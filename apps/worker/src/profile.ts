@@ -23,9 +23,10 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
-  profileFingerprint, profileFingerprintVersion, profileGateView, readOrganizerProfile, writeOrganizerProfile,
+  profileFingerprint, profileFingerprintVersion, profileGateView, readOrganizerProfile, tidyOrganizerProfile,
+  writeOrganizerProfile,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
-  type ProfileReadResult,
+  type ProfileReadResult, type ProfileTidyMode,
 } from "@trafficflow/core/adapters/organizer-profile";
 
 /**
@@ -63,6 +64,9 @@ function localSaysWhatAFingerprintSays(local: OrganizerProfilePayload, fingerpri
 
 /** How often the store is re-serialized and compared, at most. Tests inject smaller values. */
 export const DEFAULT_PROFILE_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
+
+/** The least time between two tidy passes of one mailbox's `ohmail/_meta` while one is owed. */
+export const PROFILE_TIDY_SPACING_MS = 30 * 1000;
 
 /**
  * How often {@link OrganizerProfileSync.importHoldNow} re-reads the folder BEFORE the
@@ -126,6 +130,11 @@ export interface OrganizerProfileSyncDeps {
   /** The running build's label, recorded as `producer.version`. Provenance, never a decision. */
   producerVersion: string;
   flushIntervalMs?: number;
+  /**
+   * `remove` (the default) tidies superseded settings copies; `count` only logs what a tidy would
+   * remove, and the write then removes only the copy it replaces. `TF_PROFILE_TIDY` on the worker.
+   */
+  tidyMode?: ProfileTidyMode;
   now?: () => Date;
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
@@ -172,6 +181,13 @@ export class OrganizerProfileSync {
    */
   private holdSince: Date | null = null;
   private lastWrittenFingerprint: string | null = null;
+  /**
+   * A TIDY OF `ohmail/_meta` IS OWED: the seed, a read's residue or a write's failed removal said
+   * so. Cleared when a pass leaves nothing removable (in `count` mode, after each logged plan).
+   * The tidy never appends, so owing one can never grow the folder.
+   */
+  private tidyOwed = false;
+  private lastTidyAt = 0;
   /**
    * Foreign documents discovered and SURFACED (recorded durably) — the next write may supersede them.
    * A SET, not a slot: the folder can hold two distinct foreign documents at once (crash residue), and
@@ -324,6 +340,8 @@ export class OrganizerProfileSync {
   forgetOrganizerLife(): void {
     this.seeded = false;
     this.lastWrittenFingerprint = null;
+    this.tidyOwed = false;
+    this.lastTidyAt = 0;
     this.seenForeignFingerprints = new Set<string>();
     this.holdFingerprint = null;
     this.holdNewerV = null;
@@ -800,11 +818,18 @@ export class OrganizerProfileSync {
     const ask = askStands(row, now) ? row : null;
     const expired = ask === null && row !== null && row.fingerprint !== null && row.outcome === null
       ? row.fingerprint : null;
-    if (this.seeded && ask === null && expired === null && now.getTime() - this.lastAttemptAt < interval) return;
+    const tidyMode = deps.tidyMode ?? "remove";
+    /* A TIDY OWED runs on its own clock, not the write's debounce: 30 s apart while it removes,
+       once per flush interval while it only counts. The seed owes one, so an attach's first
+       tick counts the folder. */
+    const tidyDue = (): boolean => this.tidyOwed
+      && now.getTime() - this.lastTidyAt >= (tidyMode === "count" ? interval : PROFILE_TIDY_SPACING_MS);
+    const writeDue = !this.seeded || ask !== null || expired !== null || now.getTime() - this.lastAttemptAt >= interval;
+    if (!writeDue && !tidyDue()) return;
     this.inFlight = true;
     const failuresAtEntry = this.failuresNoted;
     try {
-      this.lastAttemptAt = now.getTime();
+      if (writeDue) this.lastAttemptAt = now.getTime();
       /* THE PINNED CONNECTION, not the live getter — see the parameter. Correct wherever this
          line moves to, and no longer dependent on nothing awaiting above it. */
       const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
@@ -833,6 +858,16 @@ export class OrganizerProfileSync {
         await this.seed(io, payload, log);
         this.seeded = true;
       }
+
+      if (tidyDue()) {
+        this.lastTidyAt = now.getTime();
+        const tidied = await tidyOrganizerProfile({
+          io, installId: deps.self.installId, mode: tidyMode, now,
+          log: (event, detail) => { log(event, { ...detail, mailboxId: deps.mailboxId, accountId: deps.accountId }); },
+        });
+        if (tidyMode === "count" || tidied.remaining === 0) this.tidyOwed = false;
+      }
+      if (!writeDue) return;
 
       // The press first, so the hold blocks below read its answer on this same tick.
       if (expired !== null) await this.closeImportAsk(expired, "timed_out", log);
@@ -935,9 +970,9 @@ export class OrganizerProfileSync {
       // hold blocks above returns without writing.
       if (this.blockedByNewer) return;
       if (fp === this.lastWrittenFingerprint) {
-        // Nothing to write — but LOOK once per interval anyway. This is what heals the residue
-        // of a transient organizer overlap (two documents from two writers, neither of which
-        // will ever change its store again) and what notices a document appearing
+        // Nothing to write — but LOOK once per interval anyway. This is what owes a tidy for the
+        // residue of a transient organizer overlap (two documents from two writers, neither of
+        // which will ever change its store again) and what notices a document appearing
         // under an established organizer without any local change.
         await this.verifyFolder(io, payload, log);
         return;
@@ -960,7 +995,7 @@ export class OrganizerProfileSync {
         producer: { kind: deps.self.kind, version: deps.producerVersion },
       });
       const result = await writeOrganizerProfile({
-        io, doc, installId: deps.self.installId,
+        io, doc, installId: deps.self.installId, tidyMode, now,
         // What this writer may replace: its own last write, and any foreign document it has
         // already SURFACED. Anything else refuses as `foreign` below — the engine's guarantee
         // that no foreign configuration is ever expunged before it was recorded.
@@ -973,9 +1008,17 @@ export class OrganizerProfileSync {
       if (result.written) {
         this.lastWrittenFingerprint = fp;
         this.seenForeignFingerprints.clear();
+        if (result.owed === true) this.tidyOwed = true;
         log("organizer_profile_written", {
           mailboxId: deps.mailboxId, accountId: deps.accountId, pruned: result.removed,
+          ...(result.owed === true ? { owed: true } : {}),
         });
+      } else if (result.reason === "cleanup_owed") {
+        /* Superseded copies held the write; the write ran one tidy pass instead. The dirty check
+           stays open, so the next write-due tick writes once the folder is clean. */
+        this.tidyOwed = true;
+      } else if (result.reason === "append_unreadable") {
+        // The new copy did not read back and was removed; the current one stands. Retried next interval.
       } else if (result.reason === "newer") {
         // A newer document arrived between the seed and this write. Same posture as at seed —
         // including the durable marker, which the log line alone is not: the confirm flow
@@ -999,7 +1042,7 @@ export class OrganizerProfileSync {
           this.holdNewerV = null;
           this.holdSince = null;
         }
-      } else {
+      } else if (result.reason === "foreign") {
         const foreignFp = profileFingerprint(result.doc);
         // A NEVER-OWNED organizer meeting a document that landed after its seed takes the takeover
         // posture: hold it and write the held marker the surface answers, unless an import or a
@@ -1162,6 +1205,9 @@ export class OrganizerProfileSync {
     const detected = (state: string): void => {
       log("organizer_profile_detected", { mailboxId: deps.mailboxId, accountId: deps.accountId, state });
     };
+    /* The first pass after an attach counts the folder, whatever it holds — except beside a newer
+       format, where nothing is removed at all. */
+    if (read.state !== "newer") this.tidyOwed = true;
     switch (read.state) {
       case "none":
         clearProvisionalHold();
@@ -1236,10 +1282,10 @@ export class OrganizerProfileSync {
    * ONCE PER INTERVAL, WHEN THERE IS NOTHING TO WRITE: read what the folder actually holds.
    * The fingerprint comparison cannot see two failure shapes from a transient overlap the lease
    * permits for one cycle: (a) TWO documents from two writers, neither store ever changing again, so
-   * nothing expunges the loser and a later reader may coalesce onto it; (b) a foreign document that
-   * OVERWROTE ours with no local change to trigger a write. Both heal here: force the dirty check open
-   * (`lastWrittenFingerprint = null`) after recording what was seen, and the next tick's write
-   * supersedes through the engine's foreign gate, so nothing is expunged unsurfaced.
+   * nothing expunges the loser; (b) a foreign document that OVERWROTE ours with no local change to
+   * trigger a write. (a) owes a tidy, which removes superseded copies and never appends. (b) forces
+   * the dirty check open after recording what was seen, and the next tick's write supersedes
+   * through the engine's foreign gate, so nothing is expunged unsurfaced.
    */
   private async verifyFolder(
     io: ProfileIo,
@@ -1277,12 +1323,11 @@ export class OrganizerProfileSync {
       case "found": {
         const docFingerprint = profileFingerprint(read.doc);
         const ours = read.installId === deps.self.installId;
-        if (localSaysWhatTheDocumentSays(local, read.doc)) {
-          // The current document says what we say. A residue copy beside it is the overlap's
-          // leftover — reopen the dirty check so the next tick rewrites and expunges it.
-          if (read.residue > 0) this.lastWrittenFingerprint = null;
-          return;
-        }
+        /* Copies beside the current document are the tidy's to remove. Reopening the dirty check
+           to heal them wrote a NEW copy each time, which is how a folder whose removals never
+           stuck grew by one per interval. */
+        if (read.residue > 0) this.tidyOwed = true;
+        if (localSaysWhatTheDocumentSays(local, read.doc)) return;
         if (ours) {
           // Our own write that our memory does not match (another process sharing our install
           // id, or memory lost to a code path we did not foresee): trust the store, rewrite.

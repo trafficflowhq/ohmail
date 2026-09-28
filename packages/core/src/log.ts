@@ -204,6 +204,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // three can carry mail: each is produced by `apps/worker/src/request-drain.ts` as a counter it
   // incremented itself, never read off a record.
   "applied", "refused", "expired",
+  // ── the settings tidy of `ohmail/_meta` (`profile_tidy_planned`, `profile_tidied`), WITH its call sites ──
+  //
+  // Counts of ohmail's own settings messages by what the tidy decides about each, the mode it ran
+  // in, and whether a write left a removal owed. Every one is a counter or a word the selector set
+  // itself; never an address, a subject or a folder name.
+  "current", "removable", "own", "foreignStale", "duplicate", "malformed",
+  "keptForeignFresh", "keptUnrecognised", "keptNewerDated", "unseenCurrent", "owed", "tidyMode",
   "sample", "claims", "threadsCreated", "contactsImported", "sentRecipients", "truncated",
   "maxPages", "healthPort", "signal",
   // ── The desktop host door's loopback listener (`host_listening`), added WITH the call site ──

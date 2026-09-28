@@ -467,7 +467,7 @@ ohmail/
 ├── Receipts             receipts, confirmations, orders
 ├── Screened             senders you keep, but out of the Inbox
 ├── Quarantine           spam the automatic patterns set aside, held for review
-└── _meta                a tiny bookkeeping folder, hidden in your other mail apps
+└── _meta                a small bookkeeping folder; some mail apps show it
 ```
 
 `_meta` also holds your ohmail settings for this mailbox — the senders you've

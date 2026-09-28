@@ -1932,7 +1932,7 @@
     "managedBody": "ohmail Cloud ist dasselbe Produkt, nur hosten wir: der Organizer läuft auf unseren Servern und bleibt wach, die Web-App ist da, wenn du dich anmeldest, und dein Android-Handy bekommt Push. Du zahlst monatlich fürs Betreiben, nicht für fehlende Funktionen — die Optionen oben sind keine Demos.",
     "managedCta": "Die Tarife unten ansehen",
     "moveTitle": "Deine Einstellungen liegen in deinem Postfach — und ziehen mit.",
-    "moveBody": "Die Absender, die du gescreent hast, deine Regeln, deine Benachrichtigungs-Entscheidungen, deine Abwesenheitsantwort und deine Tag-Namen liegen im Postfach selbst — ein paar Kilobyte versioniertes JSON in einem versteckten Ordner. Nimm oben irgendeine Option und entscheide später um: verbinde dasselbe Postfach woanders, und ohmail findet deine Einstellungen und fragt, bevor es sie benutzt. Verlässt du ohmail ganz, gehören diese Entscheidungen weiter dir — in deinem eigenen Postfach, in einem Format, das alles lesen kann.",
+    "moveBody": "Die Absender, die du gescreent hast, deine Regeln, deine Benachrichtigungs-Entscheidungen, deine Abwesenheitsantwort und deine Tag-Namen liegen im Postfach selbst — versioniertes JSON in einem eigenen Buchhaltungsordner. Nimm oben irgendeine Option und entscheide später um: verbinde dasselbe Postfach woanders, und ohmail findet deine Einstellungen und fragt, bevor es sie benutzt. Verlässt du ohmail ganz, gehören diese Entscheidungen weiter dir — in deinem eigenen Postfach, in einem Format, das alles lesen kann.",
     "moveMsgNote": "Die ersten Zeilen der echten Nachricht, Wort für Wort — der Rest sind deine Einstellungen, als JSON.",
     "moveSpec": "Das Format ist öffentlich — zur Spezifikation"
   },
@@ -2103,7 +2103,7 @@
     "receipts": "Belege, Bestätigungen, Bestellungen.",
     "screened": "Absender, die du behältst — aber nicht im Posteingang.",
     "quarantine": "Spamverdächtige Post, beiseitegelegt.",
-    "meta": "Ein winziger Buchhaltungsordner, in deinen anderen Mailprogrammen ausgeblendet.",
+    "meta": "Ein kleiner Buchhaltungsordner; manche Mailprogramme zeigen ihn.",
     "metaTag": "Haushaltung",
     "untouched": "unberührt",
     "note": "Nichts davon lebt nur in ohmail. Es sind alles echte Ordner in deinem eigenen Konto — an dem Tag, an dem du gehst, ist deine Post also schon dort abgelegt, wo sie hingehört."

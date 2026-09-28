@@ -32,6 +32,11 @@ One RFC822 message in `ohmail/_meta`:
   bookkeeping, not configuration: it lets an organizer recognise its own
   previous write. It is a header rather than a JSON field so the document
   itself stays free of anything install-specific.
+- Header `X-Ohmail-Profile-Version` — the document's `v`, repeated where a
+  header read can see it, so a later format is recognised without reading the
+  body. A writer of any version above 2 MUST write it; its absence means 1 or 2.
+- Header `Date` — the document's `updatedAt`, cut to the second.
+- Header `Subject: ohmail settings for this mailbox`, exactly.
 - A plain-text body: a short human preamble (for whoever finds the message in
   an ordinary mail client), then the JSON document. A reader takes the
   substring from the body's first `{` to its last `}` — the preamble is
@@ -162,6 +167,7 @@ invented. Line endings on the wire are CRLF, as in any RFC822 message.
 ```text
 X-Ohmail-Profile: 1
 X-Ohmail-Install-Id: 0f4c7d1e-2b6a-4a51-9c3e-7d8f1a2b3c4d
+X-Ohmail-Profile-Version: 2
 Subject: ohmail settings for this mailbox
 Date: Thu, 27 Aug 2026 09:30:00 GMT
 MIME-Version: 1.0
@@ -335,11 +341,20 @@ The mail itself needs no line here: it never left the mailbox.
 
 ## Update = append new + expunge old
 
-IMAP has no in-place update. The new copy is appended first and the old copies
-expunged after, so a crash between the two steps leaves two documents rather
-than none; readers coalesce by `updatedAt` (newest wins) and the writer's next
-update cleans up the extras. Exactly one current profile message is the steady
-state.
+IMAP has no in-place update. The new copy is appended first, read back, and
+the copy it replaces expunged after, so a crash between the steps leaves two
+documents rather than none; readers coalesce by `updatedAt` (newest wins).
+Exactly one current profile message is the steady state, and the folder never
+holds more than two ohmail settings messages: while an older copy is still
+there, the next write removes it instead of appending.
+
+Settings messages are found by reading every message's headers in
+`ohmail/_meta`, checked against the folder's message count — never by a header
+SEARCH, which some servers answer with nothing. The organizer removes
+superseded copies: its own at once, another install's once the current
+document is ten minutes newer and that install holds no fresh claim. It never
+removes the current document, a claim, or a message that is not an ohmail
+settings message.
 
 Only the active organizer writes — the organizer lease already serializes
 writers, so last-incumbent-wins and no merge algorithm exists.
@@ -381,9 +396,9 @@ refuses to answer it itself:
 
 ## What a reader in another mail client sees
 
-`ohmail/_meta` is unsubscribed, so ordinary mail clients hide it. Someone who
-browses into it anyway finds a short message that explains itself and is safe
-to delete. It never touches the Inbox and triggers no notifications. A note on
+`ohmail/_meta` is unsubscribed; some mail apps, Apple Mail among them, still
+list and search it. Someone who browses into it finds a short message that
+explains itself and is safe to delete. It never touches the Inbox and triggers no notifications. A note on
 exposure: your mail provider already sees every sender as messages; this
-document adds no information the mailbox does not already hold. It is a few
-kilobytes and irrelevant to quota.
+document adds no information the mailbox does not already hold. Its size grows
+with the number of senders you have screened in.

@@ -481,6 +481,11 @@ export interface WorkerConfig {
      * tests, which cannot wait out the five-minute default.
      */
     profileFlushIntervalMs?: number;
+    /**
+     * `TF_PROFILE_TIDY`: `remove` (the default) removes superseded settings copies from
+     * `ohmail/_meta`; `count` only logs `profile_tidy_planned`, the setting a first deploy reads.
+     */
+    profileTidy?: "remove" | "count";
   };
   /** TEST SEAM: injected logger. Absent ⇒ a real JSON-lines logger on stdout. */
   logger?: Logger;
@@ -925,6 +930,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       ...(organizerDisplayNameFrom(env) ? { displayName: organizerDisplayNameFrom(env)! } : {}),
       ...(env.TF_LEASE_STALE_MS ? { staleAfterMs: optInt(env, "TF_LEASE_STALE_MS", 0) } : {}),
       ...(env.TF_PROFILE_FLUSH_MS ? { profileFlushIntervalMs: optInt(env, "TF_PROFILE_FLUSH_MS", 0) } : {}),
+      profileTidy: profileTidyFrom(env),
     },
     alertWebhookUrl: env.TF_ALERT_WEBHOOK_URL,
     alertEmail: env.TF_ALERT_EMAIL,
@@ -1146,6 +1152,14 @@ function loadAiPorts(
  * `undefined` when neither source has anything, which leaves `CLOUD_DISPLAY_NAME` — the right answer
  * for the hosted deployment and the only one it is true of.
  */
+/** `TF_PROFILE_TIDY`, refused at boot unless it names one of the two modes. */
+export function profileTidyFrom(env: NodeJS.ProcessEnv): "remove" | "count" {
+  const v = env.TF_PROFILE_TIDY?.trim();
+  if (v === undefined || v === "") return "remove";
+  if (v === "remove" || v === "count") return v;
+  throw new Error(`TF_PROFILE_TIDY=${JSON.stringify(v)} is neither "remove" nor "count"`);
+}
+
 export function organizerDisplayNameFrom(env: NodeJS.ProcessEnv): string | undefined {
   const explicit = (env.TF_ORGANIZER_DISPLAY_NAME ?? "").replace(/[\r\n]+/g, " ").trim();
   if (explicit !== "") return explicit.slice(0, 120);

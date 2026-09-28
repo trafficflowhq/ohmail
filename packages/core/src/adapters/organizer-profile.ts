@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import {
-  META_FOLDER, makeMetaFolderRef, lastSequence, metaHeaderTerm, type MetaFolderClient,
+  DEFAULT_STALE_AFTER_MS, META_FOLDER, MetaEnumRefusedError, enumerateMetaFolder, isMalformed,
+  makeMetaFolderRef, metaReadBudget, parseClaim, withServerClock,
+  type MetaEnumCode, type MetaFolderClient,
 } from "./organizer-lease.js";
-import { ImapDeadline, IMAP_META_DEADLINE_MS } from "./imap-bounds.js";
+import type { ImapDeadline } from "./imap-bounds.js";
 import { readAwayPiles } from "../away-scope.js";
 import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
@@ -60,17 +62,8 @@ export const PROFILE_LIST_MAX = {
 /** The canonical forms this build can take a fingerprint in. */
 export type ProfileCanonicalVersion = 1 | 2;
 
-/**
- * How many uids go into one FETCH command when the settings records are addressed by uid. Keeps
- * both the command line and the in-flight reply bounded regardless of how many the server named.
- */
-const PROFILE_FETCH_BATCH = 100;
-
-/** How wide one descending UID window is when searching for settings records. */
-const PROFILE_SEARCH_UID_WINDOW = 500;
-
-/** How many windows one search may walk before it reports that it could not ask. */
-const PROFILE_SEARCH_WINDOW_BUDGET = 20;
+/** How many superseded settings messages one tidy pass removes at most, oldest first. */
+export const PROFILE_TIDY_MAX_PER_PASS = 100;
 
 /**
  * The discriminator and bookkeeping headers. The lease's `H` table, for the profile.
@@ -83,16 +76,14 @@ const PROFILE_SEARCH_WINDOW_BUDGET = 20;
 const H = {
   profile: "X-Ohmail-Profile",
   installId: "X-Ohmail-Install-Id",
+  /* The document's `v`, repeated where a header read can see it, so a record from a newer format
+     is recognised without its body. Absent means 1 or 2: every build that wrote no such header
+     wrote one of those. Every writer after this one MUST carry it. */
+  version: "X-Ohmail-Profile-Version",
 } as const;
 
-/**
- * THE SETTINGS SEARCH, the one question every door (desktop, phone, Cloud worker) puts to the
- * folder through {@link makeProfileIo}. The header term is {@link metaHeaderTerm}'s: the value
- * every document carries, because an empty-value term is answered with nothing on some servers.
- */
-function profileSearch(uid: string): { header: Record<string, string>; uid: string } {
-  return { header: metaHeaderTerm(H.profile), uid };
-}
+/** The Subject every settings message has carried since v1; the tidy's shape test reads it exactly. */
+const PROFILE_SUBJECT_HEADER = "Subject: ohmail settings for this mailbox";
 
 /**
  * DOES THIS MESSAGE CLAIM TO BE A PROFILE AT ALL — the cheap pre-filter the bounded read retains on.
@@ -105,19 +96,10 @@ function profileSearch(uid: string): { header: Record<string, string>; uid: stri
  * direction — hence the header block only, matched case-insensitively, with no other condition.
  */
 function looksLikeProfile(raw: string): boolean {
-  /**
-   * The header block ends at the first blank line; a mention in the BODY is not a discriminator.
-   * And the name is anchored at a line start, not merely present: a substring test accepts
-   * `Not-X-Ohmail-Profile:` or `X-Forwarded-X-Ohmail-Profile:`, which the parser then rejects —
-   * each costing a slot in a retention window meant for real documents, until the current
-   * document is evicted by messages that were never candidates: "no settings have been published"
-   * about a mailbox that has some. A header name begins at a line start by definition; still
-   * case-insensitive, and the parser remains the only thing that decides what a record MEANS.
-   */
-  const sep = /\r?\n\r?\n/.exec(raw);
-  const head = sep ? raw.slice(0, sep.index) : raw;
-  const anchored = new RegExp(`(^|\\r?\\n)${H.profile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:`, "i");
-  return anchored.test(head);
+  /* The header block only, and the name anchored at a line start: `Not-X-Ohmail-Profile:` or a
+     mention in the body is not a discriminator. The ONE test, {@link PROFILE_HEADER_LINE}, shared
+     with the header-only reading and the tidy's shape test, so the three cannot disagree. */
+  return discriminatorValues(headerBlockOf(raw)).length > 0;
 }
 
 /** A sender this mailbox has screened IN. `address` is the natural key. */
@@ -652,7 +634,8 @@ export function formatProfileMessage(doc: OrganizerProfileDoc, opts: { installId
   const lines = [
     `${H.profile}: 1`,
     `${H.installId}: ${headerSafe(opts.installId)}`,
-    `Subject: ohmail settings for this mailbox`,
+    `${H.version}: ${doc.v}`,
+    PROFILE_SUBJECT_HEADER,
     `Date: ${new Date(doc.updatedAt).toUTCString()}`,
     `MIME-Version: 1.0`,
     `Content-Type: text/plain; charset=utf-8`,
@@ -884,32 +867,13 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
  * than one operation must name which one threw, and every member is a literal WE wrote, so it
  * costs nothing to log.
  */
-export type ProfileOp = "ensure_meta" | "list_profiles" | "append_profile" | "remove_profiles";
+export type ProfileOp = "ensure_meta" | "list_profiles" | "append_profile" | "remove_profiles" | "mark_seen";
 
 /**
  * A profile IO failure is a mailbox fault for the LOGS, never for the pipeline: unlike the
  * lease, nothing about organizing hinges on this document, so callers log the failure and move
  * on — a mailbox whose profile cannot be written is a mailbox whose settings do not travel this
  * cycle, and the next cycle tries again.
- */
-/**
- * THE ANSWER TO "WHICH RECORDS ARE THERE", INCLUDING THE ANSWER "I COULD NOT ASK".
- *
- * These are two different facts and they were one value. A search that could not be issued, was
- * refused, had no ceiling to walk down from, or ran out of window budget all came back as `null`,
- * and so did nothing at all; the caller could not tell them apart and treated the failure as a
- * reason to read the folder another way. An empty folder is `{ kind: "uids", uids: [] }` and it is
- * the ONLY value that may be read as "there is no profile here".
- */
-/**
- * The uid the server gave our own settings document when we wrote it. The settings walk has the
- * lease's problem at its own door: it covers a fixed distance below the top of the uid space, and
- * churn moves the records further from the top without limit — past the budget every window is
- * empty, and since could-not-ask now correctly refuses, the result is a mailbox whose published
- * settings are permanently unavailable. Refusing is right; never recovering is not. Keyed on the
- * connection for the lease's reasons: a folder path is identical across mailboxes, a fresh io is
- * built per call. A hint, never evidence — the document is still read from the folder and parsed
- * like any other.
  */
 /**
  * THE FOLDER'S GENERATION, which is what says whether a remembered uid still means anything.
@@ -924,32 +888,29 @@ function generationOf(client: { readonly mailbox?: { uidValidity?: number | bigi
   return typeof v === "number" || typeof v === "bigint" ? v : null;
 }
 
-export type ProfileUidAsk =
-  | { readonly kind: "uids"; readonly uids: number[] }
-  /**
-   * NOBODY HAS PUBLISHED SETTINGS — proved, not inferred, and a first-class answer because the
-   * WRITER needs one. With only `uids` and `unknown`, a folder holding no document could be
-   * reported only as a refusal, and a refusal stops the write that would create the first
-   * document: a mailbox whose `_meta` had lost its settings could never get them back. Given
-   * only by a search of the WHOLE folder, so it is a measurement; an empty WINDOW never gives it.
-   */
-  | { readonly kind: "absent" }
-  /**
-   * `code` is the SAME FACT as `why`, in the alphabet a log line can carry.
-   *
-   * `why` is prose and a log line never carries prose: measured on a reader for nine hours,
-   * `profile_mirror_read_failed` fired 47 times and named neither which refusal it was nor its
-   * cause, because the only diagnosis was inside a message. The code rides to the emitted line as
-   * `errorCode` through {@link ProfileUnavailableError}.
-   */
-  | { readonly kind: "unknown"; readonly why: string; readonly code: ProfileAskCode };
+/**
+ * THE NAMED REFUSALS OF THE LISTING, in the alphabet a log line carries as `errorCode`. Each one
+ * says "could not prove what the folder holds", never "it holds nothing": the writer once took an
+ * empty header SEARCH as proof that no copy existed and appended a new one on every change.
+ */
+export type ProfileEnumCode =
+  | "profile_no_count"
+  | "profile_enum_incomplete"
+  | "profile_meta_too_full"
+  | "profile_enum_blind"
+  | "profile_body_unavailable"
+  | "profile_group_too_large";
 
-/** The named refusals {@link ProfileUidAsk} can answer with. An `errorCode`, so identifier-shaped. */
-export type ProfileAskCode =
-  | "profile_search_unsupported"
-  | "profile_no_uidnext"
-  | "profile_search_refused"
-  | "profile_gap_too_deep";
+/** The enumeration's refusal, in the profile's own names; the enumeration's code rides in `cause`. */
+const PROFILE_ENUM_CODE: Readonly<Record<Exclude<MetaEnumCode, "read_deadline">, ProfileEnumCode>> = {
+  no_count: "profile_no_count",
+  over_ceiling: "profile_meta_too_full",
+  bytes: "profile_meta_too_full",
+  incomplete: "profile_enum_incomplete",
+  headerless: "profile_enum_incomplete",
+  generation_moved: "profile_enum_incomplete",
+  blind: "profile_enum_blind",
+};
 
 export class ProfileUnavailableError extends Error {
   readonly op: ProfileOp;
@@ -966,45 +927,73 @@ export class ProfileUnavailableError extends Error {
   }
 }
 
-/** One message in the meta folder, as the IO layer sees it — the FULL source, not headers. */
+/** One settings message in the meta folder, as the IO layer sees it. */
 export interface RawProfileMessage {
   ref: unknown;
   raw: string;
   /**
    * The folder's generation this message's `ref` was read under — REQUIRED, never optional. A
    * remembered uid is a fact only under its UIDVALIDITY: a renumbered folder re-issues the same
-   * small integers to different messages. Required because the optional form fails silently: a
-   * caller omitting it would produce a `found` result whose locator looks usable and is not,
-   * indistinguishable from a genuine `null` ("the generation could not be learned", which
-   * correctly reads unusable). The io stamps every message in one call from ONE
+   * small integers to different messages. The io stamps every message in one call from ONE
    * `generationOf(client)` taken inside the same mailbox lock as the fetch, so the pair is
    * consistent by construction.
    */
   generation: Generation;
+  /**
+   * `raw` is the HEADER BLOCK only. The body was not read because a newer document decides what is
+   * current; the header says whose copy this is, when it was written and at which version.
+   */
+  headerOnly?: true;
+  /** The message's FLAGS at the listing; absent from an io that cannot say. */
+  flags?: readonly string[];
+}
+
+/** A lease claim listed beside the settings: whose, and when it last beat. The tidy's fresh-writer test. */
+export interface MetaClaimSeen {
+  installId: string;
+  heartbeat: Date;
 }
 
 /**
- * The narrow IO the profile needs. Same shape as the lease's {@link LeaseIo} with one
- * difference that is the reason this is not that interface: `listProfileMessages` fetches full
- * SOURCES, because the document is the body — the lease reads headers only, and widening ITS
- * fetch would make the gate's cost scale with this document's size on every cycle.
+ * ONE LISTING: the settings messages and the lease claims enumerated beside them, as two fields, so
+ * no copy or filter of the messages can lose the claims the tidy's fresh-writer test reads.
+ */
+export interface ProfileListing {
+  messages: RawProfileMessage[];
+  claims: readonly MetaClaimSeen[];
+}
+
+export interface ProfileListOptions {
+  /** An over-budget body refuses instead of being skipped: the write and the tidy decide from this list. */
+  complete?: boolean;
+  /** Read these settings messages' bodies too, whatever their age — the write's read-back of its own append. */
+  bodyFor?: (row: { ref: unknown; headerBlock: string }) => boolean;
+}
+
+/**
+ * The narrow IO the profile needs. Same shape as the lease's {@link LeaseIo}, and not that
+ * interface, because this one reads BODIES — the lease reads headers only, every cycle.
  */
 export interface ProfileIo {
   /** Create `ohmail/_meta` if absent and unsubscribe it. Idempotent — the lease's semantics. */
   ensureMetaFolder(): Promise<void>;
   /**
-   * The meta folder's PROFILE messages, full source.
-   *
-   * Bounded and newest-first by default, which is what a read wants: the newest document is the
-   * current one. `complete` reads the whole folder instead, and exists for {@link
-   * writeOrganizerProfile} — its `newer`/`foreign` results are REFUSALS, and a refusal made from a
-   * window cannot tell "no such document" apart from "did not look that far back".
+   * The folder's settings messages, found by ONE header FETCH of the whole folder and checked against
+   * the server's own message count, never by SEARCH. Bodies are read only for the newest documents,
+   * the ones that decide what is current; every other settings message comes back `headerOnly`.
    */
-  listProfileMessages(opts?: { complete?: boolean }): Promise<RawProfileMessage[]>;
-  /** APPEND one profile message. */
+  listProfileMessages(opts?: ProfileListOptions): Promise<RawProfileMessage[]>;
+  /**
+   * The same listing with the claims beside it — the real io's, which the read, the write and the
+   * tidy use. A double without it lists whole sources, and its claims are read from those.
+   */
+  listMeta?(opts?: ProfileListOptions): Promise<ProfileListing>;
+  /** APPEND one profile message, `\Seen`. */
   appendProfile(raw: string): Promise<void>;
   /** STORE `\Deleted` + EXPUNGE the given messages. */
   removeProfiles(refs: readonly unknown[]): Promise<void>;
+  /** STORE `+FLAGS.SILENT (\Seen)` on one settings message. Optional: an io without it is not asked. */
+  markSeen?(ref: unknown): Promise<void>;
 }
 
 /**
@@ -1018,63 +1007,61 @@ export interface ProfileImapClient extends MetaFolderClient {
    * server may not have reported one yet, and an unknown generation is treated as a mismatch
    * rather than a match. */
   readonly mailbox?: { exists?: number; uidValidity?: number | bigint } | false;
-  /**
-   * A NOOP, which is how a long-lived connection LEARNS what changed under it. Optional, so every
-   * existing fake behaves exactly as it did. See {@link listProfileMessages} for why a cached
-   * `exists` of zero is not proof of an empty folder.
-   */
+  /** A NOOP. Optional, so every existing fake behaves exactly as it did. */
   noop?(): Promise<unknown>;
   /**
    * STATUS on a folder BY NAME — the only form of "how many messages" this module asks, because it
-   * is the only one that answers with a single number. Optional: a client without it falls back to
-   * reading the folder whole, which is bounded in what it RETAINS. See {@link lastSequence}.
+   * is the only one that answers with a single number. See {@link lastSequence}.
    */
   status?(
     path: string,
-    /**
-     * `uidNext` is asked of the SERVER, by name, on the folder — never read off `client.mailbox`,
-     * whose fields are whatever the last untagged response left behind. See the lease adapter's
-     * note where the same rule is stated: a stale ceiling sends every search window below the
-     * records that matter.
-     */
     query: { messages?: boolean; uidNext?: boolean },
   ): Promise<{ messages?: number; uidNext?: number } | false | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
-  /**
-   * SEARCH, by header. Optional — a connection without it falls back to the bounded range read,
-   * which is what this module did before and is honest about its limits.
-   *
-   * With it, the settings records can be found REGARDLESS OF POSITION, which a window cannot do:
-   * see {@link listProfileMessages}. Resolves `false` when the server refuses, exactly as the
-   * library does, and that is not the same answer as an empty folder.
-   */
-  search?(
-    /**
-     * `uid` is a UID SEQUENCE criterion (`UID <lo>:<hi>`), which is how the search is bounded to a
-     * window rather than asked about the whole folder — see {@link listProfileMessages}.
-     */
-    query: { header?: Record<string, string | boolean>; uid?: string },
-    options?: { uid?: boolean },
-  ): Promise<number[] | false | undefined>;
   fetch(
     range: string,
     /**
      * `source` may be a BYTE RANGE rather than a flag. `{ start, maxLength }` compiles to
      * `BODY.PEEK[]<start.maxLength>` (imapflow 1.5.0, `lib/commands/fetch.js`), which is the only
-     * way to bound what a message costs BEFORE the server sends it — read there rather than
-     * assumed, because the whole point of this seam is that it reaches the wire.
+     * way to bound what a message costs BEFORE the server sends it. `headers: true` is
+     * `BODY.PEEK[HEADER]`, the lease's own primitive.
      */
     query: {
       uid?: boolean;
       source?: boolean | { start?: number; maxLength?: number };
       size?: boolean;
+      flags?: boolean;
+      headers?: boolean;
+      internalDate?: boolean;
     },
     options?: { uid?: boolean },
-  ): AsyncIterableIterator<{ uid: number; seq?: number; source?: Buffer; size?: number }>;
+  ): AsyncIterableIterator<{
+    uid: number; seq?: number; source?: Buffer; size?: number; flags?: Set<string>; headers?: Buffer;
+    internalDate?: Date;
+  }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
   messageDelete(range: number[], options?: { uid?: boolean }): Promise<unknown>;
+  /** STORE `+FLAGS`; `silent` is `.SILENT`. Resolves `false` when the server refuses. */
+  messageFlagsAdd?(range: number[], flags: string[], options?: { uid?: boolean; silent?: boolean }): Promise<unknown>;
+}
+
+/** The header block of a raw message: everything before the first blank line. */
+function headerBlockOf(raw: string): string {
+  const sep = /\r?\n\r?\n/.exec(raw);
+  return sep ? raw.slice(0, sep.index) : raw;
+}
+
+/**
+ * THE DATE GROUP a settings message falls in: its `Date` header's second. Every ohmail writer
+ * since v1 writes `Date` as `updatedAt` cut to the second, so a document in an older second is
+ * strictly older than every document in a newer one. `null`: the header is absent or unparseable.
+ */
+function dateSecondOf(headerBlock: string): number | null {
+  const m = /^Date[ \t]*:(.*)$/im.exec(headerBlock.replace(/\r?\n[ \t]+/g, " "));
+  const at = m ? Date.parse(m[1]!.trim()) : NaN;
+  return Number.isFinite(at) ? Math.floor(at / 1000) : null;
 }
 
 /**
@@ -1082,16 +1069,9 @@ export interface ProfileImapClient extends MetaFolderClient {
  * holds, for the lease's reason: a second login per mailbox per cycle is how a provider decides
  * to throttle a user.
  *
- * Appended `\Seen`, like the claim, so a subscribed `_meta` in another client shows no unread
- * count for bookkeeping.
- */
-/**
  * @param limits Ceilings this IO enforces. Present so the BYTE ceiling can be observed at a size a
- * test can hold: it defaults to {@link PROFILE_BYTES_MAX_PER_FETCH}, and the only way to exercise
- * the singleton-over-ceiling path against the real constant is to allocate 128 MiB, which the test
- * runner cannot even serialise when it reports. A bound nobody can watch reject is the shape this
- * whole read was rewritten to remove, so the seam is deliberate and narrow — no caller in the
- * product passes it, asserted by the census in `organizer-profile-bounded.test.ts`.
+ * test can hold: it defaults to {@link PROFILE_BYTES_MAX_PER_FETCH}. No caller in the product passes
+ * it, asserted by the census in `organizer-profile-bounded.test.ts`.
  */
 export function makeProfileIo(
   client: ProfileImapClient,
@@ -1108,15 +1088,18 @@ export function makeProfileIo(
   const meta = makeMetaFolderRef(client, toServerPath);
   /**
    * THE GENERATION OF THE READ THAT NAMED THE REFS `removeProfiles` IS GIVEN — `null` until one
-   * has been read. `RawProfileMessage` has carried this per message since mail 0094, and the
-   * cleanup threw it away: `writeOrganizerProfile` maps the records to bare refs, so the one path
-   * that already had the epoch in hand was the one that could not check it. Held beside the
-   * connection rather than passed through the interface, so every existing caller and fake keeps
-   * working and the pairing cannot be got wrong by a caller that forgets it.
+   * has been read. Held beside the connection rather than passed through the interface, so every
+   * existing caller and fake keeps working and the pairing cannot be got wrong by a caller.
    */
   let generationAtLastRead: Generation = null;
+  const refusal = (code: ProfileEnumCode, why: string, cause?: unknown): ProfileUnavailableError =>
+    new ProfileUnavailableError(
+      `the settings messages in ${META_FOLDER} could not be listed: ${why}`,
+      { op: "list_profiles", code, ...(cause === undefined ? {} : { cause }) },
+    );
 
-  const io: ProfileIo = {
+  // `listMeta` takes the read's one budget here; the wrapper below enters it.
+  const io: ProfileIo & { listMeta(opts?: ProfileListOptions, budget?: ImapDeadline): Promise<ProfileListing> } = {
     async ensureMetaFolder(): Promise<void> {
       const at = await meta.locate();
       const found = at.row;
@@ -1133,443 +1116,182 @@ export function makeProfileIo(
     },
 
     /**
-     * The same folder, the same bound — and this read is the expensive one: FULL SOURCES rather
-     * than headers, buffered, on the organizer's hot paths; the per-document ceiling is checked
-     * by the parser after the bytes are in hand, so it never bounded this. A second loop because
-     * the shared one fetches HEADERS; what is shared is the rule: newest-first, one ceiling, the
-     * empty-folder defence. Newest-first because the profile is appended and newest wins.
-     * Truncation is NOT refused: a newest-first window answers "what is the newest document"
-     * whenever it is inside. A cached zero is not a known zero: `exists` stayed 0 for ten seconds
-     * after another connection appended — the missed fourth of the lease's corrected reads.
+     * ONE HEADER FETCH OF THE WHOLE FOLDER, then bodies for the documents that decide.
+     *
+     * `UID FETCH 1:* (UID FLAGS BODY.PEEK[HEADER])` is the lease's own primitive, and it is checked
+     * against STATUS: fewer rows than the server counts refuses by name, and our own last document
+     * is the positive control that the header read sees settings messages at all. An empty answer
+     * is a finding only when it is complete. Bodies go newest Date-second first, until one group
+     * holds a readable document; a pile of any size costs one header FETCH and one body.
      */
-    async listProfileMessages(opts?: { complete?: boolean }): Promise<RawProfileMessage[]> {
-      // Resolved ONCE and reused for both the lock and the count probe, so the two can never name
-      // different folders.
-      const metaPath = await meta.path();
+    async listMeta(opts?: ProfileListOptions, budget: ImapDeadline = metaReadBudget(now)): Promise<ProfileListing> {
+      const metaPath = await meta.path(budget);
       const lock = await client.getMailboxLock(metaPath);
       try {
+        const claims: MetaClaimSeen[] = [];
         const out: RawProfileMessage[] = [];
-        /* ── ONE GENERATION FOR THE WHOLE CALL, TAKEN INSIDE THE LOCK ──────────────────────
-         *
-         * Every message below comes from one SELECT of one folder on one connection, so they share
-         * one generation by construction — and taking it here, under the same `getMailboxLock` the
-         * fetches run under, is what makes that true rather than merely likely. Read at the call
-         * site instead it would be a generation for whatever folder the adapter had selected by
-         * then, which is the manufactured pair.
-         *
-         * The same `generationOf(client)` the memo read below already uses, so a document's
-         * locator and the anchor written from it can never disagree about the epoch. */
-        const generation = generationOf(client);
-        generationAtLastRead = generation;
-        /**
-         * A NOOP cannot prove a refresh, so nothing here rests on one. imapflow discards the
-         * command's own result, so a REFUSED noop resolves exactly like an accepted one, and
-         * "refreshed" was inferred from the absence of a throw — a stale cached zero could be
-         * trusted and the read return "no settings have been published" for a mailbox that has
-         * some. The count is asked for outright instead: {@link lastSequence} issues a STATUS
-         * naming the folder, answered on an empty folder as readily as a full one, so it needs no
-         * zero check in front. The cached `exists` is consulted only where the server cannot be
-         * asked at all.
-         */
+        /* A cached zero may END the read, as ever (a stale zero costs a read that finds nothing);
+           it never licenses one — the enumeration refuses without the server's own count. */
         const selected = client.mailbox;
         const cached = typeof selected === "object" && selected !== null ? selected.exists : undefined;
-        const probed = await lastSequence(client, metaPath);
-        /* The lease's rule, for the same reason: a cached count may END this read (an empty folder
-         * is cheap to be wrong about in one direction only) but may never be COUNTED BACK from,
-         * because nothing confirms it and a window in the wrong place loses the document. */
-        if (probed === 0) return out;
-        if (probed === undefined && cached === 0) return out;
-        /**
-         * THE SERVER'S COUNT, and only the server's. It licenses the complete search that lets
-         * {@link ProfileUidAsk} answer `absent` — see the walk's last arm. The cached `exists`
-         * deliberately does not reach it: `cached` may end this read at zero (cheap to be wrong
-         * about in one direction) but a stale-low cache authorising "the folder is small enough
-         * to search whole" would authorise an absence nobody measured, which is the lapse this
-         * module's honesty rule exists to prevent.
-         */
-        const total = probed;
-        /**
-         * Both axes, and both evict from the FRONT. The count ceiling stops many small messages,
-         * the byte one a few enormous ones. Neither may `break`: the window arrives oldest-first,
-         * so stopping on a ceiling keeps the OLDEST records — one large early append would return
-         * everything except the current document. Each message is pushed and the oldest dropped
-         * until both ceilings hold — a sliding window. `win.length > 1` on the byte arm keeps the
-         * newest message even when it alone is over the ceiling: an oversized document is the
-         * PARSER's refusal ({@link PROFILE_DOC_MAX_BYTES}); returning nothing would be the same
-         * lie by another route.
-         */
-        /**
-         * The ceilings are spent on PROFILE records, not on whatever shares the folder. Counting
-         * the lease's claims and stranger appends meant five hundred later newsletters could
-         * evict the current document — and this list also feeds {@link writeOrganizerProfile}'s
-         * `newer` and `foreign` refusals, the whole reason an older build will not overwrite a v2
-         * document. An evicted v2 is an older organizer appending v1 over settings it never saw,
-         * every later read agreeing the rollback is current — silent, durable, in the customer's
-         * own mailbox. The retention test runs AFTER the discriminator; a flood costs transfer
-         * and nothing else.
-         */
-        const complete = opts?.complete === true;
+        /* THE POSITIVE CONTROL: our own last document, by the uid the server gave it, judged by the
+           enumeration through the same path as every other row. */
+        const remembered = readMemo(identity, generationOf(client));
+        const ownUid = remembered.kind === "memo" && typeof remembered.memo.profileUid === "number"
+          ? remembered.memo.profileUid : null;
+        let listed: Awaited<ReturnType<typeof enumerateMetaFolder>>;
+        try {
+          listed = await enumerateMetaFolder(client, metaPath, budget, {
+            keep: (h) => looksLikeProfile(h) || parseClaim(h) !== null,
+            probe: ownUid === null ? null : { uid: ownUid, recognised: looksLikeProfile },
+          });
+        } catch (err) {
+          if (!(err instanceof MetaEnumRefusedError)) throw err;
+          if (err.code === "no_count" && cached === 0) {
+            generationAtLastRead = generationOf(client);
+            return { messages: out, claims };
+          }
+          // The outer race already names a spent clock; hand it the clock's own refusal.
+          if (err.code === "read_deadline") throw err.cause ?? err;
+          throw refusal(PROFILE_ENUM_CODE[err.code], err.message, err);
+        }
+        const generation = listed.generation;
+        generationAtLastRead = generation;
+        if (listed.probe === "absent") forgetMemo(identity, "profileUid");
 
-        /**
-         * Every source this adapter reads comes through here, and it always RANGES: one reply
-         * asked as `BODY.PEEK[]<0.N>`, so the server sends at most N bytes whatever the message
-         * weighs. The server's size claim is untrusted: the size pass is a prefilter, never a
-         * bound — a server free to answer `RFC822.SIZE: 1` is free to send ten megabytes — so the
-         * reported size never decides the range. N is the remaining budget PLUS ONE, making the
-         * answer exact: shorter than N is the whole document; exactly N did not fit and is
-         * refused unparsed. One at a time, because each reply is charged before the next range is
-         * computed — a batch hands every message the same nearly-full range.
-         */
-        const fetchSourceBounded = async (
-          messageset: string,
-          byUid: boolean,
-          budget: number,
-        ): Promise<{ uid: number; source: Buffer } | { over: number } | null> => {
+        type Row = { uid: number; headerBlock: string; flags: readonly string[] };
+        const profiles: Row[] = [];
+        for (const r of listed.records) {
+          if (looksLikeProfile(r.raw)) { profiles.push({ uid: r.ref, headerBlock: headerBlockOf(r.raw), flags: r.flags }); continue; }
+          // The server-stamped heartbeat, the one the election ranks by (`withServerClock`).
+          const claim = parseClaim(r.raw, r.ref, r.internalDate);
+          if (claim !== null && !isMalformed(claim)) {
+            const [stamped] = withServerClock([claim]);
+            if (stamped !== undefined && !isMalformed(stamped)) claims.push({ installId: stamped.installId, heartbeat: stamped.heartbeat });
+          }
+        }
+        profiles.sort((x, y) => x.uid - y.uid);
+
+        /* A NEWER FORMAT IN ANY HEADER ENDS THE READ HERE: nothing beside it is written or removed,
+           so no body is needed, and no flood of other records can push it out of view. */
+        if (profiles.some((r) => { const v = shapeOf(r.headerBlock).version; return typeof v === "number" && v > PROFILE_VERSION; })) {
+          for (const r of profiles) out.push({ ref: r.uid, raw: r.headerBlock, generation, headerOnly: true, flags: r.flags });
+          return { messages: out, claims };
+        }
+
+        /* WHICH BODIES: the unparseable-Date group, then Date seconds newest first until a group
+           holds a readable (or newer) document, plus whatever `bodyFor` names. Newest uid first
+           inside a group, so the byte budget is spent on the current document before an old one. */
+        const groups = new Map<number, Row[]>();
+        const undated: Row[] = [];
+        for (const r of [...profiles].reverse()) {
+          const second = dateSecondOf(r.headerBlock);
+          if (second === null) { undated.push(r); continue; }
+          groups.set(second, [...(groups.get(second) ?? []), r]);
+        }
+        const complete = opts?.complete === true;
+        const bodies = new Map<number, string>();
+        const attempted = new Set<number>();
+        let held = 0;
+        let oversized = 0;
+        const fetchSourceBounded = async (uid: number, budget: number): Promise<Buffer | { over: number } | null> => {
           const cap = Math.max(1, budget) + 1;
-          for await (const m of client.fetch(
-            messageset, { uid: true, source: { start: 0, maxLength: cap } }, { uid: byUid },
-          )) {
+          for await (const m of client.fetch(String(uid), { uid: true, source: { start: 0, maxLength: cap } }, { uid: true })) {
             if (!m.source) continue;
-            /* ── AN OVER-BUDGET REPLY STILL COST ITS BYTES, AND NOW SAYS SO ─────────────────
-             *
-             * This returned a bare marker and the callers charged nothing for it, so a record that
-             * FILLED its range was free: the budget never moved, every later record was offered
-             * the same room, and a folder of them could be walked for ever — the unbounded walk
-             * the per-reply charge exists to stop, surviving in the one branch that never reached
-             * the charge. Found by the guard written for that charge, which is what it is for. */
+            // An over-budget reply still cost its bytes, and says so.
             if (m.source.byteLength >= cap) return { over: m.source.byteLength };
-            return { uid: m.uid, source: m.source };
+            return m.source;
           }
           return null;
         };
-
-        /**
-         * The uids of every settings record in the folder, newest last, or `null` when the
-         * connection cannot be asked or the server REFUSED — which is not the same answer as
-         * "there are none" and must never be read as one.
-         */
-        /**
-         * Searched in descending uid windows, like the lease's: a bare header search lands
-         * however many uids the server chooses before any ceiling of ours runs. Each window is
-         * bounded by construction; descending because a read wants the NEWEST settings. The top
-         * comes from a STATUS, never the cached mailbox object. Could-not-ask is not
-         * there-is-nothing: no search, a refused search, or a too-sparse folder all returned the
-         * `null` an empty folder would, and the unbounded fallback could return nothing for a
-         * folder plainly holding a document — settings lapsed silently. The ask reports which
-         * happened: `unknown` refuses the cycle; only `uids` may decide anything.
-         */
-        const profileUids = async (
-          c: ProfileImapClient,
-          /**
-           * The folder's MESSAGE COUNT as the server answered it one command ago, or `undefined`
-           * when it could not be asked. The licence for the complete search below, and never
-           * taken from the connection's cache: a count that may be wrong high would authorise an
-           * unbounded read, and one that may be wrong low would authorise an absence.
-           */
-          count: number | undefined,
-        ): Promise<ProfileUidAsk> => {
-          if (typeof c.search !== "function" || typeof c.status !== "function") {
-            return {
-              kind: "unknown", code: "profile_search_unsupported",
-              why: "this server offers no way to search the folder",
-            };
+        const readBody = async (r: Row): Promise<"ok" | "newer" | "other"> => {
+          if (attempted.has(r.uid)) return "other";
+          attempted.add(r.uid);
+          if (bodies.size >= PROFILE_MESSAGES_MAX_PER_FETCH) {
+            throw refusal("profile_group_too_large", `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings `
+              + "messages share the newest dates, and a read takes at most that many bodies");
           }
-
-          const top = await (async (): Promise<number | null> => {
-            try {
-              const st = await c.status!(metaPath, { uidNext: true });
-              const next = typeof st === "object" && st !== null ? st.uidNext : undefined;
-              return typeof next === "number" && next > 1 ? next - 1 : null;
-            } catch {
-              return null;
+          const got = await fetchSourceBounded(r.uid, maxBytes - held);
+          if (got === null) {
+            /* A body that did not come back: absent now is an expunge in between; present is a refusal. */
+            for await (const m of client.fetch(String(r.uid), { uid: true }, { uid: true })) {
+              if (m.uid === r.uid) {
+                throw refusal("profile_body_unavailable", "a listed settings message would not send its body");
+              }
             }
-          })();
-          if (top === null) {
-            return {
-              kind: "unknown", code: "profile_no_uidnext",
-              why: "the folder reported no usable UIDNEXT to walk down from",
-            };
+            return "other";
           }
-
-          const out: number[] = [];
-          /* ── THE STRETCH BETWEEN OUR OWN DOCUMENT AND WHERE THE WALK STOPS ──────────────────
-           *
-           * Read like the lease's claim gap and for the same reason. The walk still starts at the
-           * top — a settings document written after ours has a higher uid, and starting at ours
-           * would read past it and answer with a stale document. What the anchor buys is the
-           * right to cover what the budget left beneath it. */
-          const remembered = readMemo(identity, generationOf(client));
-          const anchor = remembered.kind === "memo" && typeof remembered.memo.profileUid === "number"
-            ? remembered.memo.profileUid
-            : null;
-          const bottomFor = (): number => (anchor !== null && anchor >= 1 ? anchor : 1);
-          const bottom = bottomFor();
-          let hi = top;
-          for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
-            const lo = Math.max(1, hi - PROFILE_SEARCH_UID_WINDOW + 1);
-            const found = await c.search(
-              profileSearch(`${lo}:${hi}`), { uid: true },
-            );
-            if (!Array.isArray(found)) {
-              return {
-                kind: "unknown", code: "profile_search_refused",
-                why: `the search of UIDs ${lo}:${hi} was refused`,
-              };
-            }
-            out.push(...found);
-            if (lo === 1) return { kind: "uids", uids: out.sort((a, b) => a - b) };
-            if (out.length > PROFILE_MESSAGES_MAX_PER_FETCH) {
-              return { kind: "uids", uids: out.sort((a, b) => a - b) };
-            }
-            hi = lo - 1;
-          }
-          /**
-           * The budget ran out, and a record in hand is already the answer: the question is "what
-           * is the NEWEST document", and a walk from the top answers it the moment it holds a
-           * profile record — everything above was searched. Refusing here threw that answer away,
-           * and `ohmail/_meta` also carries the lease's claims, so its uid space climbs per
-           * heartbeat while the folder stays small: past 10 000 uids every read of a readable
-           * document refused with the document in `out`. An EMPTY `out` is still a refusal —
-           * nothing was found and something may lie below. The gap walk covers what the budget
-           * could not reach, down to uid 1 when there is no memo.
-           */
-          if (out.length > 0) return { kind: "uids", uids: out.sort((a, b) => a - b) };
-          const floor = hi + 1;
-          if (bottom < floor) {
-            let gapHi = floor - 1;
-            for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
-              const lo = Math.max(bottom, gapHi - PROFILE_SEARCH_UID_WINDOW + 1);
-              const found = await c.search(
-                profileSearch(`${lo}:${gapHi}`), { uid: true },
+          if ("over" in got) {
+            held += got.over;
+            if (complete) {
+              throw new ProfileUnavailableError(
+                `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte budget `
+                + "this read may spend, and a write must see every document whole before it may "
+                + "replace any",
+                { op: "list_profiles" },
               );
-              if (!Array.isArray(found)) {
-                return {
-                  kind: "unknown", code: "profile_search_refused",
-                  why: `the search of UIDs ${lo}:${gapHi} was refused`,
-                };
-              }
-              out.push(...found);
-              if (lo === bottom) return { kind: "uids", uids: out.sort((a, b) => a - b) };
-              gapHi = lo - 1;
             }
-          }
-          /* ABSENT IS AN ANSWER, AND ONLY A COMPLETE SEARCH MAY GIVE IT. Two budgets finding
-           * nothing is not "there is nothing" — something may lie below. The folder's MESSAGE
-           * COUNT settles it: a search costs what it examines, not what its uid range names, so a
-           * folder inside the fetch ceiling is searched whole for one command however deep its uid
-           * space has grown — and `ohmail/_meta` grows per heartbeat while staying small, the shape
-           * every mailbox in this defect had. `1:*` because the SERVER resolves `*` to the highest
-           * uid held, so the range is complete even against a stale UIDNEXT. An empty answer to a
-           * complete search is a measured absence, and the writer may create the first document.
-           * Measured at 0.18.0 rc, reproduced at 0.17.0: three claims, no document, uid past 40 000,
-           * every settings write refusing for the install's life while the row read Up to date. */
-          if (count !== undefined && count <= PROFILE_MESSAGES_MAX_PER_FETCH) {
-            const all = await c.search(
-              profileSearch("1:*"), { uid: true },
-            );
-            if (!Array.isArray(all)) {
-              return {
-                kind: "unknown", code: "profile_search_refused",
-                why: "the complete search of the folder was refused",
-              };
-            }
-            if (all.length === 0) return { kind: "absent" };
-            return { kind: "uids", uids: all.sort((a, b) => a - b) };
-          }
-          /**
-           * Deep AND populous, or a server that would not say how many messages it holds: still a
-           * refusal, and still a named one. This is the only folder left that no bounded read can
-           * settle — above the fetch ceiling a complete search is no longer bounded, and an
-           * unknown count is not a small one. Absence is never inferred from either.
-           */
-          return {
-            kind: "unknown", code: "profile_gap_too_deep",
-            why: "the settings document lies further below the top of the uid space than "
-              + `${2 * PROFILE_SEARCH_WINDOW_BUDGET * PROFILE_SEARCH_UID_WINDOW} uids, and the `
-              + "folder holds too many messages to search whole, so no bounded read of it can "
-              + "reach the document",
-          };
-        };
-
-        /** Sizes first, then source for the survivors only — see the note at the call site. */
-        const readByUid = async (uids: readonly number[]): Promise<{
-          win: Array<{ rec: RawProfileMessage; size: number }>; seen: number;
-        }> => {
-          if (uids.length === 0) return { win: [], seen: 0 };
-          /* One past the count ceiling, so "exactly at the ceiling" stays distinguishable from
-           * "over it" — the distinction the complete scan's refusal turns on. */
-          const capped = uids.slice(-(PROFILE_MESSAGES_MAX_PER_FETCH + 1));
-          const sizes = new Map<number, number>();
-          for (let i = 0; i < capped.length; i += PROFILE_FETCH_BATCH) {
-            const batch = capped.slice(i, i + PROFILE_FETCH_BATCH);
-            for await (const m of client.fetch(batch.join(","), { uid: true, size: true }, { uid: true })) {
-              if (typeof m.size === "number") sizes.set(m.uid, m.size);
-            }
-          }
-          /**
-           * A reported size orders the work; it never decides a refusal. The prefilter used to
-           * sum reported sizes and refuse a COMPLETE scan before a byte was fetched — handing the
-           * decision to the server: gigabyte answers for tiny records make a readable folder
-           * refuse, and a refused settings write is a person's rules not applying. The same
-           * number is already untrusted the other way; it cannot be authority in one direction
-           * and a lie in the other. Sizes affect only ORDER — cheap records first. Every refusal
-           * is decided by bytes that arrived; the COUNT ceiling stays, being this module's own
-           * arithmetic.
-           */
-          const chosen: number[] = [];
-          for (const uid of [...capped].reverse()) {
-            if (chosen.length >= PROFILE_MESSAGES_MAX_PER_FETCH) {
-              if (complete) {
-                throw new ProfileUnavailableError(
-                  `the settings in ${META_FOLDER} could not be read completely: the folder holds `
-                  + `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records, and a write must `
-                  + "see every one before it may replace any",
-                  { op: "list_profiles" },
-                );
-              }
-              break;
-            }
-            chosen.push(uid);
-          }
-          /* ── THE BUDGET IS SPENT NEWEST FIRST, AND THAT ORDERING IS LOAD-BEARING ──────────
-           *
-           * This walked in FOLDER order, which was harmless while an over-budget record cost
-           * nothing. Now that every reply is charged — including one that filled its range — an
-           * enormous OLD record fetched first spends the budget before the current document is
-           * ever asked for, and the read answers with nothing about a mailbox that has settings.
-           * `chosen` is already newest-first; the result is put back in folder order at the end,
-           * which is what every caller reads. */
-          const order = chosen;
-          const win: Array<{ rec: RawProfileMessage; size: number }> = [];
-          let held = 0;
-          let oversized = 0;
-          for (const uid of order) {
-            const got = await fetchSourceBounded(String(uid), true, maxBytes - held);
-            if (got === null) continue;   // expunged in the gap; not evidence about any other
-            if ("over" in got) {
-              held += got.over;   // it crossed the connection; it is spent
-              if (complete) {
-                throw new ProfileUnavailableError(
-                  `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte budget `
-                  + "this read may spend, and a write must see every document whole before it may "
-                  + "replace any",
-                  { op: "list_profiles" },
-                );
-              }
-            /**
-             * Skipped, but never silently — see the refusal after the loop. An over-budget record
-             * cannot be parsed, because it was never fully transferred; on a read, skipping one
-             * is right while something else can answer. What must not happen is skipping the ONLY
-             * candidate and returning an empty list, which every caller reads as "no settings
-             * have been published" and routes a person's mail by local defaults. The old contract
-             * kept such a record for the parser to refuse out loud; once the document is
-             * deliberately never transferred whole, the honest equivalent is a refusal from here
-             * — counted, and acted on below.
-             */
             oversized += 1;
-              continue;
-            }
-            /* ── EVERY BYTE THAT ARRIVED IS CHARGED, WHETHER IT IS KEPT OR THROWN AWAY ─────
-             *
-             * The budget used to move only for records that turned out to BE settings. A record
-             * that is not one still crossed the connection, still cost the memory to hold while it
-             * was examined, and then left the budget untouched — so a folder of near-misses could
-             * be walked for ever at nearly the full budget apiece. What the ceiling is defending
-             * is the transfer, and a byte spent on a message that turns out to be a newsletter is
-             * spent exactly the same as one spent on a document. */
-            const size = got.source.byteLength;
-            held += size;
-            const raw = got.source.toString("utf8");
-            if (!looksLikeProfile(raw)) continue;
-            win.push({ rec: { ref: got.uid, raw, generation }, size });
-            while (win.length > PROFILE_MESSAGES_MAX_PER_FETCH) {
-              if (complete) {
-                throw new ProfileUnavailableError(
-                  `the settings in ${META_FOLDER} could not be read completely: the folder holds `
-                  + `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records, and a write `
-                  + "must see every one before it may replace any",
-                  { op: "list_profiles" },
-                );
-              }
-              held -= win.shift()!.size;
-            }
+            return "other";
           }
-          win.sort((a, b) => Number(a.rec.ref ?? 0) - Number(b.rec.ref ?? 0));
-          if (win.length === 0 && oversized > 0) {
-            throw new ProfileUnavailableError(
-              `the only settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte `
-              + "budget this read may spend, so it was not transferred and cannot be parsed — "
-              + "answering with nothing here would say no settings have been published",
-              { op: "list_profiles" },
-            );
-          }
-          return { win, seen: capped.length };
+          held += got.byteLength;
+          const raw = got.toString("utf8");
+          bodies.set(r.uid, raw);
+          const parsed = Buffer.byteLength(raw, "utf8") > PROFILE_DOC_MAX_BYTES ? null : parseProfileMessage(raw, r.uid);
+          if (parsed === null || isMalformedProfile(parsed)) return "other";
+          return parsed.status === "ok" ? "ok" : "newer";
         };
-
-        /**
-         * A refusal cannot be made from a window: filtering the ceilings stops a flood from
-         * EVICTING the document, and cannot put back one the RANGE never delivered. Fine for a
-         * read — the newest document is the current one. Not for {@link writeOrganizerProfile}:
-         * its `newer` and `foreign` checks must run against EVERY document in the folder — a
-         * refusal that silently did not look is indistinguishable from one that found nothing,
-         * the difference between "we did not overwrite the v2 settings" and "we overwrote
-         * settings we never saw". So the write asks for a complete scan: one folder's transfer on
-         * a rare write; retention stays bounded, where the memory risk was.
-         */
-        /**
-         * Ask the server which messages are settings, rather than where they might be. The range
-         * counted backwards through claims and acks, so a settings document with a ceiling's
-         * worth of later messages on top sat outside the window and the read reported "no
-         * settings have been published" — the next organizer routes by local defaults, a person's
-         * rules silently not applied. Only settings records carry the discriminator, so a header
-         * SEARCH is complete for profiles by construction. And the bytes are bounded before
-         * delivery: the byte ceiling was applied to `m.source`, already buffered whole; sizes
-         * come first in a cheap pass, source fetched only for survivors of both ceilings.
-         */
-        const searched = await profileUids(client, total);
-        /**
-         * A failed ask refuses the cycle; it does not pick a different way to look. The fallback
-         * read the folder by sequence range, unbounded, and returned whatever survived two
-         * ceilings — for a folder holding a valid document below a flood, an EMPTY result,
-         * indistinguishable from a mailbox that never published settings: the effective profile
-         * lapsed silently with no fault recorded. A read that cannot be bounded is a different
-         * question, and its answer was being used for this one. Settings failing is a logged
-         * mailbox fault and the next cycle retries — costing a cycle rather than a person's
-         * rules.
-         */
-        if (searched.kind === "unknown") {
+        for (const r of undated) await readBody(r);
+        for (const second of [...groups.keys()].sort((a, b) => b - a)) {
+          const verdicts: string[] = [];
+          for (const r of groups.get(second)!) verdicts.push(await readBody(r));
+          if (verdicts.includes("ok") || verdicts.includes("newer")) break;
+        }
+        for (const r of profiles) {
+          if (opts?.bodyFor?.({ ref: r.uid, headerBlock: r.headerBlock })) await readBody(r);
+        }
+        if (bodies.size === 0 && oversized > 0) {
           throw new ProfileUnavailableError(
-            `the profile records in ${META_FOLDER} could not be enumerated: ${searched.why}`,
-            { op: "list_profiles", code: searched.code },
+            `the only settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte `
+            + "budget this read may spend, so it was not transferred and cannot be parsed — "
+            + "answering with nothing here would say no settings have been published",
+            { op: "list_profiles" },
           );
         }
-        /* A MEASURED ABSENCE IS AN EMPTY LIST — the same answer a folder that never published
-         * settings gives, because it is the same fact. Distinct from the refusal above, which is
-         * "could not ask": the caller reads no documents and the writer may create the first. */
-        if (searched.kind === "absent") return out;
-        const read = await readByUid(searched.uids);
-
-
-        for (const w of read.win) out.push(w.rec);
-        return out;
+        /* A body asked for and not kept was skipped (over budget, or expunged in between); it is
+           left out, as it always was. One never asked for is listed by its header. */
+        for (const r of profiles) {
+          const body = bodies.get(r.uid);
+          if (body !== undefined) out.push({ ref: r.uid, raw: body, generation, flags: r.flags });
+          else if (!attempted.has(r.uid)) out.push({ ref: r.uid, raw: r.headerBlock, generation, headerOnly: true, flags: r.flags });
+        }
+        return { messages: out, claims };
       } finally {
         lock.release();
       }
     },
 
+    async listProfileMessages(opts?: ProfileListOptions): Promise<RawProfileMessage[]> {
+      return (await io.listMeta(opts)).messages;
+    },
+
     async appendProfile(raw: string): Promise<void> {
-      const reply = await client.append(await meta.path(), raw, ["\\Seen"]);
-      // No UIDPLUS means no anchor rather than a guessed one; the walk then behaves as before.
+      /* UNDER `_meta`'S OWN LOCK: the client drops an APPEND flag the SELECTED folder's
+         PERMANENTFLAGS do not permit, and this connection may have another folder selected. */
+      const path = await meta.path();
+      const lock = await client.getMailboxLock(path);
+      let reply: unknown;
+      try {
+        reply = await client.append(path, raw, ["\\Seen"]);
+      } finally {
+        lock.release();
+      }
+      // No UIDPLUS means no anchor rather than a guessed one.
       const uid = typeof reply === "object" && reply !== null
         ? (reply as { uid?: unknown }).uid
         : undefined;
-      /* ── THE GENERATION COMES FROM THE APPEND'S OWN REPLY ──────────────────────────────
-       *
-       * Not from the connection: appending does not require a folder to be selected, so
-       * `client.mailbox` may describe another folder or none at all, and a uid paired with the
-       * wrong generation is exactly the stale anchor this pairing exists to prevent. UIDPLUS
-       * reports the uid and the generation together, so taken from there they are consistent by
-       * construction. */
+      /* The generation comes from the APPEND's own reply: UIDPLUS reports the uid and the
+         generation together, so taken from there they are consistent by construction. */
       const gen = typeof reply === "object" && reply !== null
         ? (reply as { uidValidity?: unknown }).uidValidity
         : undefined;
@@ -1647,21 +1369,43 @@ export function makeProfileIo(
         lock.release();
       }
     },
+
+    async markSeen(ref: unknown): Promise<void> {
+      if (typeof ref !== "number" || typeof client.messageFlagsAdd !== "function") return;
+      const lock = await client.getMailboxLock(await meta.path());
+      try {
+        /* The uid came out of a read, and a uid is a fact only under the numbering it was read
+           under: the same guard as `removeProfiles`, for one flag on one message. */
+        if (uidRefsAtEpoch([{ epoch: epochOf(generationAtLastRead), uid: ref }], epochOf(generationOf(client))) === "stale") {
+          throw new ProfileUnavailableError(
+            `${META_FOLDER} was renumbered between the read and the flag, so nothing was marked`,
+            { op: "mark_seen" },
+          );
+        }
+        const done = await client.messageFlagsAdd([ref], ["\\Seen"], { uid: true, silent: true });
+        if (done === false) {
+          throw new ProfileUnavailableError(`the server refused to mark a settings message seen`, { op: "mark_seen" });
+        }
+      } finally {
+        lock.release();
+      }
+    },
   };
 
   /**
-   * The read gets a wall clock; the writes deliberately do not. One budget for the whole read
-   * rather than one per round trip, because this read is a walk — a STATUS, a windowed SEARCH, a
-   * source fetch per record — and per-command clocks compose into a total nobody bounded; the
-   * socket's timer is inactivity-based and a byte-at-a-time reply resets it for ever. A breach
-   * abandons a command the driver is still running, so the connection is finished — both callers
-   * close it — and an abandoned APPEND could still land, which is why the writes are not raced.
+   * The read gets a wall clock; the writes deliberately do not. One budget for the whole read,
+   * because per-command clocks compose into a total nobody bounded. A breach abandons a command
+   * the driver is still running, so the connection is finished — both callers close it — and an
+   * abandoned APPEND could still land, which is why the writes are not raced.
    */
+  const raced = (opts?: ProfileListOptions): Promise<ProfileListing> => {
+    const budget = metaReadBudget(now);
+    return budget.race(io.listMeta(opts, budget), META_FOLDER);
+  };
   return {
     ...io,
-    listProfileMessages: async (opts?: { complete?: boolean }): Promise<RawProfileMessage[]> =>
-      ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now)
-        .race(io.listProfileMessages(opts), META_FOLDER),
+    listMeta: raced,
+    listProfileMessages: async (opts?: ProfileListOptions): Promise<RawProfileMessage[]> => (await raced(opts)).messages,
   };
 }
 
@@ -1680,18 +1424,15 @@ export type ProfileReadResult =
     state: "found"; doc: OrganizerProfileDoc; installId: string | null; ref: unknown;
     /**
      * The generation `ref` was read under (mail 0094's mirror writer needs it). `ref` alone is a
-     * uid, and storing one without its generation is the defect this pair prevents. A caller that
-     * wants to REMEMBER where this document was must store both, and this is the only source
-     * actually paired with the uid: fetching one separately is the manufactured pair — the
-     * adapter selects other folders between calls. This value comes from the same lock as the
-     * fetch. `null` means the server did not report one — an unusable locator, never "any
-     * generation will do".
+     * uid, and storing one without its generation is the defect this pair prevents. This value
+     * comes from the same lock as the fetch. `null` means the server did not report one — an
+     * unusable locator, never "any generation will do".
      */
     generation: Generation;
     /**
-     * Profile records BESIDE the chosen one that a rewrite by its writer clears: that install's
-     * older copies (crash residue) and malformed records. Another install's superseded copies are
-     * left alone and not counted, so a caller healing a non-zero residue does not rewrite for ever.
+     * How many settings messages beside the chosen one the tidy would remove ({@link
+     * tidyOrganizerProfile}'s selector, taken as the chosen document's writer). A caller that sees
+     * a non-zero residue owes a tidy, never a rewrite.
      */
     residue: number;
   }
@@ -1700,57 +1441,30 @@ export type ProfileReadResult =
   | { state: "unreadable"; reason: string };
 
 /**
- * READ `ohmail/_meta` AND SAY WHAT PROFILE IT HOLDS.
- *
- * Coalescing, for the crash-between-append-and-expunge state: among readable documents the
- * newest `updatedAt` wins (ties broken on the serialized content, so every reader picks the
- * same one from the same set). A single `newer` document anywhere DOMINATES every readable one:
- * an older build must never conclude "the current profile is the old one I can read" while a
- * newer producer's document sits beside it — that is how a downgrade quietly becomes a data
- * loss.
- */
-/**
  * The largest profile message this build will parse. The document is the body, handed to
  * `JSON.parse`, and nothing bounded that: a 500 MB message in `ohmail/_meta` was a 500 MB string,
- * a parse, and a canonical re-serialization, all inside one request; the per-list COUNT ceilings
- * run after the parse, bounding the transaction and not the read. Generous, not tight, because
- * ohmail writes this message itself and a ceiling under what the product emits would turn a heavy
- * user's own settings into `unreadable`: the number is a multiple of the largest document the
- * import would ever ACCEPT (`PROFILE_LIST_MAX`'s four ceilings come to roughly 15 MB). 64 MiB
- * is >4x the largest useful document and still FINITE, which is the property being bought.
+ * a parse, and a canonical re-serialization, all inside one request. Generous, not tight, because
+ * ohmail writes this message itself: a multiple of the largest document the import would ever
+ * ACCEPT, and still FINITE, which is the property being bought.
  */
 export const PROFILE_DOC_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
- * The ceiling on one read of `ohmail/_meta` for profile documents — a different bound from the
- * one above, and the difference is why both exist: {@link PROFILE_DOC_MAX_BYTES} bounds ONE
- * DOCUMENT and is checked by the parser after the bytes are in hand, so it says nothing about how
- * many messages are fetched and buffered — which is what an attacker with APPEND rights actually
- * chooses. Deliberately the same number as the lease's ceiling: one folder, the same handful of
- * legitimate records, and two different ceilings on one folder is two numbers to keep in step for
- * no benefit.
+ * The most settings BODIES one read of `ohmail/_meta` fetches. Only the newest documents are read
+ * by body, so at rest a read fetches one; this bounds a folder where many settings messages share
+ * the newest Date second, which no ohmail writer produces.
  */
 export const PROFILE_MESSAGES_MAX_PER_FETCH = 500;
 
 /**
- * The other axis of the same read — a count ceiling alone does not bound it. This read asks for
- * FULL SOURCES: at {@link PROFILE_DOC_MAX_BYTES} apiece a window's worth is gigabytes, buffered
- * into one array before any parse. Whoever can append chooses which ceiling to spend, so both
- * exist — the count stops many small messages, this stops a few enormous ones. Generous against
- * the legitimate population (one current document plus uncollected residue), far below anything
- * that threatens the process. A bound on what is KEPT, not a stopping point: the window arrives
- * oldest-first, so stopping keeps the oldest and drops the current document — a message past
- * either ceiling EVICTS FROM THE FRONT instead.
+ * The byte ceiling on the bodies one read fetches. Whoever can append chooses which ceiling to
+ * spend, so both exist — the count stops many small messages, this stops a few enormous ones.
  */
 export const PROFILE_BYTES_MAX_PER_FETCH = 128 * 1024 * 1024;
 
 /**
- * THE REFUSAL'S NAME, CARRIED THROUGH THE WRAPPER.
- *
- * `describeCause` walks a BOUNDED chain, so a code two wrappers down reaches no line at all —
- * measured on a reader, where the write path's line read `causeClass: "ProfileUnavailableError",
- * causeCode: null` while the root refusal had a name. Forwarding it means one field names the
- * refusal whatever wrapped it.
+ * THE REFUSAL'S NAME, CARRIED THROUGH THE WRAPPER: `describeCause` walks a BOUNDED chain, so a code
+ * two wrappers down reaches no line at all. Forwarding it means one field names the refusal.
  */
 function askCodeOf(err: unknown): string | undefined {
   return err instanceof ProfileUnavailableError ? err.code : undefined;
@@ -1762,8 +1476,8 @@ function malformedProfile(reason: string, ref: unknown): MalformedProfile {
 }
 
 /**
- * THE DOCUMENT A READER TAKES — newest `updatedAt`, ties broken as below. One rule, so the read
- * and the write agree on which document is current.
+ * THE DOCUMENT A READER TAKES — newest `updatedAt`, ties broken as below. One rule, so the read,
+ * the write and the tidy agree on which document is current.
  */
 function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
   return [...ok].sort((a, b) => {
@@ -1771,23 +1485,13 @@ function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
     const bt = Date.parse(b.doc!.updatedAt);
     const d = (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
     if (d !== 0) return d;
-    /* THE SAME RULE AS `byCodeUnit`'s header, and this one decides WHICH DOCUMENT WINS.
-       Two records stamped the same instant are separated here, and under `localeCompare` two
-       installs reading the same folder could pick DIFFERENT documents as the newest — after
-       which each would go on believing the other's configuration was a stranger's. A tie-break
-       that is not stable across machines is not a tie-break. */
+    /* THE SAME RULE AS `byCodeUnit`'s header, and this one decides WHICH DOCUMENT WINS: under
+       `localeCompare` two installs reading the same folder could pick DIFFERENT documents. */
     const byDoc = byCodeUnit(JSON.stringify(b.doc), JSON.stringify(a.doc));
     if (byDoc !== 0) return byDoc;
-    /**
-     * Identical timestamp and identical document, different records — two installs writing the
-     * same configuration. The comparator returned 0, so the winner depended on folder listing
-     * order, and the winner's `installId` decides whether a reader treats the document as its own
-     * or a stranger's. Deterministic now, by the RIGHT key: `ref` DESCENDING — the ref is the uid
-     * and the dance is append-then-expunge, so a higher uid IS a later write. An earlier
-     * tie-break sorted by `installId` — deterministic and meaning nothing — and silently changed
-     * which record won: a promoted reader stopped arming its import hold. `installId` stays as
-     * the final tie-break, where it decides nothing observable.
-     */
+    /* Identical timestamp and document, different records: `ref` DESCENDING, because the ref is
+       the uid and a higher uid IS a later write. `installId` is the final tie-break, where it
+       decides nothing observable. */
     const refA = Number(a.ref);
     const refB = Number(b.ref);
     if (Number.isFinite(refA) && Number.isFinite(refB) && refA !== refB) return refB - refA;
@@ -1797,52 +1501,245 @@ function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
 }
 
 /**
- * A SUPERSEDED COPY IS LEFT ALONE: a readable document older than the newest, written by another
- * install than `installId`. No write refuses on one, surfaces one or removes one — the newest
- * superseded it, and the mailbox keeps it for whoever wrote it. `installId`'s own older copies,
- * and malformed records, are still cleared by its next write.
+ * A line naming the discriminator, ANCHORED at a line start: the one test of "this header says it
+ * is a settings message", shared by the listing's filter, the header-only reading and the tidy's
+ * shape test. `X-Forwarded-X-Ohmail-Profile:` is not it, and neither is a mention in the body.
  */
-function isLeftAlone(r: ProfileRecord, newest: ParsedProfileMessage | null, installId: string | null): boolean {
-  if (newest === null || r === newest || isMalformedProfile(r) || r.status !== "ok") return false;
-  return r.installId !== installId;
+const PROFILE_HEADER_LINE = /^X-Ohmail-Profile[ \t]*:(.*)$/gim;
+
+/** The values of every anchored discriminator line in a header block, unfolded and trimmed. */
+function discriminatorValues(headerBlock: string): string[] {
+  const unfolded = headerBlock.replace(/\r?\n[ \t]+/g, " ");
+  return [...unfolded.matchAll(PROFILE_HEADER_LINE)].map((m) => m[1]!.trim());
 }
 
-export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadResult> {
-  let messages: RawProfileMessage[];
+/** Header values by lowercased name, in order, unfolded. */
+function headerValues(headerBlock: string, name: string): string[] {
+  const out: string[] = [];
+  const want = name.toLowerCase();
+  for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    if (colon > 0 && line.slice(0, colon).trim().toLowerCase() === want) out.push(line.slice(colon + 1).trim());
+  }
+  return out;
+}
+
+/**
+ * WHAT A SETTINGS MESSAGE'S HEADER SAYS about it. `exact` is the tidy's first condition: one anchored
+ * `X-Ohmail-Profile: 1`, one non-empty `X-Ohmail-Install-Id`, and the Subject every ohmail writer has
+ * used since v1. `version` is the `X-Ohmail-Profile-Version` header: `null` absent, which means 1 or 2.
+ */
+interface ProfileShape {
+  exact: boolean;
+  why: string;
+  installId: string | null;
+  dateSecond: number | null;
+  version: number | null | "unreadable";
+}
+
+function shapeOf(headerBlock: string): ProfileShape {
+  const discriminators = discriminatorValues(headerBlock);
+  const ids = headerValues(headerBlock, H.installId);
+  const subjects = headerValues(headerBlock, "Subject");
+  const versions = headerValues(headerBlock, H.version);
+  const v = versions.length === 0 ? null
+    : versions.length === 1 && /^\d+$/.test(versions[0]!) ? Number(versions[0]) : "unreadable";
+  const installId = ids.length === 1 && ids[0] !== "" ? ids[0]! : null;
+  const why = discriminators.length !== 1 || discriminators[0] !== "1" ? "the settings header is not exactly one `1`"
+    : installId === null ? "no single install id"
+      : subjects.length !== 1 || `Subject: ${subjects[0]}` !== PROFILE_SUBJECT_HEADER ? "another subject"
+        : "";
+  return { exact: why === "", why, installId, dateSecond: dateSecondOf(headerBlock), version: v };
+}
+
+/**
+ * A SETTINGS MESSAGE READ BY ITS HEADER ALONE. `newer`: its version header is above {@link
+ * PROFILE_VERSION}, and nothing is written or removed beside it. `unrecognised`: it says it is a
+ * settings message without the ohmail shape, and it is never removed. `superseded`: an ohmail copy
+ * older than the documents read by body. `null`: not a settings message at all.
+ */
+export type HeaderOnlyClass =
+  | { kind: "newer"; v: number }
+  | { kind: "unrecognised"; reason: string }
+  | { kind: "superseded"; installId: string; dateSecond: number | null };
+
+export function classifyHeaderOnly(headerBlock: string): HeaderOnlyClass | null {
+  const discriminators = discriminatorValues(headerBlock);
+  if (discriminators.length === 0) return null;
+  const shape = shapeOf(headerBlock);
+  if (typeof shape.version === "number" && shape.version > PROFILE_VERSION) return { kind: "newer", v: shape.version };
+  if (discriminators.length === 1 && discriminators[0] !== "1") return null;
+  if (!shape.exact || shape.version === "unreadable") {
+    return { kind: "unrecognised", reason: shape.exact ? "an unreadable version header" : shape.why };
+  }
+  return { kind: "superseded", installId: shape.installId!, dateSecond: shape.dateSecond };
+}
+
+/** One settings message of a listing, as the read, the write and the tidy all see it. */
+interface ProfileEntry {
+  msg: RawProfileMessage;
+  shape: ProfileShape;
+  /** The body's parse, when the body was read. */
+  record: ProfileRecord | null;
+  /** The header's reading, when only the header was. */
+  header: HeaderOnlyClass | null;
+}
+
+interface ProfileView {
+  entries: ProfileEntry[];
+  /** The highest newer version seen by body or by header, or `null`. */
+  newerV: number | null;
+  ok: ParsedProfileMessage[];
+  current: ProfileEntry | null;
+}
+
+/** The one reading of a listing. The parser decides what a body means; the header decides the rest. */
+function viewOf(messages: readonly RawProfileMessage[]): ProfileView {
+  const entries: ProfileEntry[] = [];
+  let newerV: number | null = null;
+  const newer = (v: number): void => { newerV = newerV === null ? v : Math.max(newerV, v); };
+  for (const m of messages) {
+    const block = m.headerOnly === true ? m.raw : headerBlockOf(m.raw);
+    const shape = shapeOf(block);
+    if (m.headerOnly === true) {
+      const header = classifyHeaderOnly(block);
+      if (header === null) continue;
+      if (header.kind === "newer") newer(header.v);
+      entries.push({ msg: m, shape, record: null, header });
+      continue;
+    }
+    // BEFORE the parse: an oversized message is MALFORMED, a copy of our bookkeeping we cannot read.
+    const record = Buffer.byteLength(m.raw, "utf8") > PROFILE_DOC_MAX_BYTES
+      ? malformedProfile(`the saved settings message is larger than ${PROFILE_DOC_MAX_BYTES} bytes`, m.ref)
+      : parseProfileMessage(m.raw, m.ref);
+    if (record === null) continue;
+    if (!isMalformedProfile(record) && record.status === "newer") newer(record.v);
+    if (typeof shape.version === "number" && shape.version > PROFILE_VERSION) newer(shape.version);
+    entries.push({ msg: m, shape, record, header: null });
+  }
+  const ok = entries
+    .map((e) => e.record)
+    .filter((r): r is ParsedProfileMessage => r !== null && !isMalformedProfile(r) && r.status === "ok");
+  const chosen = ok.length > 0 ? newestOf(ok) : null;
+  return { entries, newerV, ok, current: chosen === null ? null : entries.find((e) => e.record === chosen)! };
+}
+
+/**
+ * THE LISTING, from the real io's `listMeta`, or from a double's whole sources, where the claims are
+ * elements among the messages and are read from them.
+ */
+async function listingOf(io: ProfileIo, opts?: ProfileListOptions): Promise<ProfileListing> {
+  if (typeof io.listMeta === "function") return io.listMeta(opts);
+  const messages = await io.listProfileMessages(opts);
+  const claims: MetaClaimSeen[] = [];
+  for (const m of messages) {
+    if (m.headerOnly === true) continue;
+    const c = parseClaim(m.raw, m.ref);
+    if (c !== null && !isMalformed(c)) claims.push({ installId: c.installId, heartbeat: c.heartbeat });
+  }
+  return { messages, claims };
+}
+
+/** The counts `profile_tidy_planned` carries — numbers only, never an address, subject or folder. */
+export interface TidyCounts {
+  records: number;
+  current: 0 | 1;
+  removable: number;
+  own: number;
+  foreignStale: number;
+  duplicate: number;
+  malformed: number;
+  keptForeignFresh: number;
+  keptUnrecognised: number;
+  /** An unreadable copy dated at or after the current document: not superseded, so kept. */
+  keptNewerDated: number;
+  unseenCurrent: 0 | 1;
+}
+
+/**
+ * THE ONE SELECTOR — which settings messages beside the current document C may go.
+ *
+ * Only an ohmail-shaped copy (the header's `exact`), only while nothing newer is in the folder, only
+ * superseded by a readable C and never C itself. Then: its body is unreadable, it is this install's,
+ * it says exactly what C says, or it is another install's copy at least ten minutes older than C
+ * whose writer holds no fresh claim. Claims, acks, requests and a person's mail carry no settings
+ * header and are never in this list. Oldest first, by uid.
+ */
+function planTidy(
+  view: ProfileView, selfInstallId: string | null, now: Date, claims: readonly MetaClaimSeen[],
+): { counts: TidyCounts; refs: unknown[] } {
+  const counts: TidyCounts = {
+    records: view.entries.length, current: 0, removable: 0, own: 0, foreignStale: 0, duplicate: 0,
+    malformed: 0, keptForeignFresh: 0, keptUnrecognised: 0, keptNewerDated: 0, unseenCurrent: 0,
+  };
+  const C = view.current;
+  if (view.newerV !== null || C === null) return { counts, refs: [] };
+  counts.current = 1;
+  counts.unseenCurrent = C.msg.flags !== undefined && !C.msg.flags.includes("\\Seen") ? 1 : 0;
+  const cDoc = (C.record as ParsedProfileMessage).doc!;
+  const cFingerprint = profileFingerprint(cDoc);
+  const freshClaim = (installId: string | null): boolean => claims.some((c) => c.installId === installId
+    && now.getTime() - c.heartbeat.getTime() < DEFAULT_STALE_AFTER_MS);
+  const older = (a: number | null, b: number | null): boolean => a !== null && b !== null && a < b;
+  const picked: ProfileEntry[] = [];
+  for (const e of view.entries) {
+    if (e === C) continue;
+    if (!e.shape.exact || e.header?.kind === "unrecognised") { counts.keptUnrecognised += 1; continue; }
+    const ok = e.record !== null && !isMalformedProfile(e.record) && e.record.status === "ok";
+    /* SUPERSEDED: a readable body lost to C under `newestOf`; an unreadable body shares C's second
+       or is older; a header-only copy is older by its Date. */
+    const superseded = ok ? true
+      : e.record !== null ? e.shape.dateSecond === C.shape.dateSecond || older(e.shape.dateSecond, C.shape.dateSecond)
+        : older(e.shape.dateSecond, C.shape.dateSecond);
+    if (!superseded) { counts.keptNewerDated += 1; continue; }
+    if (e.record !== null && isMalformedProfile(e.record)
+      && (e.shape.version === null || (typeof e.shape.version === "number" && e.shape.version <= PROFILE_VERSION))) {
+      counts.malformed += 1;
+    } else if (e.shape.installId === selfInstallId) {
+      counts.own += 1;
+    } else if (ok && profileFingerprint((e.record as ParsedProfileMessage).doc!, cDoc.v) === cFingerprint) {
+      counts.duplicate += 1;
+    } else if (C.shape.dateSecond !== null && e.shape.dateSecond !== null
+      && (C.shape.dateSecond - e.shape.dateSecond) * 1000 >= DEFAULT_STALE_AFTER_MS
+      && !freshClaim(e.shape.installId)) {
+      counts.foreignStale += 1;
+    } else {
+      counts.keptForeignFresh += 1;
+      continue;
+    }
+    picked.push(e);
+  }
+  counts.removable = picked.length;
+  const uidOf = (e: ProfileEntry): number => (typeof e.msg.ref === "number" ? e.msg.ref : Number.MAX_SAFE_INTEGER);
+  return { counts, refs: picked.sort((a, b) => uidOf(a) - uidOf(b)).map((e) => e.msg.ref) };
+}
+
+/**
+ * READ `ohmail/_meta` AND SAY WHAT PROFILE IT HOLDS. Among readable documents the newest
+ * `updatedAt` wins ({@link newestOf}). A single `newer` document anywhere, by body or by its version
+ * header, DOMINATES every readable one: an older build must never conclude "the current profile is
+ * the old one I can read" while a newer producer's document sits beside it.
+ */
+export async function readOrganizerProfile(
+  io: ProfileIo, opts?: { installId?: string; now?: Date },
+): Promise<ProfileReadResult> {
+  let listing: ProfileListing;
   try {
-    messages = await io.listProfileMessages();
+    listing = await listingOf(io);
   } catch (err) {
     throw new ProfileUnavailableError(
       `the organizer profile in ${META_FOLDER} could not be read`,
       { op: "list_profiles", cause: err, code: askCodeOf(err) },
     );
   }
-  const records = messages
-    .map((m) => (
-      // BEFORE the parse — see {@link PROFILE_DOC_MAX_BYTES}. An oversized message is reported
-      // as MALFORMED rather than ignored, for the reason that state already exists: a message
-      // carrying `X-Ohmail-Profile: 1` is a copy of our own bookkeeping, and one this build
-      // cannot read is worth saying so about. `Buffer.byteLength` is the wire size; `.length` is
-      // UTF-16 units and would let a multi-byte document past a byte ceiling.
-      Buffer.byteLength(m.raw, "utf8") > PROFILE_DOC_MAX_BYTES
-        ? malformedProfile(
-          `the saved settings message is larger than ${PROFILE_DOC_MAX_BYTES} bytes`, m.ref,
-        )
-        : parseProfileMessage(m.raw, m.ref)
-    ))
-    .filter((r): r is ProfileRecord => r !== null);
-
-  if (records.length === 0) return { state: "none" };
+  const { messages } = listing;
+  const view = viewOf(messages);
+  if (view.entries.length === 0) return { state: "none" };
 
   /**
-   * The call's generation, and it must be ONE. Every message in one `listProfileMessages()` comes
-   * from one SELECT of one folder on one connection, so they share one generation; reading it off
-   * the messages rather than asking the connection again is the point — the value reaching
-   * `found` is the one the uids were actually issued under. A set reporting more than one
-   * distinct generation is not a folder state — it is evidence the producer is manufacturing the
-   * pair, refused as unreadable rather than resolved by picking one: picking hands back a locator
-   * that looks usable and is not. Anything that is not a number or bigint is `null` — "the server
-   * did not say", an unusable locator, never "any generation will do".
+   * The call's generation, and it must be ONE: every message in one listing comes from one SELECT
+   * of one folder on one connection. A set reporting more than one is evidence the producer is
+   * manufacturing the pair, refused as unreadable rather than resolved by picking one.
    */
   const generations = new Set(messages.map((m) => (
     typeof m.generation === "number" || typeof m.generation === "bigint" ? m.generation : null
@@ -1856,27 +1753,116 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
   }
   const generation: Generation = [...generations][0] ?? null;
 
-  const newer = records.filter((r): r is ParsedProfileMessage => !isMalformedProfile(r) && r.status === "newer");
-  if (newer.length > 0) {
-    return { state: "newer", v: Math.max(...newer.map((r) => r.v)) };
+  if (view.newerV !== null) return { state: "newer", v: view.newerV };
+  if (view.current === null) {
+    const first = view.entries.find((e) => e.record !== null && isMalformedProfile(e.record));
+    return {
+      state: "unreadable",
+      reason: first !== undefined && first.record !== null && isMalformedProfile(first.record)
+        ? first.record.reason : "unreadable profile",
+    };
   }
-
-  const ok = records.filter((r): r is ParsedProfileMessage => !isMalformedProfile(r) && r.status === "ok");
-  if (ok.length === 0) {
-    const first = records.find(isMalformedProfile);
-    return { state: "unreadable", reason: first?.reason ?? "unreadable profile" };
-  }
-
-  const newest = newestOf(ok);
-
+  const newest = view.current.record as ParsedProfileMessage;
+  const plan = planTidy(view, opts?.installId ?? newest.installId, opts?.now ?? new Date(), listing.claims);
   return {
     state: "found", doc: newest.doc!, installId: newest.installId, ref: newest.ref,
-    /* THE ONE THE UID WAS READ UNDER — see the field's own comment. Taken from the messages this
-       read parsed, never from the connection at this moment, because by now the caller's adapter
-       may have selected another folder entirely. */
+    /* THE ONE THE UID WAS READ UNDER — taken from the messages this read parsed, never from the
+       connection at this moment. */
     generation,
-    residue: records.filter((r) => r !== newest && !isLeftAlone(r, newest, newest.installId)).length,
+    residue: plan.refs.length,
   };
+}
+
+// ── TIDY ────────────────────────────────────────────────────────────────────────────────────
+
+/** How the organizer tidies: `remove` for real, or `count` — plan, log, remove nothing. */
+export type ProfileTidyMode = "remove" | "count";
+
+export interface TidyOutcome {
+  removed: number;
+  remaining: number;
+  /** The plan the pass logged, or `null` when it refused before planning. */
+  planned: TidyCounts | null;
+  refused?: "newer";
+}
+
+type ProfileLog = (event: string, detail: Record<string, unknown>) => void;
+
+/**
+ * ONE TIDY PASS over a listing already in hand: log the plan's counts FIRST, then (in `remove`)
+ * take the oldest `max` matches out in one custody-checked removal, then mark C seen. Never
+ * appends. Shared by {@link tidyOrganizerProfile} and the write's gate.
+ */
+async function tidyPass(
+  io: ProfileIo,
+  view: ProfileView,
+  plan: { counts: TidyCounts; refs: unknown[] },
+  args: { mode: ProfileTidyMode; max: number; log: ProfileLog },
+): Promise<TidyOutcome> {
+  args.log("profile_tidy_planned", { ...plan.counts, tidyMode: args.mode });
+  if (args.mode === "count") return { removed: 0, remaining: plan.refs.length, planned: plan.counts };
+  const batch = plan.refs.slice(0, args.max);
+  let removed = 0;
+  if (batch.length > 0) {
+    try {
+      await io.removeProfiles(batch);
+      removed = batch.length;
+    } catch (err) {
+      args.log("profile_cleanup_failed", {
+        op: "remove_profiles" satisfies ProfileOp,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  if (view.current !== null && plan.counts.unseenCurrent === 1 && typeof io.markSeen === "function") {
+    try {
+      await io.markSeen(view.current.msg.ref);
+    } catch (err) {
+      args.log("profile_cleanup_failed", {
+        op: "mark_seen" satisfies ProfileOp,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  const remaining = plan.refs.length - removed;
+  args.log("profile_tidied", { removed, remaining });
+  return { removed, remaining, planned: plan.counts };
+}
+
+/**
+ * THE ORGANIZER'S TIDY of `ohmail/_meta`: remove superseded ohmail settings copies, at most
+ * {@link PROFILE_TIDY_MAX_PER_PASS} per pass, oldest first, never the current document. Called
+ * only from the live organizer's pass (`OrganizerProfileSync.onOrganize`); a census holds that.
+ * Refuses and removes nothing while a newer-format document is in the folder.
+ */
+export async function tidyOrganizerProfile(input: {
+  io: ProfileIo;
+  installId: string;
+  mode?: ProfileTidyMode;
+  now?: Date;
+  max?: number;
+  log?: ProfileLog;
+}): Promise<TidyOutcome> {
+  const log = input.log ?? ((): void => undefined);
+  let listing: ProfileListing;
+  try {
+    listing = await listingOf(input.io, { complete: true });
+  } catch (err) {
+    throw new ProfileUnavailableError(
+      `the settings messages in ${META_FOLDER} could not be read before tidying`,
+      { op: "list_profiles", cause: err, code: askCodeOf(err) },
+    );
+  }
+  const { messages } = listing;
+  const view = viewOf(messages);
+  if (view.newerV !== null) {
+    log("profile_tidy_refused", { reason: "newer" });
+    return { removed: 0, remaining: 0, planned: null, refused: "newer" };
+  }
+  const plan = planTidy(view, input.installId, input.now ?? new Date(), listing.claims);
+  return tidyPass(input.io, view, plan, {
+    mode: input.mode ?? "remove", max: input.max ?? PROFILE_TIDY_MAX_PER_PASS, log,
+  });
 }
 
 // ── WRITE ───────────────────────────────────────────────────────────────────────────────────
@@ -1891,38 +1877,42 @@ export interface WriteProfileInput {
    * last-written/seeded fingerprint, and any foreign document it has surfaced. A readable
    * foreign document whose fingerprint is on this list is replaceable; one that is NOT is new
    * information, and the write is refused as `foreign` so the caller can surface it first.
-   * A caller that passed nothing can never silently expunge foreign content.
    */
   replaceable?: readonly string[];
-  log?: (event: string, detail: Record<string, unknown>) => void;
+  /** `count`: the gate is off and only the replaced document is removed. Default `remove`. */
+  tidyMode?: ProfileTidyMode;
+  now?: Date;
+  log?: ProfileLog;
 }
 
 export type WriteProfileResult =
-  | { written: true; removed: number }
+  /** `owed`: the replaced document could not be removed; the caller owes a tidy. */
+  | { written: true; removed: number; owed?: true }
   /** The folder holds a document from a NEWER format. Refused — see the versioning rules. */
   | { written: false; reason: "newer"; v: number }
   /**
-   * The folder holds a readable FOREIGN document the caller has not seen (its fingerprint is on
-   * neither the `replaceable` list nor equal to the document being written). Refused, and the
-   * document is handed back so the caller can surface it — log + durable marker — before
-   * deciding to supersede it on a later write. This is what makes a transient organizer overlap
-   * unable to DESTROY the other side's configuration silently: content only ever leaves the
-   * folder after the incumbent has recorded that it saw it.
+   * The folder holds a readable FOREIGN document the caller has not seen. Refused, and the
+   * document is handed back so the caller can surface it before superseding it on a later write.
    */
-  | { written: false; reason: "foreign"; doc: OrganizerProfileDoc; installId: string | null };
+  | { written: false; reason: "foreign"; doc: OrganizerProfileDoc; installId: string | null }
+  /** Superseded copies are in the folder: one tidy pass ran instead of the append. */
+  | { written: false; reason: "cleanup_owed"; removed: number }
+  /** The new copy did not read back as written: it was removed and the current one kept. */
+  | { written: false; reason: "append_unreadable" };
 
 /**
- * Write the current profile — append the new copy, THEN expunge the old ones. The order is
- * load-bearing, as for the claim: expunging first means a crash leaves NO profile, which reads as
- * "this mailbox stored no settings"; appending first leaves two, which readers coalesce.
- * Expunged: the newest document it supersedes (last-incumbent-wins), our older copies, corrupt
- * copies. Never touched: another install's older copies ({@link isLeftAlone}) and anything that
- * is not a profile record. Refused: a NEWER-format document anywhere in the folder, and an unseen
- * foreign newest document (see the result's `foreign` member).
+ * WRITE THE CURRENT PROFILE, and the folder never holds more than two settings messages.
+ *
+ * List the whole folder; refuse `newer` and an unseen foreign current document; if anything beside
+ * the current document C is removable, run one tidy pass INSTEAD of appending (the gate: on a server
+ * whose removals do not stick, the pile cannot grow). Then append N, read it back by body and
+ * compare fingerprints, and only then remove C. An N that does not read back costs N, never C.
  */
 export async function writeOrganizerProfile(input: WriteProfileInput): Promise<WriteProfileResult> {
   const { io, doc, installId } = input;
   const log = input.log ?? ((): void => undefined);
+  const mode = input.tidyMode ?? "remove";
+  const now = input.now ?? new Date();
   try {
     await io.ensureMetaFolder();
   } catch (err) {
@@ -1931,57 +1921,52 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
       { op: "ensure_meta", cause: err },
     );
   }
-  let messages: RawProfileMessage[];
+  let listing: ProfileListing;
   try {
-    // COMPLETE, not the bounded read. Both refusals below are made from this list, and a refusal
-    // that quietly did not look far enough is the failure they exist to prevent: an older organizer
-    // appending v1 over a v2 document it never fetched, with every later read then agreeing the
-    // rollback is current.
-    messages = await io.listProfileMessages({ complete: true });
+    // COMPLETE: both refusals below are made from this list, and so is the gate.
+    listing = await listingOf(io, { complete: true });
   } catch (err) {
     throw new ProfileUnavailableError(
       `the organizer profile in ${META_FOLDER} could not be read before writing`,
       { op: "list_profiles", cause: err, code: askCodeOf(err) },
     );
   }
-  const records = messages
-    .map((m) => parseProfileMessage(m.raw, m.ref))
-    .filter((r): r is ProfileRecord => r !== null);
+  const { messages } = listing;
+  const view = viewOf(messages);
+  if (view.newerV !== null) return { written: false, reason: "newer", v: view.newerV };
 
-  const newer = records.find((r): r is ParsedProfileMessage => !isMalformedProfile(r) && r.status === "newer");
-  if (newer) return { written: false, reason: "newer", v: newer.v };
-
-  // ── AN UNSEEN FOREIGN DOCUMENT REFUSES THE WRITE — see the result member's doc-comment ────
-  //
-  // Ours-by-install-id and malformed records are always replaceable (our own older copies are
-  // the dance's residue; a corrupt record carries nothing recoverable). A readable FOREIGN
-  // record is replaceable only when the caller has seen it: its payload fingerprint is on the
-  // `replaceable` list, or it says exactly what the document being written says.
+  // ── AN UNSEEN FOREIGN CURRENT DOCUMENT REFUSES THE WRITE — see the result member ────────────
   const known = new Set(input.replaceable ?? []);
   const docFingerprint = profileFingerprint(doc);
-  // Only the NEWEST can be new information: an older copy is superseded and left alone.
-  const ok = records.filter((r): r is ParsedProfileMessage => !isMalformedProfile(r) && r.status === "ok");
-  const newest = ok.length > 0 ? newestOf(ok) : null;
+  const newest = view.current === null ? null : view.current.record as ParsedProfileMessage;
   const unseen = [newest].find((r): r is ParsedProfileMessage => {
     if (r === null) return false;
     if (r.installId === installId) return false;
-    // HAVE I SEEN THIS DOCUMENT — asked at the document's OWN version, because that is the
-    // identity the caller stored when it surfaced it (and an older ohmail stored before that).
+    // HAVE I SEEN THIS DOCUMENT — asked at the document's OWN version, the identity the caller stored.
     if (known.has(profileFingerprint(r.doc!))) return false;
-    // IS IT THE SAME CONFIGURATION — a different question, and both payloads are in hand, so it
-    // is asked at ONE version. A v1 document saying exactly what this write says is not new
-    // information; refusing it as `foreign` would turn every install's first v2 write into a
-    // conflict nobody could clear, which is a version difference read as a disagreement.
+    // IS IT THE SAME CONFIGURATION — asked at ONE version, so a v1 twin is not a conflict.
     return profileFingerprint(r.doc!, doc.v) !== docFingerprint;
   });
   if (unseen) return { written: false, reason: "foreign", doc: unseen.doc!, installId: unseen.installId };
 
-  // Captured BEFORE the append, so the copy we are about to write can never be in its own
-  // removal set — the crash-safety of append-then-expunge depends on that.
-  const oldRefs = records
-    .filter((r) => !isLeftAlone(r, newest, installId))
-    .map((r) => r.ref).filter((r): r is unknown => r !== undefined);
+  // ── THE GATE: anything removable beside C is tidied first, and nothing is appended ─────────
+  const claims = listing.claims;
+  if (mode === "remove") {
+    const plan = planTidy(view, installId, now, claims);
+    if (plan.refs.length > 0) {
+      log("profile_write_held_for_cleanup", { removable: plan.refs.length });
+      const pass = await tidyPass(io, view, plan, { mode, max: PROFILE_TIDY_MAX_PER_PASS, log });
+      return { written: false, reason: "cleanup_owed", removed: pass.removed };
+    }
+  }
 
+  const refKey = (ref: unknown): string => JSON.stringify(ref ?? null);
+  const before = new Set(messages.map((m) => refKey(m.ref)));
+  const second = Math.floor(Date.parse(doc.updatedAt) / 1000);
+  const isOurs = (headerBlock: string): boolean => {
+    const s = shapeOf(headerBlock);
+    return s.installId === installId && s.dateSecond === second;
+  };
   try {
     await io.appendProfile(formatProfileMessage(doc, { installId }));
   } catch (err) {
@@ -1991,23 +1976,64 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
     );
   }
 
-  let removed = 0;
-  if (oldRefs.length > 0) {
-    try {
-      await io.removeProfiles(oldRefs);
-      removed = oldRefs.length;
-    } catch (err) {
-      // Harmless, and deliberately NOT a throw: the new document IS in the folder, so throwing
-      // here would tell the caller the write failed and make it rewrite an identical copy every
-      // cycle. The folder holds the new document plus older ones, readers coalesce by
-      // `updatedAt`, and the NEXT write's own list captures the leftovers. The bare string under
-      // `err` is the lease's convention — `log.ts` reduces `err` to class + code, and a string
-      // gives a future redactor bug no object to walk.
-      log("profile_cleanup_failed", {
-        op: "remove_profiles" satisfies ProfileOp,
-        err: err instanceof Error ? err.message : String(err),
-      });
-    }
+  // ── READ N BACK: a new message of ours with N's Date, read by body, saying what N says ──────
+  let back: RawProfileMessage[];
+  try {
+    back = (await listingOf(io, {
+      complete: true, bodyFor: (row) => !before.has(refKey(row.ref)) && isOurs(row.headerBlock),
+    })).messages;
+  } catch (err) {
+    throw new ProfileUnavailableError(
+      `the organizer profile in ${META_FOLDER} was written and could not be read back`,
+      { op: "list_profiles", cause: err, code: askCodeOf(err) },
+    );
   }
-  return { written: true, removed };
+  const appended = back.filter((m) => !before.has(refKey(m.ref)) && isOurs(m.headerOnly === true ? m.raw : headerBlockOf(m.raw)));
+  const readsBack = (m: RawProfileMessage): boolean => {
+    const r = m.headerOnly === true ? null : parseProfileMessage(m.raw, m.ref);
+    return r !== null && !isMalformedProfile(r) && r.status === "ok" && profileFingerprint(r.doc!) === docFingerprint;
+  };
+  const landed = appended.find(readsBack);
+  if (landed === undefined) {
+    if (appended.length > 0) {
+      try {
+        await io.removeProfiles(appended.map((m) => m.ref));
+      } catch (err) {
+        log("profile_cleanup_failed", {
+          op: "remove_profiles" satisfies ProfileOp,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    log("profile_append_unreadable", { count: appended.length });
+    return { written: false, reason: "append_unreadable" };
+  }
+
+  // ── THEN THE C THIS WRITE REPLACED, and nothing else ─────────────────────────────────────────
+  const C = view.current;
+  if (C === null || C.msg.ref === undefined) return { written: true, removed: 0 };
+  try {
+    /* C's uid is a fact only under the numbering it was LISTED under. The read-back re-listed the
+       folder, so the io's own guard now holds the new generation; a renumber in between is caught
+       here, by the two listings' generations, or C's uid would name whatever holds it now. */
+    if (typeof C.msg.ref === "number" && uidRefsAtEpoch(
+      [{ epoch: epochOf(C.msg.generation), uid: C.msg.ref }], epochOf(landed.generation),
+    ) === "stale") {
+      throw new ProfileUnavailableError(
+        `${META_FOLDER} was renumbered between the listing and the read-back, so the replaced `
+        + "settings message was not removed",
+        { op: "remove_profiles" },
+      );
+    }
+    await io.removeProfiles([C.msg.ref]);
+    return { written: true, removed: 1 };
+  } catch (err) {
+    /* Harmless for readers, and deliberately NOT a throw: the new document IS in the folder.
+       The caller owes a tidy, and until one sticks the gate holds every later write. */
+    log("profile_cleanup_failed", {
+      op: "remove_profiles" satisfies ProfileOp,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return { written: true, removed: 0, owed: true };
+  }
 }

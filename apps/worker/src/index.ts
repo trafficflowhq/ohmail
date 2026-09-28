@@ -2633,6 +2633,7 @@ export async function startWorkerWithLock(
             producerVersion: config.buildVersion ?? "dev",
             ...(config.organizer?.profileFlushIntervalMs !== undefined
               ? { flushIntervalMs: config.organizer.profileFlushIntervalMs } : {}),
+            ...(config.organizer?.profileTidy !== undefined ? { tidyMode: config.organizer.profileTidy } : {}),
             log: (event, detail) => {
               if (/_failed$/.test(event)) log.warn(event, detail);
               else log.info(event, detail);
