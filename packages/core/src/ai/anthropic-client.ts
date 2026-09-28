@@ -76,19 +76,17 @@ export interface AnthropicCallReport {
 }
 
 /**
- * Published list prices, USD per million tokens, as of 2026-07-31.
+ * Published list prices, USD per million tokens, as of 2026-09-28.
  *
  * Hard-coded deliberately and narrowly: the alternative is that per-action cost is unknowable at
  * the moment of spend, which is the state this table exists to end. A model absent from this
  * table reports `costMicroUsd: null` rather than a wrong number — silence beats a fabricated
- * margin. Re-check when a model id changes or an introductory price expires (Sonnet 5's
- * $2/$10 introductory rate runs through 2026-08-31; the STANDARD rate is used here, so the
- * estimate is conservative — it over-states cost while the intro price holds).
+ * margin. Re-check when a model id or a list price changes.
  */
 export const MODEL_PRICES_USD_PER_MTOK: Readonly<Record<string, { input: number; output: number }>> = {
   "claude-haiku-4-5": { input: 1, output: 5 },
   "claude-haiku-4-5-20251001": { input: 1, output: 5 },
-  "claude-sonnet-5": { input: 3, output: 15 },
+  "claude-sonnet-5": { input: 2, output: 10 },
   "claude-opus-5": { input: 5, output: 25 },
 };
 

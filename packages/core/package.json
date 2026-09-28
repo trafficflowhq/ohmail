@@ -25,11 +25,13 @@
     "./pair-link": "./src/pair-link.ts",
     "./sender-headers": "./src/sender-headers.ts",
     "./rule-order": "./src/rule-order.ts",
+    "./conversation-fold": "./src/conversation-fold.ts",
     "./reader-refusal": "./src/reader-refusal.ts",
     "./outbound-text": "./src/outbound-text.ts",
     "./model-name": "./src/model-name.ts",
     "./transport-frame": "./src/transport-frame.ts",
     "./url-escapes": "./src/url-escapes.ts",
+    "./image-dimensions": "./src/image-dimensions.ts",
     "./diagnostics": "./src/diagnostics/index.ts"
   },
   "dependencies": {
