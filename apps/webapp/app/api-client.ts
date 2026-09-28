@@ -2049,9 +2049,9 @@ export type AccountAccess =
       exportPath?: string;
       /**
        * THE ONE-TIME CATCH-UP, answered on the first open read after a closure and never again.
-       * `since` is the moment the account closed; `count` is what arrived while it was shut.
+       * `since` is when the wall stood the mailboxes down, else when the account closed. No count.
        */
-      caughtUp?: { since: string; count: number };
+      caughtUp?: { since: string };
     };
 
 /**

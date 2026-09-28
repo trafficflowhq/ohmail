@@ -3985,7 +3985,7 @@
     "subscribe": "Subscribe",
     "fixPayment": "Fix payment",
     "later": "Later",
-    "caughtUp": "{count, plural, =0 {ohmail found nothing new since {date}.} one {ohmail caught up 1 message that arrived since {date}.} other {ohmail caught up # messages that arrived since {date}.}}",
+    "caughtUp": "ohmail is catching up on mail that arrived since {date}.",
     "handedBack": "ohmail handed these mailboxes back when the account closed. It does not take them again on its own \u2014 organizing starts when you start it.",
     "startOrganizing": "Start organizing",
     "dismiss": "Got it"

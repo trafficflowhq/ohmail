@@ -27,6 +27,7 @@
    why a reader's press has nowhere to go, shared with the server's refusal. Each import is the
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
+import { refusalIsStale } from "./access-window";
 import {
   holderIsLive, holderStopped, rosterRefusalReason, type RequestRefusalReason,
 } from "@trafficflow/core/reader-refusal";
@@ -2004,7 +2005,12 @@ function climb(input: MailStateInputs): MailState {
   // <ts>}` — gating on the reason gave that mailbox silence. Complete only
   // because reason non-null ⇒ since non-null (five writers audited, each
   // sets and clears both in one statement).
-  const blocked = live.find((m) => m.syncBlockedSince !== null);
+  // …except the WALL's own block right after the service said open (mail 0135): the worker's
+  // report is the one the reopening invalidates, and it clears within a pass. Inside that window
+  // the row renders its ordinary state rather than "this subscription has ended".
+  const reopened = refusalIsStale(now);
+  const blocked = live.find((m) => m.syncBlockedSince !== null
+    && !(reopened && m.syncBlockedReason === "account_closed"));
   if (blocked) {
     return {
       ...QUIET,

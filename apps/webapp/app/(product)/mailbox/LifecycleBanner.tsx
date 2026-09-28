@@ -25,7 +25,7 @@ export const TRIAL_NOTICE_DAYS = 2;
 /** What the strip says, or `null` for the states that have nothing to say. */
 export type Notice =
   | { kind: "grace" | "pastDue" | "trialEnding"; deadline: string }
-  | { kind: "caughtUp"; since: string; count: number };
+  | { kind: "caughtUp"; since: string };
 
 /**
  * Decide the notice from the server's own facts and the server's own clock reading.
@@ -35,11 +35,12 @@ export type Notice =
  */
 export function noticeOf(
   lifecycle: AccountLifecycle | undefined,
-  caughtUp: { since: string; count: number } | undefined,
+  caughtUp: { since: string } | undefined,
   now: number,
 ): Notice | null {
   // The catch-up outranks the rest: an account that has just reopened is not also in a grace.
-  if (caughtUp && caughtUp.count >= 0) return { kind: "caughtUp", ...caughtUp };
+  // No count: the service says only when the closure began (mail 0135); an older one's number is dropped.
+  if (caughtUp && typeof caughtUp.since === "string") return { kind: "caughtUp", since: caughtUp.since };
   if (lifecycle === undefined) return null;
   if (lifecycle.state === "grace" && lifecycle.graceUntil) {
     return { kind: "grace", deadline: lifecycle.graceUntil };
@@ -142,7 +143,7 @@ export function LifecycleBanner() {
     return (
       <div className="acct-note" role="status">
         <p className="acct-note-line">
-          {t("caughtUp", { count: notice.count, date: dayStamp(notice.since) })}
+          {t("caughtUp", { date: dayStamp(notice.since) })}
         </p>
         {handedBack.length > 0
           ? (
