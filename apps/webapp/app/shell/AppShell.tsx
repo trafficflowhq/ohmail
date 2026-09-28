@@ -2558,6 +2558,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
                 remoteImages={remoteImages}
+                attachments={attachments}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "reads" ? closeCard.id : null}
@@ -2604,6 +2605,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
                 remoteImages={remoteImages}
+                attachments={attachments}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "receipts" ? closeCard.id : null}

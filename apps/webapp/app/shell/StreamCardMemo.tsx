@@ -11,7 +11,7 @@
  * The guard is `test/stream-rerender.test.tsx`, driven through `presentationReader`.
  */
 
-import { memo, useContext, useState, type ReactNode } from "react";
+import { memo, useCallback, useContext, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { StreamCard, StreamArt } from "@ohmail/ui";
@@ -65,6 +65,14 @@ export interface StreamCardMemoProps {
    * changes, which is exactly when every mounted card must re-sanitize.
    */
   remoteImages?: RemoteImagesChrome;
+  /**
+   * THE LETTER'S OWN PICTURES, by the attachments chrome's one path (`cidImagesOf` /
+   * `needCidImages`), the one `MessageCard` and `MessagePane` take. The map is the engine's, stable
+   * between arrivals; the ask is the chrome's stable callback. Absent on a client that cannot open
+   * attachments (the demo): the body draws what it can and asks for nothing.
+   */
+  cidImages?: ReadonlyMap<string, string>;
+  needCidImages?: (messageId: string, contentIds: string[]) => void;
   loadingLabel: string;
   failedLabel: string;
   /** The storage-cap sentence — terminal, honest, no retry implied. */
@@ -86,7 +94,8 @@ export interface StreamCardMemoProps {
 
 function StreamCardMemoInner({
   m, now, current, expanded, unread,
-  bodyText, bodyState, bodyHtml, bodyLoadedRemote, remoteImages, loadingLabel, failedLabel, withheldLabel,
+  bodyText, bodyState, bodyHtml, bodyLoadedRemote, remoteImages, cidImages, needCidImages,
+  loadingLabel, failedLabel, withheldLabel,
   mailboxLabel, onSelect, onToggle, onAction,
 }: StreamCardMemoProps) {
   /* The card's two toggle words. `StreamCard` has none of its own — see `copy-census`. */
@@ -107,6 +116,13 @@ function StreamCardMemoInner({
    * from re-firing on every render of this card.
    */
   const [notice, setNotice] = useState<BlockNotice | null>(null);
+  /* The pictures are fetched for the card the reader OPENED, as the files strip is: a collapsed
+     card is a preview, and its parts are connection-cost fetches nobody asked for. What arrived
+     stays drawn after a close. */
+  const onCidImages = useCallback(
+    (contentIds: string[]) => needCidImages?.(m.id, contentIds),
+    [needCidImages, m.id],
+  );
   /* THE SAME THREE-TERM `remoteLoaded` AS `MessagePane`, and the same withheld button in auto
      mode: the stored flag, the account's auto setting, this session's press. Built inside the
      memo so a skipped render costs nothing. */
@@ -124,6 +140,8 @@ function StreamCardMemoInner({
         loadTrackingPixels={remoteImages?.loadPixels ?? false}
         resolvedRemoteImages={remoteImages?.resolvedFor(m.id)}
         onRemoteImages={remoteImages ? (urls) => remoteImages.needRemote(m.id, urls) : undefined}
+        cidImages={cidImages}
+        onCidImages={needCidImages && expanded ? onCidImages : undefined}
         onNotice={setNotice}
       />
     ) : undefined;
@@ -219,6 +237,8 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.bodyHtml === b.bodyHtml &&
     a.bodyLoadedRemote === b.bodyLoadedRemote &&
     a.remoteImages === b.remoteImages &&
+    a.cidImages === b.cidImages &&
+    a.needCidImages === b.needCidImages &&
     a.loadingLabel === b.loadingLabel &&
     a.failedLabel === b.failedLabel &&
     a.withheldLabel === b.withheldLabel &&

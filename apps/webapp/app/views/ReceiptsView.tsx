@@ -29,6 +29,7 @@ import { type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/StreamShell";
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import type { RemoteImagesChrome } from "../shell/remote-images";
+import type { AttachmentsChrome } from "../shell/attachments";
 import { useStreamWindow } from "../shell/stream-window";
 import { useKeyPanelOpensCard, useStreamBar } from "../shell/stream-bar";
 import { useBodyStamp } from "../shell/body-slice";
@@ -54,6 +55,7 @@ export function ReceiptsView({
   bodyOf,
   hydrateBody,
   remoteImages,
+  attachments,
   jumpTo,
   onJumped,
   closeTo,
@@ -124,6 +126,8 @@ export function ReceiptsView({
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   /** The remote-images chrome the reading pane reads; the stream's cards read the same one. */
   remoteImages?: RemoteImagesChrome;
+  /** The attachments chrome the reading pane reads: a card draws its letter's own pictures by it. */
+  attachments?: AttachmentsChrome;
   jumpTo: string | null;
   onJumped: () => void;
   /** The controlled close and its acknowledgement — see `ReadsView` for the contract. */
@@ -442,6 +446,8 @@ export function ReceiptsView({
         bodyHtml={body.html}
         bodyLoadedRemote={body.loadedRemoteContent}
         remoteImages={remoteImages}
+        cidImages={attachments?.cidImagesOf(m.id)}
+        needCidImages={attachments?.needCidImages}
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
