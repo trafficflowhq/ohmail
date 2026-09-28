@@ -1152,8 +1152,10 @@ export function ComposeSheet({
      holds what is on screen, quietly, so leaving the app mid-sentence loses nothing. Only a bound
      sheet saves this way; a fresh one keeps on close. */
   const onScreen = JSON.stringify([to, subject, body]);
+  /* By presence, not identity: the route builds the seed per render, and a new object must not reset the timer. */
+  const bound = draft !== undefined;
   useEffect(() => {
-    if (draft === undefined || draftId === null || phase !== "idle" || saved.current === onScreen) return;
+    if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen) return;
     const timer = setTimeout(() => {
       saved.current = onScreen;
       void w.actions.draftKeep({
@@ -1163,7 +1165,7 @@ export function ComposeSheet({
     return () => clearTimeout(timer);
     // `w`, `mailboxId` and the three fields are read at the timer; `onScreen` is their change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, draftId, phase, onScreen]);
+  }, [bound, draftId, phase, onScreen]);
 
   /**
    * THE LOCKED COMPOSER SETTLES ITSELF. A queued send is retried by the world layer's
@@ -1289,7 +1291,7 @@ export function ComposeSheet({
   const closeComposer = () => {
     if (cancelAct({ phase, key: queuedKey, alreadySent }) === "close") {
       /* A bound draft keeps exactly what is on screen, emptied included; unchanged, it just closes. */
-      const worth = draft !== undefined && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
+      const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
       const act = keepAct({ phase, worth, files: attachments.length, armed: keepNote !== null });
       if (act === "close") {
         onClose();
