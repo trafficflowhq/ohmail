@@ -7,7 +7,7 @@ import { useEffect, useRef, type RefObject } from "react";
  * nothing makes the press look dead, and a second press looks the same. The element carries
  * `tabIndex={-1}`: focusable, and not a stop in the tab order.
  */
-export function useRefusalAtThePress<T extends HTMLElement>(sentence: string | null): RefObject<T> {
+export function useRefusalAtThePress<T extends HTMLElement>(sentence: string | null): RefObject<T | null> {
   const ref = useRef<T>(null);
   useEffect(() => {
     const el = ref.current;

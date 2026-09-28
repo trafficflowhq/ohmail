@@ -37,11 +37,8 @@ import type { SearchParamsLike } from "../../demo-mode";
 /** Exactly what the SHA-256 of anything is once base64url-encoded without padding. */
 const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 
-export default async function LinkDesktopPage({
-  searchParams,
-}: {
-  searchParams?: SearchParamsLike;
-}) {
+export default async function LinkDesktopPage(props: { searchParams?: Promise<SearchParamsLike> }) {
+  const searchParams = await props.searchParams;
   const raw = searchParams?.challenge;
   const first = Array.isArray(raw) ? raw[0] : raw;
   const challenge = typeof first === "string" ? first.trim() : "";

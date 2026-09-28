@@ -15,11 +15,8 @@ import type { SearchParamsLike } from "../../demo-mode";
 /** `generateToken()` is 32 bytes base64url — the same shape `/join` and `/verify-email` carry. */
 const HANDLE_RE = /^[A-Za-z0-9_-]{20,512}$/;
 
-export default async function AuthorizeDesktopPage({
-  searchParams,
-}: {
-  searchParams?: SearchParamsLike;
-}) {
+export default async function AuthorizeDesktopPage(props: { searchParams?: Promise<SearchParamsLike> }) {
+  const searchParams = await props.searchParams;
   const raw = searchParams?.request;
   const first = Array.isArray(raw) ? raw[0] : raw;
   const handle = typeof first === "string" ? first.trim() : "";

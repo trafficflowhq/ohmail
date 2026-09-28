@@ -12,7 +12,7 @@ import { ResumeScreen } from "./ResumeScreen";
  * navigation — either way a ninety-day rolling refresh token is probably still in the jar, and
  * only the browser can spend it (see `ResumeScreen`).
  */
-export default function Page() {
+export default async function Page() {
   /*
    * Which account was this surface chosen for? Read HERE, on the server: the edge picks this page
    * under the cookies of the request that asked for `/`, and another tab can replace the shared jar
@@ -22,6 +22,6 @@ export default function Page() {
    * the screen compares it against the jar at the moment the request leaves. `tf_owner` is a marker
    * and authorises nothing, so reading it here costs nothing and reveals nothing.
    */
-  const owner = cookieFromStore(cookies(), OWNER_COOKIE);
+  const owner = cookieFromStore(await cookies(), OWNER_COOKIE);
   return <ResumeScreen initialOwner={owner} />;
 }

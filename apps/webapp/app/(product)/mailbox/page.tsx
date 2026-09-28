@@ -18,11 +18,8 @@ import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-
  * reaches through the front door; it stays because the alternative, if the middleware were ever configured away, is
  * an app shell wired to nothing.
  */
-export default async function Page({
-  searchParams,
-}: {
-  searchParams?: SearchParamsLike;
-}) {
+export default async function Page(props: { searchParams?: Promise<SearchParamsLike> }) {
+  const searchParams = await props.searchParams;
   const serverDemo = isDemoBuild(process.env) || isDemoRequested(searchParams);
   const apiConfigured = Boolean(process.env.NEXT_PUBLIC_API_BASE);
 

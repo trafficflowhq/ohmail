@@ -13,11 +13,8 @@ import type { SearchParamsLike } from "../../demo-mode";
  * The 512-character clamp is not politeness: the value goes into a request body and a `sha256`, and an unbounded
  * query parameter is free work for anyone sending a megabyte — `requirePassword`'s own reasoning.
  */
-export default async function VerifyEmailPage({
-  searchParams,
-}: {
-  searchParams?: SearchParamsLike;
-}) {
+export default async function VerifyEmailPage(props: { searchParams?: Promise<SearchParamsLike> }) {
+  const searchParams = await props.searchParams;
   const raw = searchParams?.token;
   const first = Array.isArray(raw) ? raw[0] : raw;
   return (

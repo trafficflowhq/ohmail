@@ -122,7 +122,8 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
    * preference is the authority (adopted by `AppShell` when `GET /consent` lands) and the Settings
    * selector is how it is set.
    */
-  const locale = localeFromCookieHeader(headers().get("cookie")) ?? DEFAULT_LOCALE;
+  const h = await headers();
+  const locale = localeFromCookieHeader(h.get("cookie")) ?? DEFAULT_LOCALE;
   /* The first screen's cut, not the catalogue: this document is `no-store` and re-sent on every
      load, while the rest is a hashed chunk `LocaleShell` loads once and the browser keeps. */
   const messages = firstScreenCatalog(await loadCatalog(locale));
@@ -136,7 +137,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
    * splits the policy by surface. `?? undefined`: on a request middleware did not mark, the attribute is omitted and
    * the baseline `'unsafe-inline'` covers the script — never `nonce=""`, which would match nothing.
    */
-  const nonce = headers().get("x-nonce") ?? undefined;
+  const nonce = h.get("x-nonce") ?? undefined;
   return (
     <html lang={locale} suppressHydrationWarning>
       <body className="mo-canvas app-body">

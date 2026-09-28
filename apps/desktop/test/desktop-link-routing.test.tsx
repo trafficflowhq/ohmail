@@ -103,6 +103,9 @@ const submit = async (el: HTMLElement): Promise<void> => {
   /* One task after the press: every shell call is raced against its deadline, one promise step
      longer than a bare call, and a link proof takes several of them. */
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  /* Timer turns after the press, inside `act`: the answer lands only after the engine's reply AND
+     the token hash, which Node computes off the main thread. */
+  for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
 };
 
 const PIN = "D".repeat(43);

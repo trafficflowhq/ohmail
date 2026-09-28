@@ -9,8 +9,9 @@ import { publicSignupEnabled } from "../../signup-mode";
  * screens cannot answer a stranger differently — which they did. `?next=` is read here once and
  * narrowed to a name (`continuation.ts`); the screen never sees the raw value.
  */
-export default function LoginPage(
-  { searchParams }: { searchParams?: Record<string, string | string[] | undefined> },
+export default async function LoginPage(
+  props: { searchParams?: Promise<Record<string, string | string[] | undefined>> },
 ) {
+  const searchParams = await props.searchParams;
   return <LoginScreen publicSignup={publicSignupEnabled()} next={continuationOf(searchParams?.next)} />;
 }

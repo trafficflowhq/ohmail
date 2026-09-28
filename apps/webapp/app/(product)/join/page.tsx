@@ -16,11 +16,8 @@ import { publicSignupEnabled } from "../../signup-mode";
  * which it then reads from the server. `publicSignup` decides where the wizard STARTS and nothing else, read here on
  * the server so a bookmarked `/join` gets the same answer as the CTA.
  */
-export default async function JoinPage({
-  searchParams,
-}: {
-  searchParams?: SearchParamsLike;
-}) {
+export default async function JoinPage(props: { searchParams?: Promise<SearchParamsLike> }) {
+  const searchParams = await props.searchParams;
   const raw = searchParams?.code;
   const first = Array.isArray(raw) ? raw[0] : raw;
   const rawBilling = searchParams?.billing;

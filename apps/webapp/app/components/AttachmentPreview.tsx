@@ -529,7 +529,7 @@ function renderContent({
   pdf: { id: string; numPages: number } | null;
   pdfError: boolean;
   activeId: string;
-  canvasRef: React.RefObject<HTMLCanvasElement>;
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
   text: { id: string; body: string; truncated: boolean } | null;
   ensure: (attachmentId: string, opts?: { retry?: boolean }) => void;
   onDownload: (attachmentId: string) => void;

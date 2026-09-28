@@ -219,21 +219,31 @@ function itemOf(engine: OhmailEngine, messageId: string, attachmentId: string): 
   return held.items.find((i) => i.id === attachmentId);
 }
 
+/** A map's identity as a number, so a fingerprint string can say "this map was replaced". */
+const MAP_SERIALS = new WeakMap<object, number>();
+let lastSerial = 0;
+function serialOf(map: object): number {
+  let n = MAP_SERIALS.get(map);
+  if (n === undefined) MAP_SERIALS.set(map, (n = ++lastSerial));
+  return n;
+}
+
 /**
  * WHAT THIS HOOK CAN SHOW, AS ONE COMPARABLE VALUE.
  *
- * Every field a strip draws that can still MOVE after the list has landed: the outcome's own
- * state, the failure's code, and each item's byte state. Filename, type and size are fixed at
- * the list read; `objectUrl` accompanies `ready` and `error` accompanies `failed`, so neither
- * moves without the state beside it. A string rather than an object because
- * `useSyncExternalStore` compares snapshots with `Object.is`, and equal strings are equal.
+ * Every field a strip or a body draws that can still MOVE after the list has landed: the outcome's
+ * state, the failure's code, each item's byte state, and the embedded-image and calendar maps,
+ * whose identity the engine replaces when a picture or an invitation arrives — their bytes land
+ * AFTER the item already reads `ready`, so without them the picture waited for an unrelated render.
+ * A string because `useSyncExternalStore` compares snapshots with `Object.is`.
  */
 function attachmentsFingerprint(engine: OhmailEngine, ids: Iterable<string>): string {
   const parts: string[] = [];
   for (const id of ids) {
     const held = engine.attachmentsOf(id, { includeInlineParts: true });
     if (held.state === "ready") {
-      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}`).join(",")}`);
+      const maps = `img${serialOf(engine.inlineImagesOf(id))}:cal${serialOf(engine.calendarTextsOf(id))}`;
+      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}`).join(",")}:${maps}`);
     } else if (held.state === "failed") {
       parts.push(`${id}:failed:${held.code ?? ""}`);
     } else if (held.state === "loading") {

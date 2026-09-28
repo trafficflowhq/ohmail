@@ -34,7 +34,7 @@ export interface ListPaneProps {
    */
   onSeen?: (id: string) => void;
   /** External scroller ref, if the app drives scrolling itself. */
-  scrollerRef?: RefObject<HTMLDivElement>;
+  scrollerRef?: RefObject<HTMLDivElement | null>;
   /**
    * Re-scan the seen-on-scroll observer when this value changes.
    * `useSeenOnScroll` observes the rows present when it first runs and

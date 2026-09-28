@@ -47,26 +47,24 @@ RUN npm ci --no-audit --no-fund
 # EXACT versions, not ranges: the committed lockfile cannot pin what the manifests do not
 # declare, so a caret here would let two otherwise-identical builds of one release resolve
 # different declaration files — the image must be reproducible from the tree alone. The React
-# types match the versions the workspace lockfile resolves, and all four are REMOVED again
-# after the build (below), so the runtime copy ships nothing the type pass pulled in.
+# types are the versions the workspace lockfile resolves (a root test holds their major to the
+# manifest's), and all four are REMOVED again after the build (below), so the runtime copy ships
+# nothing the type pass pulled in.
 RUN npm install --no-save \
       typescript@5.6.3 \
       @types/node@22.10.2 \
       @types/react@19.2.17 \
       @types/react-dom@19.2.7
-# THE LOCKFILE HOISTS `styled-jsx` — next's own dependency — TO THE ROOT while nesting next,
-# react and react-dom under this app, and the root also carries a DIFFERENT React major for an
-# unrelated workspace. styled-jsx resolves `react` by walking UP from where it physically sits,
-# so at the root it binds that foreign React, while react-dom arms the hook dispatcher on the
-# React instance it resolved beside this app — and every pages-router prerender (`/_error`,
-# /404, /500; the app-router pages use Next's vendored React and never notice) dies with
-# "Cannot read properties of null (reading 'useContext')". Relocate styled-jsx beside the
-# react it must share an instance with. This step MUST stay below the stage's last npm
-# operation: any `npm install` reconciles the whole tree against the lockfile and puts
-# styled-jsx back at the root (measured — the install above undid an earlier placement of
-# this line). The guard makes it a no-op the day the lockfile nests styled-jsx correctly
-# itself; a tree carrying NEITHER copy fails right here, at build time.
-RUN [ -d apps/webapp/node_modules/styled-jsx ] \
+# `styled-jsx` — next's own dependency — resolves `react` by walking UP from where it physically
+# sits, and it must bind the React instance react-dom arms. When the lockfile nests react under
+# this app and hoists styled-jsx to the root, styled-jsx binds another copy and every
+# pages-router prerender (`/_error`, /404, /500) dies with "Cannot read properties of null
+# (reading 'useContext')", so it is moved beside the app's react. When react sits at the root
+# with it — one React in the tree — there is nothing to move, and the app has no node_modules of
+# its own to move it into. This step MUST stay below the stage's last npm operation: any
+# `npm install` reconciles the tree and puts styled-jsx back at the root (measured).
+RUN [ ! -d apps/webapp/node_modules/react ] \
+ || [ -d apps/webapp/node_modules/styled-jsx ] \
  || mv node_modules/styled-jsx apps/webapp/node_modules/styled-jsx
 # The flavor is a BUILD fact (see next.config.mjs — the proxy owns the split, so this bundle
 # rewrites nothing and calls /api on its own origin). The star count is pinned so the config's

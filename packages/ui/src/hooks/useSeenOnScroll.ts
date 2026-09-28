@@ -31,7 +31,7 @@ const SCROLL_KEYS = new Set([
 
 export interface UseSeenOnScrollOptions {
   /** The scrolling container. */
-  root: RefObject<HTMLElement>;
+  root: RefObject<HTMLElement | null>;
   /** Called once per element, with its data-id / data-sid. */
   onSeen: (id: string) => void;
   /** Which elements count; default: anything with [data-unseen]. */
