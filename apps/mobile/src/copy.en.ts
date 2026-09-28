@@ -231,6 +231,7 @@ const TABLE = {
    */
   phoneStateHandedBack: "Handed back",
   phoneStateHandedBackWhy: "Another computer can take this mailbox now.",
+  phoneStateParked: "Paused while the account was closed — organizing resumes on its own",
   phoneStateReader: (name: string) => `Organized by ${name}`,
   phoneStateReaderLegacy: "Organized by another install",
   /**
@@ -2478,15 +2479,7 @@ const TABLE = {
   stripSubscribe: "Subscribe",
   stripFixPayment: "Fix payment",
   stripLater: "Later",
-  stripCaughtUp: (count: number, date: string) =>
-    count === 0
-      ? `ohmail found nothing new since ${date}.`
-      : count === 1
-        ? `ohmail caught up 1 message that arrived since ${date}.`
-        : `ohmail caught up ${count} messages that arrived since ${date}.`,
-  stripHandedBack:
-    "ohmail handed these mailboxes back when the account closed. It does not take them again on its own — organizing starts when you start it.",
-  stripStartOrganizing: "Start organizing",
+  stripCaughtUp: (date: string) => `ohmail is catching up on mail that arrived since ${date}.`,
   stripDismiss: "Got it",
   /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one
      verb. The cause goes to the device's log, never to the screen. */

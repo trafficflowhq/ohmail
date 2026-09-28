@@ -43,9 +43,15 @@ export interface PhoneMailbox {
    * BACK when the account closed from one nobody ever asked it to organize, and the catch-up
    * strip offers to re-start only the first kind. An absent consent is therefore never a
    * stood-down mailbox — the direction that cannot invite somebody to resume what they never
-   * began (`ui/lifecycle-strip.ts#stoodDown`).
+   * began.
    */
   organizeConsentedAt: string | null;
+  /**
+   * WHEN THE CLOSED ACCOUNT'S PARK RELEASED IT (mail 0135) — `MailboxDTO.organizerParkedAt`. While
+   * set, the mailbox is paused, not free and not stopped: the paired server resumes it on its own.
+   * `null` where it is not paused and where a server older than the column answered.
+   */
+  organizerParkedAt?: string | null;
   /**
    * WHO ORGANIZES IT, when it is not the server this phone is paired with — `null` when that
    * server organizes it itself, and `null` when nobody ever has.
@@ -179,6 +185,8 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
           typeof r.organizeConsentedAt === "string" && r.organizeConsentedAt !== ""
             ? r.organizeConsentedAt
             : null,
+        organizerParkedAt:
+          typeof r.organizerParkedAt === "string" && r.organizerParkedAt !== "" ? r.organizerParkedAt : null,
         organizedBy: holderOf(r.organizedBy),
         /* The server's own comparison, taken only as `true` — anything else, including a server
            that predates the field, is "not the answering install's", the safe direction. */

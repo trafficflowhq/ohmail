@@ -30,7 +30,7 @@ export interface AccountAccess {
   manageUrl?: string;
   exportPath?: string;
   /** The one-time catch-up after a reopening, keyed by `since` for its dismissal. */
-  caughtUp?: { since: string; count: number };
+  caughtUp?: { since: string };
 }
 
 const str = (v: unknown): string | undefined =>
@@ -45,14 +45,10 @@ export function accessOf(body: unknown): AccountAccess | null {
   const manageUrl = str(raw.manageUrl);
   const exportPath =
     typeof raw.exportPath === "string" && raw.exportPath.startsWith("/") ? raw.exportPath : undefined;
-  const c = raw.caughtUp as { since?: unknown; count?: unknown } | undefined;
-  /* A catch-up needs BOTH halves to be a sentence: a count with no `since` has no date to name
-     and no key to be dismissed by, and would come back at every launch. */
-  const caughtUp =
-    c && typeof c.since === "string" && c.since.length > 0
-      && typeof c.count === "number" && Number.isFinite(c.count) && c.count >= 0
-      ? { since: c.since, count: c.count }
-      : undefined;
+  const c = raw.caughtUp as { since?: unknown } | undefined;
+  /* The date is the catch-up: without `since` there is no sentence and no key to dismiss it by. An
+     older API's count is dropped (mail 0135) — it counted the closure's mail, not the catch-up. */
+  const caughtUp = c && typeof c.since === "string" && c.since.length > 0 ? { since: c.since } : undefined;
   return {
     metered: true,
     ...(raw.access === "open" || raw.access === "refused" ? { access: raw.access } : {}),

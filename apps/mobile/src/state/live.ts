@@ -643,9 +643,10 @@ export interface PhoneOrganizer {
 
 export function phoneOrganizer(
   mailboxes: readonly { organizedBy: { kind: string | null; name: string | null } | null;
-                       organizerState: "held" | "stopped" | null }[],
+                       organizerState: "held" | "stopped" | null; organizerParkedAt?: string | null }[],
 ): PhoneOrganizer | null {
-  const named = mailboxes.filter((m) => (m.organizedBy?.name ?? "") !== "");
+  // A mailbox the closed account paused names nobody who stopped (mail 0135): it resumes on its own.
+  const named = mailboxes.filter((m) => (m.organizerParkedAt ?? null) === null && (m.organizedBy?.name ?? "") !== "");
   if (named.length === 0) return null;
   const distinct = new Set(named.map((m) => m.organizedBy!.name!));
   if (distinct.size !== 1) return null;
