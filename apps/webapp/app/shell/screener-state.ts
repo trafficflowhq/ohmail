@@ -69,6 +69,7 @@ import {
 } from "./sender-screening";
 import { pileNames } from "./decision-copy";
 import { screeningShown } from "./press-verdict";
+import { syncIdentityOf } from "./sync-scheduler";
 import { PLACE_LABEL } from "./format";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
 import { activeFormatZone } from "./locale";
@@ -2028,6 +2029,8 @@ export function useScreenerState(
   const pressHeldRelease = (ruleIds?: readonly string[]): void => {
     if (releasing) return;
     setReleasing(true);
+    // Before the account is confirmed the press waits for it (`sync-scheduler.ts#gatedPress`).
+    if (syncIdentityOf(engine) === "unconfirmed") toast(t("heldReleaseWaiting"));
     void engine.releaseHeldMail(ruleIds)
       .then((count) => {
         // The count the SERVER released, never the one on screen when the press happened: another
@@ -2082,6 +2085,7 @@ export function useScreenerState(
   const pressUnscreened = (addresses?: readonly string[]): void => {
     if (screening) return;
     setScreening(true);
+    if (syncIdentityOf(engine) === "unconfirmed") toast(t("unscreenedWaiting"));
     void engine.screenUnscreenedSenders(addresses)
       .then((count) => {
         // The count the SERVER moved, never the one on screen when the press happened: another

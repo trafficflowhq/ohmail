@@ -147,6 +147,11 @@ export const WAKE_SAFETY_POLL_MS = 90_000;
 /** First retry ceiling. Doubles per consecutive failure. */
 export const BACKOFF_BASE_MS = 1_000;
 /**
+ * How long a press made before the server confirmed this mirror's account waits for the confirm
+ * before it refuses. The confirm is one session read; past this the press says it could not act.
+ */
+export const PRESS_CONFIRM_WAIT_MS = 20_000;
+/**
  * The degraded steady state, not an exhaustion point. A visible tab keeps retrying at up to
  * a minute apart forever: "gave up" is a state a mail client must never enter silently, and
  * the alternative to a slow retry is a mailbox that stays wrong until someone reloads.
@@ -533,11 +538,20 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
    * unconfirmed press somebody else's mail moving. It throws {@link ForeignSessionError} and not
    * {@link MutationRejectedError} because there is no outbox to hold it under an idempotency key —
    * a press refused here has not happened and the surface says so, rather than being told later.
+   * A press in the warm open (`unconfirmed`) WAITS for the confirm, bounded by
+   * {@link PRESS_CONFIRM_WAIT_MS}: nothing is wrong yet, and a refusal there was a sentence about
+   * a failure that had not happened.
    */
+  const confirmed = (ms: number): Promise<void> => new Promise((resolve) => {
+    const done = (): void => { clearTimeout(timer); openers.delete(done); resolve(); };
+    const timer = setTimeout(done, ms);
+    openers.add(done);
+  });
   const gatedPress = <A extends unknown[], R>(
     fn: (...args: A) => Promise<R>,
     what: string,
   ): ((...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
+    if (identity() === "unconfirmed") await confirmed(PRESS_CONFIRM_WAIT_MS);
     if (identity() !== "holds") throw new ForeignSessionError(what);
     const out = await fn(...args);
     // The arrival check `gatedRead` carries, for the reason it carries it — with the press's own
