@@ -386,8 +386,8 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
  * How long a firing critical alert waits before its next hourly reminder. A standing critical
  * pages {@link DEFAULT_CRITICAL_HOURLY_PAGES} times an hour apart, then holds for
  * {@link DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS} while unchanged: an hourly mail that runs for days
- * is a mail nobody reads. Every tier re-pages at once on a state change
- * ({@link Alert.signature}), so the hold costs nothing on the case that matters.
+ * is a mail nobody reads. Every tier re-pages at once when the condition gets worse
+ * ({@link Alert.levels}), so the hold costs nothing on the case that matters.
  */
 export const DEFAULT_ALERT_REPEAT_MS = 60 * 60 * 1000;
 
@@ -410,9 +410,9 @@ const RESOLUTION_NOTICE_HORIZON_MS = 24 * 60 * 60 * 1000;
  * failure: a true `device_sync_stale` warning for one dead pairing was emailed on every repeat
  * interval for fifteen days, and the only thing that changed between the mails was the age in the
  * sentence. A warning is by its own definition not a page that earns hourly repetition — once,
- * then a daily reminder while it stands. Any real movement in the condition (count, severity —
- * the {@link Alert.signature}) re-pages immediately, so holding the unchanged case costs no
- * latency on the case that matters.
+ * then a daily reminder while it stands. A worsening (a higher severity or level, {@link
+ * Alert.levels}) re-pages immediately and a fall never does, so holding costs no latency on the
+ * case that matters.
  */
 export const DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS = 24 * 60 * 60 * 1000;
 
@@ -436,15 +436,19 @@ export interface Alert {
   /** Age of the oldest affected row, or of the staleness itself. */
   oldestSeconds: number | null;
   /**
-   * The CONDITION SIGNATURE — what has to differ for a standing alert to count as CHANGED and
-   * re-page ahead of the unchanged-renotify interval. Optional; absent, the pass derives
-   * `"<severity>|<count>"`, which is the honest default: severity and the affected count are
-   * state, while `oldestSeconds` and the ages interpolated into `title`/`detail` grow on every
-   * evaluation and are exactly what a signature must NOT include (an ever-growing age re-paging
-   * a warning each pass is the measured failure the renotify policy exists for). A rule whose
-   * state has more dimensions than that names them here itself.
+   * The CONDITION SIGNATURE — the state an `alert_firing` log line keys on. Optional; absent,
+   * `"<severity>|<count>"`. Ages grow on every evaluation and never belong in it. Paging reads
+   * {@link levels}, not this.
    */
   signature?: string;
+  /**
+   * HOW BAD the condition is, as numbers where higher is worse — what the pass pages on besides
+   * a start and the reminder clock. A page goes out when the severity or any level passes the
+   * highest this firing has already paged ({@link escalates}); a fall never pages. Absent:
+   * `[pow2Floor(count)]`, one step per doubling. A rule whose badness has another dimension (an
+   * age, a second population) names every dimension here.
+   */
+  levels?: readonly number[];
   /**
    * INCIDENT (pages) or SIGNAL (recorded and rendered only). Optional; absent reads as
    * `"incident"` — see {@link AlertClass} for why the default falls that way.
@@ -496,6 +500,36 @@ function pow2Floor(n: number): number {
   return n < 1 ? 0 : 2 ** Math.floor(Math.log2(n));
 }
 
+const SEVERITY_RANK: Readonly<Record<AlertSeverity, number>> = { warning: 1, critical: 2 };
+
+/** Severity first, then the rule's levels: the vector {@link escalates} compares. */
+function badnessOf(a: Alert): number[] {
+  return [SEVERITY_RANK[a.severity] ?? 0, ...(a.levels ?? [pow2Floor(a.count)])];
+}
+
+/**
+ * THE PEAK a firing has paged, as `alert_state.notified_signature` holds it: `peak|<n>|<n>…`,
+ * each position the highest {@link badnessOf} any confirmed page carried. Any other value (a
+ * pre-2026-09-28 signature, or null) states no peak, so nothing escalates past it until the next
+ * page writes one.
+ */
+function peakOf(stored: string | null): number[] | null {
+  if (stored === null || !/^peak(\|\d+)+$/.test(stored)) return null;
+  return stored.split("|").slice(1).map(Number);
+}
+
+/** True when this alert is worse than every page of its firing in at least one position. */
+export function escalates(stored: string | null, a: Alert): boolean {
+  const peak = peakOf(stored);
+  return peak !== null && badnessOf(a).some((v, i) => v > (peak[i] ?? -1));
+}
+
+/** The peak after this alert is paged: each position the higher of the two, never lower. */
+export function raisedPeak(stored: string | null, a: Alert): string {
+  const peak = peakOf(stored) ?? [];
+  return `peak|${badnessOf(a).map((v, i) => Math.max(v, peak[i] ?? 0)).join("|")}`;
+}
+
 /** `sync_lag:critical`'s age buckets — the worst mailbox's age, about once per doubling. */
 const SYNC_LAG_AGE_BUCKETS: ReadonlyArray<readonly [string, number]> = [
   ["2h", 2 * 3600], ["4h", 4 * 3600], ["8h", 8 * 3600], ["16h", 16 * 3600],
@@ -506,6 +540,11 @@ function syncLagAgeBucket(seconds: number | null): string {
   let label = "0";
   for (const [name, at] of SYNC_LAG_AGE_BUCKETS) if ((seconds ?? 0) >= at) label = name;
   return label;
+}
+
+/** The same bucket as a rank, 0 below the first: the age level a page escalates on. */
+function syncLagAgeRank(seconds: number | null): number {
+  return SYNC_LAG_AGE_BUCKETS.filter(([, at]) => (seconds ?? 0) >= at).length;
 }
 
 /**
@@ -947,6 +986,8 @@ export async function evaluateAlertsWithScope(
       // hold the page for the whole unchanged interval however far the roster drifted. The
       // three numbers here are what an operator would notice changing.
       signature: `degraded|${beat.mailboxes}/${beat.expected}|${beat.quarantined}`,
+      // Worse is more expected mailboxes missing, or more quarantined.
+      levels: [Math.max(0, beat.expected - beat.mailboxes), beat.quarantined],
       // THE AGE OF THE CONDITION, not of the process — they are different numbers and this
       // field is the one an operator reads as "how long has this been broken".
       oldestSeconds: degradedSeconds,
@@ -1135,6 +1176,7 @@ export async function evaluateAlertsWithScope(
       // Counts BUCKETED: mailboxes cross the sustain cut on most passes of a slow scan, and a
       // raw count re-paged each time. A doubling of either population is the change that pages.
       signature: `${lagWide ? "incident" : "signal"}|${pow2Floor(warningCount)}|${pow2Floor(laggingAccounts)}`,
+      levels: [pow2Floor(warningCount), pow2Floor(laggingAccounts)],
     });
   }
   if (criticalCount > 0) {
@@ -1166,6 +1208,7 @@ export async function evaluateAlertsWithScope(
       // The worst age in doubling buckets: a lag that keeps growing re-pages about once per
       // doubling, and one that stands still falls to the daily reminder.
       signature: `critical|${pow2Floor(criticalCount)}|${syncLagAgeBucket(oldestSeconds)}`,
+      levels: [pow2Floor(criticalCount), syncLagAgeRank(oldestSeconds)],
     });
   }
 
@@ -1636,6 +1679,7 @@ export async function evaluateAlertsWithScope(
       // cadence for as long as the incident lasted. A whole percentage point of movement is a
       // real change; the third decimal place is not.
       signature: `5xx|${pow2Floor(Math.round(rate * 100))}`,
+      levels: [pow2Floor(Math.round(rate * 100))],
     });
   }
 
@@ -2791,12 +2835,11 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // was twice discarded: without carried state it lacked the claim's three properties
   // (page-at-once, retry-after-failure, crash-survival). A tier that must page immediately is a
   // tier with its own key (`sync_lag:critical`): a new key's first observation has `notified_at`
-  // NULL, which the ordinary claim pages at once. What does exist is the SIGNATURE arm — the old
-  // idea rebuilt with the state it lacked: `notified_signature` is the last CONFIRMED condition
-  // (written only by the guarded confirm; a claim writes nothing but its lease), so a failed
-  // delivery retries and a crashed pass costs `claimTtlMs`, not the interval. A severity flip
-  // changes the default signature and pages once the change-arm floor passes — through the claim,
-  // not around it.
+  // NULL, which the ordinary claim pages at once. What does exist is the ESCALATION arm:
+  // `notified_signature` holds the firing's CONFIRMED peak (written only by the guarded confirm;
+  // a claim writes nothing but its lease), so a failed delivery retries and a crashed pass costs
+  // `claimTtlMs`, not the interval. A severity rise passes the peak and pages once the floor
+  // passes — through the claim, not around it. A fall never passes it.
 
   // ── record the observation (opened_at survives an UPSERT; last_seen_at advances) ──────
   //
@@ -2905,22 +2948,22 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // Claim the notifications this pass may send: one short transaction per firing alert — `SELECT
   // … FOR UPDATE`, the due decision, one UPDATE, zero I/O. An active lease refuses every arm —
   // another driver's page is in flight. Three arms make an alert due, judged from the last
-  // CONFIRM: never notified; the tier's interval passed; or the signature differs and the confirm
-  // is at least `claimTtlMs` old (the stale-evaluation floor; `notified_signature IS NULL` reads
-  // as unchanged so a deploy does not page every standing alert). The signature persists only on
-  // a confirm — written at claim time it was the crash hole: a pass dying mid-delivery suppressed
-  // the retry for the tier interval. Only incidents are claimed: a signal never takes a lease,
-  // never stamps `notify_count` — those fields record "a human was told", and writing them would
-  // make a later promotion read as already delivered.
+  // CONFIRM: never notified; the tier's interval passed; or it ESCALATES past the firing's peak
+  // and the confirm is at least `claimTtlMs` old (the stale-evaluation floor; a row with no peak
+  // escalates nothing, so a deploy pages no standing alert). The peak persists only on a confirm
+  // — written at claim time it was the crash hole: a pass dying mid-delivery suppressed the retry
+  // for the tier interval. Only incidents are claimed: a signal never takes a lease, never stamps
+  // `notify_count` — those fields record "a human was told", and writing them would make a later
+  // promotion read as already delivered.
   const leaseUntil = new Date(now.getTime() + claimTtlMs);
   const hourlyPages = opts.criticalHourlyPages ?? DEFAULT_CRITICAL_HOURLY_PAGES;
-  const claimed: Alert[] = [];
+  /** Each claimed alert with the peak its confirm will record. */
+  const claimed: Array<{ alert: Alert; peak: string }> = [];
   for (const alert of firing) {
     if (alertClass(alert) !== "incident") continue;
-    // The stale-evaluation floor for the change arm — see the header bullet.
+    // The stale-evaluation floor for the escalation arm — see the header bullet.
     const changeBefore = new Date(now.getTime() - claimTtlMs);
-    const sig = alertSignature(alert);
-    const won = await db.transaction(async (tx) => {
+    const won = await db.transaction(async (tx): Promise<string | null> => {
       const [cur] = await selectOpenAlerts(tx, {
         notifiedAt: alertState.notifiedAt,
         notifiedSignature: alertState.notifiedSignature,
@@ -2933,7 +2976,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       }, eq(alertState.alertKey, alert.key))
         .limit(1)
         .for("update");
-      if (!cur) return false; // resolved underneath this pass — nothing to page
+      if (!cur) return null; // resolved underneath this pass — nothing to page
       // ── THE CLASS IS RE-READ UNDER THE LOCK, NOT TAKEN FROM THIS PASS'S MEMORY ────────
       //
       // The loop above skips signals using `alertClass(alert)` — this pass's OWN evaluation,
@@ -2943,7 +2986,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       // A then enters this transaction, sees `notified_at = null`, and pages for a condition
       // that has since stopped being one. The row is the authority precisely because it is the
       // thing both passes serialise on; the in-memory class is only a hint about what to try.
-      if (cur.cls === "signal") return false;
+      if (cur.cls === "signal") return null;
       // ── AND THE ROW'S STAMP, WHICH THIS TRANSACTION ALREADY HAD IN HAND ───────────────
       //
       // `lastSeenAt` was selected under the lock and then ignored. An older pass can lose its
@@ -2955,23 +2998,21 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       const stamped = cur.lastSeenAt
         ? new Date(cur.lastSeenAt as unknown as string).getTime()
         : null;
-      if (stamped !== null && stamped > now.getTime()) return false;
+      if (stamped !== null && stamped > now.getTime()) return null;
       const heldUntil = cur.claimedUntil ? new Date(cur.claimedUntil as unknown as string) : null;
-      if (heldUntil !== null && heldUntil.getTime() > now.getTime()) return false; // in flight
+      if (heldUntil !== null && heldUntil.getTime() > now.getTime()) return null; // in flight
       const notifiedAt = cur.notifiedAt ? new Date(cur.notifiedAt as unknown as string) : null;
-      // First page plus two hourly reminders, then daily while unchanged; a change pages at once.
+      // First page plus two hourly reminders, then daily; a worsening pages at once, a fall never.
       const hourly = alert.severity === "critical" && Number(cur.notifyCount ?? 0) < hourlyPages;
       const dueBefore = new Date(now.getTime() - (hourly ? repeatMs : renotifyUnchangedMs));
       const due =
         notifiedAt === null ||
         notifiedAt.getTime() <= dueBefore.getTime() ||
-        (cur.notifiedSignature !== null &&
-          cur.notifiedSignature !== sig &&
-          notifiedAt.getTime() <= changeBefore.getTime());
-      if (!due) return false;
-      // THE LEASE AND NOTHING ELSE — see the signature bullet above: a claim that wrote the
-      // signature would suppress a crashed changed-condition page for the whole tier
-      // interval. `notified_at` and `notified_signature` move only on the guarded confirm.
+        (escalates(cur.notifiedSignature, alert) && notifiedAt.getTime() <= changeBefore.getTime());
+      if (!due) return null;
+      // THE LEASE AND NOTHING ELSE — see the peak bullet above: a claim that wrote the peak
+      // would suppress a crashed escalation page for the whole tier interval. `notified_at` and
+      // `notified_signature` move only on the guarded confirm.
       await tx
         .update(alertState)
         .set({ claimedUntil: leaseUntil })
@@ -2979,11 +3020,11 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           eq(alertState.alertKey, alert.key),
           notWrittenByANewerPass(now),
         ));
-      return true;
+      return raisedPeak(cur.notifiedSignature, alert);
     });
-    if (won) claimed.push(alert);
+    if (won !== null) claimed.push({ alert, peak: won });
   }
-  const toNotify = claimed;
+  const toNotify = claimed.map((c) => c.alert);
 
   // Resolve what is no longer true — MARK, not delete: an INSERT cannot be fenced against a row
   // that is not there, so an older pass paused before its observation write recreated and paged
@@ -3091,16 +3132,16 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // under this pass (the mark clears `claimed_until`) or claimed by another driver after expiry
   // matches nothing, and doing nothing is right. Releasing keeps a misconfigured webhook
   // self-correcting rather than a silent hole; `notify_count` moves only on a confirm, so it
-  // counts pages a sink actually accepted. A CONFIRM lands `notified_at` and `notified_signature`
-  // together — the row then says "this condition, told at this time". A RELEASE clears the lease
+  // counts pages a sink actually accepted. A CONFIRM lands `notified_at` and the raised peak
+  // together — the row then says "this bad, told at this time". A RELEASE clears the lease
   // and nothing else: the claim wrote nothing else, so the row is byte-identical to before and
   // the retry re-fires by construction — the exact state an expired lease (a crashed pass)
   // leaves, which makes the crash path and the failed-delivery path one case.
-  for (const alert of claimed) {
+  for (const { alert, peak } of claimed) {
     const settle = delivered.length > 0
       ? {
         notifiedAt: now,
-        notifiedSignature: alertSignature(alert),
+        notifiedSignature: peak,
         notifyCount: sql`${alertState.notifyCount} + 1`,
         claimedUntil: null,
       }
