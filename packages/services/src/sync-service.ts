@@ -1054,6 +1054,13 @@ export class SyncService {
             eq(routingDecisions.status, "pending_approval"),
           )),
         ),
+        /* A MESSAGE A DRAFT ANSWERS. Every draft rides the pages, so its reply target must too:
+           the client pins it, and the change that could bring it sits below the cursor. An
+           uncorrelated IN, read once: `in_reply_to_message_id` has no index to probe per row. */
+        inArray(
+          messages.id,
+          db.select({ id: drafts.inReplyToMessageId }).from(drafts).where(eq(drafts.accountId, accountId)),
+        ),
       )
       : undefined;
 
