@@ -230,6 +230,42 @@ is catching up stays until you put it away, a reload no longer loses it, and the
 too. Paying from the setup flow with a mailbox already connected finishes setup, and an account
 with no mailbox is no longer offered the sent-mail review.
 
+### Operators can grant roles to staff, and every staff read and write on the API is recorded
+<!-- changes: admin-024-open-staff.md -->
+
+Staff hold roles (support, billing, ops, owner), read on every request; an owner grants and
+revokes them with a code from their authenticator. Every staff read and write on the API is
+recorded before it is answered, and a request whose record cannot be written is refused. The
+operator console gains search, accounts by id, a sync roster and a fuller account page. Needs
+cloud migration 0047 and a re-run of `scripts/harden-staff-role.sql` with the API deploy.
+
+### Webhook and Telegram alerts say when a critical alert has resolved
+<!-- changes: fix-026-operator-sees-owed.md -->
+
+A critical alert that stays resolved is now announced on the webhook and Telegram channels as well
+as by mail. The notice is sent once: after any channel accepts it, a channel that refused it is not
+asked again.
+
+### Away replies held back are still sent
+<!-- changes: fix-026-away-reply-one-door.md -->
+
+An away reply held back because another device took over organizing is still sent afterwards, and
+a reply whose message was removed while it went out is recorded as sent. Re-screening sensitive
+mail no longer treats an automatic reply, or a reply to somebody else, as your answer.
+
+### A file that could not be fetched says why
+<!-- changes: fix-026-attachment-fault-side.md -->
+
+- A file or embedded picture that could not be fetched now says which side failed: ohmail, your
+  mail server not answering, a connection it would not secure, a sign-in it refused, a mailbox that
+  needs reconnecting, a message no longer where your mailbox had it, or no connection to ohmail. Try
+  again is offered only where asking again can help.
+- Pictures a newsletter's mail service hosts, such as Mailchimp's or Constant Contact's, are shown.
+  A picture is refused before it is fetched only when its address is a tracking pixel's or its host
+  does nothing but track.
+- A tracking pixel whose address is percent-encoded is recognised as one.
+- A calendar reply that says so only in its calendar part is recognised as a reply.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
