@@ -393,6 +393,13 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
   const usageUnrecorded = (f: UsageUnrecorded): void => {
     try { reportUsage(f); } catch { /* observability is never load-bearing */ }
   };
+  /**
+   * A LINE THE PROGRAM WOULD TAKE. It refuses a whole request for one line whose `attempts` is
+   * outside 1..100, and a call cut off before its first attempt reports 0, so such a line is
+   * dropped here, alone, rather than costing every other line in its request.
+   */
+  const sendable = (l: AiUsageLine): boolean =>
+    Number.isInteger(l.attempts) && l.attempts >= 1 && l.attempts <= 100;
   /** Did a 200 say how many lines it wrote? An older program answers without the field. */
   const usageRecordedIn = (res: Exchange): boolean =>
     res.bodyIsJson && typeof obj(res.body)?.usageRecorded === "number";
@@ -602,10 +609,11 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       // account's line or more than one work item's calls, and a refused release re-arms a
       // refund's obligation — so such lines are dropped here, counted, and never sent.
       const offered = r.usage ?? [];
-      const usage = offered.length <= AI_USAGE_LINES_PER_RELEASE
-        && offered.every((l) => l.accountId === accountId) ? offered : [];
+      const taken = offered.filter(sendable);
+      const usage = taken.length <= AI_USAGE_LINES_PER_RELEASE
+        && taken.every((l) => l.accountId === accountId) ? taken : [];
       if (usage.length < offered.length) {
-        usageUnrecorded({ path: "/v1/spend/release", lines: offered.length, why: "not_sent" });
+        usageUnrecorded({ path: "/v1/spend/release", lines: offered.length - usage.length, why: "not_sent" });
       }
       const res = await post("/v1/spend/release", {
         accountId, action: r.action, attemptKey: r.attemptKey, refund: r.refund,
@@ -628,15 +636,19 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     async recordUsage(lines: readonly AiUsageLine[]): Promise<ReleaseReceipt> {
       // AT MOST ONCE: the caller logs an `unreachable` batch and drops it, because a retried
       // POST with no identity would count its lines twice. Chunking is the caller's.
-      if (lines.length === 0) return "settled";
       if (lines.length > AI_USAGE_LINES_PER_POST) {
         usageUnrecorded({ path: "/v1/usage", lines: lines.length, why: "not_sent" });
         return "unreachable";
       }
-      const res = await post("/v1/usage", { lines });
+      const batch = lines.filter(sendable);
+      if (batch.length < lines.length) {
+        usageUnrecorded({ path: "/v1/usage", lines: lines.length - batch.length, why: "not_sent" });
+      }
+      if (batch.length === 0) return "settled";
+      const res = await post("/v1/usage", { lines: batch });
       if (res?.status !== 200) return "unreachable";
       if (!usageRecordedIn(res)) {
-        usageUnrecorded({ path: "/v1/usage", lines: lines.length, why: "no_usage_recorded_field" });
+        usageUnrecorded({ path: "/v1/usage", lines: batch.length, why: "no_usage_recorded_field" });
       }
       return "settled";
     },
