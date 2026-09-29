@@ -1014,17 +1014,16 @@ export function DesktopMailboxes(
     const asking = serverAsk?.id === m.id ? incomingFromAsk(serverAsk.ask) : null;
     const consent = plaintextAsk?.id === m.id ? plaintextAsk.checked : null;
     void (async () => {
-      const seal = (imap: Record<string, unknown>): Promise<Response> => {
-        const body = JSON.stringify({
-          imap: consent?.imap ? { ...imap, allowInsecure: true } : imap,
-          ...(consent?.smtp ? { smtp: { pass: password, allowInsecure: true } } : {}),
-        });
-        return bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
+      const sealBody = (imap: Record<string, unknown>): string => JSON.stringify({
+        imap: consent?.imap ? { ...imap, allowInsecure: true } : imap,
+        ...(consent?.smtp ? { smtp: { pass: password, allowInsecure: true } } : {}),
+      });
+      const seal = (imap: Record<string, unknown>): Promise<Response> =>
+        bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body,
+          body: sealBody(imap),
         });
-      };
       try {
         let res = await seal(asking ? { ...asking, pass: password } : { pass: password });
         if (!res.ok) {

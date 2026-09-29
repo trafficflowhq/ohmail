@@ -1481,17 +1481,13 @@ const CONNECTION_ERROR_CODES = new Set([
 ]);
 
 /**
- * THE LOCAL DOOR'S SYNC-FAILURE DISCLOSURE, derived at read time like the cloud door's
- * store-stuck overlay and never written, so the existing writer pair clears it: a served cycle
- * ends the outage, a replaced password ends a refused sign-in. `auth` settles at once; an outage
- * only after {@link LOCAL_CONNECTION_DEAD_AFTER_MS}; a missing password is not overlaid (`err_auth`
- * blames the server). A consented organizer whose lease read fails is `lease_unreadable` from the
- * runtime's first failure, below the connection's facts. A reader row's `organizerChecked` is the
- * runtime's: looked, and the last look answered.
- *
- * THE ARM ORDER IS THE INVARIANT: a refused sign-in, a refused plaintext dial, a stored password
- * this install cannot use, then an outage. The third dials nothing, so it never carries an outage
- * clock; confirmed, it names itself as a closed detail; unconfirmed it overlays nothing.
+ * THE LOCAL DOOR'S SYNC-FAILURE DISCLOSURE, derived at read time and never written, so the writer
+ * pair clears it: a served cycle ends the outage, a replaced password a refused sign-in. `auth`
+ * settles at once, an outage after {@link LOCAL_CONNECTION_DEAD_AFTER_MS}; a missing password is not
+ * overlaid. A consented organizer's failed lease read is `lease_unreadable`, below the connection's
+ * facts; a reader row's `organizerChecked` is the runtime's last look.
+ * THE ARM ORDER IS THE INVARIANT: refused sign-in, refused plaintext dial, a stored password this
+ * install cannot use (it dials nothing, so no outage clock; confirmed, a closed detail), outage.
  */
 async function discloseLocalSyncFailures(
   res: Response,
