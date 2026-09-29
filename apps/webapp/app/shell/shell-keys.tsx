@@ -883,6 +883,7 @@ export function useShellKeys({
 
   /* ── the palette command map (every command from the prototype) ── */
   const moveKey = useEnabledBinding("m");
+  const resurfaceKey = useEnabledBinding("b");
   const pressKey = useKeyPress();
   const commands: Command[] = useMemo(() => {
     const list: Command[] = [
@@ -979,17 +980,17 @@ export function useShellKeys({
       disabled: moveKey == null,
       run: () => { pressKey("m"); },
     });
+    /* RESURFACE IS THE `b` KEY'S ROW, as Move is `m`'s: live wherever `b` is — the Ohbox, News,
+       Receipts, a tag, History — and acting on what the key acts on there. */
     list.push({
       id: "resurface",
       label: t("palette.resurfaceSel"),
       keys: ["b"],
-      disabled: selectedOhbox == null,
-      run: () => {
-        if (selectedOhbox) resurfaceByKey(selectedOhbox);
-      },
+      disabled: resurfaceKey == null,
+      run: () => { pressKey("b"); },
     });
     return list;
-  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, resurfaceByKey, startFR, engine, settingsWired, goSettings, moveKey, pressKey]);
+  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR, engine, settingsWired, goSettings, moveKey, resurfaceKey, pressKey]);
 
   /**
    * THE ONE NUMBER A NATIVE SHELL IS TOLD — see `AppShell`'s `onUnread`.

@@ -108,7 +108,13 @@ export function localeFromCookieHeader(header: string | null | undefined): AppLo
     const eq = part.indexOf("=");
     if (eq < 0) continue;
     if (part.slice(0, eq).trim() !== LOCALE_COOKIE) continue;
-    return normalizeLocale(decodeURIComponent(part.slice(eq + 1).trim()));
+    // A value `decodeURIComponent` refuses (a bare `%`) reads as no cookie: it is client-writable,
+    // and a throw here is in the server render of every product page, sign-in included.
+    try {
+      return normalizeLocale(decodeURIComponent(part.slice(eq + 1).trim()));
+    } catch {
+      return null;
+    }
   }
   return null;
 }

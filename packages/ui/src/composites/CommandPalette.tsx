@@ -113,6 +113,9 @@ export function CommandPalette({
               e.preventDefault();
               setSel(Math.max(selIdx - 1, 0));
             } else if (e.key === "Enter" && items[selIdx]) {
+              /* Cancelled first: closing returns focus to the opener, and an Enter left live would
+                 then press that control too — a rail item re-opening the view the command left. */
+              e.preventDefault();
               run(items[selIdx]);
             } else if (e.key === "Escape") {
               onClose();
