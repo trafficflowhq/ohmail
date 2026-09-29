@@ -31,10 +31,12 @@ import {
   pairThroughDoor,
   pollBrowserApproval,
   proveHostLink,
+  readApprovalVerdict,
   relaunchAdoptedDoor,
   signInToCloud,
   signInToCloudWithCode,
   standingEngine,
+  stopBrowserApproval,
   type DoorResult,
   type HostLinkRefusal,
   type HostLinkStep,
@@ -278,8 +280,12 @@ export function DoorChooser({
   const approvalRun = useRef(0);
   useEffect(() => () => { approvalRun.current += 1; }, []);
 
+  /* THE THREE PRESSES THAT END A WAIT — Back, Cancel, "Type a code instead" — and only they: the
+     engine forgets the request too, so a reopened window does not resume it. An unmount or a
+     re-route only stops this window's loop; the engine keeps the wait for the next chooser. */
   const stopApproval = (): void => {
     approvalRun.current += 1;
+    if (approvalWait) void stopBrowserApproval();
     setApprovalWait(null);
   };
 
@@ -336,9 +342,17 @@ export function DoorChooser({
     } catch {
       setProblem(DOOR_COPY.noBrowser(machineWord()));
     }
-    const ends = Date.now() + begun.expiresIn * 1000;
-    let wait = 2_000;
     setApprovalWait({ note: null });
+    await awaitApproval(run, Date.now() + begun.expiresIn * 1000);
+  };
+
+  /**
+   * THE WAIT, for the press and for a chooser that finds one: poll at the server's cadence until the
+   * claim answers, and stop at the request's own lifetime. One loop, so a resumed wait ends, signs
+   * in and adopts exactly as the one the press started.
+   */
+  const awaitApproval = async (run: number, ends: number): Promise<void> => {
+    let wait = 2_000;
     while (run === approvalRun.current) {
       await new Promise<void>((resolve) => { setTimeout(resolve, wait); });
       if (run !== approvalRun.current) return;
@@ -368,6 +382,28 @@ export function DoorChooser({
       return;
     }
   };
+
+  /* THE WAIT THIS CHOOSER DID NOT START. A closed, reloaded or re-routed window left a request the
+     engine still holds (`/health`'s `approval`); a Cloud chooser resumes it on the ENGINE's expiry,
+     and says an ended one once, then ends it there so it is not said again. */
+  const cloudDoor = start === "cloud" || addressless;
+  useEffect(() => {
+    if (!cloudDoor) return;
+    const run = ++approvalRun.current;
+    void (async () => {
+      const verdict = await readApprovalVerdict();
+      if (run !== approvalRun.current || verdict === null) return;
+      setStep("cloud");
+      if (verdict.state === "ended") {
+        setProblem(approvalRefusal(verdict.code, null) ?? DOOR_COPY.browserSignInFailed);
+        void stopBrowserApproval();
+        return;
+      }
+      setApprovalWait({ note: verdict.note });
+      await awaitApproval(run, verdict.expiresAt);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, at mount: the verdict is the engine's.
+  }, []);
 
   return (
     <div className="gate">
@@ -1367,7 +1403,9 @@ function CloudDoor({
   const [viaBrowser, setViaBrowser] = useState(addressless);
   /** The browser path asks for a code only when chosen, or when the service has no approval door. */
   const [wantsCode, setWantsCode] = useState(false);
-  const byApproval = viaBrowser && approvalOffered && !wantsCode && onApprove !== undefined;
+  /* A wait on screen is the browser path, including one resumed on a card that opened on the form. */
+  const byApproval = (viaBrowser || Boolean(approvalWait)) && approvalOffered && !wantsCode
+    && onApprove !== undefined;
 
   /**
    * WHAT AN ACTIVATION NEEDS THAT AN ACTIVATION CANNOT CARRY: the address. The deep link

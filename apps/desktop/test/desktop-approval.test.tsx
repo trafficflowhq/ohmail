@@ -40,6 +40,10 @@ let asked: { command: string; payload?: Record<string, unknown> }[] = [];
 let approval: () => Uint8Array;
 /** What each `{approval: true}` poll answers, in order; the last repeats. */
 let polls: Uint8Array[];
+/** The engine's approval verdict, as its `/health` carries it (`approval-verdict.ts`). */
+let verdict: Record<string, unknown> | null;
+/** How many times the window ended a wait at the engine (`DELETE /cloud/signin/approval`). */
+let stops: number;
 
 const pending = (note?: string): Uint8Array =>
   encode(202, JSON.stringify({ status: "pending", retryAfterMs: 2000, ...(note ? { note } : {}) }));
@@ -49,6 +53,8 @@ beforeEach(() => {
   asked = [];
   approval = () => encode(200, JSON.stringify({ approvalId: ID, expiresIn: 300 }));
   polls = [pending()];
+  verdict = null;
+  stops = 0;
   let next = 1;
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => next++,
@@ -60,7 +66,16 @@ beforeEach(() => {
       }
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
-        if (url === "/cloud/signin/approval") return approval();
+        if (url === "/cloud/signin/approval" && payload?.method === "DELETE") {
+          stops += 1;
+          verdict = null;
+          return encode(204, "");
+        }
+        if (url === "/cloud/signin/approval") {
+          verdict = { state: "pending", note: null, expiresAt: new Date(Date.now() + 300_000).toISOString() };
+          return approval();
+        }
+        if (url === "/health") return encode(200, JSON.stringify({ ok: true, ...(verdict ? { approval: verdict } : {}) }));
         if (url === "/cloud/signin") return polls.length > 1 ? polls.shift()! : polls[0]!;
         return encode(404, "{}", "Not Found");
       }
@@ -231,5 +246,82 @@ describe("the browser path is one confirm, not a code", () => {
     await elapse(10_000);
     expect(pollsMade()).toBe(made);
     expect(el.querySelector("#cloud-handoff")).not.toBeNull();
+  });
+});
+
+/**
+ * THE WAIT OUTLIVES THE WINDOW THAT STARTED IT (DESKTOP-APPROVAL-WAIT-LIVES-IN-THE-WINDOW). The
+ * engine holds the request and says its verdict on `/health`; a chooser closed, reloaded or
+ * re-routed took the wait with it, so a confirm after that signed nothing in. Every Cloud chooser
+ * now resumes the engine's wait on mount, and only Back, Cancel and "Type a code instead" end it
+ * there. Mutations watched red: the mount read removed; the stop sent on unmount.
+ */
+describe("the wait belongs to the engine, not to the chooser", () => {
+  const DOOR_COPY_DENIED = "This request was declined in the browser.";
+  const DOOR_COPY_EXPIRED = "This request expired before it was confirmed. Start again.";
+  const remount = async (cloudAction: "configure" | "signIn") => {
+    await act(async () => { root!.unmount(); });
+    mountPoint!.remove();
+    root = null;
+    return mount(cloudAction);
+  };
+
+  it("a new chooser resumes the wait, and a confirm made after the reopen signs in", async () => {
+    polls = [pending(), pending(), pending(), encode(200, JSON.stringify({ status: "signed_in" }))];
+    const first = await mount("signIn");
+    await click(buttonSaying(first.el, "Sign in with browser"));
+    await click(buttonSaying(first.el, "Open ohmail.app"));
+    await elapse(2000);
+    const before = pollsMade();
+    const second = await remount("signIn");
+    expect(stops, "closing the chooser ended the wait at the engine").toBe(0);
+    expect(second.el.textContent, "the reopened chooser did not say it is waiting").toContain("Waiting for your browser…");
+    await elapse(2000);
+    await elapse(2000);
+    await elapse(2000);
+    expect(pollsMade(), "nothing polled after the reopen").toBeGreaterThan(before);
+    expect(second.entered, "the confirm made after the reopen signed nothing in").toHaveLength(1);
+  });
+
+  it("Back ends the wait at the engine, and a chooser opened after it resumes nothing", async () => {
+    const first = await mount("signIn");
+    await click(buttonSaying(first.el, "Sign in with browser"));
+    await click(buttonSaying(first.el, "Open ohmail.app"));
+    await click(buttonSaying(first.el, "Back"));
+    expect(stops).toBe(1);
+    const second = await remount("signIn");
+    expect(second.el.textContent).not.toContain("Waiting for your browser…");
+  });
+
+  it("an ended wait is said once, and ended at the engine so it is not said again", async () => {
+    verdict = { state: "ended", code: "approval_denied", expiresAt: new Date(Date.now()).toISOString() };
+    const { el } = await mount("signIn");
+    await elapse(0);
+    expect(el.textContent).toContain(DOOR_COPY_DENIED);
+    expect(stops).toBe(1);
+    expect(pollsMade(), "an ended request was polled").toBe(0);
+  });
+
+  it("a resumed wait stops at the ENGINE's expiry, with the expired sentence", async () => {
+    verdict = { state: "pending", note: null, expiresAt: new Date(Date.now() + 3_000).toISOString() };
+    const { el } = await mount("signIn");
+    expect(el.textContent).toContain("Waiting for your browser…");
+    await elapse(2000);
+    await elapse(2000);
+    await elapse(2000);
+    expect(el.textContent).toContain(DOOR_COPY_EXPIRED);
+    const made = pollsMade();
+    await elapse(8000);
+    expect(pollsMade(), "the wait polled past its own expiry").toBe(made);
+  });
+
+  it("CONTROL: a chooser that opens on the doors asks the engine nothing about a browser approval", async () => {
+    vi.resetModules();
+    const { DoorChooser } = await import("../src/DoorChooser.js");
+    mountPoint = document.createElement("div");
+    document.body.appendChild(mountPoint);
+    root = createRoot(mountPoint);
+    await act(async () => { root!.render(h(DoorChooser, { start: "doors", onEntered: () => undefined })); });
+    expect(asked.some((a) => a.payload?.url === "/health")).toBe(false);
   });
 });

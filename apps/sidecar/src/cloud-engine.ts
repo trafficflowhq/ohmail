@@ -59,6 +59,7 @@ import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 import { createSessionWatch, heldReadingOf, sameReading } from "./session-watch.js";
 import { leftOf, pairFlights, PAIR_UNDO_REVOKE_MS, revokeBearerAtHost } from "./pair-undo.js";
+import { approvalAt, approvalPending, type ApprovalVerdict } from "./approval-verdict.js";
 
 /**
  * The cloud engine — a read-only mirror of a hosted account, in the same stdio process the shell
@@ -705,11 +706,29 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     let linkVerifier: string | null = null;
 
     /**
-     * THE BROWSER APPROVAL this install is waiting on — the request id and the verifier, in this
-     * process's memory only, beside `linkVerifier` and for its reason. A new request replaces it;
-     * a claim that returned the pair, or a refusal that ended the request, clears it.
+     * THE BROWSER APPROVAL this install is waiting on, in two halves behind ONE writer. The secret
+     * half is the request id and the verifier, in this process's memory only, beside `linkVerifier`
+     * and for its reason; the said half is the verdict `/health` carries (`approval-verdict.ts`).
+     * A new request replaces both; an ended or stopped request holds no secret; a sign-in clears both.
      */
-    let approval: { id: string; verifier: string } | null = null;
+    type ApprovalSecret = { id: string; verifier: string };
+    type ApprovalEnded = Extract<ApprovalVerdict, { state: "ended" }>;
+    let approval: ApprovalSecret | null = null;
+    let approvalVerdict: ApprovalVerdict | null = null;
+    /** THE ONE WRITER, typed so an ended request cannot hold a secret. */
+    const holdApproval = (
+      next: { secret: ApprovalSecret; verdict: Extract<ApprovalVerdict, { state: "pending" }> } | ApprovalEnded | null,
+    ): void => {
+      if (next === null) { approval = null; approvalVerdict = null; }
+      else if ("secret" in next) { approval = next.secret; approvalVerdict = next.verdict; }
+      else { approval = null; approvalVerdict = next; }
+    };
+    /** The verdict as it stands NOW: a wait past its expiry is ended here, and its secret dropped. */
+    const readApproval = (): ApprovalVerdict | null => {
+      const read = approvalAt(approvalVerdict, now().getTime());
+      if (read !== null && read.state === "ended" && read !== approvalVerdict) holdApproval(read);
+      return read;
+    };
 
     /**
      * THE ACCOUNT A PENDING ENGINE ADOPTED, or null — set by the first sign-in in the same
@@ -1079,6 +1098,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
              door on disk now names that account and the window relaunches this engine behind it. */
           identityPending: config.identityPending !== undefined && adoptedAddress === null,
           adopted: adoptedAddress !== null,
+          /* THE BROWSER APPROVAL'S WAIT, states and codes only — what a reopened window resumes and a
+             support read sees. Never the request id or the verifier: the verdict does not hold them. */
+          approval: readApproval(),
         });
       }
 
@@ -1216,7 +1238,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             },
             pair.challenge,
           );
-          approval = { id: started.approvalId, verifier: pair.verifier };
+          holdApproval({
+            secret: { id: started.approvalId, verifier: pair.verifier },
+            verdict: approvalPending(now().getTime(), started.expiresIn),
+          });
           log?.("cloud_approval_requested", { mailboxId: served });
           return json(started);
         } catch (err) {
@@ -1225,6 +1250,15 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           }
           throw err;
         }
+      }
+
+      /* THE STOP: Back, Cancel and "Type a code instead" end the wait here, so a reopened window does
+         not resume a request somebody left. Nothing is asked of the hosted service — a request
+         nobody claims runs out on its own. Never pressed by an unmount or a re-route. */
+      if (req.method === "DELETE" && path === "/cloud/signin/approval") {
+        holdApproval(null);
+        log?.("cloud_approval_stopped", { mailboxId: served });
+        return new Response(null, { status: 204 });
       }
 
       if (req.method === "POST" && path === "/cloud/signin") {
@@ -1293,6 +1327,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             409,
           );
         }
+        if (namesApproval) readApproval();
         if (namesApproval && !approval) {
           return json(
             { error: { code: "approval_expired", message: "This request has expired. Start again from your computer." } },
@@ -1314,12 +1349,19 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               approval.id,
             );
             if (polled.status === "pending") {
+              holdApproval({
+                secret: approval,
+                verdict: {
+                  state: "pending", note: polled.note ?? null,
+                  expiresAt: approvalVerdict?.expiresAt ?? now().toISOString(),
+                },
+              });
               return json(
                 { status: "pending", retryAfterMs: polled.retryAfterMs, ...(polled.note ? { note: polled.note } : {}) },
                 202,
               );
             }
-            approval = null;
+            holdApproval(null);
             log?.("cloud_approval_claimed", { mailboxId: served });
             tokens = polled.tokens;
           } else tokens = await cloudSignIn(
@@ -1339,8 +1381,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           );
         } catch (err) {
           if (err instanceof CloudSignInError) {
-            // A refused request is over: a new one starts from the window, never a retry of this.
-            if (namesApproval && err.status === 410) approval = null;
+            // A refused request is over, with its code: a new one starts from the window, never a retry.
+            if (namesApproval) {
+              holdApproval({
+                state: "ended", code: err.code, expiresAt: approvalVerdict?.expiresAt ?? now().toISOString(),
+              });
+            }
             return json({ error: { code: err.code, message: err.message } }, err.status);
           }
           throw err;

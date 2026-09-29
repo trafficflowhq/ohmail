@@ -2000,6 +2000,44 @@ export async function pollBrowserApproval(): Promise<ApprovalStep> {
 }
 
 /**
+ * THE ENGINE'S VERDICT ON A BROWSER APPROVAL, read off its `/health` (`approval-verdict.ts`): the
+ * wait a closed or reloaded chooser left, so a new one resumes it. `null` for nothing asked, an
+ * older engine without the field, or an engine that did not answer — nothing to resume in each.
+ */
+export type ApprovalVerdictReading =
+  | { state: "pending"; note: "busy" | "unreachable" | null; expiresAt: number }
+  | { state: "ended"; code: string };
+
+export async function readApprovalVerdict(): Promise<ApprovalVerdictReading | null> {
+  try {
+    const res = await bridgeFetch("/health", { signal: AbortSignal.timeout(5_000) });
+    if (!res.ok) return null;
+    const said = ((await res.json().catch(() => null)) as { approval?: unknown } | null)?.approval as
+      { state?: unknown; note?: unknown; code?: unknown; expiresAt?: unknown } | null | undefined;
+    if (said?.state === "ended" && typeof said.code === "string") return { state: "ended", code: said.code };
+    const at = typeof said?.expiresAt === "string" ? Date.parse(said.expiresAt) : Number.NaN;
+    if (said?.state !== "pending" || !Number.isFinite(at)) return null;
+    const note = said.note === "busy" || said.note === "unreachable" ? said.note : null;
+    return { state: "pending", note, expiresAt: at };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * END THE WAIT AT THE ENGINE — Back, Cancel and "Type a code instead" only, so a reopened window
+ * does not resume a request somebody left. Best effort: an engine that does not answer keeps a
+ * verdict that ends by itself at the request's expiry.
+ */
+export async function stopBrowserApproval(): Promise<void> {
+  try {
+    await bridgeFetch("/cloud/signin/approval", { method: "DELETE", signal: AbortSignal.timeout(5_000) });
+  } catch {
+    /* No answer: the verdict runs out with the request. */
+  }
+}
+
+/**
  * RELAUNCH THE ENGINE BEHIND THE DOOR ITS CLAIM WROTE. The pending engine was built with no
  * address, so it named no mailbox and cannot mount mail; the shell's configure re-validates the
  * adopted door at its own boundary, writes the same file and starts the engine that activates the
