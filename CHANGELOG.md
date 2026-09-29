@@ -168,6 +168,14 @@ organizing had already resumed before you opened ohmail. The desktop app does no
   primary image, even when a track follows it. The help page, the FAQ and the tracking pixel setting
   say that a disguised pixel loads each time a message's pictures are fetched.
 
+### Forwarding a message that is only attachments sends it with them
+<!-- changes: fix-026-forward-sends.md -->
+
+Forwarding a scanned PDF, a photo sent without words or a message attached as a file no longer
+fails with "The original could not be loaded"; it goes out with every attachment. An older message
+whose stored copy was dropped under the storage limit, and a message in Junk, forward with their
+text read from your mailbox when you send. On the phone, a forward that is still refused says why.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
