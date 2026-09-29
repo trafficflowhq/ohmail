@@ -2,6 +2,7 @@ import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { messages, attachments, auditLog, recordChange, type Tx, auditAction} from "@trafficflow/db";
 import type { SQL } from "drizzle-orm";
 import { silentLogger, type Logger } from "@trafficflow/core";
+import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, type Db } from "./context.js";
 
 /**
@@ -25,7 +26,7 @@ import { bridgeTx, type Db } from "./context.js";
  * files. `attachment-flag-backfill.pg.test.ts`'s mixed-message cases caught it. Do not "simplify"
  * this back.
  */
-function realFileCount(): SQL<number> {
+export function realFileCount(): SQL<number> {
   return sql<number>`(
     select count(*)::int from ${attachments} att
      where att.message_id = ${messages}.${sql.identifier(messages.id.name)}
@@ -44,6 +45,16 @@ function realFileCount(): SQL<number> {
  * construction.
  */
 export const ATTACHMENT_FLAG_BATCH = 100;
+
+/**
+ * The lock both attachment backfills take as the FIRST statement of every page transaction
+ * (this pass and `inline-cid-backfill.ts`), so their pages never interleave. Without it a page
+ * here that waited on a row the inline pass held re-reads the `messages` tuple under
+ * EvalPlanQual while the correlated {@link realFileCount} keeps the statement's snapshot, and
+ * writes the old count back over the inline pass's recount. Transaction-scoped, one key.
+ */
+export const ATTACHMENT_BACKFILL_LOCK_CLASS = 420_727_018;
+export const ATTACHMENT_BACKFILL_LOCK_KEY = "attachment-backfill";
 
 /**
  * Pages the pass will walk before giving up and saying so — a bound of 50 000 rows at the batch
@@ -114,6 +125,7 @@ export async function runAttachmentFlagBackfill(
 
   for (let page = 0; page < maxPages; page++) {
     const result = await tx.transaction(async (t) => {
+      await dialect(deps.db).advisoryLock(t, ATTACHMENT_BACKFILL_LOCK_CLASS, ATTACHMENT_BACKFILL_LOCK_KEY);
       const rows = await selectCandidates(t, { mailboxId: deps.mailboxId, limit: batch, afterId });
       let didClear = 0;
       let didRecount = 0;

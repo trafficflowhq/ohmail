@@ -405,8 +405,15 @@ export {
 export {
   runAttachmentFlagBackfill, planAttachmentFlagBackfill,
   ATTACHMENT_FLAG_BATCH, ATTACHMENT_FLAG_MAX_PAGES,
+  ATTACHMENT_BACKFILL_LOCK_CLASS, ATTACHMENT_BACKFILL_LOCK_KEY,
   type AttachmentFlagBackfillDeps, type AttachmentFlagBackfillResult,
 } from "./attachment-flag-backfill.js";
+// Its sibling for parts the stored html references by `cid:` but an older ingest stored as files.
+// Same shape; the two share one page lock and one recount. Its CLI is not exported either.
+export {
+  runInlineCidBackfill, planInlineCidBackfill, classifyPart,
+  type InlineCidBackfillDeps, type InlineCidBackfillResult, type InlineCidPlanRow, type PartClass,
+} from "./inline-cid-backfill.js";
 // The ONE-TIME REDACTION (no migration) of credentials a detector false NEGATIVE stored
 // in the clear (German/EU OTPs, TANs, issued passwords the earlier detector left `no_ai = false`).
 

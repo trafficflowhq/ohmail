@@ -106,6 +106,7 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   // ── services-side passes and migrations ──────────────────────────────────────────────────
   "sensitive_rescreen", "sensitive_rescreen_move",
   "attachment_flag_backfill", "attachment_flag_backfill_row",
+  "inline_cid_backfill", "inline_cid_backfill_row",
   "hey_migrate", "undo_hey_migration",
   // ── account settings and the organizer profile import (`packages/db`) ────────────────────
   "account.ai_enabled", "organizer_profile_found", "organizer_profile_import_resolved",
