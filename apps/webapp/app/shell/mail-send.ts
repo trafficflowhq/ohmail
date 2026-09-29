@@ -502,6 +502,43 @@ export interface ReplyEditorMeta {
   sig?: SignatureState;
   /** The account row this browser last wrote or opened for the lane, at its stored stamp. */
   row?: { id: string; at: string };
+  /** What the editor showed while it held text — see {@link LaneEnvelope}. */
+  envelope?: LaneEnvelope;
+}
+
+/**
+ * THE ENVELOPE A LANE WAS WRITTEN UNDER: the sender, the subject on screen and the audience as the
+ * editor showed it. A lane promoted after its parent is gone takes these, where the parent can no
+ * longer be read. Absent on every lane written before it, which reads as it always did.
+ */
+export interface LaneEnvelope {
+  mailboxId: string;
+  subject: string;
+  to: EmailAddress[];
+  cc: EmailAddress[];
+  bcc: EmailAddress[];
+}
+
+/** An address list read back field-wise; anything else is no list. */
+function addressesOf(v: unknown): EmailAddress[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: EmailAddress[] = [];
+  for (const a of v as Array<Record<string, unknown> | null>) {
+    if (typeof a?.address !== "string" || a.address === "") return null;
+    out.push({ address: a.address, name: typeof a.name === "string" ? a.name : null });
+  }
+  return out;
+}
+
+function envelopeOf(v: unknown): LaneEnvelope | null {
+  if (typeof v !== "object" || v === null) return null;
+  const r = v as Record<string, unknown>;
+  const to = addressesOf(r.to);
+  const cc = addressesOf(r.cc);
+  const bcc = addressesOf(r.bcc);
+  if (typeof r.mailboxId !== "string" || r.mailboxId === "" || typeof r.subject !== "string") return null;
+  if (to === null || cc === null || bcc === null) return null;
+  return { mailboxId: r.mailboxId, subject: r.subject, to, cc, bcc };
 }
 
 /** Likewise for the reply editor's metadata half. */
@@ -517,8 +554,10 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
     // Field-wise, like every scratch reader: only the shapes the model names restore.
     const sig = parsed.sig;
     const row = parsed.row;
+    const envelope = envelopeOf(parsed.envelope);
     return {
       ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
+      ...(envelope !== null ? { envelope } : {}),
       ...(typeof row?.id === "string" && typeof row.at === "string" ? { row: { id: row.id, at: row.at } } : {}),
       ...(sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
         : sig?.kind === "edited" && typeof sig.text === "string"
@@ -532,7 +571,7 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
 
 export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
   // A meta with neither field stores nothing — absence IS the resting state, see above.
-  if (meta.subject === undefined && meta.sig === undefined && meta.row === undefined) {
+  if (meta.subject === undefined && meta.sig === undefined && meta.row === undefined && meta.envelope === undefined) {
     durableRemove(replyMetaKey(lane), "reply.meta");
     return;
   }
@@ -598,6 +637,10 @@ export interface LanePromotionPlan {
   mailboxId: string;
   subject: string;
   to: readonly EmailAddress[];
+  cc: readonly EmailAddress[];
+  bcc: readonly EmailAddress[];
+  /** The row this browser holds for the lane: the words are written into it, never beside it. */
+  rowId: string | null;
 }
 
 /** What became of one orphaned lane. Every arm but `promoted` leaves both keys where they are. */
@@ -618,32 +661,34 @@ export async function promoteOrphanedReplyLane(
   parentId: string,
   plan: LanePromotionPlan | null,
   save: (m: {
-    kind: "draft_save"; draftId: null; mailboxId: string; inReplyToMessageId: string;
+    kind: "draft_save"; draftId: string | null; mailboxId: string; inReplyToMessageId: string;
     subject: string; body: string; html?: string;
-    to: EmailAddress[]; cc: never[]; bcc: never[];
+    to: EmailAddress[]; cc: EmailAddress[]; bcc: EmailAddress[];
   }) => Promise<Pick<MutationResult, "status" | "entityId">>,
 ): Promise<LanePromotion> {
   const body = readReplyDraft(lane);
   if (body.text.trim().length === 0) return "empty";
   if (plan === null) return "unplaceable";
   const result = await save({
-    kind: "draft_save", draftId: null,
+    kind: "draft_save", draftId: plan.rowId,
     mailboxId: plan.mailboxId, inReplyToMessageId: parentId,
     subject: plan.subject, body: body.text,
     ...(body.html ? { html: body.html } : {}),
-    to: plan.to.map((a) => ({ ...a })), cc: [], bcc: [],
+    to: plan.to.map((a) => ({ ...a })), cc: plan.cc.map((a) => ({ ...a })), bcc: plan.bcc.map((a) => ({ ...a })),
   });
   // ADOPTED, not assumed — `compose-autosave`'s rule: without the server's id nothing was
-  // created, and clearing here would be the loss this function exists to prevent.
-  if (result.status !== "confirmed" || !result.entityId) return "refused";
+  // created, and clearing here would be the loss this function exists to prevent. An update
+  // names the row it wrote.
+  const rowId = result.entityId ?? plan.rowId;
+  if (result.status !== "confirmed" || !rowId) return "refused";
   /* THE EDITOR META TRAVELS WITH THE TEXT, onto the new row's own lane — `draft:<rowId>`, which is
      what the compose form reads a reopened draft's block state from. The `sig` half is the reason:
      an EDITED signature is the person's words too, and the row has no column for it, so dropping
      the meta here would restore a signature somebody had struck. Written before the old lane is
      cleared: the order is the same invariant as above. */
   const meta = readReplyMeta(lane);
-  if (meta.subject !== undefined || meta.sig !== undefined) {
-    writeReplyMeta(`draft:${result.entityId}`, meta);
+  if (meta.subject !== undefined || meta.sig !== undefined || meta.envelope !== undefined) {
+    writeReplyMeta(`draft:${rowId}`, meta);
   }
   clearReplyLane(lane);
   return "promoted";

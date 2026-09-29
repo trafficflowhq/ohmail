@@ -89,8 +89,10 @@ import {
   useMailSend,
   writeReplyDraft,
   writeReplyMeta,
+  type LaneEnvelope,
   type LanePromotionPlan,
   type OutcomeDetail,
+  type ReplyEditorMeta,
   type SendPhase,
   type SendState,
 } from "./mail-send";
@@ -514,28 +516,43 @@ export function useShellCompose({
   /* ── a parent another mail client took away ───────────────────────────────────────────── */
 
   /**
-   * WHAT A DEAD PARENT STILL LETS A PROMOTED LANE NAME — the mailbox, the subject, the audience.
-   * `null` ⇒ nothing can place it, and the lane is left exactly as it is rather than cleared.
+   * WHAT A PROMOTED LANE NAMES — the envelope it was written under, then what the dead parent still
+   * says, then nothing. `null` ⇒ nothing can place it, and the lane is left exactly as it is.
    *
-   * The audience is the PLAIN reply's, never reply-all: the lane has never held recipients, so
+   * Without an envelope (a lane from before it) the audience is the PLAIN reply's, never reply-all:
    * widening one nobody asked for would put a half-written sentence in front of a room. With no
-   * parent at all (a window that loads after the tombstone) there is neither audience nor subject
-   * to derive — the row carries the words, and the compose form is where the rest is filled in.
+   * parent either there is neither audience nor subject — the compose form is where they are filled.
    */
   const promotionPlanFor = useStableCallback(
     (lane: string, parentId: string, parent: EngineMessage | null): LanePromotionPlan | null => {
+      const meta = readReplyMeta(lane);
+      const env = meta.envelope;
       /* `sendingMailboxId` is the COMPOSE fallback, and that is what this row is: a draft the
          person will address and send from the compose form, not a reply going out now. */
-      const mailboxId = parent?.mailboxId ?? sendingMailboxId(engine.read());
+      const mailboxId = env?.mailboxId ?? parent?.mailboxId ?? sendingMailboxId(engine.read());
       if (!mailboxId) return null;
-      const meta = readReplyMeta(lane);
       const forward = lane !== parentId;
-      const subject = meta.subject
+      const subject = meta.subject ?? env?.subject
         ?? (parent ? (forward ? forwardSubject(parent.subject) : replySubject(parent.subject)) : "");
-      const to = !forward && parent ? (replyRecipients(parent, ownAddresses) ?? [parent.from]) : [];
-      return { mailboxId, subject, to };
+      const to = env ? env.to : !forward && parent ? (replyRecipients(parent, ownAddresses) ?? [parent.from]) : [];
+      return { mailboxId, subject, to, cc: env?.cc ?? [], bcc: env?.bcc ?? [], rowId: heldLaneRow(lane, meta) };
     },
   );
+
+  /**
+   * THE ROW THIS BROWSER HOLDS FOR A LANE, and nobody moved since it last saw it: a promotion writes
+   * the words into it rather than beside it, or one reply is two rows. A row another device wrote,
+   * or one that moved, is not this lane's to write over.
+   */
+  const heldLaneRow = (lane: string, meta: ReplyEditorMeta): string | null => {
+    const held = laneRowOf(lane);
+    if (held !== null) return held;
+    const row = meta.row;
+    const d = row ? drafts.find((x) => x.id === row.id) : undefined;
+    if (!row || !d || d.updatedAt !== row.at) return null;
+    // `holdOf` parks every row past `draft`, so a free row is an ordinary draft.
+    return holdOf(engine, { lane, draftId: d.id, session: null }).kind === "free" ? d.id : null;
+  };
 
   /**
    * PROMOTE EVERY LANE THESE DEAD IDS HOLD — the reply's and the inline forward's, because a
@@ -1026,6 +1043,37 @@ export function useShellCompose({
       if (at) writeReplyMeta(lane, { ...readReplyMeta(lane), row: { id: row, at } });
     },
   });
+
+  /**
+   * THE LANE KEEPS THE ENVELOPE IT IS WRITTEN UNDER — sender, subject on screen, audience as shown —
+   * while it holds text, so a promotion after the parent is gone sends the words to the same people
+   * (`promotionPlanFor`). A reply reads it off the form above, a forward off the rows it typed.
+   */
+  const forwardParent = replyTo !== null && replyMode === "forward"
+    ? reader.get<EngineMessage>("message", replyTo) ?? null
+    : null;
+  const typedLine = (line: string): EmailAddress[] => parseRecipients(line).addresses;
+  const laneEnvelope: { lane: string; envelope: LaneEnvelope } | null = replyForm !== null && replyForm.mailboxId
+    ? {
+      lane: replyForm.lane,
+      envelope: { mailboxId: replyForm.mailboxId, subject: replyForm.subject, to: replyForm.to, cc: replyForm.cc, bcc: replyForm.bcc },
+    }
+    : forwardParent !== null
+      ? {
+        lane: inlineForwardKey(forwardParent.id),
+        envelope: {
+          mailboxId: resolveReplyFrom(fromOptions, forwardParent.mailboxId, replyFromId).mailboxId ?? forwardParent.mailboxId,
+          subject: forwardSubject(forwardParent.subject),
+          to: typedLine(replyEnvelope?.to ?? ""), cc: typedLine(replyEnvelope?.cc ?? ""), bcc: typedLine(replyEnvelope?.bcc ?? ""),
+        },
+      }
+      : null;
+  const laneEnvelopeKey = laneEnvelope === null || isRichEmpty(replyBody) ? null : JSON.stringify(laneEnvelope);
+  useEffect(() => {
+    if (laneEnvelopeKey === null) return;
+    const { lane, envelope } = JSON.parse(laneEnvelopeKey) as { lane: string; envelope: LaneEnvelope };
+    writeReplyMeta(lane, { ...readReplyMeta(lane), envelope });
+  }, [laneEnvelopeKey]);
 
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`: private mode refuses the `localStorage` write, so
