@@ -303,12 +303,21 @@ function decodeMsgCursor(cursor: string): { key: Date; id: string } {
 
 /**
  * The arrival key over a table alias, NULL for the undated rows (no date AND no arrival) — the
- * History rail's months, which count the undated tail apart rather than in January 1970.
+ * History rail's month BUCKETS, which count the undated tail apart rather than in January 1970.
+ * Only for grouping: a `case` matches no index, so every probe compares on {@link keyOf} instead.
  */
 function datedKey(d: ReturnType<typeof dialect>, alias: string): SQL {
-  const date = sql.raw(alias + ".date");
-  const arrived = sql.raw(alias + ".arrived_at");
-  return sql`(case when ${date} is null and ${arrived} is null then null else ${d.arrivalKey(date, arrived)} end)`;
+  return sql`(case when ${undatedIn(alias)} then null else ${keyOf(d, alias)} end)`;
+}
+
+/** The arrival key over a table alias, spelled as the index is, so a probe on it is an index range. */
+function keyOf(d: ReturnType<typeof dialect>, alias: string): SQL {
+  return d.arrivalKey(sql.raw(alias + ".date"), sql.raw(alias + ".arrived_at"));
+}
+
+/** The undated rows (no date AND no arrival), kept out of a month by their own predicate. */
+function undatedIn(alias: string): SQL {
+  return sql.raw("(" + alias + ".date is null and " + alias + ".arrived_at is null)");
 }
 
 /** Strictly below a position under `key desc, id desc` — the one keyset every page walk takes. */
@@ -348,6 +357,24 @@ function positionOf(pos: { date: string | null; id: string }, field: "before" | 
   const read = readInstant(pos.date);
   if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal(`${field}Date`, read.why));
   return { key: read.at, id: pos.id };
+}
+
+/**
+ * A CLIENT-NAMED POSITION, ANCHORED ON THE ROW IT NAMES. A client from before the arrival key sends
+ * the last row's HEADER date; read as a key, a stale-dated row's header drops the walk below a year
+ * of mail. So while the named id is a living row of this account,
+ * the position is that row's own key and the client's date is ignored; only a gone row falls back
+ * to the date sent. Every client sends the id with its position, old and new.
+ */
+async function anchoredPosition(
+  ctx: ServiceContext, pos: { date: string | null; id: string }, field: "before" | "at",
+): Promise<{ key: Date; id: string }> {
+  const read = positionOf(pos, field);
+  // scoped-by: the id is read only within ctx.accountId's living rows
+  const [row] = await ctx.db.select({ key: arrivalKeyOf(ctx.db) }).from(messages)
+    .where(and(eq(messages.id, read.id), eq(messages.accountId, ctx.accountId), isNull(messages.deletedAt)))
+    .limit(1);
+  return row ? { key: row.key, id: read.id } : read;
 }
 
 /** An instant as the wire carries it (ISO), from what either store's driver handed back. */
@@ -525,7 +552,7 @@ export class MessageService {
       // the wire: a non-UUID id would bind against the uuid column and surface as a Postgres
       // 22P02 (a 500 for a malformed request), and an unparseable date silently selecting the
       // null-date branch would answer the WRONG page while looking like a success.
-      if (!opts.cursor && opts.before) filters.push(afterKeyset(ctx.db, positionOf(opts.before, "before")));
+      if (!opts.cursor && opts.before) filters.push(afterKeyset(ctx.db, await anchoredPosition(ctx, opts.before, "before")));
       return this.pageOf(ctx, {
         limit: clampLimit(opts.limit),
         cursor: opts.cursor,
@@ -568,7 +595,7 @@ export class MessageService {
       filters.push(afterKeyset(ctx.db, decodeMsgCursor(opts.cursor)));
     } else if (opts.before) {
       // The caller's mirror edge, page one only: a windowed client is not re-served what it holds.
-      filters.push(afterKeyset(ctx.db, positionOf(opts.before, "before")));
+      filters.push(afterKeyset(ctx.db, await anchoredPosition(ctx, opts.before, "before")));
     }
 
     // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
@@ -708,8 +735,13 @@ export class MessageService {
     const limit = Math.min(HISTORY_PAGE_MAX, clampLimit(opts.limit));
     const filters: SQL[] = [ownedMessages(ctx.accountId)];
     if (opts.cursor) filters.push(afterKeyset(ctx.db, decodeMsgCursor(opts.cursor)));
-    else if (opts.before) filters.push(afterKeyset(ctx.db, positionOf(opts.before, "before")));
-    else if (opts.at) filters.push(atOrAfterKeyset(ctx.db, atPositionOf(opts.at)));
+    else if (opts.before) filters.push(afterKeyset(ctx.db, await anchoredPosition(ctx, opts.before, "before")));
+    else if (opts.at) {
+      const at = opts.at;
+      filters.push(atOrAfterKeyset(ctx.db, at.id !== undefined
+        ? await anchoredPosition(ctx, { date: at.date, id: at.id }, "at")
+        : atPositionOf(at)));
+    }
     // scoped-by: `filters` leads with ownedMessages(ctx.accountId)
     const rows = await ctx.db.select({ id: messages.id, key: arrivalKeyOf(ctx.db) }).from(messages)
       .where(and(...filters))
@@ -743,7 +775,7 @@ export class MessageService {
     const groups = await d.exec(ctx.db, sql`
       select g.c, g.d,
         (select n.id from messages n
-          where ${ownedMessages(ctx.accountId, "n")} and ${datedKey(d, "n")} = g.d
+          where ${ownedMessages(ctx.accountId, "n")} and ${keyOf(d, "n")} = g.d and not ${undatedIn("n")}
           order by n.id desc limit 1) as id
       from (
         select ${d.monthBucket(datedKey(d, "m"))} as bucket, ${d.castInt(sql`count(*)`)} as c, max(${datedKey(d, "m")}) as d
@@ -785,14 +817,14 @@ export class MessageService {
       with v(lo, hi) as (values ${values})
       select g.c, g.d,
         (select n.id from messages n
-          where ${ownedMessages(ctx.accountId, "n")} and ${datedKey(d, "n")} = g.d
+          where ${ownedMessages(ctx.accountId, "n")} and ${keyOf(d, "n")} = g.d and not ${undatedIn("n")}
           order by n.id desc limit 1) as id
       from (
         select
           (select ${d.castInt(sql`count(*)`)} from messages m
-            where ${ownedMessages(ctx.accountId, "m")} and ${datedKey(d, "m")} >= v.lo and ${datedKey(d, "m")} < v.hi) as c,
-          (select max(${datedKey(d, "m")}) from messages m
-            where ${ownedMessages(ctx.accountId, "m")} and ${datedKey(d, "m")} >= v.lo and ${datedKey(d, "m")} < v.hi) as d
+            where ${ownedMessages(ctx.accountId, "m")} and ${keyOf(d, "m")} >= v.lo and ${keyOf(d, "m")} < v.hi and not ${undatedIn("m")}) as c,
+          (select max(${keyOf(d, "m")}) from messages m
+            where ${ownedMessages(ctx.accountId, "m")} and ${keyOf(d, "m")} >= v.lo and ${keyOf(d, "m")} < v.hi and not ${undatedIn("m")}) as d
         from v
       ) g
       where g.c > 0`);

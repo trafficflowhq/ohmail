@@ -294,6 +294,13 @@ export class PagedWalk<A> {
 
 const keysetOf = (m: EngineMessage): StoreKeyset => storeKeyOf(m);
 
+/**
+ * THE ANCHOR A NEXT PAGE IS ASKED BELOW: the row's HEADER date and its id. A server with the arrival
+ * key positions the page on the named row's own key and ignores the date; a server from before it
+ * pages by the header date, which is then the right one — so neither version skips or repeats.
+ */
+const anchorOf = (m: EngineMessage): StoreKeyset => ({ date: m.date ?? null, id: m.id });
+
 /** Does `m` sort before position `k` in the store's order — `key desc, id desc` ({@link storeKeyOf}). */
 function newerThan(m: EngineMessage, k: StoreKeyset): boolean {
   const a = storeInstantOf(m);
@@ -346,7 +353,7 @@ export class StoreTimelineWalker {
         .then((out): PageAnswer<StoreKeyset> => (out.state === "ready" ? { state: "ready", items: out.items, next: null }
           : out.state === "failed" ? { state: "failed", errorClass: out.errorClass } : { state: "unavailable" })),
       peek: (a) => engine.peekStorePage("all", a ? { before: a } : {}),
-      anchorOf: keysetOf,
+      anchorOf,
     }, {
       clock,
       rev: this.signal.revision,
