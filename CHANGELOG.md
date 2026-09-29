@@ -145,6 +145,29 @@ the same arrival order the lists show, so a message with an old or a future date
 pages away from where the list put it. History is in arrival order now; every message still shows
 its own date.
 
+### A failed read no longer takes the way to subscribe away
+<!-- changes: fix-026-payment-door.md -->
+
+If the Subscription entry in Settings could not be loaded when ohmail opened, it now comes back on
+its own the next time you return to the app, on the web and in the desktop app. A Subscribe press on
+the trial or payment note that cannot open the account page now says why. After a renewal, the note
+that ohmail is catching up on mail from the closure is shown on the web and on the phone even when
+organizing had already resumed before you opened ohmail. The desktop app does not show it yet.
+
+### A file fault says which side failed, and a tracking pixel is recognised in every picture format
+<!-- changes: fix-026-fault-tracker-named.md -->
+
+- A file from a mailbox that is not signed in here says so and offers no Try again; a send from it
+  ends at once with the same sentence.
+- A file from a mail server that took the connection and then would not serve it, or refused the
+  request after the sign-in, says the server isn't serving the mailbox right now and offers Try
+  again.
+- A file that failed on ohmail's side offers no Try again.
+- A tracking pixel is recognised in every picture format the image proxy serves, and a tracker's
+  address is matched however it is spelled. An AVIF branded as a still picture is sized by its
+  primary image, even when a track follows it. The help page, the FAQ and the tracking pixel setting
+  say that a disguised pixel loads each time a message's pictures are fetched.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
