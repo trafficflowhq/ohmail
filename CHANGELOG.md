@@ -18,6 +18,222 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.25.6] — 2026-09-30
+
+### The AI call log is complete again
+<!-- changes: plane-026-ai-usage.md -->
+
+The worker writes one `ai_call` log line per model call again. The estimated cost in that line
+prices Anthropic's Sonnet 5 model at $2 per million input tokens and $10 per million output
+tokens.
+
+### Edits made during a takeover reach the mailbox
+<!-- changes: fix-026-edits-follow-takeover.md -->
+
+After "Organize here instead", a rule, an away reply, a screening choice or a dormancy window
+changed before the new claim lands is written on the install taking over, and that install's
+settings reach `ohmail/_meta` beside the ones the previous install left, which stay until you answer
+the import question. A decision refused by the install that organizes a mailbox now says why on the
+device that made it instead of timing out. On a phone, a stop that waits on a copy of the phone's
+claim says so, and a holder that let the mailbox go is no longer named.
+
+### A browser sign-in in the desktop app waits through a closed window
+<!-- changes: fix-026-doors-say.md -->
+
+Signing in to ohmail Cloud with the browser from the desktop app kept waiting only while the sign-in
+screen stayed open; closing or reopening it lost the wait and a confirmation made afterwards signed
+nothing in, and starting it from Settings opened no browser page at all. The page now opens, the
+screen picks the wait up again when it opens, and it says when the request was declined or has run
+out. A request stopped with Back or Cancel before it is confirmed in the browser stays stopped.
+
+### Refused and blocked states say what happened
+<!-- changes: fix-026-doors-say.md -->
+
+The "account not active" screen says why a sign-out did not finish, in the browser and in the
+desktop app. The desktop app's keyring card has a Try again for after the keyring is unlocked. A
+mailbox whose saved password the desktop app cannot use says so instead of "the mail server is not
+available", and sending from a mailbox set to a port that carries no mail names the port and where
+to change it.
+
+### Signing in again asks before sending a password unencrypted
+<!-- changes: fix-026-doors-say.md -->
+
+On a mail server that offers no encryption, "Sign in again" in the desktop app now shows the same
+consent as adding the mailbox, and the consent does not carry over to a server changed before the
+next press. A password can no longer be set on a mailbox that signs in with Microsoft.
+
+### Setup, Settings and a press follow what the app already knows
+<!-- changes: fix-026-doors-say.md -->
+
+The setup screen's first pull ends when the status bar stops saying the mailbox is importing. A
+browser paired to a computer lists the settings answered "Not now" under Settings → Mailboxes. A
+change to your mail made while the web session renews and the server is briefly unavailable is kept
+and sent again, not refused; any other action taken then, a button under Settings → Mailboxes
+included, says the sign-in could not be checked, and the browser page that confirms a desktop
+sign-in says to reload it. A picture shown in a message is not kept for the next sign-in in a
+browser that ignores the sign-out's cache clearing.
+
+### Search on the phone finds the other forms of a word
+<!-- changes: fix-026-search-reach.md -->
+
+On a phone that keeps its mail, a search for "delivery" finds "deliveries" and "running" finds
+"runs", as ohmail Cloud and the desktop do. The phone rebuilds its search index once after the
+update.
+
+### Search says where it looks for part of a word
+<!-- changes: fix-026-search-reach.md -->
+
+A search for part of a word that finds nothing, or only its closest words, says that parts inside a
+word are looked for in subjects, senders, recipients and attachment names, not in the message text.
+
+### Search keeps saying "synced so far" through a long first import
+<!-- changes: fix-026-search-reach.md -->
+
+A first import still fetching mail more than a day after the mailbox was added is searched as the
+mail synced so far, not as the whole mailbox. A closest-words count says "at least" until it is
+exact.
+
+### The first search results on a device match what the full search finds
+<!-- changes: fix-026-search-reach.md -->
+
+A hyphenated word such as D-U-N-S is found as written and by its parts on every device. Its parts
+run together (DUNS) no longer match it in the first results only to disappear when the full search
+answers.
+
+### The phone app no longer closes when the outgoing server refuses the settings, or when you stop and remove a mailbox
+<!-- changes: fix-026-phone-outlives.md -->
+
+On a phone organizing its own mailbox, a Connect whose outgoing server refused the settings ended
+the app instead of naming the outgoing server on the form, and so did Stop and remove once mail had
+arrived. The form now says what the outgoing server refused, the password it had just stored is
+removed, and Stop and remove returns to the choice of how to organize.
+
+### On ohmail Cloud, pictures in older messages are no longer listed as files
+<!-- changes: fix-026-inline-pictures.md -->
+
+On ohmail Cloud, a picture that an older message's text displays is no longer counted by the
+paperclip or listed in Files; it keeps its "embedded" tile beside the message. Self-hosted servers
+and the desktop and phone apps' own stores keep listing such pictures in mail stored before this
+release.
+
+### The Screener places mail by the same rules everywhere
+<!-- changes: fix-026-client-places.md -->
+
+A rule that looks at a message's subject or text now places that message in the browser, the
+desktop and the phone where the mailbox files it. While a message's text has not arrived, it stays
+where the mailbox has it and the Screener says a rule of yours may still move it, instead of
+guessing. Screening a sender moves only the mail the list will show in its new place. A conversation
+brought back to the top keeps its replies with it in New for you and in Power Through. Previews of
+held mail in the Screener load first, and the phone on its own learns who you write to.
+
+### Held mail from your contacts can be let in
+<!-- changes: fix-026-client-places.md -->
+
+Mail from somebody in your contacts that is waiting in the Screener with no rule is offered with the
+rest of your held mail, one line per person. Releasing it lets that person into your Ohbox; the
+mail follows in your mailbox when it next syncs. A held-mail offer you dismissed comes back only for
+mail that arrives after the dismissal.
+
+### Put back what the Screener filed on its own
+<!-- changes: fix-026-client-places.md -->
+
+With automatic filing on, Settings in the browser and on the phone lists the mail the Screener
+filed out on its own. Put back returns a message to the Screener, in your mailbox when it next
+syncs, and nothing automatic files it again.
+
+### Stored-mail counts on the desktop, and arrival order below the list
+<!-- changes: fix-026-mirror-counts.md -->
+
+A desktop signed in to ohmail Cloud whose own copy could not store some of your account's mail
+says how many items could not be stored, in the sync line and in both Settings panes, and says
+when that is more than Sync now can retry; it no longer calls that state "Not connecting". Older
+mail loaded below a list, History and its month rail, and a new device's first sync now follow
+the same arrival order the lists show, so a message with an old or a future date is no longer
+pages away from where the list put it. History is in arrival order now; every message still shows
+its own date.
+
+### A failed read no longer takes the way to subscribe away
+<!-- changes: fix-026-payment-door.md -->
+
+If the Subscription entry in Settings could not be loaded when ohmail opened, it now comes back on
+its own the next time you return to the app, on the web and in the desktop app. A Subscribe press on
+the trial or payment note that cannot open the account page now says why. After a renewal, the note
+that ohmail is catching up on mail from the closure is shown on the web and on the phone even when
+organizing had already resumed before you opened ohmail. The desktop app does not show it yet.
+
+### A file fault says which side failed, and a tracking pixel is recognised in every picture format
+<!-- changes: fix-026-fault-tracker-named.md -->
+
+- A file from a mailbox that is not signed in here says so and offers no Try again; a send from it
+  ends at once with the same sentence.
+- A file from a mail server that took the connection and then would not serve it, or refused the
+  request after the sign-in, says the server isn't serving the mailbox right now and offers Try
+  again.
+- A file that failed on ohmail's side offers no Try again.
+- A tracking pixel is recognised in every picture format the image proxy serves, and a tracker's
+  address is matched however it is spelled. An AVIF branded as a still picture is sized by its
+  primary image, even when a track follows it. The help page, the FAQ and the tracking pixel setting
+  say that a disguised pixel loads each time a message's pictures are fetched.
+
+### Forwarding a message that is only attachments sends it with them
+<!-- changes: fix-026-forward-sends.md -->
+
+Forwarding a scanned PDF, a photo sent without words or a message attached as a file no longer
+fails with "The original could not be loaded"; it goes out with every attachment. An older message
+whose stored copy was dropped under the storage limit, and a message in Junk, forward with their
+text read from your mailbox when you send. On the phone, a forward that is still refused says why.
+
+### Builds install the dependency versions that were tested
+<!-- changes: fix-026-published-build-tested-tree.md -->
+
+The desktop apps, the Android app and the self-host images are now built from the dependency
+versions the project is tested with. Before, the published lockfile was resolved from the package
+registry each time a release was published, so a build could pick up newer releases of indirect
+dependencies than the ones that were tested, among them native modules of the Android app. These
+builds also run no dependency install scripts.
+
+### Who organizes your mailboxes is said once, at the foot of the sidebar
+<!-- changes: fix-026-notice-steps-aside.md -->
+
+Nothing is said any more when this install starts organizing a mailbox, so reopening a paused
+account no longer stacks a line per mailbox over the Ohbox. When another install takes a mailbox
+over, or the one organizing it stops, a short note stands at the foot of the sidebar (above the top
+bar on a narrow window), several mailboxes behind a count; Mark read clears it on every device, and
+it comes back only for a new change.
+
+### Forward stands beside Reply on the message bar
+<!-- changes: fix-026-notice-steps-aside.md -->
+
+On the web and desktop apps Forward is always on the message bar beside Reply, at every window
+width; it was only in the More menu on a narrow window or a phone. On the narrowest screens Forward
+and then Reply show just their icon rather than run off the bar.
+
+### A first mailbox without encryption, set up on the first launch
+<!-- changes: fix-026-first-door.md -->
+
+On the first launch of the desktop app, "On this computer" now shows why a mail server on your own
+network that offers no encryption was refused and offers the same consent line as adding a mailbox,
+instead of opening the app over a mailbox with no password. With the line ticked, the mailbox is
+connected and syncs. A "Sign in again" that the mail server refuses no longer keeps the refused
+password in use, and the status bar says when a mailbox has no password instead of "Connected".
+Setup asks about the mailbox just connected, and with several mailboxes connected, "Run setup again"
+and the setup link on the web ask which mailbox the setup is for.
+
+### The phone no longer signs itself out after a display, font or language change
+<!-- changes: fix-026-one-bearer.md -->
+
+The phone no longer signs itself out after a display-size, font-size or language change, or after
+being closed while it was renewing its session.
+
+### The phone keeps up with a large mailbox
+<!-- changes: phone-026-fast-and-fits-on-a-foldable.md -->
+
+On a large mailbox the phone app no longer redraws its lists after every sync when nothing changed,
+so taps take effect at once instead of after several seconds. On a foldable's cover screen and at
+large display sizes nothing is cut off: destinations without room move into More, the reader keeps
+Reply and Forward on its bar, a reply stays open and above the keyboard when you fold or unfold the
+phone, and the lists move on to the new day at midnight without a sync.
+
 ## [0.25.5] — 2026-09-29
 
 ### Large sync changes arrive in pages, and a desktop on Cloud logs the writes it sends
@@ -153,11 +369,10 @@ built with the mail sender's fix the same way.
 <!-- changes: fix-026-one-settings-message.md -->
 
 ohmail keeps one settings message per mailbox in `ohmail/_meta` and removes the older copies, its
-own and the ones other ohmail installs left behind, a hundred at a time. While ohmail asks you about
-settings another install left there, that install's message stays beside this one until you answer.
-Where a server refuses to delete, one older copy of its own can stay beside them until it can be
-removed. Before, on servers that answer ohmail's search for these messages with nothing, every
-settings change added a copy that other mail apps showed and found in searches.
+own and the ones other ohmail installs left behind, a hundred at a time. Where a server refuses to
+delete, the folder holds two at most. Before, on servers that answer ohmail's search for these
+messages with nothing, every settings change added a copy that other mail apps showed and found in
+searches.
 
 ### A full ohmail/_meta folder no longer stops organizing
 <!-- changes: fix-026-the-lease-reads-every-claim.md -->
@@ -10453,7 +10668,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.5...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.6...HEAD
+[0.25.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.6
 [0.25.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.5
 [0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
 [0.25.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.3
