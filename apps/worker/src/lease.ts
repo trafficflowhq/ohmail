@@ -2,8 +2,8 @@ import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, LeaseClockSkewError, META_FOLDER, clockSkewBoundMs,
   ClaimReleaseError,
-  isMalformed, parseClaim, runLeaseGate, sameMetaStamp,
-  type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type MetaBaselineReading,
+  isMalformed, parseClaim, peekLease, runLeaseGate, sameMetaStamp,
+  type ClaimRecord, type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type MetaBaselineReading,
   type MetaFolderStamp,
   type OrganizerClaim,
   type RawClaimMessage,
@@ -134,7 +134,7 @@ export function hasLeaseIo(adapter: MailboxAdapter): adapter is MailboxAdapter &
  * A caller that only wants to look must not be able to reach the writing one by accident.
  */
 export interface LeasePeekCapableAdapter {
-  leasePeekIo(): { listClaims(): Promise<{ ref: unknown; raw: string }[]> };
+  leasePeekIo(): { listClaims(): Promise<RawClaimMessage[]> };
 }
 
 /**
@@ -522,14 +522,12 @@ export class OrganizerStandDownError extends Error {
 export const DEFAULT_PERMIT_TTL_MS = 60 * 1000;
 
 /**
- * The shortest a permit may be — a CORRECTNESS floor, not a cost one. Two gate runs in the same
- * millisecond make an organizer stand ITSELF down: measured 2026-09-01 with `runLeaseGate` ALONE, one
- * run in three, the second answering `stand_down` against a folder holding one claim, OUR OWN, bearing
- * the nonce we passed as `lastNonce` — and a stand-down RELEASES our claims, so the folder is left
- * EMPTY. The trigger is the shared instant (a renew appends a claim whose `heartbeat` and `claimedAt`
- * equal the one it replaces, separable only by nonce), and it did not reproduce with the clock advanced
- * thirty seconds. NOTHING IN PRODUCTION reaches it, and this permit is the first caller that could run
- * the gate twice in a millisecond — the floor is here rather than an engine edit to a decision table.
+ * The shortest a permit may be — the BELT behind the engine's fix, never the fix. Two gate runs in
+ * one millisecond once made an organizer stand ITSELF down and empty the folder, one run in three
+ * (measured 2026-09-01). The MECHANISM that closes it is the gate's confirm, which no longer reads
+ * this install's own superseded claim as a clone (`supersededOwn` in `runLeaseGate`): 0 of 300
+ * same-instant pairs stand down with it, 147 of 300 without it, measured 2026-09-29.
+ * This floor keeps a caller from asking for the same instant anyway.
  */
 export const MIN_PERMIT_TTL_MS = 1000;
 
@@ -592,20 +590,19 @@ export async function assertNoLiveTwin(input: {
       { op: "list_claims", cause: err },
     );
   }
-  const twin = messages
-    .map((m) => parseClaim(m.raw, m.ref))
-    .find((c): c is OrganizerClaim =>
-      c !== null && !isMalformed(c) && c.installId === installId
-      // Absolute — measured from `now`, not the newest heartbeat in the folder. That is the entire
-      // difference between this and the engine's own liveness, and the reason this function exists. NO
-      // FORWARD CLAMP, deliberately: one was written first, mirroring `decideLease`'s
-      // `Math.min(heartbeat, now + MAX_FUTURE_SKEW_MS)`, and a mutation proved it could not change an
-      // outcome (`min(h, now) > now - stale` is true exactly when `h > now - stale`) — a redundant
-      // guard reads as a protection somebody relies on. The engine needs its clamp because a
-      // future-dated claim could wrongly WIN an election there; here the untruthful direction is already
-      // safe. The cost, stated: a claim stamped in 2099 wearing this id makes this refuse for ever
-      // (fail-SAFE — nothing writes), the same exposure `decideLease`'s `plausible` gate answers.
-      && c.heartbeat.getTime() > now.getTime() - staleAfterMs);
+  /* THE ENGINE'S ONE PREDICATE, ON THE SERVER'S CLOCK (LEASE-TWIN-CHECK-OFF-PREDICATE): parsed with
+     INTERNALDATE as the gate and the peek parse, and asked `peekLease`'s own per-holder `fresh`,
+     so a 2099 stamp is no evidence of a live twin and a live unrankable record wearing our id
+     still refuses. `fresh` reads the reader's clock against the server's stamp; this CLI runs on the
+     worker's host, whose clock the worker's own gate holds within a quarter window while it is
+     live, and a live worker's newest stamp is at most a TTL plus a poll old — far inside the window. */
+  const claims = messages
+    .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
+    .filter((c): c is ClaimRecord => c !== null);
+  const holder = peekLease({ claims, now, staleAfterMs }).holders.find((h) => h.installId === installId);
+  const twin = holder?.fresh === true
+    ? claims.find((c): c is OrganizerClaim => !isMalformed(c) && c.installId === installId)
+    : undefined;
 
   if (!twin) return;
   throw new OrganizerStandDownError({
@@ -677,9 +674,19 @@ export interface PermitIdentity {
   readonly issuedAt: Date;
 }
 
-export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
-  /** The clock, injectable so a test can drive the TTL without sleeping. */
-  now?: () => Date;
+/**
+ * THE PERMIT'S TWO CLOCKS, supplied as a PAIR or not at all: the wall one for reporting and for
+ * a suspend, the monotonic one (milliseconds, `performance.now()`'s unit) for a clock stepped back.
+ * A default mono beside an injected wall would be a real clock under a fake one — a dependency no
+ * test controls — so the type admits both or neither, and {@link acquireLeasePermit} refuses one.
+ */
+export type PermitClocks =
+  | { now?: undefined; monotonic?: undefined }
+  | { now: () => Date; monotonic: () => number };
+
+export type LeasePermitInput = LeasePermitOptions & PermitClocks;
+
+export interface LeasePermitOptions extends Omit<MailboxLeaseInput, "now"> {
   /**
    * See {@link DEFAULT_PERMIT_TTL_MS}. Clamped UP to {@link MIN_PERMIT_TTL_MS} — a shorter permit
    * is not "more careful", it is the same-instant re-entry that arm's docblock measures.
@@ -733,21 +740,42 @@ export function leaseStoodDown(authority: OrganizerWriteAuthority): boolean {
 }
 
 /**
- * TAKE THE LEASE, AND KEEP A DATED RECEIPT FOR IT.
- *
- * Throws {@link OrganizerStandDownError} when the mailbox is already somebody else's — so a caller
- * that forgets to handle the refusal fails loudly rather than sweeping on, which is the direction
- * an operator CLI's error handling should fail in.
+ * The permit's clock pair: both injected, or the wall and `performance.now()`. One injected alone
+ * is refused, and so is a runtime with no monotonic clock — a wall-only age is the defect this
+ * pair exists to close, so it is never the fallback.
+ */
+function permitClocksOf(input: PermitClocks): { wall: () => Date; mono: () => number } {
+  if (input.now !== undefined && input.monotonic !== undefined) return { wall: input.now, mono: input.monotonic };
+  if (input.now !== undefined || input.monotonic !== undefined) {
+    throw new Error("acquireLeasePermit: `now` and `monotonic` are one pair; supply both or neither");
+  }
+  const perf = (globalThis as { performance?: { now?: () => number } }).performance;
+  if (typeof perf?.now !== "function") {
+    throw new Error("acquireLeasePermit: this runtime has no performance.now(), so a permit's age has no clock a step back cannot move");
+  }
+  return { wall: (): Date => new Date(), mono: (): number => perf.now!() };
+}
+
+/**
+ * TAKE THE LEASE, AND KEEP A DATED RECEIPT FOR IT. Throws {@link OrganizerStandDownError} when the
+ * mailbox is somebody else's, so a caller that forgets the refusal fails loudly.
+ * THE RESTART BOUND: the receipt is process memory and no monotonic reading crosses a restart. A
+ * restarted process holds no receipt until the gate admits one, and the gate ages claims by the
+ * server's INTERNALDATE and refuses a skewed writer — so across a restart the residual is the
+ * gate's one cycle (FIRST-GATE-SKEW-HOLE), not this permit's. A VM restore that reverts both clocks
+ * and memory is bounded by the folder stamp at the first write boundary, and by nothing on a
+ * connection that cannot stamp (`lease_permit_unstamped`).
  */
 export async function acquireLeasePermit(input: LeasePermitInput): Promise<LeasePermit> {
-  const clock = input.now ?? ((): Date => new Date());
+  const { wall: clock, mono } = permitClocksOf(input);
   const ttlMs = Math.max(input.ttlMs ?? DEFAULT_PERMIT_TTL_MS, MIN_PERMIT_TTL_MS);
   // The window a peer reads our claim fresh in, less the skew it may carry — see `standing()`.
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   const heldForMs = staleAfterMs - clockSkewBoundMs(staleAfterMs);
   const writesPerRecheck = Math.max(input.writesPerRecheck ?? PERMIT_WRITES_PER_RECHECK, 1);
   const base = { ...input };
-  delete (base as Partial<LeasePermitInput>).now;
+  delete (base as Partial<LeasePermitOptions & { now: unknown; monotonic: unknown }>).now;
+  delete (base as Partial<LeasePermitOptions & { now: unknown; monotonic: unknown }>).monotonic;
   delete (base as Partial<LeasePermitInput>).ttlMs;
   delete (base as Partial<LeasePermitInput>).writesPerRecheck;
   delete (base as Partial<LeasePermitInput>).adopt;
@@ -766,6 +794,8 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
    */
   let pendingNonce: string | null = input.self.pendingNonce ?? null;
   let verifiedAt: Date;
+  /** `mono()` at the same look as `verifiedAt` — the second source {@link permitAge} reads. */
+  let monoAt: number;
   let issuedAt: Date;
   let uidValidity: number | bigint | null = null;
   let reads = 0;
@@ -788,13 +818,12 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   let stamp: MetaFolderStamp | null = null;
   let unstampedSaid = false;
   /**
-   * THE BASELINE IS THE CLAIM'S OWN READING, AND NEVER A LATER ONE. It comes from {@link
-   * MailboxLeaseOutcome.stamp} — the GATE's, taken in the act that admitted the claim and proved
-   * against it by nonce — so anything later is OUTSIDE the baseline, which is what makes the first
-   * write boundary probe it. Said once per permit; a connection that cannot stamp keeps the bound
-   * it had, named rather than silent. A LOST CUSTODY IS A STAND-DOWN HERE, not a bound to ride out:
-   * the permit is revoked before it is granted and no write boundary is reached, so the mailbox is
-   * left as the winner wrote it. The TTL and the write count stay a backstop behind this.
+   * THE BASELINE IS THE CLAIM'S OWN READING, AND NEVER A LATER ONE: the gate's {@link
+   * MailboxLeaseOutcome.stamp}, proved against the claim by nonce, so anything later is outside it
+   * and the first write boundary probes it. A LOST CUSTODY IS A STAND-DOWN, revoked before the
+   * permit is granted. THE RULED BOUND (LEASE-UNPROVEN-BASELINE-FALLS-BACK-TO-THE-PERMIT-BOUND): a
+   * baseline that could not be proved, or a connection that cannot stamp, leaves the permit on its
+   * TTL and write count, named once (`lease_permit_unstamped`) — could-not-look, never held.
    */
   let baselineStamped = false;
   const takeBaseline = async (reading: Promise<MetaBaselineReading>): Promise<void> => {
@@ -851,8 +880,18 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     }
   };
 
+  /**
+   * HOW OLD THIS RECEIPT IS — ONE reading, for `standing()` and `check()` alike. The larger of the
+   * wall and monotonic deltas: a wall clock stepped back cannot shrink the monotonic one, and a
+   * suspend (which CLOCK_MONOTONIC does not count) still moves the wall one, so neither lengthens
+   * the receipt. A forward wall step only expires it early — one extra gate.
+   */
+  const permitAge = (): number =>
+    Math.max(clock().getTime() - verifiedAt.getTime(), mono() - monoAt);
+
   const read = async (): Promise<void> => {
     const at = clock();
+    const monoRead = mono();
     reads++;
     // A read that THROWS leaves every field below untouched, which is the wanted behaviour: an
     // unreadable lease is not a stand-down (both call sites exempt `LeaseUnavailableError` by
@@ -889,6 +928,7 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
        value: a pending nonce left standing would name a record this renew has just superseded. */
     pendingNonce = null;
     verifiedAt = at;
+    monoAt = monoRead;
     writesSinceRead = 0;
     // THE ROW FOLLOWS THE CLAIM: the caller's record of this becoming is issued between the
     // verified claim and the probe, with nothing awaited in front of it. See
@@ -908,6 +948,8 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     lastNonce = input.adopt.outcome.nonce;
     pendingNonce = null;
     verifiedAt = input.adopt.at;
+    // The adopted look is older than this call by the wall delta, never by less than nothing.
+    monoAt = mono() - Math.max(0, clock().getTime() - input.adopt.at.getTime());
     reads = 1;
     // An ADOPT caller decided before it called, so its hook runs at entry rather than at the
     // decision — no later than this permit's first await, which is what the invariant needs, and
@@ -948,7 +990,7 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     standing(): "held" | "stale" | "revoked" {
       if (revoked) return "revoked";
       // `verifiedAt` IS the heartbeat: every read that admitted renewed the claim at that instant.
-      return clock().getTime() - verifiedAt.getTime() >= heldForMs ? "stale" : "held";
+      return permitAge() >= heldForMs ? "stale" : "held";
     },
     async check(): Promise<void> {
       if (revoked) {
@@ -966,7 +1008,7 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
       // stale receipt, and a takeover landing exactly on it is missed for another whole TTL.
       // `lease-permit.test.ts` drives the clock to exactly `ttlMs` and to exactly the write count,
       // and both cases fail if either comparison is loosened.
-      const stale = clock().getTime() - verifiedAt.getTime() >= ttlMs;
+      const stale = permitAge() >= ttlMs;
       const worked = writesSinceRead >= writesPerRecheck;
       if (stale || worked) {
         await read();

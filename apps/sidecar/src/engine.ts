@@ -418,6 +418,11 @@ export interface SidecarConfig {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   /**
+   * The monotonic clock the organizer permit reads beside `now` (`performance.now()`'s unit).
+   * Absent means `performance.now()`; the permit refuses a runtime that has neither.
+   */
+  monotonic?: () => number;
+  /**
    * How this install names itself in the organizer claim it writes to `ohmail/_meta`.
    *
    * The takeover prompt in Cloud's connect flow reads `ohmail on <machine> organizes this
@@ -5101,6 +5106,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // beside a fixed believability cutoff is silently the smaller of the two.
           leasePermit = await acquireLeasePermit({
             ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now,
+            monotonic: config.monotonic ?? ((): number => performance.now()),
             /* ── A RENEWAL THIS INSTALL PERFORMED IS THIS INSTALL'S CLAIM ─────────────────
              *
              * The permit re-reads past its deadline or its write count, and a re-read RENEWS:

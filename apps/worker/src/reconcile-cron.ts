@@ -327,9 +327,7 @@ export async function runReconcileCron(
           // Cloud claim has gone stale.
           lastNonce: null,
         },
-        // A FUNCTION, not an instant. The permit re-reads past its TTL and needs the clock at the
-        // moment it asks, not the clock at the moment this pass started.
-        now: () => new Date(),
+        // No clock handed over: the permit reads the wall and the monotonic clock itself, as a pair.
         // The instant, not a flag (0.14.1) — the election ranks one press against another, so the
         // row's own stamp travels unchanged. See `mayOrganize` in `index.ts`.
         // AND THE VERB — see `index.ts`'s gate. The backstop runs the same fence, so it has to
