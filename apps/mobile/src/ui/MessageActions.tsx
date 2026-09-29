@@ -123,7 +123,7 @@ type Open =
   | { compose: "reply" | "replyAll" | "forward"; confirmed?: boolean };
 
 /** The ask's reason, read at render time so it follows the app's language. */
-function forwardAskSentence(ask: ForwardAsk): string {
+export function forwardAskSentence(ask: ForwardAsk): string {
   switch (ask) {
     case "otp": return Copy.forwardAskOtp;
     case "verification": return Copy.forwardAskVerification;
@@ -1158,8 +1158,10 @@ export function ComposeSheet({
     if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen) return;
     const timer = setTimeout(() => {
       saved.current = onScreen;
+      /* A forward draft is saved as a forward of its original, never as a new mail. */
       void w.actions.draftKeep({
-        mode: "new", messageId: null, mailboxId, to: keptRecipients(to), subject, body, files: 0, draftId, quiet: true,
+        mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
+        mailboxId, to: keptRecipients(to), subject, body, files: 0, draftId, quiet: true,
       });
     }, DRAFT_AUTOSAVE_MS);
     return () => clearTimeout(timer);

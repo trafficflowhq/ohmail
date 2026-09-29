@@ -1053,6 +1053,8 @@ export interface DraftDTO {
   mailboxId: string;
   threadId: string | null;
   inReplyToMessageId: string | null;
+  /** The message this draft forwards, exclusive with {@link inReplyToMessageId}. */
+  forwardOfMessageId: string | null;
   subject: string;
   /**
    * The text/plain body, authoritative for a plain draft.

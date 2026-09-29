@@ -1804,6 +1804,8 @@ export const drafts = sqliteTable("drafts", {
   sendError: text("send_error"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // The message this draft forwards, last because a device's ADD COLUMN appends it.
+  forwardOfMessageId: text("forward_of_message_id").references(() => messages.id),
 }, (t) => ({
   ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),
@@ -1815,6 +1817,10 @@ export const drafts = sqliteTable("drafts", {
   // Mail 0136, as the server twin declares it.
   ixAccountReply: index("drafts_account_reply_idx").on(t.accountId, t.inReplyToMessageId)
     .where(sql`${t.inReplyToMessageId} is not null`),
+  ckReplyXorForward: check(
+    "drafts_reply_xor_forward",
+    sql`${t.inReplyToMessageId} IS NULL OR ${t.forwardOfMessageId} IS NULL`,
+  ),
 }));
 
 // Migration 0013 — the gated idempotent send state machine. ONE row per (accountId,

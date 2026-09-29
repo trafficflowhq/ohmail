@@ -649,9 +649,9 @@ export type LanePromotion = "promoted" | "empty" | "unplaceable" | "refused";
 /**
  * PROMOTE, NEVER DROP — a half-written reply whose parent another mail client has taken away.
  *
- * The lane's scratch is read only by the editor that opens ON the parent, so a delete does not
- * remove the words: it makes them unreachable. This turns them into a draft row
- * carrying `inReplyToMessageId` of the dead id (legal: the FK is nullable, the delete is soft).
+ * The lane's scratch is read only by the editor that opens ON the parent, so a delete makes the
+ * words unreachable. This saves them as a draft naming the dead id as its reply target, or a forward
+ * lane's as its original (legal: the FKs are nullable, the delete is soft).
  *
  * THE ORDER IS THE INVARIANT: the lane clears after the row is confirmed and never before, so a
  * refusal leaves the text where it was — unreachable, as today, rather than gone.
@@ -661,7 +661,8 @@ export async function promoteOrphanedReplyLane(
   parentId: string,
   plan: LanePromotionPlan | null,
   save: (m: {
-    kind: "draft_save"; draftId: string | null; mailboxId: string; inReplyToMessageId: string;
+    kind: "draft_save"; draftId: string | null; mailboxId: string;
+    inReplyToMessageId?: string; forwardOfMessageId?: string;
     subject: string; body: string; html?: string;
     to: EmailAddress[]; cc: EmailAddress[]; bcc: EmailAddress[];
   }) => Promise<Pick<MutationResult, "status" | "entityId">>,
@@ -669,9 +670,13 @@ export async function promoteOrphanedReplyLane(
   const body = readReplyDraft(lane);
   if (body.text.trim().length === 0) return "empty";
   if (plan === null) return "unplaceable";
+  // A FORWARD LANE SAVES A FORWARD: its note names the original it forwards, never as
+  // the message it answers — that would thread a forward onto its original as a reply.
+  const forward = lane !== parentId;
   const result = await save({
     kind: "draft_save", draftId: plan.rowId,
-    mailboxId: plan.mailboxId, inReplyToMessageId: parentId,
+    mailboxId: plan.mailboxId,
+    ...(forward ? { forwardOfMessageId: parentId } : { inReplyToMessageId: parentId }),
     subject: plan.subject, body: body.text,
     ...(body.html ? { html: body.html } : {}),
     to: plan.to.map((a) => ({ ...a })), cc: plan.cc.map((a) => ({ ...a })), bcc: plan.bcc.map((a) => ({ ...a })),

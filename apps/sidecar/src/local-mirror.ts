@@ -138,6 +138,10 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
   await db.update(drafts)
     .set({ inReplyToMessageId: null })
     .where(and(isNotNull(drafts.inReplyToMessageId), inArray(drafts.inReplyToMessageId, ownMessages)));
+  // …and a forward drafted there of a message here: the note stays, the original goes.
+  await db.update(drafts)
+    .set({ forwardOfMessageId: null })
+    .where(and(isNotNull(drafts.forwardOfMessageId), inArray(drafts.forwardOfMessageId, ownMessages)));
 
   // ── THE MESSAGES' OWN CHILDREN ────────────────────────────────────────────────────────────
   await db.delete(messageTags).where(inArray(messageTags.messageId, ownMessages));

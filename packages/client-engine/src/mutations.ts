@@ -793,6 +793,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         // the In-Reply-To/References the server mints off that original.
         threadId: m.threadId ?? parent?.threadId ?? null,
         inReplyToMessageId: parent?.id ?? null,
+        forwardOfMessageId: m.forwardOf ?? null,
         subject: m.subject ?? (parent ? replySubject(parent.subject) : ""),
         body: m.body,
         to,
@@ -833,6 +834,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           mailboxId: m.mailboxId,
           threadId: m.threadId ?? null,
           inReplyToMessageId: m.inReplyToMessageId ?? null,
+          forwardOfMessageId: m.forwardOfMessageId ?? null,
           subject: m.subject,
           body: m.body,
           to: m.to,
@@ -864,6 +866,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           cc: m.cc,
           bcc: m.bcc,
           ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
+          ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
           updatedAt: iso,
         } satisfies EngineDraft,
       }];

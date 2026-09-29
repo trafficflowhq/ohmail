@@ -2078,7 +2078,7 @@ const TABLE = {
   /*
    * DRAFTS — what you started and have not sent, and what is known about a send this server
    * could not confirm. Every sentence below is the webapp catalogue's `drafts.*` word for word
-   * (`drafts-live.test.ts` holds both languages to it), except the five marked PHONE-ONLY, which
+   * (`drafts-live.test.ts` holds both languages to it), except the six marked PHONE-ONLY, which
    * say what this app does instead of a verb it does not have.
    */
   draftsTitle: "Drafts",
@@ -2101,7 +2101,7 @@ const TABLE = {
   draftsSendAgain: "Send again",
   draftsItWasSent: "It was sent — dismiss",
   /**
-   * PHONE-ONLY (5/5): Send again's question. The web opens the message in its editor, where Send
+   * PHONE-ONLY (5/6): Send again's question. The web opens the message in its editor, where Send
    * is the second press; this card has no editor, so the second press is asked here.
    */
   draftsSendAgainWhat: "Sends this message as it is.",
@@ -2122,26 +2122,32 @@ const TABLE = {
   draftsDiscardAwaitingOrganizer:
     "Asked for. The install that organizes this mailbox discards it on its next pass.",
   /**
-   * PHONE-ONLY (1/5): the row's own verb where this mirror holds the message the draft answers.
+   * PHONE-ONLY (1/6): the row's own verb where this mirror holds the message the draft answers.
    * The webapp opens the draft in its editor; this app has none, so the honest verb is the
    * conversation, where Reply is one press — and it is offered only where `liveDrafts` measured
    * the parent present, never as a promise about a message this device may not hold.
    */
   draftsOpenConversation: "Open the conversation",
   /**
-   * PHONE-ONLY (2/5): the stated degradation, said only on a draft this phone cannot take whole
+   * PHONE-ONLY (2/6): the stated degradation, said only on a draft this phone cannot take whole
    * (`draftEditOf`: Cc, Bcc, formatting, a send on record, or a text this mirror does not hold).
    */
   draftsEditNote:
     "This draft can't be edited here. Edit and send it from ohmail on the web or the desktop.",
+  /**
+   * PHONE-ONLY (6/6): a forward draft whose original this phone does not hold. The forward is sent
+   * from the original, so it is opened where the original is.
+   */
+  draftsForwardOriginalAbsent:
+    "The message this draft forwards isn't on this phone. Edit and send it from ohmail on the web or the desktop.",
   /** The Drafts card's verb: the composer opens bound to this row. */
   draftsEdit: "Edit",
   /** The card over a draft that left Drafts — sent, discarded or drained away while it was open. */
   draftsRowGone: "This draft is no longer in Drafts.",
-  /** PHONE-ONLY (3/5): the detail screen's heading over the text itself. */
+  /** PHONE-ONLY (3/6): the detail screen's heading over the text itself. */
   draftsTextHeading: "Message",
   /**
-   * PHONE-ONLY (4/5): a draft with nothing typed in it yet. The empty string is a KNOWN body
+   * PHONE-ONLY (4/6): a draft with nothing typed in it yet. The empty string is a KNOWN body
    * ({@link draftBodyKnown}), which is a different fact from a body this mirror never received —
    * `draftsBodyUnavailable` says that one — and collapsing the two is the distinction a recovery
    * surface may not lose.

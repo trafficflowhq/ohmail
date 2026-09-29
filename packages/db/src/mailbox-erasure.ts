@@ -86,6 +86,16 @@ export async function stampMailboxErasure(
       exists(tx.select({ one: sql`1` }).from(messages).where(and(
         eq(messages.id, drafts.inReplyToMessageId), eq(messages.mailboxId, mailboxId),
       ))),
+    ))) + n(await tx.update(drafts)
+    // …and a forward drafted there of a message here: its note stays, its original goes.
+    .set({ forwardOfMessageId: null })
+    .where(and(
+      eq(drafts.accountId, accountId),
+      ne(drafts.mailboxId, mailboxId),
+      isNotNull(drafts.forwardOfMessageId),
+      exists(tx.select({ one: sql`1` }).from(messages).where(and(
+        eq(messages.id, drafts.forwardOfMessageId), eq(messages.mailboxId, mailboxId),
+      ))),
     )));
   // THE RESPONSE CACHE, AT THE STAMP: a stored DTO is a second copy of a draft, and a retry
   // served it for as long as the sweep ran. From this commit a replay of THIS mailbox answers 410;
@@ -195,11 +205,15 @@ async function eraseMessages(
   const seqs = await recordChanges(tx, ids.map((id) => ({
     accountId, entityType: "message" as const, entityId: id, op: "delete" as const, meta: null,
   })));
-  // A reply drafted in a SIBLING mailbox after the stamp: it keeps its text, loses its anchor.
+  // A reply or a forward drafted in a SIBLING mailbox after the stamp: it keeps its text, loses its anchor.
   const draftsUnanchored = n(await tx.update(drafts).set({ inReplyToMessageId: null })
     .where(and(
       eq(drafts.accountId, accountId), ne(drafts.mailboxId, mailboxId),
       inArray(drafts.inReplyToMessageId, ids),
+    ))) + n(await tx.update(drafts).set({ forwardOfMessageId: null })
+    .where(and(
+      eq(drafts.accountId, accountId), ne(drafts.mailboxId, mailboxId),
+      inArray(drafts.forwardOfMessageId, ids),
     )));
   const decisions = tx.select({ id: routingDecisions.id }).from(routingDecisions).where(and(
     eq(routingDecisions.accountId, accountId), inArray(routingDecisions.messageId, ids)));

@@ -57,6 +57,14 @@ export class ScheduleService {
       if (d.status !== "draft" && d.status !== "scheduled") {
         throw new ServiceError("conflict", 409, `draft cannot be scheduled from status '${d.status}'`);
       }
+      // A FORWARD IS NOT AN APPOINTMENT: the pass sends with no reader clock and cannot
+      // stream the original's attachments, so the appointment would leave without what it forwards.
+      if (d.forwardOfMessageId !== null) {
+        throw new ServiceError(
+          "forward_not_schedulable", 409,
+          "a forwarded message cannot be scheduled; send it now",
+        );
+      }
 
       // The same two preconditions a send press has, refused while the user is still looking at
       // the message rather than at send time by a worker they cannot see. Both are re-checked

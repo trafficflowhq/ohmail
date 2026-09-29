@@ -4381,6 +4381,8 @@ export class OhmailEngine {
 
     for (const d of this.store.list<EngineDraft>("draft")) {
       if (d.inReplyToMessageId) pinned.add(d.inReplyToMessageId);
+      // …and the message it forwards: a kept forward opens only while its original is here.
+      if (d.forwardOfMessageId) pinned.add(d.forwardOfMessageId);
     }
     /**
      * EVERY PARK, THROUGH THE ONE FOLD. `winningStates` reads both wire homes — the standalone

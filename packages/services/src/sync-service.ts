@@ -1023,7 +1023,12 @@ export class SyncService {
     const repliedTo = inTail
       ? db.select({ id: drafts.inReplyToMessageId }).from(drafts).where(eq(drafts.accountId, accountId))
       : undefined;
-    const reachableTail = repliedTo !== undefined
+    // …and the message a draft forwards, for the same reason: the phone opens a kept
+    // forward only while its mirror holds the original.
+    const forwarded = inTail
+      ? db.select({ id: drafts.forwardOfMessageId }).from(drafts).where(eq(drafts.accountId, accountId))
+      : undefined;
+    const reachableTail = repliedTo !== undefined && forwarded !== undefined
       ? or(
         exists(
           db.select({ x: sql`1` }).from(messageTags).where(and(
@@ -1061,6 +1066,7 @@ export class SyncService {
            the client pins it, and the change that could bring it sits below the cursor. An
            uncorrelated IN, read once: `in_reply_to_message_id` has no index to probe per row. */
         inArray(messages.id, repliedTo),
+        inArray(messages.id, forwarded),
       )
       : undefined;
 

@@ -1807,6 +1807,7 @@ export class HttpAdapter implements EngineAdapter {
               mailboxId: m.mailboxId,
               threadId: m.threadId ?? null,
               inReplyToMessageId: m.inReplyToMessageId ?? null,
+              ...(m.forwardOfMessageId ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
               ...fields,
             },
             idempotencyKey: opts.idempotencyKey,
@@ -1852,7 +1853,11 @@ export class HttpAdapter implements EngineAdapter {
           // `mailboxId` rides the update too: the sending identity follows the From pick for
           // as long as the row is a draft (the server refuses the move past `draft`), so a
           // draft closed here and reopened on another device carries the pick with it.
-          body: { ...fields, ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}) },
+          body: {
+            ...fields, ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
+            // Absent leaves the row's own (the server's patch rule); `null` clears it.
+            ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
+          },
           idempotencyKey: opts.idempotencyKey,
         });
         if (!res.ok) throw await this.rejectionOf(res);
@@ -2039,6 +2044,8 @@ export class HttpAdapter implements EngineAdapter {
               // `draft`, so the send that follows dials the identity on screen rather than the
               // frozen one — the wrong-From incident this line exists to close.
               ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
+              // The original a forward sends, onto the row it sends.
+              ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
             },
           });
           return put.ok ? ((await put.json()) as PutEcho) : null;
@@ -2140,6 +2147,8 @@ export class HttpAdapter implements EngineAdapter {
           mailboxId: m.mailboxId,
           threadId: m.threadId ?? null,
           inReplyToMessageId: m.inReplyTo,
+          // The row a forward makes names its original, so a reopened copy still forwards it.
+          ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
           subject: m.subject ?? "",
           // ONE of the two, never both. `DraftsService` derives the text/plain alternative
           // from the sanitized html itself and refuses a request that carries a `body`
@@ -2230,10 +2239,10 @@ export class HttpAdapter implements EngineAdapter {
     // `status: 'scheduled'` and dials nothing; the server's scheduled-send pass runs the
     // ordinary gated send when the time comes.
     if (m.sendAt) {
-      // A draft row stores no attachment bytes and no forward reference (both ride the SEND
-      // request, deliberately — §13.2/§14), so an appointment cannot carry either. The compose
-      // surface disables the affordance for both cases; this is the same rule where it cannot
-      // be bypassed, refused before any request rather than after the row is marked.
+      // A draft row stores no attachment bytes (they ride the SEND request, §13.2/§14), and the
+      // scheduled pass cannot stream a forward's original, so an appointment carries neither. The
+      // compose surface disables the affordance for both; this is the same rule where it cannot be
+      // bypassed, refused before any request rather than after the row is marked.
       if ((m.attachments?.length ?? 0) > 0 || m.forwardOf) {
         this.forgetSendKey(idempotencyKey);
         throw new MutationRejectedError(

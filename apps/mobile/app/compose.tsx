@@ -6,13 +6,14 @@
  * a Modal over whatever was on screen, so leaving it is the same act everywhere: closing goes
  * back, and over a queued send the close withdraws it first (`ComposeSheet.closeComposer`).
  */
+import { useState } from "react";
 import { router, useLocalSearchParams } from "expo-router";
 import { Copy } from "../src/copy";
 import { useWorld } from "../src/state/world";
-import { Empty, Screen } from "../src/ui/base";
+import { Button, Empty, Screen } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
-import { ComposeSheet } from "../src/ui/MessageActions";
+import { ComposeSheet, forwardAskSentence } from "../src/ui/MessageActions";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
@@ -32,6 +33,8 @@ export default function ComposeScreen() {
 
 function ComposeBody() {
   const w = useWorld();
+  /** A kept forward of a `no_forward` original: the ask the reader asks, answered once here. */
+  const [confirmed, setConfirmed] = useState(false);
   /* `?draft=<id>`: the Drafts card's Edit — the sheet opens bound to that row, or not at all. */
   const { draft: draftParam } = useLocalSearchParams<{ draft?: string }>();
   const leave = () => {
@@ -59,10 +62,33 @@ function ComposeBody() {
         </Screen>
       );
     }
+    /* A FORWARD DRAFT OPENS AS A FORWARD of its original, which the send reads from this
+       mirror; one this phone does not hold is said, never opened as a plain mail. */
+    const original = row.edit.forwardOf !== null ? w.message(row.edit.forwardOf) : undefined;
+    if (row.edit.forwardOf !== null && !original) {
+      return (
+        <Screen>
+          <DetailBar title={Copy.draftsTitle} />
+          <Empty title={Copy.draftsTitle} hint={Copy.draftsForwardOriginalAbsent} />
+        </Screen>
+      );
+    }
+    if (original?.forwardAsk && !confirmed) {
+      return (
+        <Screen>
+          <DetailBar title={Copy.draftsTitle} />
+          <Empty title={Copy.forwardAskQuestion} hint={forwardAskSentence(original.forwardAsk)} />
+          <Button label={Copy.actionForward} variant="solid" onPress={() => setConfirmed(true)} />
+        </Screen>
+      );
+    }
     return (
       <Screen>
         <DetailBar title={Copy.draftsTitle} />
-        <ComposeSheet m={null} mode="new" draft={{ id: row.id, body: row.body, ...row.edit }} onClose={leave} />
+        <ComposeSheet
+          m={original ?? null} mode={original ? "forward" : "new"} forwardConfirmed={confirmed}
+          draft={{ id: row.id, body: row.body, ...row.edit }} onClose={leave}
+        />
       </Screen>
     );
   }

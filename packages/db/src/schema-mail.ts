@@ -1992,6 +1992,10 @@ export const drafts = pgTable("drafts", {
   sendError: text("send_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  // The message this draft FORWARDS, the exclusive peer of `in_reply_to_message_id` (a
+  // draft answers one message or forwards one, `drafts_reply_xor_forward`). The send reads it when
+  // the request names none, so a forward kept as a draft still carries its original.
+  forwardOfMessageId: uuid("forward_of_message_id").references(() => messages.id),
 }, (t) => ({
   ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),
@@ -2003,6 +2007,10 @@ export const drafts = pgTable("drafts", {
   // Mail 0136 — "is the user replying to this message?", asked per held row.
   ixAccountReply: index("drafts_account_reply_idx").on(t.accountId, t.inReplyToMessageId)
     .where(sql`${t.inReplyToMessageId} is not null`),
+  ckReplyXorForward: check(
+    "drafts_reply_xor_forward",
+    sql`${t.inReplyToMessageId} IS NULL OR ${t.forwardOfMessageId} IS NULL`,
+  ),
 }));
 
 // Migration 0013 — the gated idempotent send state machine. ONE row per (accountId,

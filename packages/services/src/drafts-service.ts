@@ -101,6 +101,11 @@ export interface CreateDraftBody {
   mailboxId: string;
   threadId?: string | null;
   inReplyToMessageId?: string | null;
+  /**
+   * The message this draft FORWARDS — its original, which the send quotes and whose
+   * attachments it carries. Exclusive with {@link inReplyToMessageId}: both set is a 400.
+   */
+  forwardOfMessageId?: string | null;
   subject?: string;
   /**
    * The text/plain body.
@@ -249,6 +254,8 @@ export class DraftsService {
     const bcc = this.validAddresses(body.bcc, "bcc");
     this.boundRecipientTotal([to, cc, bcc]);
     const rationale = body.rationale ?? null;
+    const forwardOf = body.forwardOfMessageId ?? null;
+    this.refuseReplyAndForward(body.inReplyToMessageId ?? null, forwardOf);
     const now = ctx.now();
 
     /* THROUGH THE SEAM, WITH THE MAILBOX. `validMailbox` above ran before this transaction — a
@@ -270,17 +277,19 @@ export class DraftsService {
         if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
       }
       await this.requireOwnedReplyTarget(tx, ctx, body.inReplyToMessageId ?? null);
+      await this.requireOwnedReplyTarget(tx, ctx, forwardOf, "forwarded message not found");
       const [row] = await tx.insert(drafts).values({
         accountId: ctx.accountId,
         mailboxId,
         threadId: body.threadId ?? null,
         inReplyToMessageId: body.inReplyToMessageId ?? null,
+        forwardOfMessageId: forwardOf,
         subject, body: text, html, to, cc, bcc, rationale,
         status: "draft",
         createdAt: now, updatedAt: now,
       }).returning({ id: drafts.id });
       const s = await this.recordDraftChange(
-        tx, ctx.accountId, row!.id, "create", body.inReplyToMessageId ?? null,
+        tx, ctx.accountId, row!.id, "create", body.inReplyToMessageId ?? forwardOf,
       );
       // The stored response commits atomically with the draft, closing the
       // commit-then-crash window in which a retry would store a SECOND draft.
@@ -351,6 +360,8 @@ export class DraftsService {
     this.boundRecipientTotal(patched);
     if (patch.threadId !== undefined) set.threadId = patch.threadId ?? null;
     if (patch.inReplyToMessageId !== undefined) set.inReplyToMessageId = patch.inReplyToMessageId ?? null;
+    if (patch.forwardOfMessageId !== undefined) set.forwardOfMessageId = patch.forwardOfMessageId ?? null;
+    this.refuseReplyAndForward(patch.inReplyToMessageId ?? null, patch.forwardOfMessageId ?? null);
 
     const seq = await asTx(ctx).transaction(async (tx) => {
       // A reply target moves FIRST, before the draft row is written: the FK check on the new
@@ -367,6 +378,7 @@ export class DraftsService {
         if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
       }
       await this.requireOwnedReplyTarget(tx, ctx, patch.inReplyToMessageId ?? null);
+      await this.requireOwnedReplyTarget(tx, ctx, patch.forwardOfMessageId ?? null, "forwarded message not found");
       /**
        * An attempt still on record FREEZES the words, for the reason it blocks the discard:
        * somebody may already hold a copy of exactly these words, and editing them would leave the
@@ -376,9 +388,25 @@ export class DraftsService {
        * the reversed order is a deadlock. A `FOR UPDATE`, not a plain read: only `FOR UPDATE`
        * serializes against `reserve`'s `FOR KEY SHARE`.
        */
-      const [locked] = await dialect(ctx.db).forUpdate(tx.select({ id: drafts.id }).from(drafts)
+      const [locked] = await dialect(ctx.db).forUpdate(tx.select({
+        id: drafts.id, inReplyToMessageId: drafts.inReplyToMessageId,
+        forwardOfMessageId: drafts.forwardOfMessageId, sendAt: drafts.sendAt,
+      }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
         .limit(1));
+      if (locked) {
+        // THE PAIR THE ROW WILL HOLD, read under its lock: a patch naming one side over a row
+        // holding the other is the same refusal as naming both, never the CHECK's 500.
+        const reply = patch.inReplyToMessageId !== undefined ? patch.inReplyToMessageId ?? null : locked.inReplyToMessageId;
+        const forward = patch.forwardOfMessageId !== undefined ? patch.forwardOfMessageId ?? null : locked.forwardOfMessageId;
+        this.refuseReplyAndForward(reply, forward);
+        if (forward !== null && locked.sendAt !== null) {
+          throw new ServiceError(
+            "forward_not_schedulable", 409,
+            "a forwarded message cannot be scheduled; cancel the schedule to forward it",
+          );
+        }
+      }
       if (locked && await this.sendOnRecord(tx, ctx.accountId, id)) {
         throw new ServiceError(
           "send_recorded", 409,
@@ -429,7 +457,7 @@ export class DraftsService {
       // target leaves whatever the row already named, which every client holding this draft
       // already knows about.
       return this.recordDraftChange(
-        tx, ctx.accountId, id, "update", patch.inReplyToMessageId ?? null,
+        tx, ctx.accountId, id, "update", patch.inReplyToMessageId ?? patch.forwardOfMessageId ?? null,
       );
     });
 
@@ -725,14 +753,24 @@ export class DraftsService {
    * delete.
    */
   private async requireOwnedReplyTarget(
-    tx: Tx, ctx: ServiceContext, messageId: string | null,
+    tx: Tx, ctx: ServiceContext, messageId: string | null, missing = "reply target not found",
   ): Promise<void> {
     if (!messageId) return;
     const m = await dialect(ctx.db).forUpdate(
       tx.select({ id: messages.id }).from(messages)
         .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId))),
       { mode: "key share" });
-    if (m.length === 0) throw new ServiceError("not_found", 404, "reply target not found");
+    if (m.length === 0) throw new ServiceError("not_found", 404, missing);
+  }
+
+  /** A draft answers one message or forwards one (`drafts_reply_xor_forward`), refused by name. */
+  private refuseReplyAndForward(reply: string | null, forward: string | null): void {
+    if (reply !== null && forward !== null) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        "a draft either answers a message or forwards one, not both",
+      );
+    }
   }
 
   private async refuseIfRich(ctx: ServiceContext, id: string): Promise<void> {

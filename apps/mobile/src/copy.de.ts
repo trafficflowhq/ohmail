@@ -1404,6 +1404,8 @@ export const DE: Deck = {
   draftsOpenConversation: "Unterhaltung öffnen",
   draftsEditNote:
     "Dieser Entwurf lässt sich hier nicht bearbeiten. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
+  draftsForwardOriginalAbsent:
+    "Die Nachricht, die dieser Entwurf weiterleitet, ist nicht auf diesem Telefon. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
   draftsEdit: "Bearbeiten",
   draftsRowGone: "Dieser Entwurf ist nicht mehr in den Entwürfen.",
   draftsTextHeading: "Nachricht",

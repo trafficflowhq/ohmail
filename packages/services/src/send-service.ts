@@ -1434,6 +1434,18 @@ export class SendService {
         );
       }
 
+      /* THE FORWARD THIS SEND CARRIES: the request's, else the row's, so a forward kept
+         as a draft leaves with its original whichever client sends it, and every reader below —
+         the thread parent, the no_forward gate, the quote, the fingerprint — reads this one value.
+         A request naming another original than the row holds is refused: one is not on screen. */
+      if (input.forwardOf && d.forwardOfMessageId && input.forwardOf !== d.forwardOfMessageId) {
+        throw new ServiceError(
+          "forward_mismatch", 409,
+          "This draft forwards a different message. Reopen it and send it again.",
+        );
+      }
+      const forwardOf = input.forwardOf ?? d.forwardOfMessageId ?? null;
+
       // THE RECIPIENT CAP, with the other NEW-RESERVATION preconditions. The three lists are on
       // the row this transaction already locked, so the total costs nothing — and this is the
       // first moment all three exist together: a partial update names one field and cannot know
@@ -1489,7 +1501,7 @@ export class SendService {
       // original. One parent lookup serves both, so the two can never mint different chains.
       let inReplyTo: string | undefined;
       let references: string | undefined;
-      const threadParentId = d.inReplyToMessageId ?? input.forwardOf ?? null;
+      const threadParentId = d.inReplyToMessageId ?? forwardOf;
       if (threadParentId) {
         const [parent] = await tx
           .select({ h: messages.messageIdHeader, root: threads.rootMessageIdHeader })
@@ -1542,13 +1554,13 @@ export class SendService {
        * html part come to disagree about whether the reader wrote anything.
        */
       const blankNote = d.body.trim().length === 0;
-      if (input.forwardOf) {
+      if (forwardOf) {
         const [orig] = await tx.select({
           id: messages.id, mailboxId: messages.mailboxId, noForward: messages.noForward,
           subject: messages.subject, fromAddress: messages.fromAddress, date: messages.date,
           locator: messages.nativeLocator,
         }).from(messages)
-          .where(and(eq(messages.id, input.forwardOf), eq(messages.accountId, ctx.accountId)))
+          .where(and(eq(messages.id, forwardOf), eq(messages.accountId, ctx.accountId)))
           .limit(1);
         if (!orig) throw new ServiceError("not_found", 404, "the message to forward was not found");
         // THE SENSITIVE-LEAK GATE. A `no_forward` message (an OTP, a reset link) is forwarded only
@@ -1677,7 +1689,7 @@ export class SendService {
         html: d.html ?? null,
         body: d.body,
         inReplyToMessageId: d.inReplyToMessageId ?? null,
-        forwardOf: input.forwardOf ?? null,
+        forwardOf,
         sendAt: d.sendAt ?? null,
         attachments: [
           // INLINE: the bytes are right here, decoded on the request, so they are digested. No

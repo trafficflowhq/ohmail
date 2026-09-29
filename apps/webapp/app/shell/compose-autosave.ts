@@ -116,7 +116,7 @@ export function worthCreating(f: ComposeFields): boolean {
  * "has the form changed" depend on an argument the form does not hold.
  */
 function signatureOf(f: ComposeFields): string {
-  return JSON.stringify([f.to, f.cc ?? "", f.bcc ?? "", f.subject, f.body, f.html ?? ""]);
+  return JSON.stringify([f.to, f.cc ?? "", f.bcc ?? "", f.subject, f.body, f.html ?? "", f.forwardOf ?? ""]);
 }
 
 /**
@@ -667,6 +667,8 @@ export function useComposeAutosave(opts: {
           // the current From resolution, which is what makes a pick taken after the first
           // keystroke real on the account rather than cosmetic in this tab.
           ...(mailbox ? { mailboxId: mailbox } : {}),
+          // The message a forward carries, so the row reopened anywhere still forwards it.
+          ...(f.forwardOf ? { forwardOfMessageId: f.forwardOf } : {}),
           subject: f.subject,
           body: f.body,
           ...(f.html ? { html: f.html } : {}),

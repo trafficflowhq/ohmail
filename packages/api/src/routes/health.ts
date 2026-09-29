@@ -804,6 +804,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // every pass and `GET /account/access` writes the resume over it, so a host ahead of the migration
   // 42703s both. Deploy order migration → API → worker.
   ["mailboxes", "organizer_parked_at"],
+  // mail 0137_draft_forward_of — the message a draft forwards. Every draft read and write names
+  // the column, so a host ahead of the migration 42703s both. Deploy order migration → API.
+  ["drafts", "forward_of_message_id"],
 ] as const;
 
 /**
@@ -1023,6 +1026,9 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // classification becomes an assertion about free text while nothing in the product misbehaves
   // and no test notices. The classification, the migration and this marker are one edit.
   "outbound_send_fingerprints_hex",
+  // mail 0137_draft_forward_of — a draft answers one message or forwards one, never both. The
+  // service refuses the pair with a 400; this is the same rule where a write site can regress.
+  "drafts_reply_xor_forward",
 ];
 
 /**
@@ -1076,14 +1082,14 @@ export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring:
 export type ForeignKeyMarker = readonly [conname: string, definitionSubstring: string];
 
 /**
- * The MAIL tier's foreign-key markers. EMPTY today, and kept rather than deferred: no mail
- * migration's ONLY probeable object is a key — mail 0118 adds the fourteen unique indexes its
- * composite keys reference, and `SCHEMA_INDEX_MARKERS` probes one of those. The class is what
- * makes the invariant hold: every DDL shape a migration can add now has a marker class that can
- * see it, so the anti-drift gate refuses the tag rather than exempting the migration.
+ * The MAIL tier's foreign-key markers. Mail 0118 adds the fourteen unique indexes its composite
+ * keys reference, and `SCHEMA_INDEX_MARKERS` probes one of those. The forward key is the first
+ * probed here: a key recreated over the forward column alone would admit another account's
+ * message as the original, with the column and the CHECK still present.
  */
 export const SCHEMA_FK_MARKERS: ReadonlyArray<ForeignKeyMarker> = [
-
+  ["drafts_forward_of_message_id_account_fk",
+    "FOREIGN KEY (forward_of_message_id, account_id) REFERENCES messages(id, account_id)"],
 ] as const;
 
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
@@ -1168,7 +1174,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0136_screener_probe_indexes";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0137_draft_forward_of";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

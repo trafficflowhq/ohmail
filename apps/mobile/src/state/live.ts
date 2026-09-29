@@ -1021,6 +1021,8 @@ export interface WorldDraftEdit {
   to: string;
   /** The subject of record, empty where none — never the list's stand-in. */
   subject: string;
+  /** The message a forward draft forwards; `null` for every other draft. */
+  forwardOf: string | null;
 }
 
 /**
@@ -1038,7 +1040,7 @@ export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
     if (name === "" || name.includes('"')) return a.address;
     return /[,;<>@]/.test(name) ? `"${name}" <${a.address}>` : `${name} <${a.address}>`;
   });
-  return { mailboxId: d.mailboxId, to: typed.join(", "), subject: d.subject };
+  return { mailboxId: d.mailboxId, to: typed.join(", "), subject: d.subject, forwardOf: d.forwardOfMessageId ?? null };
 }
 
 /**
@@ -4398,8 +4400,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /**
    * KEEP WHAT WAS TYPED — see {@link LiveWorldActions.draftKeep}. The envelope is the send's: a
    * reply goes to the parent's sender (reply all to the sheet's own envelope) under `Re:`, a
-   * forward keeps its typed recipients under `Fwd:` (a draft row stores no forward reference),
-   * and a new mail is what was typed. The Undo is the Drafts card's own discard.
+   * forward keeps its typed recipients under `Fwd:` and names its original, and a new
+   * mail is what was typed. The Undo is the Drafts card's own discard.
    */
   const draftKeep = async (k: DraftKeep): Promise<DraftKeepOutcome> => {
     const parent = k.messageId === null ? undefined : messageOf(k.messageId);
@@ -4422,6 +4424,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .mutate({
         kind: "draft_save", draftId: bound, mailboxId,
         ...(reply && parent ? { inReplyToMessageId: parent.id, threadId: parent.threadId ?? null } : {}),
+        ...(k.mode === "forward" && parent ? { forwardOfMessageId: parent.id } : {}),
         subject, body: k.body, to, cc: env ? env.cc : [], bcc: [],
       })
       .then((res) => res, () => null);

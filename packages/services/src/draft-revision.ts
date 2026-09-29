@@ -14,6 +14,7 @@ import type { EmailAddress } from "@trafficflow/core/mail";
 export function draftContentRevision(row: {
   mailboxId: string;
   inReplyToMessageId: string | null;
+  forwardOfMessageId?: string | null;
   subject: string;
   body: string;
   html: string | null;
@@ -33,6 +34,8 @@ export function draftContentRevision(row: {
     row.body,
     row.html ?? null,
     addrs(row.to), addrs(row.cc), addrs(row.bcc),
+    // Only when set, so a row that forwards nothing keeps the revision it had.
+    ...(row.forwardOfMessageId ? [["forwardOf", row.forwardOfMessageId]] : []),
   ]);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }

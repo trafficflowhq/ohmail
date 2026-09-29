@@ -361,5 +361,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "CREATE INDEX IF NOT EXISTS \"approvals_account_message_idx\" ON \"approvals\" (\"account_id\", \"message_id\") WHERE \"message_id\" IS NOT NULL;",
       "CREATE INDEX IF NOT EXISTS \"drafts_account_reply_idx\" ON \"drafts\" (\"account_id\", \"in_reply_to_message_id\") WHERE \"in_reply_to_message_id\" IS NOT NULL;"
     ]
+  },
+  {
+    "name": "0137_draft_forward_of.sql",
+    "statements": [
+      "ALTER TABLE \"drafts\" ADD COLUMN \"forward_of_message_id\" text REFERENCES \"messages\"(\"id\") CONSTRAINT \"drafts_reply_xor_forward\" CHECK (\"in_reply_to_message_id\" IS NULL OR \"forward_of_message_id\" IS NULL);"
+    ]
   }
 ] as const;

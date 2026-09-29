@@ -1445,15 +1445,10 @@ export function useShellCompose({
         // Plain text is the honest reading of what this client holds.
         html: "",
         fromMailboxId: d.mailboxId,
-        // No `forwardOf`, and it cannot be otherwise: `forwardOf` rides the SEND request, never
-        // the draft row (`send-service.ts` reads it from the request body), so the `drafts`
-        // table has no column to remember it and an `EngineDraft` carries nothing to read back.
-        // A forward abandoned to autosave and reopened is therefore a plain compose whose
-        // subject still says "Fwd:" — the honest reading of what the account stored, and better
-        // than the alternative: quoting the original into the draft body would put a copy of
-        // somebody else's message — possibly a redacted sensitive one — into a stored row, the
-        // exact thing the server-side quote prevents. Recorded because the fix is a schema
-        // change, not a line in this function.
+        // THE ROW'S FORWARD: a forward kept as a draft reopens as a forward, and its
+        // send carries the original — an id, never a copy of the original's words, which the
+        // server quotes itself.
+        forwardOf: d.forwardOfMessageId ?? null,
 
         // The signature block's state survives exactly as far as this device knows it (review
         // rounds 1–3). The `drafts` row stores prose and no block state, so a draft reopened

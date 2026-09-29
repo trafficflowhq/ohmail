@@ -1,6 +1,6 @@
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILITY_REQUESTS,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
@@ -1695,6 +1695,11 @@ async function applyUpsert(
       const inReplyTo = d.inReplyToMessageId && (await messagePresent(tx, d.inReplyToMessageId))
         ? d.inReplyToMessageId
         : null;
+      // The forward's original, on the same rule: kept only when it is mirrored.
+      const wantsForwardOriginal = Boolean(d.forwardOfMessageId);
+      const forwardOf = d.forwardOfMessageId && (await messagePresent(tx, d.forwardOfMessageId))
+        ? d.forwardOfMessageId
+        : null;
       /* ── THE ONE FIELD A PAGE MAY LEAVE OUT, AND `?? ""` WAS THE WAY TO LOSE MAIL ─────────
          `DraftDTO.body` is `null` when a bounded page would not carry it (a stored body past
          `DRAFT_BODY_MAX_BYTES`). Coalescing that to `""` wrote an EMPTY body over the mirror's
@@ -1722,6 +1727,7 @@ async function applyUpsert(
         mailboxId: d.mailboxId,
         threadId: d.threadId ?? null,
         inReplyToMessageId: inReplyTo,
+        forwardOfMessageId: forwardOf,
         subject: d.subject ?? "",
         ...(bodyCarried ? { body: d.body as string } : {}),
         ...(htmlCarried ? { html: d.html ?? null } : {}),
@@ -1743,6 +1749,7 @@ async function applyUpsert(
       gen?.draft.add(d.id);
       if (d.threadId) gen?.thread.add(d.threadId);   // the thread stub this draft pinned
       return !bodyCarried || !htmlCarried || (wantsReplyParent && inReplyTo === null)
+        || (wantsForwardOriginal && forwardOf === null)
         ? "partial"
         : true;
     }
@@ -1855,9 +1862,12 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
     case "message": {
       if (!(await messagePresent(tx, ch.id))) return false;
       const replying = await tx.select({ id: drafts.id }).from(drafts)
-        .where(eq(drafts.inReplyToMessageId, ch.id));
+        .where(or(eq(drafts.inReplyToMessageId, ch.id), eq(drafts.forwardOfMessageId, ch.id)));
       await tx.update(drafts).set({ inReplyToMessageId: null })
         .where(eq(drafts.inReplyToMessageId, ch.id));
+      // The forward's twin: a draft forwarding this message keeps its note.
+      await tx.update(drafts).set({ forwardOfMessageId: null })
+        .where(eq(drafts.forwardOfMessageId, ch.id));
       for (const d of replying) detached?.push({ type: "draft", id: d.id });
       await tx.delete(folderState).where(eq(folderState.messageId, ch.id));
       await tx.delete(messageStates).where(eq(messageStates.messageId, ch.id));
