@@ -709,7 +709,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      * THE BROWSER APPROVAL this install is waiting on, in two halves behind ONE writer. The secret
      * half is the request id and the verifier, in this process's memory only, beside `linkVerifier`
      * and for its reason; the said half is the verdict `/health` carries (`approval-verdict.ts`).
-     * A new request replaces both; an ended or stopped request holds no secret; a sign-in clears both.
+     * A new request replaces both; an ended or stopped request holds no secret; an activated session
+     * and a sign-out clear both (a pending door's sign-in ends in a relaunch, which forgets them).
      */
     type ApprovalSecret = { id: string; verifier: string };
     type ApprovalEnded = Extract<ApprovalVerdict, { state: "ended" }>;
@@ -789,6 +790,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     let accountErasedLatch = readMirrorErased(config.dataDir);
 
     const activate = (tokens: CloudTokens): Authed => {
+      // Signed in: a browser request still on /health would be resumed over the session.
+      holdApproval(null);
       // A NEW session is a new answer about its account: a sign-in after the card starts clean,
       // on disk as well, so a later launch with no session does not show the card again. A write
       // that fails costs only that: the next `account_erased` answer latches it back regardless.
@@ -931,6 +934,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const signOut = async (): Promise<void> => {
       const live = authed;
       authed = null;
+      holdApproval(null);
       // THE SPENT SEAL GOES FIRST — before the awaits, not after them. This teardown's tail
       // used to remove the seal after waiting out the mirror, and a sign-in completing inside
       // that window sealed a FRESH pair the old rmSync then deleted. Removing it up front is
@@ -1335,6 +1339,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           );
         }
 
+        /* THE REQUEST THIS POLL ASKS ABOUT. A stop or a new request can land while the poll is on
+           the wire; its answer is written only while this is still the request held. */
+        const asked = namesApproval ? approval : null;
         let tokens: CloudTokens;
         try {
           if (namesApproval && approval) {
@@ -1349,8 +1356,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               approval.id,
             );
             if (polled.status === "pending") {
-              holdApproval({
-                secret: approval,
+              if (asked && approval === asked) holdApproval({
+                secret: asked,
                 verdict: {
                   state: "pending", note: polled.note ?? null,
                   expiresAt: approvalVerdict?.expiresAt ?? now().toISOString(),
@@ -1382,7 +1389,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         } catch (err) {
           if (err instanceof CloudSignInError) {
             // A refused request is over, with its code: a new one starts from the window, never a retry.
-            if (namesApproval) {
+            if (namesApproval && approval === asked) {
               holdApproval({
                 state: "ended", code: err.code, expiresAt: approvalVerdict?.expiresAt ?? now().toISOString(),
               });
