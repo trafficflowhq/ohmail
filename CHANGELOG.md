@@ -258,8 +258,7 @@ mail no longer treats an automatic reply, or a reply to somebody else, as your a
 
 - A file or embedded picture that could not be fetched now says which side failed: ohmail, your
   mail server not answering, a connection it would not secure, a sign-in it refused, a mailbox that
-  needs reconnecting, a message no longer where your mailbox had it, or no connection to ohmail. Try
-  again is offered only where asking again can help.
+  needs reconnecting, a message no longer where your mailbox had it, or no connection to ohmail.
 - Pictures a newsletter's mail service hosts, such as Mailchimp's or Constant Contact's, are shown.
   A picture is refused before it is fetched only when its address is a tracking pixel's or its host
   does nothing but track.
