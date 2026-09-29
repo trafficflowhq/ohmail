@@ -5066,15 +5066,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   // Mail 0089 — the fifth holder column goes with the other four, for the same
                   // reason: this row is now the organizer and names no holder at all.
                   organizedByCapabilities: null,
-                  /* Mail 0088: the organizing situation just changed, so say when. The fourth
-                   * of the five writers of the (role, state, holder) triple — the promotion
-                   * half. A person watching another door is entitled to be told once that this
-                   * install now organizes the mailbox. In the SAME statement as the role, on
-                   * `markMailboxStoodDown`'s reasoning: a row whose role has moved while its
-                   * event instant still describes the previous situation is a client rendering
-                   * yesterday's sentence, with nothing anywhere to notice it.
+                  /* Mail 0088: the fourth writer of the (role, state, holder) triple, in the
+                   * SAME statement as the role — another door reads `elsewhere` off it. Stamped
+                   * only on a FLIP, the hosted twin's rule (`clearOrganizerStandDown`): a row
+                   * already `organizer` keeps its instant, or a press standing past an earlier
+                   * promotion re-raises a notice the person dismissed. The SET reads the
+                   * PRE-update role.
                    */
-                  organizerEventAt: now(),
+                  organizerEventAt: sql`case when ${mailboxes.organizerRole} = 'reader'
+                    then ${dialect(db).ts(now())} else ${mailboxes.organizerEventAt} end`,
                 })
                 .where(eq(mailboxes.id, mb.id))
                 .returning({ status: mailboxes.status });

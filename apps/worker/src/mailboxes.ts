@@ -1470,12 +1470,12 @@ export async function clearOrganizerStandDown(
       organizerReleasedAt: null,
       // Mail 0135 — the resume this promotion answers is spent with its stamp.
       organizerParkedAt: null,
-      // Mail 0088 — the second writer of the (role, state, holder) triple. A PROMOTION is an event
-      // in exactly the sense the notice means: the person is entitled to be told once that this
-      // install now organizes the mailbox, and on any other door they have open the sentence is
-      // the one that says somebody else took it. Stamped in the same statement as the flip, on
-      // `markMailboxStoodDown`'s reasoning.
-      organizerEventAt: opts.now ?? new Date(),
+      // Mail 0088 — the second writer of the (role, state, holder) triple: another door reads
+      // `elsewhere` off this stamp. AN EVENT IS A FLIP, NEVER A RE-RUN: a row already `organizer`
+      // (a press standing past the promotion that spent an older one) keeps its instant, or a
+      // dismissed notice comes back on the next cycle. The SET reads the row's PRE-update role.
+      organizerEventAt: sql`case when ${mailboxes.organizerRole} = 'reader'
+        then ${(opts.now ?? new Date()).toISOString()}::timestamptz else ${mailboxes.organizerEventAt} end`,
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
     .returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
