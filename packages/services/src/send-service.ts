@@ -6,7 +6,7 @@ import {
   threads, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
-  createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
+  createLogger, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime, prepareHtmlForStorage, recordSentMessage,
   SendNotSubmitted, SentCopyAppendFailed,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
@@ -20,7 +20,7 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState" | "applyExternalFlag">;
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
-import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
+import type { OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
@@ -48,7 +48,7 @@ function domainOf(address: string | null | undefined): string {
  *
  * Both halves, and the `ref` half is the one that carries the epoch (`${uidvalidity}:${uid}`), so
  * this is also what tells a re-adopted message from a merely re-read row. Used to decide whether a
- * re-read locator is worth a second fetch — see {@link SendService.streamForwardParts}.
+ * re-read locator is worth a second fetch — see {@link SendService.streamForwardOriginal}.
  */
 function sameLocator(a: NativeLocator, b: NativeLocator): boolean {
   return a.folder === b.folder && a.ref === b.ref;
@@ -179,7 +179,7 @@ export interface SendDeps {
  * exceeding the cap before anything is transferred; a one-phase port would have to download to
  * find out, handing an authenticated caller a way to make this process pull arbitrary bytes it
  * then throws away. `fetch` is the bytes, outside the reservation transaction for
- * `streamForwardParts`' reason; it re-measures every object against its ticket, because `declare`
+ * `streamForwardOriginal`' reason; it re-measures every object against its ticket, because `declare`
  * reports what a CLIENT asserted at mint time.
  */
 export interface StagedAttachmentSource {
@@ -270,6 +270,60 @@ export interface SendInput {
 /** How many original parts a forward may re-attach, and their combined byte ceiling. */
 export const FORWARD_MAX_PARTS = 100;
 export const FORWARD_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+/**
+ * The whole-message read for an original whose stored words were let go: handed to `fetchRaw`,
+ * which refuses on the server's RFC822.SIZE before buffering past it. 20 MiB of parts base64-encoded
+ * plus headers stays under it, and it stays under `MAX_RAW_MESSAGE_BYTES`, so the parse never refuses.
+ */
+export const FORWARD_MAX_RAW_BYTES = 32 * 1024 * 1024;
+
+/** Where a forward's quoted words come from: already joined from the store, or read from the mailbox. */
+type ForwardWords =
+  | { kind: "stored" }
+  | {
+      kind: "mailbox";
+      banner: { from: string; date: Date | null; subject: string };
+      clock: { zone?: string; locale?: string };
+      note: string; noteHtml: string | null; blankNote: boolean;
+    };
+type ForwardSource = {
+  parts: ForwardPart[]; mailboxId: string; locator: NativeLocator; messageId: string; words: ForwardWords;
+};
+
+/**
+ * THE ONE COMPOSER of a forward's body: the note, then the quoted original, in text and (for a rich
+ * note) html. Called from the reservation for stored words and from the mailbox read for words the
+ * store let go, so the two sources differ in where the words come from and nowhere else.
+ */
+function composeForward(
+  note: { text: string; html: string | null; blank: boolean },
+  banner: { from: string; date: Date | null; subject: string },
+  originalText: string, originalHtml: string | null,
+  clock: { zone?: string; locale?: string },
+): { text: string; html?: string } {
+  const quoted = forwardedQuote(banner, originalText, originalHtml, clock);
+  return {
+    text: forwardJoin(note.text, quoted.text, "\n\n", note.blank),
+    ...(note.html ? { html: forwardJoin(note.html, quoted.html, "<br><br><hr>", note.blank) } : {}),
+  };
+}
+
+function forwardOriginalUnavailable(): ServiceError {
+  return new ServiceError("forward_original_unavailable", 409, "The original could not be loaded, so it was not forwarded.");
+}
+function forwardTooLarge(): ServiceError {
+  return new ServiceError("payload_too_large", 413, `the forwarded attachments exceed ${FORWARD_MAX_TOTAL_BYTES} bytes`);
+}
+/**
+ * A failed read of a husked original's words: a sentence already chosen (moved, the mail server's
+ * own refusal) stands; over the ceiling is the parts' 413; anything else is "could not be loaded".
+ * Never a send with the words dropped.
+ */
+function forwardReadRefusal(err: unknown): unknown {
+  if (err instanceof ServiceError) return err;
+  if ((err as { code?: unknown } | null)?.code === "ERAWTOOLARGE") return forwardTooLarge();
+  return forwardOriginalUnavailable();
+}
 
 /**
  * HOW MANY ATTACHMENT PARTS ONE SEND REQUEST MAY NAME — per list, inline or staged. The byte cap
@@ -874,8 +928,8 @@ type Reservation =
   | {
       kind: "new"; sendId: string; mintedMessageId: string; mailboxId: string;
       msg: OutboundMessage; seq: number;
-      /** A forward's original parts to stream + the mailbox they live in — resolved outside the tx. */
-      forward?: { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator; messageId: string };
+      /** A forward's original parts (and, for a husked body, its words) — read outside the tx. */
+      forward?: ForwardSource;
     }
   | { kind: "existing"; row: typeof outboundSends.$inferSelect; mailboxId: string };
 
@@ -1202,8 +1256,14 @@ export class SendService {
     // original's files would be a wrong send, so it fails the whole send — definitively, and
     // recorded as such by the window's handler. Bounded by count and total bytes against a
     // serverless OOM.
+    // A forward that needs the mailbox (files to stream, or words the store let go) and a host that
+    // cannot read it refuses: the banner alone is the wrong send this path exists to prevent.
+    const fwd = reservation.forward;
+    if (fwd && (fwd.parts.length > 0 || fwd.words.kind === "mailbox") && !deps.openFetchAdapter) {
+      throw forwardOriginalUnavailable();
+    }
     if (reservation.forward && deps.openFetchAdapter) {
-      await this.streamForwardParts(ctx, reservation.forward, msg, deps.openFetchAdapter);
+      await this.streamForwardOriginal(ctx, reservation.forward, msg, deps.openFetchAdapter);
     }
   }
 
@@ -1538,12 +1598,9 @@ export class SendService {
       // into the outgoing text/html. Its attachments are collected as metadata and STREAMED later,
       // outside this tx, because fetching bytes is IMAP network and a reservation tx opens none.
       // `messageId` rides along so the fetch can re-read this row's locator if the one captured
-      // here goes stale before the bytes are pulled — see `streamForwardParts`.
-      let forward:
-        | { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator; messageId: string }
-        | undefined;
-      let fwdText = "";
-      let fwdHtml = "";
+      // here goes stale before the bytes are pulled — see `streamForwardOriginal`.
+      let forward: ForwardSource | undefined;
+      let fwdBody: { text: string; html?: string } | undefined;
       /**
        * IS THERE A NOTE ABOVE THE QUOTE? — one answer, used by both parts.
        *
@@ -1573,25 +1630,6 @@ export class SendService {
         const [body] = await tx.select({
           text: messageBodies.text, html: messageBodies.html, withheld: messageBodies.withheldReason,
         }).from(messageBodies).where(eq(messageBodies.messageId, orig.id)).limit(1);
-        // THE ORIGINAL MUST BE LOADABLE. No body row (never ingested, snippet only), a body a
-        // policy emptied (storage cap, junk, expunge) or one with no content at all is refused
-        // here, before any byte leaves: a forward of the note alone over a banner is the empty
-        // mail a recipient reads as "nothing was attached". The composer renders the sentence.
-        const unloadable = !body || body.withheld !== null
-          || ((body.text ?? "").trim() === "" && (body.html ?? "").trim() === "");
-        if (unloadable) {
-          throw new ServiceError(
-            "forward_original_unavailable", 409,
-            "The original could not be loaded, so it was not forwarded.",
-          );
-        }
-        const quoted = forwardedQuote(
-          { from: orig.fromAddress, date: orig.date, subject: orig.subject },
-          body.text ?? "", body.html ?? null,
-          { zone: input.forwardZone, locale: input.forwardLocale },
-        );
-        fwdText = quoted.text;
-        fwdHtml = quoted.html;
         // The original's attachment parts — metadata only; bytes stream at send. Capped so a huge
         // forward cannot OOM the serverless function (the same bound `download-all` needs), and
         // ORDERED BY ID, which is load-bearing beyond determinism: `AttachmentsService
@@ -1605,7 +1643,31 @@ export class SendService {
           partId: attachments.partId, contentId: attachments.contentId, inline: attachments.inline,
         }).from(attachments).where(eq(attachments.messageId, orig.id))
           .orderBy(asc(attachments.id)).limit(FORWARD_MAX_PARTS);
+        // THE ORIGINAL IS WHAT ITS MAILBOX HOLDS: refused only when neither its words nor its files
+        // can be read. Stored words or at least one part forward from the store; a body the store let
+        // go (`storage_cap`, `junk_filed`) has its words read from the mailbox at send. No body row,
+        // `expunged`, `too_large`, and nothing at all refuse here, before any byte leaves.
+        const banner = { from: orig.fromAddress, date: orig.date, subject: orig.subject };
+        const clock = { zone: input.forwardZone, locale: input.forwardLocale };
+        const hasWords = !!body && ((body.text ?? "").trim() !== "" || (body.html ?? "").trim() !== "");
+        const loadable = !!body && body.withheld === null && (hasWords || attRows.length > 0);
+        const fromMailbox = !!body && (body.withheld === "storage_cap" || body.withheld === "junk_filed");
+        if (!loadable && !fromMailbox) {
+          throw new ServiceError(
+            "forward_original_unavailable", 409,
+            "The original could not be loaded, so it was not forwarded.",
+          );
+        }
+        const words: ForwardWords = loadable
+          ? { kind: "stored" }
+          : { kind: "mailbox", banner, clock, note: d.body, noteHtml: html, blankNote };
+        if (loadable) {
+          fwdBody = composeForward(
+            { text: d.body, html, blank: blankNote }, banner, body!.text ?? "", body!.html ?? null, clock,
+          );
+        }
         forward = {
+          words,
           mailboxId: orig.mailboxId,
           messageId: orig.id,
           locator: orig.locator as NativeLocator,
@@ -1635,16 +1697,11 @@ export class SendService {
         ...(cc.length ? { cc: cc.map((a) => a.address) } : {}),
         ...(bcc.length ? { bcc: bcc.map((a) => a.address) } : {}),
         subject: d.subject,
-        // The user's text, then the quoted original on a forward — with the separator between
-        // them, and ONLY where there are two things to separate (`forwardJoin`). `fwdText`/
-        // `fwdHtml` are "" for a normal send, and `forwardJoin` is then the identity on the body:
-        // a blank-bodied NON-forward joins "" to "" and is byte-identical to what it always was.
-        // The html half is appended ONLY when the draft is itself rich; a plain forward carries
-        // the quote in text alone.
-        text: fwdText ? forwardJoin(d.body, fwdText, "\n\n", blankNote) : d.body,
-        ...(html
-          ? { html: fwdHtml ? forwardJoin(html, fwdHtml, "<br><br><hr>", blankNote) : html }
-          : {}),
+        // The user's text, then the quoted original on a forward whose words the store holds
+        // (`composeForward`); otherwise the note alone — a normal send, or a forward whose words
+        // are read from the mailbox at send and composed there by the same function. The html
+        // half exists ONLY when the draft is itself rich; a plain forward quotes in text alone.
+        ...(fwdBody ?? { text: d.body, ...(html ? { html } : {}) }),
         messageId: mintedMessageId,
         ...(inReplyTo ? { inReplyTo, references } : {}),
         // ── ATTACHMENTS RIDE THE REQUEST, NOT THE ROW ──────────────────────────────────────
@@ -1831,63 +1888,77 @@ export class SendService {
   }
 
   /**
-   * FETCH A FORWARD'S ORIGINAL ATTACHMENTS from IMAP onto the outgoing message. Outside any
-   * transaction, on its OWN adapter, closed in `finally`; parts share the original's locator and
-   * differ by `partId`; an inline part keeps its `cid`. A part over the byte budget stops the
-   * fetch: silently dropping files is a wrong send. A STALE LOCATOR IS RE-RESOLVED ONCE, THEN
-   * REFUSED HONESTLY: the original can move between the reservation's read and this fetch; the
-   * adapter refuses with `MessageGoneError` rather than handing back whatever now wears that UID.
-   * Re-reading `messages.native_locator` is the witness — tried EXACTLY ONCE. If the re-read has
-   * not caught up, the send is refused with what is TRUE — never the ambiguous recovery.
+   * READ A FORWARD'S ORIGINAL onto the outgoing message: its words when the store let them go,
+   * then its parts. Outside any transaction, on ONE adapter for the ORIGINAL's mailbox, closed in
+   * `finally`; nothing read is stored. A STALE LOCATOR IS RE-RESOLVED ONCE PER SEND, shared by the
+   * words and the parts: the adapter refuses with `MessageGoneError` rather than hand back what now
+   * wears that UID, `messages.native_locator` is re-read as the witness, and a mirror that has not
+   * caught up is refused with what is true. A part over the byte budget stops the send.
    */
-  private async streamForwardParts(
+  private async streamForwardOriginal(
     ctx: ServiceContext,
-    forward: { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator; messageId: string },
+    forward: ForwardSource,
     msg: OutboundMessage,
     openFetchAdapter: OpenAdapter,
   ): Promise<void> {
-    if (forward.parts.length === 0) return;
+    if (forward.parts.length === 0 && forward.words.kind === "stored") return;
     // The forward's original is read from the person's own mail server: the send's dial rule.
     const adapter = await atMailServer(() => openFetchAdapter(forward.mailboxId));
     try {
       let locator = forward.locator;
       let reResolved = false;
-      const fetched: NonNullable<OutboundMessage["attachments"]> = [];
-      let total = 0;
-      for (const part of forward.parts) {
-        let bytes: Awaited<ReturnType<AttachmentAdapter["fetchPart"]>>;
+      // One read against the current locator, retried once against a re-resolved one. The retry is
+      // translated too: a re-resolved locator that is ALSO stale must still say what is true.
+      const read = async <T>(op: (loc: NativeLocator) => Promise<T>): Promise<T> => {
         try {
-          bytes = await atMailServer(() => adapter.fetchPart(locator, part.partId));
+          return await atMailServer(() => op(locator));
         } catch (err) {
           if (!isMessageGone(err) || reResolved) throw this.forwardSourceGone(err);
           reResolved = true;
           const fresh = await this.currentLocatorOf(ctx, forward.messageId);
-          // A row that still names the locator we just tried has nothing new to say, and neither
-          // does one whose locator has been cleared. Only a genuinely different locator earns the
-          // second attempt.
+          // A row still naming the locator just tried, or one cleared, has nothing new to say.
           if (!fresh || sameLocator(fresh, locator)) throw this.forwardSourceGone(err);
           locator = fresh;
-          // THE RETRY IS TRANSLATED TOO. Without this arm a re-resolved locator that is ALSO
-          // stale — the mirror repointed, and the message moved again, or it was repointed to
-          // something the server has since renumbered — threw the raw adapter error straight out
-          // of here. The window handler above would still have recorded the send `failed`, so
-          // nothing would have been mis-sent; but the route maps `ServiceError` and turns
-          // everything else into a 500, so the reader would have got "something went wrong"
-          // instead of the sentence that tells them nothing was sent and what to do. The honest
-          // outcome must not depend on how many times the locator moved.
           try {
-            bytes = await atMailServer(() => adapter.fetchPart(locator, part.partId));
+            return await atMailServer(() => op(locator));
           } catch (retryErr) {
             throw this.forwardSourceGone(retryErr);
           }
         }
-        total += bytes.body.byteLength;
-        if (total > FORWARD_MAX_TOTAL_BYTES) {
-          throw new ServiceError(
-            "payload_too_large", 413,
-            `the forwarded attachments exceed ${FORWARD_MAX_TOTAL_BYTES} bytes`,
-          );
+      };
+
+      if (forward.words.kind === "mailbox") {
+        const words = forward.words;
+        const fetchRaw = adapter.fetchRaw?.bind(adapter);
+        if (!fetchRaw) throw forwardOriginalUnavailable();
+        // The raw bytes and the parsed tree live in this block only; the words survive it.
+        let text: string;
+        let html: string | null;
+        {
+          let parsed: Awaited<ReturnType<typeof normalizeMime>>;
+          try {
+            const raw = await read((loc) => fetchRaw(loc, { maxBytes: FORWARD_MAX_RAW_BYTES }));
+            parsed = await normalizeMime(Buffer.from(raw));
+          } catch (err) {
+            throw forwardReadRefusal(err);
+          }
+          text = parsed.textBody;
+          // What ingest stores (pipeline.ts), so a husked original quotes exactly as an unhusked one.
+          html = prepareHtmlForStorage(parsed.htmlBody);
         }
+        const body = composeForward(
+          { text: words.note, html: words.noteHtml, blank: words.blankNote }, words.banner, text, html, words.clock,
+        );
+        msg.text = body.text;
+        if (body.html !== undefined) msg.html = body.html;
+      }
+
+      const fetched: NonNullable<OutboundMessage["attachments"]> = [];
+      let total = 0;
+      for (const part of forward.parts) {
+        const bytes = await read((loc) => adapter.fetchPart(loc, part.partId));
+        total += bytes.body.byteLength;
+        if (total > FORWARD_MAX_TOTAL_BYTES) throw forwardTooLarge();
         fetched.push({
           filename: bytes.filename ?? part.filename,
           contentType: bytes.contentType || part.contentType,

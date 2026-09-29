@@ -63,6 +63,12 @@ export interface AttachmentAdapter {
    * third parameter so every existing fake/GreenMail adapter keeps compiling.
    */
   fetchPart(locator: NativeLocator, partId: string | null, opts?: { maxBytes?: number }): Promise<FetchedBytes>;
+  /**
+   * The whole message as the server holds it, refused past `maxBytes` (the connection survives).
+   * Optional: a forward whose stored words were let go reads them here, and an adapter without it
+   * makes that forward refuse rather than go out without them.
+   */
+  fetchRaw?(locator: NativeLocator, opts?: { maxBytes?: number }): Promise<Uint8Array>;
   close(): Promise<void>;
 }
 

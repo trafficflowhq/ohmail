@@ -227,6 +227,16 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
           throw err;
         }
       },
+      // The same clock and the same teardown; `o` carries the service's ceiling to the stream.
+      fetchRaw: async (locator, o) => {
+        try {
+          return await raced(opened.adapter.fetchRaw(locator, o), operationMs);
+        } catch (err) {
+          dead = true;
+          await opened.forceClose().catch(() => { /* already down; the slots are released */ });
+          throw err;
+        }
+      },
       close: async () => { if (!dead) await opened.close(); },
     };
   };
