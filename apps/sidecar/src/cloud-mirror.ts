@@ -404,7 +404,10 @@ export interface CloudMirrorConfig {
   now?: () => Date;
   /** `/sync` page size. Production takes the default; a test shrinks it to force multiple pages. */
   pageLimit?: number;
-  /** The overflow ledger's ceiling; production takes {@link OVERFLOW_MAX}, a test shrinks it to reach the floor. */
+  /**
+   * The overflow ledger's ceiling; production takes {@link OVERFLOW_MAX}, a test shrinks it to reach
+   * the floor. Test-only: the cursor file's read still caps at {@link OVERFLOW_MAX}.
+   */
   overflowMax?: number;
   /** How long to wait between full pulls when caught up. */
   pollIntervalMs?: number;
