@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
-import { account, apiConfigured } from "../../api-client";
+import { account, accessFeedFor, apiConfigured, onAccessFeed } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
+import { readOwner } from "../../shell/owner-cookie";
 
 /**
  * The subscription pane — one control, and nothing else. Whoever operates this service holds the plan,
@@ -81,15 +82,17 @@ export function leaveForManagePage(url: string): void {
 
 /**
  * DOES THIS DEPLOYMENT OPERATE A SUBSCRIPTION PAGE FOR THIS ACCOUNT — the offer, not the address.
- * `false` for a self-hosted or unmetered install, for a demo, and for the moment before the first
- * answer: all mean DO NOT OFFER THE PANE, and collapsing them is deliberate, since the alternative is a
- * nav entry above an empty pane. Read from `GET /account/access`, which mints nothing — `metered: false`
- * is a host running no such program, exactly what the mint route answers 404 on. `/hello` cannot be
- * asked instead: its wire shape is frozen and says nothing about this. `withdraw` is the press's other
- * outcome — a mint that came back with nowhere to go takes the pane with it for the session.
+ * It FOLLOWS THE ACCESS FEED (`api-client.ts`): every answer this tab receives, whoever asked, so
+ * a read that failed at mount is healed by the next one — the account strip asks on every return
+ * to the tab — and a failed read, which publishes nothing, can never take the pane away. `false`
+ * for a self-hosted or unmetered install, a demo, and before the first answer: DO NOT OFFER THE
+ * PANE, since the alternative is a nav entry above an empty pane. `withdraw` is the press's other
+ * outcome: a mint with nowhere to go takes the pane with it for this mount.
  */
 export function useManageOffer(demo: boolean): { manageOffered: boolean; withdrawManage: () => void } {
-  const [offered, setOffered] = useState(false);
+  const entry = useSyncExternalStore(onAccessFeed, () => accessFeedFor(readOwner()), () => null);
+  const [asking, setAsking] = useState(false);
+  const [withdrawn, setWithdrawn] = useState(false);
   useEffect(() => {
     // The landing page's mailbox reaches no server and has no account to ask about.
     // SELF_HOST_BUILD: `metered` stopped meaning "subscription page exists" the day the
@@ -98,14 +101,11 @@ export function useManageOffer(demo: boolean): { manageOffered: boolean; withdra
     // box with nothing to manage. Billing UI never reaches a self-host surface;
     // compiled away on managed builds like every other SELF_HOST_BUILD branch.
     if (SELF_HOST_BUILD || demo || !apiConfigured()) return;
-    let alive = true;
-    void account.access()
-      .then((a) => { if (alive) setOffered(a.metered); })
-      // A read that failed is not evidence a page exists, and a settings pane is not where
-      // somebody acts on it.
-      .catch(() => { /* nowhere to send them */ });
-    return () => { alive = false; };
+    setAsking(true);
+    // The first paint joins the shell's own read, or asks it; the feed carries the answer here.
+    void account.access().catch(() => { /* no answer is no offer; the next one brings it */ });
+    return () => { setAsking(false); };
   }, [demo]);
-  const withdrawManage = useCallback(() => { setOffered(false); }, []);
-  return { manageOffered: offered, withdrawManage };
+  const withdrawManage = useCallback(() => { setWithdrawn(true); }, []);
+  return { manageOffered: asking && entry !== null && entry.answer.metered && !withdrawn, withdrawManage };
 }
