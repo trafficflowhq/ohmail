@@ -915,7 +915,10 @@ export const screenerSuggestOwed = pgTable("screener_suggest_owed", {
  * PRIMARY KEY: `anchor` is the plane's ISO fact the notice is about (trialEndsAt, closedAt,
  * erasureAt — never a clock read here), so a re-run inserts nothing and a NEW closure is a new
  * anchor with its own notice. No state machine, no closure table. The `reopened` kind is the
- * banner's row, inserted by `GET /account/access` on the first open read after a closure.
+ * catch-up banner's row, in one of two states with one writer each: UNTOLD (`sent_at = anchor`),
+ * planted by the hosted worker before its roster pass clears the facts it is dated from; TOLD, by
+ * `GET /account/access` on the first open read, which also inserts it when it reads first
+ * (`reopen-catch-up.ts`).
  */
 export const accountLifecycleNotices = pgTable("account_lifecycle_notices", {
   accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),

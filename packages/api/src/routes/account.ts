@@ -133,12 +133,13 @@ export const accountRoutes: Route[] = [
         }, 200);
       }
       // The catch-up banner, only where a lifecycle exists to have reopened from. Then the
-      // reopening itself (owner, 2026-09-28): the `account_closed` block goes, and every mailbox
-      // the WALL released is asked back as a `join` — the gate decides, a live claim elsewhere
-      // keeps its mailbox, and a mailbox the person released is never touched. In THIS order: the
-      // catch-up may be anchored on the `account_closed` block the reopening clears.
+      // reopening itself: the `account_closed` block goes, and every mailbox the WALL released is
+      // asked back as a `join` — the gate decides, a live claim elsewhere keeps its mailbox, and a
+      // mailbox the person released is never touched. In THIS order, and not at all when the
+      // catch-up faulted: the resume clears the facts it is anchored on, and the worker's pass
+      // records them before it spends them.
       const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
-      await resumeAfterReopen(deps, ctx);
+      if (caughtUp !== "fault") await resumeAfterReopen(deps, ctx);
       return json({
         metered: true,
         access: "open",
@@ -152,7 +153,7 @@ export const accountRoutes: Route[] = [
         aiEnabled: verdict.limits.aiEnabled,
         ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
         exportPath: "/account/export",
-        ...(caughtUp ? { caughtUp } : {}),
+        ...(caughtUp !== null && caughtUp !== "fault" ? { caughtUp } : {}),
       }, 200);
     },
   },

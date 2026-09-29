@@ -13,6 +13,12 @@
  * `export * from "./schema.js"`; they belong here, beside the code that reads them. */
 export * from "./schema-cloud.js";
 
+/* The catch-up after a reopening: the worker plants it before its roster pass spends the anchor,
+ * and `GET /account/access` tells it once. CLOUD-ONLY: the table is a cloud table. */
+export {
+  plantReopenedCatchUp, reopenAnchorOf, untoldCatchUpOf, untoldCatchUpWhere,
+} from "./reopen-catch-up.js";
+
 /**
  * `schema` — the COMBINED object — and the postgres clients built over it, on THIS entry point
  * rather than the root. Drizzle's query builder is typed on the schema its handle was constructed

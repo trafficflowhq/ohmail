@@ -1,41 +1,40 @@
-import { and, desc, eq, gt, max, or } from "drizzle-orm";
+import { and, desc, eq, gt, or, sql } from "drizzle-orm";
 import { withAccountTx } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
-import { mailboxes, parkedResumeSet, parkedResumeWhere } from "@trafficflow/db";
+import { mailboxes, parkedResumeSet, parkedResumeWhere, type Tx } from "@trafficflow/db";
 // Hosted-only: imported by `routes/account.ts` alone, which the local door never mounts.
-import { accountLifecycleNotices } from "@trafficflow/db/cloud";
+import {
+  accountLifecycleNotices, reopenAnchorOf, untoldCatchUpOf, untoldCatchUpWhere,
+} from "@trafficflow/db/cloud";
 import type { ApiDeps } from "./deps.js";
 
 /**
- * THE REOPENING BANNER'S ONE FACT (cloud 0040) — an idempotent INSERT on a GET, deliberate and
- * named here so nobody "fixes" it. The anchor is the PARK (mail 0135), else the newest
- * `account_closed` block (a reader-only account parks nothing), else the newest `closed` notice.
- * The route asks this BEFORE `resumeAfterReopen` clears the block. ONCE PER CLOSURE: a `reopened`
- * notice sent after the anchor answers it. NO COUNT: any number here is the free month's mail.
- * Bound: the worker's belt can clear the block before any client reads, and then a reader-only
- * account reopened inside one night has no anchor and no banner. Best-effort by contract.
+ * THE REOPENING BANNER'S ONE FACT (cloud 0040): a write on a GET, deliberate. The anchor is the
+ * newest row the worker PLANTED untold before its roster pass cleared the facts (first, so a read
+ * landing mid-pass tells the worker's row rather than minting another), else the park or the newest
+ * `account_closed` block the rows still state, else the newest `closed` notice. ONE statement tells it,
+ * once. A `reopened` row sent after the anchor answers it too; that assumes a told row's database clock
+ * passed every anchor of its closure, which only a skew longer than the closure breaks. NO COUNT.
+ * `"fault"` is a read or write that failed, a refused fence included: the caller holds the resume back.
  */
 export async function reopenedCatchUp(
   deps: ApiDeps, ctx: ServiceContext,
-): Promise<{ since: string } | null> {
+): Promise<{ since: string } | null | "fault"> {
   const accountId = ctx.accountId;
+  const db = deps.db as unknown as Tx;
   try {
-    const [parked] = await deps.db.select({ at: max(mailboxes.organizerParkedAt) })
-      .from(mailboxes).where(eq(mailboxes.accountId, accountId));
-    const [blocked] = await deps.db.select({ at: max(mailboxes.syncBlockedSince) })
-      .from(mailboxes).where(and(
-        eq(mailboxes.accountId, accountId),
-        eq(mailboxes.syncBlockedReason, "account_closed"),
-      ));
-    const [closed] = await deps.db.select({ anchor: accountLifecycleNotices.anchor })
-      .from(accountLifecycleNotices)
-      .where(and(
-        eq(accountLifecycleNotices.accountId, accountId),
-        eq(accountLifecycleNotices.kind, "closed"),
-      ))
-      .orderBy(desc(accountLifecycleNotices.anchor))
-      .limit(1);
-    const anchor = parked?.at ?? blocked?.at ?? closed?.anchor ?? null;
+    let anchor = await untoldCatchUpOf(db, accountId) ?? await reopenAnchorOf(db, accountId);
+    if (anchor === null) {
+      const [closed] = await deps.db.select({ anchor: accountLifecycleNotices.anchor })
+        .from(accountLifecycleNotices)
+        .where(and(
+          eq(accountLifecycleNotices.accountId, accountId),
+          eq(accountLifecycleNotices.kind, "closed"),
+        ))
+        .orderBy(desc(accountLifecycleNotices.anchor))
+        .limit(1);
+      anchor = closed?.anchor ?? null;
+    }
     if (anchor === null) return null;
     const [answered] = await deps.db.select({ anchor: accountLifecycleNotices.anchor })
       .from(accountLifecycleNotices)
@@ -46,18 +45,24 @@ export async function reopenedCatchUp(
       ))
       .limit(1);
     if (answered) return null;
-    // FENCED, like every session-holding writer of an account-owned row: a GET racing the
-    // caller's own erasure must not plant a notice after the Art. 17 sweep commits.
-    const inserted = await withAccountTx(ctx, async (tx) =>
+    const since = anchor;
+    // FENCED, like every session-holding writer of an account-owned row: a GET racing the caller's
+    // own erasure must not plant a notice after the Art. 17 sweep commits. RETURNING says whether
+    // THIS read told it: a fresh row, or the planted one made told.
+    const told = await withAccountTx(ctx, async (tx) =>
       tx.insert(accountLifecycleNotices)
-        .values({ accountId, kind: "reopened", anchor })
-        .onConflictDoNothing()
-        .returning());
-    return inserted.length === 0 ? null : { since: anchor.toISOString() };
+        .values({ accountId, kind: "reopened", anchor: since })
+        .onConflictDoUpdate({
+          target: [accountLifecycleNotices.accountId, accountLifecycleNotices.kind, accountLifecycleNotices.anchor],
+          set: { sentAt: sql`now()` },
+          setWhere: untoldCatchUpWhere(),
+        })
+        .returning({ anchor: accountLifecycleNotices.anchor }));
+    return told.length === 0 ? null : { since: since.toISOString() };
   } catch {
-    // A missing table (an API ahead of cloud 0040), a fenced refusal or any read fault costs
-    // the banner, never the wall's read.
-    return null;
+    // A missing table (an API ahead of cloud 0040), a fenced refusal or any read fault: no banner,
+    // and never the wall's read.
+    return "fault";
   }
 }
 

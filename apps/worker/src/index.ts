@@ -11,7 +11,7 @@ import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
   entitlementsFaultRecorder, alertReadersOf,
   markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
-  pruneErasedBearers, pruneAuthThrottle } from "@trafficflow/db/cloud";
+  pruneErasedBearers, pruneAuthThrottle, plantReopenedCatchUp } from "@trafficflow/db/cloud";
 import {
   runAlertPass, firingToLog,
   webhookAlertSink,
@@ -2865,6 +2865,35 @@ export async function startWorkerWithLock(
       const roster = await loadRosterMailboxes(db, selection, new Date(), parkedAccountsReader ?? undefined);
       const selected = roster.served;
 
+      // ── THE CATCH-UP'S DATE, RECORDED BEFORE THIS PASS SPENDS IT (cloud 0040) ──────────────
+      //
+      // An account reading open whose rows still carry the park or the `account_closed` block has
+      // just reopened, and this pass clears both (the promotion, then the pass end). The door dates
+      // its catch-up note from them, so the anchor is planted untold first. A FAILED plant defers the
+      // spend: that account's rows skip the resume and the block clear, and the next pass plants
+      // again. Erased is final and defers nothing. Bound: a persistent write fault on the notices
+      // table defers every pass, with this log line its only trace. An account whose parked
+      // mailbox cannot resume yet is planted again each pass, as a DO NOTHING; with nothing
+      // reopened there is no statement.
+      const plantOwed = new Set<string>();
+      const reopening = new Set<string>();
+      for (const m of selected) {
+        if (m.organizerParkedAt !== null || m.syncBlockedReason === "account_closed") reopening.add(m.accountId);
+      }
+      for (const accountId of reopening) {
+        try {
+          await plantReopenedCatchUp(db as unknown as Tx, accountId);
+        } catch (err) {
+          if (err instanceof AccountErasedError) continue;
+          plantOwed.add(accountId);
+          log.error("reopened_notice_plant_failed", {
+            accountId, err,
+            reason: "the catch-up note's date could not be recorded, so this pass leaves the " +
+              "account's closure facts standing and the next pass records them first",
+          });
+        }
+      }
+
       // ── THE RESUME: a mailbox the wall released, on an account that reads open (mail 0135) ──
       //
       // The `join` a person's "Organize here" would write, and mirrored into THIS pass's row so the
@@ -2873,6 +2902,7 @@ export async function startWorkerWithLock(
       // lost join is never stamped again. Filtered on the row as read, so a pass with nothing
       // marked issues no statement.
       for (const m of selected) {
+        if (plantOwed.has(m.accountId)) continue;
         if (m.organizerParkedAt === null || m.organizerRole !== "reader" || m.organizeConsentedAt === null
           || m.releaseRequestedAt !== null || m.takeoverAuthorizedAt !== null) continue;
         const now = new Date();
@@ -3130,8 +3160,9 @@ export async function startWorkerWithLock(
       // LAST in the pass, and the only place `sync_blocked_reason` is written. See below.
       // The parked rows ride along (mail 0124): they are filtered out of `selected` by
       // construction, and the writer below is what puts `account_closed` on them — and what
-      // clears it, because an un-parked account's rows re-enter `selected` with no bucket.
-      await reconcileSyncBlocks([...selected, ...roster.parked]);
+      // clears it, because an un-parked account's rows re-enter `selected` with no bucket; the
+      // catch-up's date was planted at the top of this pass, and a failed plant defers the clear.
+      await reconcileSyncBlocks([...selected, ...roster.parked], plantOwed);
 
       // Push rows go with the block, after it is written: idempotent, and only for an account
       // every live mailbox of which says `account_closed` as the delete runs (mail 0135).
@@ -3157,10 +3188,14 @@ export async function startWorkerWithLock(
      * excludes). The write REPEATS (idempotent — `markMailboxSyncBlocked` COALESCEs
      * `sync_blocked_since`) and CONVERGES a row another writer cleared; the clear is gated on the row ACTUALLY carrying a reason, or a healthy shard issues one pointless UPDATE per mailbox per interval. Best-effort — a worker ahead of mail 0029 fails these on a missing column, harmlessly.
      */
-    async function reconcileSyncBlocks(selected: readonly EnabledMailbox[]): Promise<void> {
+    async function reconcileSyncBlocks(
+      selected: readonly EnabledMailbox[], deferred: ReadonlySet<string>,
+    ): Promise<void> {
       const nowMs = Date.now();
       for (const mb of selected) {
         if (stopped) return;
+        // A reopened account whose catch-up was not recorded keeps its block one more pass.
+        if (deferred.has(mb.accountId)) continue;
         const block = leaseBlocked.get(mb.mailboxId)
           ?? awaitingCreds.get(mb.mailboxId)
           ?? capDropped.get(mb.mailboxId)
