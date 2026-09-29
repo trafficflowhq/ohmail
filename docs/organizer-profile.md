@@ -355,8 +355,11 @@ it instead of appending.
 Settings messages are found by reading every message's headers in
 `ohmail/_meta`, checked against the folder's message count — never by a header
 SEARCH, which some servers answer with nothing. The organizer removes
-superseded copies: its own at once, another install's once the current
-document is ten minutes newer and that install holds no fresh claim. It never
+superseded copies: its own at once (while the current document is another
+install's, only once it has read that one), another install's once the current
+document is ten minutes newer and that install holds no fresh claim, and the
+message it held for a found-settings question once that question is answered
+by an import or by saving this install's settings. It never
 removes the current document, the message it holds for an unanswered
 found-settings question, a claim, or a message that is not an ohmail settings
 message.
@@ -369,18 +372,19 @@ read again every few minutes, and shows the mail where the organizer's rules
 place it. It applies none of them itself: nothing is moved or screened by a
 reading install.
 
-## A found document holds the writer — and the screening
+## A found document stays — and holds the screening
 
 An organizer that takes over a mailbox and finds a foreign document it cannot
 call its own does two things with the one question the document poses, and
 refuses to answer it itself:
 
-- **The write-behind holds.** The found document is surfaced for the user's
-  import decision and is never overwritten while that decision is open. An
-  applied import, or saving this install's settings to the mailbox from
-  Settings, releases the hold. "Not now" answers the question for screening
-  and leaves the found document in the mailbox.
-- **The consent gate holds with it, for the senders the document lets
+- **The found document stays.** It is surfaced for the user's import decision
+  and is never overwritten or removed while that decision is open; the
+  organizer writes its own settings beside it. An applied import, or saving
+  this install's settings to the mailbox from Settings, answers the question,
+  and the organizer then removes the found document. "Not now" answers the
+  question for screening and leaves the found document in the mailbox.
+- **The consent gate holds, for the senders the document lets
   through.** While the decision is open, mail from a sender the found
   document screened in (or admits by a rule) keeps the folder the mailbox
   already has it in, instead of being re-screened by a store that has not yet

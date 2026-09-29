@@ -210,7 +210,7 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // in, and whether a write left a removal owed. Every one is a counter or a word the selector set
   // itself; never an address, a subject or a folder name.
   "current", "removable", "own", "foreignStale", "duplicate", "malformed",
-  "keptForeignFresh", "keptUnrecognised", "keptNewerDated", "unseenCurrent", "owed", "tidyMode",
+  "keptForeignFresh", "keptUnrecognised", "keptNewerDated", "keptHeld", "keptOwnBesideUnseen", "unseenCurrent", "owed", "tidyMode",
   "sample", "claims", "threadsCreated", "contactsImported", "sentRecipients", "truncated",
   "maxPages", "healthPort", "signal",
   // ── The desktop host door's loopback listener (`host_listening`), added WITH the call site ──

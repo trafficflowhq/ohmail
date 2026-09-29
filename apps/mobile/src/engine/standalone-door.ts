@@ -155,7 +155,7 @@ export interface StandaloneEngine {
       holderState?: "held" | "stopped" | "none" | null;
       /**
        * WHAT LETTING THE MAILBOX GO LEFT IN ITS SETTINGS DOCUMENT — on the stop's own record only.
-       * `kept_other`: another ohmail's document stands; `not_saved`: the write failed.
+       * `kept_other`: a newer ohmail's document stands; `not_saved`: the write failed.
        */
       settingsLeft?: "saved" | "kept_other" | "not_saved";
     }>;

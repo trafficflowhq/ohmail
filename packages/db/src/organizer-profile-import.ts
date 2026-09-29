@@ -49,6 +49,8 @@ export interface ProfileFoundMarker {
   v?: number;
   /** `found` only: the document's own write stamp and provenance. */
   updatedAt?: string;
+  /** `found` only: the install that wrote it — with `updatedAt`, where the import re-reads it. */
+  installId?: string;
   producer?: { kind: string; version: string };
   counts?: {
     screener: number; rules: number; notifyRules: number; tagNames: number; awayResponder: number;
@@ -119,6 +121,7 @@ export async function latestProfileFoundMarker(
       heldForImport: p.heldForImport === true,
       ...(typeof (p as { v?: unknown }).v === "number" ? { v: (p as { v: number }).v } : {}),
       ...(typeof p.updatedAt === "string" ? { updatedAt: p.updatedAt } : {}),
+      ...(typeof p.installId === "string" ? { installId: p.installId } : {}),
       ...(p.producer && typeof p.producer === "object" ? { producer: p.producer as { kind: string; version: string } } : {}),
       ...(p.counts && typeof p.counts === "object" ? { counts: p.counts as ProfileFoundMarker["counts"] } : {}),
     };

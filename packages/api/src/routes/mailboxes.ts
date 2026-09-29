@@ -6,7 +6,7 @@ import type {
    app (the rule at the top of `packages/db/src/index.ts`). */
 import { readMailboxProfile, RECIPIENT_ADDRESS_MAX_CHARS } from "@trafficflow/services/mail";
 import {
-  ProfileUnavailableError, readOrganizerProfile, type ProfileReadResult,
+  ProfileUnavailableError, readOrganizerProfile, type ProfileReadResult, type ProfileLocator,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { isImapDoorTimeout, withinDoorBudget } from "../imap-door.js";
 import { serviceContext } from "../context.js";
@@ -108,7 +108,7 @@ function probeInputOf(body: Record<string, unknown>): {
  * learns how to open a socket. Read-only by construction: `readOrganizerProfile` lists the meta
  * folder and writes nothing, as the organizer peek reads the lease without renewing one.
  */
-const profileReader = (deps: ApiDeps, mailboxId: string) => async (): Promise<ProfileReadResult> => {
+const profileReader = (deps: ApiDeps, mailboxId: string) => async (retain?: ProfileLocator): Promise<ProfileReadResult> => {
   try {
     /* A NAMED READER RATHER THAN AN ORGANIZER'S IDENTITY. This route only reads: it never
      * appends a settings document, so it records no position and its memory stays empty. The
@@ -122,6 +122,8 @@ const profileReader = (deps: ApiDeps, mailboxId: string) => async (): Promise<Pr
       deps, mailboxId,
       (adapter) => readOrganizerProfile(
         adapter.profileIo({ installId: "api-profile-reader", mailboxId }),
+        // The document the person was shown, which may sit beside a newer one of the organizer's.
+        retain === undefined ? undefined : { retain },
       ),
     );
   } catch (err) {

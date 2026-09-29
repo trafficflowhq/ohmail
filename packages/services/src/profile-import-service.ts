@@ -10,7 +10,7 @@ import {
 } from "@trafficflow/db";
 import {
   PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint, profileFingerprintVersion,
-  oversizedProfileList, type ProfileReadResult,
+  oversizedProfileList, type ProfileReadResult, type ProfileLocator,
 } from "@trafficflow/core/adapters/organizer-profile";
 import {
   PROFILE_IMPORT_LOCK_CLASS, applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile,
@@ -30,8 +30,12 @@ import { ServiceError } from "./errors.js";
  * pass, rules through the product's own validation (failures SKIPPED); NEWER offers nothing.
  */
 
-/** A fresh read of the mailbox's profile document. Built by the route from the live adapter. */
-export type ProfileReader = () => Promise<ProfileReadResult>;
+/**
+ * A fresh read of the mailbox's profile document. Built by the route from the live adapter.
+ * `retain` names the document the person was shown, which may sit beside a newer one this
+ * install wrote since; without it the reader answers the folder's newest.
+ */
+export type ProfileReader = (retain?: ProfileLocator) => Promise<ProfileReadResult>;
 
 export type ProfileImportCandidateDTO =
   /** Nothing to ask about — the resting answer. */
@@ -269,7 +273,7 @@ export class ProfileImportService {
 
     let fresh: ProfileReadResult;
     try {
-      fresh = await opts.read();
+      fresh = await opts.read(await this.shownAt(ctx, mailboxId, fingerprint));
     } catch (err) {
       if (!(err instanceof ProfileUnavailableError)) throw err;
       /* THE READ DID NOT FIT THIS REQUEST — a slow provider, or a dial that failed here. The press
@@ -388,6 +392,19 @@ export class ProfileImportService {
   }
 
   /** Ownership first, before any dial: a cross-account mailbox id is indistinguishable from a missing one. */
+  /**
+   * WHERE THE DOCUMENT THE PERSON WAS SHOWN SITS — from the organizer's found-marker for this
+   * fingerprint, which records its writer and write stamp. `undefined` when the marker names
+   * another document or predates the install id: the read then answers the folder's newest.
+   */
+  private async shownAt(ctx: ServiceContext, mailboxId: string, fingerprint: string): Promise<ProfileLocator | undefined> {
+    const m = await latestProfileFoundMarker(asTx(ctx), ctx.accountId, mailboxId);
+    if (m?.state !== "found" || m.fingerprint !== fingerprint) return undefined;
+    if (typeof m.installId !== "string" || typeof m.updatedAt !== "string") return undefined;
+    const at = Date.parse(m.updatedAt);
+    return Number.isFinite(at) ? { installId: m.installId, second: Math.floor(at / 1000), fingerprint } : undefined;
+  }
+
   private async assertMailbox(ctx: ServiceContext, mailboxId: string): Promise<string> {
     const rows = await ctx.db.select({ status: mailboxes.status }).from(mailboxes)
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId))).limit(1);

@@ -481,7 +481,7 @@ export async function stopOrganizingStandalone(): Promise<StopOrganizingOutcome>
 
 /**
  * WHAT THE PERSON'S STOP LEFT OFF THE MAILBOX — the engine's reading on the release's own record:
- * `kept_other` (another ohmail's settings document stands, and this phone may not replace it) or
+ * `kept_other` (a newer ohmail's settings document stands, which this phone cannot replace) or
  * `not_saved` (the write failed). `null` where the mailbox has this phone's settings, or nothing
  * was stopped this launch. Cleared by the next start.
  */
