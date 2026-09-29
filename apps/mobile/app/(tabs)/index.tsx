@@ -10,13 +10,14 @@
  */
 import { useCallback, useState, useSyncExternalStore } from "react";
 import { View } from "react-native";
+import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import {
   onOrganizerState, organizerStateVersion, readingAtConnectSaid, sayReadingAtConnect,
 } from "../../src/engine/organizer-session";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
-import { useWorld, type WorldMail, type WorldUnscreened } from "../../src/state/world";
+import { useEngineQueuesAsk, useWorld, type WorldMail, type WorldUnscreened } from "../../src/state/world";
 import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -43,6 +44,8 @@ function OhboxBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const w = useWorld();
+  // The offer and the doorbell come from the engine's queue reads, asked when this screen is shown.
+  useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */

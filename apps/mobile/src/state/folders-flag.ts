@@ -55,15 +55,35 @@ export function freshestRead<T>(
 ): (ask: () => Promise<T | null>) => Promise<T | null> {
   let seq = 0;
   let applied = 0;
+  /* AN EQUAL ANSWER IS NOT A CHANGE. Every drain re-asks these reads, and each apply hands the
+     screens a fresh object that re-derives every list; an answer that says what the last applied
+     one said is taken as current (it still supersedes older reads) and applies nothing. */
+  let last: { ans: T } | null = null;
   return async (ask) => {
     const mine = ++seq;
     const ans = await ask();
     if (ans !== null && mine > applied) {
       applied = mine;
+      if (last !== null && stableEqual(last.ans, ans)) return ans;
+      last = { ans };
       apply(ans);
     }
     return ans;
   };
+}
+
+/** Structural equality over JSON-shaped answers, object keys compared in sorted order. */
+export function stableEqual(a: unknown, b: unknown): boolean {
+  return sortedJson(a) === sortedJson(b);
+}
+
+function sortedJson(v: unknown): string | undefined {
+  return JSON.stringify(v, (_key, value: unknown) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as Record<string, unknown>).sort()) out[k] = (value as Record<string, unknown>)[k];
+    return out;
+  });
 }
 
 export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {

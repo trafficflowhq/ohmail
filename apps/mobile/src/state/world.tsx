@@ -53,6 +53,7 @@ import * as Crypto from "expo-crypto";
 import type { FaceName } from "../theme/face";
 import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead } from "./folders-flag";
+import { askEngineQueues, drainReads } from "./drain-reads";
 import { usePrefs } from "./store";
 import {
   connectionSay, firstSyncSay,
@@ -698,6 +699,19 @@ function emptyWorld(actions: WorldActions): World {
 
 /* ────────────────────────────────────────────────────────────── the provider */
 
+/**
+ * THE SCREENS THAT SHOW THE QUEUE ASK ON FOCUS — the Ohbox (the offer, the doorbell) and the
+ * Screener, through this stable callback under `useFocusEffect`. The web asks on mount; a tab
+ * screen stays mounted, so focus is the phone's mount.
+ */
+export function useEngineQueuesAsk(): () => void {
+  const conn = useConnection();
+  const engine = conn.state.k === "live" ? conn.state.session.engine : null;
+  return useCallback(() => {
+    if (engine) askEngineQueues(engine);
+  }, [engine]);
+}
+
 export function WorldProvider({ children }: { children: ReactNode }) {
   const conn = useConnection();
   /* The DEVICE half of the face lives in the prefs store (above this provider), and the account
@@ -999,33 +1013,31 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       if (current.current === m) setRelayed(ans);
     });
     const m = foldersFlag({
-      read: () => {
-        /* Fired from the flag's read so there is ONE cadence to reason about and one place that
-           knows when facts go stale. It is NOT awaited into the flag's own promise: a mailbox
-           read that is slow or refused must not hold up the folders answer, which has its own
-           epoch and its own correctness. */
-        void boxRead(() => readMailboxes(session));
-        /* THE QUEUE FROM THE STORE, ON BOTH DOORS: the standalone door serves `GET /screener` from
-           the engine in this process, so its shelf is the store's too. The engine's own copy of
-           the first page is what the partition reads, so a sender the store does not list is
-           presented in the Ohbox rather than at the gate. */
-        void queueRead(() => readScreenerWaiting(session));
-        void session.engine.refreshScreenerWaiting().catch(() => { /* the next cadence asks again */ });
-        /* THE OHBOX'S UNDECIDED-SENDER OFFER, the web's read on the same cadence: mail already in the
-           Inbox at the connect stays in the Ohbox, and a store that has not answered offers nothing. */
-        void session.engine.refreshUnscreened().catch(() => { /* an offer the door cannot make is absent */ });
-        /* BOTH DOORS: the decisions this phone sent live where its presses land. */
-        void relayRead(() => readRelayedDecisions(session));
-        /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
-        const applyFace = faces.beginRead();
-        return sigRead(async () => {
-          const ans = await readFoldersEnabled(session);
-          // `null` from the read is "could not ask", which the applier must not read as "the
-          // account has no face" — the two are different answers (face-scope.ts's contract).
-          applyFace(ans === null ? undefined : ans.themeFace);
-          return ans;
-        });
-      },
+      /* Fired from the flag's read so there is ONE cadence to reason about and one place that
+         knows when facts go stale (`drain-reads.ts`). The REST reads are not awaited into the
+         flag's own promise: a mailbox read that is slow or refused must not hold up the folders
+         answer, which has its own epoch and its own correctness. The queue shelf comes FROM THE
+         STORE on both doors (the standalone door serves `GET /screener` from this process's
+         engine), and the decisions this phone sent live where its presses land. */
+      read: drainReads<FoldersConsent>({
+        rest: [
+          () => void boxRead(() => readMailboxes(session)),
+          () => void queueRead(() => readScreenerWaiting(session)),
+          () => void relayRead(() => readRelayedDecisions(session)),
+        ],
+        consent: () => {
+          /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
+          const applyFace = faces.beginRead();
+          return sigRead(async () => {
+            const ans = await readFoldersEnabled(session);
+            // `null` from the read is "could not ask", which the applier must not read as "the
+            // account has no face" — the two are different answers (face-scope.ts's contract).
+            applyFace(ans === null ? undefined : ans.themeFace);
+            return ans;
+          });
+        },
+        engine: session.engine,
+      }),
       write: (on) => writeFoldersEnabled(session, on),
       apply: (on) => { if (current.current === m) setFoldersOn(on); },
       drain: () => {

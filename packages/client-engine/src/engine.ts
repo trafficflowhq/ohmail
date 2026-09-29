@@ -2183,6 +2183,38 @@ export const OPTIMISTIC_SENT_TTL_MS = 10 * 60 * 1000;
  */
 export const SENT_FORWARD_MAX_PARTS = 100;
 
+/** The page row's write number, which is not part of what the queue says. */
+const ASK_IS_NOT_CONTENT: ReadonlySet<string> = new Set(["ask"]);
+
+/**
+ * Do these puts restate exactly the stored rows of their type — same ids, same entities? Compared
+ * as key-sorted JSON (the rows are small and bounded: one queue page, the offer's groups), with
+ * `ignore` naming top-level fields that number a write rather than state anything.
+ */
+function sameStoredEntities(
+  stored: ReadonlyArray<{ id: string; entity: unknown }>,
+  puts: ReadonlyArray<{ id: string; entity: unknown }>,
+  ignore: ReadonlySet<string> = new Set(),
+): boolean {
+  if (stored.length !== puts.length) return false;
+  const byId = new Map(stored.map((e) => [e.id, e.entity]));
+  for (const p of puts) {
+    if (!byId.has(p.id)) return false;
+    if (sortedJson(byId.get(p.id), ignore) !== sortedJson(p.entity, ignore)) return false;
+  }
+  return true;
+}
+
+function sortedJson(v: unknown, ignore: ReadonlySet<string>): string {
+  return JSON.stringify(v, function (this: unknown, key: string, value: unknown) {
+    if (this !== null && typeof this === "object" && !Array.isArray(this) && ignore.has(key)) return undefined;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as Record<string, unknown>).sort()) out[k] = (value as Record<string, unknown>)[k];
+    return out;
+  });
+}
+
 export class OhmailEngine {
   readonly store: MirrorStore;
   private readonly adapter: EngineAdapter;
@@ -5503,16 +5535,17 @@ export class OhmailEngine {
     const wire = await ask.call(this.adapter);
     const before = this.read().list<UnscreenedGroupDTO>(UNSCREENED_TYPE);
     const keep = new Set(wire.groups.map((g) => g.address));
-    await this.store.commitLocal(
-      wire.groups.map((g) => ({
-        type: UNSCREENED_TYPE,
-        id: g.address,
-        entity: {
-          id: g.address, count: g.count, newestAt: g.newestAt, total: wire.total,
-        } satisfies UnscreenedGroupDTO,
-      })),
-      before.filter((g) => !keep.has(g.id)).map((g) => ({ type: UNSCREENED_TYPE, id: g.id })),
-    );
+    const puts = wire.groups.map((g) => ({
+      type: UNSCREENED_TYPE,
+      id: g.address,
+      entity: {
+        id: g.address, count: g.count, newestAt: g.newestAt, total: wire.total,
+      } satisfies UnscreenedGroupDTO,
+    }));
+    const gone = before.filter((g) => !keep.has(g.id)).map((g) => ({ type: UNSCREENED_TYPE, id: g.id }));
+    // An answer equal to the stored rows moves nothing: no write, no version, no notify.
+    if (gone.length === 0 && sameStoredEntities(this.store.entries(UNSCREENED_TYPE), puts)) return;
+    await this.store.commitLocal(puts, gone);
     this.notify();
   }
 
@@ -5580,8 +5613,13 @@ export class OhmailEngine {
     // The complement is read off the STORE, never the overlaid view: a row an overlay hides is
     // still on disk and would come back when the overlay retires.
     const keep = new Set(puts.map((p) => p.id));
-    const gone = this.store.entries(SCREENER_WAITING_TYPE).filter((e) => !keep.has(e.id))
+    const stored = this.store.entries(SCREENER_WAITING_TYPE);
+    const gone = stored.filter((e) => !keep.has(e.id))
       .map((e) => ({ type: SCREENER_WAITING_TYPE, id: e.id }));
+    // An answer equal to the stored queue moves nothing. The page row's `ask` is left out of the
+    // comparison: it numbers the write, and the web's onward walk keys on it, so an unchanged page
+    // keeps the ask it was written under.
+    if (gone.length === 0 && sameStoredEntities(stored, puts, ASK_IS_NOT_CONTENT)) return;
     await this.store.commitLocal(puts, gone);
     this.notify();
   }

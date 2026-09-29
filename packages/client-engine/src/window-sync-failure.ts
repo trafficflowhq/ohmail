@@ -25,6 +25,12 @@ export const WINDOW_SYNC_FAILURE_REASONS = [
   "protocol",
   /** The engine's own code threw while applying or pruning — a defect in the window, not a door. */
   "window_fault",
+  /** A call passed the runtime's stack or argument ceiling (`RangeError`) — a window fault with a known shape. */
+  "stack_ceiling",
+  /** The on-device store refused a statement (a SQLite error code). */
+  "store_write",
+  /** A request's own deadline elapsed (`TimeoutError`). */
+  "timeout",
   "unknown",
 ] as const;
 
@@ -44,6 +50,8 @@ export interface WindowSyncFailure {
 
 const NAME = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const CODE = /^[a-z][a-z0-9_]{0,63}$/;
+/** The store's own codes: expo-sqlite's coded error and SQLite's result names. Read, never copied. */
+const STORE_CODE = /^(ERR_[A-Z0-9_]*SQLITE[A-Z0-9_]*|SQLITE_[A-Z_]{1,40})$/;
 
 /**
  * Classify a drain's rejection. Reads only class names, numeric statuses and closed codes: the
@@ -67,11 +75,14 @@ export function classifyWindowSyncFailure(err: unknown, attempt: number): Window
   else if (errorClass === "SnapshotCursorRefusedError") out.reason = "snapshot_cursor_refused";
   else if (errorClass === "CursorExpiredError") out.reason = "cursor_expired";
   else if (errorClass === "BridgeDeadlineError") out.reason = "bridge_deadline";
+  else if (errorClass === "TimeoutError") out.reason = "timeout";
+  else if (typeof e.code === "string" && STORE_CODE.test(e.code)) out.reason = "store_write";
   else if (code === "network") out.reason = "transport";
   else if (code === "protocol") out.reason = "protocol";
   else if (status !== undefined) out.reason = "http_refusal";
+  else if (errorClass === "RangeError") out.reason = "stack_ceiling";
   else if (
-    errorClass === "RangeError" || errorClass === "TypeError" || errorClass === "ReferenceError"
+    errorClass === "TypeError" || errorClass === "ReferenceError"
     || errorClass === "MirrorGenerationChanged"
   ) out.reason = "window_fault";
   return out;

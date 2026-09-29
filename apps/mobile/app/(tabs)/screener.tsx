@@ -10,14 +10,14 @@
  */
 import { useState } from "react";
 import { View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
 import { destDone, type ScreenerSeg } from "../../src/state/model";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { relayMarkFor, type RelayMark } from "../../src/state/relay";
-import { useWorld, type ScreenerRow } from "../../src/state/world";
+import { useEngineQueuesAsk, useWorld, type ScreenerRow } from "../../src/state/world";
 import { Badge, Empty, Screen, Tail, TapRow, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -58,6 +58,8 @@ function ScreenerBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const w = useWorld();
+  // The waiting queue's first page is the engine's; it is asked when this screen is shown.
+  useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
   /* The shelf can arrive as a param: the pushed sender route migrates here when the window
      gains a second pane, naming the shelf its selection belongs to. */
