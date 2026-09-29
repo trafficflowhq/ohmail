@@ -801,6 +801,8 @@
   .abar-more{min-width:44px}
   .abar-read{min-width:44px}
   .abar-reply,.abar-fwd .abar-b{min-width:44px}
+  /* A minimum wider than the content would leave a lone glyph at the left edge of its target. */
+  .abar-more,.abar-read,.abar-reply,.abar-fwd .abar-b{justify-content:center}
   .mm-item{min-height:44px}
   .abar-date{min-height:44px}
 }
