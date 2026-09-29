@@ -13,13 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.25.6] — 2026-09-30
-
 ### The AI call log is complete again
 <!-- changes: plane-026-ai-usage.md -->
 
@@ -152,87 +145,10 @@ the same arrival order the lists show, so a message with an old or a future date
 pages away from where the list put it. History is in arrival order now; every message still shows
 its own date.
 
-### A failed read no longer takes the way to subscribe away
-<!-- changes: fix-026-payment-door.md -->
+### Still to come
 
-If the Subscription entry in Settings could not be loaded when ohmail opened, it now comes back on
-its own the next time you return to the app, on the web and in the desktop app. A Subscribe press on
-the trial or payment note that cannot open the account page now says why. After a renewal, the note
-that ohmail is catching up on mail from the closure is shown on the web and on the phone even when
-organizing had already resumed before you opened ohmail. The desktop app does not show it yet.
-
-### A file fault says which side failed, and a tracking pixel is recognised in every picture format
-<!-- changes: fix-026-fault-tracker-named.md -->
-
-- A file from a mailbox that is not signed in here says so and offers no Try again; a send from it
-  ends at once with the same sentence.
-- A file from a mail server that took the connection and then would not serve it, or refused the
-  request after the sign-in, says the server isn't serving the mailbox right now and offers Try
-  again.
-- A file that failed on ohmail's side offers no Try again.
-- A tracking pixel is recognised in every picture format the image proxy serves, and a tracker's
-  address is matched however it is spelled. An AVIF branded as a still picture is sized by its
-  primary image, even when a track follows it. The help page, the FAQ and the tracking pixel setting
-  say that a disguised pixel loads each time a message's pictures are fetched.
-
-### Forwarding a message that is only attachments sends it with them
-<!-- changes: fix-026-forward-sends.md -->
-
-Forwarding a scanned PDF, a photo sent without words or a message attached as a file no longer
-fails with "The original could not be loaded"; it goes out with every attachment. An older message
-whose stored copy was dropped under the storage limit, and a message in Junk, forward with their
-text read from your mailbox when you send. On the phone, a forward that is still refused says why.
-
-### Builds install the dependency versions that were tested
-<!-- changes: fix-026-published-build-tested-tree.md -->
-
-The desktop apps, the Android app and the self-host images are now built from the dependency
-versions the project is tested with. Before, the published lockfile was resolved from the package
-registry each time a release was published, so a build could pick up newer releases of indirect
-dependencies than the ones that were tested, among them native modules of the Android app. These
-builds also run no dependency install scripts.
-
-### Who organizes your mailboxes is said once, at the foot of the sidebar
-<!-- changes: fix-026-notice-steps-aside.md -->
-
-Nothing is said any more when this install starts organizing a mailbox, so reopening a paused
-account no longer stacks a line per mailbox over the Ohbox. When another install takes a mailbox
-over, or the one organizing it stops, a short note stands at the foot of the sidebar (above the top
-bar on a narrow window), several mailboxes behind a count; Mark read clears it on every device, and
-it comes back only for a new change.
-
-### Forward stands beside Reply on the message bar
-<!-- changes: fix-026-notice-steps-aside.md -->
-
-On the web and desktop apps Forward is always on the message bar beside Reply, at every window
-width; it was only in the More menu on a narrow window or a phone. On the narrowest screens Forward
-and then Reply show just their icon rather than run off the bar.
-
-### A first mailbox without encryption, set up on the first launch
-<!-- changes: fix-026-first-door.md -->
-
-On the first launch of the desktop app, "On this computer" now shows why a mail server on your own
-network that offers no encryption was refused and offers the same consent line as adding a mailbox,
-instead of opening the app over a mailbox with no password. With the line ticked, the mailbox is
-connected and syncs. A "Sign in again" that the mail server refuses no longer keeps the refused
-password in use, and the status bar says when a mailbox has no password instead of "Connected".
-Setup asks about the mailbox just connected, and with several mailboxes connected, "Run setup again"
-and the setup link on the web ask which mailbox the setup is for.
-
-### The phone no longer signs itself out after a display, font or language change
-<!-- changes: fix-026-one-bearer.md -->
-
-The phone no longer signs itself out after a display-size, font-size or language change, or after
-being closed while it was renewing its session.
-
-### The phone keeps up with a large mailbox
-<!-- changes: phone-026-fast-and-fits-on-a-foldable.md -->
-
-On a large mailbox the phone app no longer redraws its lists after every sync when nothing changed,
-so taps take effect at once instead of after several seconds. On a foldable's cover screen and at
-large display sizes nothing is cut off: destinations without room move into More, the reader keeps
-Reply and Forward on its bar, a reply stays open and above the keyboard when you fold or unfold the
-phone, and the lists move on to the new day at midnight without a sync.
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
 
 ## [0.25.5] — 2026-09-29
 
@@ -369,10 +285,11 @@ built with the mail sender's fix the same way.
 <!-- changes: fix-026-one-settings-message.md -->
 
 ohmail keeps one settings message per mailbox in `ohmail/_meta` and removes the older copies, its
-own and the ones other ohmail installs left behind, a hundred at a time. Where a server refuses to
-delete, the folder holds two at most. Before, on servers that answer ohmail's search for these
-messages with nothing, every settings change added a copy that other mail apps showed and found in
-searches.
+own and the ones other ohmail installs left behind, a hundred at a time. While ohmail asks you about
+settings another install left there, that install's message stays beside this one until you answer.
+Where a server refuses to delete, one older copy of its own can stay beside them until it can be
+removed. Before, on servers that answer ohmail's search for these messages with nothing, every
+settings change added a copy that other mail apps showed and found in searches.
 
 ### A full ohmail/_meta folder no longer stops organizing
 <!-- changes: fix-026-the-lease-reads-every-claim.md -->
@@ -10668,8 +10585,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.6...HEAD
-[0.25.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.6
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.5...HEAD
 [0.25.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.5
 [0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
 [0.25.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.3
