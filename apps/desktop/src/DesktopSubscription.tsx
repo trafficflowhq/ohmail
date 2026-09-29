@@ -14,6 +14,7 @@ import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 
 import { ACCESS_REFUSED_STATUS, ACCOUNT_ACCESS_PATH, bridgeFetch } from "./bridge-fetch.js";
+import { useAccessSchedule } from "../../webapp/app/shell/wall-lift.js";
 
 /**
  * The hosted route this pane addresses, root-relative like every path in this window.
@@ -49,47 +50,57 @@ export interface ManageOffer {
   withdrawManage: () => void;
 }
 
+/** What the offer knows: nothing yet (a failed read leaves it here), or an answer's verdict. */
+type OfferState = "unknown" | "offered" | "not-offered";
+
 /**
  * DOES THIS ACCOUNT'S DOOR SERVE A SUBSCRIPTION PAGE — the offer, not the address, and A HOOK THE GATE
  * CALLS rather than a `return null` inside the pane: `SettingsView` grows the nav entry from the PROP
  * being present, so a node that renders nothing still puts "Subscription" in the nav above an empty
- * pane. Only withholding the node withholds the entry, which is `invitesSection`'s rule, and the desktop
- * census asserts the entry is gone where no page is served. `false` covers every "nowhere": no hosted
- * account, an offline install, a server without the route, a refused read, the moment before the first
- * answer. A 402 is the one non-2xx meaning YES — a program exists and refused this account, and the mint
- * is the route the lock leaves open.
+ * pane. Any ANSWER settles it — `metered`, a 402 (a program that refused this account, whose way back
+ * the lock leaves open), `metered:false`, no hosted account — and only a FAILED read leaves it unknown,
+ * which is the one state the next return to the window asks again in, through the shell's own schedule.
  */
 export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
-  const [offered, setOffered] = useState(false);
+  const [state, setState] = useState<OfferState>("unknown");
+  /** The account door an answer belongs to: one for an earlier door is dropped. */
+  const door = useRef(0);
+  const flight = useRef<Promise<boolean> | null>(null);
+  const readOffer = useCallback((): Promise<boolean> => {
+    // One read at a time: the mount's and a return's join, so a return inside it asks nothing more.
+    if (flight.current !== null) return flight.current;
+    const asked = door.current;
+    const read = (async (): Promise<boolean> => {
+      let next: OfferState | null = null;
+      try {
+        const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
+        if (res.status === ACCESS_REFUSED) next = "offered";
+        else if (res.ok) next = ((await res.json()) as { metered?: unknown }).metered === true ? "offered" : "not-offered";
+      } catch { /* no answer: still unknown */ }
+      if (next === null || asked !== door.current) return false;
+      setState(next);
+      return true;
+    })().finally(() => { if (flight.current === read) flight.current = null; });
+    flight.current = read;
+    return read;
+  }, []);
   useEffect(() => {
+    door.current += 1;
+    flight.current = null;
     /* NO ACCOUNT DOOR, NO ASK. A standalone install and one paired to another computer have no
        hosted account and no server holding this state, so asking would put a route on the wire
        that nothing behind this door serves. Any offer an earlier door made goes with it. */
     if (!accountDoor) {
-      setOffered(false);
+      setState("not-offered");
       return;
     }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
-        if (cancelled) return;
-        if (res.status === ACCESS_REFUSED) {
-          setOffered(true);
-          return;
-        }
-        if (!res.ok) return;
-        const body = (await res.json()) as { metered?: unknown };
-        if (!cancelled) setOffered(body.metered === true);
-      } catch {
-        /* A read that failed is not evidence a page exists, and settings is not where somebody
-           acts on it. */
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [accountDoor]);
-  const withdrawManage = useCallback(() => { setOffered(false); }, []);
-  return { manageOffered: offered, withdrawManage };
+    setState("unknown");
+    void readOffer();
+  }, [accountDoor, readOffer]);
+  // A return to the window asks while, and only while, no answer has come; never on a clock.
+  useAccessSchedule({ read: accountDoor && state === "unknown" ? readOffer : undefined, minute: null, owner: null });
+  const withdrawManage = useCallback(() => { setState("not-offered"); }, []);
+  return { manageOffered: state === "offered", withdrawManage };
 }
 
 /**

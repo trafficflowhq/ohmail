@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -341,5 +341,50 @@ describe("the press", () => {
 
     expect(nav()).not.toContain(SETTINGS.billing);
     expect(opened, "an empty address was handed to the opener").toEqual([]);
+  });
+});
+
+/* A TRANSIENT NEVER REMOVES THE PANE FOR THE SESSION: a read that failed leaves the offer
+   UNKNOWN, and the next return to the window asks once more; an answered offer asks nothing. */
+describe("the offer after a failed read", () => {
+  const reads = (): number => enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length;
+  async function backToTheWindow(): Promise<void> {
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await settle();
+  }
+  beforeEach(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+  });
+  afterEach(() => {
+    delete (document as unknown as Record<string, unknown>).visibilityState;
+    localStorage.removeItem("ohmail.access.mbx-1");
+  });
+
+  it("a failed first read, then a return: exactly one more read, and the pane is offered", async () => {
+    localStorage.setItem("ohmail.access.mbx-1", "open");
+    access = { status: 503, body: JSON.stringify({ error: { code: "unavailable" } }) };
+    await open(CLOUD_SERVING);
+    expect(nav(), "premise: a failed read offers nothing").not.toContain(SETTINGS.billing);
+    const before = reads();
+    access = { status: 200, body: JSON.stringify({ metered: true, canAddMailbox: true, mailboxes: 1 }) };
+    await backToTheWindow();
+    expect(reads() - before, "the return asked once").toBe(1);
+    expect(nav(), "the answer on the return did not bring the pane").toContain(SETTINGS.billing);
+    // Answered now: another return asks nothing.
+    await backToTheWindow();
+    expect(reads() - before).toBe(1);
+  });
+
+  it("an answered metered:false, then a return: zero reads, and no pane", async () => {
+    localStorage.setItem("ohmail.access.mbx-1", "open");
+    access = { status: 200, body: JSON.stringify({ metered: false }) };
+    await open(CLOUD_SERVING);
+    const before = reads();
+    await backToTheWindow();
+    expect(reads() - before, "an answered offer asked again").toBe(0);
+    expect(nav()).not.toContain(SETTINGS.billing);
   });
 });
