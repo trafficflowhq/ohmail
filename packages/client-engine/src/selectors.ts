@@ -53,14 +53,25 @@ import {
  */
 
 /**
- * THE ROW STAMP, UNDER THE NAME EVERY IMPORTER ALREADY USES.
- *
- * The rule itself moved to `stamp.ts`, which owns every time of day in the product — the bands, the
- * clock and the reason the clock is not `Intl`-formatted are written out there. This alias is what
- * keeps the move invisible to the web app, the phone and the Screener's own DTO minting, all of
- * which import this name from this module.
+ * THE ROW STAMP, UNDER THE NAME EVERY IMPORTER ALREADY USES — the rule is `stamp.ts`'s; this adds a
+ * memo per ENTITY OBJECT beside {@link parsedDate}. A stamp depends on the message's own date and on
+ * the reader's day, zone and language, and the mirror replaces a record rather than editing it, so
+ * the entity's identity is the memo's lifetime and the key is `(reader's day, zone, locale)`: a list
+ * re-derived within a day stamps each row once. A plain `{ date }` object is stamped and forgotten.
  */
-export const messageDisplayTime = messageStamp;
+const stampMemo = new WeakMap<object, { key: string; out: string }>();
+
+export function messageDisplayTime(
+  m: Pick<EngineMessage, "time" | "date">, now: Date, zone: string, locale = "en",
+): string {
+  if (m.time) return m.time;
+  const key = `${zonedDayNumber(now, zone)}|${zone}|${locale}`;
+  const hit = stampMemo.get(m);
+  if (hit !== undefined && hit.key === key) return hit.out;
+  const out = messageStamp(m, now, zone, locale);
+  stampMemo.set(m, { key, out });
+  return out;
+}
 
 /**
  * A message's parsed date, cached per ENTITY OBJECT. `Date.parse` per comparison made the
@@ -1081,8 +1092,15 @@ function dayLabel(date: Date, now: Date, locale: string, zone: string, words: Re
 function platformToday(locale: string): string | null {
   const Rtf = (Intl as { RelativeTimeFormat?: typeof Intl.RelativeTimeFormat }).RelativeTimeFormat;
   if (typeof Rtf !== "function") return null;
-  return new Rtf(locale, { numeric: "auto" }).format(0, "day");
+  let word = TODAY_WORDS.get(locale);
+  if (word === undefined) {
+    word = new Rtf(locale, { numeric: "auto" }).format(0, "day");
+    TODAY_WORDS.set(locale, word);
+  }
+  return word;
 }
+/** The platform's "today", per locale — one formatter per language, like `stamp.ts`'s namers. */
+const TODAY_WORDS = new Map<string, string>();
 
 /**
  * `zone` and `locale` both default, and unlike {@link messageDisplayTime} that is deliberate: the

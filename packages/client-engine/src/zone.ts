@@ -58,6 +58,52 @@ function fieldFormatter(zone: string): Intl.DateTimeFormat {
  * meant to be loud: a stamp that quietly falls back to UTC is the defect this file exists to fix.
  */
 export function zonedFields(instant: Date, zone: string): ZonedFields {
+  const ms = instant.getTime();
+  if (Number.isFinite(ms)) {
+    const offset = hourOffset(ms, zone);
+    if (offset !== null) {
+      const w = new Date(ms + offset);
+      return {
+        year: w.getUTCFullYear(), month: w.getUTCMonth() + 1, day: w.getUTCDate(),
+        hour: w.getUTCHours(), minute: w.getUTCMinutes(), second: w.getUTCSeconds(),
+      };
+    }
+  }
+  return formattedFields(instant, zone);
+}
+
+/**
+ * THE OFFSET, READ ONCE PER UTC HOUR. `formatToParts` is the expensive call — on the phone it is a
+ * native round trip per row — and a zone's offset is constant between transitions. The hour's first
+ * and last whole second are read; equal, every instant inside it is `utc + offset`; unequal (a
+ * transition inside the hour, at :30 or :45 in some zones), `null`, and the caller formats that
+ * instant itself. Bounded: the map is dropped whole at its ceiling.
+ */
+const HOUR_MS = 3_600_000;
+const HOUR_OFFSETS = new Map<string, number | null>();
+const HOUR_OFFSETS_MAX = 20_000;
+
+function hourOffset(ms: number, zone: string): number | null {
+  const start = Math.floor(ms / HOUR_MS) * HOUR_MS;
+  const key = `${zone}|${start}`;
+  let offset = HOUR_OFFSETS.get(key);
+  if (offset === undefined) {
+    const first = formattedOffsetAt(start, zone);
+    const last = formattedOffsetAt(start + HOUR_MS - 1000, zone);
+    offset = first === last ? first : null;
+    if (HOUR_OFFSETS.size >= HOUR_OFFSETS_MAX) HOUR_OFFSETS.clear();
+    HOUR_OFFSETS.set(key, offset);
+  }
+  return offset;
+}
+
+function formattedOffsetAt(utcMs: number, zone: string): number {
+  const f = formattedFields(new Date(utcMs), zone);
+  return Date.UTC(f.year, f.month - 1, f.day, f.hour, f.minute, f.second) - utcMs;
+}
+
+/** The wall clock as the platform formats it — the reading every cached answer must equal. */
+export function formattedFields(instant: Date, zone: string): ZonedFields {
   const parts = fieldFormatter(zone).formatToParts(instant);
   const read = (type: string): number => {
     const found = parts.find((p) => p.type === type);
@@ -101,7 +147,7 @@ function offsetAt(utcMs: number, zone: string): number {
   /* Floored to the second because `formatToParts` cannot report milliseconds: comparing a
      sub-second instant against a whole-second reading would report an offset up to 999 ms out. */
   const whole = Math.floor(utcMs / 1000) * 1000;
-  const f = zonedFields(new Date(whole), zone);
+  const f = formattedFields(new Date(whole), zone);
   return Date.UTC(f.year, f.month - 1, f.day, f.hour, f.minute, f.second) - whole;
 }
 

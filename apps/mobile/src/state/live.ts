@@ -5273,11 +5273,18 @@ export function scheduleLabel(iso: string, now: Date, zone: string): string {
  */
 export function calendarDayLabel(day: Date, locale: string): string {
   try {
-    return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" }).format(day);
+    let fmt = DAY_LABELERS.get(locale);
+    if (fmt === undefined) {
+      fmt = new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" });
+      DAY_LABELERS.set(locale, fmt);
+    }
+    return fmt.format(day);
   } catch {
     return day.toDateString();
   }
 }
+/** One day-name formatter per language: constructing one is the expensive part of a label. */
+const DAY_LABELERS = new Map<string, Intl.DateTimeFormat>();
 
 /**
  * THE END OF A CALENDAR DAY WHERE THE READER IS — the instant an end date resolves to.
