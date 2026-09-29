@@ -60,12 +60,11 @@ export const FALLBACK_GAP_PX = 6;
  * `seg` names the segmented control a verb is a member of, or null for one that stands alone.
  * The horizons and filing are segments — their members abut, with no row gap between them, and
  * that is what makes three buttons read as one control — so a verb continuing the segment its
- * predecessor opened costs its own width and no gap. Reply all, Forward and Tag stand alone and
- * each pays a gap.
+ * predecessor opened costs its own width and no gap. Reply all and Tag stand alone and each pays a
+ * gap. Forward is not here: it is FLOOR, beside Reply, and never folds (DESIGN-026 §2.1).
  */
 export const BAR_VERB_ORDER = [
   { verb: "rall", seg: null },
-  { verb: "fwd", seg: null },
   { verb: "later", seg: "defer" },
   { verb: "aside", seg: "defer" },
   { verb: "resurface", seg: "defer" },
@@ -118,7 +117,7 @@ export function verbCost(verb: MeasuredVerb, openSeg: BarSeg | null, gapPx: numb
  * fits, and STOP at the first that does not — never skip past it to a narrower later verb,
  * because standing a later verb over a folded earlier one breaks the row-order law.
  *
- * `basePx` is the floor that always stands (Reply + the read switch with More). Each admitted
+ * `basePx` is the floor that always stands (Reply + Forward + the read switch with More). Each admitted
  * verb costs {@link verbCost}: its own width, plus one row gap unless it continues the segment
  * its predecessor opened.
  */

@@ -604,7 +604,8 @@
  * width:
  *
  *   · Without `data-admit` (server render, hydration, no ResizeObserver) the row is its FLOOR —
- *     Reply, the read switch, More — and every verb is behind More. The first measurement lands
+ *     Reply, Forward, the read switch, More — and every other verb is behind More. Forward is
+ *     floor and never folds: its word is the point, and it has no menu twin (DESIGN-026 §2.1). The first measurement lands
  *     in the commit that mounts the measure row, before the browser paints.
  *   · With `data-admit="…"`, each named verb stands in the row and its `mm-*` twin is hidden;
  *     each unnamed verb is hidden in the row and its twin shows. One rule pair per verb, and
@@ -612,16 +613,16 @@
  *     set `display` on an `.abar-<verb>` or `.mm-<verb>` of a message bar outside a
  *     `[data-admit~=…]` selector or the floor.
  *   · Admission is a greedy PREFIX in row order (`bar-density.ts#BAR_VERB_ORDER`): Reply all ·
- *     Forward · Later · Park · Resurface · Tag · Screening · Move. The row collapses from the
- *     right as room shrinks — Move first, then Screening, Tag, Resurface, Park, Later, Forward,
- *     Reply all — and the floor never folds.
+ *     Later · Park · Resurface · Tag · Screening · Move. The row collapses from the right as room
+ *     shrinks — Move first, then Screening, Tag, Resurface, Park, Later, Reply all — and the
+ *     floor never folds.
  *   · THE UNIT IS ONE VERB, and it used to be one GROUP. The horizons were admitted as a block
  *     of three and filing as a block of two, so a row with room for Later and Park folded both
  *     of them along with Resurface: measured at 1440 in the widest reading column the product
  *     has, 150px of the pill's own room stood empty with eight verbs behind More. The two
  *     segment WRAPPERS (`.abar-defer`, `.abar-file`) are not admissible themselves — each
  *     follows its first member, which the prefix law makes exact.
- *   · THE FLOOR ITSELF YIELDS ONCE, and only its words: when even Reply + read switch + More
+ *   · THE FLOOR ITSELF YIELDS ONCE, and only its words: when even Reply + Forward + read switch + More
  *     do not fit (German "Als ungelesen markieren" in a 292px column), the read switch drops
  *     its label and keeps its dot and its keycap (`compact`). The dot is the same mark the
  *     list row uses, the keycap names the key, and the verb moves to the button's own
@@ -645,7 +646,6 @@
    More with no further rule. Every token is named rather than folded into `.abar-v`, so the
    census can read the list back and refuse a verb that has no floor. */
 .abar-rall,
-.abar-fwd,
 .abar-later,
 .abar-aside,
 .abar-resurface,
@@ -689,8 +689,6 @@
    the two are laid out identically, and one value is what lets the census read the pairs back. */
 .msg-actions .abar[data-admit~="rall"] .abar-row .abar-rall { display: flex; }
 .msg-actions .abar[data-admit~="rall"] .mmenu .mm-rall { display: none; }
-.msg-actions .abar[data-admit~="fwd"] .abar-row .abar-fwd { display: flex; }
-.msg-actions .abar[data-admit~="fwd"] .mmenu .mm-fwd { display: none; }
 .msg-actions .abar[data-admit~="later"] .abar-row .abar-later { display: flex; }
 .msg-actions .abar[data-admit~="later"] .mmenu .mm-later { display: none; }
 .msg-actions .abar[data-admit~="aside"] .abar-row .abar-aside { display: flex; }
@@ -786,6 +784,9 @@
    layout was drawn around. */
 @media (max-width: 640px){
   .abar-b{min-height:44px}
+  /* The disclosure a thumb hunts for most, and the dot-only read switch: both 44 wide. */
+  .abar-more{min-width:44px}
+  .abar[data-admit~="compact"] .abar-read{min-width:44px}
   .mm-item{min-height:44px}
   .abar-date{min-height:44px}
 }

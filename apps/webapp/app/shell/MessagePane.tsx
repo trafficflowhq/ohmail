@@ -70,8 +70,7 @@ export type MessageAction =
   /**
    * Forward this message on — the third verb of the "answer it" family, once reachable only from a
    * panel's ⋯ menu (reported from real use: it belongs in the pill beside Reply). A row verb on the
-   * bar now (`.abar-fwd`, admitted whenever the measured row has room) and an `mm-fwd` item behind
-   * More otherwise — the in-the-row-or-in-the-menu rule. The shell answers with `openForward` — the
+   * bar's FLOOR now (`.abar-fwd`, beside Reply at every width, no menu twin). The shell answers with `openForward` — the
    * reply dock in forward mode, docked to THIS message, the seam the panel menus always dispatched.
    * NOT a toggle, deliberately: `openForward` refuses a `no_forward` original with a toast, and a
    * verb whose second press means "close" would swallow that refusal on the second try.
@@ -991,21 +990,8 @@ function ActionBar({
           run: () => { closeMenu(); onAction("reply_all"); },
         } as MoreMenuItem]
       : []),
-    /**
-     * FORWARD — the folded half of the row group, mirroring its row position: second, beside the
-     * two verbs it stands with. `group: "fwd"` is what makes the admission rule hide it here
-     * exactly where `.abar-fwd` stands there, keeping "a verb is in the row or in the menu,
-     * never both". Gated on the SAME `canForward` the row button is, so a `no_forward` message
-     * offers the verb in neither place rather than in one of them.
-     */
-    ...(canForward
-      ? [{
-          id: "forward",
-          group: "fwd",
-          label: tm("menuForward"),
-          run: () => { closeMenu(); onAction("forward"); },
-        } as MoreMenuItem]
-      : []),
+    /* NO FORWARD HERE: Forward is floor — it stands in the row at every width and never folds, so
+       a menu twin would put it in both places (DESIGN-026 §2.1). */
     { id: "later", group: "later", label: t("actionLater"), run: () => { closeMenu(); onAction("later"); } },
     { id: "aside", group: "aside", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
     { id: "resurface", group: "resurface", label: t("actionResurface"), run: () => { closeMenu(); openPanel("resurface", "more"); } },
@@ -1101,18 +1087,13 @@ function ActionBar({
           </div>
         ) : null}
 
-        {/* FORWARD — the third verb of the answer family, and the reason this group exists.
-            Reported from real use: "fwd message / Forward in general should be within our main
-            pill-shaped UI besides Reply etc." It stood in no row at any width — the only mouse
-            door was a panel's ⋯ menu, a disclosure a reader must already know about. Its own
-            `.abar-g` beside the other two rather than a segment inside either: Reply is the one
-            primary capsule, and Forward answers a different question — not "what do I say back"
-            but "who else needs to see this". `.abar-fwd` is SECOND in the admission order, so
-            the three answer verbs are seated before anything else; what pays is the horizons
-            and Tag folding into More earlier — stated with the admission order at the foot of
-            `action-bar.css`. `mm-fwd` is the other half of "row or menu, never both". */}
+        {/* FORWARD — the third verb of the answer family, and FLOOR: it stands beside Reply at every
+            width, the read switch yielding its words first, and it has no menu twin (DESIGN-026
+            §2.1). Its own `.abar-g` and no `.abar-v`, which is what makes the measurement count it
+            in the base. Answered on the SAME message Reply is — both dispatch this bar's
+            `onAction`, bound to the opened message. `canForward === false` draws nothing. */}
         {canForward ? (
-          <div className="abar-g abar-v abar-fwd">
+          <div className="abar-g abar-fwd">
             <button
               type="button"
               className="abar-b abar-solo"
