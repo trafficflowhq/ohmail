@@ -1134,6 +1134,11 @@ export interface MailboxDTO {
    */
   errorCode?: "auth" | "connect" | "tls" | "timeout" | "storage" | "sync" | "unknown" | null;
   errorDetail?: string | null;
+  /**
+   * The Cloud-paired desktop's count of rows its copy could not store, beside `errorCode:
+   * "storage"` — see `MailboxFacts.storeRefusals`. Absent means "not stated"; no server sends it.
+   */
+  storeRefusals?: { count: number; retrying: number; exact: boolean };
   failedAt?: string | null;
   retryCount?: number;
   /**

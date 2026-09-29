@@ -387,6 +387,11 @@ interface CursorState {
    * could not store some of the account's rows".
    */
   quarantine: QuarantinedRow[];
+  /**
+   * Refusals past {@link QUARANTINE_MAX}, by key alone — see {@link QuarantineOverflow}. Empty is
+   * the steady state and the file then carries no key for it.
+   */
+  overflow: QuarantineOverflow;
 }
 
 export interface CloudMirrorConfig {
@@ -399,6 +404,8 @@ export interface CloudMirrorConfig {
   now?: () => Date;
   /** `/sync` page size. Production takes the default; a test shrinks it to force multiple pages. */
   pageLimit?: number;
+  /** The overflow ledger's ceiling; production takes {@link OVERFLOW_MAX}, a test shrinks it to reach the floor. */
+  overflowMax?: number;
   /** How long to wait between full pulls when caught up. */
   pollIntervalMs?: number;
   /** The follow-up chain's backoff and cap; production takes {@link FOLLOW_UP_STEPS_MS} and {@link FOLLOW_UP_CAP_MS}. */
@@ -520,7 +527,7 @@ export interface CloudMirror {
    * else means this copy is missing rows the account holds, and the engine surfaces it as a
    * mailbox error so the shell renders a sentence instead of a settled-looking app.
    */
-  quarantined(): { count: number; constraint: string | null };
+  quarantined(): QuarantineReading;
 }
 
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
@@ -584,6 +591,10 @@ interface CursorFile {
   lastDrainAt?: unknown;
   /** The held rows a page apply could not store; absent on every file from before the quarantine. */
   quarantine?: unknown;
+  /** `[key, seq, fresh]` per refusal past the cap; absent when there is none. */
+  quarantineOverflow?: unknown;
+  /** `"stale"`/`"fresh"` once the overflow reached {@link OVERFLOW_MAX}; absent while exact. */
+  quarantineFloor?: unknown;
 }
 
 /**
@@ -606,6 +617,24 @@ function readQuarantine(raw: unknown): QuarantinedRow[] {
     });
   }
   return rows;
+}
+
+/**
+ * The cursor file's overflow ledger, validated entry by entry on {@link readQuarantine}'s rule: a
+ * malformed entry is dropped, never a failed read. Capped at {@link OVERFLOW_MAX} on the way in.
+ */
+function readOverflow(raw: unknown, floor: unknown): QuarantineOverflow {
+  const keys = new Map<string, OverflowEntry>();
+  if (Array.isArray(raw)) {
+    for (const item of raw.slice(0, OVERFLOW_MAX)) {
+      if (!Array.isArray(item)) continue;
+      const [key, seq, fresh] = item as unknown[];
+      if (typeof key !== "string" || !/^[a-z_]+:\S+$/.test(key)) continue;
+      if (typeof seq !== "number" || !Number.isFinite(seq)) continue;
+      keys.set(key, { seq, fresh: fresh === 1 });
+    }
+  }
+  return { keys, floor: floor === "stale" || floor === "fresh" ? floor : null };
 }
 
 function readCursor(path: string): CursorState {
@@ -636,6 +665,7 @@ function readCursor(path: string): CursorState {
       // stale install freshens on its first resume, which is the population the port is for.
       lastDrainAt: typeof j.lastDrainAt === "string" && j.lastDrainAt !== "" ? j.lastDrainAt : null,
       quarantine: readQuarantine(j.quarantine),
+      overflow: readOverflow(j.quarantineOverflow, j.quarantineFloor),
     };
   } catch {
     // No file at all is a FRESH install, not an upgraded one: there are no rows to re-key, and the
@@ -656,6 +686,7 @@ function readCursor(path: string): CursorState {
       // And it has never completed a pull: the bootstrap's own window owns "newest first" here.
       lastDrainAt: null,
       quarantine: [],
+      overflow: { keys: new Map(), floor: null },
     };
   }
 }
@@ -678,6 +709,11 @@ function writeCursor(path: string, state: CursorState): void {
     // Absent when empty, so a healthy install's cursor file is byte-identical to one written
     // before the field existed — and an old build ignores the key entirely.
     ...(state.quarantine.length > 0 ? { quarantine: state.quarantine } : {}),
+    // The same rule for the overflow: a healthy file carries neither key.
+    ...(state.overflow.keys.size > 0
+      ? { quarantineOverflow: [...state.overflow.keys].map(([k, e]) => [k, e.seq, e.fresh ? 1 : 0]) }
+      : {}),
+    ...(state.overflow.floor !== null ? { quarantineFloor: state.overflow.floor } : {}),
   };
   writeFileSync(path, JSON.stringify(onDisk));
 }
@@ -931,12 +967,58 @@ interface QuarantinedRow { ch: SyncChange; constraint: string | null; tableName:
 interface QuarantineSink { take(ch: SyncChange, facts: IntegrityFacts): void }
 
 /**
- * How many rows the quarantine may hold. A page is at most {@link DEFAULT_PAGE_LIMIT} changes and
- * a healthy install quarantines none, so the cap is defence against a pathological feed, not a
- * budget; past it the newest refusal is dropped WITH its log line, so the count on the surface
- * can under-state and never lies upward.
+ * How many rows the quarantine may hold WITH their payload — the ones the post-pull retry can
+ * re-apply. A healthy install quarantines none, so the cap is defence against a pathological feed.
+ * Past it a refusal keeps its KEY in {@link QuarantineOverflow}, so the count on the surface is
+ * the true count up to {@link OVERFLOW_MAX} and a stated floor beyond it.
  */
 const QUARANTINE_MAX = 500;
+
+/**
+ * How many refusals past {@link QUARANTINE_MAX} are counted by key. Measured at the cap: +560 KB
+ * of cursor JSON and +0.6 ms median per (synchronous) cursor write, only while it lasts. Beyond it
+ * the count becomes a floor (`exact: false`) until a completed since=0 bootstrap re-measures.
+ */
+export const OVERFLOW_MAX = 10_000;
+
+/** One overflow key: the seq it was refused at, and whether the RUNNING bootstrap refused it. */
+interface OverflowEntry { seq: number; fresh: boolean }
+
+/**
+ * THE REFUSALS THE QUARANTINE COULD NOT HOLD, counted rather than forgotten. A key leaves by the
+ * held row's own door (a strictly newer change to the entity lands) or is promoted into the held
+ * set when a later refusal of it finds a free slot. A completed since=0 bootstrap re-delivers every
+ * entity, so it drops every key it did not refuse again (`fresh`) and ends a floor it did not
+ * reach again: `floor` is `"fresh"` when the cap was reached during the running bootstrap,
+ * `"stale"` when before it, `null` while the count is exact.
+ */
+interface QuarantineOverflow { keys: Map<string, OverflowEntry>; floor: "stale" | "fresh" | null }
+
+/** What {@link CloudMirror.quarantined} answers: every refusal, the retryable part, and exactness. */
+export interface QuarantineReading {
+  count: number;
+  retrying: number;
+  exact: boolean;
+  constraint: string | null;
+}
+
+/** A new since=0 generation: nothing in the ledger has been re-measured by it yet. */
+function beginOverflowGeneration(o: QuarantineOverflow): void {
+  for (const e of o.keys.values()) e.fresh = false;
+  if (o.floor === "fresh") o.floor = "stale";
+}
+
+/**
+ * A since=0 bootstrap COMPLETED: it re-delivered every entity, so a key it did not refuse again
+ * is no longer missing, and a floor it did not reach again is over.
+ */
+function settleOverflowAfterBootstrap(o: QuarantineOverflow): void {
+  for (const [k, e] of o.keys) {
+    if (!e.fresh) o.keys.delete(k);
+    else e.fresh = false;
+  }
+  o.floor = o.floor === "fresh" ? "stale" : null;
+}
 
 /**
  * A hosted `MailboxDTO` as the local row that mirrors it — minus the two progress stamps.
@@ -2370,22 +2452,33 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const syncQuarantine = (): void => {
     cursor.quarantine = [...quarantine.values()];
   };
+  /** The overflow ledger IS the cursor's object, so every cursor write persists it. */
+  const overflow = cursor.overflow;
   const quarantineSink: QuarantineSink = {
     take: (ch, facts) => {
       const key = `${ch.type}:${ch.id}`;
       const held = quarantine.get(key);
-      // An older seq never replaces a newer held copy; a full quarantine drops the row (counted
-      // by its log line, never silently — see QUARANTINE_MAX for why the cap only under-states).
+      // An older seq never replaces a newer held copy. A full quarantine keeps the refusal's KEY
+      // in the overflow ledger, so the count stays true (see QuarantineOverflow).
       if (held && held.ch.seq > ch.seq) return;
       if (!held && quarantine.size >= QUARANTINE_MAX) {
+        const was = overflow.keys.get(key);
+        if (was && was.seq > ch.seq) return;
+        if (!was && overflow.keys.size >= (cfg.overflowMax ?? OVERFLOW_MAX)) {
+          overflow.floor = cursor.bootstrapping ? "fresh" : overflow.floor ?? "stale";
+        } else {
+          overflow.keys.set(key, { seq: ch.seq, fresh: cursor.bootstrapping });
+        }
         cfg.log?.("cloud_row_quarantine_full", {
-          count: quarantine.size, kind: ch.type, errorCode: facts.code,
+          count: quarantine.size, overflow: overflow.keys.size, kind: ch.type, errorCode: facts.code,
           constraint: facts.constraint,
-          reason: "the quarantine is at its cap, so this refused row is dropped; a later change " +
-            "to the entity re-delivers it",
+          reason: "the quarantine is at its cap, so this refused row is counted by key and not " +
+            "retried; a later change to the entity re-delivers it",
         });
         return;
       }
+      // A free slot takes the refusal with its payload, out of the key-only ledger.
+      overflow.keys.delete(key);
       quarantine.set(key, { ch, constraint: facts.constraint, tableName: facts.tableName });
       syncQuarantine();
       cfg.log?.("cloud_row_quarantined", {
@@ -2667,7 +2760,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
        seq, and re-applying it later would regress what this page just wrote. STRICTLY older — a
        held copy at the SAME seq is this page's own refused row, which the sink just took and the
        retry still owes. */
-    if (quarantine.size > 0) {
+    if (quarantine.size > 0 || overflow.keys.size > 0) {
       let droppedHeld = false;
       for (const ch of [...body.changes.creates, ...body.changes.updates, ...body.changes.moves, ...body.changes.deletes]) {
         const key = `${ch.type}:${ch.id}`;
@@ -2676,6 +2769,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           quarantine.delete(key);
           droppedHeld = true;
         }
+        // The overflow key leaves by the same door: its entity's newer state has landed.
+        const counted = overflow.keys.get(key);
+        if (counted && counted.seq < ch.seq) overflow.keys.delete(key);
       }
       if (droppedHeld) syncQuarantine();
     }
@@ -2904,6 +3000,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // A new generation owes the whole window, whatever an older file said about an earlier one.
         cursor.window = { phase: "pending" };
         sweep = newBootstrapGen(genPath);
+        beginOverflowGeneration(overflow);
       }
     }
     refetched = false;
@@ -3001,6 +3098,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // A fresh generation, never a resume: the 410 is the one moment the mirror's own position
         // is untrustworthy, and that verdict covers any marks it made from that position.
         sweep = newBootstrapGen(genPath);
+        beginOverflowGeneration(overflow);
         applied = 0;
         // The re-bootstrap owes the rules-first pass AND the window again, against the fresh
         // generation — whatever the last window had got to describes marks that no longer exist.
@@ -3721,6 +3819,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // The window belonged to the generation that just finished; the next bootstrap owes its own.
         cursor.window = { phase: "pending" };
         cursor.version = CURSOR_VERSION;
+        settleOverflowAfterBootstrap(overflow);
         writeCursor(cfg.cursorPath, cursor);
         // The generation completed and swept: its marks have no further reader. AFTER the cursor
         // write, so a crash between the two leaves a stale file a fresh generation truncates,
@@ -4041,7 +4140,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // `GET /mirror/freshness`), so a label can never disagree with a freshen.
     freshness: () => mirrorFreshness(cursor.lastDrainAt, now()),
     quarantined: () => ({
-      count: quarantine.size,
+      count: quarantine.size + overflow.keys.size,
+      retrying: quarantine.size,
+      exact: overflow.floor === null,
       constraint: quarantine.values().next().value?.constraint ?? null,
     }),
     async start() {

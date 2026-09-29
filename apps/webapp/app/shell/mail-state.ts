@@ -640,6 +640,13 @@ function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
     : "stopped";
 }
 
+/** The Cloud mirror's refused rows, as `GET /mailboxes` states them — see {@link MailboxFacts.storeRefusals}. */
+export interface StoreRefusals {
+  count: number;
+  retrying: number;
+  exact: boolean;
+}
+
 /**
  * ONE mailbox, as the shared shell is allowed to know it.
  *
@@ -897,6 +904,13 @@ export interface MailboxFacts {
    * account. The hosted client never sends it.
    */
   hostedMessageCount?: number;
+  /**
+   * HOW MANY OF THE ACCOUNT'S ROWS THIS COPY COULD NOT STORE — the Cloud-paired desktop's
+   * overlay beside `errorCode: "storage"` (`cloud-engine.ts` `decorateStoreStuck`). The count is
+   * the ACCOUNT's, the same on every row; `retrying` is the part "Sync now" re-applies; `exact`
+   * false makes `count` a floor. Absent means "not stated": the count-less sentence stands.
+   */
+  storeRefusals?: StoreRefusals;
   /**
    * MESSAGES IN THE STORE THIS IMPORT IS WRITING INTO — the import's true numerator ({@link
    * pulledCount}). It used to be the renderer's mirror; `DESKTOP_WINDOW` ended that in 0.17.0.
@@ -1394,6 +1408,8 @@ export interface MailState {
   errorDetail?: string | null;
   /** `mailboxError` only — the mailbox's server cannot be reached from here right now. */
   unreachable?: boolean;
+  /** `mailboxError` only — the refused-row count beside `errorCode: "storage"`, when stated. */
+  storeRefusals?: StoreRefusals;
   /**
    * `stale` only — the instant the mirror on screen was last known current, verbatim from the
    * freshness input (the engine's own completion stamp, or the desktop mirror's). It is the
@@ -2087,6 +2103,7 @@ function climb(input: MailStateInputs): MailState {
       ...(failed.errorDetail ? { errorDetail: failed.errorDetail } : {}),
       address: failed.address,
       ...(unreachable ? { unreachable } : {}),
+      ...(failed.storeRefusals ? { storeRefusals: failed.storeRefusals } : {}),
     };
   }
 

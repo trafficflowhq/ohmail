@@ -186,6 +186,9 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── counts and roster arithmetic (the worker's roster pass, kickstart, thread backfill) ──
   "accounts", "accountsAffected", "mailboxes", "maxMailboxes", "selected", "serving",
   "dropped", "unexplained", "examined", "resolved", "rerouted", "pruned", "count", "more",
+  // The Cloud mirror's refusals counted by key past its held cap (`cloud_row_quarantine_full`):
+  // an integer the mirror counts itself, never a key or a table name.
+  "overflow",
   // ── THE STAND-DOWN'S HANDOVER, three counts of OUR OWN bookkeeping ──
   //
   // `organizer_stand_down_moves_handed_over` (both hosts) reports how many pending local moves

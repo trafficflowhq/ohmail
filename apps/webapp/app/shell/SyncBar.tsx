@@ -69,7 +69,7 @@ import { useBrowserOnline } from "./browser-online";
 import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "./reader-holder";
 import { useManagedService } from "./managed-service";
 import { readingAlong } from "./reading-along";
-import { mailboxErrorKey } from "./mailbox-error-key";
+import { mailboxErrorKey, storeRefusalsFigure } from "./mailbox-error-key";
 
 /**
  * Rendered twice, in two shapes. The rail carries everything that acts on the app rather than on mail, so
@@ -375,14 +375,17 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, m
         link: settings,
       };
 
-    case "mailboxError":
+    case "mailboxError": {
+      const said = mailboxErrorKey(state.errorCode, state.errorDetail, state.storeRefusals,
+        (r) => storeRefusalsFigure(r, (figure) => tm("storeRefusalsFloor", { count: figure })));
       return {
         tone: "warn", role: "status", warn: true, busy: false,
         // One sentence for a server this install cannot reach, from the outage's first minute.
-        title: state.unreachable ? t("unreachable") : tm(mailboxErrorKey(state.errorCode, state.errorDetail)),
+        title: state.unreachable ? t("unreachable") : tm(said.key, said.values),
         detail: readable(state.address),
         link: settings,
       };
+    }
 
     case "filing": {
       /**

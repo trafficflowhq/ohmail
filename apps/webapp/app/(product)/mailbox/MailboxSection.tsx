@@ -77,7 +77,7 @@ import { displayAddress } from "../../shell/idn";
 import { SELF_HOST_BUILD } from "../../hello";
 import { StepUpPrompt } from "./StepUpPrompt";
 import { gatedRefusal } from "./gated-refusal";
-import { mailboxErrorKey } from "../../shell/mailbox-error-key";
+import { mailboxErrorKey, storeRefusalsFigure } from "../../shell/mailbox-error-key";
 import { PlaintextConsent } from "../../shell/PlaintextConsent";
 
 /**
@@ -2307,7 +2307,11 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                    code, an errno, an SQLSTATE, never a message — and belongs in the tooltip
                    beside how long this has been going on, not in the label. */
                 <span className="mbx-bad" title={errorTitle(m, now, t)}>
-                  {t(mailboxErrorKey(m.errorCode ?? null, m.errorDetail))}
+                  {(() => {
+                    const errSaid = mailboxErrorKey(m.errorCode ?? null, m.errorDetail, m.storeRefusals,
+                      (r) => storeRefusalsFigure(r, (figure) => t("storeRefusalsFloor", { count: figure })));
+                    return t(errSaid.key, errSaid.values);
+                  })()}
                 </span>
               ) : m.syncBlockedSince ? (
                 /**

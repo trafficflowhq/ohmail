@@ -245,17 +245,15 @@ async function decorateHostedCounts(
 
 /**
  * THE STORE-STUCK DISCLOSURE. The mirrored rows carry the HOSTED account's status — healthy —
- * so a mirror that cannot STORE what it pulls looked settled: the released 0.20.0's first-sync
- * 23503 wedge rendered no sentence anywhere. While the mirror holds quarantined rows, every
- * served row is overlaid `status: "error", errorCode: "storage"` — the closed set's own
- * "Sync failed — ohmail could not store this mail. This one is on us." — so the strip's
- * mailbox-error arm and Settings → Mailboxes disclose it through affordances that exist, and
- * the pane's "Sync now" ends in `pullOnce`, which re-applies the quarantine: the retry.
- * Derived at read time, never written, so it clears the moment the quarantine empties.
+ * so a mirror that cannot STORE what it pulls looked settled (the released 0.20.0's first-sync
+ * 23503 wedge). While the mirror holds refused rows, every served row is overlaid `status:
+ * "error", errorCode: "storage"` and `storeRefusals` — how many, how many "Sync now" retries,
+ * and whether the count is exact — so the strip and both Settings panes can say the number.
+ * The count is the ACCOUNT's (one mirror), hence on every row. Derived at read time, never written.
  */
 async function decorateStoreStuck(
   res: Response,
-  quarantined: { count: number },
+  quarantined: { count: number; retrying: number; exact: boolean },
 ): Promise<Response> {
   if (quarantined.count === 0) return res;
   let body: unknown;
@@ -268,7 +266,10 @@ async function decorateStoreStuck(
   if (!Array.isArray(items)) return res;
   const overlaid = items.map((row) =>
     row && typeof row === "object"
-      ? { ...(row as object), status: "error", errorCode: "storage" }
+      ? {
+        ...(row as object), status: "error", errorCode: "storage",
+        storeRefusals: { count: quarantined.count, retrying: quarantined.retrying, exact: quarantined.exact },
+      }
       : row,
   );
   return json({ ...(body as object), items: overlaid }, res.status);

@@ -11,6 +11,11 @@
 
 import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
 
+const isStoreRefusals = (v: unknown): v is { count: number; retrying: number; exact: boolean } => {
+  const r = v as { count?: unknown; retrying?: unknown; exact?: unknown } | null | undefined;
+  return !!r && Number.isInteger(r.count) && Number.isInteger(r.retrying) && typeof r.exact === "boolean";
+};
+
 /** What `GET /mailboxes` answers with, narrowed to the fields these two surfaces read. */
 interface MailboxWire {
   id: string;
@@ -21,6 +26,8 @@ interface MailboxWire {
   errorCode?: string | null;
   /** The allowlisted token beside it — one of them changes the row's sentence. */
   errorDetail?: string | null;
+  /** The Cloud mirror's refused-row count beside `errorCode: "storage"` (`decorateStoreStuck`). */
+  storeRefusals?: { count: number; retrying: number; exact: boolean };
   /** The local door's outage clock (`MailboxFacts.unreachableSince`); absent while it answers. */
   unreachableSince?: string | null;
   disabledReason?: string | null;
@@ -159,6 +166,8 @@ export async function readMailboxFactsVia(
     status: m.status,
     errorCode: m.errorCode ?? null,
     errorDetail: m.errorDetail ?? null,
+    // Forwarded only in its whole shape: a partial one would state a count nobody measured.
+    ...(isStoreRefusals(m.storeRefusals) ? { storeRefusals: m.storeRefusals } : {}),
     ...(typeof m.unreachableSince === "string" ? { unreachableSince: m.unreachableSince } : {}),
     disabledReason: m.disabledReason ?? null,
     syncBlockedReason: m.syncBlockedReason ?? null,

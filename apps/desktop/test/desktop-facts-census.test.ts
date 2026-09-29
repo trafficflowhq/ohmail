@@ -114,6 +114,9 @@ describe("the desktop mailbox-facts seam", () => {
          probe taxonomy, so the value here is one a real engine answers with. */
       sendingUnsettledReason: "auth",
       hostedMessageCount: 4200,
+      /* The Cloud mirror's refused-row count beside `errorCode: "storage"` — the whole shape,
+         which the seam forwards only whole. */
+      storeRefusals: { count: 612, retrying: 500, exact: true },
       /* The import's numerator — `?counts=1` only. Distinct from the two above and from the
          renderer's own row count, which on a windowed mirror is the policy floor, not the
          mailbox. */

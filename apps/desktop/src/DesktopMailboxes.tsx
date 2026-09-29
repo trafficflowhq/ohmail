@@ -35,6 +35,7 @@ import { addressKey } from "../../webapp/app/shell/address-key";
 import { holderIsLive, holderStopped } from "@trafficflow/core/reader-refusal";
 import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
+import { storeRefusalsFigure } from "../../webapp/app/shell/mailbox-error-key";
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
@@ -1451,6 +1452,13 @@ export function DesktopMailboxes(
        since-clock. A row whose own read answered with a specific state keeps that sentence; a
        worker-written or cloud-door error has no reach row here and keeps the code. */
     const r = reach.rows[m.id];
+    /* THE COPY THIS COMPUTER COULD NOT STORE — the Cloud mirror's overlay, which is not a
+       connection failure: the mailbox connects, the local store refused rows. Said with the count
+       through the strip's own figure, before the generic code. */
+    if (m.status === "error" && m.errorCode === "storage" && m.storeRefusals && m.storeRefusals.count > 0) {
+      const count = storeRefusalsFigure(m.storeRefusals, (figure) => t("storeRefusalsFloor", { count: figure }));
+      return say(t("desktopStateStorage", { count, n: m.storeRefusals.count }));
+    }
     if (m.status === "error") {
       const specific = r?.answered === true
         && (r.signInRefused || r.plaintextRefused === true || r.credentialBlocked !== null
