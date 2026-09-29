@@ -11,12 +11,16 @@ export type AttachmentFaultClass =
   | "busy"
   /** The person's mail server did not answer, or not in time. */
   | "unreachable"
+  /** The person's mail server took the connection and would not serve this mailbox now. */
+  | "server_busy"
   /** The person's mail server would not secure the connection. */
   | "not_secured"
   /** The person's mail server refused the stored sign-in. */
   | "login_refused"
   /** The mailbox's OAuth sign-in has expired: only a reconnect brings it back. */
   | "reconnect"
+  /** This mailbox holds no sign-in here (signed out or removed): only signing in brings it back. */
+  | "not_signed_in"
   /** The message is no longer where the mailbox had it. */
   | "gone"
   /** A refusal by policy: nothing about asking again changes it. */
@@ -30,9 +34,11 @@ const BY_CODE: Readonly<Record<string, AttachmentFaultClass>> = {
   mailbox_busy: "busy",
   mail_server_unreachable: "unreachable",
   mailbox_read_timeout: "unreachable",
+  mail_server_busy: "server_busy",
   mail_server_not_secured: "not_secured",
   mail_server_login_refused: "login_refused",
   mailbox_reconnect_required: "reconnect",
+  mailbox_not_signed_in: "not_signed_in",
   not_found: "gone",
   network: "offline",
   timeout: "offline",

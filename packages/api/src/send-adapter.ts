@@ -1,10 +1,9 @@
-import { eq } from "drizzle-orm";
-import { mailboxCredentials } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
 import { SendConnections, type SendAdapter, type WarmSendAdapter } from "@trafficflow/core/mail";
 import { MailboxSideRefusal } from "@trafficflow/services/mail";
 import { dialFieldsFor } from "./dial-host-guard.js";
+import { requireImapCredential } from "./attachments-adapter.js";
 import type { ApiDeps } from "./deps.js";
 
 interface CredMeta extends CredMetaAuth {
@@ -48,11 +47,7 @@ export async function makeSendAdapter(
   /* FIFTH: the keeper. Production dials through the process-wide one; a test hands in its own. */
   keep: SendConnections = sendConnections,
 ): Promise<SendAdapter> {
-  const rows = await deps.db.select().from(mailboxCredentials)
-    .where(eq(mailboxCredentials.mailboxId, mailboxId));
-
-  const imapRow = rows.find((r) => r.transport === "imap");
-  if (!imapRow) throw new MailboxSideRefusal("upstream_unavailable", 502, "mailbox has no IMAP credentials");
+  const { rows, imap: imapRow } = await requireImapCredential(deps, mailboxId);
   const smtpRow = rows.find((r) => r.transport === "smtp");
 
   // AFTER the credential read and BEFORE anything else: a live connection kept from an earlier

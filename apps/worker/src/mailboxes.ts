@@ -691,10 +691,12 @@ export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): Ma
     // `invalid_grant` is the ONE auth outcome: the stored refresh token is dead, the user must
     // reconnect. A token-endpoint outage carries `OAUTH_TOKEN_ENDPOINT_UNAVAILABLE` and is
     // `connect` — "retry later" — NEVER auth, so a Microsoft blip cannot quarantine every oauth
-    // mailbox as bad credentials. `OAUTH_CONFIG_MISSING` (a deployment with no client secret) is a
-    // named refusal that is our fault, not the mailbox's, so it is `unknown`, not `auth`.
+    // mailbox as bad credentials. `OAUTH_CONFIG_MISSING` (a deployment with no client secret) and
+    // `OAUTH_CLIENT_REFUSED` (the endpoint refused our client) are our fault, not the mailbox's:
+    // `unknown` in either phase, never `auth` and never a sync failure.
     if (code === "OAUTH_INVALID_GRANT") return "auth";
     if (code === "OAUTH_TOKEN_ENDPOINT_UNAVAILABLE") return "connect";
+    if (code === "OAUTH_CLIENT_REFUSED" || code === "OAUTH_CONFIG_MISSING") return "unknown";
     if (isTlsCode(code)) return "tls";
     if (TIMEOUT_ERRNOS.has(code)) return "timeout";
     if (CONNECT_ERRNOS.has(code) || SERVER_UNAVAILABLE_CODES.has(code)) return "connect";

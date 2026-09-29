@@ -72,12 +72,11 @@ export function SendStatus({
             /**
              * Every refusal gets the product's own words — the wire never renders. `statusFailed` used to quote the
              * server, which shipped "Nicht gesendet: authentication required" — the API middleware's English 401 text
-             * inside a German UI (owner report 2026-08-21). A protocol sentence names the machine's state, not the
-             * reader's next move; the failed line now says the one thing true of every refusal — the draft is kept
-             * and Send is the retry — with the server's text kept in `send.reason` for diagnostics.
-             * `mailbox_disabled` keeps its own sentence (a state with a control on the same screen), branched on the
-             * CODE so a reworded server message cannot change which sentence renders. "Sign in" is deliberately not
-             * said: one send's 401 cannot tell a deploy blip from a revocation — the SyncBar owns that claim.
+             * inside a German UI (owner report 2026-08-21). The failed line says the one thing true of every refusal —
+             * the draft is kept and Send is the retry — with the server's text kept in `send.reason`. A named refusal
+             * gets its own sentence, branched on the CODE so a reworded server message cannot change which renders.
+             * The SESSION's "sign in" is never said: one send's 401 cannot tell a deploy blip from a revocation — the
+             * SyncBar owns that claim. `mailbox_not_signed_in` is the server saying THIS MAILBOX has no sign-in here.
              */
             ? send.code === "mailbox_disabled"
               ? { tone: "error", text: t("statusMailboxDisabled") }
@@ -89,6 +88,9 @@ export function SendStatus({
                 ? { tone: "error", text: t("statusNotSecured") }
               : send.code === "send_login_refused"
                 ? { tone: "error", text: t("statusLoginRefused") }
+              /* No sign-in for this mailbox here: the file's own sentence, and no Try again. */
+              : send.code === "mailbox_not_signed_in"
+                ? { tone: "error", text: t("statusNotSignedIn") }
               : send.code === "forward_original_unavailable"
                 ? { tone: "error", text: t("statusForwardOriginalUnavailable") }
               /**

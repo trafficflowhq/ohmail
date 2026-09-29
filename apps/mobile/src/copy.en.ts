@@ -1652,9 +1652,11 @@ const TABLE = {
   attachmentFaultOhmail: "ohmail couldn't fetch this file.",
   attachmentFaultBusy: "ohmail already has this mailbox's connections open.",
   attachmentFaultUnreachable: "Your mail server didn't answer.",
+  attachmentFaultServerBusy: "Your mail server isn't serving this mailbox right now.",
   attachmentFaultNotSecured: "Your mail server wouldn't secure the connection, so the file wasn't fetched.",
   attachmentFaultLoginRefused: "Your mail server refused the sign-in. Check the mailbox's password in Settings.",
   attachmentFaultReconnect: "This mailbox's sign-in has expired. Reconnect it in Settings.",
+  attachmentFaultNotSignedIn: "This mailbox isn't signed in here. Sign in again in Settings.",
   attachmentFaultGone: "This message is not where your mailbox had it. It moved or was deleted.",
   attachmentFaultRefused: "ohmail can't fetch this file here.",
   attachmentFaultOffline: "Couldn't reach ohmail. Check your connection.",
@@ -1889,6 +1891,7 @@ const TABLE = {
   replyNotSecured: "Not sent. The connection to your mail server couldn't be secured.",
   replyLoginRefused: "Not sent. Your mail server refused the sign-in.",
   replyUnreachable: "Not sent. Your mail server couldn't be reached.",
+  replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
   /* The refused send while this phone cannot reach its mail server — said in the composer. */
   composeNotSentOffline: "Not sent. This phone can't reach your mail server. It's kept in Drafts — send it again once you're back online.",
   /* Send pressed again over an unconfirmed send: a second copy could reach them twice. */

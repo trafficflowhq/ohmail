@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
-import { MailboxSideRefusal, ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
+import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 import { dialFieldsFor } from "./dial-host-guard.js";
 import { imapAdmission } from "./routes/shared.js";
@@ -80,15 +80,35 @@ function retireIfIdle(mailboxId: string, gate: MailboxGate): void {
   if (gate.held === 0 && gate.waiters.length === 0) gates.delete(mailboxId);
 }
 
-/** The refusal, in the one wording every path uses. */
-function busy(retryAfterSeconds: number): ServiceError {
+/** The refusal, in the one wording every path uses; `retryAfter` is what the envelope turns into `Retry-After`. */
+function busy(retryAfter: number): ServiceError {
   return new ServiceError(
     "mailbox_busy", 429,
     "this mailbox already has as many live connections as we will open at once — " +
       "wait a moment and try again",
-    { retryAfterSeconds },
+    { retryAfter },
     true,
   );
+}
+
+/**
+ * THE MAILBOX'S STORED SIGN-IN, OR THE REFUSAL THAT SAYS THERE IS NONE — one reader for the byte
+ * door and the send door. No `imap` row is a mailbox signed out here (a sign-out keeps the mailbox
+ * and drops its credentials) or removed: the person's to fix by signing in again, so a 424 that is
+ * not retryable. A plain `ServiceError` below 500, so the envelope writes no fault row.
+ */
+export async function requireImapCredential(deps: ApiDeps, mailboxId: string) {
+  const rows = await deps.db.select().from(mailboxCredentials)
+    .where(eq(mailboxCredentials.mailboxId, mailboxId));
+  const imap = rows.find((r) => r.transport === "imap");
+  if (!imap) {
+    throw new ServiceError(
+      "mailbox_not_signed_in", 424,
+      "this mailbox is not signed in here, so nothing was fetched or sent — sign in again in Settings",
+      undefined, false,
+    );
+  }
+  return { rows, imap };
 }
 
 /**
@@ -216,10 +236,7 @@ async function openImapUnderCap(
   deps: ApiDeps, mailboxId: string, max: number, waitMs: number,
 ): Promise<OpenedMailboxImap> {
   {
-    const rows = await deps.db.select().from(mailboxCredentials)
-      .where(eq(mailboxCredentials.mailboxId, mailboxId));
-    const imapRow = rows.find((r) => r.transport === "imap");
-    if (!imapRow) throw new MailboxSideRefusal("upstream_unavailable", 502, "mailbox has no IMAP credentials");
+    const { imap: imapRow } = await requireImapCredential(deps, mailboxId);
 
     const meta = (imapRow.meta ?? {}) as CredMetaAuth & {
       host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;

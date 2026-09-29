@@ -1,4 +1,4 @@
-import { type DownloadAllInput } from "@trafficflow/services/mail";
+import { type AttachmentAdapter, type DownloadAllInput, type OpenAdapter } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import { makeOpenAdapter } from "../attachments-adapter.js";
@@ -20,15 +20,18 @@ import { pagingNumber } from "../query-bounds.js";
 /**
  * EVERY REFUSAL OF A BYTE ROUTE STATES WHETHER ASKING AGAIN CAN HELP. A source that knows says so
  * (`mailbox_busy`, the 424s); an answer that says nothing gets the status reading every shipped
- * client already applies (`retryable ?? (5xx || 429)`), written down. A 424 that stated nothing
- * would read "never" in those clients, and the reader's Try again is keyed on this flag.
+ * client applies (`retryable ?? (5xx || 429)`), written down — except our own unnamed `internal`,
+ * which states `false`: asking again repeats the fault, another mailbox slot and another fault row.
+ * The reader keeps that refusal for the tab (`shell/attachments.ts` keeps a non-retryable failure);
+ * a reload asks again. Byte routes only: on the other routes one transient 500 must not drop a
+ * queued change.
  */
 const withStatedRetry: Middleware = (next) => async (req, deps, params) => {
   const res = await next(req, deps, params);
   if (res.ok || !(res.headers.get("Content-Type") ?? "").startsWith("application/json")) return res;
-  const body = await res.clone().json().catch(() => null) as { error?: { retryable?: unknown } } | null;
+  const body = await res.clone().json().catch(() => null) as { error?: { code?: unknown; retryable?: unknown } } | null;
   if (!body?.error || typeof body.error.retryable === "boolean") return res;
-  body.error.retryable = res.status >= 500 || res.status === 429;
+  body.error.retryable = body.error.code === "internal" ? false : res.status >= 500 || res.status === 429;
   return jsonResponse(body, { status: res.status, headers: Object.fromEntries(res.headers) });
 };
 
@@ -38,6 +41,33 @@ const withStatedRetry: Middleware = (next) => async (req, deps, params) => {
  * — never a 502 blaming the person's mail server for a fault of ours.
  */
 const BYTE_ROUTE_MIDDLEWARE: readonly Middleware[] = [withStatedRetry, withErrorEnvelope];
+
+/**
+ * THE ZIP ROUTES' OPENER, THROUGH THE SAME ARM. `downloadAll` writes a failed open or part into
+ * `_errors.txt` instead of throwing, so the one-file route's `mailServerRefusal` never saw either
+ * and a refused sign-in read "mail server unavailable". The opener and every part read hand the
+ * service the typed refusal instead, which it words by its own sentence.
+ */
+function namedOpener(open: OpenAdapter): OpenAdapter {
+  return async (mailboxId) => {
+    let adapter: AttachmentAdapter;
+    try {
+      adapter = await open(mailboxId);
+    } catch (err) {
+      throw mailServerRefusal(err) ?? err;
+    }
+    return {
+      fetchPart: async (locator, partId, o) => {
+        try {
+          return await adapter.fetchPart(locator, partId, o);
+        } catch (err) {
+          throw mailServerRefusal(err) ?? err;
+        }
+      },
+      close: () => adapter.close(),
+    };
+  };
+}
 
 /** Copy a view's bytes into a standalone ArrayBuffer so the body is a plain BodyInit. */
 function toBody(bytes: Uint8Array): ArrayBuffer {
@@ -117,7 +147,7 @@ export const attachmentRoutes: Route[] = [
     handler: async (req, deps, params) => {
       try {
         const { zip, filename } = await attachments(deps).downloadAll(
-          serviceContext(deps, req), { messageId: params.id! }, { openAdapter: makeOpenAdapter(deps) },
+          serviceContext(deps, req), { messageId: params.id! }, { openAdapter: namedOpener(makeOpenAdapter(deps)) },
         );
         return new Response(toBody(zip), {
           status: 200,
@@ -133,8 +163,8 @@ export const attachmentRoutes: Route[] = [
           },
         });
       } catch (err) {
-        // A refused open is an `_errors.txt` line inside the archive, so what reaches here is
-        // mostly ours; the same arm as the one-file route keeps the three doors one reading.
+        // A refused open or part is an `_errors.txt` line inside the archive (`namedOpener`), so
+        // what reaches here is mostly ours; the same arm keeps the three doors one reading.
         throw mailServerRefusal(err) ?? err;
       }
     },
@@ -168,7 +198,7 @@ export const attachmentRoutes: Route[] = [
         const { zip, filename } = await attachments(deps).downloadAll(
           serviceContext(deps, req),
           { fileIds: body.fileIds, filter: body.filter },
-          { openAdapter: makeOpenAdapter(deps) },
+          { openAdapter: namedOpener(makeOpenAdapter(deps)) },
         );
         return new Response(toBody(zip), {
           status: 200,
@@ -184,8 +214,8 @@ export const attachmentRoutes: Route[] = [
           },
         });
       } catch (err) {
-        // A refused open is an `_errors.txt` line inside the archive, so what reaches here is
-        // mostly ours; the same arm as the one-file route keeps the three doors one reading.
+        // A refused open or part is an `_errors.txt` line inside the archive (`namedOpener`), so
+        // what reaches here is mostly ours; the same arm keeps the three doors one reading.
         throw mailServerRefusal(err) ?? err;
       }
     },

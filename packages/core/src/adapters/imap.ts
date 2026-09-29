@@ -931,6 +931,15 @@ const MESSAGE_ID_FIELD_MAX_BYTES = 8 * 1024;
 const messageIdKey = (id: string): string => id.trim().replace(/^<|>$/g, "").toLowerCase();
 
 /**
+ * imapflow's "Command failed": the server answered a command with a tagged NO or BAD. A refused
+ * LOGIN is one too and carries `authenticationFailed`, so a caller names that first.
+ */
+export function isRefusedCommand(err: unknown): boolean {
+  const status = (err as { responseStatus?: unknown } | null)?.responseStatus;
+  return status === "NO" || status === "BAD";
+}
+
+/**
  * Did a STATUS by name get the server's own statement that the mailbox does not exist? Two
  * readings, both required: imapflow's `NotFound` (a NO, then a LIST of that exact name that
  * answered empty), and the NO itself carrying `[NONEXISTENT]`, or no code and a text in

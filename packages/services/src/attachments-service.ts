@@ -163,14 +163,24 @@ function isTooLarge(err: unknown): boolean {
  *
  * Exported so the wording is asserted rather than described — see
  * `attachments-download-all-busy.at2.test.ts`. `mailbox_busy` is matched by CODE, never by
- * message text: the code is the contract the API's `makeOpenAdapter` and this function share.
+ * message text; any other NAMED refusal (the byte routes hand the mail server's refusal over
+ * typed) is said in its own sentence, and an unnamed throw is ohmail's, never the mail server's.
+ * Read by shape, for two copies of the services package.
  */
 export function downloadAllOpenFailure(err: unknown): string {
   if (err instanceof ServiceError && err.code === "mailbox_busy") {
     return "skipped — this mailbox already has as many live connections as we open at once; " +
       "try again in a moment";
   }
-  return "mail server unavailable";
+  return namedRefusal(err) ?? "skipped — ohmail could not open this mailbox";
+}
+
+/** `skipped — <its own sentence>` for a named refusal, or `null` for anything unnamed. */
+function namedRefusal(err: unknown): string | null {
+  const e = err as { httpStatus?: unknown; code?: unknown; message?: unknown } | null;
+  if (typeof e !== "object" || e === null) return null;
+  if (typeof e.httpStatus !== "number" || typeof e.code !== "string" || typeof e.message !== "string") return null;
+  return `skipped — ${e.message}`;
 }
 
 /**
@@ -416,7 +426,7 @@ export class AttachmentsService {
                   `or it may have been deleted`,
               );
             } else {
-              errors.push(`${name}: could not be fetched from the mail server`);
+              errors.push(`${name}: ${namedRefusal(err) ?? "skipped — ohmail could not fetch this part"}`);
             }
           }
         }

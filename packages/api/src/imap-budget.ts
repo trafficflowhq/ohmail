@@ -43,7 +43,7 @@ export const IMAP_OPERATION_DEADLINE_MS = IMAP_READ_DEADLINE_MS;
 export const imapDoorTimedOut = (budgetMs = IMAP_DOOR_DEADLINE_MS): ServiceError => new ServiceError(
   "mailbox_read_timeout", 504,
   `the mailbox did not answer within ${Math.round(budgetMs / 1000)} seconds — try again`,
-  { retryAfterSeconds: 5 },
+  { retryAfter: 5 },
   true,
 );
 

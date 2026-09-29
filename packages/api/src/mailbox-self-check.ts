@@ -105,7 +105,7 @@ export function dialClass(err: unknown): CheckUnreadable {
   if (isImapDoorTimeout(err)) return "timeout";
   const code = (err as { code?: unknown } | null)?.code;
   if (code === "mailbox_busy") return "busy";
-  if (code === "upstream_unavailable") return "no_login";
+  if (code === "mailbox_not_signed_in") return "no_login";
   if (code === "mailbox_host_refused" || code === "mailbox_port_refused") return "connect";
   const v = verdictFor(err);
   const c = v.verdict === "ok" ? "unknown" : v.code;

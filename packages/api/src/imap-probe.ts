@@ -534,7 +534,7 @@ function noTlsRefusal(scope: PlaintextScope, canConsent: boolean): ImapProbeVerd
 const busy = (): ServiceError => new ServiceError(
   "mailbox_busy", 429,
   "we are already opening a connection to that mailbox — wait a moment and try again",
-  { retryAfterSeconds: 10 },
+  { retryAfter: 10 },
   true,
 );
 

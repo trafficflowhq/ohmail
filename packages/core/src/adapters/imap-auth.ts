@@ -25,9 +25,9 @@ export interface CredMetaAuth {
    * For `oauth2`: which application registration issued this refresh token — `"public"` or
    * `"confidential"`; absent means `"confidential"`, the only door older tokens came through. A
    * refresh token is bound to the client that obtained it: Microsoft refuses one presented by a
-   * different `client_id`, and the failure is silent — `refreshAccessToken` maps a rejected
-   * client to `OAuthProviderUnavailableError`, so the mailbox simply stops receiving mail an hour
-   * after connecting. One self-hosted install can hold both kinds at once, so a host-wide setting
+   * different `client_id` — `refreshAccessToken` maps a rejected client to
+   * `OAuthClientRefusedError`, ours, and the mailbox stops receiving mail an hour after
+   * connecting. One self-hosted install can hold both kinds at once, so a host-wide setting
    * has no single right answer; the provenance travels with the credential.
    */
   clientKind?: string;

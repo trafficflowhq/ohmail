@@ -6,7 +6,8 @@
 // to the attacker; the host is a constant and only the tenant SEGMENT comes from data, validated
 // against a closed shape. (2) A MICROSOFT OUTAGE IS NOT A BAD CREDENTIAL — `invalid_grant` is the
 // ONLY auth verdict; a 5xx, a network failure or a timeout is non-auth, or every oauth mailbox in
-// the fleet would quarantine as "bad credentials" the instant Microsoft has a bad minute.
+// the fleet would quarantine as "bad credentials" the instant Microsoft has a bad minute. A refusal
+// of this deployment's own client is neither: `OAuthClientRefusedError`, ours.
 import { createHash } from "node:crypto";
 import type { KeyProvider } from "../crypto.js";
 import type { AccessTokenFetcherFactory, OAuthTokenProvider } from "../adapters/imap-auth.js";
@@ -57,6 +58,23 @@ export class OAuthProviderUnavailableError extends Error {
 }
 
 /**
+ * THE TOKEN ENDPOINT REFUSED THIS DEPLOYMENT'S OWN CLIENT — `invalid_client`, `unauthorized_client`
+ * or another parsed 4xx word that is no verdict on the stored grant: the registration, its secret or
+ * the request we built. Ours, and asking again will not change it — never auth (the mailbox's grant
+ * is not in question) and never an outage. `oauthError` is the closed OAuth2 word, never the
+ * description; the message carries none of the words a classifier reads as a refused password.
+ */
+export class OAuthClientRefusedError extends Error {
+  readonly code = "OAUTH_CLIENT_REFUSED";
+  readonly oauthError: string;
+  constructor(oauthError: string, public readonly httpStatus: number) {
+    super("the token endpoint refused this deployment's client");
+    this.name = "OAuthClientRefusedError";
+    this.oauthError = /^[a-z_]{1,40}$/.test(oauthError) ? oauthError : "unknown_error";
+  }
+}
+
+/**
  * THIS DEPLOYMENT IS MISCONFIGURED — a missing client secret, an unusable tenant. A NAMED refusal,
  * thrown at the moment a token is actually needed (i.e. only for an oauth mailbox), so a worker with
  * no `MS_OAUTH_CLIENT_SECRET` fails with a class an operator can read instead of a flake-shaped
@@ -76,8 +94,8 @@ export class OAuthConfigError extends Error {
  * authenticates instead. Self-host shared client: the same public registration via the
  * device-code flow. Explicit, not inferred from an empty secret: `"" means public` fails in the
  * costliest direction — a confidential deployment whose secret failed to resolve would silently
- * emit a PUBLIC request; Entra answers `invalid_client`, mapped to a provider outage, so the
- * fleet stops refreshing and nothing quarantines. With the kind stated, that deployment gets
+ * emit a PUBLIC request; Entra answers `invalid_client`, a refusal of our client, so the fleet
+ * stops refreshing and nothing quarantines. With the kind stated, that deployment gets
  * {@link OAuthConfigError} naming `MS_OAUTH_CLIENT_SECRET` — actionable.
  */
 export type MicrosoftClientKind = "confidential" | "public";
@@ -373,7 +391,8 @@ export async function exchangeAuthorizationCode(
 
   if (!res.ok) {
     let body: TokenError = {};
-    try { body = (await res.json()) as TokenError; } catch { /* unparseable 4xx */ }
+    try { body = ((await res.json()) ?? {}) as TokenError; } catch { /* unparseable 4xx */ }
+    if (typeof body !== "object") body = {};
     const error = typeof body.error === "string" ? body.error : "unknown_error";
     // The DESCRIPTION is never propagated: Microsoft puts request ids, timestamps and occasionally
     // the redirect URI in it, and this string reaches a redirect the browser follows. The `error`
@@ -501,7 +520,7 @@ export interface RefreshParams {
    * It must match the door the refresh token was ISSUED through: a token minted by the desktop's
    * public client cannot be refreshed with the managed deployment's secret, and vice versa. Entra
    * answers a mismatch with `invalid_client`, which this function maps to
-   * {@link OAuthProviderUnavailableError} rather than to a dead credential — correct, and silent.
+   * {@link OAuthClientRefusedError} rather than to a dead credential: ours, counted, never auth.
    * The kind therefore travels with the stored credential, not with the process.
    */
   clientKind?: MicrosoftClientKind;
@@ -520,18 +539,26 @@ export interface RefreshResult {
 interface TokenSuccess { access_token?: unknown; expires_in?: unknown; refresh_token?: unknown }
 interface TokenError { error?: unknown; error_description?: unknown }
 
+/**
+ * 4xx words that are no refusal of this deployment's client: the provider's own trouble, or a step
+ * only the person can take. They keep the reading every non-grant 4xx had — an unavailable endpoint,
+ * retried later, never auth.
+ */
+const NOT_OUR_CLIENT_4XX: ReadonlySet<string> = new Set([
+  "temporarily_unavailable", "server_error", "interaction_required", "consent_required",
+]);
+
 /** AADSTS codes that mean the same thing as `invalid_grant`: the token needs a fresh interactive consent. */
 const REAUTH_AADSTS = ["AADSTS700082", "AADSTS70000", "AADSTS50076"];
 
 /**
  * POST the refresh_token grant and return a fresh access token. Pure over its injected `fetch`.
- *
  * Error mapping is the security-load-bearing part (see the header's second invariant):
- *   · `fetch` rejects (network/DNS/socket)      → {@link OAuthProviderUnavailableError}
- *   · HTTP 5xx                                   → {@link OAuthProviderUnavailableError}
+ *   · `fetch` rejects, HTTP 5xx, or a 2xx with no `access_token` → {@link OAuthProviderUnavailableError}
  *   · HTTP 4xx, body `error:"invalid_grant"` or a re-auth AADSTS code → {@link OAuthReauthRequiredError}
- *   · any other non-2xx                          → {@link OAuthProviderUnavailableError} (never auth)
- *   · 2xx without an `access_token`              → {@link OAuthProviderUnavailableError}
+ *   · 408, 429, an unreadable body, or a word the provider or the person owns
+ *     (`temporarily_unavailable`, `interaction_required`, …) → {@link OAuthProviderUnavailableError}
+ *   · any other parsed 4xx word (`invalid_client`, …) → {@link OAuthClientRefusedError} (ours, never auth)
  */
 export async function refreshAccessToken(p: RefreshParams, now: () => number = Date.now): Promise<RefreshResult> {
   const endpoint = microsoftTokenEndpoint(p.tenant);
@@ -563,15 +590,20 @@ export async function refreshAccessToken(p: RefreshParams, now: () => number = D
     // A 4xx carries a verdict. Parse it defensively; a body we cannot read is treated as unavailable,
     // never as auth — the safe direction is "retry later", not "quarantine as bad credentials".
     let body: TokenError = {};
-    try { body = (await res.json()) as TokenError; } catch { /* unparseable 4xx */ }
+    try { body = ((await res.json()) ?? {}) as TokenError; } catch { /* unparseable 4xx */ }
+    if (typeof body !== "object") body = {};
     const error = typeof body.error === "string" ? body.error : "";
     const desc = typeof body.error_description === "string" ? body.error_description : "";
     if (error === "invalid_grant" || REAUTH_AADSTS.some((c) => desc.includes(c))) {
       throw new OAuthReauthRequiredError(REAUTH_AADSTS.find((c) => desc.includes(c)) ?? null);
     }
-    // invalid_client (our secret is wrong), unauthorized_client, an unrecognised 4xx: our problem or
-    // Microsoft's, but not the mailbox's credential. Non-auth so the fleet is never blamed.
-    throw new OAuthProviderUnavailableError(`token endpoint rejected the grant (${res.status})`);
+    // The provider's own trouble, a person's step, or no word at all: read as it always was.
+    if (res.status === 408 || res.status === 429 || !error || NOT_OUR_CLIENT_4XX.has(error)) {
+      throw new OAuthProviderUnavailableError(`token endpoint rejected the grant (${res.status})`);
+    }
+    // Any other word refuses OUR client (`invalid_client`: our secret; `unauthorized_client`; a
+    // request we built badly). Ours, not the mailbox's credential, so the fleet is never blamed.
+    throw new OAuthClientRefusedError(error, res.status);
   }
 
   let ok: TokenSuccess;
@@ -728,9 +760,9 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
      * `clientAuthFields` refuses an EMPTY confidential secret in one place. The secret is passed
      * through UNCONDITIONALLY, and that is the point: this used to drop it for a `public` kind
      * before the seam could look — bypassing the guard. The re-opened case: a CONFIDENTIAL
-     * registration mislabelled `public` would have its good secret silently discarded and Entra's
-     * `invalid_client` surface as a provider outage — exactly the failure the explicit kind
-     * exists to prevent. The value goes to the seam and the seam decides.
+     * registration mislabelled `public` would have its good secret silently discarded and Entra
+     * refuse the client for a secret that was fine — exactly the failure the explicit kind exists
+     * to prevent. The value goes to the seam and the seam decides.
      */
     const kind: MicrosoftClientKind = client.kind ?? "confidential";
 
@@ -738,8 +770,8 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
      * The door that answered must be the door that was asked for. `want` came from the mailbox's
      * credential; `kind` is what the host resolved. A mismatch means renewing a refresh token
      * against a registration that did not issue it — Microsoft answers `invalid_client` or
-     * `invalid_grant`, read as a provider outage or as "your consent expired" ten minutes after
-     * consent: both wrong, both actionable by the wrong person. Refused HERE, by name, before a
+     * `invalid_grant`, read as a refusal of our client or as "your consent expired" ten minutes
+     * after consent: both actionable by the wrong person. Refused HERE, by name, before a
      * request goes out. Applies only when a RESOLVER was asked — not a loophole: the static
      * fallback is a host declaring its one door, and checking `want` there would refuse every
      * mailbox on a single-door host with no fix available.
