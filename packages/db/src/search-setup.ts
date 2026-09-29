@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
 } from "./concurrent-index.js";
+import { pgDialect } from "./dialect/pg.js";
 
 /**
  * Search EXTENSION setup, kept deliberately OUT of the shared migrator. `makeTestDb()` replays
@@ -101,8 +102,27 @@ export const HISTORY_ORDER_PREBUILD_SPEC: ConcurrentIndexSpec = {
  * journal's own `if not exists` copy no-ops wherever the table already holds rows. The lock-cost
  * rule admits exactly these, and only in their spec's spelling minus `concurrently`.
  */
+/**
+ * Mail 0138's arrival index, spelled ONCE: the key is the dialect's own text (no parameter, so the
+ * planner matches the query's expression), and both journals carry it byte-equal (a test).
+ */
+export const ARRIVAL_ORDER_INDEX_DDL = sql`create index concurrently if not exists "messages_account_arrival_order_idx"
+      on public.messages using btree ("account_id",${pgDialect().arrivalKey(sql`"date"`, sql`"arrived_at"`)} desc,"id" desc)
+      where "deleted_at" is null`;
+
+/**
+ * Mail 0138's arrival index, built CONCURRENTLY ahead of the migrator on 0125's pattern, from the
+ * one DDL the hot-path spec also builds. The prerequisite is the column the key reads.
+ */
+export const ARRIVAL_ORDER_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "messages_account_arrival_order_idx",
+  table: "messages",
+  requiresColumn: "arrived_at",
+  ddl: ARRIVAL_ORDER_INDEX_DDL,
+};
+
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
-  WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC,
+  WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC,
 ];
 
 export async function ensureWithheldProvenanceIndex(

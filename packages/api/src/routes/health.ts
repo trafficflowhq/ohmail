@@ -891,6 +891,10 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   ["rules_account_match_key_idx", "ON public.rules USING btree (account_id, TRIM(BOTH FROM lower(match))) WHERE enabled"],
   ["approvals_account_message_idx", "ON public.approvals USING btree (account_id, message_id) WHERE (message_id IS NOT NULL)"],
   ["drafts_account_reply_idx", "ON public.drafts USING btree (account_id, in_reply_to_message_id) WHERE (in_reply_to_message_id IS NOT NULL)"],
+  // mail 0139_messages_arrival_order. The SILENT kind: every list, History and snapshot page walks
+  // the arrival key, and without it each page sorts the account's living set. The needle is the
+  // key's clamp arm, which renders the same in every session zone (the epoch literal does not).
+  ["messages_account_arrival_order_idx", "WHEN (((date - arrived_at) <= '48:00:00'::interval) AND ((arrived_at - date) <= '48:00:00'::interval)) THEN date"],
 ];
 
 /**
@@ -1178,7 +1182,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0138_auto_filing_undone_at";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0139_messages_arrival_order";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

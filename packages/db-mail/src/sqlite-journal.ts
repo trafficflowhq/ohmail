@@ -396,5 +396,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "INSERT INTO messages_fts(messages_fts) VALUES('rebuild');",
       "INSERT INTO message_bodies_fts(message_bodies_fts) VALUES('rebuild');"
     ]
+  },
+  {
+    "name": "0139_messages_arrival_order.sql",
+    "statements": [
+      "CREATE INDEX IF NOT EXISTS \"messages_account_arrival_order_idx\" ON \"messages\" (\"account_id\", (case when \"arrived_at\" is null then coalesce(\"date\", 0) when \"date\" is null then \"arrived_at\" when abs(\"date\" - \"arrived_at\") <= 172800000 then \"date\" else \"arrived_at\" end) DESC, \"id\" DESC) WHERE \"deleted_at\" IS NULL;"
+    ]
   }
 ] as const;

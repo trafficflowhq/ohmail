@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { ARRIVAL_ORDER_INDEX_DDL } from "./search-setup.js";
 import {
   ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
 } from "./concurrent-index.js";
@@ -58,8 +59,9 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
       on public.messages using btree ("account_id",(coalesce("date","created_at")),"id")`,
   },
   {
-    // THE READING ORDER — `date desc nulls last, id desc` within one account, which is
-    // `MSG_ORDER` in message-service.ts and the same clause in sync-service.ts's snapshot walk.
+    // THE HEADER-DATE ORDER — `date desc nulls last, id desc` within one account, the order every
+    // page walked until mail 0138 moved them to the arrival key (the spec below). KEPT this release
+    // for an older API instance still serving it; dropped next release (DROP-MSG-ORDER-INDEX-NEXT-RELEASE).
     // `nulls last` is spelled here because it is NOT free: an index declared `date desc` is NULLS
     // FIRST, and the planner then reads rows FROM it and sorts them anyway — measured, plan kept
     // the Sort. PARTIAL on `deleted_at is null`, which both readers carry verbatim: tombstones
@@ -84,6 +86,14 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
     ddl: sql`create index concurrently if not exists "folder_state_screener_held_idx"
       on public.folder_state using btree ("message_id")
       where "desired_folder" = 'ohmail/Screener' and "last_set_by" = 'us'`,
+  },
+  {
+    // THE READING ORDER since mail 0138 — `key desc, id desc` over `Dialect.arrivalKey`, which is
+    // `msgOrder` in message-service.ts, the snapshot walk and History. PARTIAL like the one above;
+    // unconditional for the same reason. The DDL is shared with the pre-migration build.
+    name: "messages_account_arrival_order_idx",
+    table: "messages",
+    ddl: ARRIVAL_ORDER_INDEX_DDL,
   },
   {
     // THE DEFERRED ONE, and the deferral is now a condition rather than a note: it builds itself
