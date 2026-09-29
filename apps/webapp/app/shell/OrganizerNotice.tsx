@@ -1,20 +1,18 @@
 "use client";
 
 /**
- * Who organizes this mailbox changed — said once, then gone. Exactly one install organizes a mailbox; which one can
- * change ("Organize here" on a laptop, a stopped server, a release), and the same person may sit in front of a window
- * whose Screener quietly stopped filing, or started. This line appears while a change is unacknowledged, carries one
- * action, then never again for that change. Once and not a standing banner: reading a mailbox somebody else organizes
- * is a normal, often deliberate state, and the durable record lives in Settings → Mailboxes. Derived from two
- * instants rather than a dismissed flag (`organizerNotices` in `mail-state.ts` owns the argument): the pair lives on
- * the mailbox row, so acknowledging on one device clears it on the others. The one gate this component makes for
- * itself: no transport, no notice — a line that cannot be acknowledged would stand on every visit for ever.
+ * Who organizes these mailboxes changed — said once, then gone. Two kinds are news (`organizerNotices`): another
+ * install took a mailbox, or its holder stopped and nothing files it. ONE BLOCK PER KIND, `stopped` first; a block
+ * about several mailboxes is one sentence with the count, and the count opens the list. Rendered at the rail's foot
+ * (`variant="rail"`) and, under 901px where the rail is a drawer, as the topbar's twin (`variant="shell"`) — one
+ * query in `app.css` shows exactly one. "Mark read" acknowledges every row its block lists, on the row itself, so the
+ * press holds on every device and across a relaunch (DESIGN-026 §1.2-1.4).
  */
 
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 
-import type { OrganizerNotice as OrganizerNoticeFact } from "./mail-state";
+import type { OrganizerNotice as OrganizerNoticeFact, OrganizerNoticeKind } from "./mail-state";
 import { goSettings } from "./routing";
 
 /**
@@ -30,79 +28,115 @@ export type OrganizerNoticeTransport = (mailboxId: string) => Promise<unknown>;
 export function OrganizerNotice({
   notices,
   onAcknowledge,
+  variant = "rail",
 }: {
   /** `organizerNotices(facts)`, newest change first. Empty renders nothing at all. */
   notices: readonly OrganizerNoticeFact[];
   onAcknowledge: OrganizerNoticeTransport;
+  variant?: "rail" | "shell";
 }) {
   const t = useTranslations("mailboxes");
   /**
-   * Mailboxes acknowledged in this session, so the line leaves on the press rather than on the
-   * poller's slower clock. Optimistic and NOT authoritative: the row decides, and the next poll
-   * brings the stamped instant back and keeps the line gone on its own — this exists because the
-   * poll is seconds away and a person who presses "Mark read" and watches nothing happen presses
-   * again. A FAILED write is removed from here again, so the line comes back: the acknowledgement
-   * did not happen, and the surface must not claim it did.
+   * Rows acknowledged in this session, so the block leaves on the press rather than on the poll.
+   * Optimistic and NOT authoritative: the row decides. A row whose write REJECTED is removed from
+   * here again, so it comes back alone — a smaller block, the truthful outcome.
    */
   const [acknowledged, setAcknowledged] = useState<ReadonlySet<string>>(() => new Set());
-  // A mailbox the wall paused gets no line: the account strip says why, and the resume says `here`.
-  const live = notices.filter((n) => n.kind !== "parked" && !acknowledged.has(n.id));
+  /** Which blocks show their mailboxes. Local UI state, remembered nowhere. */
+  const [open, setOpen] = useState<ReadonlySet<OrganizerNoticeKind>>(() => new Set());
+  const live = notices.filter((n) => !acknowledged.has(n.id));
   if (live.length === 0) return null;
 
-  const sentence = (n: OrganizerNoticeFact): ReactNode => {
-    if (n.kind === "here") return t("noticeHere", { address: n.address });
-    if (n.kind === "released") return t("noticeReleased", { address: n.address });
-    if (n.kind === "stopped") {
-      /* THE ONE OPEN CONDITION OF THE FOUR, and the only one whose sentence carries emphasis:
-         nobody is filing this mailbox, and mail is accumulating unsorted while that is true. The
-         other three describe a change that has already settled. `rich` rather than two keys
-         because the lead and the tail are one sentence, and a language that orders them
-         differently must be free to. */
-      const mark = { b: (chunks: ReactNode) => <b>{chunks}</b> };
-      return n.name
-        ? t.rich("noticeStopped", { ...mark, name: n.name, address: n.address })
-        : t.rich("noticeStoppedUnknown", { ...mark, address: n.address });
-    }
-    return n.name
-      ? t("noticeElsewhere", { name: n.name, address: n.address })
-      : t("noticeElsewhereUnknown", { address: n.address });
-  };
-
-  const acknowledge = (id: string): void => {
-    setAcknowledged((s) => new Set(s).add(id));
-    void onAcknowledge(id).catch(() => {
-      setAcknowledged((s) => {
-        const next = new Set(s);
-        next.delete(id);
-        return next;
+  const acknowledge = (ids: readonly string[]): void => {
+    setAcknowledged((s) => new Set([...s, ...ids]));
+    for (const id of ids) {
+      void onAcknowledge(id).catch(() => {
+        setAcknowledged((s) => {
+          const next = new Set(s);
+          next.delete(id);
+          return next;
+        });
       });
-    });
+    }
   };
 
-  /* ONE LINE PER MAILBOX, and not one line for the roster. Two mailboxes changing hands are two
-     facts with two different remedies, and each is acknowledged on its own row — a combined line
-     would either name one mailbox and hide the other, or be acknowledged for both by a press
-     about one. Newest first, so a slot with room for one carries the most recent change. */
-  return (
-    <>
-      {live.map((n) => (
-        <div className="ohx-notice ohx-organizer" role="status" data-state={n.kind} key={n.id}>
-          <span>{sentence(n)}</span>
-          {/* THE WAY TO ACT ON IT, ON THE ONE LINE THAT NAMES SOMETHING TO ACT ON. A mailbox
-              nobody organizes is the state a person would want to fix from here; the other three
-              describe a settled situation whose durable record and controls are in the same pane
-              anyway. "Mark read" ends every line, last, so the acknowledging press is always in
-              the same place. */}
-          {n.kind === "stopped" ? (
+  const block = (kind: OrganizerNoticeKind, rows: readonly OrganizerNoticeFact[]): ReactNode => {
+    const one = rows.length === 1 ? rows[0]! : null;
+    const isOpen = open.has(kind);
+    const mark = { b: (chunks: ReactNode) => <b>{chunks}</b> };
+    /* THE COUNT IS THE DISCLOSURE. `{count}` is at least 2 in the *Many keys — one mailbox takes
+       the named sentence — so the catalogues need no plural form. */
+    const count = (chunks: ReactNode) => (
+      <button
+        type="button"
+        className="rn-count"
+        aria-expanded={isOpen}
+        aria-label={t(isOpen ? "noticeCountHide" : "noticeCountShow")}
+        onClick={() => setOpen((s) => {
+          const next = new Set(s);
+          if (next.has(kind)) next.delete(kind); else next.add(kind);
+          return next;
+        })}
+      >
+        {chunks}
+      </button>
+    );
+    const sentence = one
+      ? kind === "stopped"
+        ? one.name
+          ? t.rich("noticeStopped", { ...mark, name: one.name, address: one.address })
+          : t.rich("noticeStoppedUnknown", { ...mark, address: one.address })
+        : one.name
+          ? t("noticeElsewhere", { name: one.name, address: one.address })
+          : t("noticeElsewhereUnknown", { address: one.address })
+      : t.rich(kind === "stopped" ? "noticeStoppedMany" : "noticeElsewhereMany",
+        { ...mark, c: count, count: rows.length });
+    const holder = (n: OrganizerNoticeFact): string => kind === "stopped"
+      ? n.name ? t("noticeRowStopped", { name: n.name }) : t("noticeRowStoppedUnknown")
+      : n.name ?? t("noticeRowUnknown");
+    return (
+      <div
+        className={variant === "rail" ? "rail-notice" : "notice-shell"}
+        role="status"
+        data-state={kind}
+        key={kind}
+      >
+        <div className="rn-line">
+          <span className="rn-mark" aria-hidden="true" />
+          <span className="rn-text">{sentence}</span>
+        </div>
+        {!one && isOpen ? (
+          <ul className="rn-rows">
+            {rows.map((n) => (
+              <li key={n.id}>
+                <span className="rn-addr">{n.address}</span>
+                <span className="rn-holder"> · {holder(n)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="rn-verbs">
+          {/* The way to act, on the one kind that names something to act on; "Mark read" last. */}
+          {kind === "stopped" ? (
             <button type="button" onClick={() => goSettings("mailboxes")}>
               {t("noticeOpenMailboxes")}
             </button>
           ) : null}
-          <button type="button" onClick={() => acknowledge(n.id)}>
+          <button type="button" onClick={() => acknowledge(rows.map((n) => n.id))}>
             {t("noticeDismiss")}
           </button>
         </div>
-      ))}
+      </div>
+    );
+  };
+
+  // The open condition above the settled one; each block keeps the rows in the order given.
+  const stopped = live.filter((n) => n.kind === "stopped");
+  const elsewhere = live.filter((n) => n.kind === "elsewhere");
+  return (
+    <>
+      {stopped.length > 0 ? block("stopped", stopped) : null}
+      {elsewhere.length > 0 ? block("elsewhere", elsewhere) : null}
     </>
   );
 }

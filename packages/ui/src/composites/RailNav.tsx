@@ -131,6 +131,13 @@ export interface RailNavProps {
    * default-absent for the reason `dock` is.
    */
   sync?: ReactNode;
+  /**
+   * A change about who organizes the mailboxes, immediately ABOVE the sync
+   * line — the host's notice block, said once and dismissed. `.rail-notice-slot`
+   * takes the rail's slack when present (`rail.css`); absent, the foot is
+   * exactly as without it. `undefined` when there is nothing to say.
+   */
+  notice?: ReactNode;
   /** Bottom line — the account address. */
   footer?: ReactNode;
   ariaLabel?: string;
@@ -187,6 +194,7 @@ export function RailNav({
   mailboxes,
   dock,
   sync,
+  notice,
   footer,
   ariaLabel,
   className,
@@ -323,6 +331,7 @@ export function RailNav({
         </div>
       ) : null}
 
+      {notice ? <div className="rail-notice-slot">{notice}</div> : null}
       {sync ? <div className="rail-sync-slot">{sync}</div> : null}
       {dock ? <div className="rail-dock">{dock}</div> : null}
       {footer ? <div className="rail-mail">{footer}</div> : null}

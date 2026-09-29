@@ -1465,6 +1465,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     refreshFacts();
     return answer;
   });
+  /**
+   * THE NOTICE'S TWO PLACEMENTS — the rail's foot at width, the topbar twin under 901px; one query
+   * in `app.css` shows exactly one. `undefined` when there is nothing to say, so the rail keeps no
+   * empty band. Withheld where no door can write the stamp (the demo; a host with no transport):
+   * a notice that cannot be acknowledged would stand for ever.
+   */
+  const organizerNotice = (variant: "rail" | "shell"): ReactNode =>
+    demo || organizerNoticeTransport === undefined || organizerChanges.length === 0
+      ? undefined
+      : <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant={variant} />;
   const screenerShownAt = useStableCallback((subject: readonly EngineMessage[], dest: ScreeningDest) =>
     screeningShown(engine.read(), subject, dest, { consent: demo ? null : consent, now: nowAt(), ownAddresses }));
   const screener = useScreenerState(
@@ -2253,6 +2263,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             absent from the DOM until a durable write has actually been refused. */}
         <DurabilityNotice />
 
+        {/* WHO ORGANIZES THESE MAILBOXES CHANGED — the narrow-width copy, beside the other
+            app-level strips and never over the Ohbox rows; hidden at 901px and up, where the
+            rail's foot carries it. */}
+        {organizerNotice("shell")}
+
         {/* WHAT THE SERVICE SAYS ABOUT THIS ACCOUNT — the same slot and the same argument as the
             two strips above, and the same absence rule: nothing at all where the host supplied
             nothing, which is every desktop window and the demo. It is a NODE and not a state
@@ -2339,6 +2354,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
               hint: (m as { railHint?: string }).railHint ?? m.provider,
             }))}
             dock={railDock}
+            notice={organizerNotice("rail")}
             /* THE MAILBOX'S OWN LINE, at the foot of the rail and above the dock. The same
                component and the same derivation as the strip below the topbar — one of the two
                is showing at any width, never both (see `SyncBar.tsx`). */
@@ -2465,10 +2481,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 }
                 noticeSection={
                   (() => {
-                    /* Two possible lines share the header slot: the Option B ohmarchy offer
-                       (above, so a fresh Linux sign-in sees it first) and the organizer notice.
-                       Each keeps its own gate; the slot is undefined only when both are absent,
-                       so OhboxView's spacing never reserves an empty band. */
+                    /* The header slot's one tenant now: the Option B ohmarchy offer. The organizer
+                       notice moved to the rail's foot (`organizerNotice`), so nothing about who
+                       organizes a mailbox stands over the mail; the slot is undefined when the offer is. */
                     /**
                      * ONE ASK AT A TIME ON A FIRST RUN: MEASURED on the released 0.13.7: at +15 s after connecting a
                      * mailbox a person faced THREE asks at once — the setup flow's modal, the OS "Open email links
@@ -2482,32 +2497,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                       && !route.firstRun
                       ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
                       : null;
-                    /**
-                     * AND THE ORGANIZER NOTICE, THE SLOT'S OTHER TENANT: Below the offer, and the order is the amount
-                     * of decision each one asks for: the offer proposes something, this reports something that
-                     * already happened. (The away line, which states a standing setting, is the list's first block
-                     * now — `standingNotice` above.) Its own gate is inside the component (it renders nothing without
-                     * an unacknowledged change), so the only thing decided here is whether there is any way to
-                     * acknowledge — see `acknowledgeOrganizerNotice`. Withheld on the demo, which has no row to stamp
-                     * and no other install to change hands with.
-                     */
-
-                    /**
-                     * THE TRANSPORT ITSELF is the condition, not the callback: the callback is stable and always
-                     * present (it holds no render scope, which is why), so the honest question is whether either door
-                     * supplied a way to write the stamp. A notice that cannot be acknowledged is withheld.
-                     */
-                    const organizer = demo || organizerNoticeTransport === undefined
-                      ? null
-                      : (
-                        <OrganizerNotice
-                          notices={organizerChanges}
-                          onAcknowledge={acknowledgeOrganizerNotice}
-                        />
-                      );
-                    return offer === null && organizer === null
-                      ? undefined
-                      : <>{offer}{organizer}</>;
+                    return offer ?? undefined;
                   })()
                 }
                 resurfacedRows={resurfacedRows}

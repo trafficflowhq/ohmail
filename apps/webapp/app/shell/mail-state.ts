@@ -556,9 +556,11 @@ export function readerMoveRefusal(
  * Withheld: a tombstone (a removed mailbox is not news about organizing); an absent or unparseable instant ("this
  * build cannot tell" must not become a sentence about a machine that never changed hands); and a reader with no
  * holder nobody ever agreed to organize — a freshly connected mailbox, whose next screen is the agreement. Newest
- * change first, so a one-line slot carries the most recent.
+ * change first. Only TWO kinds are news: another install took the mailbox, or its holder stopped. This install
+ * organizing, a release the person pressed, and the wall's pause are things the person asked for or is told
+ * elsewhere (DESIGN-026 §1.1); their durable record is Settings → Mailboxes.
  */
-export type OrganizerNoticeKind = "elsewhere" | "stopped" | "here" | "released" | "parked";
+export type OrganizerNoticeKind = "elsewhere" | "stopped";
 
 export interface OrganizerNotice {
   /** The mailbox the line is about — the id the acknowledgement is sent for. */
@@ -566,7 +568,7 @@ export interface OrganizerNotice {
   /** Its address: the line names the mailbox, and a roster may hold several. */
   address: string;
   kind: OrganizerNoticeKind;
-  /** The holder's name, on the two kinds that have one. `null` otherwise. */
+  /** The holder's name, when the claim recorded one. `null` otherwise. */
   name: string | null;
   /** `organizerEventAt`, so a caller can order or date the line. */
   at: string;
@@ -596,48 +598,31 @@ export function organizerNotices(facts: ReadonlyArray<OrganizerRow> | null): Org
       id: m.id ?? "",
       address: m.address ?? "",
       kind,
-      name: kind === "elsewhere" || kind === "stopped"
-        ? (m.organizedBy?.name && m.organizedBy.name.trim() ? m.organizedBy.name : null)
-        : null,
+      name: m.organizedBy?.name && m.organizedBy.name.trim() ? m.organizedBy.name : null,
       at,
     });
   }
   return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
-/** Which kind one row is in, or `null` for a row with nothing to announce. `parked` says nothing. */
+/** Which kind one row is in, or `null` for a row with nothing to announce. */
 function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
-  /* ABSENT READS AS ORGANIZER, the same default the role carries everywhere on this surface: a
-     host that does not send the column has not demoted anybody. */
-  if (m.organizerRole !== "reader") return "here";
-  // The wall's pause is not a handover: no "stopped", no "released" while the marker stands.
-  if (parkedByWall(m)) return "parked";
+  /* THIS INSTALL ORGANIZES IT: never news — the person asked for it (consent, payment, "Organize
+     here"), and after a paid reopening it was one line per mailbox about what they paid for.
+     ABSENT READS AS ORGANIZER, the role's default on this surface. */
+  if (m.organizerRole !== "reader") return null;
+  // The wall's pause is not a handover; the account strip says why.
+  if (parkedByWall(m)) return null;
   const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
   if (holder) return holderIsLive({ by: m.organizedBy, state: m.organizerState }) ? "elsewhere" : "stopped";
-  /* NO HOLDER, AND NOBODY EVER AGREED — an ordinary freshly connected mailbox, whose next screen
-     is the agreement rather than a notice about a handover that never happened. `=== null` and
-     not `== null`, so an absent stamp (a build that cannot tell) says nothing. */
+  /* NO HOLDER, AND NOBODY EVER AGREED — an ordinary freshly connected mailbox. `=== null` and not
+     `== null`, so an absent stamp (a build that cannot tell) says nothing. */
   if (m.organizeConsentedAt === null || m.organizeConsentedAt === undefined) return null;
-  /**
-   * NO HOLDER, CONSENTED: TWO STATES, AND ONLY THE MARKER TELLS THEM APART: This line answered `released` for both of
-   * them, and one of the two is not a release. The per-cycle peek rewrites all four holder columns and writes them
-   * ALL NULL when it finds an empty claim folder — so a stand-down whose winner was removed DECAYS into this exact
-   * shape, with nobody having released anything. Worse, the same write stamps `organizer_event_at` on a flip in
-   * either direction INCLUDING to and from NULL, so the decayed row arrives here with a fresh unacknowledged event
-   * and the line fires on it: "You stopped organizing … here", about something the person never did. So `released`
-   * needs the marker `readerStandDown` keys on, and the decayed row gets the sentence that is true of it — organizing
-   * here has stopped and nobody known holds it, which is `stopped` with no name.
-   */
-
-  /**
-   * That is the ONE open condition of the four: nothing files this mailbox, and mail accumulates unsorted while it is
-   * true, which is precisely the decayed row's situation and worth the emphasis the sentence carries.
-   * `organizerNotices` withholds the name for a row with no named holder already, so the unknown-holder wording is
-   * reached by the same rule that serves a stopped holder whose claim recorded no name.
-   */
-  return m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined
-    ? "released"
-    : "stopped";
+  /* NO HOLDER, CONSENTED: the release marker tells the two states apart. With it, the person
+     pressed Stop (news to nobody). Without it, a stand-down whose winner vanished DECAYED into
+     this shape (the peek writes the holder columns NULL): nothing files the mailbox, which is
+     `stopped` with no name — the one open condition. */
+  return m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined ? null : "stopped";
 }
 
 /** The Cloud mirror's refused rows, as `GET /mailboxes` states them — see {@link MailboxFacts.storeRefusals}. */

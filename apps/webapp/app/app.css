@@ -904,6 +904,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .rail-host {
   display: none;
 }
+/* THE ORGANIZER NOTICE'S PAIR, on the same rule: the topbar twin at rest, the rail's slot at
+   width, both halves beside the one query (DESIGN-026 §1.3). */
+.notice-shell {
+  display: flex;
+}
+.rail-notice-slot {
+  display: none;
+}
 @media (min-width: 901px) {
   .sync-bar {
     display: none;
@@ -930,6 +938,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
     display: flex;
   }
   .rail-sync-slot {
+    display: block;
+  }
+  .notice-shell {
+    display: none;
+  }
+  .rail-notice-slot {
     display: block;
   }
 }
@@ -1242,34 +1256,23 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    The pane is `packages/ui`'s `Banner` now (primitives/banner.css: the soft accent ground over
    the panel, the card radius, the 2px leading rule, the quiet verb — and the ONE media rule that
    pins it at 901px and up while it scrolls with the rows below), and `AwayNotice` renders through
-   `OhboxView`'s `standingNotice` slot INSIDE the scroller rather than in this header slot. The
-   two rules below stay for the header slot's remaining tenants. */
+   `OhboxView`'s `standingNotice` slot INSIDE the scroller rather than in this header slot. */
 
-/* ============ the organizer notice: the same quiet line, once per change ================
-   The Ohbox notice's second tenant. Which install organizes a mailbox can change — a press on
-   another machine, a machine that stopped — and this is where that is said, once, on the pane
-   its owner reads: one sentence and "Mark read", which makes it go for good. It borrows
-   `.ohx-notice` whole because it is the same kind of statement: ambient, never an alert — the
-   change it names is normal and usually wanted. Several mailboxes can change at once; each gets
-   a line of its own, in the roster's order, so nothing is folded into a count and nothing waits
-   unseen behind a line already on screen. */
-.ohx-notice + .ohx-notice {
-  /* Two lines in the slot read as one quiet block, not as two announcements. */
-  margin-top: 4px;
-}
-.ohx-organizer > span {
-  /* The address is the one word here that cannot hyphenate, and on a phone it is wider than a
-     third of the line. It breaks rather than push the pane; nothing here ellipsizes. */
-  overflow-wrap: anywhere;
-}
-/* NOBODY IS FILING THE MAILBOX. Of the five things this line can say, this is the one open
-   condition rather than a finished change, so the fact takes the reading ink and its weight —
-   the one step the Screener's reader note takes — and nothing else: no colour, no mark, no
-   background. It is something to know, not something that went wrong. The way to act on it is
-   a second quiet verb beside the sentence, and "Mark read" still ends the line. */
-.ohx-organizer[data-state="stopped"] b {
-  font-weight: 600;
-  color: var(--ink);
+/* ============ the organizer notice, under 901px: the topbar's twin =====================
+   The rail's foot carries the notice at width (`.rail-notice`, rail.css); where the rail is a
+   closed drawer this is the one copy — one quiet line in the strip register of the host line,
+   never over the Ohbox rows. Its `display` is declared beside `.host-strip`, above the single
+   901px query that swaps the pair. The inner marks, rows and verbs are rail.css's `.rn-*`. */
+.notice-shell {
+  flex: none;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 14px;
+  font-size: calc(12px + var(--type-up));
+  line-height: 1.45;
+  color: var(--ink2);
+  box-shadow: inset 0 -1px 0 var(--hair-soft);
+  background: var(--canvas);
 }
 
 /* ============ settings found on a mailbox: the restore card ============================
@@ -6893,6 +6896,7 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
      landed on a chip. Row-gap only: the column gap, every width and the wrap are untouched. */
   .scn-head{row-gap:11px}
   .ohx-notice button{min-height:44px}
+  .rn-verbs button{min-height:44px}
   .draft-open{min-height:44px}
 }
 /* UNDER A COARSE POINTER, the controls that were each the only way to their action measured under

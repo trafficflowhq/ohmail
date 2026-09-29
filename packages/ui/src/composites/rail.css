@@ -114,6 +114,39 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
  * shove both controls down by its own height. */
 .rail-sync-slot{margin-top:auto;padding-bottom:10px}
 .rail-sync-slot + .rail-dock{margin-top:0}
+/* THE ORGANIZER NOTICE'S PLACE — see `notice` in `RailNav.tsx`. One link more in the same chain:
+ * present, it takes the slack and the sync slot gives it up, so the foot stays welded to the
+ * bottom edge and the block grows upwards. No `display` here: the pair's swap lives in app.css
+ * beside its one query, and this sheet loads after it.
+ *
+ * The block speaks the rail's own text register (`.rail-host`'s): no box, no fill, no tone. The
+ * mark tells the two kinds apart — a hollow ring for a settled handover, a filled one for the
+ * open condition — and stays bigger than the 4px mailbox bullets above so it never reads as a
+ * mailbox. The count is the disclosure; its underline style is its state. */
+.rail-notice-slot{margin-top:auto;padding:0 0 8px}
+.rail-notice-slot:empty{padding:0}
+.rail-notice-slot + .rail-sync-slot{margin-top:0}
+.rail-notice{display:flex;flex-direction:column;gap:3px;padding:0 8px;
+  font-size:calc(11.5px + var(--type-up));line-height:1.45;color:var(--ink2)}
+.rail-notice + .rail-notice{margin-top:8px}
+.rn-line{display:flex;align-items:flex-start;gap:7px}
+.rn-text{min-width:0;overflow-wrap:anywhere}
+.rn-mark{flex:none;width:8px;height:8px;margin-top:5px;border-radius:var(--r-avatar);
+  box-shadow:inset 0 0 0 1.5px var(--ink3)}
+[data-state="stopped"] > .rn-line .rn-mark{box-shadow:none;background:var(--accent-ink)}
+[data-state="stopped"] .rn-text b{font-weight:600;color:var(--ink)}
+.rn-count{font:inherit;font-weight:600;color:var(--ink);padding:0;background:none;border:0;
+  cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;
+  text-decoration-color:var(--ink3)}
+.rn-count:hover,.rn-count[aria-expanded="true"]{text-decoration-style:solid;text-decoration-color:var(--ink)}
+.rn-rows{list-style:none;margin:2px 0 2px 13px;padding:0;display:flex;flex-direction:column;gap:2px;
+  font-size:calc(10.5px + var(--type-up));color:var(--ink3)}
+.rn-rows li{overflow-wrap:anywhere}
+.rn-addr{color:var(--ink2)}
+.rn-verbs{display:flex;flex-wrap:wrap;gap:2px 8px;margin-left:13px}
+.rn-verbs button{font-size:calc(11.5px + var(--type-up));font-weight:600;color:var(--accent-ink);
+  border-radius:var(--r-pill);padding:2px 9px;margin-left:-9px}
+.rn-verbs button:hover{background:var(--accent-soft)}
 .rail-dock{margin-top:auto;padding-top:10px;box-shadow:inset 0 1px 0 var(--hair-soft);
   display:flex;align-items:stretch;gap:4px}
 .rail-dock .ritem{width:auto}
