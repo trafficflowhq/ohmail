@@ -16,7 +16,7 @@ export * from "./schema-cloud.js";
 /* The catch-up after a reopening: the worker plants it before its roster pass spends the anchor,
  * and `GET /account/access` tells it once. CLOUD-ONLY: the table is a cloud table. */
 export {
-  plantReopenedCatchUp, reopenAnchorOf, untoldCatchUpOf, untoldCatchUpWhere,
+  dropUntoldCatchUps, plantReopenedCatchUp, reopenAnchorOf, untoldCatchUpOf, untoldCatchUpWhere,
 } from "./reopen-catch-up.js";
 
 /**

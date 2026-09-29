@@ -11,7 +11,7 @@ import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
   entitlementsFaultRecorder, alertReadersOf,
   markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
-  pruneErasedBearers, pruneAuthThrottle, plantReopenedCatchUp } from "@trafficflow/db/cloud";
+  pruneErasedBearers, pruneAuthThrottle, plantReopenedCatchUp, dropUntoldCatchUps } from "@trafficflow/db/cloud";
 import {
   runAlertPass, firingToLog,
   webhookAlertSink,
@@ -986,6 +986,13 @@ export async function startWorkerWithLock(
      * open again, and `reconcileSyncBlocks`'s clear arm erases the row's reason the same pass.
      */
     const parkedBlocked = new Map<string, SyncBlock>();
+    /**
+     * Parked accounts whose untold catch-ups this leader has already dropped for the current
+     * closure. An account leaves it when it reads open again; a failed drop keeps it out, so the
+     * next pass tries again, and a new leader drops once for every account it reads parked. Kept
+     * per closure so a parked account costs one statement, not one per pass.
+     */
+    const closureDropped = new Set<string>();
     /**
      * Record a block, PRESERVING `since` across passes.
      *
@@ -2998,6 +3005,26 @@ export async function startWorkerWithLock(
             mailboxId: m.mailboxId, accountId: m.accountId, err,
             reason: "the roster still detaches the runtime and the claim lapses on its own; " +
               "the row's stand-down is retried next pass",
+          });
+        }
+      }
+      // A closure read for the first time ends any catch-up an earlier reopening left untold: nobody
+      // was shown it before the account closed again. Here, at the first pass that reads the account
+      // parked, and never behind the block grace, which a closure paid within minutes never reaches.
+      const parkedAccountIds = new Set(roster.parked.map((m) => m.accountId));
+      for (const id of [...closureDropped]) if (!parkedAccountIds.has(id)) closureDropped.delete(id);
+      for (const accountId of parkedAccountIds) {
+        if (stopped) return;
+        if (closureDropped.has(accountId)) continue;
+        try {
+          await dropUntoldCatchUps(db as unknown as Tx, accountId);
+          closureDropped.add(accountId);
+        } catch (err) {
+          if (err instanceof AccountErasedError) { closureDropped.add(accountId); continue; }
+          log.error("reopened_notice_drop_failed", {
+            accountId, err,
+            reason: "an earlier reopening's untold catch-up note could not be dropped; the next " +
+              "pass tries again, and until then a reopening may name that earlier closure's date",
           });
         }
       }

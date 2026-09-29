@@ -10,7 +10,8 @@ import type { Tx } from "./change-log.js";
  * (`sent_at = anchor`, planted by the hosted worker before its roster pass spends the anchor) or TOLD
  * (`sent_at` is the database clock when `GET /account/access` answered it). Only EQUALITY reads as
  * untold: the park and the block are the worker's clock and `sent_at` the database's, so an ordering
- * between them is no fact about the row.
+ * between them is no fact about the row. Bound: an untold row is told at the first open read however
+ * late, until a roster pass reads the account closed again ({@link dropUntoldCatchUps}).
  */
 
 /** The closure the catch-up is dated from: the newest park, else the newest `account_closed` block. */
@@ -60,4 +61,23 @@ export async function untoldCatchUpOf(db: Tx, accountId: string): Promise<Date |
     .orderBy(desc(accountLifecycleNotices.anchor))
     .limit(1);
   return row?.anchor ?? null;
+}
+
+/**
+ * A NEW CLOSURE ENDS AN UNTOLD CATCH-UP. A reopening no client read before the account closed again
+ * would otherwise be told at the next reopening in its place, dated from the older closure. The
+ * worker calls this at the first roster pass that reads the account parked, never behind the block
+ * grace. Fenced like the plant; returns how many rows went.
+ */
+export async function dropUntoldCatchUps(db: Tx, accountId: string): Promise<number> {
+  return fencedAccountWrite(db, { accountId }, async (tx) => {
+    const rows = await tx.delete(accountLifecycleNotices)
+      .where(and(
+        eq(accountLifecycleNotices.accountId, accountId),
+        eq(accountLifecycleNotices.kind, "reopened"),
+        untoldCatchUpWhere(),
+      ))
+      .returning({ anchor: accountLifecycleNotices.anchor });
+    return rows.length;
+  });
 }
