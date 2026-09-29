@@ -272,6 +272,15 @@ mail no longer treats an automatic reply, or a reply to somebody else, as your a
 An account whose mailboxes are all disconnected, or whose subscription has ended, now has its older
 mail indexed for search like every other account.
 
+### A computer whose clock jumps stops organizing on time
+<!-- changes: fix-026-permit-one-clock.md -->
+
+A computer whose clock is set back, or jumps forward, stops organizing a mailbox within the usual
+window once it no longer holds it, rather than for as long as the clock moved. The settings page and
+the apps name the computer that actually organizes a mailbox, and a claim written by a newer ohmail
+is named as unknown. The note on a mailbox that is not being synced now appears after four minutes,
+once the automatic reconnect has had its turn.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
