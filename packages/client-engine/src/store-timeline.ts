@@ -7,7 +7,7 @@
  */
 import { errorClassOf, type OhmailEngine, type ServerSearchFacets, type ServerSearchOutcome } from "./engine.js";
 import {
-  HISTORY_PAGE_ROWS, segmentAt, storeSearchList, timelineSegments,
+  HISTORY_PAGE_ROWS, segmentAt, storeInstantOf, storeKeyOf, storeSearchList, timelineSegments,
   type StoreKeyset, type StoreSearchKey, type StoreTimeline, type TimelineSegment,
 } from "./store-pages.js";
 import type { EngineMessage } from "./types.js";
@@ -292,16 +292,13 @@ export class PagedWalk<A> {
   }
 }
 
-const keysetOf = (m: EngineMessage): StoreKeyset => ({ date: m.date ?? null, id: m.id });
+const keysetOf = (m: EngineMessage): StoreKeyset => storeKeyOf(m);
 
-/** Does `m` sort before position `k` in the store's order — `date desc nulls last, id desc`. */
+/** Does `m` sort before position `k` in the store's order — `key desc, id desc` ({@link storeKeyOf}). */
 function newerThan(m: EngineMessage, k: StoreKeyset): boolean {
-  const d = m.date ?? null;
-  if (d === null || k.date === null) return d === k.date ? m.id > k.id : d !== null;
-  const a = Date.parse(d);
-  const b = Date.parse(k.date);
-  const cmp = Number.isFinite(a) && Number.isFinite(b) ? a - b : d < k.date ? -1 : d > k.date ? 1 : 0;
-  return cmp !== 0 ? cmp > 0 : m.id > k.id;
+  const a = storeInstantOf(m);
+  const b = k.date === null ? 0 : Date.parse(k.date);
+  return a !== b ? a > b : m.id > k.id;
 }
 
 /** A render subscription: bumped on every change a render can see. */

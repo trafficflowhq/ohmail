@@ -213,6 +213,12 @@ export function pgDialect(): Dialect {
     // Truncated, not formatted: formatting every row costs more than the grouping it serves.
     monthBucket: (instant: SQL): SQL => sql`date_trunc('month', ${instant} at time zone 'UTC')`,
 
+    // IMMUTABLE throughout — `timestamptz - timestamptz` and an interval literal — so it indexes.
+    arrivalKey: (date: SQL, arrivedAt: SQL): SQL => sql`(case when ${arrivedAt} is null then coalesce(${date}, 'epoch'::timestamptz) when ${date} is null then ${arrivedAt} when ${date} - ${arrivedAt} <= interval '48 hours' and ${arrivedAt} - ${date} <= interval '48 hours' then ${date} else ${arrivedAt} end)`,
+
+    keysetBelow: (key: SQL, id: SQL, at: Date, atId: string, inclusive = false): SQL =>
+      sql`(${key}, ${id}) ${sql.raw(inclusive ? "<=" : "<")} (${at.toISOString()}::timestamptz, ${atId}::uuid)`,
+
     search: {
       lexical: (q: string, corpus: SearchCorpus): SearchArm => {
         const tsq = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${q})`;

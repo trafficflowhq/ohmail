@@ -29,7 +29,7 @@ export interface OlderMail {
    * The hook always states it; a surface handed an `OlderMail` without it reads "not pending".
    */
   pending?: boolean;
-  /** Older messages fetched so far, mirror-preferred by id, in the order the server sent them. */
+  /** Older messages fetched so far, mirror-preferred by id, in the server's order — arrival, as the list's own. */
   items: EngineMessage[];
   /** A page is in flight. */
   loading: boolean;
@@ -120,9 +120,9 @@ export function useOlderMail(
   /** With `view: "folder"`: the folder ENTITY id. Undefined reads as "no list" (unavailable). */
   folderId?: string,
   /**
-   * The caller's mirror boundary — the OLDEST row the mirror renders for this scope, as a
-   * (date, id) keyset position. Page one starts strictly below it, so the reach-past never
-   * re-serves the rows already on screen above it. Read once per scope, at the first ask.
+   * The caller's mirror boundary — the OLDEST row the mirror renders for this scope, as an
+   * arrival-key position (`storeKeyOf`: `sortAt ?? date`, id). Page one starts strictly below it,
+   * so the reach-past never re-serves the rows on screen above it. Read once per scope.
    */
   startBelow?: { date: string | null; id: string },
   /**

@@ -27,6 +27,7 @@ import {
 } from "./pagination.js";
 import { requireUuid } from "./ids.js";
 import { heldOutByResurfacedFolds } from "./resurfaced-fold.js";
+import { arrivalKeyOf } from "./arrival-key.js";
 import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
@@ -283,77 +284,70 @@ export interface PatchResult {
 }
 
 /**
- * (date, id) keyset, and the third position the tuple used to lose. Ordered `date desc NULLS
- * LAST, id desc`; the cursor carries both components. `messages.date` IS NULLABLE and the null is
- * a POSITION: it is the sender's own `Date:` header, and this encoder used to write epoch `0` for
- * it — two defects: the undated tail was UNREACHABLE (the next page asked for rows older than
- * 1970, so the list ended early), and the ORDER BY and the predicate disagreed (drizzle's bare
- * `DESC` is `NULLS FIRST` in PostgreSQL while the `before` predicate was written for NULLS LAST).
- * `nulls last` is not a new opinion: the snapshot bootstrap, the Screener's sort key and the
- * client mirror already treat undated mail as oldest; this surface was the odd one out.
+ * THE ARRIVAL KEY'S KEYSET — `(key, id)` under `key desc, id desc`, where the key is
+ * `Dialect.arrivalKey` (`sortAtOf(date, arrivedAt) ?? date ?? epoch`), the one order every client
+ * sorts by (`selectors.ts` `tsOf`). The key is NON-NULL — an undated row with no arrival sits at
+ * the epoch — so the keyset is a btree range, not the `OR date IS NULL` arm that walked a deep page
+ * from the top (MSG-ORDER-CURSOR). The codec is unchanged: a new cursor never mints `null`, and an
+ * old `null:<uuid>` cursor reads as the epoch position, which is where those rows now sort.
  */
-function encodeMsgCursor(date: Date | null, id: string): string {
-  return encodeNullableKeysetCursor(date === null ? null : date.getTime(), id);
+function encodeMsgCursor(key: Date, id: string): string {
+  return encodeNullableKeysetCursor(key.getTime(), id);
 }
-function decodeMsgCursor(cursor: string): { date: Date | null; id: string } {
-  // The KEYSET decoder, not the bare-id one: this family orders by (date, id). Using the shared
-  // `decodeListCursor` for both made each shape valid on the other's routes, so a tuple sent to
-  // `/contacts` bound `"1712…:<uuid>"` against a uuid column — the 22P02 the validator exists to
-  // stop, reintroduced by the validator being too generous. The NULLABLE variant, because this is
-  // the only family whose sort column admits one.
+function decodeMsgCursor(cursor: string): { key: Date; id: string } {
+  // The KEYSET decoder, not the bare-id one: a tuple bound against a uuid column is the 22P02 the
+  // validator exists to stop. The NULLABLE variant, because pre-arrival cursors carry `null`.
   const { millis, id } = decodeNullableKeysetCursor(cursor);
-  return { date: millis === null ? null : new Date(millis), id };
+  return { key: new Date(millis ?? 0), id };
 }
 
 /**
- * THE ONE KEYSET PREDICATE, so the cursor branch and the `before` branch cannot fork again.
- *
- * "Strictly after `(date, id)`" under `date desc nulls last, id desc`:
- *  · a DATED position — older dates, then the same date with a smaller id, then the whole undated
- *    tail, which sorts after every dated row;
- *  · an UNDATED position — only the rest of that tail, since nothing sorts after it.
- *
- * Identical to `sync-service.ts:807-811`, which is where the shape was already correct.
+ * The arrival key over a table alias, NULL for the undated rows (no date AND no arrival) — the
+ * History rail's months, which count the undated tail apart rather than in January 1970.
  */
-function afterKeyset(pos: { date: Date | null; id: string }): SQL {
-  return pos.date === null
-    ? and(isNull(messages.date), lt(messages.id, pos.id))!
-    : or(
-        lt(messages.date, pos.date),
-        and(eq(messages.date, pos.date), lt(messages.id, pos.id)),
-        isNull(messages.date),
-      )!;
+function datedKey(d: ReturnType<typeof dialect>, alias: string): SQL {
+  const date = sql.raw(alias + ".date");
+  const arrived = sql.raw(alias + ".arrived_at");
+  return sql`(case when ${date} is null and ${arrived} is null then null else ${d.arrivalKey(date, arrived)} end)`;
+}
+
+/** Strictly below a position under `key desc, id desc` — the one keyset every page walk takes. */
+function afterKeyset(db: Db, pos: { key: Date; id: string }): SQL {
+  return dialect(db).keysetBelow(arrivalKeyOf(db), sql`${messages.id}`, pos.key, pos.id);
 }
 
 /**
- * AT OR AFTER a position under `date desc nulls last, id desc` — {@link afterKeyset} with the
- * position itself admitted, so the rail's jump lands ON the month's newest message. With no id,
- * every message at the instant is admitted.
+ * AT OR AFTER a position — {@link afterKeyset} with the position itself admitted, so the rail's
+ * jump lands ON the month's newest message. With no id, every message at the instant is admitted.
  */
-function atOrAfterKeyset(pos: { date: Date | null; id: string | null }): SQL {
-  const sameInstant = (d: Date | null): SQL => (d === null ? isNull(messages.date) : eq(messages.date, d));
-  const tie = pos.id === null ? sameInstant(pos.date) : and(sameInstant(pos.date), lte(messages.id, pos.id))!;
-  return pos.date === null ? tie : or(lt(messages.date, pos.date), tie, isNull(messages.date))!;
+function atOrAfterKeyset(db: Db, pos: { key: Date; id: string | null }): SQL {
+  const key = arrivalKeyOf(db);
+  return pos.id === null
+    ? sql`${key} <= ${dialect(db).ts(pos.key)}`
+    : dialect(db).keysetBelow(key, sql`${messages.id}`, pos.key, pos.id, true);
 }
 
 /** The rail's jump position: an instant, and an id only when the caller names one. */
-function atPositionOf(pos: { date: string | null; id?: string }): { date: Date | null; id: string | null } {
+function atPositionOf(pos: { date: string | null; id?: string }): { key: Date; id: string | null } {
   if (pos.id !== undefined) return positionOf({ date: pos.date, id: pos.id }, "at");
   if (pos.date === null) throw new ServiceError("validation_failed", 400, "at needs atDate or atId");
   const read = readInstant(pos.date);
   if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal("atDate", read.why));
-  return { date: read.at, id: null };
+  return { key: read.at, id: null };
 }
 
-/** A client-named keyset position, validated at the door: a uuid id and a total instant, or 400. */
-function positionOf(pos: { date: string | null; id: string }, field: "before" | "at"): { date: Date | null; id: string } {
+/**
+ * A client-named keyset position, validated at the door: a uuid id and a total instant, or 400. The
+ * instant is an arrival KEY; an absent one is the epoch, where the undated rows sort.
+ */
+function positionOf(pos: { date: string | null; id: string }, field: "before" | "at"): { key: Date; id: string } {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pos.id)) {
     throw new ServiceError("validation_failed", 400, `${field}Id must be a message id`);
   }
-  if (pos.date === null) return { date: null, id: pos.id };
+  if (pos.date === null) return { key: new Date(0), id: pos.id };
   const read = readInstant(pos.date);
   if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal(`${field}Date`, read.why));
-  return { date: read.at, id: pos.id };
+  return { key: read.at, id: pos.id };
 }
 
 /** An instant as the wire carries it (ISO), from what either store's driver handed back. */
@@ -363,8 +357,10 @@ function instantText(v: unknown): string {
   return new Date(String(v)).toISOString();
 }
 
-/** `date desc NULLS LAST, id desc` — see {@link encodeMsgCursor} for why the clause is explicit. */
-const MSG_ORDER = [sql`${messages.date} desc nulls last`, desc(messages.id)];
+/** `key desc, id desc` over the arrival key — see {@link encodeMsgCursor}. No `nulls last`: the key is non-null. */
+function msgOrder(db: Db): SQL[] {
+  return [sql`${arrivalKeyOf(db)} desc`, desc(messages.id)];
+}
 
 export interface GetBodiesOptions {
   /** Opaque keyset cursor — the last `messages.id` a previous page returned. */
@@ -529,20 +525,7 @@ export class MessageService {
       // the wire: a non-UUID id would bind against the uuid column and surface as a Postgres
       // 22P02 (a 500 for a malformed request), and an unparseable date silently selecting the
       // null-date branch would answer the WRONG page while looking like a success.
-      if (!opts.cursor && opts.before) {
-        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.before.id)) {
-          throw new ServiceError("validation_failed", 400, "beforeId must be a message id");
-        }
-        let bd: Date | null = null;
-        if (opts.before.date !== null) {
-          // Total, by the same reader as the schedule door: a date that normalises is a page
-          // boundary nobody named.
-          const read = readInstant(opts.before.date);
-          if (!read.ok) throw new ServiceError("validation_failed", 400, instantRefusal("beforeDate", read.why));
-          bd = read.at;
-        }
-        filters.push(afterKeyset({ date: bd, id: opts.before.id }));
-      }
+      if (!opts.cursor && opts.before) filters.push(afterKeyset(ctx.db, positionOf(opts.before, "before")));
       return this.pageOf(ctx, {
         limit: clampLimit(opts.limit),
         cursor: opts.cursor,
@@ -581,19 +564,18 @@ export class MessageService {
     ];
     if (!split && unread !== undefined) filters.push(eq(messages.unread, unread));
     if (opts.cursor) {
-      // Keyset for `date desc nulls last, id desc`: strictly "older" rows than the cursor tuple,
-      // including the undated tail, which sorts after every dated row.
-      filters.push(afterKeyset(decodeMsgCursor(opts.cursor)));
+      // Keyset for `key desc, id desc`: strictly below the cursor tuple.
+      filters.push(afterKeyset(ctx.db, decodeMsgCursor(opts.cursor)));
     } else if (opts.before) {
       // The caller's mirror edge, page one only: a windowed client is not re-served what it holds.
-      filters.push(afterKeyset(positionOf(opts.before, "before")));
+      filters.push(afterKeyset(ctx.db, positionOf(opts.before, "before")));
     }
 
     // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
-    const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
+    const rows = await ctx.db.select({ id: messages.id, key: arrivalKeyOf(ctx.db) }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
-      .orderBy(...MSG_ORDER)
+      .orderBy(...msgOrder(ctx.db))
       .limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
@@ -615,7 +597,7 @@ export class MessageService {
     const held = view === "new_for_you" ? await heldOutByResurfacedFolds(ctx.db, ctx.accountId, page) : null;
     const items = held === null || held.size === 0 ? page : page.filter((m) => !held.has(m.id));
     const last = pageRows[pageRows.length - 1];
-    const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.date, last.id) : null;
+    const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.key, last.id) : null;
     return { items, nextCursor };
   }
 
@@ -717,40 +699,39 @@ export class MessageService {
   }
 
   /**
-   * HISTORY — every living message the account owns, across mailboxes and folders, newest first,
-   * back to the first. No folder join: the page is an Index Only Scan of
-   * `messages_account_msg_order_idx` (mail 0125 carries it for a store the setup command never
-   * reaches), keyed by the same `(date, id)` cursor as every view, or started below `before` / at
-   * `at`. Junk never reaches the store; Trash rows are tombstoned and stay out.
+   * HISTORY — every living message the account owns, across mailboxes and folders, newest ARRIVAL
+   * first, back to the first. No folder join: the page walks the arrival index, keyed by the same
+   * `(key, id)` cursor as every view, or started below `before` / at `at`. Junk never reaches the
+   * store; Trash rows are tombstoned and stay out. Every row still SHOWS its header time.
    */
   async listAll(ctx: ServiceContext, opts: ListMessagesOptions): Promise<Page<MessageDTO>> {
     const limit = Math.min(HISTORY_PAGE_MAX, clampLimit(opts.limit));
     const filters: SQL[] = [ownedMessages(ctx.accountId)];
-    if (opts.cursor) filters.push(afterKeyset(decodeMsgCursor(opts.cursor)));
-    else if (opts.before) filters.push(afterKeyset(positionOf(opts.before, "before")));
-    else if (opts.at) filters.push(atOrAfterKeyset(atPositionOf(opts.at)));
+    if (opts.cursor) filters.push(afterKeyset(ctx.db, decodeMsgCursor(opts.cursor)));
+    else if (opts.before) filters.push(afterKeyset(ctx.db, positionOf(opts.before, "before")));
+    else if (opts.at) filters.push(atOrAfterKeyset(ctx.db, atPositionOf(opts.at)));
     // scoped-by: `filters` leads with ownedMessages(ctx.accountId)
-    const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
+    const rows = await ctx.db.select({ id: messages.id, key: arrivalKeyOf(ctx.db) }).from(messages)
       .where(and(...filters))
-      .orderBy(...MSG_ORDER)
+      .orderBy(...msgOrder(ctx.db))
       .limit(limit + 1);
     const pageRows = rows.slice(0, limit);
     const items = await materializeMessagesInOrder(
       ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
     );
     const last = pageRows[pageRows.length - 1];
-    const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.date, last.id) : null;
+    const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.key, last.id) : null;
     return { items, nextCursor };
   }
 
   /**
-   * THE HISTORY RAIL — one grouped read of the History index: every month's count and its newest
-   * message (the jump: `at` on `view=all`), the undated tail, and the total. Months are the
-   * READER'S (`zone`, UTC when unstated): the grouping runs in UTC, then each zoned month a UTC
-   * month's rows can fall in (one either side) is counted over its own instant window, so both
-   * stores bucket by the same window arithmetic and the counts sum to the UTC ones.
+   * THE HISTORY RAIL — one grouped read: every ARRIVAL month's count and its newest message by the
+   * arrival key (the jump: `at` on `view=all`, so `first.date` IS the key), the undated tail, and
+   * the total. Months are the READER'S (`zone`, UTC when unstated): the grouping runs in UTC, then
+   * each zoned month a UTC month's rows can fall in (one either side) is counted over its own
+   * instant window, so both stores bucket by the same window arithmetic.
    */
-  // `undated`: messages with no date, the end of the timeline after every month.
+  // `undated`: messages with no date AND no arrival — the key's epoch rows, after every month.
   async timeline(
     ctx: ServiceContext, opts: { zone?: string } = {},
   ): Promise<{ total: number; months: TimelineMonth[]; undated: number }> {
@@ -762,10 +743,10 @@ export class MessageService {
     const groups = await d.exec(ctx.db, sql`
       select g.c, g.d,
         (select n.id from messages n
-          where ${ownedMessages(ctx.accountId, "n")} and n.date = g.d
+          where ${ownedMessages(ctx.accountId, "n")} and ${datedKey(d, "n")} = g.d
           order by n.id desc limit 1) as id
       from (
-        select ${d.monthBucket(sql`m.date`)} as bucket, ${d.castInt(sql`count(*)`)} as c, max(m.date) as d
+        select ${d.monthBucket(datedKey(d, "m"))} as bucket, ${d.castInt(sql`count(*)`)} as c, max(${datedKey(d, "m")}) as d
         from messages m
         where ${ownedMessages(ctx.accountId, "m")}
         group by 1
@@ -804,14 +785,14 @@ export class MessageService {
       with v(lo, hi) as (values ${values})
       select g.c, g.d,
         (select n.id from messages n
-          where ${ownedMessages(ctx.accountId, "n")} and n.date = g.d
+          where ${ownedMessages(ctx.accountId, "n")} and ${datedKey(d, "n")} = g.d
           order by n.id desc limit 1) as id
       from (
         select
           (select ${d.castInt(sql`count(*)`)} from messages m
-            where ${ownedMessages(ctx.accountId, "m")} and m.date >= v.lo and m.date < v.hi) as c,
-          (select max(m.date) from messages m
-            where ${ownedMessages(ctx.accountId, "m")} and m.date >= v.lo and m.date < v.hi) as d
+            where ${ownedMessages(ctx.accountId, "m")} and ${datedKey(d, "m")} >= v.lo and ${datedKey(d, "m")} < v.hi) as c,
+          (select max(${datedKey(d, "m")}) from messages m
+            where ${ownedMessages(ctx.accountId, "m")} and ${datedKey(d, "m")} >= v.lo and ${datedKey(d, "m")} < v.hi) as d
         from v
       ) g
       where g.c > 0`);
@@ -832,12 +813,12 @@ export class MessageService {
     args: { limit: number; cursor?: string; filters: SQL[] },
   ): Promise<Page<MessageDTO>> {
     const filters = [...args.filters];
-    if (args.cursor) filters.push(afterKeyset(decodeMsgCursor(args.cursor)));
+    if (args.cursor) filters.push(afterKeyset(ctx.db, decodeMsgCursor(args.cursor)));
     // scoped-by: the caller's filters pin messages.mailboxId to a mailbox proved this account's (uf)
-    const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
+    const rows = await ctx.db.select({ id: messages.id, key: arrivalKeyOf(ctx.db) }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
-      .orderBy(...MSG_ORDER)
+      .orderBy(...msgOrder(ctx.db))
       .limit(args.limit + 1);
     const pageRows = rows.slice(0, args.limit);
     // The batch, for the reason written at `list`'s own page: round-trips constant in the page
@@ -846,7 +827,7 @@ export class MessageService {
       ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
     );
     const last = pageRows[pageRows.length - 1];
-    const nextCursor = rows.length > args.limit && last ? encodeMsgCursor(last.date, last.id) : null;
+    const nextCursor = rows.length > args.limit && last ? encodeMsgCursor(last.key, last.id) : null;
     return { items, nextCursor };
   }
 

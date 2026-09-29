@@ -13,10 +13,29 @@ export const HISTORY_PAGE_ROWS = 50;
 /** Rows the page cache may hold, across every page — three pages; the farthest goes first. */
 export const HISTORY_PAGE_CACHE_ROWS = 150;
 
-/** A position in `date desc nulls last, id desc` — the store's reading order. */
+/**
+ * A position in `key desc, id desc` — the store's reading order, where `date` is the ARRIVAL KEY
+ * instant ({@link storeKeyOf}). `null` is a pre-arrival cursor's undated position: the epoch.
+ */
 export interface StoreKeyset {
   date: string | null;
   id: string;
+}
+
+/**
+ * THE INSTANT A MESSAGE SORTS BY IN EVERY ORDER — the server's arrival key (`Dialect.arrivalKey`):
+ * `sortAt ?? date`, the epoch when a row has neither. One rule for the list comparators
+ * (`selectors.ts` `tsOf`), the coverage counts and History's walker, so no two can disagree.
+ */
+export function storeInstantOf(m: { sortAt?: string | null; date?: string | null }): number {
+  const instant = m.sortAt ?? m.date;
+  const t = instant ? Date.parse(instant) : 0;
+  return Number.isFinite(t) ? t : 0;
+}
+
+/** A message's position in the store's order — {@link storeInstantOf} and its id. */
+export function storeKeyOf(m: { id: string; sortAt?: string | null; date?: string | null }): StoreKeyset {
+  return { date: new Date(storeInstantOf(m)).toISOString(), id: m.id };
 }
 
 /** One month of the timeline: its count and its newest row, which is where a jump lands. */
@@ -276,21 +295,21 @@ export function readTimelineWire(wire: unknown): StoreTimeline | null {
 }
 
 /**
- * WHAT THE STORE HOLDS THAT THIS MIRROR DOES NOT — the mirror's rows counted per UTC month against
- * the store's own timeline. `whole` when every month (and the undated tail) holds at least the
+ * WHAT THE STORE HOLDS THAT THIS MIRROR DOES NOT — the mirror's rows counted per UTC ARRIVAL month
+ * ({@link storeInstantOf}) against the store's own timeline, which buckets by the same key. `whole` when every month (and the undated tail) holds at least the
  * store's count. Otherwise `below` is where the first short month starts, newest first: every
  * store row above it is held, so a page asked strictly below it skips nothing the mirror lacks.
  */
 export function mirrorCoverage(
   t: StoreTimeline,
-  held: Iterable<{ date?: string | null }>,
+  held: Iterable<{ date?: string | null; sortAt?: string | null }>,
 ): { whole: true } | { whole: false; below: StoreKeyset } {
   const perMonth = new Map<string, number>();
   let undated = 0;
   for (const m of held) {
-    const at = typeof m.date === "string" ? Date.parse(m.date) : Number.NaN;
-    if (!Number.isFinite(at)) { undated += 1; continue; }
-    const month = new Date(at).toISOString().slice(0, 7);
+    // Undated as the store counts it: no header date AND no recorded arrival.
+    if (!m.sortAt && !m.date) { undated += 1; continue; }
+    const month = new Date(storeInstantOf(m)).toISOString().slice(0, 7);
     perMonth.set(month, (perMonth.get(month) ?? 0) + 1);
   }
   for (const s of timelineSegments(t)) {

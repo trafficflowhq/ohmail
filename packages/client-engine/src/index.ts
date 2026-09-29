@@ -711,6 +711,8 @@ export {
   readTimelineWire,
   mirrorCoverage,
   StorePageCache,
+  storeInstantOf,
+  storeKeyOf,
   storeSearchList,
   type StoreKeyset,
   type StoreSearchKey,

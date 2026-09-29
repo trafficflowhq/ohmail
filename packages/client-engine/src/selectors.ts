@@ -11,6 +11,7 @@ import type { EntityReader } from "./store.js";
 import { ownAddressKeys, senderKey } from "./own-address.js";
 import { zonedDayNumber, zonedFields } from "./zone.js";
 import { daysAgo, messageStamp, named } from "./stamp.js";
+import { storeInstantOf } from "./store-pages.js";
 import {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
@@ -61,7 +62,6 @@ import {
  */
 export const messageDisplayTime = messageStamp;
 
-/** Server list order (contract §5.2): date desc, id desc. */
 /**
  * A message's parsed date, cached per ENTITY OBJECT. `Date.parse` per comparison made the
  * comparator itself the cost at scale (a whole-mirror pass is tens of thousands of
@@ -73,12 +73,9 @@ const parsedDate = new WeakMap<EngineMessage, number>();
 function tsOf(m: EngineMessage): number {
   let t = parsedDate.get(m);
   if (t === undefined) {
-    // `sortAt ?? date` — the server's arrival-clamped instant when the row carries one, the
-    // sender-written header otherwise (mail 0119). ONE derivation for every date comparator, so
-    // a header months from arrival cannot take a position months from where the reader watched
-    // the row on one surface and not another.
-    const instant = m.sortAt ?? m.date;
-    t = instant ? Date.parse(instant) : 0;
+    // The store's own arrival key (`store-pages.ts` `storeInstantOf`): ONE derivation for every
+    // date comparator and for the server's keyset, so a list and the pages below it agree.
+    t = storeInstantOf(m);
     parsedDate.set(m, t);
   }
   return t;

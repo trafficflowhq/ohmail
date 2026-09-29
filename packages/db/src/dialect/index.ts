@@ -534,6 +534,22 @@ export interface Dialect {
    */
   monthBucket(instant: SQL): SQL;
 
+  /**
+   * THE ARRIVAL KEY — the one order every store read of messages takes, and `sortAtOf(date,
+   * arrivedAt) ?? date ?? epoch` in SQL: the header while it lies within 48 h of a known arrival,
+   * else the arrival; an undated row with no arrival at the epoch, as the client's `tsOf` reads
+   * it. Spelled with LITERALS and no member: a bound parameter never matches an index expression,
+   * and this text is byte-equal to both journals' arrival index (a test holds the three equal).
+   */
+  arrivalKey(date: SQL, arrivedAt: SQL): SQL;
+
+  /**
+   * Strictly below `(at, atId)` under `key desc, id desc` — or at-or-below when `inclusive` — as
+   * the store's btree can take it as a range: a row comparison on the server, a range plus a tie
+   * on the device store, which has no row-comparison range.
+   */
+  keysetBelow(key: SQL, id: SQL, at: Date, atId: string, inclusive?: boolean): SQL;
+
   readonly search: {
     /** Word-based search over one {@link SearchCorpus}'s indexed text. */
     lexical(q: string, corpus: SearchCorpus): SearchArm;

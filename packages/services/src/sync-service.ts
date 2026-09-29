@@ -3,7 +3,9 @@ import {
   approvals, changeLog, drafts, messages, messageStates, messageTags, prunedThroughSeq, routingDecisions, seqBounds,
   rules, tags, rulesTheActWrote, type EntityType,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, type Db, type ServiceContext } from "./context.js";
+import { arrivalKeyOf } from "./arrival-key.js";
 import { ServiceError } from "./errors.js";
 import { clampPageLimit } from "./pagination.js";
 import { isUuid } from "./ids.js";
@@ -25,6 +27,13 @@ export const SYNC_CURSOR_MAX_CHARS = 80;
  * date, a uuid, a count and a phase word. 512 characters is several times what that weighs.
  */
 export const SNAPSHOT_CURSOR_MAX_CHARS = 512;
+
+/**
+ * The snapshot cursor's format. 2 since the window walks the ARRIVAL key: a v1 cursor carries a
+ * header-date position, and resuming it under the new order could skip a stale-dated row, so it is
+ * refused (410) and the client restarts the window once — `cloud-mirror.ts` `drainWindowFirst`.
+ */
+export const SNAPSHOT_CURSOR_VERSION = 2;
 
 /**
  * THE RANGE THE COLUMN ACCEPTS, not the range `Date` can hold — the same note as `pagination.ts`,
@@ -212,8 +221,8 @@ interface MessageSnapshotCursor {
   asOfSeq: bigint;
   /** The run of the store that issued it, `null` for a store with no runs. See {@link DraftsSnapshotCursor}. */
   generation: number | null;
-  /** The previous page's last `messages.date` as epoch ms; `null` ⇒ the undated tail. */
-  date: number | null;
+  /** The previous page's last ARRIVAL KEY as epoch ms (`arrival-key.ts`); never null — undated is the epoch. */
+  date: number;
   id: string;
   /** Messages emitted by every page so far — the `minRows` floor is cumulative. */
   emitted: number;
@@ -353,7 +362,7 @@ export class SyncService {
   /** Opaque base64url of the snapshot's consistent point plus this page's keyset position. */
   encodeSnapshotCursor(c: SnapshotCursor): string {
     const payload = {
-      v: 1, s: c.asOfSeq.toString(10), n: c.emitted,
+      v: SNAPSHOT_CURSOR_VERSION, s: c.asOfSeq.toString(10), n: c.emitted,
       ...(c.generation === null ? {} : { g: c.generation }),
       // A drafts-phase cursor carries no message keyset; every other phase carries one.
       ...(c.phase === "drafts" ? {} : { d: c.date, i: c.id }),
@@ -379,7 +388,7 @@ export class SyncService {
       const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
       if (typeof raw !== "object" || raw === null) throw new Error("not an object");
       const { v, s, d, i, n, p, da, di, g } = raw as Record<string, unknown>;
-      if (v !== 1) throw new Error("unknown cursor version");
+      if (v !== SNAPSHOT_CURSOR_VERSION) throw new Error("unknown cursor version");
       if (g !== undefined && (typeof g !== "number" || !Number.isSafeInteger(g) || g < 0)) {
         throw new Error("bad store run");
       }
@@ -422,11 +431,11 @@ export class SyncService {
       if (!isUuid(i)) throw new Error("bad keyset id");
       // `Date`'s own range, not merely "finite": `1e308` is a finite number and not a date, and
       // it reaches a `timestamptz` comparison as one.
-      if (d !== null && (typeof d !== "number" || !Number.isFinite(d) || d > MAX_EPOCH_MS || d < MIN_EPOCH_MS)) {
+      if (typeof d !== "number" || !Number.isFinite(d) || d > MAX_EPOCH_MS || d < MIN_EPOCH_MS) {
         throw new Error("bad keyset date");
       }
       return {
-        asOfSeq: BigInt(s), generation, date: d as number | null, id: i, emitted: n,
+        asOfSeq: BigInt(s), generation, date: d, id: i, emitted: n,
         ...(p === "tail" ? { phase: "tail" as const } : {}),
         ...draft,
       };
@@ -990,23 +999,14 @@ export class SyncService {
       };
     }
 
-    // ── The message window: newest first, keyset-paged on (date desc nulls last, id desc).
-    //
-    // `nulls last` is written out rather than left to the default because Postgres puts NULLs
-    // FIRST for a DESC sort, which would open the newest-first window with the undated rows —
-    // the least useful mail in the mailbox leading the bootstrap. The keyset predicate below
-    // mirrors that ordering exactly, including its treatment of the undated tail; a predicate
-    // that disagreed with its ORDER BY would skip rows silently rather than fail.
+    // ── The message window: newest ARRIVAL first, keyset-paged on (key desc, id desc) — the
+    // arrival key every client sorts by (`arrival-key.ts`), so the window a mirror holds is the
+    // newest by the order it shows, and a stale-dated arrival is inside it. The key is non-null
+    // (undated at the epoch, past every dated row), so the predicate is one btree range.
+    const arrivalKey = arrivalKeyOf(db);
     const keyset = cursor === null
       ? undefined
-      : cursor.date === null
-        // Already in the undated tail: only undated rows remain, ordered by id desc.
-        ? and(isNull(messages.date), lt(messages.id, cursor.id))
-        : or(
-          lt(messages.date, new Date(cursor.date)),
-          and(eq(messages.date, new Date(cursor.date)), lt(messages.id, cursor.id)),
-          isNull(messages.date),
-        );
+      : dialect(db).keysetBelow(arrivalKey, sql`${messages.id}`, new Date(cursor.date), cursor.id);
 
     // ── WHAT A MESSAGE BELOW THE WINDOW MUST OWN TO BE CARRIED ───────────────────────────────
     //
@@ -1092,10 +1092,10 @@ export class SyncService {
 
     // scoped-by: `where` above leads with eq(messages.accountId, accountId)
     const rows = await db
-      .select({ id: messages.id, date: messages.date })
+      .select({ id: messages.id, key: arrivalKey })
       .from(messages)
       .where(where)
-      .orderBy(sql`${messages.date} desc nulls last`, desc(messages.id))
+      .orderBy(sql`${arrivalKey} desc`, desc(messages.id))
       .limit(walkLimit);
 
     const pageMessages = await materializeMessagesInOrder(db, accountId, rows.map((r) => r.id));
@@ -1181,7 +1181,7 @@ export class SyncService {
     const keysetOf = (phase?: "tail"): string => this.encodeSnapshotCursor({
       asOfSeq,
       generation: gen,
-      date: last!.date ? last!.date.getTime() : null,
+      date: last!.key.getTime(),
       id: last!.id,
       emitted,
       ...(phase ? { phase } : {}),
@@ -1205,9 +1205,9 @@ export class SyncService {
     } else {
       const cutoff = ctx.now().getTime() - SNAPSHOT_WINDOW.days * DAY_MS;
       // Inside the recency floor ⇒ keep going. Past it ⇒ keep going only until the volume floor is
-      // met. An undated row is past the floor by construction (it sorts into the tail), so it can
-      // only be carried by the volume arm.
-      const withinWindow = last?.date != null && last.date.getTime() >= cutoff;
+      // met. The floor reads the arrival KEY; an undated row sits at the epoch, past the floor by
+      // construction, so it can only be carried by the volume arm.
+      const withinWindow = last !== undefined && last.key.getTime() >= cutoff;
       const underCeiling = emitted < SNAPSHOT_WINDOW.maxRows;
       if (fullPage && underCeiling && (withinWindow || emitted < SNAPSHOT_WINDOW.minRows)) {
         nextCursor = keysetOf();            // still inside the window

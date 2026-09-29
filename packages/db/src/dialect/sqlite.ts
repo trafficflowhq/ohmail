@@ -445,6 +445,12 @@ export function sqliteDialect(): Dialect {
     // The instant is milliseconds here.
     monthBucket: (instant: SQL): SQL => sql`strftime('%Y-%m', ${instant} / 1000, 'unixepoch')`,
 
+    // Epoch milliseconds here, so the tolerance is 48 h in ms and the undated floor is 0.
+    arrivalKey: (date: SQL, arrivedAt: SQL): SQL => sql`(case when ${arrivedAt} is null then coalesce(${date}, 0) when ${date} is null then ${arrivedAt} when abs(${date} - ${arrivedAt}) <= 172800000 then ${date} else ${arrivedAt} end)`,
+
+    keysetBelow: (key: SQL, id: SQL, at: Date, atId: string, inclusive = false): SQL =>
+      sql`${key} <= ${at.getTime()} and (${key} < ${at.getTime()} or ${id} ${sql.raw(inclusive ? "<=" : "<")} ${atId})`,
+
     search: {
       // Full-text lives in external-content tables kept beside the rows by triggers, rather than
       // in a generated column on the row itself: this dialect has no stored generated column of
