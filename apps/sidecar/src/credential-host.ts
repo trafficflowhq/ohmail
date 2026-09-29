@@ -38,6 +38,24 @@ export function sealedHost(meta: unknown): string | null {
 }
 
 /**
+ * WHETHER THE SEED MAY DIAL ITS SETTINGS' SERVER WITHOUT ENCRYPTION — the consent its own
+ * credential row records, never the settings file's (which has no such field). True only when the
+ * row says `insecureConsent: true` for exactly the endpoint the settings name: the same host (this
+ * file's one normalisation), the same port, and `secure: false` on both. The row's flag is written
+ * only after a probe re-proved "no TLS, this network" and is rewritten false once one proves TLS;
+ * any disagreement answers false, so an edited server loses the consent rather than inheriting it.
+ */
+export function seedConsentFor(
+  meta: unknown, dial: { host: string; port: number; secure: boolean },
+): boolean {
+  if (typeof meta !== "object" || meta === null) return false;
+  const m = meta as { insecureConsent?: unknown; port?: unknown; secure?: unknown };
+  const host = sealedHost(meta);
+  return m.insecureConsent === true && host !== null && host === normalizeHost(dial.host)
+    && m.port === dial.port && m.secure === false && dial.secure === false;
+}
+
+/**
  * Was this credential sealed for a DIFFERENT server than the one the engine is configured for? The
  * one-sided default is the whole care: `false` — usable — whenever the comparison cannot be made.
  * The row records no host (a credential predating the probe would otherwise be refused on every

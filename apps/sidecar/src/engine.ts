@@ -90,7 +90,9 @@ import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 // The boot contract's one comparison. Its own file, with no imports, because the desktop shell's
 // install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow`
 // dependency at all — see the header of `credential-host.ts` for why one definition, not two.
-import { credentialIsForeign, credentialIsForeignSmtp, sealedHost, sealedSmtpHost } from "./credential-host.js";
+import {
+  credentialIsForeign, credentialIsForeignSmtp, sealedHost, sealedSmtpHost, seedConsentFor,
+} from "./credential-host.js";
 import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from "./signout-fence.js";
 // The exit from a stand-down, as a ceremony rather than a flag — the SAME function the
 // `organize-here` CLI runs. See its header for why status, reason and the one-shot stamp move
@@ -1406,6 +1408,17 @@ export function credentialsRefused(err: unknown): boolean {
 }
 
 /**
+ * THE SEED'S DIAL: the settings file's host, port and TLS mode, and the plaintext consent its own
+ * credential row records for exactly that endpoint ({@link seedConsentFor}). A consent the
+ * configuration already carries (a test seam; the shell composes none) is kept. Every other
+ * dialler of a mailbox reads the row's flag the same way, the phone's seed included.
+ */
+export function seedDial(configured: SidecarImapConfig, meta: unknown): SidecarImapConfig {
+  if (configured.allowInsecure === true || !seedConsentFor(meta, configured)) return configured;
+  return { ...configured, allowInsecure: true };
+}
+
+/**
  * Did the server decline this for now rather than refuse it — a throttle (`ETHROTTLE`, or a
  * positive `throttleReset` hint), RFC 5530 `UNAVAILABLE`/`LIMIT`, or imapflow's own no-connection
  * codes? The same closed evidence `classifyMailboxError` reads above the flag; literals only.
@@ -1488,13 +1501,14 @@ const CONNECTION_ERROR_CODES = new Set([
 /**
  * THE LOCAL DOOR'S SYNC-FAILURE DISCLOSURE, derived at read time and never written, so the writer
  * pair clears it: a served cycle ends the outage, a replaced password a refused sign-in. `auth`
- * settles at once, an outage after {@link LOCAL_CONNECTION_DEAD_AFTER_MS}; a missing password is not
- * overlaid. A consented organizer's failed lease read is `lease_unreadable`, below the connection's
- * facts; a reader row's `organizerChecked` is the runtime's last look.
- * THE ARM ORDER IS THE INVARIANT: refused sign-in, refused plaintext dial, a stored password this
- * install cannot use (it dials nothing, so no outage clock; confirmed, a closed detail), outage.
+ * settles at once, an outage after {@link LOCAL_CONNECTION_DEAD_AFTER_MS}; no password stored is the
+ * block `awaiting_credentials`, never an error. A consented organizer's failed lease read is
+ * `lease_unreadable`, below the connection's facts; a reader row's `organizerChecked` is the
+ * runtime's last look. THE ARM ORDER IS THE INVARIANT: refused sign-in, refused plaintext dial, a
+ * stored password this install cannot use (no outage clock; confirmed, a closed detail), no password
+ * stored (a block with its own clock), outage. Exported for the cases that drive that order.
  */
-async function discloseLocalSyncFailures(
+export async function discloseLocalSyncFailures(
   res: Response,
   states: readonly {
     mailboxId: string;
@@ -1502,6 +1516,9 @@ async function discloseLocalSyncFailures(
       unreachableSince: Date | null; signInRefused: boolean; plaintextRefused?: boolean;
       /** Absent on a caller that cannot say, which overlays nothing and leaves the outage arm. */
       credentialBlocked?: { state: "unreadable" | "foreign-host"; confirmed: boolean } | null;
+      /** No password on this install, and since when — both, or the arm overlays nothing. */
+      needsCredential?: boolean;
+      needsCredentialSince?: Date | null;
     };
     /** Absent on a caller that cannot say, which overlays nothing. */
     holderLooked?: boolean;
@@ -1526,6 +1543,9 @@ async function discloseLocalSyncFailures(
      pane says the same sentence from the reach poll with no bound either. */
   const outages = new Map<string, string>();
   const unreadable = new Map<string, string>();
+  /* NO PASSWORD STORED, from the moment the runtime entered that state: nothing refused it and
+     nothing dials it, so it is a block (the strip's "Not syncing") and never an error or a clock. */
+  const awaiting = new Map<string, string>();
   for (const r of states) {
     if (r.connection.signInRefused) failures.set(r.mailboxId, "auth");
     else if (r.connection.plaintextRefused === true) {
@@ -1538,6 +1558,10 @@ async function discloseLocalSyncFailures(
         details.set(r.mailboxId, r.connection.credentialBlocked.state === "unreadable"
           ? "MAILBOX_CREDENTIAL_UNREADABLE" : "MAILBOX_CREDENTIAL_FOREIGN_HOST");
       }
+    } else if (r.connection.needsCredential === true) {
+      if (r.connection.needsCredentialSince instanceof Date) {
+        awaiting.set(r.mailboxId, r.connection.needsCredentialSince.toISOString());
+      }
     } else if (r.connection.unreachableSince !== null) {
       outages.set(r.mailboxId, r.connection.unreachableSince.toISOString());
       if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
@@ -1547,7 +1571,8 @@ async function discloseLocalSyncFailures(
       unreadable.set(r.mailboxId, r.organizer.unreadableSince);
     }
   }
-  if (failures.size === 0 && outages.size === 0 && looked.size === 0 && unreadable.size === 0) return res;
+  if (failures.size === 0 && outages.size === 0 && looked.size === 0 && unreadable.size === 0
+    && awaiting.size === 0) return res;
   let body: unknown;
   try {
     body = await res.clone().json();
@@ -1575,6 +1600,9 @@ async function discloseLocalSyncFailures(
     const organizes = m?.organizerRole !== "reader" && typeof m?.organizeConsentedAt === "string";
     const blockedSince = healthy && organizes && (m!.syncBlockedSince ?? null) === null
       ? unreadable.get(id) : undefined;
+    /* True of a reader and an organizer alike: with no password neither moves any mail. */
+    const awaitingSince = healthy && (m!.syncBlockedSince ?? null) === null
+      ? awaiting.get(id) : undefined;
     return {
       ...(row as object),
       ...checked,
@@ -1583,6 +1611,8 @@ async function discloseLocalSyncFailures(
       ...(since !== undefined ? { unreachableSince: since } : {}),
       ...(blockedSince !== undefined
         ? { syncBlockedReason: "lease_unreadable", syncBlockedSince: blockedSince } : {}),
+      ...(awaitingSince !== undefined
+        ? { syncBlockedReason: "awaiting_credentials", syncBlockedSince: awaitingSince } : {}),
     };
   });
   return new Response(JSON.stringify({ ...(body as object), items: overlaid }), {
@@ -2639,9 +2669,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * THE ANSWER A "SIGN IN AGAIN" PRESS GIVES ON A MAILBOX THAT NEVER DIALLED — the first
      * connect's shape. The launch is awaited within its own two dial deadlines (connect +
      * greeting); a server refusing the sign-in or the encrypted way in is the press's refusal, and
-     * the password the press stored is discarded so it cannot win over the next press. An outage,
-     * a slow server or no dial at all is not a refusal: the password stays, and the connection
-     * record says what the mailbox is doing.
+     * the password the press stored leaves the store AND the runtime ({@link LocalMailboxRuntime.purgeCredential},
+     * never the sign-out's bump), so it cannot win over the next press and nothing dials it again.
+     * An outage, a slow server or no dial at all is not a refusal: the password stays, and the
+     * connection record says what the mailbox is doing.
      */
     const answerPressLaunch = async (
       mailboxId: string, rt: LocalMailboxRuntime, answer: Promise<DialAnswer | null>,
@@ -2665,12 +2696,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       if (within === null || within.outcome !== "failed") return;
       const refused = credentialsRefused(within.err) ? "auth" : tlsRefused(within.err) ? "tls" : null;
       if (refused === null) return;
-      await discardCredentialsFor(mailboxId);
+      await rt.purgeCredential({ keepCoordinates: false });
       log("local_mailbox_launch_refused", {
         mailboxId,
         err: within.err,
         reason: "the mail server refused the launch this press started, so the password it had "
-          + "just stored was removed again and the press is answered with the refusal",
+          + "just stored was removed again, from the store and from this mailbox's memory, and "
+          + "the press is answered with the refusal",
       });
       throw launchRefused(refused);
     };
@@ -2710,17 +2742,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         .limit(1))[0];
       const dialMeta = (dialRow?.meta ?? null) as
         (CredMetaAuth & { host?: string; port?: number; secure?: boolean; insecureConsent?: boolean }) | null;
-      /* The seed dials what it was configured for — the boot contract. As
+      /* The seed dials the host, port and TLS mode it was configured for — the boot contract. As
        * `isSeed && !dialMeta?.host`, a seed whose credential recorded a host dialled the
        * credential's host and ignored the configuration — which silently disables the incoming
        * boot contract: `credentialIsForeign(row.meta, mbImap.host)` with both sides from one
        * row compares the credential against itself and can never disagree, so a launch pointed
        * at a new server would go on dialling the old one for ever, with the password. The
        * seed's dial is the configuration the shell set, keeping the comparison real; mailboxes
-       * #2..N have no configured server to disagree with — their row is the only statement of
-       * where they live, so the same predicate correctly never withholds. */
+       * #2..N have no configured server to disagree with, so the predicate never withholds. ITS
+       * CONSENT to dial unencrypted is its row's, as for every other dialler ({@link seedDial}). */
       let mbImap: SidecarImapConfig = isSeed
-        ? config.imap
+        ? seedDial(config.imap, dialMeta)
         : {
             host: dialMeta?.host ?? "",
             port: dialMeta?.port ?? 993,
@@ -2747,13 +2779,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
-       * Remove the `(mailbox, imap)` credential row. See {@link Sidecar.forgetStoredLogin}.
-       *
-       * ONE ROW, AND NOTHING ELSE. Not the mailbox, not the messages, not the mirror — every one of
-       * those is reconstructible from the user's own server and none of them is a secret. The
-       * credential is the only thing on this machine that a person signing out is asking to be gone.
+       * Remove this mailbox's password from the store AND from this runtime — see
+       * {@link LocalMailboxRuntime.purgeCredential}: every transport's row and the stamp in one
+       * transaction, then the plaintext, the login, the timers and every refusal the password earned,
+       * leaving a runtime that started without one. Nothing else: the mailbox, its messages and the
+       * mirror are reconstructible and no secret. NO EPOCH BUMP: `dialUnder` is read once at attach,
+       * so a bump refuses every later dial of this runtime for the process's life — the sign-out
+       * wants that ({@link forgetStoredLogin}), a refused press does not.
        */
-      const forgetStoredLogin = async (opts?: { keepCoordinates?: boolean }): Promise<boolean> => {
+      const purgeCredential = async (opts?: { keepCoordinates?: boolean }): Promise<boolean> => {
         /**
          * The delete and its proof are one transaction, and the proof is a read. This issued the DELETE, logged
          * `stored_login_cleared` and answered 200 without asking whether the row was gone — a delete that removed
@@ -2796,19 +2830,42 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           return before.length > 0;
         });
+        /* THE COPY IN MEMORY GOES WITH THE ROW. Left in `login` and in the dial config, a removed
+           password was dialled again by the next poll or "Sync now" after a refused press. */
+        login = { state: "absent", pass: null };
+        useDialledPassword("");
+        needsCredential = true;
+        needsCredentialSince ??= now();
+        launchSkipped = true;
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (heartbeatTimer) { clearTimeout(heartbeatTimer); heartbeatTimer = null; }
+        /* Nothing is dialled from here, so there is no outage to report and no refusal left to
+           honour: every clock and flag the removed password earned goes with it. */
+        outageSince = null;
+        connectionDeadSince = null;
+        connectionDeadBy = null;
+        credentialBlock = null;
+        certificateRefusedNow = false;
+        plaintextRefusedNow = false;
         /* THE CREDENTIAL IS GONE, so a refusal recorded against the old one is stale evidence.
            This path does NOT detach the runtime, which is why the flag needs clearing here rather
            than by construction — see `signInRefused`. */
-        clearSignInRefusal("the stored password was forgotten");
+        clearSignInRefusal("the stored password was forgotten", "nothing dials until a password is entered again");
+        await closeDialAfterSignOut();
+        return had;
+      };
+
+      /** The sign-out's forget: {@link purgeCredential}, then the epoch. See {@link Sidecar.forgetStoredLogin}. */
+      const forgetStoredLogin = async (opts?: { keepCoordinates?: boolean }): Promise<boolean> => {
+        const had = await purgeCredential(opts);
         /**
          * AND THE EPOCH MOVES, so nothing in flight writes this password back and no dial opens a
-         * login on the copy in memory. Here rather than only in the sign-out route because the
-         * refused-launch path (`mobile.ts`) discards a seal without signing out and leaves the
-         * same fact. After the row is proven gone: bumping over a clear that THREW would leave an
-         * install refusing to dial a credential it still holds.
+         * login on a copy another path still holds. Here rather than only in the sign-out route
+         * because the refused-launch path (`mobile.ts`) discards a seal without signing out and
+         * leaves the same fact. After the row is proven gone: bumping over a clear that THREW would
+         * leave an install refusing to dial a credential it still holds.
          */
         fence.bump();
-        await closeDialAfterSignOut();
         log("stored_login_cleared", {
           mailboxId: mb.id,
           state: had ? "removed" : "absent",
@@ -3103,7 +3160,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * Folded into one field, a re-dial that reached a live server with an unreadable lease
        * cleared the outage and reported the mailbox healthy while nothing was filed. So the
        * socket field drives the re-dial and this one drives the Settings row, clearing only when
-       * a cycle has actually been served.
+       * a cycle has actually been served, or with the password itself ({@link purgeCredential}).
        */
       let outageSince: Date | null = null;
       /**
@@ -3164,10 +3221,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * Not {@link credentialBlock}, which is about a stored row that could not be OPENED: here
        * nothing is stored and there is nothing to open. Not an outage either — no clock is
        * armed and nothing is retried, because with no password there is nothing to retry and
-       * dialling an empty one is how a provider locks an account. One writer sets it (`start()`'s
-       * two no-password arms) and one clears it (a later read that opens the row).
+       * dialling an empty one is how a provider locks an account. `start()`'s two no-password arms
+       * and {@link purgeCredential} set it, a read that opens the row clears it; its clock moves too.
        */
       let needsCredential = false;
+      /** When {@link needsCredential} became true — set and cleared in the same statements. */
+      let needsCredentialSince: Date | null = null;
       /**
        * `start()` RETURNED WITHOUT DIALLING FOR WANT OF A PASSWORD — and nothing in this process
        * dials such a runtime later: no poll, no heartbeat, no death for the re-dial to act on. Its
@@ -3190,7 +3249,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * backoff, because a new password is a new question and it should be asked promptly rather
        * than at the end of whatever wait the old one had earned.
        */
-      const clearSignInRefusal = (why: string): void => {
+      const clearSignInRefusal = (why: string, next = "the next poll dials again"): void => {
         if (!signInRefused && redialAttempts === 0) return;
         signInRefused = false;
         redialAttempts = 0;
@@ -3201,7 +3260,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         forcedNotBefore = 0;
         log("mailbox_sign_in_retry_armed", {
           mailboxId: mb.id,
-          reason: `${why}; the stored refusal is discarded and the next poll dials again`,
+          reason: `${why}; the stored refusal is discarded and ${next}`,
         });
       };
       /** Backoff for the failures that MAY pass. Attempts since the last successful dial. */
@@ -3544,6 +3603,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* AND THE STATE THE LAUNCH ENTERED WITH NO PASSWORD — this read is the thing that ends
              it: a password is stored and this mailbox dials with it from here. */
           needsCredential = false;
+          needsCredentialSince = null;
           log("mailbox_login_restored", {
             mailboxId: mb.id,
             state: fresh.state,
@@ -3555,8 +3615,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
         /* A ROW THAT IS GONE IS NOT A BLOCK. Somebody signed out: nothing is stored, the shell
            shows a password field, and claiming an unreadable credential would be a sentence about
-           a row that does not exist. The outage clocks are left as any sign-out mid-outage leaves
-           them — `noteCycleServed` is the one writer that clears them. */
+           a row that does not exist. The outage clocks are left as they stand: `noteCycleServed`
+           clears them when a cycle is served, and {@link purgeCredential} with the password. */
         if (fresh.state === "absent" || fresh.state === "ready") {
           credentialBlock = null;
           return false;
@@ -3572,6 +3632,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "Nothing was deleted: re-entering the password re-seals the row under this key",
         });
         return false;
+      };
+
+      /**
+       * THE SEED'S PLAINTEXT CONSENT, re-read from its credential row onto both dial configs — the
+       * one other writer of `allowInsecure` beside {@link adoptRowDial}, for the mailbox that one
+       * never follows. A row that proves TLS (or names another endpoint) takes the consent away.
+       */
+      const adoptSeedConsent = async (): Promise<void> => {
+        const allowInsecure = seedDial(config.imap, (await storedLogin())?.meta ?? null).allowInsecure === true;
+        if (allowInsecure === (mbImap.allowInsecure === true)) return;
+        const { allowInsecure: _was, ...rest } = mbImap;
+        mbImap = { ...rest, ...(allowInsecure ? { allowInsecure: true } : {}) };
+        if (allowInsecure) imapConfig.allowInsecure = true; else delete imapConfig.allowInsecure;
       };
 
       /**
@@ -3729,9 +3802,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           connectionDeadSince = null;
           connectionDeadBy = null;
         }
-        /* THE PERSON'S CLOCK CLEARS HERE AND NOWHERE ELSE — a cycle was actually served. A
-           re-dial that reached a live server does not clear it (the socket is not the mailbox);
-           see {@link outageSince}. */
+        /* THE PERSON'S CLOCK CLEARS HERE — a cycle was actually served — and at
+           {@link purgeCredential}, which removes the password the outage was about. A re-dial that
+           reached a live server does not clear it (the socket is not the mailbox); see
+           {@link outageSince}. */
         outageSince = null;
       };
 
@@ -3924,9 +3998,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /**
        * END THE LOGIN THE FORGOTTEN PASSWORD BOUGHT. Removing the row leaves an authenticated
        * socket open on a credential the person asked to be gone, and this engine outlives the
-       * clear on every door that does not stop it. The poll timer is left alone deliberately: it
-       * fires, finds the epoch moved and does not dial — one refusal, in `dialAndGate`, rather
-       * than a second teardown path racing `detach()`.
+       * clear on every door that does not stop it. The login alone: the timers are
+       * {@link purgeCredential}'s, which leaves the runtime dialling nothing.
        */
       const closeDialAfterSignOut = async (): Promise<void> => {
         await adapter.close().catch(() => { /* already going away */ });
@@ -7022,6 +7095,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                beside `unreachableSince` rather than inside it: there is no outage clock to
                name, and an outage sentence would send somebody to look at a working network. */
             needsCredential,
+            needsCredentialSince,
             /* AND WHY, WHEN THE REASON IS THIS INSTALL'S OWN STORE rather than the server. No
                socket was opened at all here, so "can't reach the mail server" would send somebody
                to look at a network that is working. See {@link CredentialBlock}. */
@@ -7065,6 +7139,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         redial: redialIfDead,
         credentialState: async () => (await resolveLogin()).state,
         forgetStoredLogin,
+        purgeCredential,
         /**
          * THE SEALED PASSWORD WAS REPLACED — see {@link LocalMailboxRuntime.credentialReplaced}.
          *
@@ -7077,6 +7152,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (stopped) return null;
           const moved = opts?.followRow === true && await adoptRowDial();
           await rereadCredential();
+          /* THE SEED'S CONSENT FOLLOWS ITS ROW ({@link seedDial}): the press just proved it. Only
+             where the dial is the configuration (the desktop): a composition that follows the row
+             took the row's consent with its endpoint in `adoptRowDial` above. */
+          if (isSeed && opts?.followRow !== true) await adoptSeedConsent();
           clearSignInRefusal("the stored password was replaced");
           /* THE SAME MAILBOX ON ANOTHER PORT OR TLS MODE: the socket is replaced and the claim is
              not touched — the re-dial destroys the old connection without a release, and the
@@ -7146,6 +7225,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // state a surface renders is not news to repeat.
           if (login.state !== "ready" || !login.pass) {
             needsCredential = true;
+            needsCredentialSince ??= now();
             launchSkipped = true;
             return;
           }
@@ -7157,6 +7237,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             /* THE SAME STATE AS THE ARM ABOVE, and it is set for the arm above's reason: this
                runtime opened no socket, so nothing may report it reachable. */
             needsCredential = true;
+            needsCredentialSince ??= now();
             launchSkipped = true;
             log("stored_login_absent", {
               mailboxId: mb.id,

@@ -147,6 +147,12 @@ export interface MailboxConnectionState {
    */
   needsCredential: boolean;
   /**
+   * WHEN {@link needsCredential} BECAME TRUE, written in the same statement and cleared with it —
+   * the clock the local door's "no password is stored" block names. Optional so a state built
+   * elsewhere reads as "cannot say", which overlays nothing.
+   */
+  needsCredentialSince?: Date | null;
+  /**
    * THE STORED PASSWORD COULD NOT BE USED — see {@link CredentialBlock}, `null` when it could.
    *
    * Beside `signInRefused` and not folded into it: no server has answered this launch at all, so
@@ -446,6 +452,14 @@ export interface LocalMailboxRuntime {
    * so it is not kept as where the mailbox lives (mail 0127).
    */
   forgetStoredLogin(opts?: { keepCoordinates?: boolean }): Promise<boolean>;
+  /**
+   * THE PASSWORD LEAVES THE STORE AND THIS RUNTIME TOGETHER — the rows, the plaintext this runtime
+   * dials with, its login and its timers — and the runtime is left as one that started without a
+   * password (it dials nothing until a later press stores one). `forgetStoredLogin` is this plus
+   * the sign-out's epoch bump; a refused press calls it without the bump, so the next press's
+   * password is dialled by the same runtime. Answers whether a password was there.
+   */
+  purgeCredential(opts?: { keepCoordinates?: boolean }): Promise<boolean>;
   /**
    * THE SEALED PASSWORD WAS REPLACED — re-read it, drop the refusal, dial now.
    *
