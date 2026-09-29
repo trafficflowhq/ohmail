@@ -281,6 +281,27 @@ the apps name the computer that actually organizes a mailbox, and a claim writte
 is named as unknown. The note on a mailbox that is not being synced now appears after four minutes,
 once the automatic reconnect has had its turn.
 
+### A draft keeps what it answers
+<!-- changes: fix-026-draft-keeps-answer.md -->
+
+A forward you save as a draft, on your phone or on the web, is sent as a forward when you open it
+again: the original message is quoted and its attachments go with it. A reply saved as a draft
+because its message was moved or deleted in another mail app keeps its subject and recipients,
+reply all included, and is written into that reply's own draft. A message whose send was
+interrupted is sent from its own draft after a reload, without making a second one, and a change
+waiting in a tab you closed is sent by a tab that is still open.
+
+### Every list says when the message you were reading has gone
+<!-- changes: fix-026-view-says-gone.md -->
+
+If the message you have open in a tag, History, a Triage pile, a folder or Trash is moved or deleted
+elsewhere, the reading pane now says so instead of showing a different message or the old one. On a
+phone-sized window every list gives the whole width to the list, Trash included, and the top bar
+names Trash. After a short
+connection drop, History, the address view and a letter's files recover on their own once the server
+answers again. An open History keeps its count right when older mail arrives or a message is deleted
+elsewhere. Enter in the command palette runs a "Go to" entry again.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
