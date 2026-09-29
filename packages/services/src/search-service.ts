@@ -643,7 +643,9 @@ export class SearchService {
    * counted exactly by its own size, a cut arm by the planner's expected rows; the union is at
    * least its largest arm and at least the candidates it fused, and at most the planner's reading
    * of the mailbox under the filters (a join's estimate can exceed the table it reads: "about
-   * 75,246" of 74,003). Every cut arm and the mailbox are asked in ONE plan.
+   * 75,246" of 74,003). Every cut arm and the mailbox are asked in ONE plan. Never asked for the
+   * typo tier: `<%` has no selectivity estimator, so its planner rows are a default, and a cut
+   * typo arm is said as "at least" until the exact count lands.
    */
   private async estimateOf(
     ctx: ServiceContext, d: Dialect, where: SQL, arms: readonly Arm[], sizes: readonly number[], k: number, candidates: number,
@@ -864,7 +866,7 @@ export class SearchService {
         const { k, named, all, sizes } = this.fusedArms(d, where, arms, t, limit);
         const counted = await this.facets(ctx, db, d, sql`select id from (${all}) x group by id`, { named, extras: sizes });
         const cut = counted.extras.some((n) => n >= k);
-        return { ...counted, cut, estimateOf: cut ? () => this.estimateOf(ctx, d, where, arms, counted.extras, k, counted.total) : null };
+        return { ...counted, cut, estimateOf: cut && t !== "similar" ? () => this.estimateOf(ctx, d, where, arms, counted.extras, k, counted.total) : null };
       };
       let t: SearchTier = "exact";
       let counted = await ofTier(t);
