@@ -21,7 +21,6 @@ import {
   ListPane,
   ListRows,
   MessageRow,
-  ReadColumn,
   SegmentedControl,
 } from "@ohmail/ui";
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
@@ -29,7 +28,7 @@ import { useKeyBindings } from "../shell/keymap";
 import { useMessageChrome } from "../shell/message-chrome";
 import { pressResurfaceKey } from "../shell/message-verbs";
 import { useZoneNav } from "../shell/zone-nav";
-import { readColumnHidden } from "../shell/narrow";
+import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useListWindow } from "../shell/list-window";
 import { useColumnPick } from "../shell/column-pick";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
@@ -70,6 +69,8 @@ const PILE_EMPTY: Record<TriagePileId, "emptyReply" | "emptyAside" | "emptyResur
 
 export function TriageView({
   piles,
+  settled,
+  owed,
   pile,
   onPile,
   frDone,
@@ -89,6 +90,9 @@ export function TriageView({
   onAddTag,
 }: {
   piles: TriagePiles;
+  /** `MailState.settled` / `owed`: an empty pile is said only over a read mirror. */
+  settled: boolean;
+  owed: boolean;
   /** Which horizon is open — `route.triagePile`. */
   pile: TriagePileId;
   onPile: (next: TriagePileId) => void;
@@ -156,21 +160,17 @@ export function TriageView({
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  /**
-   * The message the reading column shows — the user's pick, or the pile's first OPENABLE entry
-   * so the column is never blank beside a list that has rows. Safe here as it is in Tag and
-   * History: this list does not re-partition under the fallback (a pile's membership changes
-   * only when the user files something), so it cannot re-point at a message nobody chose.
-   */
+  /** The column's row — the pick, else the pile's first OPENABLE entry — or the gone notice (`useListView`). */
   const openable = entries
     .map((e) => (e.messageId ? messageOf(e.messageId) : null))
     .filter((m): m is EngineMessage => m !== null);
-  const shown = openable.find((m) => m.id === selectedId) ?? openable[0] ?? null;
+  const list = useListView({ rows: openable, settled, pending: owed, picked: selectedId });
+  const shown = list.shown;
 
   /** The cursor is per-pile. Switching horizons must not leave the reader on the last pile's mail. */
   useEffect(() => setSelectedId(null), [pile]);
   useColumnPick({
-    picked: selectedId, shown: shown?.id ?? null, locateId,
+    picked: selectedId, shown: list.standsFor, locateId,
     located: locateId != null && openable.some((m) => m.id === locateId),
     select: setSelectedId, onPick,
   });
@@ -234,7 +234,7 @@ export function TriageView({
    */
   const openRow = (m: EngineMessage) => {
     setSelectedId(m.id);
-    if (readColumnHidden()) onOpen(m);
+    if (list.columnHidden()) onOpen(m);
   };
 
   /**
@@ -440,28 +440,29 @@ export function TriageView({
                already this exact sentence, so the empty state repeating it put the same subtitle
                on screen twice, ~150px apart. Only the Answer Later pane — whose header carries
                the Reply Run's note instead — still needs the hint down here. */
-            <div className="empty">
-              <span className="glyph" aria-hidden="true">◷</span>
-              <b>{t(PILE_EMPTY[pile])}</b>
-              {pile === "reply" ? t(PILE_HINT[pile]) : null}
-            </div>
+            <ListEmpty
+              list={list}
+              glyph="◷"
+              title={t(PILE_EMPTY[pile])}
+              hint={pile === "reply" ? t(PILE_HINT[pile]) : null}
+            />
           )}
         </ListRows>
       </ListPane>
       {/* THE READING COLUMN — the Ohbox's own. No `onEnterReader` on the pane, for the reason
           the Ohbox and Tag omit it: the "open reading mode" button would sit at exactly the
           widths where the sheet duplicates this column. */}
-      <ReadColumn regionLabel={tReader("pane")}>
-        {shown ? (
+      <ListReadColumn list={list} regionLabel={tReader("pane")}>
+        {(m) => (
           <MessagePane
-            message={shown}
+            message={m}
             tags={tags}
             now={now}
-            onAction={(a) => onAction(a, shown)}
+            onAction={(a) => onAction(a, m)}
             onAddTag={onAddTag}
           />
-        ) : null}
-      </ReadColumn>
+        )}
+      </ListReadColumn>
     </section>
   );
 }

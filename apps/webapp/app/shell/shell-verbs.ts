@@ -941,6 +941,8 @@ export function useShellVerbs({
 
   /** The last verb's subject, for the pane's after-verb reaction — see `after-verb.ts`. */
   const lastActed = useRef<ActedMarker | null>(null);
+  /** Every id a verb here acted on this session: a tombstone one of them left is this tab's own, not "gone". */
+  const actedIds = useRef<Set<string>>(new Set());
 
   const onMessageAction = useStableCallback(
     (action: MessageAction, m: EngineMessage) => {
@@ -949,6 +951,7 @@ export function useShellVerbs({
          from a drain applying another device's work. A ref: the pane reads it when the row
          actually leaves, and nothing re-renders for the write itself. */
       lastActed.current = { id: m.id, at: Date.now() };
+      actedIds.current.add(m.id);
       switch (action) {
         case "reply":
           // Inline, in place. This used to be `setReaderOpen(false); go("compose")` —
@@ -1567,6 +1570,7 @@ export function useShellVerbs({
     createTag,
     createTagAlone,
     dropTag,
+    actedIds,
     lastActed,
     onMessageAction,
     onStageClickCapture,

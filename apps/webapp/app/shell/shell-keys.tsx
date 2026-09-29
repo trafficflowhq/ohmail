@@ -152,8 +152,6 @@ export interface ShellKeysInput {
   /** The one armed Undo, pressed by `mod+z` (`shell-dispatch.ts`). */
   runArmedUndo: ShellDispatch["runArmedUndo"];
   allOhbox: ShellDerivations["allOhbox"];
-  /** The rail's own number — the three groups, never the surface (`shell-derivations.ts`). */
-  ohboxCount: ShellDerivations["ohboxCount"];
   /** The projection the Send + Done rule is asked of, never the reader. */
   presented: ShellDerivations["presented"];
   /** The chord's door — the same send the button presses (`shell-compose.ts`). */
@@ -228,7 +226,7 @@ export function useShellKeys({
   accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
   aboutSection, desktopSection, devicesSection, onUnread,
   runArmedUndo,
-  allOhbox, ohboxCount, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
+  allOhbox, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
   ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
   trashPage,
   barPanel, focused, fr, frValues, picker, railOpen, readerFor, readerMessage, readerGone,
@@ -1024,7 +1022,7 @@ export function useShellKeys({
             hot: true,
             ...(mayCount ? {
               count: ohboxUnread,
-              title: t("rail.ohboxTitle", { unread: ohboxUnread, total: ohboxCount }),
+              title: t("rail.ohboxTitle", { unread: ohboxUnread }),
             } : {}),
           },
           /* The streams count "new since last visit" — the fresh side of each view's own
@@ -1224,7 +1222,7 @@ export function useShellKeys({
       },
     ],
     [
-      t, ohboxUnread, ohboxCount, readsNew, receiptsNew, mayCount, screener.waitingCount, piles,
+      t, ohboxUnread, readsNew, receiptsNew, mayCount, screener.waitingCount, piles,
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
       folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
       route.folderId, facts,

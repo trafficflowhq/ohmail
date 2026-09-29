@@ -469,7 +469,7 @@
     "settings": "Settings",
     "mailboxes": "Mailboxes",
     "ariaMain": "Main",
-    "ohboxTitle": "{unread, number} unread of {total, plural, one {1 message} other {# messages}}",
+    "ohboxTitle": "{unread, number} unread",
     "readsTitle": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here",
     "screenerTitle": "{count} waiting",
     "openNav": "Open navigation",
@@ -1175,6 +1175,7 @@
     "addressEmptyFrom": "Nothing from {address}.",
     "addressEmptyTo": "Nothing sent to {address}.",
     "addressRetry": "Try again",
+    "addressOffline": "ohmail Cloud can't be reached — showing the mail on this computer.",
     "addressKeyClose": "Leave this address"
   },
   "compose": {

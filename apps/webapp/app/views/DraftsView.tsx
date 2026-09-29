@@ -19,12 +19,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { HELD_SEND_RECHECK_MS, type EngineDraft } from "@ohmail/client-engine";
+import { HELD_SEND_RECHECK_MS, listSurface, saysEmpty, type EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 import { displayTime, scheduleLabel } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
 import { HeldSendResolve } from "../components/HeldSendResolve";
+import { ListEmpty } from "../shell/list-view";
 
 /**
  * Is the engine still looking for this held send? `updatedAt` is the moment the row was left
@@ -52,6 +53,8 @@ function recipientLine(d: EngineDraft): string {
 
 export function DraftsView({
   drafts,
+  settled,
+  owed,
   scheduled,
   now,
   onOpen,
@@ -72,6 +75,9 @@ export function DraftsView({
   repliesHere,
 }: {
   drafts: readonly EngineDraft[];
+  /** `MailState.settled` / `owed`: "nothing half-written" is said only over a read mirror. */
+  settled: boolean;
+  owed: boolean;
   /**
    * SEND LATER's appointments (mail 0077), soonest first — rendered as their own group ABOVE
    * the drafts, because a message that WILL act on its own is more urgent to see than one that
@@ -388,11 +394,12 @@ export function DraftsView({
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         {draftCount === 0 ? (
           <ListRows ariaLabel={t("title")}>
-            <div className="empty">
-              <span className="glyph">✎</span>
-              <b>{t("emptyTitle")}</b>
-              {t("emptyHint")}
-            </div>
+            <ListEmpty
+              list={{ empty: saysEmpty(listSurface({ settled, count: draftCount, pending: owed })) }}
+              glyph="✎"
+              title={t("emptyTitle")}
+              hint={t("emptyHint")}
+            />
           </ListRows>
         ) : null}
       </ListPane>

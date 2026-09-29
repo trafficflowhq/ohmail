@@ -21,9 +21,10 @@
  * asserts the snapshot emits a folder outside the union, another that the selector labels such a row.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { addressHash } from "./routing";
 import {
+  createSessionReask,
   type AddressCounts,
   type AddressDirection,
   type EngineMessage,
@@ -58,8 +59,26 @@ export type AddressArchive =
    * `ready` has already answered. A retry control over either would be a button that does
    * nothing, which is the same defect as a missing one and harder to see.
    */
-  | { state: "failed"; error: string; retry: () => void }
+  | { state: "failed"; error: string; errorClass: string; retry: () => void }
   | { state: "unavailable" };
+
+/** The pass's answer as a store read hears it — the one re-ask rule reads it (`createSessionReask`). */
+function passSignal() {
+  const listeners = new Set<() => void>();
+  let now: AddressArchive = { state: "searching" };
+  return {
+    set(next: AddressArchive): void {
+      now = next;
+      for (const l of [...listeners]) l();
+    },
+    subscribe: (cb: () => void): (() => void) => {
+      listeners.add(cb);
+      return () => { listeners.delete(cb); };
+    },
+    cause: (): string | null => (now.state === "failed" ? now.errorClass : null),
+    answered: (): boolean => now.state === "ready",
+  };
+}
 
 /**
  * Does the archive's answer cover the direction on screen? Derived here rather than worked out by the
@@ -171,6 +190,20 @@ export function useAddressView({
    */
   const [retryTick, setRetryTick] = useState(0);
   const available = engine.serverAddressSearchAvailable();
+  /* A PASS THE WIRE FAILED — the paired desktop's refusal while the account is out of reach among
+     them — is asked again when the server answers a drain, at most REASK_MAX times; the session
+     door is not this read's. */
+  const signal = useMemo(() => passSignal(), [engine]);
+  const rule = useMemo(() => createSessionReask(null, {
+    subscribe: signal.subscribe, cause: signal.cause, answered: signal.answered,
+    reask: () => setRetryTick((n) => n + 1),
+    drains: { completed: () => engine.drainsCompleted(), subscribe: (cb) => engine.subscribe(cb) },
+  }), [engine, signal]);
+  useEffect(() => rule.attach(), [rule]);
+  const put = useCallback((next: { address: string; outcome: AddressArchive }): void => {
+    signal.set(next.outcome);
+    setPass(next);
+  }, [signal]);
 
   useEffect(() => {
     if (address.trim() === "") {
@@ -183,21 +216,21 @@ export function useAddressView({
       // `ready` with nothing, and the direction the archive serves — byte for byte what
       // `OhmailEngine.searchAddressServer` itself answers for a blank address, so the contract
       // and the engine cannot disagree about what "nothing to ask" looks like.
-      setPass({ address, outcome: { state: "ready", items: [], total: 0, direction: "from", importing: false } });
+      put({ address, outcome: { state: "ready", items: [], total: 0, direction: "from", importing: false } });
       return;
     }
     if (!available) {
-      setPass({ address, outcome: { state: "unavailable" } });
+      put({ address, outcome: { state: "unavailable" } });
       return;
     }
     let live = true;
-    setPass({ address, outcome: { state: "searching" } });
+    put({ address, outcome: { state: "searching" } });
     // `searchAddressServer` never rejects — the outcome is a value the view renders, so there is
     // no unhandled promise here and no error boundary over somebody's mailbox.
     void engine.searchAddressServer(address, { ...(limit !== undefined ? { limit } : {}) })
       .then((outcome: ServerAddressOutcome) => {
         if (!live) return;
-        setPass({
+        put({
           address,
           outcome:
             outcome.state === "ready"
@@ -209,7 +242,10 @@ export function useAddressView({
                 importing: outcome.importing === true,
               }
               : outcome.state === "failed"
-                ? { state: "failed", error: outcome.error, retry: () => setRetryTick((n) => n + 1) }
+                ? {
+                  state: "failed", error: outcome.error, errorClass: outcome.errorClass,
+                  retry: () => setRetryTick((n) => n + 1),
+                }
                 : { state: "unavailable" },
         });
       });
@@ -221,7 +257,7 @@ export function useAddressView({
     // round trip to receive the identical rows, and would blank the archive's half of the count
     // line while it was in flight — a number that flickers on a control that changed nothing
     // about what was asked.
-  }, [engine, address, available, limit, retryTick]);
+  }, [engine, address, available, limit, retryTick, put]);
 
   /** The archive's answer, but only while it still belongs to the address on screen. */
   const archive: AddressArchive =

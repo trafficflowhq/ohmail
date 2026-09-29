@@ -263,11 +263,7 @@
   :root[data-layout="zero"] .col-handle-list {
     display: block;
   }
-  :root[data-layout="zero"] .view-ohbox .read-col,
-  :root[data-layout="zero"] .view-history .read-col,
-  :root[data-layout="zero"] .view-tag .read-col,
-  :root[data-layout="zero"] .view-triage .read-col,
-  :root[data-layout="zero"] .view-folder .read-col {
+  :root[data-layout="zero"] .view.split > .read-col {
     display: block;
   }
   :root[data-layout="zero"] .view-reads .list-col,

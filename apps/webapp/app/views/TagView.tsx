@@ -19,12 +19,12 @@ import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
 import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
-import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot, TextField } from "@ohmail/ui";
+import { Button, Kbd, ListPane, ListRows, MessageRow, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
-import { readColumnHidden } from "../shell/narrow";
+import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useListWindow } from "../shell/list-window";
 import { useColumnPick } from "../shell/column-pick";
 
@@ -37,6 +37,8 @@ export interface TagAdmin {
 export function TagView({
   tag,
   messages,
+  settled,
+  owed,
   tags,
   threadParticipants,
   threadCountOf,
@@ -56,6 +58,9 @@ export function TagView({
 }: {
   tag: TagDTO;
   messages: EngineMessage[];
+  /** `MailState.settled` / `owed`: "nothing carries this tag" is said only over a read mirror. */
+  settled: boolean;
+  owed: boolean;
   /**
    * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
    * the shell (this view has none) and mapped to `{initials, hue}`. A LOOKUP into the shell's
@@ -110,14 +115,11 @@ export function TagView({
   const tReader = useTranslations("reader");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  /**
-   * The message the reading column shows — the user's pick, or the first row so the column is
-   * never blank beside a list that has rows. Safe here as it is in History: the list does not
-   * re-partition under the fallback, so it cannot re-point at a message nobody chose.
-   */
-  const shown = messages.find((m) => m.id === selectedId) ?? messages[0] ?? null;
+  /** The column's row, or the gone notice for a pick another mail client took away — `useListView`. */
+  const list = useListView({ rows: messages, settled, pending: owed, picked: selectedId });
+  const shown = list.shown;
   useColumnPick({
-    picked: selectedId, shown: shown?.id ?? null, locateId,
+    picked: selectedId, shown: list.standsFor, locateId,
     located: locateId != null && messages.some((m) => m.id === locateId),
     select: setSelectedId, onPick,
   });
@@ -140,7 +142,7 @@ export function TagView({
     setSelectedId(m.id);
     // Where the column is hidden the sheet is the only reading surface; where it is standing the
     // selection above is the whole open, and nothing leaves the screen.
-    if (readColumnHidden()) onOpen(m);
+    if (list.columnHidden()) onOpen(m);
   };
 
   /**
@@ -262,34 +264,35 @@ export function TagView({
             {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>
           ) : (
-            <div className="empty">
-              <span className="glyph">🏷</span>
-              <b>{t("emptyTitle")}</b>
-              {t.rich("emptyHint", { kbd: (chunks) => <Kbd>{chunks}</Kbd> })}
-            </div>
+            <ListEmpty
+              list={list}
+              glyph="🏷"
+              title={t("emptyTitle")}
+              hint={t.rich("emptyHint", { kbd: (chunks) => <Kbd>{chunks}</Kbd> })}
+            />
           )}
         </ListRows>
       </ListPane>
       {/* THE READING COLUMN — the Ohbox's own. No `onEnterReader` on the pane, for the reason
           the Ohbox omits it: the "open reading mode" button would sit at exactly the widths
           where the sheet duplicates this column. */}
-      <ReadColumn regionLabel={tReader("pane")}>
-        {/* THE PANE AGREES WITH THE ROW IT WAS OPENED FROM. `presentsUnread` and not the
-            stored flag: a resurfaced message is drawn unread in the list beside this pane, and
-            a pane offering "Mark unread" over a bold row is the two-derivations defect at arm's
-            length — worse, the fallback verb WRITES `unread: true`, when what a pinned row needs
-            is the deliberate read that releases it. The projection is presentation only;
-            `onAction` still carries the real message. */}
-        {shown ? (
+      {/* THE PANE AGREES WITH THE ROW IT WAS OPENED FROM. `presentsUnread` and not the
+          stored flag: a resurfaced message is drawn unread in the list beside this pane, and
+          a pane offering "Mark unread" over a bold row is the two-derivations defect at arm's
+          length — worse, the fallback verb WRITES `unread: true`, when what a pinned row needs
+          is the deliberate read that releases it. The projection is presentation only;
+          `onAction` still carries the real message. */}
+      <ListReadColumn list={list} regionLabel={tReader("pane")}>
+        {(m) => (
           <MessagePane
-            message={shown.unread === presentsUnread(shown) ? shown : { ...shown, unread: presentsUnread(shown) }}
+            message={m.unread === presentsUnread(m) ? m : { ...m, unread: presentsUnread(m) }}
             tags={tags}
             now={now}
-            onAction={(a) => onAction(a, shown)}
+            onAction={(a) => onAction(a, m)}
             onAddTag={onAddTag}
           />
-        ) : null}
-      </ReadColumn>
+        )}
+      </ListReadColumn>
     </section>
   );
 }

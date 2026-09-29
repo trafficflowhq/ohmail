@@ -570,11 +570,6 @@ export function useShellDerivations({
     () => ohboxSurfaceMessages(resurfacedRows, ohbox, older.items),
     [resurfacedRows, ohbox, older.items],
   );
-  /* WHAT THE RAIL COUNTS — the three groups, never the surface. The surface unions a resurfaced
-     conversation's other members in so the column can resolve them, and one of those is the Sent
-     copy of your own reply: counting it would make "N unread of M messages" say the Ohbox holds
-     mail it does not list. */
-  const ohboxCount = ohbox.resurfaced.length + ohbox.newForYou.length + ohbox.previouslySeen.length;
   /**
    * The conversation's people for a row's lead circles — bound to the
    * presented reader here (the views have no reader), mapped to
@@ -658,7 +653,6 @@ export function useShellDerivations({
     account,
     notifications,
     allOhbox,
-    ohboxCount,
     participantsOf,
     threadCountOf,
     threadSubjectOf,

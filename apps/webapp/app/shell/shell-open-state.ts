@@ -202,8 +202,10 @@ export function readerMessageFor(
   if (!readerFor) return null;
   const mine = fromMirror(readerFor);
   if (mine) return mine;
+  // Before the carried row: a store page's row the mirror records as taken away is gone, not read.
+  if (isGone(readerFor)) return "gone";
   if (offMirror?.id === readerFor) return offMirror;
-  return isGone(readerFor) ? "gone" : null;
+  return null;
 }
 
 /**

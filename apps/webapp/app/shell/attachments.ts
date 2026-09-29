@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { threadOf, type OhmailEngine } from "@ohmail/client-engine";
+import { REASK_MAX, threadOf, wireFailed, type OhmailEngine } from "@ohmail/client-engine";
 import {
   fileRetryIsOffered, isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
 } from "../components/AttachmentStrip";
@@ -589,6 +589,32 @@ export function useMessageAttachments(
       for (const id of [...wantedIds()]) {
         const held = engine.attachmentsOf(id);
         if (held.state !== "failed" || !isAuthListFailure(held.code)) continue;
+        engine.releaseAttachments(id);
+        void engine.loadAttachments(id);
+      }
+    });
+  }, [engine, messageId, available, wantedIds]);
+
+  /**
+   * AND A LIST THE WIRE FAILED is asked again when the server answers a drain again — the store
+   * reads' one classifier (`wireFailed`) and their cap, per id: at most REASK_MAX re-asks while the
+   * list stays wire-failed, reset once it answers. "Couldn't reach ohmail" stood over a message
+   * for minutes after a short drop while every other request answered 200.
+   */
+  useEffect(() => {
+    if (!available || !messageId) return;
+    const asks = new Map<string, number>();
+    let seen = engine.drainsCompleted();
+    return engine.subscribe(() => {
+      const n = engine.drainsCompleted();
+      if (n <= seen) return;
+      seen = n;
+      for (const id of [...wantedIds()]) {
+        const held = engine.attachmentsOf(id);
+        if (held.state !== "failed" || !wireFailed(held.code)) { asks.delete(id); continue; }
+        const k = asks.get(id) ?? 0;
+        if (k >= REASK_MAX) continue;
+        asks.set(id, k + 1);
         engine.releaseAttachments(id);
         void engine.loadAttachments(id);
       }

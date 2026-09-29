@@ -174,6 +174,12 @@ export function AddressView({
       t("scopeWholeSearching")
     ) : archive.state === "unavailable" ? (
       t("scopeNoArchive")
+    ) : archive.state === "failed" && archive.errorClass.split(" ").includes("offline_read_only") ? (
+      /* THE PAIRED DESKTOP WITH THE ACCOUNT OUT OF REACH: its door refuses an address count rather
+         than answer it from the mirror, so the device's rows are this computer's mail, and a Try
+         again would ask a door that cannot answer until the account is back — the re-ask is the
+         engine's, on the first drain the account answers. */
+      t("addressOffline")
     ) : archive.state === "failed" ? (
       /* A refusal is the one archive state a reader can do something about, so it is the one
          that carries a control. `retry` hangs off the failed arm of the contract, so there is no

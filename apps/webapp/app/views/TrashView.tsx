@@ -18,7 +18,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { presentsUnread, type EngineMessage, type TagDTO, type TrashRowWire } from "@ohmail/client-engine";
-import { ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
+import { ListPane, ListRows, MessageRow, Reader, Spinner } from "@ohmail/ui";
 import type { TrashWindowItemWire } from "../api-client";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useRowBadgeCopy } from "../shell/row-copy";
@@ -30,7 +30,8 @@ import {
 import { displayAddressee, displayAddressUnder } from "../shell/idn";
 import { BodyText } from "../shell/BodyText";
 import { useZoneNav } from "../shell/zone-nav";
-import { readColumnHidden } from "../shell/narrow";
+import { ListEmpty, ListReadColumn, ListSentence, useListView } from "../shell/list-view";
+import { useFocusFollows } from "../shell/focus-follows";
 import { useListWindow } from "../shell/list-window";
 import { useColumnPick } from "../shell/column-pick";
 import { useKeyBindings } from "../shell/keymap";
@@ -126,20 +127,19 @@ export function TrashView({
   const rows = page.items;
   const win = useListWindow({ scrollerRef, count: rows.length });
 
-  /* The user's pick, else the URL's open message, else the first row — `FolderView`'s rule, safe
-     here for a stronger reason: this list never re-partitions (one flat order, from the server). */
-  const mirroredShown =
-    rows.find((m) => m.id === selectedId)
-    ?? (locateId ? rows.find((m) => m.id === locateId) : null)
-    ?? rows[0]
-    ?? null;
+  /* The user's pick, else the URL's open message, else the first row — or the gone notice for a
+     pick that left Trash elsewhere (`useListView`). Empty is said once the server's pages end. */
+  const list = useListView({
+    rows, settled: page.exhausted, pending: page.loading, picked: selectedId,
+    first: (locateId ? rows.find((m) => m.id === locateId) : null) ?? rows[0] ?? null,
+  });
   /* ONE READING COLUMN, TWO POPULATIONS. A live pick wins while it stands, because the mirrored
      fallback is the first row and would otherwise keep a deleted message on screen beside the
      live row somebody just opened. Picking a mirrored row clears the live key, and vice versa. */
   const openLive = liveKey === null
     ? null
     : live?.items.find((i) => trashLiveKeyOf(i) === liveKey) ?? null;
-  const shown = openLive === null ? mirroredShown : null;
+  const shown = openLive === null ? list.shown : null;
   /* ⇧⌫ DOES WHAT THE RESTORE BUTTON BESIDE IT DOES. The shell's own ⇧⌫ acts on `focused`, which
      never holds a Trash row, so the key the button's chip names restored nothing. Bound here to the
      row this column shows, with the shell's two conditions; a live row has no restore, so none. */
@@ -162,14 +162,18 @@ export function TrashView({
   const openRow = (m: TrashRowWire) => {
     setLiveKey(null);
     setSelectedId(m.id);
-    if (readColumnHidden()) onOpen(m);
+    if (list.columnHidden()) onOpen(m);
   };
+  /* A LIVE ROW UNDER THE BREAKPOINT opens in this view's own sheet: it has no mirror id for the
+     shell's reader, and the column is off screen there. No address claim; Escape closes it and
+     focus goes back to the row. */
+  const [liveSheet, setLiveSheet] = useState(false);
+  const liveSheetRef = useRef<HTMLDivElement | null>(null);
+  useFocusFollows(liveSheetRef, { active: liveSheet && liveKey !== null });
 
   /* THE LIVE BODY, ON OPEN. Keyed on the row's key alone and NOT on the control — the control is
      a fresh object per render, and this door re-asks a failed key, so a render-keyed effect would
-     be a billed retry loop with nobody behind it (`session-body.ts` records the measurement).
-     There is no narrow-width branch: the Trash view's reading column is not hidden at phone
-     widths, and a live row has no mirror id the reader sheet could open. */
+     be a billed retry loop with nobody behind it (`session-body.ts` records the measurement). */
   const liveRef = useRef(live);
   liveRef.current = live;
   const openLiveKey = openLive === null ? null : trashLiveKeyOf(openLive);
@@ -239,7 +243,7 @@ export function TrashView({
   const locateIdx = locateId ? rows.findIndex((m) => m.id === locateId) : -1;
   const locateFound = locateIdx >= 0;
   useColumnPick({
-    picked: liveKey === null ? selectedId : null, shown: shown?.id ?? null, locateId,
+    picked: liveKey === null ? selectedId : null, shown: liveKey === null ? list.standsFor : null, locateId,
     located: locateFound, select: setSelectedId, onPick,
   });
   useEffect(() => {
@@ -263,10 +267,7 @@ export function TrashView({
           {/* UNAVAILABLE IS ITS OWN SENTENCE and never an empty list: a demo that said "nothing
               in Trash" would be claiming something about a mailbox it does not have. */}
           {!page.available ? (
-            <div className="empty">
-              <span className="glyph">🗑</span>
-              {t("unavailable")}
-            </div>
+            <ListSentence glyph="🗑">{t("unavailable")}</ListSentence>
           ) : rows.length ? (
             <>
               <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
@@ -298,16 +299,9 @@ export function TrashView({
               ))}
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>
-          ) : page.loading || !page.exhausted ? (
-            /* NEITHER SENTENCE MAY BE SAID YET — the server has not finished answering, and
-               "Trash is empty" about a list nobody has heard back about is a claim. The tail
-               below carries the state; this slot stays quiet. */
-            null
           ) : (
-            <div className="empty">
-              <span className="glyph">🗑</span>
-              {t("empty")}
-            </div>
+            /* "Trash is empty" only once the server's pages end; before that the tail row says so. */
+            <ListEmpty list={list} glyph="🗑" hint={t("empty")} silhouette={false} />
           )}
 
           {/* THE END-OF-LIST LINE — the folder view's own `.tail-row`, carrying the scope
@@ -358,32 +352,44 @@ export function TrashView({
               onSelect={(key) => {
                 setSelectedId(null);
                 setLiveKey(key);
+                if (list.columnHidden()) setLiveSheet(true);
               }}
             />
           ) : null}
         </ListRows>
       </ListPane>
-      <ReadColumn regionLabel={tReader("pane")}>
-        {/* WHICH VERBS THIS COLUMN OFFERS is decided ONCE, by which population is open, and the
-            decision is the only switch: a mirrored row gets `MessagePane`'s restore bar, a live
-            row gets a pane with no action set at all. Not an omitted prop — `MessagePane` with
-            no `trash` renders the full eleven-group bar, so omission would arm every filing verb
-            over a message the mirror has never held. */}
-        {trashReadVerbs({ live: openLive !== null }).verbs === "restore_and_read" ? (
-          shown ? (
-            <MessagePane
-              message={shown.unread === presentsUnread(shown) ? shown : { ...shown, unread: presentsUnread(shown) }}
-              tags={tags}
-              now={now}
-              onAction={(a) => onAction(a, shown)}
-              onAddTag={onAddTag}
-              trash
-            />
-          ) : null
-        ) : openLive !== null && live !== undefined ? (
-          <TrashLiveRead item={openLive} live={live} now={now} />
-        ) : null}
-      </ReadColumn>
+      {/* WHICH VERBS THIS COLUMN OFFERS is decided ONCE, by which population is open: a mirrored
+          row gets `MessagePane`'s restore bar, a live row a pane with no action set at all
+          (`trashReadVerbs`). Not an omitted prop — `MessagePane` with no `trash` renders the full
+          bar, which would arm every filing verb over a message the mirror has never held. */}
+      <ListReadColumn
+        list={list}
+        regionLabel={tReader("pane")}
+        instead={trashReadVerbs({ live: openLive !== null }).verbs === "restore_and_read" || openLive === null || !live
+          ? null
+          : <TrashLiveRead item={openLive} live={live} now={now} />}
+      >
+        {(m) => (
+          <MessagePane
+            message={m.unread === presentsUnread(m) ? m : { ...m, unread: presentsUnread(m) }}
+            tags={tags}
+            now={now}
+            onAction={(a) => onAction(a, m)}
+            onAddTag={onAddTag}
+            trash
+          />
+        )}
+      </ListReadColumn>
+      <Reader
+        open={liveSheet && openLive !== null && live !== undefined}
+        onClose={() => setLiveSheet(false)}
+        ariaLabel={tReader("pane")}
+        returnHint={tReader("hintReturn")}
+        closeLabel={tReader("back")}
+        sheetRef={liveSheetRef}
+      >
+        {openLive !== null && live !== undefined ? <TrashLiveRead item={openLive} live={live} now={now} /> : <span />}
+      </Reader>
     </section>
   );
 }
@@ -453,13 +459,12 @@ function TrashLiveSection({
       {/* FAILED, NEVER EMPTY: "nothing in your mail server's Trash" is an answer, and a read that
           did not happen has no business giving it. The retry is this press, not a loop. */}
       {verdict === "failed" ? (
-        <div className="empty" role="status">
-          <span className="glyph" aria-hidden="true">🗑</span>
+        <ListSentence glyph="🗑" status>
           {t("liveFailed")}
           <button type="button" className="btn ghost" onClick={live.reload}>
             {t("liveRetry")}
           </button>
-        </div>
+        </ListSentence>
       ) : null}
 
       {/* THE SERVER'S OWN TRASH IS ITS OWN LISTBOX, named by the heading above it — these rows

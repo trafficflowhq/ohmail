@@ -18,13 +18,13 @@ import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
 import { presentsUnread, type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
-import { ListGroupLabel, ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
+import { ListGroupLabel, ListPane, ListRows, MessageRow, Spinner } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
-import { readColumnHidden } from "../shell/narrow";
+import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useListWindow } from "../shell/list-window";
 import { useColumnPick } from "../shell/column-pick";
 import type { OlderMail } from "../shell/older-mail";
@@ -101,20 +101,6 @@ export function FolderView({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
-  // The user's pick, else the URL's open message (a search hit's landing), else the first row
-  // so the column is never blank beside a list that has rows — TagView's rule, safe for
-  // TagView's reason: the list does not re-partition under it.
-  const shown =
-    messages.find((m) => m.id === selectedId)
-      ?? older.items.find((m) => m.id === selectedId)
-      ?? (locateId ? messages.find((m) => m.id === locateId) : null)
-      ?? messages[0]
-      ?? older.items[0]
-      ?? null;
-
-  useEffect(() => {
-    if (shown) hydrateBody(shown.id);
-  }, [shown?.id, hydrateBody]);
 
   /**
    * OPENING A ROW MOVES THE CURSOR, ON BOTH LAYOUTS.
@@ -130,7 +116,7 @@ export function FolderView({
     setSelectedId(m.id);
     // Where the column is hidden the sheet is the only reading surface; where it is standing the
     // selection above is the whole open, and nothing leaves the screen.
-    if (readColumnHidden()) onOpen(m);
+    if (list.columnHidden()) onOpen(m);
   };
 
   // The standard grouping, the Ohbox's own labels: unread is what is unhandled here, read is
@@ -167,6 +153,21 @@ export function FolderView({
    */
   const mirrorIds = new Set(ordered.map((m) => m.id));
   const olderRows = older.items.filter((m) => !mirrorIds.has(m.id));
+
+  /* The column's row — the pick, else the URL's open message (a search hit's landing), else the
+     first row — or the gone notice (`useListView`). Empty is said once the server has no older
+     page to give; while one is asked the tail row below says so. */
+  const list = useListView({
+    rows: [...ordered, ...olderRows],
+    settled: !older.available || older.exhausted,
+    pending: older.loading,
+    picked: selectedId,
+    first: (locateId ? messages.find((m) => m.id === locateId) : null) ?? messages[0] ?? older.items[0] ?? null,
+  });
+  const shown = list.shown;
+  useEffect(() => {
+    if (shown) hydrateBody(shown.id);
+  }, [shown?.id, hydrateBody]);
 
   /**
    * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
@@ -250,7 +251,7 @@ export function FolderView({
   const locateIdx = locateId ? ordered.findIndex((m) => m.id === locateId) : -1;
   const locateFound = locateIdx >= 0;
   useColumnPick({
-    picked: selectedId, shown: shown?.id ?? null, locateId, located: locateFound,
+    picked: selectedId, shown: list.standsFor, locateId, located: locateFound,
     select: setSelectedId, onPick,
   });
   useEffect(() => {
@@ -320,17 +321,9 @@ export function FolderView({
               })}
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>
-          ) : olderRows.length > 0 || (older.available && !older.exhausted) ? (
-            // The mirror holds nothing AND either fetched rows exist below (never claim empty
-            // over visible mail) or the server has not finished answering: neither sentence may
-            // be said yet. The tail below carries the state; this slot stays quiet.
-            null
           ) : (
-            <div className="empty">
-              <span className="glyph">📁</span>
-              <b>{t("emptyTitle")}</b>
-              {t("emptyHint")}
-            </div>
+            // Fetched rows below or a page still owed: not empty, and the tail row carries the state.
+            <ListEmpty list={list} glyph="📁" title={t("emptyTitle")} hint={t("emptyHint")} silhouette={false} />
           )}
           {/* MAIL FROM BEYOND WHAT THIS DEVICE KEPT — the Ohbox tail, verbatim in idiom and in
               copy (one namespace, so the two surfaces can never phrase the boundary apart).
@@ -398,23 +391,18 @@ export function FolderView({
         </ListRows>
       </ListPane>
       {/* The reading column — the Ohbox's own; no `onEnterReader`, TagView's reason. */}
-      <ReadColumn regionLabel={tReader("pane")}>
-        {/* THE PANE AGREES WITH THE ROW IT WAS OPENED FROM. `presentsUnread` and not the
-            stored flag: a resurfaced message is drawn unread in the list beside this pane, and
-            a pane offering "Mark unread" over a bold row is the two-derivations defect at arm's
-            length — worse, the fallback verb WRITES `unread: true`, when what a pinned row needs
-            is the deliberate read that releases it. The projection is presentation only;
-            `onAction` still carries the real message. */}
-        {shown ? (
+      {/* THE PANE AGREES WITH THE ROW IT WAS OPENED FROM — `presentsUnread`, TagView's reason. */}
+      <ListReadColumn list={list} regionLabel={tReader("pane")}>
+        {(m) => (
           <MessagePane
-            message={shown.unread === presentsUnread(shown) ? shown : { ...shown, unread: presentsUnread(shown) }}
+            message={m.unread === presentsUnread(m) ? m : { ...m, unread: presentsUnread(m) }}
             tags={tags}
             now={now}
-            onAction={(a) => onAction(a, shown)}
+            onAction={(a) => onAction(a, m)}
             onAddTag={onAddTag}
           />
-        ) : null}
-      </ReadColumn>
+        )}
+      </ListReadColumn>
     </section>
   );
 }

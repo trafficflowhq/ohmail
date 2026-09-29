@@ -15,7 +15,7 @@ import {
   countWhen, listSurface, physicalFolderOf, saysEmpty,
   type EngineMessage, type OhmailEngine, type TagDTO,
 } from "@ohmail/client-engine";
-import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
+import { InfoNote, ListPane, ListRows, MessageRow } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useListWindow } from "../shell/list-window";
 import { useColumnPick } from "../shell/column-pick";
@@ -23,7 +23,7 @@ import { useStoreTimeline } from "../shell/store-timeline";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
-import { readColumnHidden } from "../shell/narrow";
+import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { HistoryRail } from "./HistoryRail";
 import "./history-rail.css";
@@ -139,10 +139,20 @@ export function HistoryView({
     setPicked(was ? { row: was.row, at: was.at < 0 ? was.at : was.at + tl.shifted - shiftSeen } : null);
   }
   const first = tl.rowAt(0);
-  const shown = picked
-    ? (engine.storePageRow(picked.row) ?? picked.row)
-    : first !== null && first !== "gone" ? first : null;
-  const shownAt = picked ? picked.at : shown ? 0 : -1;
+  /* The picked row as it stands now (`storePageRow`), the gone notice where another mail client
+     took it away, else the first slot's row (`useListView`). Empty only over an answered store,
+     or a read mirror where the store is not available. */
+  const answer = tl.state === "unavailable" ? { settled, pending: owed } : { settled: tl.state === "ready", pending: false };
+  const list = useListView({
+    rows: [],
+    count: tl.length,
+    ...answer,
+    picked: picked?.row.id ?? null,
+    resolve: (id) => (picked !== null && picked.row.id === id ? engine.storePageRow(picked.row) : null),
+    first: first !== null && first !== "gone" ? first : null,
+  });
+  const shown = list.shown;
+  const shownAt = picked && shown?.id === picked.row.id ? picked.at : shown ? 0 : -1;
 
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
@@ -173,14 +183,14 @@ export function HistoryView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picked, tl]);
   useColumnPick({
-    picked: picked?.row.id ?? null, shown: shown?.id ?? null, locateId,
+    picked: picked?.row.id ?? null, shown: list.standsFor, locateId,
     located: locateId != null && engine.read().get<EngineMessage>("message", locateId) != null,
     select: selectId, onPick,
   });
 
   const openRow = (m: EngineMessage, at: number) => {
     setPicked({ row: m, at });
-    if (readColumnHidden()) onOpen(m);
+    if (list.columnHidden()) onOpen(m);
   };
 
   /** Move the cursor to slot `i`: select the row there, or scroll to it so its page is fetched. */
@@ -296,8 +306,6 @@ export function HistoryView({
       ? countWhen({ settled, count: tl.length, pending: owed },
         tl.length ? t("metaCount", { count: tl.length }) : undefined)
       : undefined;
-  const empty = tl.length === 0 && (tl.state === "ready"
-    || (tl.state === "unavailable" && saysEmpty(listSurface({ settled, count: 0, pending: owed }))));
 
   const slots: ReactElement[] = [];
   for (let i = win.start; i < win.end; i++) {
@@ -366,33 +374,24 @@ export function HistoryView({
               {slots}
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>
-          ) : empty ? (
-            <div className="empty">
-              <span className="glyph">🕰</span>
-              <b>{t("emptyTitle")}</b>
-              {t("emptyHint")}
-            </div>
           ) : (
-            <div className="empty" role="status" aria-busy="true">
-              <span className="mbx-wait">
-                <Spinner className="mbx-spin" />
-                {speak ? <b>{t("loading")}</b> : null}
-              </span>
-            </div>
+            <ListEmpty list={list} glyph="🕰" title={t("emptyTitle")} hint={t("emptyHint")}>
+              {speak ? <b>{t("loading")}</b> : null}
+            </ListEmpty>
           )}
         </ListRows>
       </ListPane>
-      <ReadColumn regionLabel={tReader("pane")}>
-        {shown ? (
+      <ListReadColumn list={list} regionLabel={tReader("pane")}>
+        {(m) => (
           <MessagePane
-            message={shown}
+            message={m}
             tags={tags}
             now={now}
-            onAction={(a) => onAction(a, shown)}
+            onAction={(a) => onAction(a, m)}
             onAddTag={onAddTag}
           />
-        ) : null}
-      </ReadColumn>
+        )}
+      </ListReadColumn>
     </section>
   );
 }

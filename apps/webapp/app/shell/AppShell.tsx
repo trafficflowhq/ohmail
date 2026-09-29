@@ -76,6 +76,7 @@ import { useDayClock } from "./day-clock";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "./idn";
 import { MessageGone, MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
+import { ListGoneProvider, useListGoneFacts } from "./list-view";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
@@ -1328,7 +1329,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     older, folderOlder, ohbox, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rules, mailboxes, draft, aiChip, account,
-    notifications, allOhbox, ohboxCount, participantsOf, threadCountOf, threadSubjectOf, fallbackMailboxId,
+    notifications, allOhbox, participantsOf, threadCountOf, threadSubjectOf, fallbackMailboxId,
     drafts, scheduled,
   } = useShellDerivations({
     engine, reader, derived, demo, resolvedDemo, now, facts, seedOwed, consent, route, trashWire,
@@ -1842,7 +1843,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const {
     bulkToggleTag, bulkVerbs, canDeleteMessage, canReplyAllTo, changeScreening, confirmSubjectRule,
-    createTag, createTagAlone, dropTag, lastActed, onMessageAction, onStageClickCapture,
+    createTag, createTagAlone, dropTag, actedIds, lastActed, onMessageAction, onStageClickCapture,
     onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
     revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
@@ -1853,6 +1854,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
   });
+  const listGone = useListGoneFacts(engine, actedIds, openTrashWindow);
 
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
      reply draft in its own conversation. See {@link openMessageRef}. */
@@ -1874,7 +1876,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
     aboutSection, desktopSection, devicesSection, onUnread,
     runArmedUndo,
-    allOhbox, ohboxCount, presented, pressSendAndDone,
+    allOhbox, presented, pressSendAndDone,
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
     ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
     trashPage,
@@ -2155,6 +2157,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     // (`MailStateHost`) so the shell can READ the mailbox facts as well as publish them — see
     // the note there. Every surface that reports mailbox state is still inside it.
     <MessageChromeProvider value={chrome}>
+    <ListGoneProvider value={listGone}>
     <div className="app-root">
       <div className="shell">
         {demo && !ribbonGone ? (
@@ -2713,6 +2716,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
             {effectiveView === "triage" ? (
               <TriageView
+                settled={mailState.settled}
+                owed={mailState.owed}
                 threadParticipants={participantsOf}
                 threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}
@@ -2751,6 +2756,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
             {effectiveView === "tag" && tagGroup ? (
               <TagView
+                settled={mailState.settled}
+                owed={mailState.owed}
                 threadParticipants={participantsOf}
                 threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}
@@ -2987,6 +2994,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "drafts" ? (
               <DraftsView
                 drafts={drafts}
+                settled={mailState.settled}
+                owed={mailState.owed}
                 scheduled={scheduled}
                 now={now}
                 onOpen={openDraft}
@@ -3715,6 +3724,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           them and where they can be linked to; the two controls that act on what is on
           screen rather than describe it are at the foot of the rail (`railDock`). */}
     </div>
+    </ListGoneProvider>
     </MessageChromeProvider>
   );
 }
