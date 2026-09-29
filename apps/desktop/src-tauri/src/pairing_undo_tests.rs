@@ -52,6 +52,7 @@ fn hosting(name: &str, autostart: Option<bool>) -> (PathBuf, HostSnapshot) {
         imap_secure: true,
         smtp: None,
         address: Some("reader@example.test".into()),
+        pending: false,
     });
     config::write(&root.join(config::CONFIG_FILE_NAME), &door).expect("door");
     fs::create_dir_all(root.join("engine-local/pgdata")).expect("local store");

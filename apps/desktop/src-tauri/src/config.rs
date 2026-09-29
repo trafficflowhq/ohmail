@@ -103,6 +103,12 @@ pub struct LocalDoor {
     pub smtp: Option<Smtp>,
     /// The address the mailbox is known by, when it differs from the login.
     pub address: Option<String>,
+    /// THE FIRST LOCAL DOOR BEFORE ITS PASSWORD IS SAVED — the local twin of the cloud door's
+    /// `identity_pending`. The engine runs from these settings so the window can seal the password
+    /// onto its row, and nothing is written: the door's own next configure (the relaunch after the
+    /// seal) writes `config.json`, so a refused seal, a quit or a crash leaves no door on disk. The
+    /// exact `true` (`parse`); never written (`to_json`), and a file carrying it reads as no door.
+    pub pending: bool,
 }
 
 /// Which shape of server a cloud door opens. `None` is every door written before the fourth one.
@@ -184,6 +190,11 @@ impl Config {
     /// Is this the hosted door waiting for its account? See `CloudDoor::identity_pending`.
     pub fn is_identity_pending(&self) -> bool {
         matches!(self, Config::Cloud(c) if c.identity_pending)
+    }
+
+    /// Is this the first local door waiting for its password? See `LocalDoor::pending`.
+    pub fn is_door_pending(&self) -> bool {
+        matches!(self, Config::Local(l) if l.pending)
     }
 }
 
@@ -749,6 +760,8 @@ pub fn parse(value: &serde_json::Value) -> Result<Config, String> {
                 imap_secure: bool_at(imap, "secure", true),
                 smtp,
                 address: string_at(map, "address"),
+                // The exact boolean, like `identityPending`: a truthy near-miss is a written door.
+                pending: matches!(map.get("pending"), Some(serde_json::Value::Bool(true))),
             }))
         }
         "cloud" => {
@@ -833,6 +846,7 @@ pub fn to_json(config: &Config) -> serde_json::Value {
             if let Some(address) = &l.address {
                 out["address"] = serde_json::Value::String(address.clone());
             }
+            // NEVER `pending`: a pending door is not written (`LocalDoor::pending`).
             out
         }
         Config::Cloud(c) => {
@@ -1116,7 +1130,9 @@ pub fn unset_for(config: &Config) -> Vec<OsString> {
 pub fn read(path: &Path) -> Option<Config> {
     let raw = fs::read_to_string(path).ok()?;
     let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
-    parse(&value).ok()
+    // A PENDING DOOR ON DISK IS NO DOOR: nothing writes one (`to_json` never does), and a launch
+    // must never spawn an engine for a door whose password was not saved.
+    parse(&value).ok().filter(|config| !config.is_door_pending())
 }
 
 /// Every staging file this process makes gets its own number. See {@link staging_path}.

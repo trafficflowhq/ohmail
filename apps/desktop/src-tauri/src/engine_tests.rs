@@ -2732,6 +2732,112 @@ fn configuring_the_pending_door_writes_no_door_and_is_only_for_an_install_with_n
     let _ = fs::remove_dir_all(&root);
 }
 
+// ── THE FIRST LOCAL DOOR IS WRITTEN ONLY AFTER ITS PASSWORD IS SAVED ─────────────────────────
+//
+// The first-run "On this computer" door configured first and sealed second, so a refused seal left
+// `config.json` naming a mailbox with no password: the gate entered the mail client at its next
+// poll and at every launch after. The door now configures PENDING (nothing written, `doorPending`
+// on the status, which the chooser holds on) and its own next configure — the relaunch after the
+// seal — is the commit that writes the file.
+
+/// The first-run local door's first configure, as `enterLocalDoor` sends it on an install with none.
+fn pending_local_door() -> serde_json::Value {
+    serde_json::json!({
+        "mode": "local",
+        "imap": { "host": "mail.home.arpa", "user": "mila@home.arpa", "port": 143, "secure": false },
+        "address": "mila@home.arpa",
+        "pending": true,
+    })
+}
+
+/// A root carrying a written local door — what a pending one must never be configured over.
+fn local_door_root(name: &str) -> PathBuf {
+    let root = candidate_root(name);
+    let door = crate::config::Config::Local(crate::config::LocalDoor {
+        imap_host: "imap.example.org".to_string(),
+        imap_user: "someone@example.org".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: None,
+        pending: false,
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    root
+}
+
+#[test]
+fn the_pending_local_door_writes_no_door_and_its_next_configure_commits_it() {
+    with_key_in_env();
+    let root = candidate_root("pending-local");
+    let file = root.join(crate::config::CONFIG_FILE_NAME);
+    let shell = Shell::rooted_for_tests(&root);
+    let status = shell.configure(&pending_local_door()).expect("a pending local door on an install with none");
+    assert!(!file.exists(), "the pending local door wrote a door a refused seal would leave behind");
+    assert_eq!(status["doorPending"], serde_json::Value::Bool(true), "{status}");
+    // NOT the hosted door's cue: `identityPending` beside an address is "relaunch behind the claim".
+    assert!(status.get("identityPending").is_none(), "{status}");
+    assert_eq!(status["mode"], serde_json::Value::Null, "a pending door named a door on disk: {status}");
+
+    let mut committed = pending_local_door();
+    committed.as_object_mut().expect("an object").remove("pending");
+    let after = shell.configure(&committed).expect("the commit: the same door, after the seal");
+    assert!(file.exists(), "the commit wrote no door");
+    assert!(after.get("doorPending").is_none(), "the commit left the door pending: {after}");
+    assert_eq!(after["mode"], serde_json::Value::String("local".to_string()), "{after}");
+    let written: serde_json::Value =
+        serde_json::from_slice(&fs::read(&file).expect("the door")).expect("json");
+    assert!(written.get("pending").is_none(), "the flag reached the disk: {written}");
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_pending_local_door_is_refused_over_a_local_door_and_over_a_cloud_one() {
+    with_key_in_env();
+    for root in [local_door_root("pending-over-local"), signed_in_root("pending-over-cloud", "https://api.ohmail.app")] {
+        let file = root.join(crate::config::CONFIG_FILE_NAME);
+        let before = fs::read(&file).expect("the door");
+        let shell = Shell::rooted_for_tests(&root);
+        let refused = shell.configure(&pending_local_door()).expect_err("a pending door over a chosen one");
+        assert!(refused.contains("already has a door"), "{refused}");
+        assert_eq!(fs::read(&file).expect("the door"), before, "the refusal moved the door");
+        assert!(shell.status().get("doorPending").is_none(), "a refused pending door was reported");
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[test]
+fn a_pending_local_door_that_gave_up_is_retried_onto_no_door() {
+    // Nothing of it is on disk, so the re-plan the press takes is the chooser — never "nothing to start".
+    let root = candidate_root("pending-retry");
+    let shell = Shell {
+        paths: ShellPaths { app_data: Some(root.clone()), resources: None, downloads: None },
+        engine: Mutex::new(Arc::new(Engine::inert(EngineState::Failed {
+            reason: "four starts in a row failed".to_string(),
+            last: None,
+        }))),
+        host_plan: Mutex::new(None),
+        door: Mutex::new(()),
+        leaving: Mutex::new(Leaving::NotStarted),
+        pending_door: Mutex::new(Some(Mode::Local)),
+    };
+    assert_eq!(shell.status()["doorPending"], serde_json::Value::Bool(true));
+    let answered = shell.retry().expect("the press on a pending door that gave up is answered");
+    /* THE PLAN THE DISK GIVES, whatever this harness's engine resolves to (`absent` here, where no
+       binary is packaged; `not_configured` in the app): the same answer a shell with no door reads. */
+    let no_door = {
+        let fresh = Shell::rooted_for_tests(&root);
+        fresh.replan();
+        fresh.status()
+    };
+    assert_eq!(answered["state"], no_door["state"], "{answered}");
+    assert_ne!(answered["state"], serde_json::Value::String("failed".to_string()), "{answered}");
+    assert_eq!(answered["mode"], serde_json::Value::Null, "{answered}");
+    assert!(answered.get("doorPending").is_none(), "the flag outlived the press: {answered}");
+    let _ = fs::remove_dir_all(&root);
+}
+
 // ── THE CANDIDATE WALK: NOTHING OF THIS INSTALL'S IS TOUCHED ────────────────────────────────
 //
 // The paired door's first step asks an engine, and a fresh install has none — so where there is no
@@ -3010,6 +3116,7 @@ fn one_function_picks_the_list_and_the_label_for_every_door() {
         imap_secure: true,
         smtp: None,
         address: None,
+        pending: false,
     });
     let paired = paired_door(Some(FIXTURE_PIN));
     let pending = pending_door();
@@ -3053,6 +3160,7 @@ fn the_status_names_the_paired_computer_from_the_door_and_never_the_bridge() {
         imap_secure: true,
         smtp: None,
         address: None,
+        pending: false,
     }));
     assert_eq!(local.get("mode").and_then(|v| v.as_str()), Some("local"));
     assert!(!local.contains_key("cloudUrl"));
@@ -4157,6 +4265,7 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
         imap_secure: true,
         smtp: None,
         address: None,
+        pending: false,
     });
     crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
     // …and REAL resources, so `planned` resolves a spawnable engine without touching the process
@@ -4179,7 +4288,7 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
         leaving: Mutex::new(Leaving::NotStarted),
-        pending_door: AtomicBool::new(false),
+        pending_door: Mutex::new(None),
     };
     // The lock sits where the PLAN says the engine's data directory is — read the way the press
     // reads it, so the fixture cannot drift from the resolution it exercises.
@@ -4274,6 +4383,7 @@ fn the_start_over_press_sets_the_store_aside_and_starts_the_engine_again() {
         imap_secure: true,
         smtp: None,
         address: None,
+        pending: false,
     });
     crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
     let res = root.join("resources");
@@ -4293,7 +4403,7 @@ fn the_start_over_press_sets_the_store_aside_and_starts_the_engine_again() {
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
         leaving: Mutex::new(Leaving::NotStarted),
-        pending_door: AtomicBool::new(false),
+        pending_door: Mutex::new(None),
     };
     // The store sits where the PLAN says the data directory is, read the way the press reads it.
     let planned = shell.planned(None);
@@ -4349,6 +4459,7 @@ fn the_retry_press_starts_the_engine_again_and_removes_nothing() {
         imap_secure: true,
         smtp: None,
         address: None,
+        pending: false,
     });
     crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
     let res = root.join("resources");
@@ -4368,7 +4479,7 @@ fn the_retry_press_starts_the_engine_again_and_removes_nothing() {
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
         leaving: Mutex::new(Leaving::NotStarted),
-        pending_door: AtomicBool::new(false),
+        pending_door: Mutex::new(None),
     };
     let planned = shell.planned(None);
     let Plan::Spawn(launch) = &planned else {
@@ -4405,7 +4516,7 @@ fn the_retry_press_refuses_an_install_with_no_engine_to_start() {
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
         leaving: Mutex::new(Leaving::NotStarted),
-        pending_door: AtomicBool::new(false),
+        pending_door: Mutex::new(None),
     };
     let said = shell.retry().expect_err("an inert plan must refuse the press");
     assert!(said.contains("no engine to start"), "the refusal names the wrong thing: {said}");
@@ -4430,6 +4541,7 @@ fn the_retry_press_re_plans_a_no_key_engine_through_the_keystore() {
         imap_secure: true,
         smtp: None,
         address: None,
+        pending: false,
     });
     crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
     let res = root.join("resources");
@@ -4447,7 +4559,7 @@ fn the_retry_press_re_plans_a_no_key_engine_through_the_keystore() {
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
         leaving: Mutex::new(Leaving::NotStarted),
-        pending_door: AtomicBool::new(false),
+        pending_door: Mutex::new(None),
     };
     crate::engine::keystore_double::queue(vec![
         Err("the keystore is still locked".to_string()),
@@ -4624,6 +4736,7 @@ fn local_root(name: &str, frozen_cloud: bool) -> PathBuf {
         imap_secure: true,
         smtp: None,
         address: Some("reader@example.test".to_string()),
+        pending: false,
     });
     crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
     fs::create_dir_all(root.join("engine-local/pgdata")).expect("local store");

@@ -26,6 +26,7 @@ fn local_door() -> Config {
         imap_secure: true,
         smtp: Some(Smtp { host: "smtp.example.org".to_string(), port: 587, secure: false }),
         address: None,
+        pending: false,
     })
 }
 
@@ -1290,4 +1291,39 @@ fn the_mirror_owner_record_is_spelled_the_same_way_in_the_engine() {
         .unwrap_or_else(|e| panic!("could not read {}: {e}", engine.display()));
     let needle = format!("export const MIRROR_OWNER_FILE = \"{MIRROR_OWNER_FILE}\";");
     assert!(source.contains(&needle), "the engine does not declare {needle:?}");
+}
+
+// ── THE PENDING LOCAL DOOR: PARSED FROM THE WINDOW, NEVER WRITTEN, NEVER READ BACK ────────────
+
+fn pending_json(pending: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "mode": "local",
+        "imap": { "host": "mail.home.arpa", "user": "mila@home.arpa", "port": 143, "secure": false },
+        "pending": pending,
+    })
+}
+
+#[test]
+fn a_local_door_is_pending_on_the_exact_boolean_only() {
+    assert!(parse(&pending_json(serde_json::Value::Bool(true))).expect("parses").is_door_pending());
+    for near in [serde_json::json!("true"), serde_json::json!(1), serde_json::json!(false)] {
+        let door = parse(&pending_json(near.clone())).expect("parses");
+        assert!(!door.is_door_pending(), "{near} made a pending door");
+    }
+    assert!(!parse(&pending_json(serde_json::Value::Bool(true))).expect("parses").is_identity_pending());
+}
+
+#[test]
+fn a_pending_local_door_is_never_written_and_a_file_carrying_it_reads_as_no_door() {
+    let door = parse(&pending_json(serde_json::Value::Bool(true))).expect("parses");
+    assert!(to_json(&door).get("pending").is_none(), "{}", to_json(&door));
+    let dir = std::env::temp_dir().join(format!("ohmail-pending-read-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch");
+    let file = dir.join(CONFIG_FILE_NAME);
+    std::fs::write(&file, serde_json::to_vec(&pending_json(serde_json::Value::Bool(true))).unwrap()).unwrap();
+    assert_eq!(read(&file), None, "a pending door on disk was read as a door");
+    std::fs::write(&file, serde_json::to_vec(&pending_json(serde_json::Value::Bool(false))).unwrap()).unwrap();
+    assert!(read(&file).is_some(), "the same door without the flag must read");
+    let _ = std::fs::remove_dir_all(&dir);
 }

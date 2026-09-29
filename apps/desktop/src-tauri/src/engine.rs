@@ -73,7 +73,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -1412,10 +1412,12 @@ pub struct Shell {
     /// process its own destroy while a handler is blocked inside it. The waiting happens on a
     /// thread of its own now, and the process exits when it ends.
     leaving: Mutex<Leaving>,
-    /// THE ENGINE RUNNING NOW IS THE PENDING DOOR'S. Its claim writes `config.json`, so the file
-    /// alone cannot say so: the status reports it (`identityPending`) until the next spawn, and the
-    /// window keeps its chooser up until it relaunches the engine behind the adopted door.
-    pending_door: AtomicBool,
+    /// THE ENGINE RUNNING NOW IS A PENDING DOOR'S, and which kind. The hosted door waiting for its
+    /// account (`Mode::Cloud`): its claim writes `config.json`, so the file alone cannot say so, and
+    /// the status reports `identityPending` until the next spawn. The first local door waiting for
+    /// its password (`Mode::Local`): nothing is written until the door's own next configure, and the
+    /// status reports `doorPending`. Either way the window keeps its chooser up.
+    pending_door: Mutex<Option<Mode>>,
 }
 
 /// THE PAIRED COMPUTER A PAIRING WAS UNDONE AGAINST WHILE IT STILL HELD A SESSION THERE — this
@@ -1477,7 +1479,7 @@ impl Shell {
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
-            pending_door: AtomicBool::new(false),
+            pending_door: Mutex::new(None),
         }
     }
 
@@ -1491,7 +1493,7 @@ impl Shell {
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
-            pending_door: AtomicBool::new(false),
+            pending_door: Mutex::new(None),
         }
     }
 }
@@ -1580,7 +1582,7 @@ impl Shell {
             host_plan: Mutex::new(host),
             door: Mutex::new(()),
             leaving: Mutex::new(Leaving::NotStarted),
-            pending_door: AtomicBool::new(false),
+            pending_door: Mutex::new(None),
         }
     }
 
@@ -1619,7 +1621,7 @@ impl Shell {
     /// Restart the engine from the stored configuration and the current host-mode decision —
     /// what arming and disarming do once the setting is written.
     pub fn replan(&self) {
-        self.pending_door.store(false, Ordering::SeqCst);
+        *self.pending_door.lock().expect("pending door") = None;
         self.replace(self.planned(None));
     }
 
@@ -1659,7 +1661,7 @@ impl Shell {
                 ));
             }
         }
-        self.pending_door.store(false, Ordering::SeqCst);
+        *self.pending_door.lock().expect("pending door") = None;
         self.replace(plan);
         Ok(self.status())
     }
@@ -1686,7 +1688,7 @@ impl Shell {
             log_line(format_args!("start over: the store could not be moved aside ({err})"));
             format!("the store could not be moved aside ({err}); the engine was not restarted")
         })?;
-        self.pending_door.store(false, Ordering::SeqCst);
+        *self.pending_door.lock().expect("pending door") = None;
         self.replace(plan);
         Ok(self.status())
     }
@@ -1706,10 +1708,13 @@ impl Shell {
             _ => return Err("the engine has not given up, so it was not restarted".to_string()),
         };
         let plan = self.planned(None);
-        if !from_no_key && !matches!(plan, Plan::Spawn(_)) {
+        /* A PENDING DOOR'S ENGINE GAVE UP, and nothing of it is on disk: the plan the disk gives is
+           the answer (no door, so the chooser), never a refusal a person cannot get past. */
+        let pending = self.pending_door.lock().expect("pending door").is_some();
+        if !from_no_key && !pending && !matches!(plan, Plan::Spawn(_)) {
             return Err("this install has no engine to start; nothing was restarted".to_string());
         }
-        self.pending_door.store(false, Ordering::SeqCst);
+        *self.pending_door.lock().expect("pending door") = None;
         self.replace(plan);
         Ok(self.status())
     }
@@ -2083,12 +2088,21 @@ impl Shell {
         let path = self.paths.config_path().ok_or_else(|| {
             "this computer named no place for the app to keep its settings".to_string()
         })?;
-        // THE PENDING DOOR IS NOT WRITTEN: its claim CREATES `config.json` once, with the account
-        // it adopted, and refuses when a file is there. So it is an install with no door's only.
+        // THE PENDING DOORS ARE NOT WRITTEN: the hosted one's claim CREATES `config.json` once, with
+        // the account it adopted, and the local one's file is written by its own next configure,
+        // after its password is saved. So both are an install with no door's only, over a local
+        // file and a cloud one alike.
         if config.is_identity_pending() && self.paths.config().is_some() {
             return Err(
                 "this install already has a door; confirming in a browser with no address is \
                  how an install with none is set up"
+                    .to_string(),
+            );
+        }
+        if config.is_door_pending() && self.paths.config().is_some() {
+            return Err(
+                "this install already has a door; opening a mailbox before its password is saved \
+                 is how an install with none is set up"
                     .to_string(),
             );
         }
@@ -2101,7 +2115,7 @@ impl Shell {
                     Ok(left_at) => {
                         self.note_pairing_left(left_at);
                         log_configured(&config, provisional);
-                        self.pending_door.store(false, Ordering::SeqCst);
+                        *self.pending_door.lock().expect("pending door") = None;
                         leave_erased_copy(&root, &config);
                         self.planned(Some(&config))
                     }
@@ -2114,8 +2128,8 @@ impl Shell {
             outcome?;
             return Ok(self.status());
         }
-        if config.is_identity_pending() {
-            // An unreadable leftover (which reads as no door) is cleared for the pending door.
+        if config.is_identity_pending() || config.is_door_pending() {
+            // An unreadable leftover (which reads as no door) is cleared for a pending door.
             config::remove(&path)?;
         } else {
             config::write(&path, &config)?;
@@ -2123,7 +2137,7 @@ impl Shell {
         log_configured(&config, false);
         // Through `planned`, so an armed host door survives a reconfigure of the SAME door and
         // is correctly absent when the door is not the local one.
-        self.pending_door.store(config.is_identity_pending(), Ordering::SeqCst);
+        *self.pending_door.lock().expect("pending door") = pending_kind(&config);
         self.replace_with(|| {
             leave_erased_copy(&root, &config);
             self.planned(Some(&config))
@@ -2184,7 +2198,7 @@ impl Shell {
                 }
                 Err(reason) => outcome = Err(reason),
             }
-            self.pending_door.store(false, Ordering::SeqCst);
+            *self.pending_door.lock().expect("pending door") = None;
             self.planned(None)
         });
         let undone = outcome?;
@@ -2406,7 +2420,7 @@ impl Shell {
         // NOT a re-plan. After a sign-out the honest state is "nothing is configured", and
         // re-planning would start an engine again from whatever the environment happens to say —
         // which on a developer's machine is the door the person just left.
-        self.pending_door.store(false, Ordering::SeqCst);
+        *self.pending_door.lock().expect("pending door") = None;
         self.replace(Plan::Inert(EngineState::NotConfigured {
             missing: vec![config::CONFIG_FILE_NAME.to_string()],
             door: None,
@@ -2427,9 +2441,14 @@ impl Shell {
                     object.insert("mode".into(), serde_json::Value::Null);
                 }
             }
-            // Beside whatever the file says, because the pending engine's claim is what writes it.
-            if self.pending_door.load(Ordering::SeqCst) {
-                object.insert("identityPending".into(), true.into());
+            // Beside whatever the file says, because the pending engine's claim is what writes it —
+            // and for the pending local door, whose file is written by the door's next configure.
+            // Two names on purpose: `identityPending` beside an address is the window's cue to
+            // relaunch behind an adopted door, which a local door must never be able to satisfy.
+            match *self.pending_door.lock().expect("pending door") {
+                Some(Mode::Cloud) => { object.insert("identityPending".into(), true.into()); }
+                Some(Mode::Local) => { object.insert("doorPending".into(), true.into()); }
+                None => {}
             }
             // A SWITCH NOT YET ANSWERED, read from the disk it is kept on, like the door itself.
             if self.paths.app_data.as_deref().is_some_and(|root| config::switch_path(root).exists()) {
@@ -2583,6 +2602,18 @@ fn switch_on_disk(
         return Err(reason);
     }
     Ok(left_at)
+}
+
+/// WHICH PENDING DOOR A CONFIGURE STARTS, if any — the one reader of the two flags the status and
+/// the refusals share. `None` is every door that is written.
+fn pending_kind(config: &Config) -> Option<Mode> {
+    if config.is_identity_pending() {
+        Some(Mode::Cloud)
+    } else if config.is_door_pending() {
+        Some(Mode::Local)
+    } else {
+        None
+    }
 }
 
 fn log_configured(config: &Config, provisional: bool) {
