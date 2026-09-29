@@ -9,7 +9,7 @@
  */
 import { requireOptionalNativeModule } from "expo";
 
-import type { FoldFeature } from "./derive";
+import type { FoldFeature, WindowFrame } from "./derive";
 
 export interface PostureNative {
   /** The current folds crossing the app's window, or null where the platform has no reading. */
@@ -20,6 +20,11 @@ export interface PostureNative {
   getLaunchOverride(): string | null;
   /** The status bar's frame in window points — the closed Duo's right-strip cluster; iOS only. */
   getStatusCluster?(): Promise<{ x: number; y: number; width: number; height: number } | null>;
+  /**
+   * The key window's frame in the screen's space — iOS only, read on the main queue where UIKit's
+   * windows are, so it answers asynchronously; absent (Android) or null where there is none.
+   */
+  getWindowFrame?(): Promise<WindowFrame | null>;
   addListener?(event: string, listener: (payload: { folds: FoldFeature[] }) => void): { remove(): void };
 }
 

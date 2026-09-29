@@ -14,10 +14,12 @@ import {
   derivePosture,
   parsePostureOverride,
   statusClusterOf,
+  windowBoundsOf,
   type FoldFeature,
   type PlatformName,
   type Posture,
   type PostureOverride,
+  type WindowFrame,
 } from "./derive";
 import { nativePosture } from "./posture-native";
 
@@ -64,6 +66,17 @@ export function PostureProvider({
     return () => sub?.remove();
   }, []);
 
+  /* THE WINDOW'S FRAME, re-read whenever the window changes size: iOS answers on the main queue,
+     Android has no reading, and `null` keeps the width-only one until an answer arrives. */
+  const [frame, setFrame] = useState<WindowFrame | null>(null);
+  useEffect(() => {
+    const native = nativePosture();
+    if (native?.getWindowFrame === undefined) return undefined;
+    let current = true;
+    native.getWindowFrame().then((f) => { if (current) setFrame(f); }, () => { if (current) setFrame(null); });
+    return () => { current = false; };
+  }, [dims.width, dims.height]);
+
   const value = useMemo<Posture>(() => {
     const forced = override ?? launchOverride();
     if (forced) {
@@ -77,12 +90,8 @@ export function PostureProvider({
         windowBounds: forced.windowBounds ?? null,
       });
     }
-    /* Split detection without a native window position: the window narrower than the screen is
-       a split; the side is unknown from JS alone, and 'left' is the harmless default until the
-       native half reports bounds — Android keeps its dock in a split anyway. */
-    const screen = Dimensions.get("screen");
-    const windowBounds =
-      screen.width - dims.width > 40 ? { x: 0, w: dims.width, screenW: screen.width } : null;
+    /* The side from the platform's frame where it gives one — `windowBoundsOf` decides. */
+    const windowBounds = windowBoundsOf(frame, dims, Dimensions.get("screen"));
     return derivePosture({
       platform: platformName,
       width: dims.width,
@@ -92,7 +101,7 @@ export function PostureProvider({
       isPad: Platform.OS === "ios" && Platform.isPad === true,
       windowBounds,
     });
-  }, [override, dims.width, dims.height, folds, hasFold]);
+  }, [override, dims.width, dims.height, folds, hasFold, frame]);
 
   return <PostureContext.Provider value={value}>{children}</PostureContext.Provider>;
 }

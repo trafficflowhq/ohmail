@@ -78,6 +78,23 @@ export interface PostureInput {
   windowBounds?: { x: number; w: number; screenW: number } | null;
 }
 
+/** The window's frame in the screen's coordinate space, as the platform reports it (iOS). */
+export interface WindowFrame { x: number; w: number; screenW: number }
+
+/**
+ * WHERE THE WINDOW SITS — the platform's own frame where it answers (iOS: the key window in the
+ * screen's space, so a right-half split says right), else the width-only reading: narrower than
+ * the screen is a split, placed at `x: 0` because nothing says the side. Android answers no frame
+ * and needs none: every Android split plans the dock (`scaffold/plan.ts`), so the side is read by
+ * nothing there. A frame as wide as the screen is no split, whatever the width reading says.
+ */
+export function windowBoundsOf(
+  frame: WindowFrame | null, dims: { width: number }, screen: { width: number },
+): WindowFrame | null {
+  if (frame !== null) return frame.screenW - frame.w > 40 ? { x: frame.x, w: frame.w, screenW: frame.screenW } : null;
+  return screen.width - dims.width > 40 ? { x: 0, w: dims.width, screenW: screen.width } : null;
+}
+
 export const sizeClassOf = (w: number): SizeClass =>
   w < 600 ? "compact" : w < 840 ? "medium" : "expanded";
 export const heightClassOf = (h: number): SizeClass =>

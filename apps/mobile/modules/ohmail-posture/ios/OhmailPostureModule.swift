@@ -105,6 +105,18 @@ public class OhmailPostureModule: Module {
       return ["x": f.origin.x, "y": f.origin.y, "width": f.width, "height": f.height]
     }.runOnQueue(.main)
 
+    // The key window's frame in its screen's coordinate space, and the screen's width — which
+    // half a split window is in (`windowBoundsOf` in derive.ts). Main queue, for the reason above.
+    AsyncFunction("getWindowFrame") { () -> [String: Double]? in
+      guard let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
+        ?? UIApplication.shared.connectedScenes.first as? UIWindowScene,
+        let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first else { return nil }
+      let screen = scene.screen.bounds
+      let frame = window.convert(window.bounds, to: scene.screen.coordinateSpace)
+      if frame.width <= 0 || screen.width <= 0 { return nil }
+      return ["x": Double(frame.origin.x), "w": Double(frame.width), "screenW": Double(screen.width)]
+    }.runOnQueue(.main)
+
     Function("getLaunchOverride") { () -> String? in
       return ProcessInfo.processInfo.environment["OHMAIL_POSTURE"]
     }
