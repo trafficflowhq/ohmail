@@ -239,12 +239,12 @@ export class PrivacyService {
     /**
      * THE PIXEL PREFERENCE IS ENFORCED BEFORE THE FETCH, for the trackers the server knows. The
      * client's own refusal cannot know this list; an ESP's click host serving `r/abc.jpg` arrives
-     * here as "a picture". Classifying AFTER the fetch has already told the sender about the open
-     * — the one event "Block tracking pixels" exists to prevent. So a known tracker host or
+     * here as "a picture", and classifying AFTER the fetch has already told the sender about the
+     * open. So a tracking-only host (`TRACKER_HOSTS`, none of which serves a real picture) or a
      * beacon-shaped url is refused the FETCH while the pixel switch stands (mail 0072), whatever
-     * the images grant says; the reader gets the same transparent stub a fetched 1×1 gets, and
-     * the event is recorded so the feed can say who tried. The post-fetch dimension check stays:
-     * the half that needs the bytes — an unknown host's undeclared 1×1.
+     * the images grant says; the reader gets the transparent stub a fetched 1×1 gets, and the
+     * event is recorded so the feed can say who tried. The post-fetch dimension check stays: the
+     * half that needs the bytes — any other host's undeclared 1×1.
      */
     const host = hostOf(url);
     const trackerByUrl = isKnownTracker(host) || isBeaconUrl(url);

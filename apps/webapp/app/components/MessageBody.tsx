@@ -14,6 +14,7 @@
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalTheme } from "@ohmail/ui";
+import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
 import {
   anchorFor,
   BodyText,
@@ -271,7 +272,8 @@ export interface BlockedAsset {
  * A url shaped like an open-tracking beacon: a beacon word in its PATH (`/wf/open?u=…`,
  * `/pixel.gif`) or a per-recipient key in its query (`?uid=…`) — never its host, never a size:
  * `p.png?w=120` is a sized picture. The twin of `@ohmail/client-engine`'s `BEACON_PATH`, the
- * rule's home; `test/mail-render-rules-parity.test.ts` holds the literals equal.
+ * rule's home; `test/mail-render-rules-parity.test.ts` holds the literals equal. Every call site
+ * tests the url with unreserved escapes decoded (`decodeUnreservedEscapes`), so `/%6fpen` is `/open`.
  */
 const BEACON_PATH =
   /^[^?#]*[^/?#]\/(?:wf\/open|open|track|tracking|beacon|pixel|spy|imp|impression)(?:[./?#]|$)|[?&](?:mid|eid|uid|rid|recipient|subscriber)\b/i;
@@ -2283,7 +2285,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * agree that a beacon is never fetched, and one place saying it is easier to keep true than two.
    */
   const cssUrl = (url: string, tiny = false): string | null => {
-    const beacon = tiny || BEACON_PATH.test(url);
+    const beacon = tiny || BEACON_PATH.test(decodeUnreservedEscapes(url));
     record(url, "css", beacon);
     // `loadPixels` lifts the beacon override and nothing else — the proxy is still the only road.
     return proxy && (!beacon || loadPixels) ? proxy(url) : null;
@@ -2315,7 +2317,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     // Decided FIRST, and used by both the style-attribute rewrite below and the img branch, so
     // the answer cannot depend on which of them happens to run first.
     const pixel =
-      tag === "img" && (declaresPixel(node) || BEACON_PATH.test(node.getAttribute("src") ?? ""));
+      tag === "img" && (declaresPixel(node) || BEACON_PATH.test(decodeUnreservedEscapes(node.getAttribute("src") ?? "")));
 
     neutraliseStyleAttr(node, (url) => cssUrl(url, pixel), cssCid);
 
@@ -2346,7 +2348,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     const bg = node.getAttribute("background");
     if (bg) {
       node.removeAttribute("background");
-      if (REMOTE_URL.test(bg)) record(bg, "attr", BEACON_PATH.test(bg));
+      if (REMOTE_URL.test(bg)) record(bg, "attr", BEACON_PATH.test(decodeUnreservedEscapes(bg)));
     }
 
     if (tag === "img") {

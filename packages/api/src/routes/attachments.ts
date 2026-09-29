@@ -1,29 +1,43 @@
-import {
-  ServiceError, mailServerRefusalOf, type DownloadAllInput, type MailServerRefusalKind,
-} from "@trafficflow/services/mail";
+import { type DownloadAllInput } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { jsonResponse, errorResponse } from "../responses.js";
+import { jsonResponse } from "../responses.js";
 import { makeOpenAdapter } from "../attachments-adapter.js";
+import { mailServerRefusal } from "../mail-server-refusal.js";
+import { withErrorEnvelope, type Middleware } from "../middleware.js";
 import type { Route } from "../router.js";
 import { attachments, readBody } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
-
-/** The sentence for a refusal the person's mail server made while one attachment was fetched. */
-const MAIL_SERVER_REFUSED: Record<MailServerRefusalKind, string> = {
-  unreachable: "your mail server could not be reached, so this attachment could not be loaded",
-  not_secured: "the connection to your mail server could not be secured, so this attachment could not be loaded",
-  login_refused: "your mail server refused the sign-in, so this attachment could not be loaded",
-};
 
 /**
  * Attachments & files. Metadata lives server-side; the blob bytes do not — `GET /attachments/:id`
  * and the two `download-all` routes fetch bytes on demand from IMAP and stream them straight
  * back, never persisted. The byte/zip routes are raw (reduced pipeline — still session-gated):
- * they return `application/octet-stream` / `application/zip`, not the JSON envelope, so they map
- * their own ServiceErrors (`GET /img` in `privacy.ts` does the same). `download-all` is
- * synchronous — the zip is assembled from IMAP and returned in the response — so `GET
- * /downloads/:jobId` is omitted.
+ * a success is `application/octet-stream` / `application/zip`, a failure the JSON envelope.
+ * `download-all` is synchronous — the zip is assembled from IMAP and returned in the response —
+ * so `GET /downloads/:jobId` is omitted.
  */
+
+/**
+ * EVERY REFUSAL OF A BYTE ROUTE STATES WHETHER ASKING AGAIN CAN HELP. A source that knows says so
+ * (`mailbox_busy`, the 424s); an answer that says nothing gets the status reading every shipped
+ * client already applies (`retryable ?? (5xx || 429)`), written down. A 424 that stated nothing
+ * would read "never" in those clients, and the reader's Try again is keyed on this flag.
+ */
+const withStatedRetry: Middleware = (next) => async (req, deps, params) => {
+  const res = await next(req, deps, params);
+  if (res.ok || !(res.headers.get("Content-Type") ?? "").startsWith("application/json")) return res;
+  const body = await res.clone().json().catch(() => null) as { error?: { retryable?: unknown } } | null;
+  if (!body?.error || typeof body.error.retryable === "boolean") return res;
+  body.error.retryable = res.status >= 500 || res.status === 429;
+  return jsonResponse(body, { status: res.status, headers: Object.fromEntries(res.headers) });
+};
+
+/**
+ * The byte routes carry the envelope FULL routes have: a `ServiceError` keeps its status, code and
+ * `retryable`, and an unnamed throw is the 500 `internal` with `request_unhandled` and a fault row
+ * — never a 502 blaming the person's mail server for a fault of ours.
+ */
+const BYTE_ROUTE_MIDDLEWARE: readonly Middleware[] = [withStatedRetry, withErrorEnvelope];
 
 /** Copy a view's bytes into a standalone ArrayBuffer so the body is a plain BodyInit. */
 function toBody(bytes: Uint8Array): ArrayBuffer {
@@ -68,7 +82,7 @@ export const attachmentRoutes: Route[] = [
     // verification gate entirely (RAW_PIPELINE omitted it), so the three costliest reads in
     // the product could not have been gated even by marking them one at a time.
     cost: "connection",
-    options: { raw: true },   // streams the blob fetched live from IMAP (reduced pipeline; still session-gated)
+    options: { raw: true, middleware: BYTE_ROUTE_MIDDLEWARE },   // streams the blob fetched live from IMAP
     handler: async (req, deps, params) => {
       try {
         const { contentType, filename, body } = await attachments(deps).fetchBytes(
@@ -89,17 +103,8 @@ export const attachmentRoutes: Route[] = [
           },
         });
       } catch (err) {
-        if (err instanceof ServiceError) return errorResponse(err.code, err.httpStatus, err.message, err.details);
-        /**
-         * A refusal the person's mail server made is 424, not a 5xx of ours, with the code it had
-         * and `retryable` stating what the 502 implied. Anything else is an unclassified throw,
-         * most likely ours, and keeps its 502, whose code still names the mail server.
-         */
-        const refused = mailServerRefusalOf(err);
-        if (refused !== null) {
-          return errorResponse("upstream_unavailable", 424, MAIL_SERVER_REFUSED[refused], undefined, true);
-        }
-        return errorResponse("upstream_unavailable", 502, "attachment fetch failed");
+        // What the person's mail server did is its typed 424; everything else is the envelope's.
+        throw mailServerRefusal(err) ?? err;
       }
     },
   },
@@ -108,7 +113,7 @@ export const attachmentRoutes: Route[] = [
     pattern: "/messages/:id/attachments/download-all",
     relay: true,
     cost: "connection",
-    options: { raw: true },   // returns a zip assembled synchronously from IMAP
+    options: { raw: true, middleware: BYTE_ROUTE_MIDDLEWARE },   // a zip assembled synchronously from IMAP
     handler: async (req, deps, params) => {
       try {
         const { zip, filename } = await attachments(deps).downloadAll(
@@ -128,8 +133,9 @@ export const attachmentRoutes: Route[] = [
           },
         });
       } catch (err) {
-        if (err instanceof ServiceError) return errorResponse(err.code, err.httpStatus, err.message, err.details);
-        return errorResponse("upstream_unavailable", 502, "download-all failed");
+        // A refused open is an `_errors.txt` line inside the archive, so what reaches here is
+        // mostly ours; the same arm as the one-file route keeps the three doors one reading.
+        throw mailServerRefusal(err) ?? err;
       }
     },
   },
@@ -155,7 +161,7 @@ export const attachmentRoutes: Route[] = [
     pattern: "/files/download-all",
     relay: true,
     cost: "connection",
-    options: { raw: true },   // returns a zip of the filtered/selected set
+    options: { raw: true, middleware: BYTE_ROUTE_MIDDLEWARE },   // a zip of the filtered/selected set
     handler: async (req, deps) => {
       try {
         const body = await readBody<DownloadAllInput>(req);
@@ -178,8 +184,9 @@ export const attachmentRoutes: Route[] = [
           },
         });
       } catch (err) {
-        if (err instanceof ServiceError) return errorResponse(err.code, err.httpStatus, err.message, err.details);
-        return errorResponse("upstream_unavailable", 502, "download-all failed");
+        // A refused open is an `_errors.txt` line inside the archive, so what reaches here is
+        // mostly ours; the same arm as the one-file route keeps the three doors one reading.
+        throw mailServerRefusal(err) ?? err;
       }
     },
   },

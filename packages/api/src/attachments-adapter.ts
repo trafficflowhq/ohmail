@@ -249,8 +249,8 @@ async function openImapUnderCap(
       admitted = await imapAdmission(deps).acquire(deps.db, { mailboxId, max, now: deps.now?.() ?? new Date() });
     } catch (err) {
       // The counter itself failed. FAIL, do not fail open — an uncapped mailbox is exactly the
-      // state this exists to prevent, and the route's blanket 502 is honest about a database
-      // fault. The local slot must still go back or the instance leaks it for ever.
+      // state this exists to prevent, and the route answers it as our own 500. The local slot
+      // must still go back or the instance leaks it for ever.
       giveLocalSlot(mailboxId, gate);
       throw err;
     }

@@ -342,7 +342,9 @@ export function presentedOf(
 /** What a tile press gets back: the bytes as base64, or the engine's own refusal by name. */
 export type WorldAttachmentBytes =
   | { state: "ready"; base64: string; mime: string; filename: string }
-  | { state: "too_large" | "failed" | "unavailable" };
+  /** The engine item's refusal facts: the tile's sentence names the side, `retryable` its tap. */
+  | { state: "failed"; code: string | null; retryable: boolean; status: number | null }
+  | { state: "too_large" | "unavailable" };
 
 /** One attachment tile: the engine's item (fallback name applied), size as words. */
 export interface WorldAttachment {
@@ -372,6 +374,8 @@ export type WorldPileState = "reply_later" | "set_aside" | "bubbled_up" | "resur
  */
 /** How long the reader may say "loading" over a husk moved out of Junk — the engine's number. */
 export { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
+// Which side failed for a file that could not be fetched — the web reader's own class table.
+export { attachmentFaultClass, type AttachmentFaultClass } from "@ohmail/client-engine";
 export { ruleMatchKey } from "@ohmail/client-engine";
 /** Forward's one predicate and its ask, for the reader — the engine's own, through this seam. */
 export { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
@@ -3318,11 +3322,20 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   const openAttachmentBytes = async (messageId: string, attachmentId: string): Promise<WorldAttachmentBytes> => {
-    await engine.openAttachment(messageId, attachmentId, { retry: true }).catch(() => undefined);
     // A variable, not a literal — correct against either option spelling (see `liveMessage`).
     const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
-    const list = engine.attachmentsOf(messageId, EVERY_PART);
-    const item = list.state === "ready" ? list.items.find((i) => i.id === attachmentId) : undefined;
+    const itemNow = () => {
+      const list = engine.attachmentsOf(messageId, EVERY_PART);
+      return list.state === "ready" ? list.items.find((i) => i.id === attachmentId) : undefined;
+    };
+    // A held failure is asked again only where the refusal said asking again can help: a refused
+    // sign-in answers the same way every tap, and each tap is a connection to the person's server.
+    const before = itemNow();
+    if (!(before?.state === "failed" && before.retryable === false)) {
+      await engine.openAttachment(messageId, attachmentId, before?.state === "failed" ? { retry: true } : {})
+        .catch(() => undefined);
+    }
+    const item = itemNow();
     if (!item) {
       logAttachmentRefusal("bytes_unavailable");
       return { state: "unavailable" };
@@ -3332,15 +3345,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const blob = engine.attachmentBlobOf(messageId, attachmentId);
     if (item.state !== "ready" || !blob) {
       logAttachmentRefusal("bytes_failed");
-      return { state: "failed" };
+      return { state: "failed", code: item.code ?? null, retryable: item.retryable !== false, status: item.status ?? null };
     }
     try {
       return { state: "ready", base64: await blobToBase64(blob), mime: item.mimeType, filename: item.filename };
     } catch {
-      // The one non-engine failure: the byte read itself. Same sentence as a failed fetch —
-      // the tile's retry re-asks `openAttachment`, which short-circuits on the held Blob.
+      // The one non-engine failure: the byte read itself, ours and worth a second tap — the
+      // tile's retry re-asks `openAttachment`, which short-circuits on the held Blob.
       logAttachmentRefusal("bytes_unreadable");
-      return { state: "failed" };
+      return { state: "failed", code: "bytes_unreadable", retryable: true, status: null };
     }
   };
 

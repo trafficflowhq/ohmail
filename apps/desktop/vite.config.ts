@@ -838,6 +838,7 @@ export default defineConfig({
          the engine bundle (which has its own resolver) went green beside them. Same reason the
          four entries above exist; listed after them because it is the same kind of seam. */
       { find: "@trafficflow/core/ics", replacement: r("../../packages/core/src/ics.ts") },
+      { find: "@trafficflow/core/url-escapes", replacement: r("../../packages/core/src/url-escapes.ts") },
       { find: "@trafficflow/core/away-scope", replacement: r("../../packages/core/src/away-scope.ts") },
       /* The organized six and the retro-move question — `@ohmail/client-engine` re-exports
          `retroPassWouldMove` from this leaf, so the shell's screening sheet pulls it into the

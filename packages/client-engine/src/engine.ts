@@ -1405,6 +1405,15 @@ export interface AttachmentItem {
   blob?: Blob;
   /** The server's own sentence when `state` is `failed` or `too_large`. */
   error?: string;
+  /**
+   * The refusal's own facts when `state` is `failed`, read as the list's failed arm reads them:
+   * `code` (null for a throw nobody classified), `retryable` (whether asking again can help; true
+   * for a throw that never established a refusal) and `status` (null without an HTTP answer). A
+   * reader picks its sentence through `attachmentFaultClass` and offers Try again on `retryable` only.
+   */
+  code?: string | null;
+  retryable?: boolean;
+  status?: number | null;
 }
 
 /**
@@ -8703,7 +8712,9 @@ export class OhmailEngine {
     if (current.state === "too_large") return;
     if (current.state === "failed" && !opts.retry) return;
 
-    this.patchAttachment(messageId, attachmentId, { state: "loading", error: undefined });
+    this.patchAttachment(messageId, attachmentId, {
+      state: "loading", error: undefined, code: undefined, retryable: undefined, status: undefined,
+    });
 
     const request = fetchOne.call(this.adapter, attachmentId)
       .then((blob) => {
@@ -8729,9 +8740,19 @@ export class OhmailEngine {
       .catch((err: unknown) => {
         const code = (err as { code?: unknown } | null)?.code;
         const message = err instanceof Error ? err.message : String(err);
+        if (code === "payload_too_large") {
+          this.patchAttachment(messageId, attachmentId, { state: "too_large", error: message });
+          return;
+        }
+        // The adapter's classification, kept as the list keeps it: a throw nobody classified never
+        // established a refusal, so asking again is honest.
+        const rejected = err instanceof MutationRejectedError ? err : null;
         this.patchAttachment(messageId, attachmentId, {
-          state: code === "payload_too_large" ? "too_large" : "failed",
+          state: "failed",
           error: message,
+          code: rejected ? rejected.code : null,
+          retryable: rejected ? rejected.retryable : true,
+          status: rejected ? rejected.status : null,
         });
       })
       .finally(() => {

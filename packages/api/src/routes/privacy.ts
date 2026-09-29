@@ -2,9 +2,13 @@ import { ServiceError } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
 import { serviceContext } from "../context.js";
 import { errorResponse, jsonResponse } from "../responses.js";
+import { countFault } from "../middleware.js";
 import type { Route } from "../router.js";
 import { privacy } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
+
+/** What a fault row names for `/img`: its pattern, nothing the sender chose. */
+const IMG_ROUTE = { pattern: "/img" } as const;
 
 /**
  * The spy-pixel blocker surface (4 endpoints). `GET /img` is mounted again; its return condition
@@ -118,13 +122,18 @@ export const privacyRoutes: Route[] = [
         const log = deps.logger ?? silentLogger;
         if (err instanceof ServiceError) {
           const at = { method: req.method, route: "/img", status: err.httpStatus, code: err.code };
-          if (err.httpStatus >= 500) log.error("request_failed", at);
-          else log.warn("request_failed", at);
+          if (err.httpStatus >= 500) {
+            log.error("request_failed", at);
+            // The envelope's rule: a 5xx about somebody else's side writes no fault row.
+            if ((err as { notOurFault?: unknown }).notOurFault !== true) await countFault(deps, IMG_ROUTE, req, err.httpStatus, err);
+          } else log.warn("request_failed", at);
           return errorResponse(err.code, err.httpStatus, err.message, err.details, err.retryable);
         }
         /* The unknown arm keeps the repo-wide event name for "not a refusal, a bug", so the
            two are still distinguishable by name rather than only by status. */
         log.error("request_unhandled", { method: req.method, route: "/img", status: 500, err });
+        // Counted like the envelope's 500: the row holds the class and the route, never the url.
+        await countFault(deps, IMG_ROUTE, req, 500, err);
         /**
          * What reaches here is our own fault, and it must stay a 5xx. Tempting to answer 424,
          * since every upstream refusal now sits off the 5xx class — wrong, dangerously: the `try`

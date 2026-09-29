@@ -42,7 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  * error boundary, which replaces the whole app with its error page. Typing this against the
  * package makes that same mistake a build failure instead. */
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
-import type { AttachmentItem } from "./AttachmentStrip";
+import { fileFaultSentence, fileRetryIsOffered, type AttachmentItem } from "./AttachmentStrip";
 import { useKeyBindings } from "../shell/keymap";
 import "./attachment-preview.css";
 import { formatFileSize, Spinner } from "@ohmail/ui";
@@ -547,8 +547,9 @@ function renderContent({
   }
   if (active.state === "failed") {
     return (
-      <Card title={COPY.failedTitle} detail={active.error}
-        action={{ label: COPY.retry, onClick: () => ensure(active.id, { retry: true }) }} />
+      // The side that failed, in the reader's language; Try again only where asking again can help.
+      <Card title={COPY.failedTitle} detail={fileFaultSentence(active)}
+        action={fileRetryIsOffered(active) ? { label: COPY.retry, onClick: () => ensure(active.id, { retry: true }) } : undefined} />
     );
   }
   if (active.state === "idle" || active.state === "loading") {

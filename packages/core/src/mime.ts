@@ -52,9 +52,10 @@ function toAddr(a: { name?: string; address?: string }): EmailAddress {
 function toAttachmentMeta(a: Attachment): AttachmentMeta {
   const contentLen = Buffer.isBuffer(a.content) ? a.content.length : undefined;
   const partId = (a as Attachment & { partId?: string | null }).partId ?? null;
+  const baseType = scrubNul(a.contentType || "application/octet-stream");
   return {
     filename: scrubNul(a.filename?.trim() ?? "") || null,
-    contentType: scrubNul(a.contentType || "application/octet-stream"),
+    contentType: withCalendarMethod(baseType, a),
     sizeBytes: contentLen ?? a.size ?? 0,
     partId: partId === null ? null : scrubNul(partId),
     contentId: a.contentId
@@ -139,16 +140,28 @@ export function invitationWithoutEvent(m: CalendarHeaderFacts): boolean {
 }
 
 /**
- * DOES THIS MESSAGE'S OWN HEADER DECLARE IT AN iTIP REPLY — `Content-Type: …; method=REPLY` at the
- * TOP LEVEL, the single-part RFC 6047 shape.
- *
- * Header-only on purpose: a multipart acknowledgement keeps its method on the calendar PART, and
- * a part's parameters do not survive storage (the stored content type is the base type, and the
- * .ics bytes carrying `METHOD:` are never persisted). So this answers one arm; the other arm is
- * the subject a calendar client writes, which the list composes where it needs it.
+ * DOES THIS MESSAGE DECLARE ITSELF AN iTIP REPLY — `method=REPLY` on its own top-level
+ * `Content-Type` (the single-part RFC 6047 shape), or on a stored calendar part's type, which is
+ * where a multipart acknowledgement keeps it ({@link withCalendarMethod}). The other arm is the
+ * subject a calendar client writes, which the list composes where it needs it.
  */
-export function itipReplyByHeaders(m: Pick<CalendarHeaderFacts, "headers">): boolean {
-  return headerValues(m.headers, "content-type").some((v) => icsMethodOfContentType(v) === "REPLY");
+export function itipReplyByHeaders(m: CalendarHeaderFacts): boolean {
+  return headerValues(m.headers, "content-type").some((v) => icsMethodOfContentType(v) === "REPLY")
+    || m.attachments.some((a) => isCalendarMime(a.contentType) && icsMethodOfContentType(a.contentType) === "REPLY");
+}
+
+/**
+ * A calendar part's stored type keeps its iTIP method as the MIME parameter it arrived as
+ * (`text/calendar; method=REPLY`): the .ics bytes are never persisted, so this is the method's only
+ * stored home. Calendar parts only, and only a token (`/^[A-Z-]{1,16}$/i`, uppercased); every other
+ * part keeps its base type. The fingerprint reads the base type (`identity.ts` `baseContentType`).
+ */
+function withCalendarMethod(baseType: string, a: Attachment): string {
+  if (!isCalendarMime(baseType)) return baseType;
+  const ct = a.headers?.get("content-type") as { params?: Record<string, unknown> } | undefined;
+  const method = ct?.params?.method;
+  if (typeof method !== "string" || !/^[A-Z-]{1,16}$/i.test(method)) return baseType;
+  return `${baseType}; method=${method.toUpperCase()}`;
 }
 
 function addrList(field: AddressObject | AddressObject[] | undefined): EmailAddress[] {

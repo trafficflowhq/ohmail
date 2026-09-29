@@ -145,11 +145,21 @@ export function messageFingerprint(m: FingerprintInput): string {
   field(parts, LABEL.htmlHash, m.htmlBody === null ? null : bodyHash(m.htmlBody));
   for (const a of m.attachments) {
     field(parts, LABEL.attachmentName, a.filename);
-    field(parts, LABEL.attachmentType, a.contentType);
+    field(parts, LABEL.attachmentType, baseContentType(a.contentType));
     field(parts, LABEL.attachmentSize, String(a.sizeBytes));
     field(parts, LABEL.attachmentHash, a.contentSha256);
   }
   return createHash("sha256").update(Buffer.concat(parts)).digest("hex");
+}
+
+/**
+ * A part's type as the fingerprint reads it: the base type, cut at the first `;`, lowercased. A
+ * calendar part's stored type carries its iTIP method as a parameter, and fed raw that parameter
+ * would give every re-observed REPLY a second identity; every type before the method was kept is
+ * already a bare base type, so no stored `fp1` moves (`fingerprint-corpus.test.ts`).
+ */
+export function baseContentType(contentType: string): string {
+  return (contentType.split(";")[0] ?? "").trim().toLowerCase();
 }
 
 /** `fp1:<sha256 hex>` — what `messages.dedup_key` holds for everything ingested from here on. */

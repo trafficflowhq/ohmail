@@ -401,7 +401,8 @@ export interface EngineMessage extends EngineMessageExtras {
    */
   invitationWithoutEvent?: boolean;
   /**
-   * TRUE ⇒ the top-level `Content-Type` declares `method=REPLY`. One arm of
+   * TRUE ⇒ the message declares `method=REPLY`, on its top-level `Content-Type` or on a
+   * calendar part's stored type. One arm of
    * {@link isItipAcknowledgement}, which is what holds a machine's calendar
    * acknowledgement out of a conversation's face; the other arm is the
    * subject, which this side already holds. Absent means "not known".

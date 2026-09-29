@@ -9,6 +9,8 @@
 // remote-reference shape, and a frame CSP of `default-src 'none'`. Routing reader html through
 // this instead would trade a default-deny gate for a default-allow one.
 
+import { decodeUnreservedEscapes } from "../url-escapes.js";
+
 /** The stored/surfaced tracker kind. `pixel` = a beacon by the readers' rule (a declared
  *  1×1/0×0 or a beacon url); `remote_image` = an image from a known tracker host that is
  *  neither; `read_receipt` is reserved for provider read-receipt beacons. */
@@ -21,34 +23,30 @@ export interface TrackerHit {
   isPixel: boolean;     // a declared 1×1/0×0 or a beacon url — the label the readers show
 }
 
-// A small built-in list of hosts/domains overwhelmingly used for open-tracking
-// and email beacons. Matched as a substring of the url host, so subdomains
-// (e.g. `ct.sendgrid.net`, `email.mailchimp.com`) are covered. Not exhaustive by
-// design — dimension + beacon heuristics catch the long tail.
-const TRACKER_HOSTS: string[] = [
-  "list-manage.com",       // Mailchimp campaign links / opens
-  "mailchimp.com",
-  "mailchi.mp",
-  "sendgrid.net",          // SendGrid open-tracking (ct.sendgrid.net, wtrack…)
-  "sendgrid.com",
-  "hubspot.com",
-  "hubspotemail.net",
-  "hs-sites.com",
+/**
+ * HOSTS THAT SERVE NOTHING BUT OPEN AND CLICK TRACKING — the image proxy refuses their FETCH while
+ * the pixel switch stands, so a host here must never serve a sender's real picture. An ESP's
+ * umbrella domain that also hosts pictures does not belong: Mailchimp's pictures live on
+ * `gallery.mailchimp.com`, Constant Contact's on `files.constantcontact.com`, SendGrid's on
+ * `cdn.mcauto-images-production.sendgrid.net` (so only `ct.sendgrid.net`, its tracking host).
+ * Matched as the host or a subdomain of it; `tracker-hosts-census.test.ts` holds one tracker
+ * url and one picture url per entry.
+ */
+export const TRACKER_HOSTS: readonly string[] = [
+  "list-manage.com",       // Mailchimp opens and clicks (pictures: gallery.mailchimp.com)
+  "mandrillapp.com",       // Mailchimp Transactional opens and clicks
+  "ct.sendgrid.net",       // SendGrid opens and clicks (pictures: *.mcauto-images-production.sendgrid.net)
+  "hubspotemail.net",      // HubSpot opens and clicks (pictures: *.hubspotusercontent*.net)
   "mailgun.org",
   "mailgun.net",
-  "mandrillapp.com",
   "sparkpostmail.com",
-  "sendibm1.com",          // Sendinblue / Brevo
-  "sendinblue.com",
+  "sendibm1.com",          // Brevo opens and clicks (pictures: img.mailinblue.com)
   "doubleclick.net",
   "google-analytics.com",
-  "awstrack.me",           // Amazon SES open-tracking
-  "constantcontact.com",
-  "rs6.net",               // Constant Contact
-  "exct.net",              // Salesforce Marketing Cloud (ExactTarget)
-  "mixpanel.com",
-  "klaviyomail.com",
-  "braze.com",
+  "awstrack.me",           // Amazon SES opens and clicks
+  "rs6.net",               // Constant Contact opens and clicks (pictures: files.constantcontact.com)
+  "api.mixpanel.com",      // Mixpanel's event endpoint (its own pictures sit on mixpanel.com)
+  "klaviyomail.com",       // Klaviyo opens and clicks
 ];
 
 const REMOTE = /^https?:\/\//i;
@@ -63,10 +61,10 @@ export function hostOf(url: string): string {
   }
 }
 
-/** True when `host` matches (as a substring) any known email-tracker host. */
+/** True when `host` is a listed tracking host or a subdomain of one — never a substring match. */
 export function isKnownTracker(host: string): boolean {
   if (!host) return false;
-  return TRACKER_HOSTS.some((h) => host === h || host.endsWith(`.${h}`) || host.includes(h));
+  return TRACKER_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
 /**
@@ -80,8 +78,9 @@ export function isKnownTracker(host: string): boolean {
 export const BEACON_PATH =
   /^[^?#]*[^/?#]\/(?:wf\/open|open|track|tracking|beacon|pixel|spy|imp|impression)(?:[./?#]|$)|[?&](?:mid|eid|uid|rid|recipient|subscriber)\b/i;
 
+/** The beacon rule over the url a server would fetch: unreserved escapes decoded (`/%6fpen` is `/open`). */
 export function isBeaconUrl(url: string): boolean {
-  return BEACON_PATH.test(url);
+  return BEACON_PATH.test(decodeUnreservedEscapes(url));
 }
 
 /** Read `name="…"` / `name='…'` / `name=bare` from a single HTML tag. */

@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, like, lt, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { users, type Tx } from "@trafficflow/db";
 import { authThrottle, loginTokens } from "@trafficflow/db/cloud";
 import { bridgeTx, type Db } from "../context.js";
@@ -512,32 +512,6 @@ export class MailService {
       .returning({ userId: loginTokens.userId });
     // Bound by construction (cloud 0041's CHECK admits a NULL user for the approval purpose only).
     return row && row.userId !== null ? { userId: row.userId } : null;
-  }
-
-  /**
-   * Delete `mail:` throttle rows whose window has long since closed. The limiter's correctness
-   * does not need this, but nothing else deletes these rows, and the table otherwise grows by one
-   * per distinct recipient for ever (keys are `sha256(address)` — housekeeping, not privacy).
-   * `like('mail:%')` matches BOTH quota namespaces. The per-IP namespaces are swept too, all
-   * three: `waitlist:ip:%`; `register:ip:%` — not swept at first, a real gap: only the waitlist's
-   * prefix was listed while `POST /auth/register` sat on the same public funnel; `verify:ip:%`.
-   * Sequential scans by design: this runs on a schedule over a table bounded by distinct
-   * recipients and callers, not traffic.
-   */
-  async pruneRateLimitWindows(ctx: MailContext, olderThanMs?: number): Promise<number> {
-    const cutoff = new Date(ctx.now().getTime() - (olderThanMs ?? this.cfg.rateWindowMs));
-    const deleted = await asTx(ctx).delete(authThrottle)
-      .where(and(
-        or(
-          like(authThrottle.key, "mail:%"),
-          like(authThrottle.key, "waitlist:ip:%"),
-          like(authThrottle.key, "register:ip:%"),
-          like(authThrottle.key, "verify:ip:%"),
-        ),
-        lt(authThrottle.windowStartedAt, cutoff),
-      ))
-      .returning({ key: authThrottle.key });
-    return deleted.length;
   }
 
   // ── The guard every send goes through ────────────────────────────────────────

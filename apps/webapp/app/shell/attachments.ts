@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { threadOf, type OhmailEngine } from "@ohmail/client-engine";
 import {
-  isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
+  fileRetryIsOffered, isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
 } from "../components/AttachmentStrip";
 import { desktopAttachmentsEnabled, saveAttachmentToDownloads, type SaveRefusal } from "./open-attachment";
 import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
@@ -243,7 +243,8 @@ function attachmentsFingerprint(engine: OhmailEngine, ids: Iterable<string>): st
     const held = engine.attachmentsOf(id, { includeInlineParts: true });
     if (held.state === "ready") {
       const maps = `img${serialOf(engine.inlineImagesOf(id))}:cal${serialOf(engine.calendarTextsOf(id))}`;
-      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}`).join(",")}:${maps}`);
+      // A failed item's code too: the sentence names the side, and a re-ask can fail on another.
+      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}${i.state === "failed" ? `:${i.code ?? ""}` : ""}`).join(",")}:${maps}`);
     } else if (held.state === "failed") {
       parts.push(`${id}:failed:${held.code ?? ""}`);
     } else if (held.state === "loading") {
@@ -646,16 +647,18 @@ export function useMessageAttachments(
     (id: string, attachmentId: string): void => {
       void (async () => {
         const before = itemOf(engine, id, attachmentId);
-        // `too_large` is permanent — the strip renders it as a div rather than a button for
-        // exactly this reason, and a programmatic call must agree with the pixels.
+        // `too_large` is permanent, and so is a failure asking again cannot help — the strip renders
+        // both as a div rather than a button for exactly this reason, and a programmatic call must
+        // agree with the pixels.
         if (!before || before.state === "too_large") return;
+        if (before.state === "failed" && !fileRetryIsOffered(before)) return;
 
         if (before.state !== "ready" || !before.objectUrl) {
           // `retry` ONLY on a press over a failed tile. The engine deliberately refuses an
           // automatic re-ask (a React effect whose identity changes per render would loop
           // against a server that already refused, at `cost: "connection"` a time) — and the
-          // failed tile's own words are "Couldn't fetch — try again", so a press that did
-          // not re-ask would make that sentence a lie.
+          // failed tile's own words end "try again", so a press that did not re-ask would make that
+          // sentence a lie.
           await engine.openAttachment(id, attachmentId, before.state === "failed" ? { retry: true } : {});
         }
 
@@ -746,9 +749,10 @@ export function useMessageAttachments(
           }
 
           // `too_large` is permanent — the server refused at its ceiling — so it is not asked
-          // for. `failed` IS re-asked: a press of the group verb is a human act, which is the
-          // only thing that may re-drive a `cost:"connection"` fetch the server already refused.
-          const wanted = held.items.filter((i) => i.state !== "too_large");
+          // for, nor is a failure the server said asking again cannot help. Any other `failed` IS
+          // re-asked: a press of the group verb is a human act, which is the only thing that may
+          // re-drive a `cost:"connection"` fetch the server already refused.
+          const wanted = held.items.filter((i) => i.state !== "too_large" && (i.state !== "failed" || fileRetryIsOffered(i)));
           for (const item of wanted) {
             await engine.openAttachment(id, item.id, item.state === "failed" ? { retry: true } : {});
           }

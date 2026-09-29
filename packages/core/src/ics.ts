@@ -119,9 +119,9 @@ export const CALENDAR_MESSAGE_CONTENT_CLASS = "urn:content-classes:calendarmessa
  * The `method=` parameter of a Content-Type, uppercased — RFC 6047's iTIP marker
  * (`text/calendar; method=REPLY`). Returns `null` when the parameter is absent.
  *
- * It is read from the HEADER and never from {@link IcsEventPreview}, because the parameter is the
- * only form of the method that survives storage: the stored part metadata keeps the BASE type
- * alone, and the .ics bytes that carry `METHOD:` are fetched on demand and never persisted.
+ * It is read from a Content-Type and never from {@link IcsEventPreview}, because the parameter is
+ * the only form of the method that survives storage: a calendar part's stored type keeps it
+ * (`mime.ts` `withCalendarMethod`), and the .ics bytes that carry `METHOD:` are never persisted.
  */
 export function icsMethodOfContentType(contentType: string): string | null {
   for (const raw of contentType.split(";").slice(1)) {

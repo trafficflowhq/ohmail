@@ -192,7 +192,8 @@ export interface MessageDTO {
    */
   invitationWithoutEvent?: boolean;
   /**
-   * TRUE ⇒ this message's own top-level `Content-Type` declares `method=REPLY` — one arm of "is
+   * TRUE ⇒ this message declares `method=REPLY` (its top-level `Content-Type` or a calendar
+   * part's stored type) — one arm of "is
    * this a calendar acknowledgement rather than something a person said". The other arm is the
    * subject a calendar client writes, which the client composes itself. Server-computed because
    * the header is not mirrored. Absent means "not known"; consumers test `=== true`.

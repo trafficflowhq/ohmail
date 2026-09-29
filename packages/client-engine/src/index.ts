@@ -788,6 +788,7 @@ export {
  */
 export {
   BEACON_PATH,
+  isBeaconShaped,
   BLANK_GIF,
   CID_URL,
   cidOfSrc,
@@ -805,6 +806,9 @@ export {
   SAFE_HREF,
   tinyDimension,
 } from "./mail-render-rules.js";
+
+// Which side failed for a file that could not be fetched — the one table both readers render from.
+export { attachmentFaultClass, type AttachmentFaultClass } from "./attachment-fault.js";
 
 // A screening press: the address rule it writes outranks its domain's, and after it the pressed
 // rows as the list shows them, with the one sentence they earn.

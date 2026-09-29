@@ -412,8 +412,8 @@ export function isForwardedByUs(m: Pick<EngineMessage, "folder" | "subject" | "l
  * IS THIS A CALENDAR CLIENT'S ACKNOWLEDGEMENT RATHER THAN SOMETHING A PERSON SAID — the
  * "Accepted:" the account's own Calendar app sends back.
  *
- * Two arms, since only one of the fact's two homes is mirrored: the top-level `method=REPLY`
- * header ({@link EngineMessage.itipReplyHeader}), and the subject, trusted OWN-SENT only — a
+ * Two arms: the stored `method=REPLY`, on the top-level header or a calendar part's stored type
+ * ({@link EngineMessage.itipReplyHeader}), and the subject, trusted OWN-SENT only — a
  * received "Accepted: …" is a person telling you something. DISPLAY ONLY: nothing here reaches
  * threading, naming or a merge, and the worst error is own mail that genuinely opens "Accepted:"
  * losing its conversation's FACE while staying a member of it.

@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { JUNK_REFILL_BOUND_MS, type WorldAttachment } from "../state/live";
 import { junkLeaving, withheldNote } from "./body-note";
+import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
 import { ActivityIndicator, Platform, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
@@ -281,7 +282,10 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
   const [busy, setBusy] = useState<string | null>(null);
   // The REFUSAL, not its sentence: a deck read held in state freezes in the language it was
   // read in; the kind is stored and the sentence resolves where it renders.
-  const [note, setNote] = useState<{ id: string; kind: "too_large" | "failed" | "share" } | null>(null);
+  const [note, setNote] = useState<
+    | { id: string; kind: "too_large" } | { id: string; kind: "share" }
+    | { id: string; kind: "failed"; fault: AttachmentFault } | null
+  >(null);
   // Only ever the world's list — a raw `m.attachment.filename` here would be the empty-label
   // bug this component exists to close (the world resolves every name through the fallback).
   const tiles = m.attachments ?? [];
@@ -298,7 +302,10 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
       if (!shared) setNote({ id, kind: "share" });
       return;
     }
-    setNote({ id, kind: got.state === "too_large" ? "too_large" : "failed" });
+    if (got.state === "failed") setNote({ id, kind: "failed", fault: got });
+    else if (got.state === "too_large") setNote({ id, kind: "too_large" });
+    // No held list to read the file from: ours, and a second tap asks for it again.
+    else setNote({ id, kind: "failed", fault: { code: "bytes_unavailable", retryable: true, status: null } });
   };
 
   return (
@@ -346,7 +353,7 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
                 ? Copy.attachmentTooLarge
                 : note.kind === "share"
                   ? Copy.attachmentShareRefused
-                  : Copy.attachmentOpenFailed}
+                  : attachmentFaultNote(note.fault)}
             </Txt>
           ) : null}
         </View>

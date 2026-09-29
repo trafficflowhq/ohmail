@@ -12,12 +12,12 @@
 import { parseDocument } from "htmlparser2";
 import { Element, Text, type AnyNode, type ChildNode } from "domhandler";
 import {
-  BEACON_PATH,
   BLANK_GIF,
   cidOfSrc,
   CID_URL,
   declaresPixelAttrs,
   INLINE_IMAGE_SRC,
+  isBeaconShaped,
   MAIL_ALLOWED_ATTR,
   MAIL_ALLOWED_TAGS,
   MAIL_MAX_HTML_CHARS,
@@ -152,7 +152,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
 
   /** The css `url()` rule — one place, like the web's `cssUrl`: a beacon is never resolved. */
   const cssUrl = (url: string, tiny = false): string | null => {
-    const beacon = tiny || BEACON_PATH.test(url);
+    const beacon = tiny || isBeaconShaped(url);
     record(url, "css", beacon);
     const minted = !beacon || opts.loadPixels === true ? opts.resolvedRemote?.get(url) : undefined;
     return minted !== undefined && INLINE_IMAGE_SRC.test(minted) ? minted : null;
@@ -206,7 +206,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
 
     // Decided FIRST and used by both the style rewrite and the img branch, like the web's
     // post-pass, so the answer cannot depend on which of them runs first.
-    const pixel = tag === "img" && (declaresPixelAttrs(attr) || BEACON_PATH.test(attr("src") ?? ""));
+    const pixel = tag === "img" && (declaresPixelAttrs(attr) || isBeaconShaped(attr("src") ?? ""));
 
     const kept: Array<[string, string]> = [];
     for (const [name, rawValue] of Object.entries(el.attribs)) {
@@ -224,7 +224,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
       }
       if (name === "background") {
         // html 3.2, still emitted by bulk mail. Dropped even under consent; counted.
-        if (REMOTE_URL.test(rawValue)) record(rawValue, "attr", BEACON_PATH.test(rawValue));
+        if (REMOTE_URL.test(rawValue)) record(rawValue, "attr", isBeaconShaped(rawValue));
         continue;
       }
       if (name === "style") {

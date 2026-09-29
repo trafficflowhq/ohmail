@@ -77,6 +77,7 @@
          published mirror it is the only thing that can resolve it, because there `ics.ts` is a
          lone file with no package.json beside it. */
       "@trafficflow/core/ics": ["../../packages/core/src/ics.ts"],
+      "@trafficflow/core/url-escapes": ["../../packages/core/src/url-escapes.ts"],
       "@trafficflow/core/away-scope": ["../../packages/core/src/away-scope.ts"],
       /* The organized six and the retro-move question, reached through `@ohmail/client-engine`'s
          re-export — the bundler's twin, and the pair must agree. */

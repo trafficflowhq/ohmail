@@ -7,6 +7,7 @@
  * halves and this module against the same fixtures, so the two spellings cannot drift apart
  * silently.
  */
+import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
 
 /**
  * The tags a mail may use — an allow-list, so a tag nobody has thought about is absent by
@@ -100,6 +101,15 @@ export const BLANK_GIF =
  */
 export const BEACON_PATH =
   /^[^?#]*[^/?#]\/(?:wf\/open|open|track|tracking|beacon|pixel|spy|imp|impression)(?:[./?#]|$)|[?&](?:mid|eid|uid|rid|recipient|subscriber)\b/i;
+
+/**
+ * {@link BEACON_PATH} over the url a server would fetch: percent-escapes of unreserved characters
+ * decoded first, so `/%6fpen` is `/open` (`@trafficflow/core/url-escapes`, the one decoder the web
+ * reader and the image proxy read too). A reserved escape stays: `/wf%2Fopen` is not `/wf/open`.
+ */
+export function isBeaconShaped(url: string): boolean {
+  return BEACON_PATH.test(decodeUnreservedEscapes(url));
+}
 
 /** The host of a url, lowercased, or "" when it will not parse. */
 export function mailHostOfUrl(url: string): string {

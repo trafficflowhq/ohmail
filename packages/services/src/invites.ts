@@ -320,8 +320,7 @@ export function normalizeInviteCode(raw: string): string {
  *
  * Consumed rows are KEPT: `consumed_by_user_id` is how "which invite opened this account"
  * is answered, and that question outlives the invite. Housekeeping only — nothing depends
- * on it for correctness. Runs from the same maintenance path as
- * `MailService.pruneRateLimitWindows`.
+ * on it for correctness.
  */
 export async function pruneExpiredInvites(
   tx: Tx, now: Date, olderThanMs = 90 * 24 * 60 * 60_000,

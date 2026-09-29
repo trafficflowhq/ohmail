@@ -276,10 +276,9 @@ export class AttachmentsService {
       // than the route's bare "attachment" — see {@link partFallbackName}.
       return { ...fetched, filename: part.filename ?? fetched.filename ?? partFallbackName(part) };
     } catch (err) {
-      // TRANSLATE, or the route loses it. `routes/attachments.ts` maps `ServiceError` and turns
-      // everything else into a blanket 502 `upstream_unavailable` — so an un-translated ceiling
-      // breach would reach the user as "the mail server is having trouble", which is both false
-      // and unactionable. It is not an upstream failure; it is us refusing, and it says so.
+      // TRANSLATE, or the route loses it: an un-translated ceiling breach is an unnamed throw,
+      // which `routes/attachments.ts` answers as our own 500 — false and unactionable. It is not
+      // a fault either; it is us refusing, and it says so.
       if (isTooLarge(err)) {
         throw new ServiceError(
           "payload_too_large", 413,
@@ -290,14 +289,15 @@ export class AttachmentsService {
       // The same argument one condition over. The message is not at that locator any more —
       // expunged, moved from another client, or its folder recreated under a new UIDVALIDITY, in
       // which case the adapter refuses rather than downloading part n of whatever now wears the
-      // UID. Untranslated, the route's blanket 502 says "the mail server is having trouble",
-      // which is false and leaves the reader nothing to do; this says what happened and what
-      // fixes it, and the fix is real — the next sync re-resolves the locator by Message-ID.
+      // UID. Untranslated, the route answers a 500 of ours, which is false and leaves the reader
+      // nothing to do; this says what happened and what fixes it, and the fix is real — the next
+      // sync re-resolves the locator by Message-ID, so asking again after it is retryable.
       if (isMessageGone(err)) {
         throw new ServiceError(
           "not_found", 404,
           "this attachment is no longer where the mailbox said it was — the message has moved or " +
             "been deleted. Refresh and try again.",
+          undefined, true,
         );
       }
       throw err;

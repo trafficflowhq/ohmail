@@ -315,8 +315,8 @@ export const API_FAULT_RECORD_BUDGET_MS = 1_000;
  * The port's absence is the local shell's normal state and says nothing; a present port that
  * throws is a hosted board going dark and says so once. See {@link ApiFaultLogPort}.
  */
-async function countFault(
-  deps: ApiDeps, route: Route, req: Request, status: number, err: unknown,
+export async function countFault(
+  deps: ApiDeps, route: Pick<Route, "pattern">, req: Request, status: number, err: unknown,
 ): Promise<void> {
   const port = deps.faultLog;
   if (!port) return;

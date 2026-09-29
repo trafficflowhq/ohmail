@@ -78,12 +78,19 @@ export function invitationWithoutEventWhere(d: Dialect, row: { id: SQL }): SQL {
 }
 
 /**
- * DOES THIS MESSAGE'S TOP-LEVEL Content-Type DECLARE `method=REPLY` — the SQL half of
- * `itipReplyByHeaders`, and one of the two arms of the list's acknowledgement test. The other arm
- * is the subject, which the client already holds and composes itself.
+ * DOES THIS MESSAGE DECLARE `method=REPLY` — on its top-level Content-Type, or on a stored calendar
+ * part's type, where a multipart acknowledgement keeps it. The SQL half of `itipReplyByHeaders`,
+ * and one of the two arms of the list's acknowledgement test; the other is the subject, which the
+ * client already holds and composes itself.
  */
 export function itipReplyHeaderWhere(d: Dialect, row: { id: SQL }): SQL {
   const ct = headerElements(d, row.id, "content-type", "ct");
-  return sql`exists (select 1 from ${ct.from}
-                      where ${ct.isString} and (${hasMethodParam(d, ct.text, ";method=reply")}))`;
+  return sql`(
+    exists (select 1 from ${ct.from}
+             where ${ct.isString} and (${hasMethodParam(d, ct.text, ";method=reply")}))
+    or exists (select 1 from ${attachments} a
+                where a.message_id = ${row.id}
+                  and ${baseType(d, sql`a.content_type`)} in ('text/calendar', 'application/ics')
+                  and ${hasMethodParam(d, sql`a.content_type`, ";method=reply")})
+  )`;
 }

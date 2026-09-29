@@ -10,7 +10,8 @@
  * falloff: idle — a flat impression (`--tint`, no shadow): the bytes are NOT here, they are in the user's mailbox,
  * and the tile says so; loading — the impression breathes between the two neutral tints under "Fetching from your
  * mailbox…" (the wait is named, never an anonymous spinner); ready — the object RISES onto the panel (`--panel` +
- * `--lift-0`): fetched means standing on the surface; failed — the accent-soft warn register, the tile is the retry;
+ * `--lift-0`): fetched means standing on the surface; failed — the accent-soft warn register naming the side that
+ * failed, and the tile is the retry only where asking again can help;
  * too_large — honest and inert, the size and the fact, because dressing it as openable is a lie the first press
  * exposes.
  */
@@ -28,6 +29,7 @@ import { useMemo, type ReactNode } from "react";
 import { isCalendarMime, parseIcsEvent } from "@trafficflow/core/ics";
 import "./attachment-strip.css";
 import { formatFileSize, Spinner } from "@ohmail/ui";
+import { attachmentFaultClass, type AttachmentFaultClass } from "@ohmail/client-engine";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
 import { IcsEventCard } from "./IcsEventCard";
 
@@ -41,6 +43,14 @@ export interface AttachmentItem {
   objectUrl?: string;
   /** Present only when state === "failed". */
   error?: string;
+  /**
+   * The refusal's facts when state === "failed" (the engine's item carries them): which side
+   * failed comes from `code`/`status` through `attachmentFaultClass`, and `retryable` decides
+   * whether the tile is a retry. Absent on bare harnesses, which read as an unclassified throw.
+   */
+  code?: string | null;
+  retryable?: boolean;
+  status?: number | null;
   /**
    * The body's own picture (a `cid:` part) rather than an attached file. The tile wears a quiet
    * "embedded" tag so a logo listed here beside the invoice explains itself; everything else —
@@ -151,7 +161,22 @@ const EN = {
   /** en.json: "{size} · in your mailbox" — the true thing: not fetched yet. */
   idle: (size: string) => `${size} · in your mailbox`,
   loading: "Fetching from your mailbox…",
-  failed: "Couldn't fetch — try again",
+  /**
+   * en.json `fault*`: a failed file's state line, ONE per side that failed — never the server's
+   * English sentence, which a reader in another language could not read. `faultRetry` follows
+   * the sentence only where asking again can help, and only there is the tile a button.
+   */
+  faultOhmail: "ohmail couldn't fetch this file",
+  faultBusy: "ohmail already has this mailbox's connections open",
+  faultUnreachable: "Your mail server didn't answer",
+  faultNotSecured: "Your mail server wouldn't secure the connection",
+  faultLoginRefused: "Your mail server refused the sign-in — check the password in Settings",
+  faultReconnect: "This mailbox's sign-in has expired — reconnect it in Settings",
+  faultGone: "Not where your mailbox had it — moved or deleted",
+  faultRefused: "ohmail can't fetch this file here",
+  faultOffline: "Couldn't reach ohmail — check your connection",
+  faultSignedOut: "Your session ended — sign in again",
+  faultRetry: "try again",
   /** en.json: "{size} · too large to fetch" */
   tooLarge: (size: string) => `${size} · too large to fetch`,
 
@@ -227,6 +252,33 @@ export function isAuthListFailure(code: string | null): boolean {
  */
 export function listRetryIsOffered(code: string | null, retryable: boolean): boolean {
   return retryable || isAuthListFailure(code);
+}
+
+/** A failed file's sentence for the side that failed, in the reader's language. */
+export function fileFaultSentence(item: Pick<AttachmentItem, "code" | "status">): string {
+  const by: Record<AttachmentFaultClass, string> = {
+    ohmail: COPY.faultOhmail,
+    busy: COPY.faultBusy,
+    unreachable: COPY.faultUnreachable,
+    not_secured: COPY.faultNotSecured,
+    login_refused: COPY.faultLoginRefused,
+    reconnect: COPY.faultReconnect,
+    gone: COPY.faultGone,
+    refused: COPY.faultRefused,
+    offline: COPY.faultOffline,
+    signed_out: COPY.faultSignedOut,
+  };
+  return by[attachmentFaultClass(item.code, item.status)];
+}
+
+/**
+ * MAY A FAILED FILE BE ASKED FOR AGAIN? The list's predicate, so the two never disagree: the
+ * refusal's own `retryable` (absent reads as a throw nothing classified, which is retryable), and
+ * the session arm, whose refusal expires with the session. The strip's tile, the shell's press
+ * and the overlay's Try again all read this.
+ */
+export function fileRetryIsOffered(item: Pick<AttachmentItem, "code" | "retryable">): boolean {
+  return listRetryIsOffered(item.code ?? null, item.retryable !== false);
 }
 
 /** The shared formatter, in the reader's own language — see `@ohmail/ui`'s `formatFileSize`. */
@@ -370,7 +422,7 @@ function Tile({
         {COPY.loading}
       </>
     ) : item.state === "failed" ? (
-      COPY.failed
+      fileRetryIsOffered(item) ? `${fileFaultSentence(item)} — ${COPY.faultRetry}` : fileFaultSentence(item)
     ) : item.state === "too_large" ? (
       COPY.tooLarge(size)
     ) : item.state === "ready" ? (
@@ -398,12 +450,13 @@ function Tile({
     </>
   );
 
-  if (item.state === "too_large") {
+  if (item.state === "too_large" || (item.state === "failed" && !fileRetryIsOffered(item))) {
     /* Not a button, deliberately: there is nothing pressing it could truthfully do. And no
-       look either — the bytes are past the ceiling, so neither verb has an honest version. */
+       look either — the bytes are past the ceiling, or the refusal says asking again cannot
+       help (a refused sign-in, a message no longer there), so neither verb has an honest version. */
     return (
       <div className="att-item">
-        <div className="att-tile" data-state="too_large">
+        <div className="att-tile" data-state={item.state} title={item.state === "failed" ? fileFaultSentence(item) : undefined}>
           {body}
         </div>
       </div>
@@ -434,7 +487,7 @@ function Tile({
         aria-disabled={loading || undefined}
         title={
           item.state === "failed"
-            ? item.error
+            ? fileFaultSentence(item)
             : canLook
               ? COPY.preview(item.filename)
               : COPY.download(item.filename)

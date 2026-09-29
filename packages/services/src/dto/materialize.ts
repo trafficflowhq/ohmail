@@ -245,7 +245,8 @@ export function messageRowToDTO(
    */
   invitationWithoutEvent?: boolean,
   /**
-   * TRUE ⇒ the top-level `Content-Type` declares `method=REPLY`, decided by `itipReplyHeaderWhere`
+   * TRUE ⇒ the message declares `method=REPLY` (its top-level `Content-Type` or a calendar part's
+   * stored type), decided by `itipReplyHeaderWhere`
    * in the batch below. An EIGHTH PARAMETER for the seventh's reason. Omitted ⇒ key ABSENT.
    */
   itipReplyHeader?: boolean,
