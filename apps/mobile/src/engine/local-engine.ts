@@ -19,6 +19,17 @@ import { StoreFault, type SecureKV } from "../state/servers";
  */
 export const ENGINE_DB_FILE = "ohmail-engine.db";
 
+/**
+ * How the engine's store is opened, by every opener. expo-sqlite's close finalizes every statement
+ * SQLite still lists; after FTS5 has run, that list holds FTS5's own cached statements, and
+ * `sqlite3_close` then frees them again — a native double free that ended the app on the first
+ * close after an import (a refused Connect, Stop and remove). The executor finalizes each statement
+ * it prepares, so nothing of ours is left for that pass. One value, so expo's per-file connection
+ * cache also matches the removal's read-back to the door's handle.
+ */
+export const ENGINE_DB_OPEN_OPTIONS = { finalizeUnusedStatementsBeforeClosing: false } as const;
+export type EngineDbOpenOptions = typeof ENGINE_DB_OPEN_OPTIONS;
+
 /** Rows as arrays with the statement's own column names — the engine's store contract. */
 export interface PhoneSqlRows {
   readonly columns: readonly string[];
@@ -147,8 +158,8 @@ export const ENGINE_STORE_TABLES = ["accounts", "mailbox_credentials", "mailboxe
 
 /** What removing this phone's mailbox needs of the platform: the store's two verbs, and the keystore. */
 export interface EngineStoreSeams {
-  /** The engine's own file — the SAME name the opener opens, never a mirror's. */
-  openDatabase: (name: string) => Promise<EngineStoreDatabase>;
+  /** The engine's own file — the SAME name the opener opens, never a mirror's — with {@link ENGINE_DB_OPEN_OPTIONS}. */
+  openDatabase: (name: string, options: EngineDbOpenOptions) => Promise<EngineStoreDatabase>;
   /**
    * Remove that file. REQUIRED, on `MobileEngineDeps.deleteDatabase`'s argument: a platform half
    * that can only create a mailbox is not complete. It must name the file the opener names —
@@ -161,7 +172,7 @@ export interface EngineStoreSeams {
 
 /** Which of {@link ENGINE_STORE_TABLES} the store still holds. Creates nothing it does not drop. */
 async function engineStoreSurvivors(deps: EngineStoreSeams): Promise<string[]> {
-  const probe = expoEngineExecutor(await deps.openDatabase(ENGINE_DB_FILE));
+  const probe = expoEngineExecutor(await deps.openDatabase(ENGINE_DB_FILE, ENGINE_DB_OPEN_OPTIONS));
   try {
     const held = await probe.all(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${
@@ -238,7 +249,7 @@ export async function openLocalEnginePlatform(deps: EngineStoreSeams & {
     }
     return { kind: "refused", reason: refuse("standaloneMailboxRemoved") };
   }
-  const exec = expoEngineExecutor(await deps.openDatabase(ENGINE_DB_FILE));
+  const exec = expoEngineExecutor(await deps.openDatabase(ENGINE_DB_FILE, ENGINE_DB_OPEN_OPTIONS));
   try {
     const kek = await ensureKek(deps.kv, deps.randomKekHex);
     if (kek.kind === "refused") {

@@ -13,8 +13,10 @@ import * as SQLite from "expo-sqlite";
 import { nativeServerProfiles, secureKV } from "../state/servers-native";
 import {
   ENGINE_DB_FILE,
+  ENGINE_DB_OPEN_OPTIONS,
   openLocalEnginePlatform,
   removeStandaloneEngine,
+  type EngineDbOpenOptions,
   type EngineRemovalRecord,
   type EngineStoreDatabase,
   type LocalEnginePlatformVerdict,
@@ -25,9 +27,12 @@ import type { RandomKekHex } from "./kek";
 export const expoRandomKekHex: RandomKekHex = () =>
   Array.from(Crypto.getRandomBytes(32), (b) => b.toString(16).padStart(2, "0")).join("");
 
-/** The engine's own database file. Distinct from every mirror name by construction. */
-export async function openEngineDatabase(name: string = ENGINE_DB_FILE): Promise<EngineStoreDatabase> {
-  return (await SQLite.openDatabaseAsync(name)) as unknown as EngineStoreDatabase;
+/** The engine's own database file, opened as `local-engine.ts` says. Distinct from every mirror name by construction. */
+export async function openEngineDatabase(
+  name: string = ENGINE_DB_FILE,
+  options: EngineDbOpenOptions = ENGINE_DB_OPEN_OPTIONS,
+): Promise<EngineStoreDatabase> {
+  return (await SQLite.openDatabaseAsync(name, options)) as unknown as EngineStoreDatabase;
 }
 
 /**
