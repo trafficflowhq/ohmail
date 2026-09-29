@@ -17,7 +17,7 @@ import {
   readMemo, writeMemo, forgetMemo, peekMemo, type Generation,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
-  type RequestRefusalReason,
+  type RequestRefusalReason, isRequestRefusalReason,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { epochOf, epochVerdict, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
@@ -409,11 +409,20 @@ class RequestConflictError extends Error {
 }
 
 /** Thrown inside the apply transaction when the key was spent by THIS EXACT request already. */
-class AlreadyAppliedError extends Error {
-  constructor(readonly requestId: string) {
-    super(`request ${requestId} was already applied on an earlier cycle`);
-    this.name = "AlreadyAppliedError";
+class AlreadyAnsweredError extends Error {
+  constructor(readonly requestId: string, readonly answer: RecordedAnswer) {
+    super(`request ${requestId} was already answered on an earlier cycle`);
+    this.name = "AlreadyAnsweredError";
   }
+}
+
+/** What an organizer answered one request, as its `meta-request:<id>` key records it. */
+type RecordedAnswer = { applied: true } | { applied: false; reason: RequestRefusalReason };
+
+/** An apply's key says `applied`; a refusal's key carries `applied: false` and its reason. */
+function recordedAnswerOf(json: unknown): RecordedAnswer {
+  const j = typeof json === "object" && json !== null ? json as { applied?: unknown; reason?: unknown } : {};
+  return j.applied === false && isRequestRefusalReason(j.reason) ? { applied: false, reason: j.reason } : { applied: true };
 }
 
 /**
@@ -851,34 +860,35 @@ export async function applyMetaRequests(
 
   /** Refusals and applies both end in "remove this record", batched into ONE STORE+EXPUNGE. */
   const toRemove: unknown[] = [...staleAckRefs];
-  /** Acks to append, one per record whose outcome is decided this cycle. `resend`: applied earlier. */
+  /** Acks to append, one per record whose outcome is decided this cycle. `resend`: answered earlier. */
   const toAck: Array<{
     requestId: string; outcome: "applied" | "refused"; reason?: RequestRefusalReason;
-    ref?: unknown; resend: boolean;
+    ref?: unknown; resend: boolean; hash: string;
   }> = [];
 
   const settle = (
-    e: { requestId?: string; ref?: unknown },
+    e: RequestEnvelope,
     outcome: "applied" | "refused",
     reason?: RequestRefusalReason,
     resend = false,
   ): void => {
     if (e.ref !== undefined) toRemove.push(e.ref);
-    if (e.requestId !== undefined && !alreadyAcked.has(e.requestId)) {
-      toAck.push({ requestId: e.requestId, outcome, reason, ref: e.ref, resend });
+    if (!alreadyAcked.has(e.requestId)) {
+      toAck.push({ requestId: e.requestId, outcome, reason, ref: e.ref, resend, hash: requestContentHash(e) });
     }
   };
 
   /**
-   * WAS THIS CONTENT APPLIED HERE — the `meta-request:<id>` key holding the same hash. The key is
-   * claimed after the record was appended and lives a full window, so it outlives the reader's
-   * wait. `null` when the read failed: that says nothing, and the record stays for the next pass.
+   * WHAT THIS ORGANIZER ANSWERED THIS CONTENT — the `meta-request:<id>` key holding the same hash,
+   * an apply's or a refusal's. It lives a full window, so it outlives the reader's wait. `"none"`:
+   * no answer yet. `null`: the read failed, which says nothing, and the record stays for next pass.
    */
-  const appliedEarlier = async (e: RequestEnvelope): Promise<boolean | null> => {
+  const answeredEarlier = async (e: RequestEnvelope): Promise<RecordedAnswer | "none" | null> => {
     try {
       const held = await db.transaction((tx) =>
         readIdempotencyKey(tx, rt.accountId, `meta-request:${e.requestId}`, now));
-      return held !== null && held.erasedAt === null && held.requestHash === requestContentHash(e);
+      if (held === null || held.erasedAt !== null || held.requestHash !== requestContentHash(e)) return "none";
+      return recordedAnswerOf(held.responseJson);
     } catch (err) {
       log("organizer_request_apply_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
@@ -973,6 +983,23 @@ export async function applyMetaRequests(
       continue;
     }
 
+    // ── (3d) ANSWERED ALREADY: a record whose ack was lost is answered from its key ──────────
+    //
+    // The same answer, logged once: an applied record is never applied twice, and a refused one
+    // is not re-derived on the next pass, where a refusal that depends on time could change.
+    const earlier = await answeredEarlier(e);
+    if (earlier === null) { deferred++; continue; }
+    if (earlier !== "none") {
+      if (earlier.applied) {
+        settle(e, "applied", undefined, true);
+        applied++;
+      } else {
+        settle(e, "refused", earlier.reason, true);
+        refused++;
+      }
+      continue;
+    }
+
     // ── (4) IT MAY NOT NAME ANOTHER ROW THIS STORE HOLDS ─────────────────────────────────────
     //
     // Every install mints its own row id, so a reader's id is one this store has usually never
@@ -1003,16 +1030,8 @@ export async function applyMetaRequests(
     // `decidedAt` order, leaving the older one as the final state. Refusing the stale one leaves
     // exactly the rule the person last asked for.
     if (now.getTime() - e.decidedAt.getTime() > REQUEST_STALE_AFTER_MS) {
-      /* `stale` refuses a decision nobody applied. One applied HERE whose ack was lost is still in
-         the folder for its answer, and that answer is `applied`, never a refusal of mail that
-         moved. Asked of a stale record only: a fresh one reaches the same key at step (8). */
-      const earlier = await appliedEarlier(e);
-      if (earlier === null) { deferred++; continue; }
-      if (earlier) {
-        settle(e, "applied", undefined, true);
-        applied++;
-        continue;
-      }
+      /* `stale` refuses a decision nobody answered: one applied HERE whose ack was lost was
+         answered from its key at (3d), `applied`, never a refusal of mail that moved. */
       settle(e, "refused", "stale");
       refused++;
       log("organizer_request_refused", {
@@ -1080,7 +1099,7 @@ export async function applyMetaRequests(
         const existing = await readIdempotencyKey(tx, rt.accountId, idemKey, now);
         if (existing !== null) {
           if (existing.requestHash !== hash) throw new RequestConflictError(e.requestId);
-          throw new AlreadyAppliedError(e.requestId);
+          throw new AlreadyAnsweredError(e.requestId, recordedAnswerOf(existing.responseJson));
         }
 
         const claimed = await claimIdempotencyKey(tx, {
@@ -1105,7 +1124,7 @@ export async function applyMetaRequests(
           if (winner !== null && winner.requestHash !== hash) {
             throw new RequestConflictError(e.requestId);
           }
-          throw new AlreadyAppliedError(e.requestId);
+          throw new AlreadyAnsweredError(e.requestId, recordedAnswerOf(winner?.responseJson));
         }
 
         /* THE KIND'S OWN APPLIER, inside the SAME idempotency arm every kind shares. The fence,
@@ -1123,11 +1142,16 @@ export async function applyMetaRequests(
       settle(e, "applied");
       applied++;
     } catch (err) {
-      if (err instanceof AlreadyAppliedError) {
-        // Exactly as done as one applied this cycle. The reader is owed the same `applied` ack,
-        // and when that cycle's ack was lost this is its retry.
-        settle(e, "applied", undefined, true);
-        applied++;
+      if (err instanceof AlreadyAnsweredError) {
+        // Exactly as done as one answered this cycle: the reader is owed the same answer, and
+        // when that cycle's ack was lost this is its retry.
+        if (err.answer.applied) {
+          settle(e, "applied", undefined, true);
+          applied++;
+        } else {
+          settle(e, "refused", err.answer.reason, true);
+          refused++;
+        }
         continue;
       }
       if (err instanceof RequestConflictError) {
@@ -1172,14 +1196,41 @@ export async function applyMetaRequests(
     }
   }
 
+  /* A REFUSAL IS RECORDED BEFORE IT IS ANSWERED, under the key an apply claims, in its own
+     transaction (the apply's rolled back). When its ack is then lost the record stays, and the
+     next pass answers it from the key at (3d). A refusal that could not be recorded is re-derived
+     next pass; the fence first, so an erased account gets no key. */
+  for (const a of toAck) {
+    if (a.outcome !== "refused" || a.resend || a.reason === undefined) continue;
+    const reason = a.reason;
+    try {
+      await db.transaction(async (txRaw) => {
+        const tx = carryDialect(db, txRaw as object) as typeof txRaw;
+        if (await readAccountErasedAt(tx, dialect(tx), rt.accountId) != null) return;
+        await claimIdempotencyKey(tx, {
+          accountId: rt.accountId, key: `meta-request:${a.requestId}`, requestHash: a.hash,
+          responseStatus: 200, responseJson: { applied: false, requestId: a.requestId, reason },
+          seq: null, now,
+        });
+      });
+    } catch (err) {
+      log("organizer_request_refusal_unrecorded", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: a.requestId,
+        ...refusalFields(err),
+        reason: "the refusal is acknowledged now; if that fails too, the next pass decides it again",
+      });
+    }
+  }
+
   /* The acks, then the one expunge: acks first, so a failed expunge leaves each answer beside its
-     record (`alreadyAcked` next cycle). AN APPLIED RECORD LEAVES ONLY WITH ITS ANSWER: when its ack
-     fails the record stays, and a later pass finds its key and acks from it — the key forbids a
-     second apply, and its life covers the reader's window. A lost REFUSAL is still expunged: the
-     reader then reads `expired`, true of a decision nobody applied. One line per request for the
-     loss and one for the resend, however many passes lie between. */
+     record (`alreadyAcked` next cycle). A RECORD LEAVES ONLY WITH ITS ANSWER, applied or refused:
+     when its ack fails the record stays, and a later pass finds its key and acks from it — the key
+     forbids a second apply and a second verdict, and its life covers the reader's window. One line
+     per request for the loss and one for the resend, however many passes lie between. */
   let ackFailures = 0;
   const keep = new Set<unknown>();
+  let keptApplied = 0;
+  let keptRefused = 0;
   for (const a of toAck) {
     try {
       await io.ack(formatAck({
@@ -1189,26 +1240,30 @@ export async function applyMetaRequests(
       if (a.resend) {
         log("organizer_ack_resent", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: a.requestId,
-          reason: "applied on an earlier pass; its acknowledgement is appended now",
+          reason: "answered on an earlier pass; its acknowledgement is appended now",
         });
       }
     } catch (err) {
       ackFailures++;
-      const held = a.outcome === "applied" && a.ref !== undefined;
-      if (held) keep.add(a.ref);
+      const held = a.ref !== undefined;
+      if (held) {
+        keep.add(a.ref);
+        if (a.outcome === "applied") keptApplied++; else keptRefused++;
+      }
       if (!a.resend) {
         log("organizer_ack_append_failed", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: a.requestId,
           ...refusalFields(err),
           reason: held
-            ? "the record stays in the folder and a later pass acknowledges it from the applied record"
+            ? "the record stays in the folder and a later pass acknowledges it from its recorded answer"
             : "the outcome is not carried back; the reader falls back to its window",
         });
       }
     }
   }
   // Kept for its answer: from the reader's side nothing has resolved yet.
-  applied -= keep.size;
+  applied -= keptApplied;
+  refused -= keptRefused;
   deferred += keep.size;
   const removing = toRemove.filter((r) => !keep.has(r));
 
