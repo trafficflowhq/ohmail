@@ -1290,7 +1290,13 @@ interface Election {
   candidates: readonly OrganizerClaim[];
   /** Not lapsed relative to the newest heartbeat in the folder. */
   live: readonly OrganizerClaim[];
-  /** The strongest live candidate, or `null` when the folder holds no readable claim. */
+  /**
+   * THE ONE ORDER: `live`, strongest first by {@link compareStrength}. The winner is its head and
+   * the peek names holders in it, so the gate and the screen cannot name two organizers for one
+   * folder (LEASE-SCREEN-AND-ELECTION-COMPARATORS-DIVERGE).
+   */
+  ranked: readonly OrganizerClaim[];
+  /** The strongest live candidate — `ranked[0]` — or `null` when the folder holds no readable claim. */
   winner: OrganizerClaim | null;
   /**
    * WHAT THE FOLDER SAYS ABOUT TIME, read once — see {@link FolderClock}.
@@ -1402,7 +1408,8 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
   // asked below on the reader's clock, deciding only arm 7 against arm 8.
   const newest = candidates.reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
   const live = candidates.filter((c) => newest - c.heartbeat.getTime() < staleAfterMs);
-  const winner = [...live].sort(compareStrength)[0] ?? null;
+  const ranked = [...live].sort(compareStrength);
+  const winner = ranked[0] ?? null;
 
   // The one place the reader's clock decides anything about the folder as a whole, and it decides
   // only whether to ASK a human. It is now literally `!clock.renewing` rather than a second
@@ -1412,7 +1419,7 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
   // every folder holding one claim.
   const quiet = !clock.renewing;
 
-  return { candidates, live, winner, clock, plausiblePress, quiet, malformed };
+  return { candidates, live, ranked, winner, clock, plausiblePress, quiet, malformed };
 }
 
 /**
@@ -1478,7 +1485,9 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   // would treat a live claim in a format we cannot read as beatable residue.
   const unrankable = claims.find((c): c is OrganizerClaim =>
     !isMalformed(c) && !rawOurs(c) && (c.protocol > ourProtocol || c.kind === "unknown") && rawIsLive(c));
-  if (unrankable) return { verdict: "stand_down", reason: "organized_elsewhere:unknown", by: unrankable };
+  if (unrankable) {
+    return { verdict: "stand_down", reason: "organized_elsewhere:unknown", by: namedHolder(unrankable, ourProtocol) };
+  }
 
   const { winner } = election;
 
@@ -1573,9 +1582,28 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   // so the request is consumed by the pass that considered and refused it rather than left on the
   // row to be re-offered every cycle against an organizer it can never beat.
   if (!election.quiet && winner !== null) {
-    return { verdict: "stand_down", reason: reasonFor(winner), by: winner };
+    const by = namedHolder(winner, ourProtocol);
+    return { verdict: "stand_down", reason: reasonFor(by), by };
   }
-  return { verdict: "available", by: winner };
+  return { verdict: "available", by: winner === null ? null : namedHolder(winner, ourProtocol) };
+}
+
+/**
+ * THE KIND A HOLDER IS NAMED BY: its own header when this build can rank the claim, `unknown`
+ * when it cannot. A newer protocol's kind header is not evidence this build can read, so no reader
+ * names Cloud from it (STAND-DOWN-AND-PEEK-NAME-AN-UNRANKABLE-HOLDER-TWO-WAYS). The gate's `by`
+ * and the peek's holders both take it, so one folder names one holder one way.
+ */
+export function holderKind(
+  c: Pick<OrganizerClaim, "kind" | "protocol">, ourProtocol: number = CLAIM_PROTOCOL,
+): OrganizerKind | "unknown" {
+  return c.protocol > ourProtocol || c.kind === "unknown" ? "unknown" : c.kind;
+}
+
+/** The claim as a verdict names it: {@link holderKind} applied, every other field its own. */
+function namedHolder(c: OrganizerClaim, ourProtocol: number): OrganizerClaim {
+  const kind = holderKind(c, ourProtocol);
+  return kind === c.kind ? c : { ...c, kind };
 }
 
 /**
@@ -1692,7 +1720,7 @@ export type LeaseOccupancy = "none" | "held" | "stopped";
 
 export interface LeasePeek {
   state: LeaseOccupancy;
-  /** Freshest first. One entry per install id, the same coalescing the gate does. */
+  /** In the gate's order (see `peekLease`). One entry per install id, the same coalescing the gate does. */
   holders: LeaseHolder[];
   /**
    * Claims that say they are claims and are not readable as one.
@@ -1739,7 +1767,9 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
   // another computer was organizing their mailbox by a build that would have let them take it.
   // This is the seam the two copies of the folder-relative test hid from each other.
   const rawValid = claims.filter((c): c is OrganizerClaim => !isMalformed(c));
-  const clock = readFolderClock(rawValid, input.now, staleAfterMs);
+  /* THE GATE'S OWN ELECTION: its clock for the unrankable scan and its order for the holders. */
+  const election = runElection(claims, input.now, staleAfterMs);
+  const { clock } = election;
   /**
    * An install is renewing if ANY of its raw records says so. Coalesce keeps the newest heartbeat
    * per install, and a 2099 cleanup residue IS the newest — so an install renewing honestly at
@@ -1762,9 +1792,11 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
       .map((c) => c.installId),
   );
 
+  const lapsed = election.candidates.filter((c) => !election.ranked.includes(c)).sort(compareStrength);
+  const position = new Map([...election.ranked, ...lapsed].map((c, i) => [c.installId, i] as const));
   const holders: LeaseHolder[] = valid
     .map((c) => ({
-      kind: unrankableInstalls.has(c.installId) ? ("unknown" as const) : c.kind,
+      kind: unrankableInstalls.has(c.installId) ? ("unknown" as const) : holderKind(c),
       installId: c.installId,
       displayName: c.displayName,
       heartbeat: c.heartbeat,
@@ -1783,20 +1815,18 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
       capabilities: c.capabilities,
     }))
     /**
-     * Ordered by BELIEVABLE recency, because `holders[0]` is read as "the organizer" (the worker,
-     * the sidecar and the API all take the first holder as the machine to name). Sorting on the
-     * raw heartbeat let a stamp nobody believes decide that name: two installs each carrying a
-     * live record and a 2099 duplicate — the election chose A on incumbency, the preview put B
-     * first because B's residue was a day later in 2099, and the screen named the election's
-     * loser. An unbelievable stamp sorts as `now`, the same cap the reference uses; ties break on
-     * the install id so two readers produce the same order.
+     * IN THE GATE'S ORDER, because `holders[0]` is read as "the organizer" by the worker, the
+     * sidecar, the API and {@link answerLeasePeek}. A live record this build cannot rank first
+     * (the gate's rule 1/2 answer), then the election's `ranked`, then the lapsed by
+     * {@link compareStrength}. Recency ordered it before, and on two unpressed live claims it named
+     * the newer renewer while the election kept the incumbent
+     * (LEASE-SCREEN-AND-ELECTION-COMPARATORS-DIVERGE).
      */
     .sort((a, b) => {
-      const rank = (h: LeaseHolder): number =>
-        Math.min(h.heartbeat.getTime(), input.now.getTime());
-      const byRecency = rank(b) - rank(a);
-      if (byRecency !== 0) return byRecency;
-      return a.installId < b.installId ? -1 : a.installId > b.installId ? 1 : 0;
+      const ua = unrankableInstalls.has(a.installId) ? 0 : 1;
+      const ub = unrankableInstalls.has(b.installId) ? 0 : 1;
+      if (ua !== ub) return ua - ub;
+      return (position.get(a.installId) ?? position.size) - (position.get(b.installId) ?? position.size);
     });
 
   const state: LeaseOccupancy =
@@ -1959,7 +1989,7 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
 export type LeasePeekAnswer =
   /** The folder was read and nothing is renewing a claim in it. The only answer that admits one. */
   | { readonly answer: "free"; readonly peek: LeasePeek }
-  /** The folder was read and somebody is renewing. `holder` is the freshest, as `peekLease` sorts. */
+  /** The folder was read and somebody is renewing. `holder` is `holders[0]`, the one the gate names. */
   | { readonly answer: "held"; readonly peek: LeasePeek; readonly holder: LeaseHolder }
   /**
    * The folder was NOT read. Says nothing about who holds the mailbox — in particular not that
@@ -2018,11 +2048,11 @@ export async function answerLeasePeek(input: AnswerLeasePeekInput): Promise<Leas
     throw err;
   }
   /* `held` IS THE LIVENESS, not the presence of records. `peekLease` already decides it from the
-     same `isClaimLive` the gate uses, and `holders[0]` is the freshest believable one — so a
+     same `isClaimLive` the gate uses, and `holders[0]` is the holder the gate names — so a
      `stopped` folder answers `free`, which is what the gate's `available` verdict means and what
      a person pressing "organize here" on a machine whose other install went quiet expects. */
   if (peek.state === "held") {
-    const holder = peek.holders.find((h) => h.fresh) ?? peek.holders[0];
+    const holder = peek.holders[0];
     /* A `held` with no holder is unrepresentable through `peekLease` — `state` is `held` only
        because some holder is fresh — but this narrowing is the compiler's, not a comment's, and
        the safe reading of "held by nobody nameable" is still not `free`. */
@@ -3547,14 +3577,12 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   }
 
   /**
-   * The writer's own clock, before any append — read from the election's records (our own claim
-   * carries both stamps for one instant), so it costs no round trip and is judged before this
-   * gate can write. A refusal is {@link LeaseClockSkewError}, a `LeaseUnavailableError` and
-   * deliberately not a stand-down: both hosts exempt the class, the mailbox does not sync and is
-   * not quarantined, our claim ages out un-renewed — while a stand-down would void a one-shot
-   * press this pass could never have honoured. One-cycle residual, stated: an install that has
-   * never written a claim has no pair to measure, so its first gate run is unchecked; its own
-   * append supplies the pair and the next cycle refuses.
+   * The writer's own clock, before any append — read off our own claim's two stamps, so no round
+   * trip, judged before this gate can write. A refusal is {@link LeaseClockSkewError}, exempt by
+   * class on both hosts and never a stand-down, which would void a press this pass could never
+   * honour. THE RULED BOUND (FIRST-GATE-SKEW-HOLE): an install that has never written a claim has
+   * no pair to measure, so its first gate run is unchecked; its own append supplies the pair and
+   * the next cycle refuses. One cycle, accepted over a probe append before the first claim.
    */
   const staleWindowMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   if (staleWindowMs > MAX_FUTURE_SKEW_MS) {
@@ -4060,13 +4088,13 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   }
   /**
    * THE BASELINE, AND THE PROOF THAT IT IS ONE — the gate's last act, issued and never awaited.
-   *
-   * ORDER IS THE WHOLE MECHANISM: counters FIRST, custody re-proved by nonce behind them. A takeover
-   * landing before the counters or between them and the proof leaves our claim missing from the
-   * proof; one landing after moves the counters off the baseline, which is what the permit's next
-   * boundary is for. Proof-then-counters would put a takeover between the two INSIDE the baseline.
-   * Not awaited: the caller's row write follows the verified claim with nothing in front of it
-   * ({@link LeaseGateResult.stamp}), and the permit awaits this before it grants.
+   * Counters FIRST, custody re-proved by nonce behind them: a takeover before or between them
+   * leaves our claim missing from the proof, one after moves the counters off the baseline.
+   * Not awaited: the row write follows the verified claim ({@link LeaseGateResult.stamp}), and the
+   * permit awaits this before it grants. THE RULED BOUND, LEASE-BASELINE-RACES-THE-STATUS-ROUND-TRIP:
+   * a rival APPEND the server takes between our last write and this STATUS is inside the baseline
+   * — one round trip, irreducible for any answer read off the folder; the permit's TTL and write
+   * count stand behind it.
    */
   const proveAndStamp = async (): Promise<MetaBaselineReading> => {
     const stamp = io.stampMeta === undefined ? null : await io.stampMeta().catch(() => null);

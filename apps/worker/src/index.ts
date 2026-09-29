@@ -1364,9 +1364,9 @@ export async function startWorkerWithLock(
           return;
         }
         const seen = answered.peek;
-        // FRESHEST FIRST, and the freshest is the one a person means by "who organizes this".
-        // `holders` is already sorted that way by `peekLease`; an empty list means the folder
-        // holds no readable claim, which is reported as "nobody named" rather than invented.
+        // THE GATE'S HOLDER FIRST: `peekLease` sorts `holders` in the election's order, so the
+        // name here is the install the gate elects. An empty list means the folder holds no
+        // readable claim, which is reported as "nobody named" rather than invented.
         const top = seen.holders[0] ?? null;
         // `none` is not a member of the column's closed set and must not be coerced into one:
         // "nobody has ever organized this mailbox" is genuinely absent, not `stopped`.

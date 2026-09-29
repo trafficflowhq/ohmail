@@ -1108,13 +1108,10 @@ export async function markMailboxStoodDown(
     isMailboxDisabledReason(reason) ? reason : "organized_elsewhere:unknown";
   // The kind, from the CLAIM where there is one and from the reason otherwise. The fallback keeps the
   // column populated for a malformed claim, whose reason is the honest `organized_elsewhere:unknown`.
-  // THEY DO NOT ALWAYS AGREE, and this used to say they did ("`readMailboxLease` derives the reason
-  // from the same claim"). The unrankable arm is the counter-example: a claim from a FUTURE PROTOCOL
-  // parses its `X-Ohmail-Organizer-Kind` header perfectly (`cloud`, say) while the verdict is
-  // `organized_elsewhere:unknown`, because what could not be ranked was the protocol, not the kind —
-  // and the row is better for the disagreement (the banner names "ohmail Cloud (next)"). What is not
-  // acceptable is a comment asserting an equality the code does not maintain, so it is stated as a
-  // preference for the claim's own answer, which is what the expression encodes.
+  // The claim's kind is the ENGINE's name for it (`holderKind`): a claim from a future protocol
+  // reads `unknown` here as it does on the reader's peek, whatever its kind header says, so the
+  // stand-down and the next cycle's peek name one holder one way
+  // (STAND-DOWN-AND-PEEK-NAME-AN-UNRANKABLE-HOLDER-TWO-WAYS).
   // THROUGH THE WRITE DOOR, not a cast: the middle term is a word cut out of a reason string,
   // so the assertion was making a claim the expression cannot keep. `organized_by_kind` is a
   // widenable set, which the device store carries no CHECK for at all — this is the refusal on

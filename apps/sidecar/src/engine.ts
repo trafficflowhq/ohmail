@@ -4357,8 +4357,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             return;
           }
           const seen = answered.peek;
-          /* FRESHEST FIRST — `peekLease` sorts them, and the freshest is what a person means by
-             "who organizes this". An empty list is "nobody named", never invented. */
+          /* THE GATE'S HOLDER FIRST — `peekLease` sorts them in the election's order, so this
+             names the install the gate elects. An empty list is "nobody named", never invented. */
           const top = seen.holders[0] ?? null;
           /* `none` is not a member of the column's closed set: "nobody has ever organized this
              mailbox" is genuinely absent, not `stopped`. */
