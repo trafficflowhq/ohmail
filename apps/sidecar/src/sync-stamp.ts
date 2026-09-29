@@ -1,16 +1,15 @@
 /**
- * The two columns that say how far this mailbox has got — written here, because on a desktop install
- * there is nobody else to. `mailboxes.last_sync_at` and `initial_import_completed_at` are what the
- * client's sync line reads: a null `last_sync_at` means "not one pass has completed", a null
- * `initial_import_completed_at` means "the first import is not known to be finished". On a hosted
- * account the server-side worker writes them; on a desktop install the worker IS this process, and
- * neither was — so the ladder read the null import stamp as a FLOOR and said "Syncing your mail" for
- * a day over a mailbox that finished in ninety seconds. `last_sync_at` is "a pass finished" (read
- * only as `=== null`); `initial_import_completed_at` is written ONCE, only when a pass drained with NO BACKLOG.
+ * The three columns that say how far this mailbox has got — written here, because on a desktop install
+ * there is nobody else to. `last_sync_at` is "a pass finished" (read only as `=== null`);
+ * `initial_import_completed_at` is written ONCE, when a pass drained with NO BACKLOG, and null means
+ * "the first import is not known to be finished"; `sync_progress_at` is when a pass last ran out of
+ * cycles with that stamp still null — the import's own clock, which search reads past the first day.
+ * On a hosted account the worker writes all three; on a desktop install the worker IS this process.
  */
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { mailboxes } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import type { LocalDb } from "./db.js";
 
 /**
@@ -36,6 +35,7 @@ export interface SyncStamps {
  * first, so it is naturally once-only and safe against two passes finishing close together — and its
  * `RETURNING` is the authority on whether the import finished HERE. The first statement's `RETURNING`
  * carries the stamp as it stood at no extra read, since the pass write does not touch that column.
+ * An undrained pass also moves `sync_progress_at` in that first statement, only while the stamp is null.
  */
 export async function stampSynced(
   db: LocalDb,
@@ -43,9 +43,11 @@ export async function stampSynced(
   now: Date,
   drained: boolean,
 ): Promise<SyncStamps> {
+  const progress = sql`case when ${mailboxes.initialImportCompletedAt} is null then ${dialect(db).ts(now)}
+    else ${mailboxes.syncProgressAt} end`;
   const passed = await db
     .update(mailboxes)
-    .set({ lastSyncAt: now })
+    .set(drained ? { lastSyncAt: now } : { lastSyncAt: now, syncProgressAt: progress })
     .where(eq(mailboxes.id, mailboxId))
     .returning({ importCompletedAt: mailboxes.initialImportCompletedAt });
   // No row ⇒ the mailbox was removed while this pass ran. There is no import to report either way.

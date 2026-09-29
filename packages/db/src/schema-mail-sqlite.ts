@@ -429,7 +429,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   profileImportAskAt: integer("profile_import_ask_at", { mode: "timestamp_ms" }),
   profileImportAskOutcome: text("profile_import_ask_outcome"),
   profileImportAskReason: text("profile_import_ask_reason"),
-  /** Mail 0130 — when a cycle last read a never-completed mailbox; see the pg twin. LAST for 0111's reason. */
+  /** Mail 0130 — when a cycle last saw the first import still owing mail; see the pg twin. LAST for 0111's reason. */
   syncProgressAt: integer("sync_progress_at", { mode: "timestamp_ms" }),
   /** Mail 0132 — the mailbox's own Sent folder, written at attach; see the pg twin. LAST for 0111's reason. */
   sentFolder: text("sent_folder"),

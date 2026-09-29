@@ -125,7 +125,7 @@ import {
   markMailboxReleased, refreshOrganizerHolder, resumeParkedMailbox, deleteParkedPushRows,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, isProviderRefusal, mailboxErrorDetail,
-  stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
+  stampMailboxSyncNow, stampInitialImportComplete, stampImportProgress, makeSyncWriteFence, type LeaderFence,
   accountsOf, organizedMailboxIdsOf, accountInShard, accountShardFilter, shardFilter,
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason, type ParkedAccountsReader,
@@ -3863,6 +3863,21 @@ export async function startWorkerWithLock(
                 mailboxId: rt.mailboxId, accountId: rt.accountId, err,
                 reason: "this mailbox's first import drained but initial_import_completed_at could " +
                   "not be written — the next no-backlog cycle re-attempts it, and the mailbox keeps " +
+                  "serving either way",
+              });
+            }
+          } else {
+            // A cycle with a backlog: the first import still owes mail, so its clock moves. Search
+            // reads it past the first day (`stampImportProgress`). Best-effort, like the stamp above.
+            try {
+              await asDatabaseFault("cycle.stampImportProgress",
+                () => stampImportProgress(db, rt.mailboxId, new Date()));
+            } catch (err) {
+              noteIfSharedDatabaseFault(err, rt);
+              log.error("mailbox_import_progress_stamp_failed", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+                reason: "this mailbox's first import still owes mail but sync_progress_at could not " +
+                  "be written — the next cycle with a backlog re-attempts it, and the mailbox keeps " +
                   "serving either way",
               });
             }

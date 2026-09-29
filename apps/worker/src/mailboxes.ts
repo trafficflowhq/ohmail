@@ -1339,8 +1339,8 @@ export async function markMailboxSyncBlocked(
  * failed. So this writes the mail-0029 pair and leaves `status`, `error_code`, `error_detail`,
  * `failed_at` and `retry_count` as they were (mail 0039 makes the next-attempt instant survive a
  * restart). `retry_count` is NOT incremented: it counts FAILURES, and a cap hit is not one.
- * On a mailbox no cycle has completed yet it also stamps `sync_progress_at` (mail 0130): the
- * mailbox was read, which is what the `sync_lag` alert needs to call a first import alive.
+ * On a mailbox no cycle has completed yet it also stamps `sync_progress_at` (mail 0130), as
+ * {@link stampImportProgress} does after one: the `sync_lag` alert then calls a first import alive.
  */
 export async function markMailboxReadLimited(
   db: WorkerDb, mailboxId: string,
@@ -1366,7 +1366,8 @@ export async function markMailboxProviderUnavailable(
  * `sync_progress_at` and nothing else, so the `sync_lag` rule reads the first import as alive.
  * The cycle's failure arm calls it on every such end, because one bounded cycle is not yet a
  * quarantine and would otherwise stamp nothing. Guarded on `last_sync_at IS NULL` in the statement;
- * `false` when there was nothing to stamp or the fence refused.
+ * `false` when there was nothing to stamp or the fence refused. A completed cycle with a backlog
+ * moves the same column through {@link stampImportProgress}.
  */
 export async function stampSyncProgress(
   db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
@@ -1634,5 +1635,20 @@ export async function stampInitialImportComplete(
 ): Promise<void> {
   await db.update(mailboxes)
     .set({ initialImportCompletedAt: now })
+    .where(and(eq(mailboxes.id, mailboxId), isNull(mailboxes.initialImportCompletedAt)));
+}
+
+/**
+ * A cycle completed WITH a backlog while the first import is open: move `sync_progress_at`, the
+ * import's own clock. Search reads it to keep saying "synced so far" past the first day while
+ * cycles still owe mail (`search-coverage.ts`). The else arm of {@link stampInitialImportComplete}'s
+ * `!hasBacklog`, so the two stamps cannot disagree; guarded on the same `IS NULL` and best-effort
+ * like it. The `sync_lag` rule reads this column only while `last_sync_at` is null.
+ */
+export async function stampImportProgress(
+  db: WorkerDb, mailboxId: string, now: Date,
+): Promise<void> {
+  await db.update(mailboxes)
+    .set({ syncProgressAt: now })
     .where(and(eq(mailboxes.id, mailboxId), isNull(mailboxes.initialImportCompletedAt)));
 }

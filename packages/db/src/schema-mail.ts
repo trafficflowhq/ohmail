@@ -449,11 +449,11 @@ export const mailboxes = pgTable("mailboxes", {
   profileImportAskOutcome: text("profile_import_ask_outcome"),
   profileImportAskReason: text("profile_import_ask_reason"),
   /**
-   * WHEN A CYCLE LAST READ THIS MAILBOX BEFORE ANY CYCLE COMPLETED (mail 0130). Written with a
-   * `read_limited` block while `last_sync_at` is still NULL: the mailbox answered and was read up
-   * to one of our ceilings. Read by the `sync_lag` alert alone, after `last_sync_at` and before
-   * `created_at`, so a first import that hits a ceiling is alive rather than lagging. Every other
-   * reader keeps `last_sync_at`, which still means a completed cycle.
+   * WHEN A CYCLE LAST SAW THIS MAILBOX'S FIRST IMPORT STILL OWING MAIL (mail 0130). Written with a
+   * `read_limited` block while `last_sync_at` is still NULL (read up to one of our ceilings), and
+   * by every completed cycle that ends with a backlog while `initial_import_completed_at` is NULL.
+   * The `sync_lag` alert reads it after `last_sync_at` and before `created_at`, so it counts only
+   * before a cycle completed; search's coverage reads it as the import's clock past the first day.
    */
   syncProgressAt: timestamp("sync_progress_at", { withTimezone: true }),
   /**
