@@ -146,6 +146,13 @@ export interface StandaloneEngine {
        * to the lease, false once the claim leaves or where it was never ours.
        */
       claimed: boolean;
+      /** `sibling_lapse`: a copy of this install holds the claim and the stop waits for it to lapse. */
+      releaseRefusal?: "sibling_lapse" | null;
+      /**
+       * The last look at the claims: `none` read no holder, `null` (or absent) did not look. Absent
+       * reads as not looked, so an engine that predates the field keeps the stand-down's sentence.
+       */
+      holderState?: "held" | "stopped" | "none" | null;
       /**
        * WHAT LETTING THE MAILBOX GO LEFT IN ITS SETTINGS DOCUMENT — on the stop's own record only.
        * `kept_other`: another ohmail's document stands; `not_saved`: the write failed.

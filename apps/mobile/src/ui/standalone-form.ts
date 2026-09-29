@@ -252,7 +252,7 @@ export type PhoneClaim =
    * answer, carried so the chip is the engine's state rather than a plain `Organizing` over a
    * mailbox somebody has already asked this phone to let go.
    */
-  | { k: "ours"; stopping: boolean; releasePending: boolean }
+  | { k: "ours"; stopping: boolean; releasePending: boolean; siblingLapse?: boolean }
   /** Read, and no install holds it. `starting` = a start is asked for and not yet confirmed. */
   | { k: "free"; starting: boolean }
   /**
@@ -494,7 +494,14 @@ export function claimHere(
      * would render `free` over a standing stop and nothing would say so.
      */
     releaseRequestedAt: string | null;
-    heldBy: { name: string; standDownReason: string } | null;
+    /** `sibling_lapse`: a copy of this install holds the claim and the stop waits for it to lapse. */
+    releaseRefusal?: "sibling_lapse" | null;
+    /**
+     * WHO ELSE HOLDS IT, from the engine's stand-down and its last look. `holderState` decides
+     * whether that holder still organizes: `none` or `stopped` is nobody, as {@link claimFrom}
+     * reads a paired row; `null` is a look not taken, and the remembered reason stands.
+     */
+    heldBy: { name: string; standDownReason: string; holderState: "held" | "stopped" | "none" | null } | null;
   },
   /**
    * THE SESSION'S ONE STANDING INSTRUCTION, and it may only ever MODIFY the engine's answer.
@@ -521,9 +528,11 @@ export function claimHere(
      person asked and the mail server has not said yet — and it is true whether the pass is still
      reporting itself organizing or has already stopped reporting it. */
   const releasePending = here.releaseRequestedAt !== null;
-  if (here.organizing) {
-    return { k: "ours", stopping: instruction === "stopping", releasePending };
-  }
+  const siblingLapse = releasePending && here.releaseRefusal === "sibling_lapse";
+  const ours = (): PhoneClaim => ({
+    k: "ours", stopping: instruction === "stopping", releasePending, ...(siblingLapse ? { siblingLapse } : {}),
+  });
+  if (here.organizing) return ours();
   const held = here.heldBy;
   /* A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS. The engine arranges nothing while it
    * carries out a release, so `organizing` is false on both of its endings — and on a device that
@@ -533,8 +542,15 @@ export function claimHere(
    * organizing arm above takes it, not from the standing request: a stop still being carried out
    * reads `Stopping`, one the server refused reads `Organizing`. Pinned `true` here, the chip said
    * `Stopping` for ever and the Stop verb — the only way to ask again — stayed hidden. */
-  if (held === null && here.releaseRequestedAt !== null) {
-    return { k: "ours", stopping: instruction === "stopping", releasePending };
+  if (held === null && here.releaseRequestedAt !== null) return ours();
+  /* A HOLDER THAT LET GO IS NOBODY: the look that read no claim, or a lapsed one, answers the
+     remembered stand-down reason, and the card offers the start rather than naming a machine. */
+  if (held !== null && !holderIsLive({
+    by: held.holderState === "none" ? null : { kind: holderKind(held.standDownReason), name: held.name },
+    state: held.holderState,
+  })) {
+    if (handedBack && instruction !== "starting") return { k: "handedBack" };
+    return { k: "free", starting: instruction === "starting" };
   }
   if (held === null) {
     /* NOT WHILE A PRESS IS IN FLIGHT: `starting` is a transition a person asked for and is the
@@ -580,6 +596,7 @@ export function claimNoteLine(
       /* A STOP THE MAIL SERVER HAS NOT HONOURED gets the sentence that says what is happening —
          the platform rule ("dismiss the notification to stop") is an instruction about a press
          that has already been made. Every other `ours` keeps it. */
+      if (claim.siblingLapse === true) return Copy.phoneStateStopSiblingLapse;
       if (claim.releasePending) return Copy.phoneStateStopPendingWhy;
       return facts?.declined === true ? null : platformRuleLine(os);
     case "pairedServer":

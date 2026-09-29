@@ -129,6 +129,7 @@ export const DE: Deck = {
   phoneStateStopping: "Wird beendet",
   phoneStateStopPending: "Stopp ausstehend",
   phoneStateStopPendingWhy: "Ein Stopp steht bereits aus; es wartet auf das Postfach.",
+  phoneStateStopSiblingLapse: "Eine andere Kopie dieses Telefons hält den Anspruch auf das Postfach noch; der Stopp endet, wenn dieser Anspruch verfällt.",
   /* Ohne Desktop-Zwilling: nur auf dem Telefon kann ein Start hinter einem Stopp warten. */
   phoneStateStarting: "Wird gestartet",
   phoneStateNotOrganized: "Dieses Postfach wird von nichts organisiert",

@@ -221,6 +221,8 @@ const TABLE = {
      still ours and "Organizing" would say the press did nothing. */
   phoneStateStopPending: "Stop pending",
   phoneStateStopPendingWhy: "A stop is already pending; waiting for the mailbox.",
+  /* The stop waits on a copy of this phone's claim — the desktop's `stopOrganizingSiblingLapse`. */
+  phoneStateStopSiblingLapse: "Another copy of this phone still holds the mailbox's claim; the stop finishes when that claim lapses.",
   /* The sixth, and the only one with no desktop twin: a computer has no start to wait through —
      its press lands on an idle mailbox. A phone's can be queued behind a stop it changed its mind
      about, and the chip has to say which of the two is happening. */

@@ -213,6 +213,18 @@ export interface OrganizerState {
    */
   claimed: boolean;
   /**
+   * WHY A STANDING STOP HAS NOT FINISHED — the row's `release_refusal`, carried here because the
+   * phone reads this state and never the row. `sibling_lapse`: a copy of this install renews a claim
+   * under its id, and the stop waits for that claim to lapse. `null` everywhere else. REQUIRED.
+   */
+  releaseRefusal: "sibling_lapse" | null;
+  /**
+   * WHAT THE LAST LOOK AT THE CLAIMS SAW ABOUT ANOTHER HOLDER — the peek's occupancy, from the read
+   * that named {@link heldBy}. `none`: the folder was read and no claim stood. `null`: not read this
+   * pass (a relaunch reassembles a stand-down from the row), which is not `none`. REQUIRED.
+   */
+  holderState: "held" | "stopped" | "none" | null;
+  /**
    * WHAT LETTING THE MAILBOX GO LEFT IN ITS SETTINGS DOCUMENT — on the record a person's stop or a
    * hand-back wrote, and absent on every other. `kept_other` and `not_saved` are the two a surface
    * owes a sentence: this install's decisions are on this install only.

@@ -227,6 +227,8 @@ export interface StandDownHolder {
   readonly name: string;
   /** The engine's stand-down reason, unmodified. Non-null by construction: see the field above. */
   readonly standDownReason: string;
+  /** What the engine's last look saw: `none` is a holder that let go, `null` a look not taken. */
+  readonly holderState: "held" | "stopped" | "none" | null;
 }
 
 /**
@@ -248,6 +250,8 @@ export interface StandaloneHere {
    * not honoured, which is the one state the panel could not tell from a free mailbox.
    */
   readonly releaseRequestedAt: string | null;
+  /** Why that stop has not finished: `sibling_lapse` while a copy of this install holds the claim. */
+  readonly releaseRefusal: "sibling_lapse" | null;
   readonly heldBy: StandDownHolder | null;
   /** `null` until the engine has said — see the body. */
   readonly reachable: boolean | null;
@@ -322,6 +326,7 @@ export function standaloneHere(): StandaloneHere | null {
   let heldBy: StandDownHolder | null = null;
   /** See {@link StandaloneHere.releaseRequestedAt}. `null` is "none standing, or not said yet". */
   let releaseRequestedAt: string | null = null;
+  let releaseRefusal: "sibling_lapse" | null = null;
   try {
     /* ONE read of the engine's answer, and both halves off it: `runtimes()` is a snapshot per
        call, so asking twice is asking two different moments. */
@@ -337,6 +342,7 @@ export function standaloneHere(): StandaloneHere | null {
       releaseRequestedAt = entries
         .map(([, state]) => state.releaseRequestedAt)
         .find((at) => at !== null) ?? null;
+      releaseRefusal = entries.some(([, state]) => state.releaseRefusal === "sibling_lapse") ? "sibling_lapse" : null;
       /**
        * THE REASON IS THE DISCRIMINATOR AND THE NAME IS NOT. A name is absent in two different
        * states — a claim that named nothing, and EVERY RELAUNCH, where the engine reassembles the
@@ -351,7 +357,7 @@ export function standaloneHere(): StandaloneHere | null {
         const stood = entries.map(([, state]) => state).find((state) => state.reason !== null);
         heldBy = stood === undefined
           ? null
-          : { name: stood.heldBy ?? "", standDownReason: stood.reason! };
+          : { name: stood.heldBy ?? "", standDownReason: stood.reason!, holderState: stood.holderState ?? null };
       }
     }
     /**
@@ -399,7 +405,7 @@ export function standaloneHere(): StandaloneHere | null {
        somebody's organizing on screen. */
   }
   return {
-    id, address: held.address, organizing, releaseRequestedAt, heldBy, reachable,
+    id, address: held.address, organizing, releaseRequestedAt, releaseRefusal, heldBy, reachable,
     unreachableSince, signInRefused, certificateRefused, needsCredential, dialled, firstSync,
   };
 }
