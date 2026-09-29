@@ -1,12 +1,13 @@
 import { UNMETERED, isSpendMetered, type SpendComposition, type Tx } from "@trafficflow/db";
 import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder } from "@trafficflow/db/cloud";
-import type { SpendPort } from "@trafficflow/db";
+import type { AiUsageLine, SpendPort } from "@trafficflow/db";
 import { generateProposals, silentLogger, unconfiguredProposer, type Logger, type WorkflowPort } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { loadServedAccounts } from "./mailboxes.js";
 import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
+import { attributedProposer, type UsageHook } from "./ai-usage.js";
 
 /**
  * The AI PROPOSAL-generation pass — a `reconcile-cron` sibling. It assembles the account's REDACTED
@@ -34,6 +35,9 @@ export async function proposalGeneratePass(
     credits?: SpendPort;
     /** Where the pass says it did not get the claim. Absent ⇒ silent, as a library must be. */
     log?: Logger;
+    /** Where this host records usage: the model call's line, as `propose`, rides the pass's
+     *  release. Absent ⇒ nothing is recorded. */
+    usageHook?: UsageHook;
   },
   now: Date = new Date(),
 ): Promise<{ generated: number }> {
@@ -63,16 +67,21 @@ export async function proposalGeneratePass(
    * attempt, whose proposals may well have been delivered, so its claim goes back unrefunded.
    */
   let refundOnRelease = false;
+  /** The pass's one model call, once made, for the one release to carry. */
+  let usageLine: AiUsageLine | undefined;
   const releaseClaim = async (refund: boolean): Promise<void> => {
     if (!deps.credits || !claimed || released) return;
     released = true;
+    const usage = usageLine ? { usage: [usageLine] } : {};
     await deps.credits.release(deps.accountId, refund && chargedAttempt !== null
-      ? { action: "propose", attemptKey, refund: true, attempt: chargedAttempt }
-      : { action: "propose", attemptKey, refund: false });
+      ? { action: "propose", attemptKey, refund: true, attempt: chargedAttempt, ...usage }
+      : { action: "propose", attemptKey, refund: false, ...usage });
   };
   try {
     const stored = await generateProposals(db, deps.accountId, {
-      port: deps.port,
+      port: deps.usageHook
+        ? attributedProposer(deps.port, deps.accountId, deps.usageHook, (l) => { usageLine = l; })
+        : deps.port,
       now: () => now,
       // The money question, asked by `generateProposals` at the only point where the
       // answer is meaningful: after the patterns exist (so a pass that cannot reach a model is
@@ -175,6 +184,9 @@ export async function runProposalCron(
       })
       : UNMETERED;
     const spend = isSpendMetered(entitlements) ? entitlements : undefined;
+    // Armed beside a real port, like the worker body, so a metered call no hook attributed is said.
+    const usageRelay = metered && spend ? config.aiUsage : undefined;
+    usageRelay?.arm();
     let generated = 0;
     for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
       try {
@@ -183,6 +195,7 @@ export async function runProposalCron(
           // ONE port for the invocation; the account is an argument to the spend and the terms
           // come from `SPEND_ACTIONS.propose`.
           ...(metered && spend ? { credits: spend } : {}),
+          ...(usageRelay ? { usageHook: usageRelay.hook } : {}),
         }, now);
         generated += res.generated;
       } catch (err) {

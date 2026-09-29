@@ -148,13 +148,12 @@ export interface AnthropicClientOptions {
   /** Jitter source; injected so backoff is deterministic under test. */
   random?: () => number;
   /**
-   * Called after EVERY metered call, success or failure — the margin-measurement hook: hosts wire
-   * it to the structured logger AND the cost table, so the token counts behind every AI action
-   * are greppable and joinable. Invoked through a try/catch — a reporter that throws must not
-   * become the outcome of a call that succeeded. It may return a promise, and this client AWAITS
-   * it: the API runs serverless, so an unawaited durable write may simply never land; awaiting
-   * after seconds at a model provider costs nothing measurable. A rejecting reporter is swallowed
-   * like a throwing one — observability is never load-bearing. See `makeAiUsageRecorder`.
+   * Called after EVERY metered call, success or failure: the process-level hook, where a host
+   * writes its `ai_call` line. A host that records usage by account attributes each call through
+   * the call's own hook ({@link AiCallOptions}), which fires first. Invoked through a try/catch: a
+   * reporter that throws must not become the outcome of a call that succeeded. It may return a
+   * promise, and this client AWAITS it, because on a serverless host an unawaited write may never
+   * land. A rejecting reporter is swallowed like a throwing one.
    */
   onUsage?: (report: AnthropicCallReport) => void | Promise<void>;
   /** Convenience: when set and `onUsage` is not, usage is logged as `ai_call` at info level. */
@@ -246,8 +245,8 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
     // tokens cost — and with no `log` either, this line resolves to `undefined?.info(…)` and does
     // literally nothing. That was the worker's state for a stretch: the arm making most of the
     // product's model calls, silently unmeasured, beside a comment claiming otherwise. The guard
-    // is not here (a default cannot detect its own absence) but in the `ai_usage_unrecorded`
-    // rule, which compares the cost table against the credit ledger.
+    // is not here (a default cannot detect its own absence) but in the entitlements program's
+    // daily reconcile, which compares recorded calls against the credit ledger.
     log?.info("ai_call", { ...r });
   });
 

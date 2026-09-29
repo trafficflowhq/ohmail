@@ -30,7 +30,7 @@ import {
    * have — the worker's deliberately small runtime dependency set, and `test/deps.test.ts` is
    * what keeps that true. */
   makeSupabaseStagingStorage, makeS3StagingStorage, sweepExpiredStagingFor,
-  reconcileStagingOrphansFor, StagingListingUnsupportedError,
+  reconcileStagingOrphansFor, StagingListingUnsupportedError, ENTITLEMENTS_CALL_BUDGET_MS,
   type AlertSink,
   type AlertSinkHealth,
   type AttachmentStagingStorage,
@@ -39,6 +39,7 @@ import {
   createLogger, silentLogger, resolveOhboxPolicy, resolveScreeningCutoff, DEFAULT_OHBOX_POLICY, type Logger,
   providerAuthservIds,
   MicrosoftTokenProvider, type OAuthTokenProvider, type UpdateSecretPort, type FetchLike,
+  type ClassifierPort,
 } from "@trafficflow/core";
 import { makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders } from "@trafficflow/core/adapters/drizzle-repo";
 import {
@@ -86,6 +87,7 @@ import {
   runThreadBackfill, THREAD_BACKFILL_SLICE_MS, THREAD_BACKFILL_SLICE_PAGES,
 } from "./thread-backfill.js";
 import { makeClassifierCircuit, ClassifierFaultError, type ClassifierCircuit } from "./ai-circuit.js";
+import { attributedIngestClassifier, attributedWorkflowDrafter, makeAiUsageBuffer } from "./ai-usage.js";
 import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./workflow-cron.js";
 import { bubbleUpPass } from "./bubble-up-cron.js";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-heal.js";
@@ -1199,6 +1201,18 @@ export async function startWorkerWithLock(
      * (`refund-obligation-composition.test.ts`).
      */
     const obligations = spend ? refundObligationsOn(db as unknown as Tx) : undefined;
+    /**
+     * WHERE A MODEL CALL'S USAGE GOES, composed on `spend`'s condition: ingest classification and
+     * workflow steps into a bounded buffer the entitlements port takes every 30 s (and twice in
+     * `stop()`), the Screener's and the proposer's on their own releases. Armed here, so a
+     * metered call no hook attributed is warned about; an unmetered host records nothing.
+     */
+    const usageRelay = spend ? config.aiUsage : undefined;
+    const recordUsage = isMetered(entitlements) ? entitlements.recordUsage?.bind(entitlements) : undefined;
+    const usageBuffer = usageRelay && recordUsage
+      ? makeAiUsageBuffer({ port: { recordUsage }, log, budgetMs: ENTITLEMENTS_CALL_BUDGET_MS })
+      : undefined;
+    usageRelay?.arm();
 
     /**
      * WHICH ACCOUNTS ARE PARKED (mail 0124, the wall) — ONE reader for the roster AND the alert
@@ -1216,15 +1230,20 @@ export async function startWorkerWithLock(
     // converges fastest. `circuit.port()` is resolved PER CYCLE and never cached: while open it
     // answers `undefined`, `pipeline.ts`'s `classifier &&` short-circuits before the money question,
     // and the message files rules-only with no model call and no debit; holding a wrapper across the
-    // open transition would charge every message and then fail it. The COST RECORDER is attached here
-    // because here is where the pool exists — `config.aiUsage` relays usage to it, BUFFERED (30 s),
-    // safe because nothing freezes this process between a call and its flush, tail flushed on
-    // shutdown. Absent when managed AI is not armed — the rules-only deployment records and spends nothing.
+    // open transition would charge every message and then fail it. Its usage is attributed per
+    // mailbox's account in `aiFor`, as ingest, into `usageBuffer`. Absent when managed AI is not
+    // armed: the rules-only deployment records and spends nothing.
 
     // Absent classifier ⇒ no circuit and today's behaviour exactly (rules-only routing).
     const classifierCircuit: ClassifierCircuit | undefined = config.classifier
       ? makeClassifierCircuit(config.classifier, { log })
       : undefined;
+    /** The ingest classifier, its calls attributed to `accountId`, where usage is recorded. */
+    function attributedIngest(port: ClassifierPort | undefined, accountId: string): ClassifierPort | undefined {
+      return port && usageRelay && usageBuffer
+        ? attributedIngestClassifier(port, accountId, usageRelay.hook, usageBuffer)
+        : port;
+    }
     /** The classifier + gate pair for one mailbox's cycle. */
     function aiFor(mailboxId: string, accountId: string): Pick<SyncDeps, "classifier" | "credits"> {
       if (!classifierCircuit) return { ...(spend ? { credits: spend } : {}) };
@@ -1232,7 +1251,7 @@ export async function startWorkerWithLock(
         // The SAME mailbox id both halves take: `meter` records this mailbox's charge and the
         // wrapper clears this mailbox's record on a success. Two different ids there, or one
         // omitted, is how a success for one mailbox forfeits another's refund.
-        classifier: classifierCircuit.port(mailboxId),
+        classifier: attributedIngest(classifierCircuit.port(mailboxId), accountId),
         // The metered port is what teaches the circuit which ledger attempt it charged, so a
         // trip can refund the message it just abandoned. See `ai-circuit.ts`.
         ...(spend ? { credits: classifierCircuit.meter(mailboxId, spend) } : {}),
@@ -4412,6 +4431,7 @@ export async function startWorkerWithLock(
                 classifier: classifierCircuit?.port(),
                 ...(spend ? { credits: spend } : {}),
                 ...(obligations ? { obligations } : {}),
+                ...(usageRelay ? { usageHook: usageRelay.hook } : {}),
                 ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
               },
             );
@@ -4493,7 +4513,12 @@ export async function startWorkerWithLock(
             // `sensitiveBackfillPass` gets, for the same reason.
             await workflowDrainPass(
               db as unknown as Tx,
-              { drafter: config.drafter ?? unconfiguredDrafter, accountId, ...(spend ? { credits: spend } : {}) },
+              {
+                drafter: config.drafter && usageRelay && usageBuffer
+                  ? attributedWorkflowDrafter(config.drafter, accountId, usageRelay.hook, usageBuffer)
+                  : config.drafter ?? unconfiguredDrafter,
+                accountId, ...(spend ? { credits: spend } : {}),
+              },
               nowTick,
             );
           } catch (err) {
@@ -4823,6 +4848,7 @@ export async function startWorkerWithLock(
                 classifier: classifierCircuit?.port(),
                 ...(spend ? { credits: spend } : {}),
                 ...(obligations ? { obligations } : {}),
+                ...(usageRelay ? { usageHook: usageRelay.hook } : {}),
                 ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
               },
             );
@@ -5812,7 +5838,13 @@ export async function startWorkerWithLock(
           // UPDATE would refuse it anyway (`leader = true` is false by then) — this is the
           // belt to that suspenders, and it also stops a beat racing `owned.close()`.
           clearTimers();
+          // THE BUFFERED USAGE, TWICE, each bounded by one call budget: the held lines now, before
+          // a drain that can outlive a platform's grace window, and the in-flight cycle's tail
+          // after it. A `flushExit(1)` fatal path flushes nothing; the daily reconcile shows it.
+          await usageBuffer?.flush();
           await drain();                   // let the in-flight cycle/roster pass finish
+          await usageBuffer?.flush();
+          usageBuffer?.stop();
           try {
             for (const rt of [...runtimes.values()]) await detach(rt, "worker stopping");
             // Hand the shard back BEFORE the pool closes: a clean shutdown that left its last
@@ -5886,7 +5918,8 @@ export async function runWorkerCli(): Promise<void> {
       // Both of these can throw, and until they were moved inside the try neither had a
       // handler: the rejection escaped a discarded async IIFE. See `installCrashHandlers`.
       const { runWorkerSupervised } = await import("./supervisor.js");
-      const config = loadConfig();
+      // The model client's `ai_call` lines read `cliLog` at each call, after it is rebuilt below.
+      const config = loadConfig(process.env, { log: () => cliLog });
       cliLog = createLogger({
         service: "worker",
         fields: { instanceId: config.instanceId ?? instanceIdFrom(), environment: config.environment },

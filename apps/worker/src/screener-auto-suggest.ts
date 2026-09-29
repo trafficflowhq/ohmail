@@ -6,8 +6,9 @@ import {
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender,
   decisionCanBeApplied, readRequestEligibility,
-  type RefundObligationPort, type RefundObligationReason, type SpendPort, type Tx,
+  type AiUsageLine, type RefundObligationPort, type RefundObligationReason, type SpendPort, type Tx,
 } from "@trafficflow/db";
+import { screenerUsageHook, type UsageHook } from "./ai-usage-line.js";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { correspondentsAmong } from "@trafficflow/core/adapters/drizzle-repo";
 import {
@@ -87,6 +88,9 @@ export interface ScreenerAutoSuggestDeps {
   /** The account's own "who belongs in my Ohbox" words, so a bought suggestion asks the same
    *  question a user-pressed one does. Absent ⇒ omitted from the request. */
   ohboxBar?: string;
+  /** Where this host records usage: each candidate's model call is attributed to the account as
+   *  `screener`, and its line rides that candidate's release. Absent ⇒ nothing is recorded. */
+  usageHook?: UsageHook;
   log?: Logger;
   /** Test seam. Default {@link AUTO_SUGGEST_BATCH}. */
   batch?: number;
@@ -283,6 +287,8 @@ export async function screenerAutoSuggestPass(
      * cycle over the same message and that is the claim this pass's caller already makes.
      */
     let refundOnRelease: RefundObligationReason | null = null;
+    /** This candidate's model call, once made, for the one release to carry. */
+    let usageLine: AiUsageLine | undefined;
     /**
      * Give the claim back, once; reverse the charge only when told to.
      *
@@ -311,9 +317,10 @@ export async function screenerAutoSuggestPass(
             "lost release would leave this charge with nothing to reverse it",
         });
       }
+      const usage = usageLine ? { usage: [usageLine] } : {};
       const receipt = await gate.release(accountId, reverses
-        ? { action: "screener", attemptKey, refund: true, attempt: chargedAttempt!, meta }
-        : { action: "screener", attemptKey, refund: false, meta });
+        ? { action: "screener", attemptKey, refund: true, attempt: chargedAttempt!, meta, ...usage }
+        : { action: "screener", attemptKey, refund: false, meta, ...usage });
       if (reverses && receipt === "settled" && deps.obligations) {
         await deps.obligations.settle(accountId, chargedAttempt!);
       }
@@ -403,7 +410,7 @@ export async function screenerAutoSuggestPass(
           snippet: c.snippet,
           ...(deps.ohboxBar ? { ohboxBar: deps.ohboxBar } : {}),
           ...(facts ? { senderFacts: facts } : {}),
-        });
+        }, deps.usageHook ? screenerUsageHook(deps.usageHook, accountId, (l) => { usageLine = l; }) : undefined);
       } catch (err) {
         // STOP, where the user-pressed path CONTINUES — nobody is waiting here, and a model fault is almost
         // always the whole endpoint, so pressing on would charge the rest of the batch against an outage

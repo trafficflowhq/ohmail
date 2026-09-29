@@ -361,13 +361,9 @@ export interface WorkerConfig {
    *  runs cleanly, no suggestions). Tests inject a mock port. */
   proposer?: WorkflowPort;
   /**
-   * The late-bound usage sink the three ports above report through. It exists because of an ORDERING
-   * this app cannot rearrange: the model client is constructed while the CONFIGURATION is parsed
-   * (`loadAiPorts`), and the database pool is opened later, inside `startWorkerWithLock`, from a URL
-   * that configuration produced — so at the moment `onUsage` is handed to the client, there is nothing
-   * to record into. A relay closes that gap without a module-level global: `loadAiPorts` hands the
-   * client a dispatcher, the worker body attaches the real recorder once the pool exists, and anything
-   * reported in between goes to the logger only. Absent on a rules-only deployment.
+   * The process-level usage reporter the three ports above share: the `ai_call` line, and the
+   * per-call hooks that attribute a call to its account and action (`AiUsageRelay`). The worker
+   * body arms it beside a real entitlements port. Absent on a rules-only deployment.
    */
   aiUsage?: AiUsageRelay;
 
@@ -841,7 +837,13 @@ function loadEntitlements(env: NodeJS.ProcessEnv): { url: string; secret: string
   return { url: url.origin, secret };
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
+/**
+ * `opts.log` is READ, not held: the composition roots rebuild their logger after this returns,
+ * so the model client's `ai_call` lines go through whichever logger is current at the call.
+ */
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env, opts: { log?: () => Logger } = {},
+): WorkerConfig {
   /* ONE DEFINITION, IMPORTED. This was a fourth copy of the same three-way fallback, and copies
      of it had already drifted: two repair commands read `TF_ENVIRONMENT`, a variable spelled
      nowhere else, so on any deployment that is not production they claimed the lease under a
@@ -971,7 +973,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     apiCron: apiCronFrom(env),
     healthDetailSecret: healthDetailSecretFrom(env),
     ...loadAttachmentStagingConfig(env),
-    ...loadAiPorts(env),
+    ...loadAiPorts(env, opts.log),
   };
 }
 
@@ -1096,43 +1098,44 @@ export function classifyCallCeilingMs(env: NodeJS.ProcessEnv): number {
 }
 
 /**
- * THE USAGE RELAY — a one-slot dispatcher between the model client and a recorder that does not
- * exist yet.
+ * THE USAGE RELAY: the process-level `onUsage`, and the reader of what the per-call hooks claimed.
  *
- * Not a global and not a timer: it holds one nullable function and forwards to it. Before
- * `attach`, every report goes to the logger and nowhere else, which is the honest behaviour for
- * the window in question — a handful of calls at most, before the first sync cycle can run.
+ * It writes every call's `ai_call` line, which carries the provider's `request-id`. Once armed,
+ * only beside a real entitlements port, it also warns `ai_call_unattributed` for a report no
+ * per-call hook claimed. The client fires a call's own hook first and on the same object, so a
+ * claimed report is in the set by the time this runs. An unarmed relay never warns: an unmetered
+ * host attributes and records nothing. The logger is read lazily, since it is rebuilt after boot.
  */
-interface AiUsageRelay {
+export interface AiUsageRelay {
   /** The `onUsage` handed to the client at construction. Never throws. */
   readonly onUsage: (report: AnthropicCallReport) => void;
-  /** Install the real sink once the database pool exists. */
-  attach(sink: (report: AnthropicCallReport) => void): void;
+  /** A per-call hook that claims its report, then hands it to `fn`. */
+  hook(fn: (report: AnthropicCallReport) => void): (report: AnthropicCallReport) => void;
+  /** Warn on every unclaimed report from here on. */
+  arm(): void;
 }
 
-function makeAiUsageRelay(log?: Logger): AiUsageRelay {
-  let sink: ((report: AnthropicCallReport) => void) | null = null;
+function makeAiUsageRelay(log?: () => Logger): AiUsageRelay {
+  const claimed = new WeakSet<AnthropicCallReport>();
+  let armed = false;
   return {
     onUsage(report) {
-      // BOTH, and the log line first — it is the per-call forensic record (it carries the
-      // provider's `request-id`, the only handle their support can act on) and it must not
-      // depend on a recorder having been attached. The claim that this line existed on the
-      // worker was FALSE before cloud 0029: `loadAiPorts(env)` was called with one argument, so
-      // the client's `log?.info` default resolved to `undefined?.` and the arm that makes most
-      // of this product's model calls wrote its costs nowhere at all.
-      log?.info("ai_call", { ...report });
-      // A sink that throws is not allowed to become the outcome of a model call — the client
-      // guards this too, and a second guard here costs nothing and documents the rule at the
-      // one place a future sink will be added.
-      try { sink?.(report); } catch { /* observability is never load-bearing */ }
+      const l = log?.();
+      l?.info("ai_call", { ...report });
+      if (armed && !claimed.has(report)) {
+        l?.warn("ai_call_unattributed", { model: report.model, requestId: report.requestId });
+      }
     },
-    attach(next) { sink = next; },
+    hook(fn) {
+      return (report) => { claimed.add(report); fn(report); };
+    },
+    arm() { armed = true; },
   };
 }
 
 function loadAiPorts(
   env: NodeJS.ProcessEnv,
-  log?: Logger,
+  log?: () => Logger,
 ): Pick<WorkerConfig, "classifier" | "drafter" | "proposer" | "aiUsage"> {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (raw === "") return {};
@@ -1149,10 +1152,8 @@ function loadAiPorts(
     // whole worker, not a per-request nicety. Two retries at 30 s bounds one classify at ~90 s
     // plus backoff, and the circuit opens after two of those.
     timeoutMs: optInt(env, "TF_AI_TIMEOUT_MS", AI_CLASSIFY_TIMEOUT_MS_DEFAULT),
-    // `onUsage`, NOT `log`. The relay logs the same line the client's default would have — and
-    // then forwards to the cost recorder once one is attached. Passing `log` here instead would
-    // reinstate exactly the state cloud 0029 exists to end: a logger nobody handed in and a cost
-    // table nothing writes to.
+    // `onUsage`, NOT `log`: the relay writes the `ai_call` line and says which calls no per-call
+    // hook attributed. Usage itself leaves by those hooks, on a release or through the buffer.
     onUsage: aiUsage.onUsage,
   });
   return {

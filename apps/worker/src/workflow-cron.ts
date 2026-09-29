@@ -3,7 +3,7 @@ import {
   workflowRuns, workflows as workflowsTbl, UNMETERED, isSpendMetered,
   type SpendComposition, type Tx,
 } from "@trafficflow/db";
-import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder } from "@trafficflow/db/cloud";
+import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder, ENTITLEMENTS_CALL_BUDGET_MS } from "@trafficflow/db/cloud";
 import type { SpendPort } from "@trafficflow/db";
 import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type WorkflowTrigger } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
@@ -11,6 +11,7 @@ import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { loadServedAccounts } from "./mailboxes.js";
 import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
+import { attributedWorkflowDrafter, makeAiUsageBuffer } from "./ai-usage.js";
 
 /**
  * The workflow DRAIN pass, in TWO phases. REAP requeues runs stranded in `running` by a dead worker; SCAN
@@ -304,13 +305,21 @@ export async function runWorkflowCron(
      * `index.ts` makes, for its reason: `ENTITLEMENTS_URL` set ⇒ the HTTP client, unset ⇒ nothing
      * meters and the spend call sites are handed nothing. */
     // A failed call is a row (arm `worker`), awaited: this process exits when the pass ends.
-    const entitlements: SpendComposition = config.entitlements
+    const client = config.entitlements
       ? makeEntitlementsClient({
         baseUrl: config.entitlements.url, secret: config.entitlements.secret,
         onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
       })
-      : UNMETERED;
+      : undefined;
+    const entitlements: SpendComposition = client ?? UNMETERED;
     const spend = isSpendMetered(entitlements) ? entitlements : undefined;
+    // The worker body's usage composition, for this fallback run: workflow lines into a buffer
+    // flushed before the pool closes, the relay armed beside the real port.
+    const usageRelay = spend && config.drafter ? config.aiUsage : undefined;
+    const usageBuffer = usageRelay && client?.recordUsage
+      ? makeAiUsageBuffer({ port: { recordUsage: client.recordUsage.bind(client) }, log, budgetMs: ENTITLEMENTS_CALL_BUDGET_MS })
+      : undefined;
+    usageRelay?.arm();
     for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
       try {
         // Enqueue any due time-triggered runs FIRST, then drain them this same pass.
@@ -318,7 +327,9 @@ export async function runWorkflowCron(
         const res = await workflowDrainPass(
           db as unknown as Tx,
           {
-            drafter: config.drafter ?? unconfiguredDrafter,
+            drafter: config.drafter && usageRelay && usageBuffer
+              ? attributedWorkflowDrafter(config.drafter, accountId, usageRelay.hook, usageBuffer)
+              : config.drafter ?? unconfiguredDrafter,
             // ONE port for the pass, not a gate per account: the account is an argument to the
             // spend, and the step's terms come from `SPEND_ACTIONS.workflow`.
             ...(spend ? { credits: spend } : {}),
@@ -331,6 +342,7 @@ export async function runWorkflowCron(
         log.error(cronEvent("workflow", "account_failed"), { accountId, err });
       }
     }
+    await usageBuffer?.flush();
     return { ran: true, drained };
   } finally {
     try { await owned.close(); } catch (err) { log.error(cronEvent("workflow", "pool_close_failed"), { err }); }

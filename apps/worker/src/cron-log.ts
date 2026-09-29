@@ -114,7 +114,8 @@ export async function runCronCli<T>(
   seams: CronCliSeams = {},
 ): Promise<void> {
   const exit = seams.exit ?? flushExit;
-  const load = seams.loadConfig ?? loadConfig;
+  // The model client reads `log` at each call, so its `ai_call` lines follow the rebuilt logger.
+  const load = seams.loadConfig ?? ((): WorkerConfig => loadConfig(process.env, { log: () => log }));
   let log = cronLogger(undefined, seams.sink);
   installCronNoticeSink(() => log);
   try {
