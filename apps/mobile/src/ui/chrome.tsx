@@ -6,7 +6,7 @@
  * inset and carries the factual sentences — freshness, outage, first-sync,
  * unsaved changes — which are state, not brand.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, Animated, Easing, Platform, View, type LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -24,7 +24,7 @@ import { usePosture } from "./posture";
 import { scaffoldPlan } from "./scaffold/plan";
 import { Tap, Txt, useTopPad } from "./base";
 import { toastBottom, useBottomChromeExtent } from "./bottom-chrome";
-import { doorbellFaces } from "./doorbell-stack";
+import { doorbellFaces, doorbellMax } from "./doorbell-stack";
 import { GlassPill } from "./glass";
 import { UnsavedChanges } from "./UnsavedChanges";
 
@@ -171,12 +171,18 @@ export function Doorbell(
   { initials, count, max }: { initials: string[]; count: number; max?: number },
 ) {
   const t = useTheme();
+  const [width, setWidth] = useState(0);
   if (count === 0) return null;
-  // FOUR FACES AND A COUNT, the web's rule to the letter (`doorbell-stack.ts` holds it and the
-  // suite drives it). 351 waiting used to draw 351 letters straight off the right-hand edge.
-  const { shown, overflow } = doorbellFaces(initials, max);
+  // FACES AND A COUNT, the web's rule (`doorbell-stack.ts` holds it and the suite drives it), the
+  // number of faces read off the capsule's own width so the sentence and "Screener" always fit.
+  const cap = max ?? doorbellMax(width);
+  const { shown, overflow } = doorbellFaces(initials, cap);
   return (
     <Tap
+      onLayout={(e) => {
+        const w = Math.round(e.nativeEvent.layout.width);
+        if (w > 0) setWidth((prev) => (prev === w ? prev : w));
+      }}
       onPress={() => router.push("/screener")}
       accessibilityRole="button"
       accessibilityLabel={Copy.doorbellAria(count, Copy.doorbellGo)}
@@ -193,7 +199,7 @@ export function Doorbell(
         backgroundColor: t.c.accentSoft,
       }}
     >
-      <View style={{ flexDirection: "row" }}>
+      {cap > 0 ? <View style={{ flexDirection: "row", flexShrink: 0 }}>
         {shown.map((i, n) => (
           <View
             key={`${i}-${n}`}
@@ -241,15 +247,14 @@ export function Doorbell(
             </Txt>
           </View>
         ) : null}
-      </View>
-      <Txt variant="meta" tone="ink2" numberOfLines={1} style={{ flexShrink: 1 }}>
+      </View> : null}
+      <Txt variant="meta" tone="ink2" numberOfLines={2} style={{ flex: 1, minWidth: 0 }}>
         <Txt variant="settingsLabel" tone="ink">
           {Copy.doorbell(count)}
         </Txt>{" "}
         {Copy.doorbellRest(count)}
       </Txt>
-      <View style={{ flex: 1 }} />
-      <Txt variant="button" tone="accent">
+      <Txt variant="button" tone="accent" style={{ flexShrink: 0 }}>
         {Copy.doorbellGo}
       </Txt>
     </Tap>

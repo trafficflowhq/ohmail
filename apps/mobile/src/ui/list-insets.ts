@@ -30,10 +30,19 @@ export interface ListSpace {
   tabClearance: number;
 }
 
-export function listInsets(space: ListSpace, insetBottom: number, nav: ListNav): ListInsets {
+/** The gap a list keeps above whatever stands at the foot — `bottom-chrome.ts`'s `TOAST_GAP`. */
+export const CHROME_GAP = 12;
+
+/**
+ * The gutters are the deck's alone: a one-pane rail's side is paid by `Screen` for every screen at
+ * once, and the two-pane surfaces pay their own. The foot clears the nav's own clearance plus the
+ * inset, or the tallest chrome standing there (`useBottomChromeExtent`: the reader's bar, the dock)
+ * plus the gap — whichever reaches higher, so the last line of a message stops above the bar.
+ */
+export function listInsets(space: ListSpace, insetBottom: number, nav: ListNav, chromeExtent = 0): ListInsets {
   return {
-    paddingLeft: space.deckCompact + nav.left,
-    paddingRight: space.deckCompact + nav.right,
-    paddingBottom: nav.bottom + insetBottom,
+    paddingLeft: space.deckCompact,
+    paddingRight: space.deckCompact,
+    paddingBottom: Math.max(nav.bottom + insetBottom, chromeExtent > 0 ? chromeExtent + CHROME_GAP : 0),
   };
 }

@@ -25,6 +25,7 @@ import {
 import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { listInsets, type ListInsets } from "./list-insets";
+import { useBottomChromeExtent } from "./bottom-chrome";
 import { usePosture } from "./posture";
 import { listNavClearance, scaffoldPlan } from "./scaffold/plan";
 import { topPad } from "./safe-area";
@@ -79,7 +80,7 @@ export function useTopPad(gap: number): number {
 export function useListInsets(): ListInsets {
   const t = useTheme();
   const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
-  return listInsets(t.space, useSafeAreaInsets().bottom, listNavClearance(plan, t.space.tabClearance));
+  return listInsets(t.space, useSafeAreaInsets().bottom, listNavClearance(plan, t.space.tabClearance), useBottomChromeExtent());
 }
 
 /* ---------------------------------------------------------------- surfaces */
@@ -94,10 +95,17 @@ export function useListInsets(): ListInsets {
 export function Screen({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  /* A ONE-PANE RAIL OWNS ITS COLUMN: every screen starts past it — the title, the reader, its bar,
+     the composer — so nothing is drawn under the rail. Two panes pay their own rail padding. */
+  const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
+  const rail = plan.nav === "rail" && plan.panes === 1 ? listNavClearance(plan, 0) : null;
   return (
     <View
       style={[
-        { flex: 1, backgroundColor: t.c.canvas, paddingLeft: insets.left, paddingRight: insets.right },
+        {
+          flex: 1, backgroundColor: t.c.canvas,
+          paddingLeft: insets.left + (rail?.left ?? 0), paddingRight: insets.right + (rail?.right ?? 0),
+        },
         style,
       ]}
     >

@@ -23,3 +23,13 @@ export function doorbellFaces(initials: readonly string[], max: number = DOORBEL
   const shown = initials.slice(0, Math.max(0, max));
   return { shown, overflow: initials.length - shown.length };
 }
+
+/**
+ * How many faces fit the capsule's own measured width: four from 360, three from 300, none below —
+ * there the sentence carries the count alone. An unmeasured capsule (0) draws the full four, which
+ * the first layout then corrects.
+ */
+export function doorbellMax(width: number): number {
+  if (width <= 0 || width >= 360) return DOORBELL_MAX;
+  return width >= 300 ? 3 : 0;
+}

@@ -44,6 +44,7 @@ export const ohmarchyPalettes: Record<SchemeName, Palette> = {
     scrim: "rgba(255,252,240,0.5)",
     glass: "rgba(255,252,240,0.8)",
     glassBrd: "rgba(16,15,15,0.1)",
+    glassFlat: "rgba(255,252,240,0.94)",
     tag: {
       rosewood: { ink: "#8d5321", bg: "rgba(208,119,43,0.14)" },
       ochre: { ink: "#5d692a", bg: "rgba(135,154,57,0.14)" },
@@ -77,6 +78,7 @@ export const ohmarchyPalettes: Record<SchemeName, Palette> = {
     scrim: "rgba(26,27,38,0.5)",
     glass: "rgba(26,27,38,0.78)",
     glassBrd: "rgba(169,177,214,0.1)",
+    glassFlat: "rgba(26,27,38,0.94)",
     tag: {
       rosewood: { ink: "#ff9e64", bg: "rgba(255,158,100,0.14)" },
       ochre: { ink: "#9ece6a", bg: "rgba(158,206,106,0.14)" },

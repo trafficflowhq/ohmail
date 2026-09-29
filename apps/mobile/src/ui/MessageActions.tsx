@@ -96,6 +96,7 @@ import { Segmented } from "./Segmented";
 import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
+import { holdReader } from "./reader-held";
 import { failedSendLine } from "./send-failed";
 
 /**
@@ -160,6 +161,13 @@ export function MessageActions({
   // A message swap must not leave a sheet open over a different message's verbs — the same
   // reset the webapp's pane applies to its panels.
   useEffect(() => setOpen(null), [m.id]);
+  /* A sheet or composer open here holds the fold/unfold move until it closes (`reader-held.ts`). */
+  const holdToken = useRef(Symbol("reader")).current;
+  const holding = open !== null;
+  useEffect(() => {
+    holdReader(holdToken, holding);
+    return () => holdReader(holdToken, false);
+  }, [holdToken, holding]);
 
   const a = w.actions;
   const close = () => setOpen(null);
@@ -230,16 +238,19 @@ export function MessageActions({
       on: m.pile === "bubbled_up",
       onPress: () => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface")) },
   ]).filter((v) => placement.standing.includes(v.id));
+  /* FORWARD STANDS BESIDE REPLY (the compact bar's lead): measured as its word and as its icon. */
+  const forwardStands = mode === "compact" && placement.standing.includes("forward");
   const recordWidth = (id: string) => (e: LayoutChangeEvent) => {
     measuredWidths.current[id] = e.nativeEvent.layout.width;
-    if (Object.keys(measuredWidths.current).length >= compactRow.length + 1) {
+    if (Object.keys(measuredWidths.current).length >= compactRow.length + 1 + (forwardStands ? 2 : 0)) {
       setCompactWidths({ ...measuredWidths.current });
     }
   };
   const barFit = compactFit({
-    verbs: compactRow.map((v) => v.id),
+    verbs: [...(forwardStands ? ["forward"] : []), ...compactRow.map((v) => v.id)],
     widths: compactWidths,
     room: compactRoom,
+    ...(forwardStands ? { lead: "forward" } : {}),
   });
   /* A folded verb is in the sheet, so the row and ⋯ together always carry the whole set. */
   const moreHas = (id: ReaderVerbId) =>
@@ -337,7 +348,7 @@ export function MessageActions({
   const barSpec = (id: ReaderVerbId): BarVerbSpec => {
     switch (id) {
       case "replyAll": return { id, label: Copy.actionReplyAll, onPress: () => setOpen({ compose: "replyAll" }) };
-      case "forward": return { id, label: Copy.actionForward, onPress: openForward };
+      case "forward": return { id, label: Copy.actionForward, iconFace: "fwd", onPress: openForward };
       case "later": return { id, icon: "clock", label: Copy.actionLater, seg: "defer", onPress: () => a.pileToggle(m.id, "replyLater") };
       case "aside": return { id, icon: "pause", label: Copy.actionSetAside, seg: "defer", onPress: () => a.pileToggle(m.id, "setAside") };
       case "resurface": return { id, icon: "up", label: Copy.actionResurface, seg: "defer", onPress: () => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface")) };
@@ -374,7 +385,8 @@ export function MessageActions({
           <GlassActionBar
             reply={{ label: Copy.actionReply, onPress: () => setOpen({ compose: "reply" }) }}
             verbs={barVerbs}
-            readSwitch={{ label: readFace.label, onPress: readFace.press }}
+            readSwitch={{ label: readFace.label, icon: readFace.icon, onPress: readFace.press }}
+            floor={["forward"]}
             extraMore={barExtraMore}
           />
         </View>
@@ -407,6 +419,16 @@ export function MessageActions({
         <View onLayout={recordWidth("__reply")}>
           <Button label={Copy.actionReply} icon="pen" variant="solid" onPress={() => undefined} />
         </View>
+        {forwardStands ? (
+          <>
+            <View onLayout={recordWidth("forward")}>
+              <Button label={Copy.actionForward} icon="fwd" variant="plain" onPress={() => undefined} />
+            </View>
+            <View onLayout={recordWidth("forward.icon")}>
+              <ForwardIcon onPress={() => undefined} />
+            </View>
+          </>
+        ) : null}
         {compactRow.map((v) => (
           <View key={v.id} onLayout={recordWidth(v.id)}>
             <BarToggle label={v.label} icon={v.icon} on={false} onPress={() => undefined} />
@@ -450,6 +472,13 @@ export function MessageActions({
             style={{ maxWidth: "100%" }}
             onPress={() => setOpen({ compose: "reply" })}
           />
+          {/* Forward, beside Reply, through the SAME door as the sheet's row (`openForward` → the
+              composer over `m`, Reply's own target). Its word while it fits, else its icon. */}
+          {forwardStands && barFit.standing.includes("forward") ? (
+            barFit.leadIcon
+              ? <ForwardIcon onPress={openForward} />
+              : <Button label={Copy.actionForward} icon="fwd" variant="plain" onPress={openForward} />
+          ) : null}
           {compactRow
             .filter((v) => barFit.standing.includes(v.id))
             .map((v) => (
@@ -1588,7 +1617,7 @@ export function ComposeSheet({
                   </Tap>
                 </View>
               ))}
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 8, rowGap: 4 }}>
                 <Button
                   label={Copy.attachFile}
                   icon="clip"
@@ -1602,8 +1631,7 @@ export function ComposeSheet({
                   disabled={phase !== "idle"}
                   onPress={() => void pick("photos")}
                 />
-                <View style={{ flex: 1 }} />
-                <Txt variant="caption" tone="ink3">
+                <Txt variant="caption" tone="ink3" style={{ marginLeft: "auto" }}>
                   {Copy.attachCap(sizeLabel(attachCap))}
                 </Txt>
               </View>
@@ -1910,3 +1938,24 @@ type LaterStep =
  * differently in the same language.
  */
 const dayLabel = calendarDayLabel;
+
+/** Forward's narrow face on the compact bar: the 44pt square with its icon, the word as its label. */
+function ForwardIcon({ onPress }: { onPress: () => void }) {
+  const t = useTheme();
+  return (
+    <Tap
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={Copy.actionForward}
+      style={({ pressed }) => [
+        {
+          width: 44, minHeight: 38, alignItems: "center", justifyContent: "center",
+          borderRadius: t.radius.pill, backgroundColor: t.c.panel, opacity: pressed ? 0.86 : 1,
+        },
+        t.lift("l0"),
+      ]}
+    >
+      <Icon name="fwd" size={13} color={t.c.ink} />
+    </Tap>
+  );
+}

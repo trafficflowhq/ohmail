@@ -74,16 +74,26 @@ export function compactFit(args: {
   verbs: readonly string[];
   widths: Readonly<Record<string, number>> | null;
   room: number | null;
-}): { standing: string[]; overflow: string[] } {
-  const { verbs, widths, room } = args;
-  if (widths === null || room === null) return { standing: [], overflow: [...verbs] };
+  /** The verb that stands beside Reply at every width (Forward): its word while it fits, else `${lead}.icon`. */
+  lead?: string;
+}): { standing: string[]; overflow: string[]; leadIcon: boolean } {
+  const { widths, room, lead } = args;
+  const verbs = args.verbs.filter((id) => id !== lead);
+  if (widths === null || room === null) return { standing: [], overflow: [...verbs], leadIcon: false };
+  const line = barLineWidth(room);
+  const reply = widths["__reply"] ?? 0;
+  /* THE LEAD NEVER LEAVES THE ROW: its word when Reply + gap + word fits the line, else its icon. */
+  const word = lead === undefined ? 0 : (widths[lead] ?? 0);
+  const leadIcon = lead !== undefined && reply + BAR.gap + word > line;
+  const leadWidth = lead === undefined ? 0 : leadIcon ? (widths[`${lead}.icon`] ?? 44) : word;
   const fit = fitOneLine(
     verbs.map((id) => widths[id] ?? 0),
-    barLineWidth(room),
-    widths["__reply"] ?? 0,
+    line,
+    reply + (lead === undefined ? 0 : BAR.gap + leadWidth),
   );
   return {
-    standing: fit.standing.map((i) => verbs[i]),
+    standing: [...(lead === undefined ? [] : [lead]), ...fit.standing.map((i) => verbs[i])],
     overflow: fit.overflow.map((i) => verbs[i]),
+    leadIcon,
   };
 }

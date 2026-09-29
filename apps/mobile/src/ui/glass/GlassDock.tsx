@@ -28,6 +28,7 @@ export function GlassDock({
   onItemPress,
   search,
   compose,
+  onRoom,
 }: {
   items: readonly DockItem[];
   activeId: string | null;
@@ -35,6 +36,8 @@ export function GlassDock({
   search: { label: string; onPress: () => void };
   /** Starting a mail is a verb, not a destination — it rides the trailing pill beside search. */
   compose?: { label: string; onPress: () => void };
+  /** The dock's own width, every layout — the room `dockFold` folds destinations against. */
+  onRoom?: (width: number) => void;
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
@@ -45,7 +48,10 @@ export function GlassDock({
   return (
     <View
       pointerEvents="box-none"
-      onLayout={(e) => standing(foot + e.nativeEvent.layout.height)}
+      onLayout={(e) => {
+        standing(foot + e.nativeEvent.layout.height);
+        onRoom?.(e.nativeEvent.layout.width);
+      }}
       style={{
         position: "absolute",
         left: 0,

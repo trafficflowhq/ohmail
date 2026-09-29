@@ -72,9 +72,10 @@ const BAR_STANDING: readonly ReaderVerbId[] = [
   "reply", "replyAll", "forward", "later", "aside", "resurface", "tag", "screening", "move", "read",
 ];
 
-/** The compact More sheet's rows, the shipped order — read parted from delete by rules. */
+/** The compact More sheet's rows, the shipped order — read parted from delete by rules. Forward
+ *  stands on the compact bar beside Reply and is not here. */
 const COMPACT_MORE: readonly ReaderVerbId[] = [
-  "replyAll", "forward", "tag", "screening", "move", "read", "delete",
+  "replyAll", "tag", "screening", "move", "read", "delete",
 ];
 
 const RAIL_MORE: readonly ReaderVerbId[] = ["later", "resurface", "tag", "screening", "move", "delete"];
@@ -89,7 +90,7 @@ export function readerVerbPlacement(mode: ReaderVerbMode, f: ReaderVerbFacts): R
       .filter((id): id is ReaderVerbId => id !== "back" && id !== "junk" && id !== "more");
     return { standing, behindMore: admit(f, RAIL_MORE) };
   }
-  return { standing: ["reply", "later", "aside", "resurface"], behindMore: admit(f, COMPACT_MORE) };
+  return { standing: admit(f, ["reply", "forward", "later", "aside", "resurface"]), behindMore: admit(f, COMPACT_MORE) };
 }
 
 /**

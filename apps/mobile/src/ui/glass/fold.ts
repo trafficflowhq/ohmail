@@ -64,6 +64,42 @@ export function railFold(groups: readonly (readonly RailEntry[])[], availableHei
   return { kept: kept.filter((g) => g.length > 0), folded };
 }
 
+/* ── the dock ────────────────────────────────────────────────────────────────────────────── */
+
+/** The dock's metrics: 44pt buttons, 2 inside a pill, 8 pill padding, 8 between the two pills, 12 each side. */
+export const DOCK = { btn: 44, itemGap: 2, groupPad: 8, groupGap: 8, sideInset: 12 } as const;
+/** The fixed verbs pill — New mail and Search, two buttons that never fold. */
+const DOCK_VERBS = 2 * DOCK.btn + DOCK.itemGap + DOCK.groupPad;
+
+/** The width the dock needs with `k` destinations standing. */
+export const dockNeed = (k: number): number =>
+  2 * DOCK.sideInset + (k * DOCK.btn + Math.max(0, k - 1) * DOCK.itemGap + DOCK.groupPad) + DOCK.groupGap + DOCK_VERBS;
+
+/**
+ * The order destinations leave the dock and the rail for More — the rail's own bottom-to-top, the
+ * dock's right-to-left. More, New mail, Search and Back never fold.
+ */
+export const DESTINATION_FOLD_ORDER = ["receipts", "reads", "screener", "index"] as const;
+
+/**
+ * THE DOCK FOLDS; NOTHING CLIPS. While the row needs more than `room`, the next destination in
+ * {@link DESTINATION_FOLD_ORDER} leaves it into More. `ids` is the row as ordered; `null` room (no
+ * measurement yet) keeps the whole row.
+ */
+export function dockFold(ids: readonly string[], room: number | null): { kept: string[]; folded: string[] } {
+  const kept = [...ids];
+  const folded: string[] = [];
+  if (room === null) return { kept, folded };
+  for (const id of DESTINATION_FOLD_ORDER) {
+    if (dockNeed(kept.length) <= room) break;
+    const at = kept.indexOf(id);
+    if (at < 0) continue;
+    kept.splice(at, 1);
+    folded.push(id);
+  }
+  return { kept, folded };
+}
+
 /* ── the bar ─────────────────────────────────────────────────────────────────────────────── */
 
 export interface BarVerbBox {
@@ -135,8 +171,12 @@ export function barAdmitted(args: {
   readSwitch: boolean;
   room: number | null;
   gap?: number;
+  /** Verbs of the FLOOR (Forward): they stand at every width, so they pay as fixed cost and are not admitted. */
+  floor?: readonly string[];
 }): number {
-  const { verbs, widths, reply, readSwitch, room } = args;
+  const { widths, reply, readSwitch, room } = args;
+  const floor = args.floor ?? [];
+  const verbs = args.verbs.filter((v) => !floor.includes(v.id));
   const gap = args.gap ?? BAR_GAP;
   if (room === null || widths === null) return 0;
   const boxes: BarVerbBox[] = verbs.map((v, i) => {
@@ -150,8 +190,39 @@ export function barAdmitted(args: {
   });
   const fixed =
     (reply ? (widths["__reply"] ?? 0) + gap : 0) +
+    floor.reduce((n, id) => n + (widths[id] ?? 0) + gap, 0) +
     (readSwitch ? (widths["__read"] ?? 0) + gap : 0) +
     (widths["__more"] ?? 0) +
     BAR_PILL_CHROME;
   return admitVerbs(boxes, room, fixed, gap);
+}
+
+/** An icon face's box: the 44pt touch square. */
+export const ICON_FACE = 44;
+
+/**
+ * THE FLOOR'S FACES. The floor — Reply, Forward, the read switch, ⋯ — stands at every width; when
+ * its worded form exceeds the room the read switch takes its icon face, and if the floor still
+ * exceeds it Forward takes its own. Answers the widths to admit with (the icon boxes substituted)
+ * and which faces are icons. Before a measurement nothing is an icon.
+ */
+export function barFloorFaces(args: {
+  widths: Readonly<Record<string, number>> | null;
+  room: number | null;
+  reply: boolean;
+  readSwitch: boolean;
+  floor: readonly string[];
+  gap?: number;
+}): { widths: Readonly<Record<string, number>> | null; readIcon: boolean; floorIcon: boolean } {
+  const { widths, room, reply, readSwitch, floor } = args;
+  const gap = args.gap ?? BAR_GAP;
+  if (widths === null || room === null) return { widths, readIcon: false, floorIcon: false };
+  const need = (w: Readonly<Record<string, number>>) =>
+    (reply ? (w["__reply"] ?? 0) + gap : 0) + floor.reduce((n, id) => n + (w[id] ?? 0) + gap, 0)
+    + (readSwitch ? (w["__read"] ?? 0) + gap : 0) + (w["__more"] ?? 0) + BAR_PILL_CHROME;
+  if (need(widths) <= room) return { widths, readIcon: false, floorIcon: false };
+  const readIconWidths = readSwitch ? { ...widths, __read: ICON_FACE } : widths;
+  if (need(readIconWidths) <= room || floor.length === 0) return { widths: readIconWidths, readIcon: readSwitch, floorIcon: false };
+  const both = { ...readIconWidths, ...Object.fromEntries(floor.map((id) => [id, ICON_FACE])) };
+  return { widths: both, readIcon: readSwitch, floorIcon: true };
 }

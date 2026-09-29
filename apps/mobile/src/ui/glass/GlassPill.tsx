@@ -51,7 +51,9 @@ export function GlassPill({
         <View
           style={[
             {
-              backgroundColor: t.c.glass,
+              /* Where no blur mounts the wash is the flat pair (α .94): a row passing under the
+                 pill reads as a tone, never as words through the verbs. */
+              backgroundColor: Platform.OS === "ios" ? t.c.glass : t.c.glassFlat,
               flexDirection: horizontal ? "row" : "column",
               alignItems: "center",
               gap: 2,

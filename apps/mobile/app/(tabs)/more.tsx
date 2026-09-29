@@ -8,12 +8,16 @@
  * cannot drift. A feature that is not live yet gets a plain sentence, never a
  * control that goes nowhere.
  */
+import { useSyncExternalStore } from "react";
 import { View } from "react-native";
-import { useWorld } from "../../src/state/world";
+import { router } from "expo-router";
+import { Copy } from "../../src/copy";
+import { useWorld, type World } from "../../src/state/world";
+import { foldedNow, subscribeFolded } from "../../src/ui/nav-fold";
 import { phoneBannerLines } from "../../src/state/live";
 import { Panel, Screen, Scroller, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
-import { MoreNav } from "../../src/ui/MoreNav";
+import { MoreNav, Nav } from "../../src/ui/MoreNav";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
@@ -30,6 +34,7 @@ function MoreBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const w = useWorld();
+  const folded = useSyncExternalStore(subscribeFolded, foldedNow);
 
   return (
     <Screen>
@@ -59,6 +64,17 @@ function MoreBody() {
           ) : null}
         </View>
 
+        {/* WHAT THE DOCK OR THE RAIL FOLDED, reachable here: the same fold result, so "into
+            More" is never "gone". Absent while nothing folded. */}
+        {folded.length > 0 ? (
+          <Panel style={{ paddingVertical: 8, marginBottom: 12 }}>
+            {folded.map((id) => {
+              const d = FOLDABLE[id];
+              if (!d) return null;
+              return <Nav key={id} label={d.label()} count={d.count(w)} onPress={() => router.navigate(d.path)} />;
+            })}
+          </Panel>
+        ) : null}
         <Panel style={{ paddingBottom: 8 }}>
           <MoreNav />
         </Panel>
@@ -66,3 +82,11 @@ function MoreBody() {
     </Screen>
   );
 }
+
+/** The destinations the dock and the rail can fold, with the counts their buttons carry. */
+const FOLDABLE: Record<string, { path: string; label: () => string; count: (w: World) => number }> = {
+  index: { path: "/", label: () => Copy.ohbox, count: (w) => w.ohbox.unread },
+  screener: { path: "/screener", label: () => Copy.screener, count: (w) => w.screener.waiting.length },
+  reads: { path: "/reads", label: () => Copy.reads, count: (w) => w.reads.newCount },
+  receipts: { path: "/receipts", label: () => Copy.receipts, count: (w) => w.receipts.newCount },
+};

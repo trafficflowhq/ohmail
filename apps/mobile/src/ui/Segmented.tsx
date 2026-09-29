@@ -3,8 +3,10 @@
  * segment lifted out of it on a float surface. Used for the Screener's three
  * shelves and for the appearance preference.
  */
-import { Platform, View } from "react-native";
+import { useState } from "react";
+import { Platform, View, type LayoutChangeEvent } from "react-native";
 import { useTheme } from "../theme";
+import { SEGMENT_PAD, segmentFace } from "./segment-face";
 import { a11yRole } from "./a11y-role";
 import { Tap, Txt } from "./base";
 
@@ -37,8 +39,23 @@ export function Segmented<T extends string>({
   disabled?: boolean;
 }) {
   const t = useTheme();
+  /* A hidden copy measures each segment's label (the selected weight) and count; the face follows. */
+  const [width, setWidth] = useState(0);
+  const [sizes, setSizes] = useState<Record<string, number>>({});
+  const put = (k: string) => (e: LayoutChangeEvent) => {
+    const w = Math.ceil(e.nativeEvent.layout.width);
+    setSizes((prev) => (prev[k] === w ? prev : { ...prev, [k]: w }));
+  };
+  const labelW = (i: number) => sizes[`l${i}`] ?? 0;
+  const countW = (i: number) => (segments[i]!.count === undefined ? 0 : (sizes[`c${i}`] ?? 0) + 5);
+  const face = fill ? segmentFace(width, segments.map((_, i) => labelW(i) + countW(i))) : "equal";
+  const stacked = face === "stacked";
   return (
     <View
+      onLayout={(e) => {
+        const w = Math.round(e.nativeEvent.layout.width);
+        if (w > 0) setWidth((prev) => (prev === w ? prev : w));
+      }}
       style={[
         {
           flexDirection: "row",
@@ -51,8 +68,25 @@ export function Segmented<T extends string>({
         style,
       ]}
     >
-      {segments.map((seg) => {
+      {fill ? (
+        <View
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={{ position: "absolute", left: 0, top: 0, opacity: 0, flexDirection: "row", alignItems: "flex-start" }}
+        >
+          {segments.map((seg, i) => (
+            <View key={seg.value} style={{ flexDirection: "row" }}>
+              <Txt variant="settingsLabel" onLayout={put(`l${i}`)}>{seg.label}</Txt>
+              {seg.count !== undefined ? <Txt variant="caption" tabular onLayout={put(`c${i}`)}>{seg.count}</Txt> : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {segments.map((seg, i) => {
         const on = seg.value === value;
+        const basis = face === "equal" ? null
+          : { flexGrow: 1, flexShrink: 0, flexBasis: (stacked ? labelW(i) : labelW(i) + countW(i)) + SEGMENT_PAD };
         return (
           <Tap
             key={seg.value}
@@ -63,11 +97,12 @@ export function Segmented<T extends string>({
             style={[
               {
                 flex: fill ? 1 : 0,
-                minHeight: 34,
-                flexDirection: "row",
+                ...basis,
+                minHeight: stacked ? 44 : 34,
+                flexDirection: stacked ? "column" : "row",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: 5,
+                gap: stacked ? 0 : 5,
                 borderRadius: t.radius.pill,
                 paddingHorizontal: 8,
                 backgroundColor: on ? t.c.float : "transparent",

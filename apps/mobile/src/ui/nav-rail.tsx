@@ -19,10 +19,14 @@ import { useTheme } from "../theme";
 import { GlassRail, type RailAction } from "./glass";
 import type { IconName } from "./Icon";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
+import { publishFolded } from "./nav-fold";
+import { useEffect } from "react";
 import { useReaderRail } from "./reader-rail";
 import { isTabRoute, railHome, scaffoldPlan } from "./scaffold/plan";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
+/** The rail's fold, published for the More screen; stable, so the rail's effect runs on a change only. */
+const onRailFold = (ids: readonly string[]) => publishFolded("rail", ids.filter((id) => !id.startsWith("__")));
 
 /* The five destinations — labels through GETTERS, so a language switch re-reads the deck. */
 const DESTINATIONS: { id: string; path: string; readonly label: string; icon: IconName }[] = [
@@ -45,6 +49,10 @@ export function NavRail() {
   const w = useWorld();
   const win = useAppWindow();
   const cluster = useStatusCluster();
+  const railShown = plan.nav === "rail" && gateFor(conn.state, conn.profiles.length).to === "mail"
+    && !(plan.railCarriesReaderVerbs && readerRail !== null);
+  /* The rail's folded set is More's to list, and nobody's once the rail is gone. */
+  useEffect(() => (railShown ? () => publishFolded("rail", []) : undefined), [railShown]);
 
   if (plan.nav !== "rail") return null;
   if (gateFor(conn.state, conn.profiles.length).to !== "mail") return null;
@@ -77,6 +85,8 @@ export function NavRail() {
         badgeHot: d.id === "screener" || d.id === "index",
         on: d.id === active,
         role: "tab" as const,
+        /* More never folds: it is where everything that folded is reached. */
+        fixed: d.id === "more",
         onPress: () => {
           if (d.id !== active) router.navigate(d.path);
         },
@@ -105,7 +115,7 @@ export function NavRail() {
         zIndex: t.zLayer.tabBar,
       }}
     >
-      <GlassRail groups={groups} foldInto="none" />
+      <GlassRail groups={groups} foldInto="none" onFold={onRailFold} />
     </View>
   );
 }

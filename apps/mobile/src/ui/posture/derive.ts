@@ -125,6 +125,12 @@ export function duoHeuristic(w: number, h: number): FoldFeature | null {
 /** The closed Duo is 466×678 either way up; the inner display's long side (951) is well past this. */
 export const OUTER_FACE_MAX = 700;
 
+/**
+ * THE TWO-PANE FLOOR ON ANDROID, dp: rail 62 + three gutters 30 + a 280 list + a 320 reader = 692.
+ * Below it the window is an honest phone — one pane with the dock — never a 234-dp reader.
+ */
+export const ANDROID_TWO_PANE_MIN = 700;
+
 export function derivePosture(input: PostureInput): Posture {
   const { width: w, height: h, platform } = input;
   const orientation: Orientation = w >= h ? "landscape" : "portrait";
@@ -163,7 +169,8 @@ export function derivePosture(input: PostureInput): Posture {
      pane; a split window is one pane; everything else holds two. A half-open horizontal fold
      (tabletop) is two panes stacked, which the width rule already admits. */
   const onePane =
-    split !== "full" || outer || sizeClass === "compact" || (heightClass === "compact" && h < 440);
+    split !== "full" || outer || sizeClass === "compact" || (heightClass === "compact" && h < 440)
+    || (platform === "android" && w < ANDROID_TWO_PANE_MIN);
 
   return {
     sizeClass,

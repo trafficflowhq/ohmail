@@ -15,7 +15,7 @@ import { Copy } from "../../copy";
 import { Icon, type IconName } from "../Icon";
 import { Sheet, SheetRow } from "../Sheet";
 import { Tap } from "../base";
-import { BAR_GAP, barAdmitted, nextRoom } from "./fold";
+import { BAR_GAP, ICON_FACE, barAdmitted, barFloorFaces, nextRoom } from "./fold";
 import { GlassPill } from "./GlassPill";
 
 export interface BarVerbSpec {
@@ -24,6 +24,8 @@ export interface BarVerbSpec {
   icon?: IconName;
   /** The segmented control this verb belongs to — members abut and read as one control. */
   seg?: "defer" | "file" | null;
+  /** The icon a floor verb shows when the floor is tight — its narrow face. */
+  iconFace?: IconName;
   onPress: () => void;
 }
 
@@ -34,15 +36,18 @@ export function GlassActionBar({
   verbs,
   readSwitch,
   extraMore = [],
+  floor = [],
 }: {
   /** The one solid capsule. Never folds. */
   reply?: { label: string; onPress: () => void } | null;
   /** Row order = fold order — the webapp's BAR_VERB_ORDER, supplied by the surface. */
   verbs: readonly BarVerbSpec[];
-  /** The read state, beside the verbs, never folded — Done / Mark unread. */
-  readSwitch?: { label: string; onPress: () => void } | null;
+  /** The read state, beside the verbs, never folded — Done / Mark unread; `icon` is its narrow face. */
+  readSwitch?: { label: string; icon?: IconName; onPress: () => void } | null;
   /** Verbs that always live behind ⋯, after whatever folded. */
   extraMore?: readonly BarVerbSpec[];
+  /** Verbs of the floor (Forward): never folded; they stand in their row place, as an icon when the floor is tight. */
+  floor?: readonly string[];
 }) {
   const t = useTheme();
   const [room, setRoom] = useState<number | null>(null);
@@ -56,18 +61,23 @@ export function GlassActionBar({
     if (Object.keys(widths.current).length >= need) setMeasured({ ...widths.current });
   };
 
+  const faces = barFloorFaces({ widths: measured, room, reply: reply != null, readSwitch: readSwitch != null, floor });
   const admitted = barAdmitted({
     verbs,
-    widths: measured,
+    widths: faces.widths,
     reply: reply != null,
     readSwitch: readSwitch != null,
     room,
+    floor,
   });
-  const standing = verbs.slice(0, admitted);
-  const folded = [...verbs.slice(admitted), ...extraMore];
+  /* The admitted prefix of the verbs that can fold, with the floor verbs kept in their row place. */
+  const foldable = verbs.filter((v) => !floor.includes(v.id));
+  const admittedIds = new Set(foldable.slice(0, admitted).map((v) => v.id));
+  const standing = verbs.filter((v) => floor.includes(v.id) || admittedIds.has(v.id));
+  const folded = [...foldable.slice(admitted), ...extraMore];
 
   /** One verb capsule — `.abar-b`: 44pt touch box, icon 13, the segment track behind members. */
-  const capsule = (v: BarVerbSpec, opts?: { measure?: boolean }) => (
+  const capsule = (v: BarVerbSpec, opts?: { measure?: boolean; iconOnly?: boolean }) => (
     <Tap
       key={v.id}
       accessibilityRole="button"
@@ -79,15 +89,17 @@ export function GlassActionBar({
         alignItems: "center",
         gap: 5,
         minHeight: 44,
-        paddingHorizontal: 12,
+        ...(opts?.iconOnly ? { width: ICON_FACE, justifyContent: "center" as const } : { paddingHorizontal: 12 }),
         borderRadius: t.radius.pill,
         backgroundColor: pressed && !opts?.measure ? t.c.tint : "transparent",
       })}
     >
       {v.icon ? <Icon name={v.icon} size={13} color={t.c.ink2} /> : null}
-      <Text style={[t.type.button, { color: t.c.ink2 }]} numberOfLines={1}>
-        {v.label}
-      </Text>
+      {opts?.iconOnly ? null : (
+        <Text style={[t.type.button, { color: t.c.ink2 }]} numberOfLines={1}>
+          {v.label}
+        </Text>
+      )}
     </Tap>
   );
 
@@ -189,10 +201,17 @@ export function GlassActionBar({
               {g.run.map((v) => capsule(v))}
             </View>
           ) : (
-            g.run.map((v) => capsule(v))
+            g.run.map((v) => (faces.floorIcon && floor.includes(v.id) && v.iconFace !== undefined
+              ? capsule({ ...v, icon: v.iconFace }, { iconOnly: true })
+              : capsule(v)))
           ),
         )}
-        {readSwitch ? capsule({ id: "__read", label: readSwitch.label, onPress: readSwitch.onPress }) : null}
+        {readSwitch
+          ? capsule(
+            { id: "__read", label: readSwitch.label, icon: faces.readIcon ? readSwitch.icon : undefined, onPress: readSwitch.onPress },
+            { iconOnly: faces.readIcon && readSwitch.icon !== undefined },
+          )
+          : null}
         {more()}
       </GlassPill>
 

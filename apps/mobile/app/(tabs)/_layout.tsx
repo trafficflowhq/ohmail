@@ -8,12 +8,15 @@
  * NO WORDMARK here: the chrome is navigation, and the space is the app's.
  */
 import { router, Tabs } from "expo-router";
+import { useEffect, useState } from "react";
 import { Platform } from "react-native";
 import { useWorld } from "../../src/state/world";
 import { Gated } from "../../src/ui/Gated";
 import { ProfileImportCard } from "../../src/ui/ProfileImportCard";
 import { type IconName } from "../../src/ui/Icon";
 import { GlassDock, type DockItem } from "../../src/ui/glass";
+import { dockFold, nextRoom } from "../../src/ui/glass/fold";
+import { publishFolded } from "../../src/ui/nav-fold";
 import { usePosture } from "../../src/ui/posture";
 import { useReaderRail } from "../../src/ui/reader-rail";
 import { scaffoldPlan } from "../../src/ui/scaffold/plan";
@@ -79,6 +82,8 @@ function GlassNav({ state, navigation }: NavProps) {
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const readerRail = useReaderRail();
+  /* THE DOCK FOLDS; NOTHING CLIPS — against its own measured width (a 0 reading keeps the last). */
+  const [room, setRoom] = useState<number | null>(null);
 
   /**
    * The engine's counts over the mirror, not a third derivation computed here.
@@ -96,21 +101,31 @@ function GlassNav({ state, navigation }: NavProps) {
     more: 0,
   };
 
-  const items: DockItem[] = state.routes.flatMap((route) => {
-    const tab = TABS.find((x) => x.name === route.name);
+  const fold = dockFold(state.routes.map((r) => r.name).filter((n) => TABS.some((x) => x.name === n)), room);
+  const foldedKey = fold.folded.join(",");
+  const docked = plan.nav !== "bars" && plan.nav !== "rail" && !(plan.railCarriesReaderVerbs && readerRail !== null);
+  useEffect(() => {
+    publishFolded("dock", docked && foldedKey !== "" ? foldedKey.split(",") : []);
+    return () => publishFolded("dock", []);
+  }, [foldedKey, docked]);
+  const activeId = state.routes[state.index]?.name ?? null;
+  /* More carries what folded: `on` while the active route is one of them, a quiet count of their new mail. */
+  const foldedCount = fold.folded.reduce((n, id) => n + (badgeOf[id] ?? 0), 0);
+  const items: DockItem[] = fold.kept.flatMap((name) => {
+    const tab = TABS.find((x) => x.name === name);
     if (!tab) return [];
-    const count = badgeOf[route.name] ?? 0;
+    const count = name === "more" ? foldedCount : badgeOf[name] ?? 0;
     return [
       {
-        id: route.name,
+        id: name,
         icon: tab.icon,
         label: count ? Copy.ariaLabelCount(tab.label, count) : tab.label,
         badge: count,
-        badgeHot: route.name === "screener" || route.name === "index",
+        badgeHot: name === "screener" || name === "index",
       },
     ];
   });
-  const activeId = state.routes[state.index]?.name ?? null;
+  const shownActive = activeId !== null && fold.folded.includes(activeId) ? "more" : activeId;
   const press = (id: string) => {
     const route = state.routes.find((r) => r.name === id);
     if (!route) return;
@@ -141,7 +156,14 @@ function GlassNav({ state, navigation }: NavProps) {
 
   return (
     <>
-      <GlassDock items={items} activeId={activeId} onItemPress={press} search={search} compose={compose} />
+      <GlassDock
+        items={items}
+        activeId={shownActive}
+        onItemPress={press}
+        search={search}
+        compose={compose}
+        onRoom={(width) => setRoom((prev) => nextRoom(prev, width))}
+      />
     </>
   );
 }

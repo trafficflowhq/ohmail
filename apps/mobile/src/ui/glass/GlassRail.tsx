@@ -7,7 +7,7 @@
  * clips. Until the first measurement the whole column renders; the fold applies on the next
  * frame, the bar-density lesson in the other axis.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View, type LayoutChangeEvent } from "react-native";
 import { useTheme } from "../../theme";
 import { Copy } from "../../copy";
@@ -35,6 +35,7 @@ export const RAIL_WIDTH = 62;
 export function GlassRail({
   groups,
   foldInto = "sheet",
+  onFold,
 }: {
   /** Pill groups, top to bottom. Order is fold order — the last non-fixed item folds first. */
   groups: readonly (readonly RailAction[])[];
@@ -43,6 +44,8 @@ export function GlassRail({
    * because a More destination in the column already reaches them (the nav rail).
    */
   foldInto?: "sheet" | "none";
+  /** Told the ids the fold took out of the column, whenever that set changes. */
+  onFold?: (ids: readonly string[]) => void;
 }) {
   const t = useTheme();
   const [availH, setAvailH] = useState<number | null>(null);
@@ -58,6 +61,10 @@ export function GlassRail({
 
   const fold = availH === null ? { kept: groups.map((g) => [...g]), folded: [] } : railFold(groups, availH);
   const folded = fold.folded.map((e) => byId.get(e.id)).filter((a): a is RailAction => a !== undefined);
+  const foldedKey = fold.folded.map((e) => e.id).join(",");
+  useEffect(() => {
+    onFold?.(foldedKey === "" ? [] : foldedKey.split(","));
+  }, [foldedKey, onFold]);
 
   return (
     <View

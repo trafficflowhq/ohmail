@@ -8,7 +8,7 @@
  * hinge; search sits at the list pane's foot wherever the nav carries no pill. CONTINUITY: the selection is
  * the route's `open` param, and when the pane goes the reading migrates to the pushed route.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Platform, ScrollView, StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams, usePathname } from "expo-router";
@@ -23,6 +23,7 @@ import { MoreNav, Nav } from "./MoreNav";
 import { PaneChromeContext } from "./pane-chrome";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
+import { readerHeldNow, subscribeReaderHeld } from "./reader-held";
 import { paneFootSearch, paneSplit, railHome, scaffoldPlan, RAIL_W } from "./scaffold/plan";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
@@ -81,7 +82,15 @@ export function ListDetail({
   /* THE PANE WENT (folding mid-read): hand the open message to the pushed route — the same
      reading, moved; the id survives and `pane-memory` restores the scroll. The route is
      pushed BEFORE the param clears so no frame renders the bare list over an open reading. */
-  const twoPane = plan.panes === 2;
+  /* FOLDED WITH A SHEET OR A COMPOSER OPEN: the pair's tree stays (list pane hidden, same axis) so
+     the reader keeps its state; the move fires when the last one closes. */
+  const held = useSyncExternalStore(subscribeReaderHeld, readerHeldNow);
+  const lastAxis = useRef<"row" | "column" | null>(null);
+  const holding = plan.panes !== 2 && open !== null && held && lastAxis.current !== null;
+  if (plan.panes === 2) lastAxis.current = plan.paneAxis;
+  else if (!holding) lastAxis.current = null;
+  const axis = holding ? lastAxis.current! : plan.paneAxis;
+  const twoPane = plan.panes === 2 || holding;
   useEffect(() => {
     if (!twoPane && open !== null) {
       router.push(toRoute(open));
@@ -104,7 +113,7 @@ export function ListDetail({
     return <>{list}</>;
   }
 
-  const split = box === null ? null : paneSplit(posture, plan, box.w, box.h);
+  const split = box === null || holding ? null : paneSplit(posture, plan, box.w, box.h);
   const railPad = plan.nav === "rail" ? RAIL_W : 0;
 
   const listPane = (
@@ -194,36 +203,38 @@ export function ListDetail({
   return (
     <Screen>
       <View style={{ flex: 1 }} onLayout={measure}>
-        {split !== null ? (
+        {split !== null || holding ? (
           <View
             style={{
               flex: 1,
-              flexDirection: plan.paneAxis,
+              flexDirection: axis,
               padding: plan.gutter,
               paddingLeft: plan.gutter + (plan.navSide === "left" ? railPad : 0),
               paddingRight: plan.gutter + (plan.navSide === "right" ? railPad : 0),
             }}
           >
-            <View style={plan.paneAxis === "row" ? { width: split.first } : { height: split.first }}>
-              {plan.paneAxis === "column" ? readerPane : listPane}
+            <View style={split === null ? (axis === "column" ? { flex: 1 } : { display: "none" }) : axis === "row" ? { width: split.first } : { height: split.first }}>
+              {axis === "column" ? readerPane : listPane}
             </View>
             {/* The seam: flat, an empty gutter; half-open, the keep-out band with its
                 hairline pair; a hardware hinge is its own width and nothing is painted. */}
             <View
               style={
-                plan.paneAxis === "row"
-                  ? { width: split.gap, flexDirection: "row", justifyContent: "space-between" }
-                  : { height: split.gap, flexDirection: "column", justifyContent: "space-between" }
+                split === null
+                  ? { display: "none" }
+                  : axis === "row"
+                    ? { width: split.gap, flexDirection: "row", justifyContent: "space-between" }
+                    : { height: split.gap, flexDirection: "column", justifyContent: "space-between" }
               }
             >
-              {plan.foldPaint === "hairlines" ? (
+              {split !== null && plan.foldPaint === "hairlines" ? (
                 <>
                   {hair}
                   {hair}
                 </>
               ) : null}
             </View>
-            <View style={{ flex: 1 }}>{plan.paneAxis === "column" ? listPane : readerPane}</View>
+            <View style={split === null && axis === "column" ? { display: "none" } : { flex: 1 }}>{axis === "column" ? listPane : readerPane}</View>
           </View>
         ) : null}
       </View>
