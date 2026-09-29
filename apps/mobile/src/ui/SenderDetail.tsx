@@ -23,7 +23,7 @@ import {
   type ScreenerSeg,
 } from "../state/model";
 import { relayMarkFor, senderSheetLine } from "../state/relay";
-import { useWorld } from "../state/world";
+import { useBodies, useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
@@ -48,6 +48,7 @@ export function SenderDetail({
   const id = routeKey;
   const t = useTheme();
   const w = useWorld();
+  const bodies = useBodies();
 
   const rows =
     seg === "waiting" ? w.screener.waiting : seg === "screened" ? w.screener.screened : w.screener.spam;
@@ -168,7 +169,11 @@ export function SenderDetail({
           </Txt>
         </View>
 
-        {row.held.map((h) => (
+        {row.held.map((held) => {
+          /* THE BODY AS IT STANDS NOW: the Screener's rows are kept across bodies, so the sheet reads
+             each held message's body itself and redraws when one lands. */
+          const h = { ...held, ...(bodies(held.id) ?? {}) };
+          return (
           <Panel key={h.id} level="l1" radius={t.radius.card} style={{ marginBottom: 12, padding: 18 }}>
             <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
               <Txt variant="heldTitle" style={{ flexShrink: 1 }}>
@@ -210,7 +215,8 @@ export function SenderDetail({
             {/* The held message's files, through the reader's one strip. */}
             <AttachmentTiles m={{ id: h.id, attachments: w.filesOf(h.id) }} />
           </Panel>
-        ))}
+          );
+        })}
       </Scroller>
 
       {seg === "waiting" ? (

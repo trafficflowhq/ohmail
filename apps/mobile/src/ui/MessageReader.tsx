@@ -15,7 +15,7 @@ import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-no
 import { ActivityIndicator, Platform, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
-import { useWorld } from "../state/world";
+import { useBodyStamp, useWorld } from "../state/world";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
 import { DetailBar } from "./chrome";
@@ -42,6 +42,8 @@ export function MessageReader({
 }) {
   const t = useTheme();
   const w = useWorld();
+  // The reader draws the body, so it subscribes to it: a body landing redraws this pane alone.
+  useBodyStamp();
   const m = w.message(id);
   /* The rail carries Back where it carries the verbs (the closed Duo, the unfolded landscape):
      a detail bar above it would stand Back twice. */

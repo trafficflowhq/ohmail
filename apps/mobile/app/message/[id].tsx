@@ -10,7 +10,7 @@
 import { useEffect } from "react";
 import { Platform } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { useWorld } from "../../src/state/world";
+import { useBodyStamp, useWorld } from "../../src/state/world";
 import { Gated } from "../../src/ui/Gated";
 import { ReaderRailHost } from "../../src/ui/list-detail";
 import { MessageReader } from "../../src/ui/MessageReader";
@@ -42,6 +42,8 @@ export default function MessageScreen() {
 function MessageRoute() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const w = useWorld();
+  // The reader draws the body, so it subscribes to it: a body landing redraws this screen alone.
+  useBodyStamp();
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const m = w.message(id ?? "");

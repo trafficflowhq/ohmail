@@ -106,6 +106,11 @@ import {
   ruleMatchKey,
   unscreenedGroups,
   unscreenedTotalOf,
+  zonedDayNumber,
+  NOT_DERIVED_FROM,
+  beginDerive,
+  takeClientEngineVitals,
+  type MessageBody,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
@@ -547,7 +552,40 @@ function displayName(r: EmailAddress): string {
 }
 
 function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
-  const body = bodyOf(reader, m);
+  return mailRow(reader, m, v, bodyOf(reader, m));
+}
+
+/** A list row carries no body: a body is drawn by the surface that subscribes to it (`useBodyStamp`). */
+const NO_BODY: MessageBody = {
+  text: "", state: "snippet", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
+};
+
+/**
+ * A LIST ROW, memoised per ENTITY OBJECT across derivations. Its inputs are the entity (replaced,
+ * never edited, on change), the view (the reader's day, zone, language, tags, mailboxes and own
+ * addresses — the last three by identity) and two facts the reader answers in O(1) off its own
+ * caches: the pile and the conversation length. A hit re-reads those two and returns the SAME row
+ * object, so a list re-derived after an arrival changes the identity of the rows that moved and
+ * nothing else. No body text is held: the memo is bounded by the window's rows.
+ */
+const listRows = new WeakMap<EngineMessage, {
+  day: string; tags: unknown; mailboxes: unknown; own: unknown; pile: WorldPileState; thread: number; row: WorldMail;
+}>();
+
+export function toListRow(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
+  const day = `${zonedDayNumber(v.now, v.zone)}|${v.zone}|${v.locale ?? "en"}`;
+  const pile = pileOf(reader, m);
+  const thread = conversationSize(reader, m);
+  const hit = listRows.get(m);
+  if (hit !== undefined && hit.day === day && hit.tags === v.tags && hit.mailboxes === v.mailboxes
+    && hit.own === v.ownAddresses && hit.pile === pile && hit.thread === thread) return hit.row;
+  const row = mailRow(reader, m, v, NO_BODY);
+  delete (row as { bodyState?: BodyState }).bodyState;
+  listRows.set(m, { day, tags: v.tags, mailboxes: v.mailboxes, own: v.ownAddresses, pile, thread, row });
+  return row;
+}
+
+function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: MessageBody): WorldMail {
   const env = replyAllRecipients(m, v.ownAddresses ?? NO_OWN_ADDRESSES);
   const physical = physicalFolderOf(m);
   return {
@@ -881,7 +919,7 @@ export function liveTagged(pres: EntityReader, v: WorldView): WorldTagged {
     items: (id) => {
       const held = rows.get(id);
       if (held) return held;
-      const list = of(id).map((m) => toMail(pres, m, v));
+      const list = of(id).map((m) => toListRow(pres, m, v));
       const made = { rows: list, unread: list.filter((m) => m.unread).length, total: list.length };
       rows.set(id, made);
       return made;
@@ -1150,8 +1188,8 @@ export function liveFolder(
       const bt = b.date ? new Date(b.date).getTime() : 0;
       return bt - at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
     });
-  const fresh = rows.filter((m) => m.unread).map((m) => toMail(pres, m, v));
-  const seen = rows.filter((m) => !m.unread).map((m) => toMail(pres, m, v));
+  const fresh = rows.filter((m) => m.unread).map((m) => toListRow(pres, m, v));
+  const seen = rows.filter((m) => !m.unread).map((m) => toListRow(pres, m, v));
   return { fresh, seen, unread: fresh.length, total: rows.length };
 }
 
@@ -1172,6 +1210,10 @@ export interface WorldOhbox {
  * `openHeld` is the row the reader is on (`OhmailEngine.holdOpenRow`, held by `openMessage`): it
  * keeps its conversation in New until it is left or answered.
  */
+const ohboxRowMemo = new WeakMap<EngineMessage, {
+  mail: WorldMail; face: WorldMail; subject: string; unread: boolean; newSince: number; members: string; key: string; row: WorldMail;
+}>();
+
 export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | null = null): WorldOhbox {
   const box = ohboxView(pres, openHeld);
   /**
@@ -1182,17 +1224,26 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
    */
   const rows = ohboxRows(pres, openHeld);
   const toRow = (r: OhboxRow): WorldMail => {
-    const mail = toMail(pres, r.openTarget, v);
-    const face = r.face === r.openTarget ? mail : toMail(pres, r.face, v);
+    const mail = toListRow(pres, r.openTarget, v);
+    const face = r.face === r.openTarget ? mail : toListRow(pres, r.face, v);
     const subject = r.members.length > 1 ? threadSubject(pres, r.key) ?? face.subject : face.subject;
-    return {
+    const unread = r.members.some(presentsUnread);
+    const newSince = r.resurfaced && r.resurfaced.newSince > 0 ? r.resurfaced.newSince : 0;
+    const members = r.members.map((m) => m.id).join("\n");
+    /* THE SAME ROW OBJECT while nothing it shows moved — see {@link toListRow}. */
+    const hit = ohboxRowMemo.get(r.openTarget);
+    if (hit !== undefined && hit.mail === mail && hit.face === face && hit.subject === subject
+      && hit.unread === unread && hit.newSince === newSince && hit.members === members && hit.key === r.key) return hit.row;
+    const row: WorldMail = {
       ...mail,
       from: face.from, snippet: face.snippet, time: face.time, subject,
-      unread: r.members.some(presentsUnread),
+      unread,
       rowKey: r.key,
       memberIds: r.members.map((m) => m.id),
-      ...(r.resurfaced && r.resurfaced.newSince > 0 ? { newSince: r.resurfaced.newSince } : {}),
+      ...(newSince > 0 ? { newSince } : {}),
     };
+    ohboxRowMemo.set(r.openTarget, { mail, face, subject, unread, newSince, members, key: r.key, row });
+    return row;
   };
   const resurfaced = rows.resurfaced.map(toRow);
   const fresh = rows.new.map(toRow);
@@ -1246,7 +1297,7 @@ export interface WorldReads {
 export function liveReads(pres: EntityReader, v: WorldView): WorldReads {
   const p = readsPartition(pres);
   const all = [...p.fresh, ...p.seen];
-  const items = all.map((m) => toMail(pres, m, v));
+  const items = all.map((m) => toListRow(pres, m, v));
   return {
     items,
     waterlineAboveId: p.seen[0]?.id ?? null,
@@ -1277,7 +1328,7 @@ export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
   // The phone's own word for today: Hermes has no Intl.RelativeTimeFormat to answer it.
   const groups = receiptsByDay(pres, v.now, v.locale ?? "en", v.zone, { today: Copy.today }).map((g) => ({
     label: g.label,
-    items: g.items.map((m) => toMail(pres, m, v)),
+    items: g.items.map((m) => toListRow(pres, m, v)),
   }));
   const all = groups.flatMap((g) => g.items);
   // ONE partition read, for both facts it carries: the anchor the line renders above, and the
@@ -1622,13 +1673,21 @@ export interface WorldHistory {
 export function liveHistory(
   raw: EntityReader, history: readonly EngineMessage[], v: WorldView,
 ): WorldHistory {
-  const items = history.map((m) => {
-    const stamped: EngineMessage = { ...m, physicalFolder: m.folder };
-    const row = toMail(raw, stamped, v);
-    row.historyPlace = physicalFolderOf(stamped);
-    return row;
-  });
+  const items = history.map((m) => historyRow(raw, m, v));
   return { items, total: items.length, pending: postureOf(v).state === "unanswered" };
+}
+
+/** A History row: the message stamped with its own folder, the stamped copy kept per entity so the row memo hits. */
+const historyCopies = new WeakMap<EngineMessage, EngineMessage>();
+export function historyRow(raw: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
+  let stamped = historyCopies.get(m);
+  if (stamped === undefined) {
+    stamped = { ...m, physicalFolder: m.folder };
+    historyCopies.set(m, stamped);
+  }
+  const row = toListRow(raw, stamped, v);
+  row.historyPlace = physicalFolderOf(stamped);
+  return row;
 }
 
 /**
@@ -1882,7 +1941,7 @@ export function liveSearch(engine: OhmailEngine, base: EntityReader, v: WorldVie
   const rows = (hits: readonly { message: EngineMessage }[]): WorldMail[] =>
     hits
       .filter((h) => base.get<EngineMessage>("message", h.message.id) !== undefined)
-      .map((h) => toMail(base, h.message, v));
+      .map((h) => toListRow(base, h.message, v));
   return {
     query(q, limit) {
       const r = engine.search(q, limit === undefined ? {} : { limit });
@@ -5529,3 +5588,19 @@ export type {
   AddressDirection, Destination, FolderEntity, FolderNameError, Held, Mail, PileItem, PileKind,
   Place, Scope, SignatureState,
 };
+
+/** The derived stamp's deny list and the reader's day number, through this seam. */
+export { NOT_DERIVED_FROM, zonedDayNumber, beginDerive, takeClientEngineVitals };
+
+/**
+ * ONE MESSAGE'S BODY, read at the moment a surface draws it — the list rows carry none (see
+ * {@link toListRow}). The surface subscribes to the body stamp (`useBodyStamp`) so a body that lands
+ * redraws it. `null` for a message the mirror does not hold.
+ */
+export function liveBody(engine: OhmailEngine, id: string): Pick<WorldMail, "body" | "bodyState" | "bodyWithheld"> | null {
+  const reader = engine.read();
+  const m = reader.get<EngineMessage>("message", id);
+  if (m === undefined) return null;
+  const b = bodyOf(reader, m);
+  return { body: b.text, bodyState: b.state, ...(b.state === "withheld" && b.withheld ? { bodyWithheld: b.withheld } : {}) };
+}

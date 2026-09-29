@@ -41,7 +41,8 @@ export function MailRow({
   const w = useWorld();
   const seen = !m.unread;
   const thread = threadOfRow(m);
-  const preview = m.protected ? Copy.protectedPreview : (m.snippet ?? firstLine(m.body));
+  // A list row carries no body (the world's lists key on the stamp that ignores bodies); the snippet is the preview.
+  const preview = m.protected ? Copy.protectedPreview : (m.snippet ?? "");
   /* EVERY BADGE INSIDE THE STRIP DECIDES WHETHER THE STRIP IS DRAWN. `newSince` was missing, and
      a Resurfaced row wears nothing else in a list — so the chip saying somebody wrote since this
      came back rendered for no row on this phone. `test/mail-row-badges-spoken.test.ts` reads
@@ -279,6 +280,3 @@ function SwipeFace({
   );
 }
 
-function firstLine(body: string): string {
-  return body.split("\n").find((l) => l.trim().length > 0) ?? "";
-}

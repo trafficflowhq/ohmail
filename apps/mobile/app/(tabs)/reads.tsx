@@ -15,7 +15,7 @@ import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useTheme } from "../../src/theme";
-import { useWorld, type WorldMail } from "../../src/state/world";
+import { useMessageBody, useWorld, type WorldMail } from "../../src/state/world";
 import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -168,7 +168,7 @@ function ReadsBody() {
 
 /** One issue. Clamped until tapped; the fade says there is more, not how much. */
 function StreamCard({
-  m,
+  m: row,
   onExpand,
   onOpenBeside,
 }: {
@@ -177,6 +177,9 @@ function StreamCard({
   /** Two panes: the tap opens the issue in the reading pane instead of unclamping the card. */
   onOpenBeside?: () => void;
 }) {
+  /* THE CARD DRAWS THE ISSUE'S TEXT, so it reads the body itself: the list's rows carry none. */
+  const body = useMessageBody(row.id);
+  const m = body === null ? row : { ...row, ...body };
   const t = useTheme();
   const w = useWorld();
   const [open, setOpen] = useState(false);

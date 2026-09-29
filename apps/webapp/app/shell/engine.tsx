@@ -22,7 +22,7 @@ import {
 } from "react";
 import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
-import { OhmailEngine, type AbandonedMutation, type EntityReader, type MirrorFreshness } from "@ohmail/client-engine";
+import { NOT_DERIVED_FROM, OhmailEngine, type AbandonedMutation, type EntityReader, type MirrorFreshness } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./confirm-schedule";
 import { cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
@@ -1121,16 +1121,12 @@ export function useEngineVersion(): number {
 }
 
 /**
- * TYPES NO WHOLE-MIRROR DERIVATION READS — the deny list {@link useDerivedVersion} asks with.
- *
- * A `message_body` is read one message at a time, by id, at the moment a surface draws it; no
- * pile, count, partition or projection lists them. Everything else the mirror holds is fair
- * game for a derivation, which is why this is a DENY list rather than the list of types that
- * matter: a type added later is watched by default, and the day a selector learns to read
- * bodies the honest failure is a needless rebuild rather than a window showing last minute's
- * mail. `derived-stamp-ignores-only-bodies.test.ts` refuses an entry the selectors do read.
+ * TYPES NO WHOLE-MIRROR DERIVATION READS — the deny list {@link useDerivedVersion} asks with, now
+ * the engine package's (`derived-stamp.ts`) so the phone keys on the same list. Re-exported here
+ * under the name the shell and its census import. `derived-stamp-census.test.ts` refuses an entry
+ * the selectors do read.
  */
-export const NOT_DERIVED_FROM: readonly string[] = ["message_body"];
+export { NOT_DERIVED_FROM };
 
 /**
  * THE VERSION OF WHAT THE WINDOW DERIVES FROM — {@link useEngineVersion} minus the bodies.

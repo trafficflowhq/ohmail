@@ -4,9 +4,9 @@
  * the consent projection, `engine.mutate` behind every action, watched ({@link useWorldToast}).
  * Without a live session the world is empty — no account, no-op actions; honestly nothing,
  * never sample data (the navigation gate keeps mail screens off-screen; the empty world covers
- * a deep link restored mid-boot). Computed once per change (the engine's version signal) and
- * shared through context — six consumers re-deriving five piles per render would scan the
- * mirror thirty times per drain tick. `world.actions` is one object for the app's life.
+ * a deep link restored mid-boot). Projected by `world-projection.ts` on the derived stamp (bodies
+ * excluded) and shared through context; each list is computed when a screen reads it and kept
+ * until what it reads moves. `world.actions` is one object for the app's life.
  */
 import {
   createContext,
@@ -54,6 +54,8 @@ import type { FaceName } from "../theme/face";
 import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead } from "./folders-flag";
 import { askEngineQueues, drainReads } from "./drain-reads";
+import { startUiVitals } from "../engine/engine-log";
+import { createProjector, type Projected } from "./world-projection";
 import { usePrefs } from "./store";
 import {
   connectionSay, firstSyncSay,
@@ -79,6 +81,9 @@ import {
   liveSearch,
   sendingMailboxId,
   liveTags,
+  liveBody,
+  NOT_DERIVED_FROM,
+  takeClientEngineVitals,
   liveTagged,
   mirrorSettled,
   phoneOrganizer,
@@ -712,6 +717,42 @@ export function useEngineQueuesAsk(): () => void {
   }, [engine]);
 }
 
+/** The projection plus the per-render facts, the projection's getters carried over by descriptor. */
+function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement">): World {
+  const out = Object.defineProperties({}, Object.getOwnPropertyDescriptors(projected)) as World;
+  return Object.assign(out, facts);
+}
+
+/**
+ * A SURFACE THAT DRAWS A BODY SUBSCRIBES TO ONE — the web's rule. The world no longer re-derives on
+ * a body write (its lists key on the derived stamp), so the reader, the open Reads card and the
+ * sender sheet read their body at render and re-render when the body stamp moves.
+ */
+export function useBodyStamp(): number {
+  const conn = useConnection();
+  const engine = conn.state.k === "live" ? conn.state.session.engine : null;
+  return useSyncExternalStore(
+    useCallback((cb: () => void) => (engine ? engine.subscribe(cb) : () => undefined), [engine]),
+    () => (engine ? engine.read().stampOf("message_body") : 0),
+  );
+}
+
+/** A body reader for a surface that draws several — a new function whenever a body lands. */
+export function useBodies(): (id: string) => ReturnType<typeof liveBody> {
+  const conn = useConnection();
+  const engine = conn.state.k === "live" ? conn.state.session.engine : null;
+  const stamp = useBodyStamp();
+  // `stamp` is the dependency: the function reads the engine, and a body landing must re-read it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useCallback((id: string) => (engine ? liveBody(engine, id) : null), [engine, stamp]);
+}
+
+/** One message's body for a surface that draws it — see {@link useBodyStamp}. */
+export function useMessageBody(id: string): ReturnType<typeof liveBody> {
+  const bodies = useBodies();
+  return useMemo(() => bodies(id), [bodies, id]);
+}
+
 export function WorldProvider({ children }: { children: ReactNode }) {
   const conn = useConnection();
   /* The DEVICE half of the face lives in the prefs store (above this provider), and the account
@@ -728,9 +769,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const offMirrorRev = useSyncExternalStore(subscribeOffMirror, offMirrorRevision, offMirrorRevision);
 
   /* The engine's own change signal — the exact idiom `LiveFacts` (servers.tsx) established. */
-  const version = useSyncExternalStore(
+  /* WHAT THE LISTS DERIVE FROM: the engine's stamp minus the bodies (`NOT_DERIVED_FROM`, the web's
+     `useDerivedVersion`). A body write re-derives nothing; a surface that draws a body subscribes
+     to the body stamp itself (`useBodyStamp`). */
+  const derivedStamp = useSyncExternalStore(
     useCallback((cb: () => void) => (engine ? engine.subscribe(cb) : () => undefined), [engine]),
-    () => (engine ? engine.read().version() : 0),
+    () => (engine ? engine.read().stampExcept(NOT_DERIVED_FROM) : 0),
   );
 
   /* WHICH SEARCH INDEX ANSWERED — the engine notifies when a build settles, with no record
@@ -1528,195 +1572,43 @@ export function WorldProvider({ children }: { children: ReactNode }) {
      overlay carries the named rows until it closes (`@ohmail/client-engine#presentAt`). */
   const heldPlaces = useSyncExternalStore(subscribeRoutingPlaces, routingPlaces);
 
-  const projected = useMemo<Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement"> | null>(() => {
-    if (engine === null || session === null) return null;
+  /* ONE PROJECTOR PER ENGINE (`world-projection.ts`): it keeps the presented reader and every list
+     across runs, each keyed on what it reads, so a run is cheap unless a list's own inputs moved. */
+  const projector = useMemo(() => (engine ? createProjector() : null), [engine]);
+  /* The cost of the lists, on the engine log once a minute (`ui_vitals`): a device reads its own. */
+  useEffect(() => (engine === null ? undefined : startUiVitals(takeClientEngineVitals)), [engine]);
+  const projected = useMemo<Projected | null>(() => {
+    if (engine === null || session === null || projector === null) return null;
     /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
-       a route this session does not dial (the same fact the queue read is skipped for, below).
-       Waiting for an answer that can never arrive would withhold the Screener for the life of
-       the session, so that door is `unsupplied`: settled, retiring nobody, marked as nothing. */
+       a route this session does not dial. Waiting for an answer that can never arrive would
+       withhold the Screener for the life of the session, so that door is `unsupplied`. */
     const posture: ScreeningPosture = session.standalone ? SCREENING_UNSUPPLIED : screening;
-    /* The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected. */
-    const tagsNow = liveTags(engine.read());
-    const v: WorldView = {
-      now: new Date(), zone, locale, foldersEnabled: foldersOn,
-      // Before the first read this is `[]`, which is `NO_OWN_ADDRESSES` — the posture this
-      // client had for its whole life, and the right answer for a phone that has not asked yet.
-      ownAddresses: addressesNow.current,
-      /* The rows behind those addresses, so a message can name the mailbox it arrived in. `?? []`
-         is "nothing read yet", which the label gate reads as nothing to disambiguate. */
-      mailboxes: mailboxes ?? [],
-      // The SAME posture the partition below is taken under — the shelves read it for the marker.
-      screening: posture,
-      tags: tagsNow,
-    };
-    /* A HELD DELETE'S ROW LEAVES EVERY LIST AT THE PRESS while the mirror keeps it — the
-       webapp's `hideMessages` composition, over the base BOTH presentations read: the window
-       is what makes the delete look done, and Undo restores the row by forgetting the id.
-       `message(id)` below stays on the unhidden engine, the webapp's own rule — the hiding
-       reader is never used to open a message or behind a mutation. */
-    const base = hiddenMessagesReader(engine.read(), heldDeletes);
-    /* ONE partition, both arms (`live.ts#presentedWorld`): `world.reader` is the projection the
-       piles group over, `world.history` is the mail the cutline retired. Two calls would be one
-       rule read at two clocks — a sender in both lists, or in neither. */
-    const world = presentedWorld(base, v.now, foldersOn, posture, addressesNow.current);
-    presentedOptionsNow.current = presentedOptions(v.now, foldersOn, posture, addressesNow.current);
-    /* AND A HELD ROUTING PRESS SHOWS ITS MAIL WHERE IT WAS FILED, over the PROJECTION and never
-       under it: a row's place comes from its sender's rule, so the overlay has to sit above the
-       reader that applies rules or the rule that has not been sent yet would win. Unwrapped when
-       nothing is held, so the ordinary render pays nothing. */
-    const pres = routingReader(world.reader, heldPlaces);
-    /* …and the same reader the verbs that ask about the Ohbox read — see `presentedNow`. */
-    presentedNow.current = pres;
-    const ohbox = liveOhbox(pres, v, engine.openRowHeld());
-    const reads = liveReads(pres, v);
-    const receipts = liveReceipts(pres, v);
-    /* THE PAIRED DOOR'S QUEUE IS THE SERVER'S SET — see `liveScreener`. `null` here is the
-       standalone door and a paired door that has not been answered yet; the derived list then
-       stands and the meta below says the count was worked out on this phone. */
-    const screener = liveScreener(pres, v, scopes, waitingOnScreen(screenerServer, leavingWaiting));
-    /* The RAW mirror, not `pres`: the projection deletes History's rows, which is what makes
-       History a presentation rather than a folder. See `liveHistory`. */
-    const history = liveHistory(base, world.history, v);
-    const piles = livePiles(pres, v);
-    const pileTotal = piles.reduce((n, p) => n + p.items.length, 0);
-    return {
-      live: true,
-      worldKey: session.ownerKey,
-      /**
-       * Whose mail this is, in words a person reads. A paired door names the server it is paired
-       * with by its host and the mailbox the roster says it serves; the account id is a key, not
-       * a name, and the origin's scheme is wire (a URL and a UUID at the top of More and the
-       * drawer — measured on the iPhone and the iPad, 2026-09-21). The standalone door has the
-       * same shape in its own words: the phone's own name in the reader's language (a getter, so
-       * a switch reaches it) and the mailbox the engine serves. The address comes from the row in
-       * both cases, because the profile has never held one; an unread roster leaves it empty.
-       */
-      account: organizesHere(session.profile)
-        ? { get name(): string { return Copy.standaloneName; }, email: mailboxes?.[0]?.address ?? "" }
-        : { name: session.profile.origin.replace(/^https?:\/\//, ""), email: mailboxes?.[0]?.address ?? "" },
-      // THE DOOR, derived once by the layer that composes the session. See the field.
-      standalone: session.standalone,
+    return projector.project({
+      engine, worldKey: session.ownerKey, standalone: session.standalone, bearer: session.bearer,
+      /* Whose mail this is, in words a person reads: a paired door names its server's host and the
+         mailbox the roster serves; the standalone door names the phone (a getter, so a language
+         switch reaches it). The address comes from the row; an unread roster leaves it empty. */
+      account: (rows) => organizesHere(session.profile)
+        ? { get name(): string { return Copy.standaloneName; }, email: rows?.[0]?.address ?? "" }
+        : { name: session.profile.origin.replace(/^https?:\/\//, ""), email: rows?.[0]?.address ?? "" },
       images: imageRouteOf(session),
-      mailboxes: {
-        // `known` is the SUCCESSFUL-read gate, not "the list is non-empty": an account whose
-        // mailbox was removed answers `[]`, and that is an answer. The banner is drawn behind
-        // this so a phone that has not asked says nothing about who organizes anything.
-        known: mailboxes !== null,
-        ownAddresses: addressesNow.current,
-        organizer: mailboxes === null ? null : phoneOrganizer(mailboxes),
-        /* The same value `known` and `organizer` are derived from, so the three cannot disagree:
-           `freshestRead` keeps the last successful answer, and a failed read changes none of them. */
-        rows: mailboxes ?? [],
-        /* The engine's mirror, not this read: a phone that has never reached `/mailboxes`
-           can still send from the mailbox its mirrored mail arrived in. */
-        sendingId: sendingMailboxId(base),
-        settingsBell: engine.read().entries("settings")[0]?.seq ?? null,
+      zone, locale, foldersOn, foldersPending, foldersStorable, setFoldersEnabled,
+      folderSummary: (folderId: string) => readFolderSummary(session, folderId),
+      signatures, resurfaceTime, rememberResurfaceTime, posture, scopes,
+      screenerServer, relayed, leavingWaiting, heldDeletes, heldPlaces,
+      mailboxes, ownAddresses: addressesNow.current,
+      walker, searchWalker, openOffMirror, actions,
+      onPresented: (pres, options) => {
+        presentedNow.current = pres;
+        presentedOptionsNow.current = options;
       },
-      ohbox: { ...ohbox, meta: Copy.metaUnreadOf(ohbox.unread, ohbox.total), unscreened: liveUnscreened(engine.read()) },
-      doorbell: {
-        initials: screener.waiting.map((r) => r.initial),
-        count: screener.waiting.length,
-      },
-      reads: {
-        ...reads,
-        waterLabel: Copy.waterline,
-        meta: Copy.metaNew(reads.newCount),
-      },
-      receipts: {
-        groups: receipts.groups,
-        waterlineAboveId: receipts.waterlineAboveId,
-        waterLabel: Copy.waterline,
-        total: receipts.total,
-        newCount: receipts.newCount,
-        meta: Copy.metaNew(receipts.newCount),
-      },
-      screener: {
-        ...screener,
-        relayed,
-        // A number this phone derived is never shown as the mailbox's own.
-        meta: screener.source === "server"
-          ? Copy.metaWaiting(screener.waiting.length)
-          : Copy.metaWaitingOnDevice(screener.waiting.length),
-      },
-      history: { ...history, meta: Copy.historyMeta(history.total) },
-      piles,
-      pilesMeta: Copy.metaItems(pileTotal),
-      tags: tagsNow,
-      tagged: liveTagged(pres, v),
-      // Also raw, and for the same reason: a draft is not presented mail and never passes
-      // through the consent cutline. `v` carries the clock the appointment is read in.
-      scheduled: liveScheduled(engine.read(), v),
-      // Raw too, and for `scheduled`'s reason exactly.
-      drafts: liveDrafts(engine.read(), v),
-      folders: (() => {
-        // Gated TWICE, the webapp shell's own double gate: the flag is the authority, the
-        // entities are data — a mirror still holding `folder` rows after a disable lists none.
-        const list = foldersOn ? liveFolders(engine.read()) : [];
-        return {
-          enabled: foldersOn,
-          storable: foldersStorable,
-          list,
-          unread: foldersOn ? liveFolderUnread(pres) : new Map<string, number>(),
-          byId: (id: string) => list.find((f) => f.id === id),
-          items: (id: string) => {
-            const f = list.find((x) => x.id === id);
-            return f ? liveFolder(pres, f, v) : { fresh: [], seen: [], unread: 0, total: 0 };
-          },
-          pending: foldersPending,
-          setEnabled: setFoldersEnabled,
-          // The one read the verbs need beside the engine (`net/folder-ops.ts`): the count
-          // goes to THIS session's server, and a superseded session answers "could not count".
-          summary: (folderId: string) => readFolderSummary(session, folderId),
-          // Only asked when there is no section to hang the first create on — one mirror
-          // pass, paid exactly in the zero-folders state it serves.
-          soleCreateMailboxId:
-            foldersOn && list.length === 0 ? soleMessageMailbox(engine.read()) : null,
-          // Off the MAILBOX facts, not the entities: `\Junk` is excluded from the inventory
-          // whole, so no `folder` entity can ever carry it. `null` while the roster has not
-          // been read — an unasked question is not the answer "there is no Junk folder".
-          junkSaid: junkFolderSaid(mailboxes ?? []),
-        };
-      })(),
-      // The engine resolves it from the adapter's capability PAIR (list + restore) — a Trash
-      // whose Restore cannot work is not the feature, the engine's own rule.
-      trash: { available: engine.trashAvailable() },
-      signatures,
-      resurfaceTime,
-      remember: rememberResurfaceTime,
-      /* THE SAME VIEW THE LISTS WERE DERIVED FROM, field for field. It used to carry the clock,
-         the language and the folders flag alone, so the reading screen projected the mirror under
-         a different cutline than the list that linked to it (a row the list showed could answer
-         "no longer here") and resolved reply-all against an EMPTY own-address set, which leaves
-         the reader in the audience of their own reply. */
-      message: (id) => liveMessage(engine, id, {
-        now: new Date(), zone, locale, foldersEnabled: foldersOn,
-        ownAddresses: addressesNow.current, mailboxes: mailboxes ?? [], screening: posture,
-        tags: tagsNow,
-      }),
-      filesOf: (id) => liveFiles(engine, id),
-      /* The same hiding reader and view the lists derive from — a held-deleted row must not
-         survive in search for the window. `searchRev` in this memo's deps is what re-derives
-         it when a build settles. */
-      search: liveSearch(engine, base, v),
-      store: {
-        walker,
-        searchWalker,
-        renewal: session.bearer,
-        mirrorRows: () => mirrorNewestFirst(engine),
-        rowOf: (m, inHistory) => storeRowOf(engine, m, v, inHistory),
-        searchAvailable: engine.serverSearchAvailable(),
-        open: openOffMirror,
-      },
-      actions,
-    };
-    // `version` IS the dependency that re-derives this projection on every mirror change; the
-    // reader itself is stable across drains, so it cannot stand in for it. The connection's
-    // state is deliberately NOT here — see the header, and the assembly below, which carries it.
+    });
+    // The derived stamp IS the mailbox dependency; the day rolls over on `freshBeat`'s tick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, locale, actions, version, freshBeat, searchRev, walker, searchWalker, offMirrorRev,
-    foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
+  }, [engine, projector, session, scopes, zone, locale, actions, derivedStamp, freshBeat, searchRev, walker, searchWalker,
+    offMirrorRev, foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
     resurfaceTime, rememberResurfaceTime, screening, screenerServer, relayed, leavingWaiting, heldDeletes,
-    heldPlaces]);
+    heldPlaces, mailboxes]);
 
   /**
    * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the
@@ -1729,8 +1621,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const world = useMemo<World>(() => {
     if (projected === null || engine === null || session === null) return emptyWorld(actions);
-    return {
-      ...projected,
+    /* The projection's lists are GETTERS, so it is copied by descriptor, never spread: a spread
+       would compute every list on every connection change. */
+    return withFacts(projected, {
       // Read per derivation, not latched: the first drain's completion stamps the mirror and
       // flips `conn.syncing`, which is in this memo's deps — so `settled` turns true in the
       // same render pass that could otherwise flash an empty state over a just-synced mailbox.
@@ -1769,7 +1662,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
       sendOutcome: outcomeOf,
       sendSettlement: settlementOf,
-    };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
     outcomeOf, settlementOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices,

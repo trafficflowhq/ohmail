@@ -783,6 +783,9 @@ export {
  * the shell's `ui_vitals` report. Exported from the barrel rather than as a leaf: the only caller
  * is the shell, which already compiles this package.
  */
+/** The derived stamp's deny list, shared by the web shell and the phone. */
+export { NOT_DERIVED_FROM } from "./derived-stamp.js";
+
 export {
   beginDerive,
   countNotify,

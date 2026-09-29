@@ -197,3 +197,21 @@ export function logBackupExclusion(state: BackupExclusion, platform: string): vo
     platform,
   }));
 }
+
+/**
+ * THE WORLD'S COST, ONCE A MINUTE — how many list derivations the phone ran, the worst one and the
+ * p95 of the last hundred, and how many engine notifications there were. Numbers only, nothing to
+ * redact; a device run reads its own cost here instead of inferring it.
+ */
+export function logUiVitals(v: { derives: number; deriveMsMax: number; deriveMsP95: number | null; notifies: number }): void {
+  engineLogSink()(JSON.stringify({
+    service: "app", event: "ui_vitals",
+    derives: v.derives, deriveMsMax: v.deriveMsMax, deriveMsP95: v.deriveMsP95, notifies: v.notifies,
+  }));
+}
+
+/** The `ui_vitals` cadence: once a minute, from the moment a session's world exists. Answers its stop. */
+export function startUiVitals(take: () => { derives: number; deriveMsMax: number; deriveMsP95: number | null; notifies: number }): () => void {
+  const every = setInterval(() => logUiVitals(take()), 60_000);
+  return () => clearInterval(every);
+}
