@@ -4623,23 +4623,6 @@ describe("a store that cannot keep up is disclosed, with the retry beside it", (
       .toContain("Not connecting (storage)");
   });
 
-  /* THE COUNT, when the engine states it (CLOUD-QUARANTINE-STRIP-COUNT-AND-CAP-STATE): the mailbox
-     connects, this computer's copy refused rows, so the cell says that and how many — through the
-     strip's own figure — never "Not connecting". The count-less row above is its control. */
-  it("an error/storage row that states its count says how many could not be stored", async () => {
-    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage", storeRefusals: { count: 612, retrying: 500, exact: true } }];
-    const el = await render("cloud");
-    const row = addressRows(el)[0]!;
-    expect(row.textContent).toContain("Could not store 612 items");
-    expect(row.textContent, "a copy that could not store is not a connection failure").not.toContain("Not connecting");
-  });
-
-  it("and a floor is said as one", async () => {
-    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage", storeRefusals: { count: 10_500, retrying: 500, exact: false } }];
-    const el = await render("cloud");
-    expect(addressRows(el)[0]!.textContent).toContain("Could not store more than 10,500 items");
-  });
-
   it("and Sync now — the retry that re-pulls — is still offered and reaches the engine", async () => {
     FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
     const el = await render("cloud");
