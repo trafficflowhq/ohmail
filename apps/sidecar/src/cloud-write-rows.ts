@@ -107,6 +107,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /push/subscriptions": none,
   "POST /rules": verbs("rule_create"),
   "POST /screener/:id": verbs("screener_decide"),
+  "POST /screener/auto-filed/undo": direct,
   "POST /screener/held-releases": direct,
   "POST /screener/held-releases/dismiss": direct,
   "POST /screener/unscreened": direct,

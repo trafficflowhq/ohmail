@@ -791,6 +791,8 @@ export const folderState = sqliteTable("folder_state", {
   lastErrorClass: text("last_error_class"),
   // Mail 0099: the pile a trashed message came from, so an untrash knows where to put it back.
   trashedFrom: text("trashed_from"),
+  // Mail 0138: the person put back the Screener's automatic filing; the pass files it never again.
+  autoFilingUndoneAt: integer("auto_filing_undone_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and

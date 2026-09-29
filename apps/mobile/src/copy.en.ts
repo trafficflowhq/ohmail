@@ -1142,6 +1142,20 @@ const TABLE = {
     "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to, and sensitive mail, are never filed this way. Off by default.",
   autoActNeedsSuggest: "Needs automatic suggestions",
   autoActReader: "Set this on the install that organizes your mail.",
+  /* What the Screener filed on its own, and Put back — the web Settings row's words (row 140). */
+  autoFiledTitle: "Filed automatically",
+  autoFiledSummary: (n: number) => `${n === 1 ? "1 message" : `${n} messages`} filed out of your Screener for you.`,
+  autoFiledSummaryMore: (n: number) => `The newest ${n} messages filed out of your Screener for you.`,
+  autoFiledReview: "Review",
+  autoFiledHide: "Hide",
+  autoFiledRow: (from: string, subject: string, place: string) => `${from} · ${subject} · in ${place}`,
+  autoFiledPutBack: "Put back",
+  autoFiledPutBackAll: (n: number) => `Put back all ${n}`,
+  autoFiledPutBackDone: (n: number) =>
+    `${n === 1 ? "1 message goes" : `${n} messages go`} back to your Screener. They are not filed automatically again.`,
+  autoFiledRequested: "Sent to the install that organizes this mailbox. It puts them back.",
+  autoFiledNone: "Nothing left to put back.",
+  autoFiledFailed: "Couldn't put that back — try again.",
   autoActFailed: "That setting did not save. It is unchanged.",
   /** The Use-folders switch's two positions. English happens to be the same in German. */
   switchOff: "Off",

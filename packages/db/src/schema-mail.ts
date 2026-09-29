@@ -869,6 +869,13 @@ export const folderState = pgTable("folder_state", {
    * restore would work for a week, then silently stop.
    */
   trashedFrom: text("trashed_from"),
+  /**
+   * When the person PUT BACK the Screener's automatic filing of this message (mail 0138). The
+   * undo moves it to the gate through the ordinary move door, whose `last_set_by = 'us'` the
+   * auto-apply candidate statement admits; this is that statement's sixth exclusion, so the pass
+   * never files the message again. Written by the undo alone, never cleared.
+   */
+  autoFilingUndoneAt: timestamp("auto_filing_undone_at", { withTimezone: true }),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and

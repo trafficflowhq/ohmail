@@ -556,6 +556,24 @@ export const screeningSettings: {
     }) => Promise<ScreeningPreferenceWire>;
 } = absent;
 
+export interface AutoFiledItemWire {
+    messageId: string;
+    from: string | null;
+    subject: string | null;
+    to: string;
+    filedAt: string;
+}
+
+export interface AutoFiledWire {
+    items: AutoFiledItemWire[];
+    more: boolean;
+}
+
+export const screenerAutoFiled: {
+    get: () => Promise<AutoFiledWire>;
+    undo: (messageIds: readonly string[]) => Promise<{ putBack: string[]; requested: string[] }>;
+} = absent;
+
 export interface ConsentStateWire {
     seedConfirmedAt: string | null;
     screeningResetAt: string | null;

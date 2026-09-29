@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 import { OhboxWords } from "./OhboxWords";
+import { AutoFiledReview } from "./AutoFiledReview";
 import { TravelledChangeNote, useTravelledChange } from "./travelled-change";
 import { screeningSettings, type ScreeningPreferenceWire } from "../api-client";
 
@@ -109,6 +110,8 @@ export function ScreeningSection() {
           />
         }
       />
+      {/* What the switch filed, still in place, with Put back — under the switch that did it. */}
+      <AutoFiledReview />
 
       {saved ? <span className="scn-sg-note">{t("screening.saved")}</span> : null}
       {failed ? <span className="scn-sg-note">{t("screening.failed")}</span> : null}

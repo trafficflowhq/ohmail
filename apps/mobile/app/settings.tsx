@@ -74,6 +74,7 @@ import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
 import { AutoActPanel, readsOnly } from "../src/ui/AutoActPanel";
+import { AutoFiledPanel } from "../src/ui/AutoFiledPanel";
 import { IMAGE_QUALITY_LEVELS, type ImageQualityLevel } from "../src/compose/attach";
 
 /** The dial's four names, read at render so they follow the app's language. */
@@ -169,6 +170,9 @@ function SettingsBody() {
      under the finger rather than on the next navigation. */
   useLocale();
   const w = useWorld();
+  const conn = useConnection();
+  /* The live session the "Filed automatically" panel reads through; none, no panel. */
+  const session = conn.state.k === "live" ? conn.state.session : null;
   const { themePref, setTheme, facePin, setFacePin, pictureQuality, setPictureQuality } = usePrefs();
   const wake = useWake();
   /*
@@ -353,6 +357,10 @@ function SettingsBody() {
             set={w.autoAct.set}
           />
         ) : null}
+
+        {/* WHAT THE SCREENER FILED ON ITS OWN, with Put back — beside the other automatic act.
+            The phone has no auto-apply switch of its own; the panel reads the same route pair. */}
+        {session !== null ? <AutoFiledPanel session={session} /> : null}
 
         {/*
           THE AWAY RESPONDER — a row rather than the form, because the form is

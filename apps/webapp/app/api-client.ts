@@ -2167,6 +2167,39 @@ export const screeningSettings = {
   }) => api<ScreeningPreferenceWire>("/account/screening", { method: "PATCH", body }),
 };
 
+/** One message the Screener filed on its own, still where it put it (`GET /screener/auto-filed`). */
+export interface AutoFiledItemWire {
+  messageId: string;
+  from: string | null;
+  subject: string | null;
+  /** The pile the pass filed it to. */
+  to: string;
+  filedAt: string;
+}
+
+/** The read: the newest automatic filings still in place, and whether more are behind them. */
+export interface AutoFiledWire {
+  items: AutoFiledItemWire[];
+  more: boolean;
+}
+
+/**
+ * `GET /screener/auto-filed` and `POST /screener/auto-filed/undo` — what the Screener filed on its
+ * own, and putting it back. Put back returns each message to the Screener, desired state only,
+ * and the pass never files it again; `requested` are the ones sent to the install that organizes.
+ */
+export const screenerAutoFiled = {
+  // A body that is not a page is no filing: an older server answers 404, never a list to render.
+  get: async (): Promise<AutoFiledWire> => {
+    const w = await api<Partial<AutoFiledWire> | null>("/screener/auto-filed");
+    return { items: Array.isArray(w?.items) ? w.items : [], more: w?.more === true };
+  },
+  undo: (messageIds: readonly string[]) =>
+    api<{ putBack: string[]; requested: string[] }>("/screener/auto-filed/undo", {
+      method: "POST", body: { messageIds: [...messageIds] },
+    }),
+};
+
 /** What `GET /consent` answers: where an account stands in onboarding, and the dial it counts with. */
 export interface ConsentStateWire {
   /** ISO timestamp, or null while the seed review has never been confirmed. */

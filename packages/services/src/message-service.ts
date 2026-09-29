@@ -1240,7 +1240,8 @@ export class MessageService {
 
   async move(
     ctx: ServiceContext, id: string, body: MoveBody,
-    opts: { idempotency?: MoveIdempotency | null } = {},
+    /** `putBackAutoFiling` — the Screener's automatic filing undone (mail 0138), in this transaction. */
+    opts: { idempotency?: MoveIdempotency | null; putBackAutoFiling?: boolean } = {},
   ): Promise<MoveResult | MoveRequestResult> {
     const folder = this.validFolder(body.folder);
 
@@ -1296,6 +1297,11 @@ export class MessageService {
       // `null` — see the `patch` arm above and `upsertDesired`'s parameter block: a move CLEARS
       // the delete origin, which is what makes a second delete from a new folder honest.
       await this.upsertDesired(tx, id, observed, folder, ctx.now(), null);
+      // The auto-apply pass's sixth exclusion: a message put back is never filed automatically again.
+      if (opts.putBackAutoFiling === true) {
+        // scoped-by: the message row was read above under eq(messages.accountId, ctx.accountId)
+        await tx.update(folderState).set({ autoFilingUndoneAt: ctx.now() }).where(eq(folderState.messageId, id));
+      }
       let seqBig = await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
         meta: { from: observed, to: folder },

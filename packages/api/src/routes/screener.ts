@@ -1,6 +1,7 @@
 import {
   ServiceError, dismissHeldRelease, heldReleaseSummary, releaseHeld, HELD_RELEASE_GROUPS_MAX,
   screenUnscreened, unscreenedSummary, OHBOX_UNSCREENED_GROUPS_MAX,
+  autoFiledSummary, undoAutoFiled, AUTO_FILED_PAGE_MAX,
   type ScreenBody,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
@@ -106,6 +107,40 @@ export const screenerRoutes: Route[] = [
         senders: body.senders as readonly string[] | undefined,
       });
       return jsonResponse(result);
+    },
+  },
+  {
+    /**
+     * WHAT THE SCREENER FILED ON ITS OWN — the recent auto-apply moves still where the pass put
+     * them, newest first, bounded. A read: it spends nothing and moves no row. No step-up, for the
+     * held-release pair's reason: a summary of the caller's own mail.
+     */
+    method: "GET",
+    pattern: "/screener/auto-filed",
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const page = await autoFiledSummary(ctx.db, ctx.accountId);
+      return jsonResponse({ ...page, max: AUTO_FILED_PAGE_MAX });
+    },
+  },
+  {
+    /**
+     * PUT BACK — the named messages return to the Screener and the pass never files them again.
+     * Desired state only, through the move door; the reconciler moves the mail. A name that is no
+     * longer an automatic filing still in place is skipped, so a replay puts nothing back twice.
+     */
+    method: "POST",
+    pattern: "/screener/auto-filed/undo",
+    relay: true,
+    cost: "work",
+    replay: "guarded",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const body = await readBody<{ messageIds?: unknown }>(req);
+      // Left `unknown`: the service refuses a non-array, a bad id and more than the page's bound.
+      return jsonResponse(await undoAutoFiled(ctx, { messageIds: body.messageIds }));
     },
   },
   {

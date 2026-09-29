@@ -369,6 +369,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
+    "name": "0138_auto_filing_undone_at.sql",
+    "statements": [
+      "ALTER TABLE \"folder_state\" ADD COLUMN \"auto_filing_undone_at\" integer;"
+    ]
+  },
+  {
     "name": "0138_device_search_stems.sql",
     "statements": [
       "DROP TRIGGER IF EXISTS messages_fts_after_insert;",

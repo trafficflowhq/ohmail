@@ -807,6 +807,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0137_draft_forward_of — the message a draft forwards. Every draft read and write names
   // the column, so a host ahead of the migration 42703s both. Deploy order migration → API.
   ["drafts", "forward_of_message_id"],
+  // mail 0138_auto_filing_undone_at — the Screener's automatic filing, put back. The auto-apply
+  // candidate statement and the undo both name the column, so a host ahead of the migration 42703s
+  // both. Deploy order migration → API → worker.
+  ["folder_state", "auto_filing_undone_at"],
 ] as const;
 
 /**
@@ -1174,7 +1178,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0137_draft_forward_of";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0138_auto_filing_undone_at";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

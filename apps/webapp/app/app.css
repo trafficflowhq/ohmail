@@ -1802,6 +1802,46 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   font-weight: 400;
   color: var(--ink2);
 }
+/* "Filed automatically" under the auto-apply switch: one row per message, its Put back beside it. */
+.scn-autofiled {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0 12px;
+}
+.scn-autofiled ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+.scn-autofiled-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.scn-autofiled-row > button {
+  flex: none;
+  white-space: nowrap;
+}
+/* Two lines at most, so a narrow window keeps the subject rather than the address alone. */
+.scn-autofiled-what {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  font-size: calc(12px + var(--type-up));
+  color: var(--ink2);
+}
 .scn-relay {
   margin: 0;
   font-size:calc(11.5px + var(--type-up));
