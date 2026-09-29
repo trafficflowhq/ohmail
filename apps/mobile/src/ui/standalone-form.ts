@@ -557,7 +557,16 @@ export function claimHere(
  * phone does instead, in the desktop's words (`mailboxes.readerReadsOnly`). No arm offers a takeover —
  * there is no such press in this panel.
  */
-export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
+export function claimNoteLine(
+  claim: PhoneClaim,
+  os: string,
+  /**
+   * THIS PHONE DECLINED TO ORGANIZE BEHIND ITS NOTIFICATION — notifications off or battery saver,
+   * as the card's own records say. The platform rule is then false and the decline's sentence
+   * beside it is the true one, so `ours` says nothing here rather than contradicting it.
+   */
+  facts?: { readonly declined: boolean },
+): string | null {
   switch (claim.k) {
     case "free":
       /* AND NOTHING AT ALL WHERE NOTHING ORGANIZES IT. The platform rule tells somebody to dismiss
@@ -571,7 +580,8 @@ export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
       /* A STOP THE MAIL SERVER HAS NOT HONOURED gets the sentence that says what is happening —
          the platform rule ("dismiss the notification to stop") is an instruction about a press
          that has already been made. Every other `ours` keeps it. */
-      return claim.releasePending ? Copy.phoneStateStopPendingWhy : platformRuleLine(os);
+      if (claim.releasePending) return Copy.phoneStateStopPendingWhy;
+      return facts?.declined === true ? null : platformRuleLine(os);
     case "pairedServer":
       /* AND THE PLATFORM RULE IS FALSE HERE, which is what made the paired card wrong twice over:
          "it organizes while its notification is shown" describes THIS phone, and the server that

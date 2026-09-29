@@ -181,11 +181,19 @@ class OrganizerService : Service() {
      * CAN THE NOTIFICATION BE SEEN? A refused `POST_NOTIFICATIONS` (API 33+) or, below 33, the
      * app's notifications switched off leaves the service running behind nothing, and "behind a
      * notification you can see" would be false. The caller answers `false` to JS and the mailbox
-     * is handed back. From 33 Android answers this from the permission, so it is one fact on every
-     * level; JS reads this same function below 33 (`Function("canPostNotification")`).
+     * is handed back. So does the `organizing` CHANNEL turned off (a long-press on the notification
+     * offers exactly that): Android hides what is posted to it while the app switch stays on. A
+     * channel not created yet is not blocked. JS reads this same function on every level
+     * (`Function("canPostNotification")`) and the claim watch re-reads it while the service runs.
      */
-    fun canPostNotification(context: Context): Boolean =
-      NotificationManagerCompat.from(context).areNotificationsEnabled()
+    fun canPostNotification(context: Context): Boolean {
+      if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+      val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        ?: return true
+      val channel = manager.getNotificationChannel(CHANNEL_ID) ?: return true
+      return channel.importance != NotificationManager.IMPORTANCE_NONE
+    }
   }
 
   override fun onBind(intent: Intent?): IBinder? = null

@@ -51,6 +51,8 @@ export function nativeBackgroundService(): BackgroundService | null {
     stop: () => mod.stop(),
     running: () => mod.isRunning(),
     restricted: () => mod.isRestricted(),
+    /* THE ONE GATE `start` refuses on — never a JS re-derivation of it. */
+    canPost: () => mod.canPostNotification(),
     beat: () => mod.beat(),
     beatIntervalMs: () => mod.beatIntervalMs(),
     onStopRequested: (listener: () => void) => {

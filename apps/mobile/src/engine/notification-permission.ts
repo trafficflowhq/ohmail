@@ -54,16 +54,18 @@ export const NOTIFICATION_PERMISSION_API = 33;
  * CAN THIS PHONE SHOW THE ORGANIZER'S NOTIFICATION — the question `OrganizerService` asks before it
  * starts, and the one answer the panel's sentence and the start press read.
  *
- * Below API 33 the permission does not exist and checking it answers `false` on every phone, so
- * the fact is the app's notification switch: the service's own gate, read through the module. From
- * 33 Android keeps the permission and that switch as one fact, so the permission is read once.
- * `null` is "could not ask", never off.
+ * The service's own gate is read on every level: it holds the app switch AND the `organizing`
+ * channel, and a channel turned off hides the notification on any level. Below API 33 the
+ * permission does not exist (checking it answers `false` on every phone), so the gate is the whole
+ * answer; from 33 a refused permission is `false` without asking further, and a missing module
+ * leaves the permission's answer. `null` is "could not ask", never off.
  */
 export async function organizerNotificationEnabled(
   host: NotificationPermissionHost,
 ): Promise<boolean | null> {
-  if (host.apiLevel >= NOTIFICATION_PERMISSION_API) return host.permissionGranted();
-  return host.switchOn();
+  if (host.apiLevel < NOTIFICATION_PERMISSION_API) return host.switchOn();
+  if (!(await host.permissionGranted())) return false;
+  return (await host.switchOn()) !== false;
 }
 
 /**

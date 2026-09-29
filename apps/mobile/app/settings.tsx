@@ -478,6 +478,10 @@ function DiagnosticPanel() {
  */
 const HERE_CARD = "this-phone";
 
+/** A decline this phone's own records state — only over the door in this process (see below). */
+const declinedHere = (key: string): boolean =>
+  key === HERE_CARD && (organizerRestrictedSaid() || organizerNotificationsOffSaid());
+
 function ThisPhonePanel() {
   const w = useWorld();
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -630,9 +634,11 @@ function ThisPhonePanel() {
                     statement about the BUILD, so under "Nothing organizes this mailbox" it was an
                     instruction about a notification that is not showing. `claimNoteLine` answers
                     null there and this renders the absence. */}
-                {claimNoteLine(claim, Platform.OS) === null ? null : (
+                {/* AND NOTHING OVER A DECLINE: under "Notifications are off" or battery saver the
+                    rule ("while its notification is shown") is false, and the decline says why. */}
+                {claimNoteLine(claim, Platform.OS, { declined: declinedHere(row.key) }) === null ? null : (
                   <Txt variant="note" tone="ink2">
-                    {claimNoteLine(claim, Platform.OS)}
+                    {claimNoteLine(claim, Platform.OS, { declined: declinedHere(row.key) })}
                   </Txt>
                 )}
                 {/* THE CONNECTION, WHERE SOMEBODY ASKING "IS MY MAIL BEING FILED?" IS LOOKING.

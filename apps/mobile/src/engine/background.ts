@@ -87,6 +87,13 @@ export interface BackgroundService {
    */
   restricted(): boolean;
   /**
+   * CAN THE NOTIFICATION STILL BE SEEN — `OrganizerService.canPostNotification`, the very gate
+   * `start` refuses on (the app switch, the permission, the `organizing` channel). A running
+   * service is not restarted at the next background, so without a re-read a channel turned off
+   * under a standing notification left this phone organizing behind nothing.
+   */
+  canPost(): boolean;
+  /**
    * The user's stop. Fires for the notification's action AND for a swipe-dismiss, which are the
    * same act — see the Kotlin half: one `ACTION_STOP`, one handler.
    *
@@ -610,8 +617,37 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
          IMAP read would hold it past the watchdog's deadline and take the notification down over a
          runtime that was working. */
       beatNow();
+      gateNow();
       void serial(() => claimLostCheck());
     }, every);
+  };
+
+  /**
+   * THE SAME GATE `start` REFUSES ON, re-read at every tick while the service stands. Closed in
+   * the background: the ordinary decline, which says so and hands the mailbox back. Closed in the
+   * foreground: the notification comes down and the off state is said, and the next background
+   * edge refuses at `start` and hands back. Not {@link beatNow}'s arm: that one is a system kill.
+   */
+  const gateNow = (): void => {
+    if (deps.service === null || watch === null) return;
+    let open = true;
+    try {
+      open = deps.service.canPost();
+    } catch (err) {
+      log("organizer_service_gate_unreadable", { err });
+      return;
+    }
+    if (open) return;
+    disarmWatch();
+    if (inBackground) {
+      void serial(() => declineBackground("notification_not_showing"));
+      return;
+    }
+    void serial(async () => {
+      log("organizer_notification_hidden", { why: "notification_not_showing" });
+      announceNotificationsOffOnce();
+      await dropService("notification_not_showing");
+    });
   };
 
   /** The tick, from the platform, bounded so a bad answer cannot make the watch a busy loop. */
@@ -704,11 +740,17 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     if (why === "system_restricted" && !announcedRestricted) {
       announcedRestricted = true;
       deps.announceRestricted();
-    } else if (why === "notification_not_showing" && !announcedNotificationsOff) {
-      announcedNotificationsOff = true;
-      deps.announceNotificationsOff();
+    } else if (why === "notification_not_showing") {
+      announceNotificationsOffOnce();
     }
     await stopBackground(why);
+  };
+
+  /** The notifications-off announcement, once per session — shared by the decline and the tick. */
+  const announceNotificationsOffOnce = (): void => {
+    if (announcedNotificationsOff) return;
+    announcedNotificationsOff = true;
+    deps.announceNotificationsOff();
   };
 
   const toBackground = async (latched = false): Promise<void> => {

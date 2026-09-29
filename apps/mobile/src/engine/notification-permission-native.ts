@@ -31,10 +31,10 @@ export function nativeNotificationPermission(): NotificationPermissionHost {
   return {
     platform: Platform.OS,
     apiLevel: Platform.OS === "android" && typeof Platform.Version === "number" ? Platform.Version : 0,
-    /* TWO READS OF ONE FACT, and `organizerNotificationEnabled` picks by level. Below API 33 the
+    /* TWO READS, and `organizerNotificationEnabled` combines them by level. Below API 33 the
        permission is undefined, so `check` answers `false` over a phone whose switch is on and
-       whose service runs; the switch is read through the service's own gate. From 33 Android
-       writes the switch into the permission, so `check` is that same fact. */
+       whose service runs; the gate alone answers there. From 33 the permission comes first and
+       the gate still follows it, because the gate also reads the `organizing` channel. */
     permissionGranted: (): Promise<boolean> => PermissionsAndroid.check(
       POST_NOTIFICATIONS as Parameters<typeof PermissionsAndroid.check>[0],
     ),
