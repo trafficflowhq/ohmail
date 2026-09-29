@@ -157,9 +157,9 @@ export interface AccountFanOut {
   /** Held elsewhere by an install that cannot take this kind. */
   refused: FanOutRefusal[];
   /**
-   * Readers this install was asked to organize, the claim not landed yet (`takeoverPending`). Only
-   * filled on `admitTakeover`: the write is made here, no request goes to the holder the claim
-   * displaces, and the organizing pass that follows the claim carries it out.
+   * Readers this install was asked to organize, the claim not landed yet (`takeoverPending`), on
+   * EVERY door: the write is made here, no request goes to the holder the claim displaces, and the
+   * organizing pass that follows the claim carries it out.
    */
   awaiting: string[];
 }
@@ -176,7 +176,13 @@ export interface AccountFanOut {
  */
 export async function planAccountFanOut(
   tx: Tx, accountId: string, kind: RequestKind,
-  opts: { admitTakeover?: boolean } = {},
+  /**
+   * DECIDES NOTHING. A pending takeover counts as organizing here on every door; when it was an
+   * option only the Screener passed it, and a rule, an away reply, a screening choice or a
+   * dormancy window went to the holder the claim displaces. `true` is the only value the type
+   * admits, so no door can opt out.
+   */
+  _opts: { admitTakeover?: true } = {},
 ): Promise<AccountFanOut> {
   // Live mailboxes only. A tombstone organizes nothing — `assertAccountOrganizes`' own reason: the
   // row keeps whatever `organizer_role` it had at removal, so counting it would let an account
@@ -196,7 +202,7 @@ export async function planAccountFanOut(
     // reason to refuse and not a place to send anything.
     if (!e || e.status === "disabled") continue;
     if (e.role === "organizer") { organized.push(id); continue; }
-    if (opts.admitTakeover === true && e.takeoverPending) { awaiting.push(id); continue; }
+    if (e.takeoverPending) { awaiting.push(id); continue; }
     if (e.capable) { requestTo.push({ mailboxId: id, holder: e.by }); continue; }
     refused.push({ mailboxId: id, holder: e.by, reason: requestRefusalReason(e) });
   }
