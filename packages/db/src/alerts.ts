@@ -276,9 +276,9 @@ export interface AlertThresholds {
    * How many DISTINCT MINUTES with a failed call make the worker's entitlements reading an incident,
    * in the same window. The worker writes one row per path per minute (`ENTITLEMENTS_FAULT_GRAIN`),
    * so its count is minutes: judged by the call floor, nine minutes of outage read as nothing.
-   * THREE: one failing minute is a blip, two can be one blip across a minute boundary, three are the
-   * program failing for at least two minutes. A continuous outage reads nine to eleven, so no
-   * minute-offset jitter takes it near the floor.
+   * THREE: one failing minute is a blip, two can be one blip across a minute boundary; three need
+   * failures in three separate clock minutes, a span of more than a minute or three isolated calls.
+   * A continuous outage reads nine to eleven, so no minute-offset jitter takes it near the floor.
    */
   apiFaultMinMinutesPerRoute: number;
   /**
@@ -903,12 +903,16 @@ export function apiFaultRateText(
   const who = ARM_WORD[r.arm as ApiFaultArm] ?? r.arm;
   const path = r.route.slice(ENTITLEMENTS_FAULT_ROUTE_PREFIX.length);
   const counted = perMinute ? `in ${count} separate minute(s)` : `${count} times`;
+  // A window cut mid-minute touches one more clock minute than it is long, so the count can read 11.
+  const touched = Math.ceil(t.apiFaultWindowMs / 60_000) + 1;
+  const span = perMinute
+    ? `in ${count} of the ${touched} clock minutes the last ${window} touches, past the floor of ${floor} minutes`
+    : `${count} times in the last ${window}, past the floor of ${floor}`;
   return {
     title: `calls from the ${who} to the entitlements program failed ${counted}`,
-    detail: `Calls from the ${who} to the entitlements program's ${path} failed ${counted} in the ` +
-      `last ${window}, past the floor of ${floor}${perMinute ? " minutes" : ""}: each got no answer ` +
-      `inside its budget or a 5xx, and the caller took its fault arm (the last verdict it knew, else ` +
-      `allow).` +
+    detail: `Calls from the ${who} to the entitlements program's ${path} failed ${span}: each got no ` +
+      `answer inside its budget or a 5xx, and the caller took its fault arm (the last verdict it knew, ` +
+      `else allow).` +
       (perMinute ? " The worker records one row per path per minute, so this counts minutes, not calls." : "") +
       ` ${newest}`,
   };
