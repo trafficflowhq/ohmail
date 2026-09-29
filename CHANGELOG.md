@@ -266,6 +266,12 @@ mail no longer treats an automatic reply, or a reply to somebody else, as your a
 - A tracking pixel whose address is percent-encoded is recognised as one.
 - A calendar reply that says so only in its calendar part is recognised as a reply.
 
+### Search finds older mail in accounts that are not syncing
+<!-- changes: db-026-does-less.md -->
+
+An account whose mailboxes are all disconnected, or whose subscription has ended, now has its older
+mail indexed for search like every other account.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
