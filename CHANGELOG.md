@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.5] — 2026-09-29
+
 ### Large sync changes arrive in pages, and a desktop on Cloud logs the writes it sends
 <!-- changes: fix-026-sync-pages.md -->
 
@@ -318,11 +325,6 @@ background, and This phone says notifications are off, with the way to the setti
 
 When an update reworks the mail store on the phone, the launch counts the steps and says when a
 large mailbox may take several minutes.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.4] — 2026-09-28
 
@@ -10447,7 +10449,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.4...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.5...HEAD
+[0.25.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.5
 [0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
 [0.25.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.3
 [0.25.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.2
