@@ -1,7 +1,8 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import {
   approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies,
-  messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl, weAnsweredThisSenderWhere,
+  messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl, rulesTheActWrote,
+  weAnsweredThisSenderWhere,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
@@ -183,6 +184,13 @@ interface OwedRule {
    * forward and leaves the licence behind, which is exactly when the narrowing must lift.
    */
   retroRequestedAt: Date | null;
+  /**
+   * `rules.provenance` and `rules.person_decided_at`, for `rulesTheActWrote`: the act on
+   * suggestions' rule is an automatic decision, whose walk leaves a message the person put back from
+   * automatic filing where they put it (mail 0138).
+   */
+  provenance: string;
+  personDecidedAt: Date | null;
 }
 
 /**
@@ -293,6 +301,7 @@ export async function ruleRetroPass(
           id: rulesTbl.id, accountId: rulesTbl.accountId, kind: rulesTbl.kind,
           match: rulesTbl.match, destination: rulesTbl.destination, cursor: rulesTbl.retroCursor,
           releaseHeldAt: rulesTbl.releaseHeldAt, retroRequestedAt: rulesTbl.retroRequestedAt,
+          provenance: rulesTbl.provenance, personDecidedAt: rulesTbl.personDecidedAt,
         }).from(rulesTbl)
           .where(and(
             eq(rulesTbl.id, row.id),
@@ -318,8 +327,12 @@ export async function ruleRetroPass(
         const rules: Rule[] = await pageRepo.listRules(rule.accountId);
         const known: ReadonlySet<string> = await pageRepo.knownSenders(rule.accountId);
 
+        // The act on suggestions' own rule, read exactly (`rulesTheActWrote`: its decision, and none
+        // from anybody else) — a "Not junk" rescue and a promotion also leave `person_decided_at` NULL.
+        const byTheAct = rule.provenance === "promoted" && rule.personDecidedAt === null
+          && (await rulesTheActWrote(tx, rule.accountId, [rule])).has(rule.id);
         const candidates = await selectCandidates(tx, {
-          rule, ownAddresses: own, limit: batch, afterId: rule.cursor,
+          rule, ownAddresses: own, limit: batch, afterId: rule.cursor, byTheAct,
         });
 
         let moved = 0;
@@ -567,7 +580,7 @@ function aLiveMailboxIsOutsideTheWalk(accountId: string) {
  */
 async function selectCandidates(
   t: Tx,
-  opts: { rule: OwedRule; ownAddresses: readonly string[]; limit: number; afterId: string | null },
+  opts: { rule: OwedRule; ownAddresses: readonly string[]; limit: number; afterId: string | null; byTheAct: boolean },
 ): Promise<RetroRow[]> {
   const { rule } = opts;
   const d = dialect(t);
@@ -655,6 +668,11 @@ async function selectCandidates(
       fromAddress: messages.fromAddress as unknown as SQL,
       ownAddresses: opts.ownAddresses,
     })}`);
+  }
+  // 6 — THE ACT ON SUGGESTIONS' RULE LEAVES WHAT THE PERSON PUT BACK (mail 0138): it re-walks the
+  // sender's backlog, and a filing the person undid is not an automatic decision's to make again.
+  if (opts.byTheAct) {
+    filters.push(isNull(folderState.autoFilingUndoneAt));
   }
   if (opts.afterId) filters.push(gt(messages.id, d.castUuid(opts.afterId)));
 

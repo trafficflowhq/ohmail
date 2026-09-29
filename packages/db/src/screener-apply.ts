@@ -353,19 +353,28 @@ export async function heldRowById(tx: Tx, accountId: string, id: string): Promis
  * one-organizer fence lives now that the mailbox filter is optional.
  */
 export async function heldRowsForSender(
-  tx: Tx, accountId: string, address: string, mailboxId?: string,
+  tx: Tx, accountId: string, address: string, mailboxId?: string, o: HeldRowsOptions = {},
 ): Promise<AppliedScreenerRow[]> {
-  return heldRows(tx, accountId, senderIs(address), mailboxId);
+  return heldRows(tx, accountId, withPutBack(senderIs(address), o), mailboxId);
 }
+
+/** `skipPutBack` — leave out a message the person put back from automatic filing (mail 0138). */
+export interface HeldRowsOptions { skipPutBack?: boolean }
+
+/* AN AUTOMATIC DECISION NEVER FILES WHAT THE PERSON PUT BACK: the auto-apply pass reads the column
+   as its sixth exclusion, and the act on suggestions decides through this door, so its held bag
+   leaves those rows at the gate. A person's own decision still moves them. */
+const withPutBack = (extra: SQL, o: HeldRowsOptions): SQL =>
+  (o.skipPutBack === true ? sql`${extra} and ${folderState.autoFilingUndoneAt} is null` : extra);
 
 /**
  * Every held row for ONE domain — `domainOf`, translated to SQL — account-wide unless `mailboxId`
  * narrows it. See `decide`'s own comment for the three rejected shapes.
  */
 export async function heldRowsForDomain(
-  tx: Tx, accountId: string, domain: string, mailboxId?: string,
+  tx: Tx, accountId: string, domain: string, mailboxId?: string, o: HeldRowsOptions = {},
 ): Promise<AppliedScreenerRow[]> {
-  return heldRows(tx, accountId, domainIs(tx, domain), mailboxId);
+  return heldRows(tx, accountId, withPutBack(domainIs(tx, domain), o), mailboxId);
 }
 
 function domainIs(tx: Tx, domain: string): SQL {
@@ -568,9 +577,10 @@ export async function applyScreenerDecision(
     if (seqs.length > 0) lastSeq = seqs[seqs.length - 1]!;
   }
 
+  const held = { skipPutBack: decidedBy === "pass" };
   const heldMail = scope === "domain"
-    ? await heldRowsForDomain(tx, accountId, domain)
-    : await heldRowsForSender(tx, accountId, address);
+    ? await heldRowsForDomain(tx, accountId, domain, undefined, held)
+    : await heldRowsForSender(tx, accountId, address, undefined, held);
 
   const moved = await rerouteHeldBag(tx, accountId, heldMail, appliedFolder, now);
   if (moved.lastSeq !== null) lastSeq = moved.lastSeq;
