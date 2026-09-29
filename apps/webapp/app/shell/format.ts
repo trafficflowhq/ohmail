@@ -78,10 +78,13 @@ export function placeLabel(folder: string): string {
  * `isJunkHuskLeaving`), bounded by the engine's JUNK_REFILL_BOUND_MS. One resolver for every
  * surface; a new member is a type error at this mapping until it gets its own sentence.
  */
+/** The `body.*` key a withheld body's sentence is rendered through. */
+export type WithheldCopyKey = "withheld" | "withheldJunk" | "withheldJunkLoading" | "withheldExpunged" | "withheldTooLarge";
+
 export function withheldCopyKey(
   marker: WithheldMarker | null | undefined,
   folder: string | null | undefined,
-): "withheld" | "withheldJunk" | "withheldJunkLoading" | "withheldExpunged" | "withheldTooLarge" {
+): WithheldCopyKey {
   switch (marker) {
     case "junk_filed":
       return isJunkHuskLeaving({ state: "withheld", withheld: marker }, folder)

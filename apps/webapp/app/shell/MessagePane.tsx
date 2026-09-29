@@ -14,7 +14,7 @@ import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
 import type { BlockNotice } from "../components/BlockNotice";
-import { JUNK_REFILL_BOUND_MS, PLACE_LABEL, dayAt, dayValue, hueOf, nextWeekAt, resurfaceClock, tagsOfMessage, tomorrowAt, withheldCopyKey, type ResurfaceHorizon } from "./format";
+import { PLACE_LABEL, dayAt, dayValue, hueOf, nextWeekAt, resurfaceClock, tagsOfMessage, tomorrowAt, withheldCopyKey, type ResurfaceHorizon } from "./format";
 import { activeFormatLocale } from "./locale";
 import { replyAllRecipients } from "./compose-from";
 import { useBarDensity } from "./bar-density";
@@ -22,7 +22,7 @@ import { InlineReply } from "./InlineReply";
 import { ForwardAskStrip } from "./ForwardAsk";
 import { inlineForwardKey } from "./mail-send";
 import { ariaShortcut, chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
-import { useBodyStalled, useJunkRefill, useMessageChrome, type MessageBarPanel } from "./message-chrome";
+import { useBodyStalled, useMessageChrome, useWithheldSentence, type MessageBarPanel } from "./message-chrome";
 import { useDrawnBody } from "./body-slice";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
 import { endOpen } from "./ui-vitals";
@@ -1750,12 +1750,11 @@ export function MessagePane({
    */
   const waitingForBody = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, waitingForBody);
-  /* A verdict's husk on a message moved out of Junk is text on its way, never the verdict — see
-     `withheldCopyKey`. The mirror sheds it on the move's changes; this re-asks, and bounds it. */
-  const junkLoading = body.state === "withheld"
-    && withheldCopyKey(body.withheld, message.folder) === "withheldJunkLoading";
+  /* A verdict's husk on a message moved out of Junk is text on its way — `useWithheldSentence`. */
   const reaskBody = useCallback(() => chrome.hydrateBody(message.id), [chrome, message.id]);
-  const refillExpired = useJunkRefill(message.id, junkLoading, waitingForBody, reaskBody, JUNK_REFILL_BOUND_MS);
+  const withheldSentence = useWithheldSentence(
+    message.id, body.state, withheldCopyKey(body.withheld, message.folder), reaskBody,
+  );
   /**
    * THE FAILURE'S TAXONOMY: AUTH LOSS IS NOT A CONTENT FAILURE: "Couldn't load the full message — Retry" was this
    * pane's one sentence for every failure, and during a dead session it was the WRONG one: the message is fine, the
@@ -1786,7 +1785,7 @@ export function MessagePane({
          sentence (`withheldCopyKey`): the storage cap's copy points at the mailbox and the
          plan, the junk verdict's at the provider's Junk folder, the expunge says the copies
          are gone. The preview above it is real either way (the snippet is stored). */
-      junkLoading && refillExpired ? tb("failed") : tb(withheldCopyKey(body.withheld, message.folder))
+      tb(withheldSentence)
     ) : body.state === "failed" || stalled ? (
       sessionDead ? (
         <>

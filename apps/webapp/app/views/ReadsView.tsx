@@ -634,6 +634,8 @@ export function ReadsView({
     },
     [hydrateBody, barToggled],
   );
+  /* A husk moved out of Junk re-asked once it sheds — `useWithheldSentence`, on the card as in the pane. */
+  const reaskBody = useCallback((id: string) => hydrateBody(id), [hydrateBody]);
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
 
@@ -672,7 +674,8 @@ export function ReadsView({
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
-        withheldLabel={tb(withheldCopyKey(body.withheld, m.folder))}
+        withheldKey={withheldCopyKey(body.withheld, m.folder)}
+        onReask={reaskBody}
         /* The same fact the row above carries, resolved to a STRING here so the memo's comparator
            keeps comparing primitives. */
         mailboxLabel={mailboxLabelOf?.(m.mailboxId) ?? undefined}

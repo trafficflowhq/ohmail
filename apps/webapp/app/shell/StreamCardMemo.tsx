@@ -22,6 +22,8 @@ import { MessageRecipients } from "./MessageRecipients";
 import { FoldTableArt, StreamCardToggled, StreamCardWidth } from "./StreamShell";
 import type { RemoteImagesChrome } from "./remote-images";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
+import { useWithheldSentence } from "./message-chrome";
+import type { WithheldCopyKey } from "./format";
 import { MessageFiles } from "./MessageFiles";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
 
@@ -75,8 +77,10 @@ export interface StreamCardMemoProps {
   needCidImages?: (messageId: string, contentIds: string[]) => void;
   loadingLabel: string;
   failedLabel: string;
-  /** The storage-cap sentence — terminal, honest, no retry implied. */
-  withheldLabel: string;
+  /** Which withheld sentence the body gets (`withheldCopyKey`) — a primitive, so the memo compares it. */
+  withheldKey: WithheldCopyKey;
+  /** Stable — asks for the body again when a husk moved out of Junk sheds (`useWithheldSentence`). */
+  onReask: (id: string) => void;
   /**
    * THE MAILBOX THIS MESSAGE WAS DELIVERED TO, already resolved to a word by the view — absent on a
    * one-mailbox account and wherever the shell has no mailbox facts. A STRING and not a resolver:
@@ -95,11 +99,15 @@ export interface StreamCardMemoProps {
 function StreamCardMemoInner({
   m, now, current, expanded, unread,
   bodyText, bodyState, bodyHtml, bodyLoadedRemote, remoteImages, cidImages, needCidImages,
-  loadingLabel, failedLabel, withheldLabel,
+  loadingLabel, failedLabel, withheldKey, onReask,
   mailboxLabel, onSelect, onToggle, onAction,
 }: StreamCardMemoProps) {
   /* The card's two toggle words. `StreamCard` has none of its own — see `copy-census`. */
   const tm = useTranslations("message");
+  const tb = useTranslations("body");
+  /* The reading pane's rule for a husk moved out of Junk, on the card too: re-asked, bounded. */
+  const reask = useCallback(() => onReask(m.id), [onReask, m.id]);
+  const withheldLabel = tb(useWithheldSentence(m.id, bodyState, withheldKey, reask));
   /* CONTEXT AND NOT A PROP: `areEqual` below skips a render whose props are unchanged, and the
      width arrives once, after the stream has measured it — a context read re-renders the mounted
      cards for that one change and leaves the comparator alone. */
@@ -241,7 +249,8 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.needCidImages === b.needCidImages &&
     a.loadingLabel === b.loadingLabel &&
     a.failedLabel === b.failedLabel &&
-    a.withheldLabel === b.withheldLabel &&
+    a.withheldKey === b.withheldKey &&
+    a.onReask === b.onReask &&
     a.mailboxLabel === b.mailboxLabel &&
     a.onSelect === b.onSelect &&
     a.onToggle === b.onToggle &&

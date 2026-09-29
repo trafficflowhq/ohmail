@@ -422,6 +422,8 @@ export function ReceiptsView({
     },
     [hydrateBody, barToggled],
   );
+  /* A husk moved out of Junk re-asked once it sheds — `useWithheldSentence`, on the card as in the pane. */
+  const reaskBody = useCallback((id: string) => hydrateBody(id), [hydrateBody]);
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
 
@@ -451,7 +453,8 @@ export function ReceiptsView({
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
-        withheldLabel={tb(withheldCopyKey(body.withheld, m.folder))}
+        withheldKey={withheldCopyKey(body.withheld, m.folder)}
+        onReask={reaskBody}
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}

@@ -27,11 +27,10 @@ import {
   initialsOf,
   rowAddress,
   senderName,
-  JUNK_REFILL_BOUND_MS,
   withheldCopyKey,
 } from "./format";
 import { displayAddress } from "./idn";
-import { useBodyStalled, useJunkRefill, useMessageChrome } from "./message-chrome";
+import { useBodyStalled, useMessageChrome, useWithheldSentence } from "./message-chrome";
 import { useDrawnBody } from "./body-slice";
 import { MessageRecipients } from "./MessageRecipients";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
@@ -285,10 +284,10 @@ export function MessageCard({
   const waiting = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, waiting);
   // The focused pane's rule for a verdict's husk outside Junk: loading, re-asked, bounded.
-  const junkLoading = body.state === "withheld"
-    && withheldCopyKey(body.withheld, message.folder) === "withheldJunkLoading";
   const reaskBody = useCallback(() => chrome.hydrateBody(message.id), [chrome, message.id]);
-  const refillExpired = useJunkRefill(message.id, junkLoading, waiting, reaskBody, JUNK_REFILL_BOUND_MS);
+  const withheldSentence = useWithheldSentence(
+    message.id, body.state, withheldCopyKey(body.withheld, message.folder), reaskBody,
+  );
 
   /**
    * WHAT THE BODY HAD REFUSED — reported by the viewer, worn by the header: `MessageBody` says what it refused
@@ -353,7 +352,7 @@ export function MessageCard({
     // what is true to say (storage cap / junk verdict / expunged) — `withheldCopyKey`.
     body.state === "withheld" ? (
       <p className="hm-state">
-        {junkLoading && refillExpired ? tb("failed") : tb(withheldCopyKey(body.withheld, message.folder))}
+        {tb(withheldSentence)}
       </p>
     ) : null;
   const failedNote: ReactNode =

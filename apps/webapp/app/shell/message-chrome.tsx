@@ -12,6 +12,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BODY_FETCH_TIMEOUT_MS,
+  JUNK_REFILL_BOUND_MS,
   type AddressBookEntry,
   type ComposeAttachment,
   type EngineMessage,
@@ -25,6 +26,7 @@ import type { DraftReplyChrome } from "./InlineReply";
 import { SIG_FOLLOWING, type SignatureState } from "./signature";
 import type { ReplyEnvelopeEdit } from "./compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
+import type { WithheldCopyKey } from "./format";
 
 /**
  * The three sub-rows that can take the action bar's place. Declared HERE and not in
@@ -501,29 +503,34 @@ export function useBodyStalled(key: string, waiting: boolean): boolean {
 }
 
 /**
- * A HUSK MOVED OUT OF JUNK, WATCHED WHILE IT IS READ. `leaving`: the reader is showing a
- * `junk_filed` body for a message no longer in the spam pile. The mirror sheds such a husk on the
- * message's next change (the move, then the refill); `shed` is the body gone back to waiting, and
- * the reader asks again then, once per husk seen, so the refilled text lands where it is read.
- * Past `boundMs` of `leaving` the answer is `true` and the reader says the text could not be
- * read instead of loading for ever.
+ * A WITHHELD BODY'S SENTENCE, one rule for every reader — the pane, a thread's panels and the
+ * News and Receipts cards. `withheldKey` is `withheldCopyKey`'s answer for the body. A husk moved
+ * out of Junk (`withheldJunkLoading`) is text on its way: the mirror sheds it on the move's changes
+ * (the body goes back to waiting), and the reader asks again then, once per husk seen, so the
+ * refilled text lands where it is read. Past `JUNK_REFILL_BOUND_MS` it says the text could not be
+ * read instead of loading for ever. Returns the `body.*` key to render.
  */
-export function useJunkRefill(
-  key: string, leaving: boolean, shed: boolean, reask: () => void, boundMs: number,
-): boolean {
+export function useWithheldSentence(
+  key: string,
+  bodyState: MessageBody["state"],
+  withheldKey: WithheldCopyKey,
+  reask: () => void,
+): WithheldCopyKey | "failed" {
+  const leaving = bodyState === "withheld" && withheldKey === "withheldJunkLoading";
+  const shed = bodyState === "loading" || bodyState === "snippet";
   const [expired, setExpired] = useState(false);
   const owedFor = useRef<string | null>(null);
   useEffect(() => {
     setExpired(false);
     if (!leaving) return;
     owedFor.current = key;
-    const timer = setTimeout(() => setExpired(true), boundMs);
+    const timer = setTimeout(() => setExpired(true), JUNK_REFILL_BOUND_MS);
     return () => clearTimeout(timer);
-  }, [key, leaving, boundMs]);
+  }, [key, leaving]);
   useEffect(() => {
     if (!shed || owedFor.current !== key) return;
     owedFor.current = null;
     reask();
   }, [key, shed, reask]);
-  return expired;
+  return leaving && expired ? "failed" : withheldKey;
 }
