@@ -10,6 +10,7 @@
 import type { AccountLifecycle } from "../net/access-lock";
 import type { AccessFeed } from "../net/account";
 import type { PhoneMailbox } from "../net/mailboxes";
+import { linksOutToBilling, type Distribution } from "../distribution";
 
 /** How close to the end of a trial the strip appears. The day-12 reminder mail is the other half. */
 export const TRIAL_NOTICE_DAYS = 2;
@@ -93,6 +94,26 @@ export function stripNotice(
   if (next === null) return null;
   const key = dismissKey(next, owner);
   return hidden.has(key) || dismissed(key) ? null : next;
+}
+
+/**
+ * THE PRESS A DEADLINE STRIP OFFERS: `subscribe` for a trial or a grace, `fixPayment` for a
+ * failed payment, `null` for the catch-up and on the store face (App Review 3.1.1). It reads the
+ * notice and the build's face and nothing the server sends: a strip is drawn only from a plane's
+ * lifecycle, and that plane mints the page at the press (`mintManageLink`), whose failure says so.
+ * `distribution` defaults to the build's own literal, so a case drives both faces by name.
+ */
+export function stripPress(
+  notice: Notice, distribution?: Distribution,
+): "subscribe" | "fixPayment" | null {
+  const mayLinkOut = distribution === undefined ? linksOutToBilling() : linksOutToBilling(distribution);
+  if (!mayLinkOut) return null;
+  switch (notice.kind) {
+    case "grace":
+    case "trialEnding": return "subscribe";
+    case "pastDue": return "fixPayment";
+    case "caughtUp": return null;
+  }
 }
 
 /** The schedule's read is done once an answer earns no deadline: that ends a hand-off poll. */

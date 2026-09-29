@@ -18,13 +18,12 @@ import { appLifecycle } from "./AccountWall";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import { dayStamp } from "./day-stamp";
 import {
-  QUIET_RETURN_MS, dismissKey, remember, settlesTheStrip, stripNotice,
+  QUIET_RETURN_MS, dismissKey, remember, settlesTheStrip, stripNotice, stripPress,
 } from "./lifecycle-strip";
 import { RETURN_DEBOUNCE_MS, wallLift, type WallLift } from "./wall-lift";
 import {
   accessFeedFor, mintManageLink, onAccessFeed, putAwayCatchUp, readAccess, type ManageLink,
 } from "../net/account";
-import { linksOutToBilling } from "../distribution";
 import type { ConnectedSession } from "../net/pairing";
 
 export function LifecycleStrip({ session }: { session: ConnectedSession | null }) {
@@ -49,10 +48,6 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
 
   const notice = stripNotice(entry, session?.ownerKey ?? null, hidden, Date.now());
   useEffect(() => { drawn.current = notice !== null; });
-  /* Does the service operate an account page — `manageUrl` is that fact and nothing more; the
-     press mints its own link. Absent on a deployment with no subscription page, and the press is
-     then not drawn — a button that goes nowhere is worse than no button. */
-  const offersPage = entry !== null && entry.answer.metered && entry.answer.manageUrl !== undefined;
 
   useEffect(() => {
     if (session === null || session.standalone) return;
@@ -117,10 +112,10 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
   }
 
   const date = dayStamp(notice.deadline, locale);
-  /* THE STORE FACE SAYS THE SAME SENTENCE AND OFFERS NO DOOR: the page the button would open is
-     where a subscription is bought (App Review 3.1.1, Play's billing rule). The strip keeps its
-     sentence, which is the part that matters — the deadline is a fact whatever the build is. */
-  const mayLinkOut = linksOutToBilling();
+  /* THE PRESS IS `stripPress`'s alone. The store face says the same sentence and offers no door,
+     because the page it would open is where a subscription is bought (App Review 3.1.1, Play's
+     billing rule); the deadline is a fact whatever the build is. */
+  const press = stripPress(notice);
   return (
     <Panel
       style={{
@@ -138,10 +133,10 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
             : Copy.stripTrialEnds(date)}
       </Txt>
       <View style={{ flexDirection: "row", gap: 8 }}>
-        {mayLinkOut && offersPage ? (
+        {press !== null ? (
           <View>
             <Button
-              label={notice.kind === "pastDue" ? Copy.stripFixPayment : Copy.stripSubscribe}
+              label={press === "fixPayment" ? Copy.stripFixPayment : Copy.stripSubscribe}
               variant="solid"
               onPress={() => { void leave(); }}
             />

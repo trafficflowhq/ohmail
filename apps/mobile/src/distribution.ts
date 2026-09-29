@@ -6,7 +6,7 @@
  * not open a page where a subscription is bought (App Review 3.1.1, Play's billing rule), and a
  * runtime sniff answers differently under a test, a sideload and a simulator.
  *
- * `sideload` is set deliberately, and moves one surface: whether the wall offers that button.
+ * `sideload` is set deliberately, and moves one button on two surfaces: the wall and the strip.
  */
 
 /** Every distribution this app knows. `store` is the default and what an unstamped build is. */
@@ -42,7 +42,8 @@ export const DISTRIBUTION: Distribution = distributionOf(
  *
  * The page the button opens is where a subscription is bought, so the button is what the store
  * rules are about — not the wall, not the export, and not deleting an account. A store build keeps
- * every one of those and loses this one control, replaced by the sentence naming where to go.
+ * every one of those and loses this one control, replaced on the wall by the sentence naming where
+ * to go; the account strip keeps its deadline sentence alone.
  */
 export function linksOutToBilling(distribution: Distribution = DISTRIBUTION): boolean {
   return distribution === "sideload";
