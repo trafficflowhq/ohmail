@@ -765,6 +765,23 @@ const mailboxDisabled = (): ServiceError => new ServiceError(
   "This mailbox is disconnected. Reconnect it before setting new credentials.",
 );
 
+/**
+ * A PASSWORD ONTO A MAILBOX THAT SIGNS IN WITH OAUTH. Its credential row holds a refresh token under
+ * `meta.authType: "oauth2"`; a password written there is read by the organizer as a token. There is
+ * nothing to rotate, only a fresh consent. Refused before any dial and again under the row lock.
+ */
+const signsInWithOAuth = (provider: string): ServiceError => new ServiceError(
+  "mailbox_signs_in_with_oauth", 409,
+  provider === "microsoft"
+    ? "This mailbox signs in with Microsoft, so it takes no password. Reconnect it from Settings → Mailboxes."
+    : "This mailbox signs in through its provider, so it takes no password. Reconnect it from Settings → Mailboxes.",
+);
+
+/** The one test for {@link signsInWithOAuth}: an OAuth row, and a patch that carries a password. */
+function refuseOAuthPassword(row: { authKind: string; provider: string }, patch: UpdateMailboxBody): void {
+  if (row.authKind === "oauth" && (patch.imap?.pass || patch.smtp?.pass)) throw signsInWithOAuth(row.provider);
+}
+
 /** A port a server could actually listen on. */
 const isValidPort = (port: number): boolean => Number.isInteger(port) && port >= 1 && port <= 65535;
 
@@ -1620,6 +1637,8 @@ export class MailboxService {
       if (effectiveStatus === "disabled" && (patch.imap?.pass || patch.smtp?.pass)) {
         throw mailboxDisabled();
       }
+      // The locked read decides: a row read as a password mailbox before the dial may be OAuth now.
+      refuseOAuthPassword(current, patch);
 
       /**
        * The merge is RE-DERIVED under the lock before it is written. The probe ran outside this
@@ -2452,6 +2471,7 @@ export class MailboxService {
     if (!opts?.probe) throw probeMissing();
 
     const current = await this.ownedRow(ctx, id); // 404 before anything is dialled
+    refuseOAuthPassword(current, patch);
 
     /**
      * Disabled is refused here too, and it is not a redundant copy. `delete` disables the row AND
@@ -2514,6 +2534,7 @@ export class MailboxService {
     ctx: ServiceContext, id: string, patch: UpdateMailboxBody, smtpProbe: SmtpProbe,
   ): Promise<ProbedMeta & { maxMessageBytes: number | null }> {
     const current = await this.ownedRow(ctx, id); // 404 before anything is dialled
+    refuseOAuthPassword(current, patch);
 
     const effectiveStatus = patch.status ?? current.status;
     if (effectiveStatus === "disabled") throw mailboxDisabled();

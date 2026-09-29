@@ -50,6 +50,8 @@ import { firstRunDoorFor } from "./doors.js";
 import {
   askFor, incomingFromAsk, knownIncoming, readServerUnknown, type ServerAsk,
 } from "./sign-in-again-server.js";
+import { LocalWireError, localPlaintextOffer } from "./local-first-run.js";
+import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
 import { openWeb } from "./native.js";
 
 /** Whether this install can reach ONE mailbox's server right now — see {@link MailboxReachSlice}. */
@@ -939,6 +941,14 @@ export function DesktopMailboxes(
    * name (an earlier version's sign-out kept none) and no provider fact places — `null` otherwise.
    */
   const [serverAsk, setServerAsk] = useState<{ id: string; ask: ServerAsk } | null>(null);
+  /**
+   * THE PLAINTEXT CONSENT THE SIGN-IN ASKS FOR, for the one mailbox whose server offered no
+   * encryption to the password just typed — the Add form's own line (`localPlaintextOffer`). A
+   * consent stored with the old password is not inherited: the press that sends the new one asks.
+   */
+  const [plaintextAsk, setPlaintextAsk] = useState<{
+    id: string; offer: { imap: boolean; smtp: boolean }; checked: { imap: boolean; smtp: boolean };
+  } | null>(null);
   const cloud = door === "cloud";
   /* PAIRED: a cloud door whose far side is a computer of the person's own. Everything the ENGINE
      does is the cloud door's; what changes is what this pane may claim. */
@@ -1002,17 +1012,36 @@ export function DesktopMailboxes(
     setProblem(null);
     setSignInBusy(true);
     const asking = serverAsk?.id === m.id ? incomingFromAsk(serverAsk.ask) : null;
+    const consent = plaintextAsk?.id === m.id ? plaintextAsk.checked : null;
     void (async () => {
-      const seal = (imap: Record<string, unknown>): Promise<Response> =>
-        bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
+      const seal = (imap: Record<string, unknown>): Promise<Response> => {
+        const body = JSON.stringify({
+          imap: consent?.imap ? { ...imap, allowInsecure: true } : imap,
+          ...(consent?.smtp ? { smtp: { pass: password, allowInsecure: true } } : {}),
+        });
+        return bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ imap }),
+          body,
         });
+      };
       try {
         let res = await seal(asking ? { ...asking, pass: password } : { pass: password });
         if (!res.ok) {
           const refusal = await refusalOf(res);
+          const offered = localPlaintextOffer(
+            new LocalWireError(refusal.message, refusal.code ?? null, refusal.details), "add",
+          );
+          if (offered !== null) {
+            /* NOTHING WAS STORED. The line joins the one already asked for, unticked: the person
+               ticks it and presses again, and only that press carries the consent. */
+            setPlaintextAsk((a) => {
+              const none = { imap: false, smtp: false };
+              const kept = a?.id === m.id ? a : { id: m.id, offer: none, checked: none };
+              return { ...kept, offer: { ...kept.offer, [offered]: true } };
+            });
+            throw new Error(refusal.message);
+          }
           const unknown = asking ? null : readServerUnknown(refusal.code, refusal.details);
           if (unknown === null) throw new Error(refusal.message);
           const known = knownIncoming(unknown, m.address);
@@ -1026,6 +1055,7 @@ export function DesktopMailboxes(
         setSigningIn(null);
         setNewPassword("");
         setServerAsk(null);
+        setPlaintextAsk(null);
         setSignedIn(m.id);
         refresh();
       } catch (err) {
@@ -2132,6 +2162,7 @@ export function DesktopMailboxes(
                         setSignedIn(null);
                         setNewPassword("");
                         setServerAsk(null);
+                        setPlaintextAsk(null);
                         setSigningIn(shown);
                       }}
                     >
@@ -2273,11 +2304,22 @@ export function DesktopMailboxes(
                   disabled={signInBusy}
                 />
               </SettingsField>
+              {plaintextAsk?.id === shown.id ? (
+                <PlaintextConsent
+                  id="mbx-sign-in-insecure"
+                  offer={plaintextAsk.offer}
+                  checked={plaintextAsk.checked}
+                  onChange={(k, on) => setPlaintextAsk((a) => (
+                    a ? { ...a, checked: { ...a.checked, [k]: on } } : a))}
+                />
+              ) : null}
               <div className="acct-actions">
                 <Button
                   type="button"
                   disabled={signInBusy}
-                  onClick={() => { setSigningIn(null); setNewPassword(""); setServerAsk(null); }}
+                  onClick={() => {
+                    setSigningIn(null); setNewPassword(""); setServerAsk(null); setPlaintextAsk(null);
+                  }}
                 >
                   {t("signInAgainCancel")}
                 </Button>

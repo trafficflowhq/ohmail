@@ -4488,6 +4488,87 @@ describe("the row takes a new password without the mailbox being removed", () =>
     expect(el.querySelector("#mbx-new-password")).not.toBeNull();
   });
 
+  /* ── A SERVER THAT OFFERS NO ENCRYPTION ASKS FOR THE CONSENT AT THE PRESS ─────────────────
+     The engine refuses the pass-only press the way the Add form's dial is refused: `tls_unavailable`
+     with the plaintext offer. The row offers the Add form's own consent line, unticked; only the
+     press made with it ticked carries the consent. A consent stored with the old password is not
+     inherited (the service's own rule: `mergedTransportMeta` takes it from the proving dial). */
+  const plaintextOffered = (transport: "imap" | "smtp"): Response => new Response(JSON.stringify({
+    error: {
+      code: "mailbox_probe_failed", message: "the server offers no encryption",
+      details: { reason: "tls", transport, tls: { kind: "tls_unavailable", plaintext: "offered" } },
+    },
+  }), { status: 400, headers: { "content-type": "application/json" } });
+  /** PATCHes answer `answers` in order, then 200; the poll reads a refused sign-in. */
+  const sealsAnswer = (...answers: Array<() => Response>): (() => Response) => {
+    let patches = 0;
+    return () => {
+      if (bridged.at(-1)?.method !== "PATCH") return reach({ signInRefused: true });
+      const next = answers[patches];
+      patches += 1;
+      return next ? next() : new Response("{}", { status: 200 });
+    };
+  };
+  const consentBox = (el: HTMLElement, transport: "imap" | "smtp"): HTMLInputElement | null =>
+    el.querySelector<HTMLInputElement>(`#mbx-sign-in-insecure-${transport}`);
+  const tick = async (box: HTMLInputElement): Promise<void> => {
+    await act(async () => { box.click(); });
+  };
+
+  it("a server with no encryption: the refusal asks for the consent, and only the ticked press sends it", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = sealsAnswer(() => plaintextOffered("imap"));
+    const el = await render("local");
+    await openAndType(el, "the-new-one");
+    await submitSignIn(el);
+    const box = consentBox(el, "imap");
+    expect(box, "the row offered no plaintext consent for a server with no TLS").not.toBeNull();
+    expect(box!.checked, "the consent arrived ticked").toBe(false);
+    expect(consentBox(el, "smtp"), "a consent nobody was asked for").toBeNull();
+    expect(el.textContent).toContain("the server offers no encryption");
+    expect(el.textContent).not.toContain(copy.signInAgainDone!);
+    await tick(box!);
+    await submitSignIn(el);
+    expect(sentBodies.map((b) => JSON.parse(b.body) as unknown)).toEqual([
+      { imap: { pass: "the-new-one" } },
+      { imap: { pass: "the-new-one", allowInsecure: true } },
+    ]);
+    expect(el.textContent).toContain(copy.signInAgainDone!);
+    expect(consentBox(el, "imap"), "the consent line outlived the sign-in").toBeNull();
+  });
+
+  it("an outgoing server with no encryption adds its own line, and the press carries both", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = sealsAnswer(() => plaintextOffered("imap"), () => plaintextOffered("smtp"));
+    const el = await render("local");
+    await openAndType(el, "pw");
+    await submitSignIn(el);
+    await tick(consentBox(el, "imap")!);
+    await submitSignIn(el);
+    expect(consentBox(el, "imap")!.checked, "the first consent was lost").toBe(true);
+    await tick(consentBox(el, "smtp")!);
+    await submitSignIn(el);
+    expect(sentBodies.map((b) => JSON.parse(b.body) as unknown)).toEqual([
+      { imap: { pass: "pw" } },
+      { imap: { pass: "pw", allowInsecure: true } },
+      { imap: { pass: "pw", allowInsecure: true }, smtp: { pass: "pw", allowInsecure: true } },
+    ]);
+    expect(el.textContent).toContain(copy.signInAgainDone!);
+  });
+
+  it("CONTROL: a refusal that offers nothing asks for no consent", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = sealsAnswer(() => new Response(JSON.stringify({
+      error: { code: "mailbox_probe_failed", message: "the server said no", details: { reason: "auth", transport: "imap" } },
+    }), { status: 400, headers: { "content-type": "application/json" } }));
+    const el = await render("local");
+    await openAndType(el, "still-wrong");
+    await submitSignIn(el);
+    expect(el.textContent).toContain("the server said no");
+    expect(consentBox(el, "imap")).toBeNull();
+    expect(consentBox(el, "smtp")).toBeNull();
+  });
+
   it("the hosted door is not offered it — its own PATCH is behind a second factor", async () => {
     FACTS = [MAILBOX];
     bridgeReply = () => reach({});
