@@ -674,6 +674,11 @@
    folded in the copy, which would zero the very widths that decide the fold. */
 .abar-measure .abar-v { display: flex !important; }
 .abar-measure .abar-read-lab { display: inline !important; }
+/* The answer verbs' words likewise, and their icon faces never: the copy measures the WORDS, the
+   floor's concession for each is its word less the icon (`bar-density.ts`). */
+.abar-measure .abar-fwd-lab,
+.abar-measure .abar-reply-lab { display: inline !important; }
+.abar-measure .abar-ico { display: none !important; }
 /* AND THE COUNT CAPSULE'S WORD, for exactly the reason above — this one was measured the hard
    way. The compact rule is written `.abar-row .abar-count .abar-count-word`, and the measure
    row IS an `.abar-row`, so folding the word hid it in the COPY as well: the next measurement
@@ -725,6 +730,13 @@
 /* THE COMPACT FLOOR: the read switch keeps its dot (or check) and its keycap; the words move
    to the button's name. */
 .msg-actions .abar[data-admit~="compact"] .abar-row .abar-read .abar-read-lab { display: none; }
+/* AND THEN THE ANSWER VERBS' WORDS, Forward first: each keeps its target, its name and a title
+   (DESIGN-026 §2.1; the phone bar's rule). The icon is hidden until its word is. */
+.abar-ico { display: none; }
+.msg-actions .abar[data-admit~="compact-fwd"] .abar-row .abar-fwd .abar-fwd-lab { display: none; }
+.msg-actions .abar[data-admit~="compact-fwd"] .abar-row .abar-fwd .abar-ico { display: inline-block; }
+.msg-actions .abar[data-admit~="compact-reply"] .abar-row .abar-reply .abar-reply-lab { display: none; }
+.msg-actions .abar[data-admit~="compact-reply"] .abar-row .abar-reply .abar-ico { display: inline-block; }
 
 /* ── THE COMPACT FLOOR'S SECOND WORD ────────────────────────────────────────────────────
  * The selection pill's floor carries the count capsule's word beside the read switch's, and
@@ -788,6 +800,7 @@
      both 44 wide. Unconditional here so the measurement's copy carries the same floor. */
   .abar-more{min-width:44px}
   .abar-read{min-width:44px}
+  .abar-reply,.abar-fwd .abar-b{min-width:44px}
   .mm-item{min-height:44px}
   .abar-date{min-height:44px}
 }

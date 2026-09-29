@@ -100,6 +100,14 @@ export const COMPACT_LABELS: ReadonlyArray<{ label: string; button: string }> = 
   { label: ".abar-count .abar-count-word", button: ".abar-count" },
 ];
 
+/** The answer verbs' icon faces, in the order the floor gives their words up. */
+export const ANSWER_FACES: ReadonlyArray<{ token: string; label: string; button: string }> = [
+  { token: "compact-fwd", label: ".abar-fwd .abar-fwd-lab", button: ".abar-b" },
+  { token: "compact-reply", label: ".abar-reply .abar-reply-lab", button: ".abar-reply" },
+];
+/** The icon a face shows in place of its word (`MessagePane.tsx`, `size={14}`). */
+export const ANSWER_ICON_PX = 14;
+
 export interface MeasuredVerb {
   name: BarVerb;
   width: number;
@@ -313,6 +321,21 @@ export function useBarDensity(): {
         floor = base - widest;
         tokens.push(COMPACT);
       }
+    }
+    /* THEN THE ANSWER VERBS' WORDS, Forward before Reply, each only while the floor still does
+       not fit (DESIGN-026 §2.1). Each saves its word less the icon that replaces it, never below
+       the button's own `min-width`. Still too wide after both: the column is too narrow. */
+    for (const face of ANSWER_FACES) {
+      if (floor <= avail) break;
+      const lab = row.querySelector<HTMLElement>(face.label);
+      const btn = lab?.closest<HTMLElement>(face.button) ?? null;
+      const labW = lab ? lab.getBoundingClientRect().width : 0;
+      if (!lab || labW <= 0) continue;
+      const btnW = btn ? btn.getBoundingClientRect().width : 0;
+      const minW = btn ? parseFloat(getComputedStyle(btn).minWidth) || 0 : 0;
+      const plain = Math.max(0, labW - ANSWER_ICON_PX);
+      floor -= btn && minW > 0 ? Math.min(plain, Math.max(0, btnW - minW)) : plain;
+      tokens.push(face.token);
     }
     const next = [...admitVerbs(avail, floor, verbs, gap), ...tokens].join(" ");
     setAdmit((prev) => (prev === next ? prev : next));

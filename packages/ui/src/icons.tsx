@@ -84,6 +84,9 @@ export const ICON_PATHS: Record<string, ReactElement> = {
     <path d="M2.2 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.3 1.3h5a1.2 1.2 0 0 1 1.2 1.2v5.5a1.2 1.2 0 0 1-1.2 1.2H3.4a1.2 1.2 0 0 1-1.2-1.2z" />
   ),
   chev: <path d="m6 3.8 4.2 4.2L6 12.2" />,
+  /* The two answer verbs' icon faces, for a bar too narrow for their words (DESIGN-026 §2.1). */
+  reply: <path d="M6.4 4.2 2.8 7.8l3.6 3.6M3 7.8h6.4a3.8 3.8 0 0 1 3.8 3.8v.6" />,
+  fwd: <path d="m9.6 4.2 3.6 3.6-3.6 3.6M13 7.8H6.6a3.8 3.8 0 0 0-3.8 3.8v.6" />,
   /* The reader's Delete verb (a move to the provider's own Trash folder, never an expunge) —
      drawn thin on the 16 grid like the rest of the set. */
   trash: (

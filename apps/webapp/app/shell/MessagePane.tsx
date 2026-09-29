@@ -522,6 +522,10 @@ function ActionBar({
   useEffect(() => setResurfaceAt(storedHhmm), [message.id, panel, storedHhmm]);
   /** The floor's one concession is in force: the read switch stands without its words. */
   const compact = density.admit?.split(" ").includes("compact") ?? false;
+  /* THE ANSWER VERBS' ICON FACES — the floor's next concessions after the read switch's words,
+     Forward first (DESIGN-026 §2.1): the word leaves, the 44px target, the name and a title stay. */
+  const iconFwd = density.admit?.split(" ").includes("compact-fwd") ?? false;
+  const iconReply = density.admit?.split(" ").includes("compact-reply") ?? false;
 
   /**
    * MARK UNREAD — the read-state verb of a message that IS read. It PRESSES `u` rather than dispatching its own
@@ -1057,10 +1061,13 @@ function ActionBar({
         <div className="abar-g">
           <button
             type="button"
-            className="abar-b abar-solo primary"
+            className="abar-b abar-solo primary abar-reply"
+            aria-label={t("actionReply")}
+            title={iconReply ? t("actionReply") : undefined}
             onClick={() => onAction("reply")}
           >
-            {t("actionReply")}
+            <Icon name="reply" size={14} className="abar-ico" />
+            <span className="abar-reply-lab">{t("actionReply")}</span>
             <Key chord="r" />
           </button>
         </div>
@@ -1097,9 +1104,12 @@ function ActionBar({
             <button
               type="button"
               className="abar-b abar-solo"
+              aria-label={tm("menuForward")}
+              title={iconFwd ? tm("menuForward") : undefined}
               onClick={() => onAction("forward")}
             >
-              {tm("menuForward")}
+              <Icon name="fwd" size={14} className="abar-ico" />
+              <span className="abar-fwd-lab">{tm("menuForward")}</span>
               <Key chord="shift+f" />
             </button>
           </div>
