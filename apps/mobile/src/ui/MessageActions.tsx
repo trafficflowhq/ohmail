@@ -8,7 +8,7 @@
  * envelope, Forward always (a `no_forward` message asks once), the read slot holds one of its
  * three faces. The AI drafter is not here — no engine verb, so an absent control, never a dead one.
  */
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View,
   type LayoutChangeEvent,
@@ -321,8 +321,13 @@ export function MessageActions({
    * and {@link SkipNote} says why, before the press. The repeated-hour night books the time that
    * was asked for (the earlier of the two), so it earns no sentence.
    */
-  const tomorrow = tomorrowAt(new Date(), resurfaceTime);
-  const nextWeek = nextWeekAt(new Date(), resurfaceTime);
+  /* Per reader day and chosen hour, not per render: the reader re-renders on every body and bar change. */
+  const horizonDay = new Date().toDateString();
+  const { tomorrow, nextWeek } = useMemo(
+    () => ({ tomorrow: tomorrowAt(new Date(), resurfaceTime), nextWeek: nextWeekAt(new Date(), resurfaceTime) }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resurfaceTime, horizonDay],
+  );
 
   /**
    * The ActionBar's verb capsules (mode "bar") — the webapp's `BAR_VERB_ORDER` arrives through
@@ -626,9 +631,10 @@ export function MessageActions({
               />
             ))}
           </ScrollView>
-        ) : (
+        ) : open === "pick" ? (
           // The picked day, as rows — the native idiom for the webapp's date input, floored at
-          // tomorrow so the chooser cannot name a horizon in the past.
+          // tomorrow so the chooser cannot name a horizon in the past. Built only while this list
+          // is open: it stood in the closed branch, so every reader render built ninety rows.
           <ScrollView style={{ maxHeight: 320 }}>
             {/* Ninety days of rows — the webapp's date input takes any future day; a list is
                 the phone's idiom, and a quarter ahead covers the horizons people actually
@@ -647,7 +653,7 @@ export function MessageActions({
               );
             })}
           </ScrollView>
-        )}
+        ) : null}
       </Sheet>
 
       {/* ── Move: this message, relocated — every place except where it is ───────────────── */}
