@@ -10,7 +10,7 @@
 export {
   SsrfRefusal, isBlockedAddress, isPrivateNetworkAddress, privateNetworkPin, privateNetworkScope, nodeHostResolver,
   assertPublicHttpUrl, assertPublicHost, resolvePinUnchecked,
-  assertPublicHttpUrlShape, assertPublicHostShape,
+  assertPublicHttpUrlShape, assertPublicHostShape, canonicalHost,
   type HostResolver, type PrivateNetworkScope, type PublicUrlOptions, type UrlShapeOptions,
 } from "./ssrf-guard.js";
 export {

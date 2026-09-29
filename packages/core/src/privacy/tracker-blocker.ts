@@ -10,6 +10,7 @@
 // this instead would trade a default-deny gate for a default-allow one.
 
 import { decodeUnreservedEscapes } from "../url-escapes.js";
+import { canonicalHost } from "../net/ssrf-guard.js";
 
 /** The stored/surfaced tracker kind. `pixel` = a beacon by the readers' rule (a declared
  *  1×1/0×0 or a beacon url); `remote_image` = an image from a known tracker host that is
@@ -18,7 +19,7 @@ export type TrackerKind = "pixel" | "remote_image" | "read_receipt";
 
 export interface TrackerHit {
   url: string;          // the original remote url
-  host: string;         // its host (lowercased), "" if unparseable
+  host: string;         // its host as the gate dials it (`hostOf`), "" if unparseable
   kind: TrackerKind;    // pixel vs remote_image
   isPixel: boolean;     // a declared 1×1/0×0 or a beacon url — the label the readers show
 }
@@ -29,8 +30,9 @@ export interface TrackerHit {
  * umbrella domain that also hosts pictures does not belong: Mailchimp's pictures live on
  * `gallery.mailchimp.com`, Constant Contact's on `files.constantcontact.com`, SendGrid's on
  * `cdn.mcauto-images-production.sendgrid.net` (so only `ct.sendgrid.net`, its tracking host).
- * Matched as the host or a subdomain of it; `tracker-hosts-census.test.ts` holds one tracker
- * url and one picture url per entry.
+ * Matched as the host or a subdomain of it, in the spelling the gate dials (`hostOf`);
+ * `tracker-hosts-census.test.ts` holds one tracker url and one picture url per entry, and that
+ * every entry is canonical and none sits under another.
  */
 export const TRACKER_HOSTS: readonly string[] = [
   "list-manage.com",       // Mailchimp opens and clicks (pictures: gallery.mailchimp.com)
@@ -46,25 +48,34 @@ export const TRACKER_HOSTS: readonly string[] = [
   "awstrack.me",           // Amazon SES opens and clicks
   "rs6.net",               // Constant Contact opens and clicks (pictures: files.constantcontact.com)
   "api.mixpanel.com",      // Mixpanel's event endpoint (its own pictures sit on mixpanel.com)
+  "api-eu.mixpanel.com",   // the same for EU residency (docs.mixpanel.com/reference/overview)
+  "api-in.mixpanel.com",   // the same for India residency (docs.mixpanel.com/reference/overview)
   "klaviyomail.com",       // Klaviyo opens and clicks
+  "track.hubspot.com",     // HubSpot's event and page-view pixel (developers.hubspot.com, Events HTTP API)
+  "track-eu1.hubspot.com", // the same for EU portals (ibid.; pictures: *.hubspotusercontent*.net)
 ];
 
 const REMOTE = /^https?:\/\//i;
 
-/** The host of a url, lowercased, or "" if it cannot be parsed. */
+/**
+ * The host of a url as the image proxy's gate dials it — `canonicalHost` of `URL.hostname`: lower
+ * case, no root dot, no port (a port is the gate's own refusal), punycode — or "" if it cannot be
+ * parsed. The fallback reads the same host out of a url `URL` refuses, userinfo and port dropped.
+ */
 export function hostOf(url: string): string {
   try {
-    return new URL(url).host.toLowerCase();
+    return canonicalHost(new URL(url).hostname);
   } catch {
-    const m = /^https?:\/\/([^/?#]+)/i.exec(url);
-    return m ? m[1]!.toLowerCase() : "";
+    const m = /^https?:\/\/(?:[^/?#]*@)?(\[[^\]/?#]*\]|[^/?#:]*)/i.exec(url);
+    return m ? canonicalHost(m[1]!) : "";
   }
 }
 
-/** True when `host` is a listed tracking host or a subdomain of one — never a substring match. */
+/** True when `host`, read canonically, is a listed tracking host or a subdomain of one — never a substring match. */
 export function isKnownTracker(host: string): boolean {
-  if (!host) return false;
-  return TRACKER_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  const h = canonicalHost(host);
+  if (!h) return false;
+  return TRACKER_HOSTS.some((t) => h === t || h.endsWith(`.${t}`));
 }
 
 /**

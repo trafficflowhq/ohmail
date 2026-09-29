@@ -204,7 +204,7 @@ export type PrivateNetworkScope =
   | { kind: "private"; pin: string[] } | { kind: "public" } | { kind: "unresolved" };
 
 export async function privateNetworkScope(host: string, resolver: HostResolver): Promise<PrivateNetworkScope> {
-  const h = host.trim().toLowerCase().replace(/\.$/, "");
+  const h = canonicalHost(host.trim());
   const bare = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
   if (parseIpv4(bare) || parseIpv6(bare)) {
     return isPrivateNetworkAddress(bare) ? { kind: "private", pin: [bare] } : { kind: "public" };
@@ -368,6 +368,16 @@ async function resolveAndClear(host: string, resolver: HostResolver): Promise<st
 }
 
 /**
+ * THE HOST AS THIS GATE DIALS IT: lower case, one root dot dropped (`URL.hostname` keeps a
+ * FQDN's). Every reader that asks "is this host X" asks it of this spelling — the gate here, and
+ * the image proxy's tracker list (`privacy/tracker-blocker.ts`) — so a name cannot be one host to
+ * the dial and another to the list.
+ */
+export function canonicalHost(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.$/, "");
+}
+
+/**
  * The part of {@link assertPublicHost} that needs no I/O. Returns the canonical host and, when
  * that host is an IP LITERAL that cleared the address rules, the address itself — a permitted
  * literal needs no DNS, and it IS the pin.
@@ -375,7 +385,7 @@ async function resolveAndClear(host: string, resolver: HostResolver): Promise<st
 export function assertPublicHostShape(
   hostname: string, opts: UrlShapeOptions = {},
 ): { host: string; literal: string | null } {
-  const host = hostname.toLowerCase().replace(/\.$/, "");
+  const host = canonicalHost(hostname);
   if (host === "") refuse("host is empty");
   if (host === "localhost" || BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) refuse("host is not public");
 
@@ -418,7 +428,7 @@ export async function resolvePinUnchecked(raw: string, resolver: HostResolver): 
   if (u!.protocol !== "https:" && u!.protocol !== "http:") refuse("scheme must be http or https");
   if (u!.username !== "" || u!.password !== "") refuse("userinfo is not allowed");
 
-  const host = u!.hostname.toLowerCase().replace(/\.$/, "");
+  const host = canonicalHost(u!.hostname);
   if (host === "") refuse("host is empty");
   const bracketed = host.startsWith("[") && host.endsWith("]");
   const bare = bracketed ? host.slice(1, -1) : host;
