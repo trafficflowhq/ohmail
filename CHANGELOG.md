@@ -5168,8 +5168,8 @@ set an out-of-office and no out-of-office would ever be sent.
   opens one correspondent: what that address sent and what was sent to it, either direction or both.
 - That view says what it can see — this device answers all three directions, the archive by sender
   only — and mail you have sent is listed for the first time, marked "Sent".
-- A hyphenated or dotted run is three terms now — itself, its joined form and its parts — so
-  `D-U-N-S`, `d-u-n-s` and `DUNS` all reach a message none of them found before.
+- A hyphenated or dotted run is searched as itself and its parts — so `D-U-N-S` and `d-u-n-s`
+  reach a message neither found before.
 - A search of the whole archive that never comes back now ends: "The archive did not answer."
 
 ### Doors: a laptop through your desktop, and a server you run

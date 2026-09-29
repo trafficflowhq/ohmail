@@ -185,14 +185,13 @@ const ZERO_CLOCK = (): number => 0;
 const PHRASE_BONUS = { subject: 2, from: 1 } as const;
 
 /**
- * Text → terms, and a hyphenated compound is three of them: `compoundForms`
- * (`@trafficflow/core/search-rank`) makes `Your D-U-N-S Number` index
- * `d-u-n-s` and `duns` beside `your` and `number`. The query runs through
- * this same function, so `DUNS` reaches the same message via the joined
- * form; `search` ANDs across tokens, so the hyphenated query is the MORE
- * specific one (`search-punctuation.test.ts` pins that). Compounds come
- * first so `matches[0]` is the form present in the subject (the view
- * highlights by finding it). A compound-free text is untouched.
+ * Text → terms, and a hyphenated compound is itself beside its parts:
+ * `compoundForms` (`@trafficflow/core/search-rank`) makes `Your D-U-N-S
+ * Number` index `d-u-n-s` beside `your` and `number`, as the stores do, so
+ * this first paint never finds what the store's answer drops. The query
+ * runs through this same function. Compounds come first so `matches[0]` is
+ * the form present in the subject (the view highlights by finding it). A
+ * compound-free text is untouched.
  */
 function tokenize(text: string): string[] {
   const lower = text.toLowerCase();

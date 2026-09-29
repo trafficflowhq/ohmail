@@ -114,12 +114,11 @@ const COMPOUND = /[\p{L}\p{N}]+(?:[-.][\p{L}\p{N}]+)+/gu;
 const MIN_TERM_LEN = 2;
 
 /**
- * The two extra forms a compound is worth: the compound VERBATIM (`d-u-n-s`) and its JOINED form
- * (`duns`). Its parts are deliberately not returned — the caller's ordinary word pass already
- * produces them under its own length floor. The joined form is what lets the two spellings reach
- * each other: a subject saying `D-U-N-S` and a query saying `DUNS` share exactly this token.
- * Deduped, lower-cased, ordered by first appearance, so a highlighting caller gets the compound —
- * the form findable in the original string.
+ * The extra form a compound is worth: the compound VERBATIM (`d-u-n-s`). Its parts are not
+ * returned — the caller's ordinary word pass produces them under its own length floor. Never its
+ * JOINED form (`duns`): neither store has that lexeme, and the mirror is a first paint that must
+ * answer a subset of the store's answer (SEARCH-JOINED-FORM-DEVICE-ONLY). Deduped, lower-cased,
+ * ordered by first appearance, so a highlighting caller gets the form findable in the original.
  */
 export function compoundForms(text: string): string[] {
   const found = text.toLowerCase().match(COMPOUND);
@@ -127,11 +126,9 @@ export function compoundForms(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const compound of found) {
-    for (const form of [compound, compound.replace(/[-.]/g, "")]) {
-      if (form.length < MIN_TERM_LEN || seen.has(form)) continue;
-      seen.add(form);
-      out.push(form);
-    }
+    if (compound.length < MIN_TERM_LEN || seen.has(compound)) continue;
+    seen.add(compound);
+    out.push(compound);
   }
   return out;
 }
