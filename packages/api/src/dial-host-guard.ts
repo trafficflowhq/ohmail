@@ -48,6 +48,18 @@ function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
   if (err.message.endsWith(UNRESOLVED)) {
     return Object.assign(new Error(`the ${leg} server's hostname did not resolve`), { code: "ENOTFOUND" });
   }
+  /* A STORED PORT THAT CARRIES NO MAIL, read off the guard's own fields. Still terminal: the port is
+     the person's to change, so the sentence names it and where it lives. */
+  const said = err.details as { port?: unknown; ports?: unknown } | undefined;
+  if (typeof said?.port === "number") {
+    const ports = Array.isArray(said.ports) ? said.ports.filter((p): p is number => typeof p === "number") : [];
+    const choice = ports.length > 1 ? `${ports.slice(0, -1).join(", ")} or ${ports.at(-1)}` : ports.join("");
+    return new MailboxSideRefusal(
+      "mailbox_port_refused", 502,
+      `This mailbox's ${leg} server is set to port ${said.port}, which does not carry mail. `
+        + `Change the port in Settings → Mailboxes${choice ? ` (${choice})` : ""}.`,
+    );
+  }
   return new MailboxSideRefusal(
     "mailbox_host_refused", 502,
     `This mailbox's ${leg} server is at an address that is not one this service will connect to. `

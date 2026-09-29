@@ -21,6 +21,7 @@ import { useWallLift } from "../../webapp/app/shell/wall-lift.js";
 import { linksOutToBilling } from "./distribution.js";
 import { MANAGE_LINK_PATH, leaveForAccountPage } from "./DesktopSubscription.js";
 import { dayStamp } from "../../webapp/app/shell/format.js";
+import { DOOR_COPY } from "./door-copy.js";
 
 /**
  * What the headline says, and the date it carries — the browser tab's rule, mirrored.
@@ -60,6 +61,8 @@ export function DesktopAccessLock(
   const t = useTranslations("accessLock");
   const { check, armPoll, checkAgain } = useWallLift({ lifts: accountOpens, onLifted, owner: null });
   const [signingOut, setSigningOut] = useState(false);
+  /** The shell's reason when the last sign-out was refused, said under the button. */
+  const [signOutRefused, setSignOutRefused] = useState<string | null>(null);
   const lang = useLocale() === "de" ? "de" : "en";
   const [minting, setMinting] = useState(false);
   const [mintRefusal, setMintRefusal] = useState<"failed" | "unverified" | null>(null);
@@ -92,14 +95,13 @@ export function DesktopAccessLock(
   const doSignOut = useCallback(async () => {
     if (signingOut) return;
     setSigningOut(true);
+    setSignOutRefused(null);
     try {
       /* The gate hears the new engine state and leaves this screen; nothing here navigates. */
       onSignedOut(await engineLogout());
-    } catch {
-      /* A refusal leaves the session live and the button available again, which is the honest
-         state — this screen has nothing else to fall back to. That it says nothing is filed as
-         ACCESS-LOCK-REFUSED-SIGN-OUT-IS-SILENT: the sentence it needs is not written, on either
-         surface, and inventing one here would leave the browser tab still silent. */
+    } catch (err) {
+      /* A refusal leaves the session live and the button available again, and says so. */
+      setSignOutRefused(err instanceof Error ? err.message : String(err));
       setSigningOut(false);
     }
   }, [onSignedOut, signingOut]);
@@ -177,6 +179,9 @@ export function DesktopAccessLock(
             {t("signOut")}
           </Button>
         </div>
+        {signOutRefused !== null
+          ? <p className="wall-warn" role="alert">{DOOR_COPY.accessLockSignOutRefused(signOutRefused)}</p>
+          : null}
       </div>
     </div>
   );

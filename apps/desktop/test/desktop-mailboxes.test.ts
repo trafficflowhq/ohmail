@@ -4577,6 +4577,40 @@ describe("a door-derived error and the row's own reach read", () => {
   });
 });
 
+/* ═══ A RUNTIME THAT DIALLED NOTHING IS NOT AN OUTAGE (96-DESKTOP) ═════════════════════════════
+ * A sealed mailbox whose launch the engine skipped reads `reachable: false` with `dialled: false`:
+ * nothing was tried, so "Can't reach the mail server" — here or on the organizer chip — is false.
+ * The row falls through to the mirror's own age. Absent `dialled` is an older engine and reads
+ * as dialled, so this pane lands before or after the engine field. Mutation watched red: the
+ * `r.dialled` gate dropped from `stateOf`'s outage arm.
+ */
+describe("a mailbox this computer has not dialled yet", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const ORGANIZER: MailboxFacts = {
+    ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+  };
+  const reach = (over: Record<string, unknown>) => (): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: false, unreachableSince: null, needsCredential: false, ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  it("says no outage on the row or the chip", async () => {
+    FACTS = [ORGANIZER];
+    bridgeReply = reach({ dialled: false });
+    const el = await render("local");
+    const text = el.textContent ?? "";
+    expect(text, "a runtime that dialled nothing was reported unreachable").not.toContain(copy.desktopStateUnreachable!);
+    expect(el.querySelector(".mbx-org")?.textContent ?? "").not.toContain(copy.stateOrganizingHereUnreachable!);
+  });
+
+  it("CONTROL: the same row with the field absent is an older engine's outage, said as before", async () => {
+    FACTS = [ORGANIZER];
+    bridgeReply = reach({});
+    const el = await render("local");
+    expect(el.textContent ?? "").toContain(copy.desktopStateUnreachable!);
+    expect(el.querySelector(".mbx-org")?.textContent ?? "").toContain(copy.stateOrganizingHereUnreachable!);
+  });
+});
+
 /* ORGANIZER-BANNER-CLAIMS-FILING-MID-OUTAGE: the organizer chip said this computer files the
    mailbox, in the present tense, beside a state cell saying the server cannot be reached. The chip
    reads the same reach row; a standing stop keeps precedence. To watch it fail: drop the outage

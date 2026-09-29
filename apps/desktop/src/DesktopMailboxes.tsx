@@ -101,6 +101,12 @@ export interface MailboxReach {
   /** ISO instant of the FIRST observation of death in the current outage; null while reachable. */
   unreachableSince: string | null;
   /**
+   * WHETHER THIS INSTALL HAS DIALLED THIS MAILBOX AT ALL this launch. `false` is a runtime whose
+   * launch was skipped: nothing was tried, so nothing failed, and "can't reach the mail server"
+   * would be false. Absent reads as dialled — an engine older than the field says nothing.
+   */
+  dialled: boolean;
+  /**
    * WHAT THIS COMPUTER'S LAST STOP LEFT IN THE MAILBOX'S SETTINGS DOCUMENT: the mailbox kept
    * another install's settings, or this computer's could not be written. `null` when they were
    * saved, and on an engine older than the field.
@@ -383,6 +389,7 @@ export async function readMailboxReachVia(
       credentialBlocked?: unknown; profileBlocked?: unknown; needsCredential?: unknown;
       settingsLeft?: unknown;
       plaintextRefused?: unknown;
+      dialled?: unknown;
     };
     /* NO ID, NOTHING TO SAY IT ABOUT. Dropped rather than faulted: marking the slice would let one
        unattributable entry speak for rows it never named. */
@@ -391,6 +398,7 @@ export async function readMailboxReachVia(
       out[it.mailboxId] = {
         answered: false, reachable: false, signInRefused: false, credentialBlocked: null,
         profileBlocked: null, unreachableSince: null, needsCredential: false, settingsLeft: null,
+        dialled: true,
       };
       continue;
     }
@@ -398,6 +406,9 @@ export async function readMailboxReachVia(
       answered: true,
       reachable: it.reachable,
       unreachableSince: typeof it.unreachableSince === "string" ? it.unreachableSince : null,
+      /* TOLERANT, the phone's own reader's rule (`standalone-door.ts`): only an explicit `false` is
+         a runtime that dialled nothing, so this pane lands before or after the engine field does. */
+      dialled: it.dialled !== false,
       /* ABSENT READS AS `false`, on this file's standing rule: an engine older than the field
          cannot have refused a sign-in, and the dangerous default is the other one — telling
          somebody their password was rejected because their app is out of date. */
@@ -736,8 +747,9 @@ export function DesktopMailboxes(
           shown: rows.length,
           withoutRecord: rows.length - named.length,
           unanswered: named.length - answered.length,
-          reachable: answered.filter((m) => r.rows[m.id]!.reachable).length,
-          unreachable: answered.filter((m) => !r.rows[m.id]!.reachable).length,
+          reachable: answered.filter((m) => r.rows[m.id]!.dialled && r.rows[m.id]!.reachable).length,
+          unreachable: answered.filter((m) => r.rows[m.id]!.dialled && !r.rows[m.id]!.reachable).length,
+          undialled: answered.filter((m) => !r.rows[m.id]!.dialled).length,
         },
       });
       if (line === noted) return;
@@ -1413,7 +1425,7 @@ export function DesktopMailboxes(
     if (m.status === "error") {
       const specific = r?.answered === true
         && (r.signInRefused || r.plaintextRefused === true || r.credentialBlocked !== null
-          || r.needsCredential || !r.reachable);
+          || r.needsCredential || (!r.reachable && r.dialled));
       if (!specific) {
         return say(t("desktopStateError", { code: m.errorCode ?? t("desktopUnknownCode") }));
       }
@@ -1486,7 +1498,9 @@ export function DesktopMailboxes(
     if (!r && reachUnknownForRow(reach, organizesHere(m), now)) {
       return say(t("desktopStateUnknown"));
     }
-    if (r && !r.reachable) {
+    /* A RUNTIME THAT DIALLED NOTHING falls through: nothing was tried, nothing failed, and the
+       mirror's age below is the true sentence. */
+    if (r && !r.reachable && r.dialled) {
       /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
          `day` stamp is deliberately date-only because the sentences it serves are standing facts
          somebody reads once. "Unreachable since 5 Sep 2026" tells a person nothing about an
@@ -1622,7 +1636,7 @@ export function DesktopMailboxes(
       stopQueued ? "queued" : role === "organizer" && m.releaseRequestedAt ? "pending" : undefined;
     /* THE CONNECTION'S OWN ANSWER for this row — `stateOf`'s outage arm, read from the same row. */
     const reached = reach.rows[m.id];
-    const offline = reached !== undefined && reached.answered && !reached.reachable;
+    const offline = reached !== undefined && reached.answered && !reached.reachable && reached.dialled;
     /* IS THE HOLDER A PHONE, asked once for this row. `mobile` is the third `OrganizerKind` and
        this pane had arms for two, so a phone took `readerSinceUnknown` — "Since <date>. This
        computer reads the mailbox" — which names no holder and promises a schedule a phone does

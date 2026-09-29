@@ -115,10 +115,12 @@ export function makeProbeHostGuard(
         // they are told which ports are on offer; the SSRF gate's own refusals are re-said one
         // module over (`probe-host-refusal.ts`) and this one is already ours, so it passes that
         // mapping untouched.
-        const ports = [...MAIL_PROBE_PORTS[transport]].sort((a, b) => a - b).join(", ");
+        const offered = [...MAIL_PROBE_PORTS[transport]].sort((a, b) => a - b);
+        // The port and the set ride as FIELDS, so the dial door says them without reading this text.
         throw new ServiceError(
           "validation_failed", 400,
-          `Mail is not carried on port ${port}. Use ${ports}.`,
+          `Mail is not carried on port ${port}. Use ${offered.join(", ")}.`,
+          { port, ports: offered },
         );
       }
       // Throws on a private/unresolvable/unparseable host — the port must never be opened to one.

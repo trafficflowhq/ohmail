@@ -4412,6 +4412,67 @@ fn the_retry_press_refuses_an_install_with_no_engine_to_start() {
     let _ = fs::remove_dir_all(&root);
 }
 
+// ── THE KEY STORE'S CARD HAS A "TRY AGAIN" (KEYRING-CARD-HAS-NO-RETRY) ─────────────────────────
+//
+// The shell resolved the key once, at launch, so a keyring unlocked afterwards was read only by a
+// relaunch. `retry` now admits `NoKey` and re-plans, which reads the keystore again: a store that
+// still refuses is `NoKey` again, the answer the card says, and one that answers now spawns.
+
+#[cfg(unix)]
+#[test]
+fn the_retry_press_re_plans_a_no_key_engine_through_the_keystore() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = candidate_root("retry-no-key");
+    let door = Config::Local(crate::config::LocalDoor {
+        imap_host: "mail.example.org".to_string(),
+        imap_user: "someone".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: None,
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    let res = root.join("resources");
+    fs::create_dir_all(res.join("engine").join("bin")).expect("engine dir");
+    fs::write(engine_path_in(&res), "").expect("engine bundle");
+    fs::create_dir_all(res.join(RUNTIME_RESOURCE_DIR)).expect("runtime dir");
+    let node = vendored_node_in(&res);
+    fs::write(&node, "#!/bin/sh\nexit 0\n").expect("fake runtime");
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).expect("exec bit");
+    let shell = Shell {
+        paths: ShellPaths { app_data: Some(root.clone()), resources: Some(res), downloads: None },
+        engine: Mutex::new(Arc::new(Engine::inert(EngineState::NoKey {
+            reason: "this computer's keystore would not answer".to_string(),
+        }))),
+        host_plan: Mutex::new(None),
+        door: Mutex::new(()),
+        leaving: Mutex::new(Leaving::NotStarted),
+        pending_door: AtomicBool::new(false),
+    };
+    crate::engine::keystore_double::queue(vec![
+        Err("the keystore is still locked".to_string()),
+        Ok("0".repeat(64)),
+    ]);
+
+    let still = shell.retry().expect("a press on the key card is answered, never refused");
+    assert_eq!(still.get("state").and_then(|s| s.as_str()), Some("no_key"), "a locked keystore read as anything else");
+
+    let opened = shell.retry().expect("a press once the keystore answers is answered");
+    let state = opened.get("state").and_then(|s| s.as_str());
+    assert_ne!(state, Some("no_key"), "the press never read the keystore again");
+    assert_ne!(state, Some("failed"), "the press never re-entered start");
+    crate::engine::keystore_double::queue(Vec::new());
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_key_card_press_still_refuses_an_engine_that_has_not_given_up() {
+    // CONTROL: admitting `NoKey` widened nothing else — a running or stopped engine keeps its refusal.
+    let calm = Shell::around(Engine::inert(EngineState::Stopped));
+    assert!(calm.retry().is_err());
+}
+
 // ── Signing out acts on the door the press was made on ─────────────────────────────────────────
 //
 // `logout` read the door ONCE and acted on that snapshot for its whole length — the clear, the

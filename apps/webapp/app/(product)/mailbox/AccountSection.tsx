@@ -38,6 +38,7 @@ import { SELF_HOST_BUILD } from "../../hello";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { forgetThisBrowser, signOut } from "../../sign-out";
+import { signOutTrouble } from "../../sign-out-trouble";
 import { markAccountErased } from "../../shell/account-erased";
 import {
   account,
@@ -120,48 +121,15 @@ export function AccountSection() {
     setSignOutUnverified(false);
     setSignOutServerRefused(null);
     const outcome = await signOut(owner);
-    /**
-     * If the mail is still here, this does not leave. An IndexedDB delete is BLOCKED — not failed —
-     * while any other connection holds the database open; our own page yields its handle, but a
-     * second tab on the mailbox does not. `signOut` used to resolve as though the wipe had worked, so
-     * signing out of tab A with tab B open said "signed out" and left every message on disk on the
-     * borrowed machine this control exists for. Staying put costs a dead shell behind an actionable
-     * sentence; leaving costs a silent false promise about somebody's mail. The session and cookie
-     * are already gone, so pressing again is safe — the first thing the copy asks. The sentence names
-     * both causes (a blocked delete or a refused one): this arm cannot tell them apart.
-     */
-    /**
-     * The unverifiable case is tested first because it is a subset of the other: `cleared` is false
-     * whenever the inventory is partial, so checking `!cleared` first made this branch unreachable —
-     * every browser that simply could not be asked what it holds was told another tab was holding its
-     * mail open, and this distinct remedy was dead code. Nothing is holding a database open here: the
-     * browser will not say which local databases it has, and the registry it would fall back on has
-     * never been anchored on this origin. The deletes we could name went through; what cannot be
-     * claimed is that they were all of them.
-     */
-    if (!outcome.inventoryComplete) {
+    /* If the mail is still here, or the session may be, this does not leave: an IndexedDB delete
+       is BLOCKED while another tab holds the database open, and leaving would be a silent false
+       promise about mail on a borrowed machine. The arms and their order are `signOutTrouble`'s. */
+    const said = signOutTrouble(outcome);
+    if (said !== null) {
       if (alive.current) {
-        setSignOutUnverified(true);
-        setSigningOut(false);
-      }
-      return;
-    }
-    /**
-     * Same rule as the sign-out arm above: a blocked IndexedDB delete (a second tab holds the
-     * database open) or a refused one must not let this leave — leaving would be a silent false
-     * promise about mail still on disk. The session and cookie are already gone, so pressing again
-     * is safe, and the sentence names both causes because this arm cannot tell them apart.
-     */
-    if (!outcome.cleared) {
-      if (alive.current) {
-        setSignOutBlocked(true);
-        setSigningOut(false);
-      }
-      return;
-    }
-    if (outcome.serverRefused !== null) {
-      if (alive.current) {
-        setSignOutServerRefused(outcome.serverRefused);
+        if (said.key === "signOutUnverified") setSignOutUnverified(true);
+        else if (said.key === "signOutBlocked") setSignOutBlocked(true);
+        else setSignOutServerRefused(said.reason);
         setSigningOut(false);
       }
       return;

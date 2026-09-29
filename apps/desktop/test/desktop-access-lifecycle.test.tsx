@@ -381,3 +381,29 @@ describe("the window's lift and first paint", () => {
     expect(seen[0]).toBe("open");
   });
 });
+
+/* THE LOCK SCREEN'S SIGN-OUT SAYS A REFUSAL (ACCESS-LOCK-REFUSED-SIGN-OUT-IS-SILENT, the window's
+   half): the shell refusing gave the button back and changed nothing on the screen. The sentence
+   is the window's own (`door-copy.ts`), with the shell's reason in it. Mutation watched red: the
+   catch's sentence dropped. */
+describe("a refused sign-out on the lock screen", () => {
+  it("says so under the button, with the shell's reason, and the button presses again", async () => {
+    fakeBridge(() => ({ status: 200, body: "{}" }));
+    const internals = (globalThis as { __TAURI_INTERNALS__: { invoke: (c: string, p?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+    const inner = internals.invoke;
+    internals.invoke = async (command, payload) => {
+      if (command === "engine_logout") throw "the shell could not sign out";
+      return inner(command, payload as never);
+    };
+    await paint("direct", CLOSED);
+    const out = buttons().find((b) => b.textContent === LOCK.signOut)!;
+    await act(async () => { out.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    const { DOOR_COPY } = await import("../src/door-copy.js");
+    const alerts = [...host.querySelectorAll('[role="alert"]')].map((a) => a.textContent);
+    expect(alerts, "the refused sign-out was silent").toEqual([
+      DOOR_COPY.accessLockSignOutRefused("the shell could not sign out"),
+    ]);
+    expect(buttons().find((b) => b.textContent === LOCK.signOut)!.disabled).toBe(false);
+  });
+});

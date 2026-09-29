@@ -717,11 +717,11 @@ const EN = {
   gateKeyringTitle:
     "This computer's keyring is not available",
   gateKeyringWhy:
-    "ohmail keeps the key that protects your mailbox passwords in your login keyring, and the keyring did not answer: it is locked, or this computer has none. Unlock it, or create a login keyring (in GNOME with Passwords and Keys, in KDE with KWallet), then quit ohmail and open it again.",
+    "ohmail keeps the key that protects your mailbox passwords in your login keyring, and the keyring did not answer: it is locked, or this computer has none. Unlock it, or create a login keyring (in GNOME with Passwords and Keys, in KDE with KWallet), then press Try again.",
   gateKeychainWhy:
-    "ohmail keeps the key that protects your mailbox passwords in your login keychain, and the keychain did not answer. Unlock the login keychain in Keychain Access, then quit ohmail and open it again.",
+    "ohmail keeps the key that protects your mailbox passwords in your login keychain, and the keychain did not answer. Unlock the login keychain in Keychain Access, then press Try again.",
   gateCredentialsWhy:
-    "ohmail keeps the key that protects your mailbox passwords in Windows Credential Manager, and it did not answer. Quit ohmail and open it again; if it keeps happening, ohmail's log file has the details.",
+    "ohmail keeps the key that protects your mailbox passwords in Windows Credential Manager, and it did not answer. Press Try again; if it keeps happening, ohmail's log file has the details.",
   /* ── A LOCKED LOCAL STORE, in person words ───────────────────────────────────────────────
      The engine reclaims a provably-stale lock on its own; what reaches this card is the residue
      it may not decide alone — a record it cannot read (a torn file after a power cut) or a live
@@ -747,6 +747,11 @@ const EN = {
     "The copy could not be set aside, so nothing was changed. ohmail's log file has the details.",
   gateRetryRefused:
     "The mail engine could not be started again, so nothing changed. ohmail's log file has the details.",
+  /* The key store asked again and still did not answer: the card stays, with its press. */
+  gateKeyringStillLocked: "Still not available, so nothing changed.",
+  /* THE LOCK SCREEN'S SIGN-OUT, REFUSED BY THE SHELL. The session stays, so the button does too. */
+  accessLockSignOutRefused: (reason: string) =>
+    `Signing out did not finish (${reason}). Press Sign out to try again.`,
   gateSessionGone:
     "You were signed out of your hosted account, so this install stopped receiving new mail. "
     + "What was already here is kept; sign in again to reconnect.",
@@ -834,6 +839,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   hostRefuseNothingListening: ["host"],
   hostRefuseTimedOut: ["host"],
   hostRefusePairingUndone: ["host"],
+  accessLockSignOutRefused: ["reason"],
   hostRefuseCertName: ["host"],
   hostRefuseCertDate: ["host"],
   hostRefuseCertTrust: ["host"],

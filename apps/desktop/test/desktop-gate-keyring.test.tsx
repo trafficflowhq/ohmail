@@ -17,12 +17,13 @@ import messages from "../../webapp/messages/en.json";
  * A fresh install on a Linux desktop with no usable login keyring opened to "ohmail cannot open
  * your mailbox" before any mailbox was chosen, with the library's own error in the sentence
  * ("Couldn't access platform storage: SS error: …") and a Try again that re-read the same answer.
- * The card now names the keyring, says what to do, and offers no press that changes nothing: the
- * shell resolves the key at launch, so the remedy is a relaunch.
+ * The card names the keyring and says what to do. Its Try again (KEYRING-CARD-HAS-NO-RETRY) now
+ * reads the store again — `Shell::retry` re-plans from `NoKey` — so a press after unlocking opens
+ * the door, and a store still locked says so under the button.
  *
  * Mutations watched red: `gateFor` without `keyring: true` (the old card and its raw reason come
  * back); the card's `keyring` arm deleted from `DesktopGate`; `keyringSentence` answering the
- * keychain sentence on Linux.
+ * keychain sentence on Linux; the still-locked reading dropped from the card.
  */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
@@ -41,14 +42,22 @@ const RAW_NO_KEY =
   "this computer's keystore would not store a key (Couldn't access platform storage: SS error: " +
   "result not returned from SS API)";
 
-function noKeyShell(): { commands: string[] } {
+/** A shell whose key store refuses until `retries` presses in, then the engine serves. */
+function noKeyShell(opensAfter = Number.POSITIVE_INFINITY): { commands: string[] } {
   const ledger = { commands: [] as string[] };
-  const status = { state: "no_key", mode: null, reason: RAW_NO_KEY } as unknown as EngineStatus;
+  const noKey = { state: "no_key", mode: null, reason: RAW_NO_KEY } as unknown as EngineStatus;
+  let status: EngineStatus = noKey;
+  let presses = 0;
   let next = 1;
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => next++,
     invoke: async (command) => {
       ledger.commands.push(command);
+      if (command === "engine_retry") {
+        presses += 1;
+        if (presses >= opensAfter) status = { state: "starting", mode: "local", attempt: 1, of: 4 } as unknown as EngineStatus;
+        return status;
+      }
       if (command === "engine_status") return status;
       return null;
     },
@@ -102,11 +111,27 @@ describe("the key store's card", () => {
     expect(said).not.toContain("platform storage");
   });
 
-  it("offers no press that re-reads the same answer", async () => {
-    noKeyShell();
+  it("Try again asks the store again, and a store still locked says so under the button", async () => {
+    const ledger = noKeyShell();
     const el = await render();
-    const labels = [...el.querySelectorAll("button")].map((b) => b.textContent ?? "");
-    expect(labels).not.toContain(DOOR_COPY.gateTryAgain);
+    const again = [...el.querySelectorAll("button")].filter((b) => (b.textContent ?? "") === DOOR_COPY.gateTryAgain);
+    expect(again, "the keyring card offers no press that reads the store again").toHaveLength(1);
+    await act(async () => { again[0]!.click(); });
+    for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    expect(ledger.commands).toContain("engine_retry");
+    const alerts = [...el.querySelectorAll('[role="alert"]')].map((a) => a.textContent);
+    expect(alerts, "a store still locked was silent").toEqual([DOOR_COPY.gateKeyringStillLocked]);
+    expect(el.textContent).toContain(DOOR_COPY.gateKeyringTitle);
+  });
+
+  it("a press after the store answers leaves the card", async () => {
+    noKeyShell(1);
+    const el = await render();
+    const again = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "") === DOOR_COPY.gateTryAgain)!;
+    await act(async () => { again.click(); });
+    for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    expect(el.textContent, "the card stayed over an engine the store now opens").not.toContain(DOOR_COPY.gateKeyringTitle);
+    expect(el.textContent).not.toContain(DOOR_COPY.gateKeyringStillLocked);
   });
 
   it("the gate still carries the shell's reason, for the log, beside the keyring mark", () => {

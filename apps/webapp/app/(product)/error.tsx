@@ -7,6 +7,7 @@ import { buildId } from "../build-id";
 import { reportRenderError } from "../error-report";
 import { readOwner } from "../shell/owner-cookie";
 import { signOut } from "../sign-out";
+import { signOutTrouble } from "../sign-out-trouble";
 
 /**
  * THE MAIL CLIENT'S OWN ERROR PAGE. `ViewBoundary` keeps a throw inside one pile; this catches
@@ -30,21 +31,14 @@ export default function ProductError({ error }: { error: Error & { digest?: stri
      while rendering would paint a control on the client that the server's HTML did not have. */
   useEffect(() => { setSignedIn(readOwner() !== null); }, []);
 
-  /**
-   * The four outcomes in `AccountSection`'s order, which is load-bearing: `cleared` is false
-   * whenever the inventory is partial, so testing it first makes the unverifiable arm dead code.
-   * Three of them do NOT leave — a blocked or unconfirmed wipe means the mail is still in this
-   * browser, and navigating away would be a silent false promise about it. Pressing again is
-   * safe: the session and the cookie are already gone.
-   */
+  /* The outcomes and their order are `signOutTrouble`'s; only a finished sign-out leaves.
+     Pressing again is safe: the session and the cookie are already gone. */
   const doSignOut = useCallback(async () => {
     setSigningOut(true);
     setTrouble(null);
-    const outcome = await signOut(readOwner() ?? undefined);
-    if (!outcome.inventoryComplete) { setTrouble(ta("signOutUnverified")); setSigningOut(false); return; }
-    if (!outcome.cleared) { setTrouble(ta("signOutBlocked")); setSigningOut(false); return; }
-    if (outcome.serverRefused !== null) {
-      setTrouble(ta("signOutServerRefused", { reason: outcome.serverRefused }));
+    const said = signOutTrouble(await signOut(readOwner() ?? undefined));
+    if (said !== null) {
+      setTrouble(said.key === "signOutServerRefused" ? ta(said.key, { reason: said.reason }) : ta(said.key));
       setSigningOut(false);
       return;
     }

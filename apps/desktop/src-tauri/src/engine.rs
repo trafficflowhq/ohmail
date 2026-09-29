@@ -83,6 +83,27 @@ use std::time::{Duration, Instant};
 #[path = "engine_tests.rs"]
 mod tests;
 
+/// A KEYSTORE THAT REFUSES AND THEN ANSWERS, for the key card's press — per test thread, ahead of
+/// the environment key the other cases set, and absent from every build that is not a test.
+#[cfg(test)]
+pub(crate) mod keystore_double {
+    use std::cell::RefCell;
+    thread_local! {
+        static ANSWERS: RefCell<Vec<Result<String, String>>> = const { RefCell::new(Vec::new()) };
+    }
+    /// The answers the next plans take, in order; an empty queue is no double at all.
+    pub(crate) fn queue(answers: Vec<Result<String, String>>) {
+        ANSWERS.with(|a| *a.borrow_mut() = answers);
+    }
+    pub(super) fn answer() -> Option<Result<super::Resolved, String>> {
+        ANSWERS.with(|a| {
+            let mut a = a.borrow_mut();
+            if a.is_empty() { return None; }
+            Some(a.remove(0).map(|key| super::Resolved { key, from: super::KeySource::Env }))
+        })
+    }
+}
+
 // ── The frame codec's constants. Mirrored from the engine's own codec ─────────────────────────
 //
 // These four numbers are the engine's, and a disagreement is a stream that cannot be read. They
@@ -1265,6 +1286,8 @@ impl ShellPaths {
             Some(key) => Ok(Resolved { key, from: KeySource::Env }),
             None => install_key(self.app_data.as_deref()),
         };
+        #[cfg(test)]
+        let key = keystore_double::answer().unwrap_or(key);
         let key = match key {
             Ok(Resolved { key, from }) => {
                 // The launch line a support read starts from: which store served this key.
@@ -1672,12 +1695,18 @@ impl Shell {
     /// engine again from the stored configuration and REMOVE NOTHING. The lock and the store keep
     /// their own presses, because removing either is the person's judgement on that card; the
     /// engine still reclaims a provably stale lock itself. Refused unless the shell has given up.
+    ///
+    /// AND THE KEY STORE'S CARD'S. From [`EngineState::NoKey`] every re-plan is taken: the plan
+    /// reads the keystore again, so an unlocked one spawns, and one that still refuses is
+    /// `Inert(NoKey)` again — the answer the card says, never an `Err`.
     pub fn retry(&self) -> Result<serde_json::Value, String> {
-        if !matches!(self.engine().state(), EngineState::Failed { .. }) {
-            return Err("the engine has not given up, so it was not restarted".to_string());
-        }
+        let from_no_key = match self.engine().state() {
+            EngineState::Failed { .. } => false,
+            EngineState::NoKey { .. } => true,
+            _ => return Err("the engine has not given up, so it was not restarted".to_string()),
+        };
         let plan = self.planned(None);
-        if !matches!(plan, Plan::Spawn(_)) {
+        if !from_no_key && !matches!(plan, Plan::Spawn(_)) {
             return Err("this install has no engine to start; nothing was restarted".to_string());
         }
         self.pending_door.store(false, Ordering::SeqCst);

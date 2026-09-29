@@ -6,6 +6,7 @@ import { Button, Spinner } from "@ohmail/ui";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { signOut } from "../../sign-out";
+import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
 import { readOwner } from "../../shell/owner-cookie";
 import { dayStamp } from "../../shell/format";
 import { saveBlob } from "../../shell/attachments";
@@ -63,6 +64,9 @@ export function AccessLock(
     owner: readOwner(),
   });
   const [signingOut, setSigningOut] = useState(false);
+  /** Why the last sign-out did not finish, in the account pane's own sentences. */
+  const [signOutSaid, setSignOutSaid] = useState<SignOutTrouble | null>(null);
+  const ta = useTranslations("account");
   const [exporting, setExporting] = useState(false);
   const [exportFailed, setExportFailed] = useState(false);
   /** The erasure ceremony, in place. It is the Settings pane's own, not a second door. */
@@ -95,12 +99,26 @@ export function AccessLock(
 
   const doSignOut = useCallback(async () => {
     setSigningOut(true);
+    setSignOutSaid(null);
     // `owner` is captured before the call: afterwards there is nobody to ask which mirror to wipe.
-    await signOut(readOwner() ?? undefined);
-    // `signOut` navigates on success. A refusal leaves the session live and the button available
-    // again, which is the honest state — this screen has nothing else to fall back to.
-    setSigningOut(false);
+    const said = signOutTrouble(await signOut(readOwner() ?? undefined));
+    /* A sign-out that did not finish keeps the button and says why under it; a finished one
+       leaves, as the error page's does — this screen has nothing else to fall back to. */
+    if (said !== null) {
+      setSignOutSaid(said);
+      setSigningOut(false);
+      return;
+    }
+    window.location.assign("/login");
   }, []);
+
+  const signOutLine = signOutSaid === null ? null : (
+    <p className="wall-warn" role="alert">
+      {signOutSaid.key === "signOutServerRefused"
+        ? ta(signOutSaid.key, { reason: signOutSaid.reason })
+        : ta(signOutSaid.key)}
+    </p>
+  );
 
   const doExport = useCallback(async () => {
     setExportFailed(false);
@@ -200,6 +218,7 @@ export function AccessLock(
               <div className="gate-actions">
                 <Button onClick={doSignOut} disabled={signingOut}>{t("signOut")}</Button>
               </div>
+              {signOutLine}
             </>
           )
           : (
@@ -280,6 +299,7 @@ export function AccessLock(
                   {t("signOut")}
                 </Button>
               </div>
+              {signOutLine}
             </>
           )}
       </div>

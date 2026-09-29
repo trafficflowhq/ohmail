@@ -1488,12 +1488,20 @@ const CONNECTION_ERROR_CODES = new Set([
  * blames the server). A consented organizer whose lease read fails is `lease_unreadable` from the
  * runtime's first failure, below the connection's facts. A reader row's `organizerChecked` is the
  * runtime's: looked, and the last look answered.
+ *
+ * THE ARM ORDER IS THE INVARIANT: a refused sign-in, a refused plaintext dial, a stored password
+ * this install cannot use, then an outage. The third dials nothing, so it never carries an outage
+ * clock; confirmed, it names itself as a closed detail; unconfirmed it overlays nothing.
  */
 async function discloseLocalSyncFailures(
   res: Response,
   states: readonly {
     mailboxId: string;
-    connection: { unreachableSince: Date | null; signInRefused: boolean; plaintextRefused?: boolean };
+    connection: {
+      unreachableSince: Date | null; signInRefused: boolean; plaintextRefused?: boolean;
+      /** Absent on a caller that cannot say, which overlays nothing and leaves the outage arm. */
+      credentialBlocked?: { state: "unreadable" | "foreign-host"; confirmed: boolean } | null;
+    };
     /** Absent on a caller that cannot say, which overlays nothing. */
     holderLooked?: boolean;
     /** Absent on a caller that cannot say, which overlays no block. */
@@ -1523,6 +1531,12 @@ async function discloseLocalSyncFailures(
       /* Settled at once: nothing was dialled, and the sentence is not "can't reach the server". */
       failures.set(r.mailboxId, "connect");
       details.set(r.mailboxId, "MAILBOX_PLAINTEXT_REFUSED");
+    } else if (r.connection.credentialBlocked) {
+      if (r.connection.credentialBlocked.confirmed) {
+        failures.set(r.mailboxId, "connect");
+        details.set(r.mailboxId, r.connection.credentialBlocked.state === "unreadable"
+          ? "MAILBOX_CREDENTIAL_UNREADABLE" : "MAILBOX_CREDENTIAL_FOREIGN_HOST");
+      }
     } else if (r.connection.unreachableSince !== null) {
       outages.set(r.mailboxId, r.connection.unreachableSince.toISOString());
       if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {

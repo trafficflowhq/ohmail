@@ -804,15 +804,10 @@ export function DesktopGate() {
       return <StartOverNotice onSettled={() => void refresh()} />;
     }
     /* THE KEY STORE WOULD NOT ANSWER. Its own card: a keyring is the fact, the platform's store
-       and the remedy are the sentence, and no button — the shell resolves the key at launch, so
-       only a relaunch reads the unlocked store. The library's error stays in the log. */
+       and the remedy are the sentence, and Try again reads the store again (`Shell::retry`
+       re-plans from `NoKey`). The library's error stays in the log. */
     if (gate.keyring === true) {
-      return (
-        <GateNotice
-          title={DOOR_COPY.gateKeyringTitle}
-          reason={keyringSentence(BUILD_PLATFORM)}
-        />
-      );
+      return <KeyringNotice onSettled={() => void refresh()} />;
     }
     if (gate.failureClass === "DataDirLockedError") {
       return (
@@ -1667,6 +1662,37 @@ function RetryNotice({ reason, onSettled }: { reason: string; onSettled: () => v
   return (
     <GateNotice reason={reason} actionLabel={DOOR_COPY.gateTryAgain} onAction={press}>
       {refused ? <p role="alert">{DOOR_COPY.gateRetryRefused}</p> : null}
+    </GateNotice>
+  );
+}
+
+/**
+ * THE KEY STORE'S CARD, with the press that asks it again. A store that still refuses answers
+ * `no_key` once more, said under the button; one that answers now leaves this card for whatever
+ * the engine does next. A refused press says the retry's own sentence.
+ */
+function KeyringNotice({ onSettled }: { onSettled: () => void }) {
+  const [said, setSaid] = useState<"still" | "refused" | null>(null);
+  const [pressing, setPressing] = useState(false);
+  const press = (): void => {
+    if (pressing) return;
+    setPressing(true);
+    void engineRetry()
+      .then((status) => setSaid(status?.state === "no_key" ? "still" : null), () => setSaid("refused"))
+      .finally(() => {
+        setPressing(false);
+        onSettled();
+      });
+  };
+  return (
+    <GateNotice
+      title={DOOR_COPY.gateKeyringTitle}
+      reason={keyringSentence(BUILD_PLATFORM)}
+      actionLabel={DOOR_COPY.gateTryAgain}
+      onAction={press}
+    >
+      {said === "still" ? <p role="alert">{DOOR_COPY.gateKeyringStillLocked}</p> : null}
+      {said === "refused" ? <p role="alert">{DOOR_COPY.gateRetryRefused}</p> : null}
     </GateNotice>
   );
 }
