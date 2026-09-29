@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "ohmail for macOS, Windows and Linux \u2014 a Tauri v2 shell around the ohmail client UI: a standalone client that carries its own mail engine and speaks IMAP to your own server. One directory also builds the served host-client bundle its host mode hands to phones.",
-  "//": "Ranges, not exact pins, and the same ones the rest of the monorepo uses: an exact pin here puts a SECOND copy of @types/react in the workspace, and two React type identities break apps/webapp's typecheck. In the published mirror npm resolves these fresh; every CI run prints what it got.",
+  "//": "Ranges, not exact pins, and the same ones the rest of the monorepo uses: an exact pin here puts a SECOND copy of @types/react in the workspace, and two React type identities break apps/webapp's typecheck. The lockfile beside it is derived from the resolution this repository tests, never resolved fresh, and `overrides` is written with it: each edge that resolution takes outside its dependent's own range, which npm has to be told about.",
   "//scripts": "TWO ARTIFACTS, ONE DIRECTORY. `ui:build:engine` is the WINDOW bundle that belongs in a binary compiled with the Rust `local-engine` feature: the real client and the bridge in src/bridge-fetch.ts. `ui:build:host` is the SERVED bundle host mode hands to a phone (dist-host). Set the vite arm and the Cargo feature together or the halves disagree \u2014 a window with a bridge and no commands to call, or commands with nothing to call them. Both go through scripts/build-ui.mjs because a `VAR=1 vite build` prefix is POSIX syntax that cmd.exe reads as a program name, and Windows is one of the three platforms this ships to. THREE halves, not two: the engine-bearing artifact also needs `--config src-tauri/tauri.engine.conf.json`, which is what puts the engine and its Node runtime into the bundle as resources. `app:build:engine` selects all three and is the only thing CI calls. (A third artifact \u2014 a fixtures-only interface preview, once `ui:build`'s default \u2014 is retired under the no-demo rule; build-ui.mjs refuses a bare invocation so a stale caller learns that rather than getting the window bundle under an old name.)",
   "scripts": {
     "ui:dev": "vite",
@@ -52,5 +52,11 @@
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.0"
+  },
+  "overrides": {
+    "imapflow": {
+      ".": "$imapflow",
+      "nodemailer": "9.1.0"
+    }
   }
 }
