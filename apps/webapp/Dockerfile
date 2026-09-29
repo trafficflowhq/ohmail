@@ -42,7 +42,7 @@ RUN test -f package-lock.json || { \
       echo "  The legacy builder cannot build this image: install the buildx component"; \
       echo "  (https://docs.docker.com/go/buildx/) and build again."; \
       exit 1; }
-RUN npm ci --no-audit --no-fund
+RUN npm ci --ignore-scripts --no-audit --no-fund
 # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it, the mail
 # sender's among them. git applies them, installed in this stage only (the runtime layer is
 # unchanged); a patch that does not apply fails the build by name.
@@ -52,15 +52,16 @@ RUN node scripts/apply-patches.mjs apply
 # are build-stage tools, installed --no-save so they can never join the published manifests.
 # EXACT versions, not ranges: the committed lockfile cannot pin what the manifests do not
 # declare, so a caret here would let two otherwise-identical builds of one release resolve
-# different declaration files — the image must be reproducible from the tree alone. The React
-# types are the versions the workspace lockfile resolves (a root test holds their major to the
-# manifest's), and all four are REMOVED again after the build (below), so the runtime copy ships
-# nothing the type pass pulled in.
-RUN npm install --no-save \
-      typescript@5.6.3 \
-      @types/node@22.10.2 \
+# different declaration files — the image must be reproducible from the tree alone. All four
+# are the versions this repository's own typecheck resolves (a test holds each line to that),
+# the tree is read again after the install, and all four are REMOVED again after the build
+# (below), so the runtime copy ships nothing the type pass pulled in.
+RUN npm install --no-save --ignore-scripts --no-audit --no-fund \
+      typescript@5.9.3 \
+      @types/node@22.20.1 \
       @types/react@19.2.17 \
       @types/react-dom@19.2.7
+RUN node scripts/apply-patches.mjs verify-tree --extra typescript --extra @types/node --extra @types/react --extra @types/react-dom
 # `styled-jsx` — next's own dependency — resolves `react` by walking UP from where it physically
 # sits, and it must bind the React instance react-dom arms. When the lockfile nests react under
 # this app and hoists styled-jsx to the root, styled-jsx binds another copy and every

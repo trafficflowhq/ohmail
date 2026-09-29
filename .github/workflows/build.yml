@@ -169,10 +169,11 @@ jobs:
       # tested against rather than whatever its ranges resolve to today — and a
       # build with no network can resolve it at all. `npm install` would
       # quietly rewrite a lock that had drifted from the manifest; `npm ci`
-      # refuses it.
+      # refuses it. No dependency's install script runs; esbuild's JavaScript API finds its
+      # platform binary without its own.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -200,11 +201,12 @@ jobs:
 
       # ── 2 + 3 · the engine and the runtime it is spawned with ──────────────
       - name: Install the locked dependency tree
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
-      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      # does not apply, and the engine bundler refuses an engine that does not carry them. It reads
+      # the installed tree off the disk against the lockfile first, and refuses one that moved.
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
 
@@ -818,10 +820,11 @@ jobs:
       # tested against rather than whatever its ranges resolve to today — and a
       # build with no network can resolve it at all. `npm install` would
       # quietly rewrite a lock that had drifted from the manifest; `npm ci`
-      # refuses it.
+      # refuses it. No dependency's install script runs; esbuild's JavaScript API finds its
+      # platform binary without its own.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -845,11 +848,12 @@ jobs:
           cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
-      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      # does not apply, and the engine bundler refuses an engine that does not carry them. It reads
+      # the installed tree off the disk against the lockfile first, and refuses one that moved.
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
 
@@ -1153,10 +1157,11 @@ jobs:
       # tested against rather than whatever its ranges resolve to today — and a
       # build with no network can resolve it at all. `npm install` would
       # quietly rewrite a lock that had drifted from the manifest; `npm ci`
-      # refuses it.
+      # refuses it. No dependency's install script runs; esbuild's JavaScript API finds its
+      # platform binary without its own.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -1180,11 +1185,12 @@ jobs:
           cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
-      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      # does not apply, and the engine bundler refuses an engine that does not carry them. It reads
+      # the installed tree off the disk against the lockfile first, and refuses one that moved.
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
 
@@ -2295,10 +2301,11 @@ jobs:
       # tested against rather than whatever its ranges resolve to today — and a
       # build with no network can resolve it at all. `npm install` would
       # quietly rewrite a lock that had drifted from the manifest; `npm ci`
-      # refuses it.
+      # refuses it. No dependency's install script runs; esbuild's JavaScript API finds its
+      # platform binary without its own.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -2324,11 +2331,12 @@ jobs:
           cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
-      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      # does not apply, and the engine bundler refuses an engine that does not carry them. It reads
+      # the installed tree off the disk against the lockfile first, and refuses one that moved.
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
 
@@ -3601,26 +3609,30 @@ jobs:
       # From the committed package-lock.json, so the dependency tree is the same
       # on every machine — the reproducibility the exact-pinned manifests promise.
       - name: Install the locked dependency tree
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
-      # does not apply, and the engine bundler refuses an engine that does not carry them.
+      # does not apply, and the engine bundler refuses an engine that does not carry them. It reads
+      # the installed tree off the disk against the lockfile first, and refuses one that moved.
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
 
       # typescript AND every @types package in ONE install: a second `npm install
       # --no-save` prunes what an earlier one added, after which `npx tsc` fetches
       # the unrelated `tsc` package. The @types back the engine's `node:` and
-      # untyped-dependency imports; the runtime deps ship their own declarations.
+      # untyped-dependency imports; the runtime deps ship their own declarations. Each is the
+      # version this repository's own typecheck uses, and the tree is read again afterwards,
+      # because the engine bundle below is built from it.
       - name: Typecheck the engine source
         run: |
-          npm install --no-save \
-            typescript@5.6 \
-            @types/node@^22.10.0 \
-            @types/nodemailer@^6.4.16 \
-            @types/mailparser@^3.4.0 \
-            @types/sanitize-html@^2.16.1
+          npm install --no-save --ignore-scripts --no-audit --no-fund \
+            typescript@5.9.3 \
+            @types/node@22.20.1 \
+            @types/nodemailer@6.4.24 \
+            @types/mailparser@3.4.6 \
+            @types/sanitize-html@2.16.1
+          node scripts/apply-patches.mjs verify-tree --extra typescript --extra @types/node --extra @types/nodemailer --extra @types/mailparser --extra @types/sanitize-html
           ./node_modules/.bin/tsc --noEmit -p tsconfig.engine.json
 
       # Build the one-file engine from the published source. esbuild is pinned —
@@ -3730,10 +3742,10 @@ jobs:
 
       # `apps/desktop` only, and no workspace: the Vite config aliases every
       # `@ohmail/*` specifier straight at a source path, which is why the three
-      # platform jobs install exactly this and nothing else.
+      # platform jobs install exactly this and nothing else. No install script runs.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Build the engine-bearing UI bundle
         working-directory: apps/desktop

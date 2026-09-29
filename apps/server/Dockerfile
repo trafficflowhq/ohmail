@@ -43,22 +43,21 @@ RUN test -f package-lock.json || { \
       exit 1; }
 # The committed lockfile IS the resolution: the tree this bundle is built from is the tree
 # this repository's own CI typechecks.
-RUN npm ci --no-audit --no-fund
+RUN npm ci --ignore-scripts --no-audit --no-fund
 # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it, the mail
 # sender's among them. git applies them, installed in this stage only (the runtime layer is
 # unchanged); a patch that does not apply fails the build by name.
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 RUN node scripts/apply-patches.mjs apply
-# The bundler, pinned and off to one side — never a project dependency. Same arrangement as
-# the engine build; scripts/engine-bundle.mjs refuses any other esbuild version.
-RUN mkdir -p /tmp/esbuild && cd /tmp/esbuild && npm install --no-save esbuild@0.24.0
+# The bundler is the locked tree's own esbuild, a pinned devDependency of the root manifest that
+# `npm ci` installed above; scripts/engine-bundle.mjs refuses any other version.
 # IN THE BUILD STAGE TOO, the organizer recipe's arrangement: `bundle-host.mjs` reads it and
 # writes the label INTO the layout as `BUILD_VERSION`, which `config.ts` reads BEFORE any
 # variable — so the identity is baked into the artifact and a compose-override variable cannot
 # outrank it. With no argument the bundler writes the workspace version, still a truthful label.
 ARG TF_BUILD_VERSION=""
 ENV TF_BUILD_VERSION=${TF_BUILD_VERSION}
-RUN OHMAIL_ESBUILD_FROM=/tmp/esbuild node scripts/bundle-host.mjs server
+RUN node scripts/bundle-host.mjs server
 # Fail the BUILD, not the container, if the bundle or a journal did not get laid out.
 RUN test -f build/host-server/bin/ohmail-server.mjs \
  && test -d build/host-server/drizzle \

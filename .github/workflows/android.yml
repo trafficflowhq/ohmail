@@ -134,12 +134,13 @@ jobs:
           java-version: 17
 
       - name: Install the locked dependency tree
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code. `patches/` holds this repository's changes to it, among
       # them the TLS transport's Android half and the mail sender; this applies them to every
       # installed copy and refuses by name when one does not apply. The dex step below reads the
-      # result in the compiled app, and the engine bundler refuses an engine without it.
+      # result in the compiled app, and the engine bundler refuses an engine without it. It reads
+      # the installed tree off the disk against the lockfile first, and refuses one that moved.
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
 
@@ -387,12 +388,13 @@ jobs:
           esac
 
       - name: Install the locked dependency tree
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code. `patches/` holds this repository's changes to it, among
       # them the TLS transport's Android half and the mail sender; this applies them to every
       # installed copy and refuses by name when one does not apply. The dex step below reads the
-      # result in the compiled app, and the engine bundler refuses an engine without it.
+      # result in the compiled app, and the engine bundler refuses an engine without it. It reads
+      # the installed tree off the disk against the lockfile first, and refuses one that moved.
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
 

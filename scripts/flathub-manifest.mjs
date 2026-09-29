@@ -68,7 +68,8 @@ export function missingSources(wanted, sources, field) {
 /**
  * The whole check, as lines. One entry per lockfile, so a refusal names WHICH tree drifted: the
  * crates and the desktop's npm tree are in this repository, and the root npm lockfile is written
- * by the publisher and only exists in a published checkout — pass `--mirror` to include it.
+ * when the tree is published, so only a published checkout or a render of the tree holds it — pass
+ * `--mirror` to include it.
  */
 export function checkSources({ mirror = null } = {}) {
   const cargo = JSON.parse(readFileSync(CARGO_SOURCES, "utf8"));
@@ -82,7 +83,7 @@ export function checkSources({ mirror = null } = {}) {
   if (mirror !== null) {
     const rootLock = join(mirror, "package-lock.json");
     if (!existsSync(rootLock)) {
-      throw new Error(`flathub-manifest: ${rootLock} does not exist — --mirror wants a published checkout`);
+      throw new Error(`flathub-manifest: ${rootLock} does not exist — --mirror wants a published checkout or a render of the tree`);
     }
     out.push({ lock: `${rootLock}`, file: "node-sources.json",
       missing: missingSources(npmIntegrities(readFileSync(rootLock, "utf8")), node, "sha512") });
@@ -109,15 +110,15 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathS
       for (const checksum of row.missing.slice(0, 10)) process.stdout.write(`    ${checksum}\n`);
     }
     /* A DERIVED FILE'S CHECK NAMES THE TREE IT DERIVES FROM (FLATHUB-NODE-SOURCES-DERIVE-AT-
-     * CEREMONY). node-sources.json is derived from the PUBLISHED root lockfile, which only a
-     * published checkout has and which the publisher rewrites at every ceremony — so the
-     * repo-local form reads two lockfiles, finds nothing wrong with either, and prints a green
-     * that says nothing about the one a Flathub build installs first. It left the file sixteen
-     * packages behind. Without a mirror this is NOT DERIVABLE, never a pass. */
+     * CEREMONY). node-sources.json is derived from the PUBLISHED root lockfile too, which only a
+     * published checkout or a render of the tree holds — so the repo-local form reads two lockfiles,
+     * finds nothing wrong with either, and prints a green that says nothing about the one a Flathub
+     * build installs first. It left the file sixteen packages behind. Without a mirror this is NOT
+     * DERIVABLE, never a pass. */
     if (mirror === null && !argv.includes("--local-only")) {
       process.stderr.write("flathub-manifest: NOT DERIVABLE HERE — node-sources.json is derived from the " +
-        "PUBLISHED root package-lock.json, which only a published checkout has and which the publisher " +
-        "REWRITES at every ceremony. Pass --mirror <checkout>, or --local-only to read just the two " +
+        "PUBLISHED root package-lock.json too, which only a published checkout or a render of the tree " +
+        "holds. Pass --mirror <checkout or render>, or --local-only to read just the two " +
         "repo-local lockfiles and have the verdict say so.\n");
       process.exit(3);
     }

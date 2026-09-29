@@ -47,13 +47,14 @@ RUN test -f package-lock.json || { \
       echo "  The legacy builder cannot build this image: install the buildx component"; \
       echo "  (https://docs.docker.com/go/buildx/) and build again."; \
       exit 1; }
-RUN npm ci --no-audit --no-fund
+RUN npm ci --ignore-scripts --no-audit --no-fund
 # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it, the mail
 # sender's among them. git applies them, installed in this stage only (the runtime layer is
 # unchanged); a patch that does not apply fails the build by name.
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 RUN node scripts/apply-patches.mjs apply
-RUN mkdir -p /tmp/esbuild && cd /tmp/esbuild && npm install --no-save esbuild@0.24.0
+# The bundler is the locked tree's own esbuild, a pinned devDependency of the root manifest that
+# `npm ci` installed above; scripts/engine-bundle.mjs refuses any other version.
 # WHICH COMMIT THIS IMAGE WAS BUILT FROM, through the source this process TRUSTS. `bundle-host.mjs`
 # writes the label into `BUILD_VERSION` beside the bundle, and `build-version.ts` reads that file
 # BEFORE the environment on purpose: a variable set beside a container can name a build the image
@@ -62,7 +63,7 @@ RUN mkdir -p /tmp/esbuild && cd /tmp/esbuild && npm install --no-save esbuild@0.
 # what a build from a working tree is a build of. The release workflow passes the tagged commit.
 ARG TF_BUILD_VERSION=""
 ENV TF_BUILD_VERSION=${TF_BUILD_VERSION}
-RUN OHMAIL_ESBUILD_FROM=/tmp/esbuild node scripts/bundle-host.mjs worker
+RUN node scripts/bundle-host.mjs worker
 RUN test -f build/host-worker/bin/ohmail-worker.mjs \
  && test -d build/host-worker/drizzle \
  && test -d build/host-worker/drizzle-cloud

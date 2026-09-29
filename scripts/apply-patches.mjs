@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * apply-patches.mjs — carry `patches/` into a tree installed with `npm ci`, and prove an artefact carries it.
- *
- *   node scripts/apply-patches.mjs apply                         patch every installed copy, or refuse
- *   node scripts/apply-patches.mjs markers [--json]              the literals each patch adds
+ *   node scripts/apply-patches.mjs apply                          read the tree against its lockfile, then patch it
+ *   node scripts/apply-patches.mjs verify-tree [--extra <name>]…  the installed tree is the locked one
+ *   node scripts/apply-patches.mjs markers [--json]               the literals each patch adds
  *   node scripts/apply-patches.mjs assert --in <path> --require <name>   refuse an artefact without them
  *
  * pnpm applies these files itself in the development workspace; an npm install gets them only here.
@@ -28,7 +28,7 @@ function refuse(message) {
 }
 
 function parseArgs(argv) {
-  const out = { verb: argv[0], root: null, ins: [], requires: [], json: false };
+  const out = { verb: argv[0], root: null, ins: [], requires: [], extra: [], json: false };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -38,6 +38,7 @@ function parseArgs(argv) {
     if (a === "--root") out.root = value();
     else if (a === "--in") out.ins.push(value());
     else if (a === "--require") out.requires.push(value());
+    else if (a === "--extra") out.extra.push(value());
     else if (a === "--json") out.json = true;
     else refuse(`unknown argument ${a}`);
   }
@@ -191,6 +192,87 @@ function gitErrors(r) {
   return lines.length ? lines.join("\n    ") : `git exited ${r.status}${r.error ? ` (${r.error.message})` : ""}`;
 }
 
+/* npm's platform rule for a lock entry's os/cpu/libc lists: a `!name` excludes, and a plain list must match. */
+function listAdmits(value, list) {
+  if (!Array.isArray(list) || list.length === 0) return true;
+  let negated = 0;
+  let match = false;
+  for (const entry of list) {
+    if (entry.startsWith("!")) { negated += 1; if (value === entry.slice(1)) return false; }
+    else if (value === entry) match = true;
+  }
+  return match || negated === list.length;
+}
+function hostLibc() {
+  if (process.platform !== "linux") return null;
+  return process.report?.getReport?.()?.header?.glibcVersionRuntime ? "glibc" : "musl";
+}
+const platformExcludes = (e) => !listAdmits(process.platform, e.os) || !listAdmits(process.arch, e.cpu) || (Array.isArray(e.libc) && !listAdmits(hostLibc(), e.libc));
+
+/* Every package DIRECTORY at a node_modules position (not the package.json files packages carry inside
+ * themselves), recursing only into each package's own node_modules; a link is a workspace, not a package. */
+function packagePositions(dir, rel, out) {
+  if (!isDir(dir)) return out;
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.name.startsWith(".")) continue;
+    const names = e.name.startsWith("@") && e.isDirectory() ? readdirSync(join(dir, e.name)).map((n) => `${e.name}/${n}`) : [e.name];
+    for (const name of names) {
+      const abs = join(dir, name);
+      if (lstatSync(abs).isSymbolicLink() || !isDir(abs) || !existsSync(join(abs, "package.json"))) continue;
+      const at = `${rel}/${name}`;
+      out.push(at);
+      packagePositions(join(abs, "node_modules"), `${at}/node_modules`, out);
+    }
+  }
+  return out;
+}
+
+/* THE INSTALLED TREE IS THE LOCKED ONE, read off the DISK: npm's own record of what it did says nothing about
+ * a later `--no-save` step or a package something rewrote. Each lock entry is on disk at its path with its
+ * name and version, or is optional with a platform that excludes this host; a package directory the lock
+ * does not name is EXTRA unless `--extra` names it (with everything inside it). An empty read refuses. */
+function verifyTree(treeRoot, { extra = [], tree = "." } = {}) {
+  const lock = readJson(join(treeRoot, "package-lock.json"));
+  if (!lock?.packages) refuse(`TREE_NOT_AS_LOCKED ${tree}: no package-lock.json to read the tree against`);
+  const entries = Object.entries(lock.packages).filter(([k, e]) => k.includes("node_modules/") && !e.link && e.version);
+  const problems = [];
+  let present = 0;
+  let skipped = 0;
+  for (const [k, e] of entries) {
+    const name = k.slice(k.lastIndexOf("node_modules/") + "node_modules/".length);
+    const disk = readJson(join(treeRoot, k, "package.json"));
+    if (!disk) {
+      if (e.optional && platformExcludes(e)) { skipped += 1; continue; }
+      problems.push(`MISSING ${k} (${name}@${e.version})${e.optional ? " — optional, and its platform admits this host" : ""}`);
+    } else if (disk.name !== name || disk.version !== e.version) {
+      problems.push(`MOVED ${k}: the lock says ${name}@${e.version}, the disk holds ${disk.name}@${disk.version}`);
+    } else present += 1;
+  }
+  const ws = Array.isArray(lock.packages[""]?.workspaces) ? lock.packages[""].workspaces : [];
+  const positions = ["", ...ws].flatMap((w) => packagePositions(join(treeRoot, w, "node_modules"), `${w ? `${w}/` : ""}node_modules`, []));
+  if (entries.length === 0 || positions.length === 0) refuse(`TREE_NOT_AS_LOCKED ${tree}: a vacuous read — ${entries.length} locked entries, ${positions.length} package directories on disk`);
+  const extras = [];
+  for (const at of positions) {
+    if (lock.packages[at]) continue;
+    const segs = at.split("/node_modules/").map((x) => x.replace(/^node_modules\//, ""));
+    if (segs.some((n) => extra.includes(n))) { extras.push(at); continue; }
+    problems.push(`EXTRA ${at}: on disk and not in the lock`);
+  }
+  if (problems.length) {
+    refuse(`TREE_NOT_AS_LOCKED ${tree}: ${problems.length} difference(s) from package-lock.json\n  ${problems.slice(0, 40).join("\n  ")}` +
+      `${problems.length > 40 ? `\n  … ${problems.length - 40} more` : ""}`);
+  }
+  console.log(`TREE_AS_LOCKED locked=${entries.length} present=${present} skipped-optional=${skipped} extra=[${[...new Set(extras.map((x) => x.split("/node_modules/").pop().replace(/^node_modules\//, "")))].join(",")}] tree=${tree}`);
+}
+
+/* The root tree, and the desktop app's own when it is installed beside it. */
+function verifyTrees(root, opts) {
+  verifyTree(root, { ...opts, tree: "." });
+  if (existsSync(join(root, "apps", "desktop", "package-lock.json")) && isDir(join(root, "apps", "desktop", "node_modules"))) {
+    verifyTree(join(root, "apps", "desktop"), { ...opts, tree: "apps/desktop" });
+  }
+}
+
 function apply(root) {
   const probe = spawnSync("git", ["--version"], { encoding: "utf8" });
   if (probe.error || probe.status !== 0) refuse(`TOOL_MISSING git: \`git --version\` did not answer (${probe.error?.code ?? `rc ${probe.status}`}); the patches are applied with git apply`);
@@ -198,6 +280,7 @@ function apply(root) {
   if (existsSync(join(root, "node_modules", ".pnpm")) || existsSync(join(root, "node_modules", ".modules.yaml"))) {
     refuse(`${root} was installed by pnpm, which applies these patches itself; this applier is for an npm tree`);
   }
+  verifyTrees(root, {});
   const patches = patchList(root);
   const nms = nodeModulesDirs(root);
   if (nms.length === 0) refuse(`${join(root, "node_modules")} does not exist: install the tree first`);
@@ -309,9 +392,10 @@ function assertIn(root, ins, requires) {
 const args = parseArgs(process.argv.slice(2));
 const root = resolve(args.root ?? join(dirname(fileURLToPath(import.meta.url)), ".."));
 if (args.verb === "apply") apply(root);
+else if (args.verb === "verify-tree") verifyTrees(root, { extra: args.extra });
 else if (args.verb === "markers") markers(root, args.json);
 else if (args.verb === "assert") assertIn(root, args.ins, args.requires);
 else {
-  process.stderr.write("usage: node scripts/apply-patches.mjs apply | markers [--json] | assert --in <path> --require <name> [--root <dir>]\n");
+  process.stderr.write("usage: node scripts/apply-patches.mjs apply | verify-tree [--extra <name>]… | markers [--json] | assert --in <path> --require <name> [--root <dir>]\n");
   process.exit(2);
 }

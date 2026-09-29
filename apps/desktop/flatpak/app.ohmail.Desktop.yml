@@ -60,8 +60,8 @@ modules:
         npm_config_cache: /run/build/ohmail/flatpak-node/npm-cache
     build-commands:
       # 1 · the dependency trees, from the sources flatpak-node-generator wrote.
-      - npm ci --offline --no-audit --no-fund
-      - npm ci --offline --no-audit --no-fund --prefix apps/desktop
+      - npm ci --offline --ignore-scripts --no-audit --no-fund
+      - npm ci --offline --ignore-scripts --no-audit --no-fund --prefix apps/desktop
       #     and the dependency patches this repository carries, applied with the SDK's git; the
       #     engine bundler below refuses an engine without them.
       - node scripts/apply-patches.mjs apply
