@@ -542,7 +542,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
      */
     mustHold();
     const resumed = await resumeSession();
-    if (resumed === "unavailable") throw renewalUnavailableError();
+    if (resumed === "unavailable") throw sessionUncheckedError();
     if (resumed !== "resumed") throw err;
     // The refresh rewrites the whole jar, so the question has to be asked again before the
     // retry: a refresh that landed as a different account must not be retried as this one.
@@ -560,18 +560,23 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 }
 
 /**
- * A RENEWAL THAT MET A FAULT (a 5xx, the network) learned nothing about the session, so it is
- * answered as the desktop's door answers it (`cloud-auth.ts` `offlineResponse`): 503
- * `offline_read_only`, retryable, no Retry-After. The engine's outbox keeps such a press and sends
- * it again after the next renewal; a renewal the server REFUSED is still the refusal.
+ * A RENEWAL THAT MET A FAULT (a 5xx, the network) learned nothing about the session. The ENGINE's
+ * transport answers it as the desktop's door does (`cloud-auth.ts` `offlineResponse`): 503
+ * `offline_read_only`, because its outbox keeps the press and sends it again after the next
+ * renewal. `api()` keeps nothing, so its caller gets `session_unchecked`, whose sentence promises no
+ * re-send. A renewal the server REFUSED is still the refusal on both.
  */
 const RENEWAL_UNAVAILABLE = {
   code: "offline_read_only",
   message: "the session could not be renewed right now, so this waits and is sent again once it is",
 } as const;
 
-function renewalUnavailableError(): ApiError {
-  return new ApiError(503, RENEWAL_UNAVAILABLE.code, RENEWAL_UNAVAILABLE.message, undefined, { coded: true, retryable: true });
+/** `api()`'s renewal fault: nothing kept, nothing sent again. `/approve` says its reload sentence. */
+export const SESSION_UNCHECKED = "session_unchecked";
+
+function sessionUncheckedError(): ApiError {
+  return new ApiError(503, SESSION_UNCHECKED, "Your sign-in could not be checked just now. Try again in a moment.",
+    undefined, { coded: true, retryable: true });
 }
 
 function renewalUnavailableResponse(): Response {

@@ -16,7 +16,7 @@ import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { pendApiOwner } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
-import { ApiError, apiConfigured, auth, messageOf, type DesktopApprovalDTO } from "../../api-client";
+import { ApiError, SESSION_UNCHECKED, apiConfigured, auth, messageOf, type DesktopApprovalDTO } from "../../api-client";
 import { isBusy, retryBusy } from "../../retry-busy";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 import { rememberApprovalRequest } from "./approval-return";
@@ -80,6 +80,8 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
       if (err.code === "approval_used") return t("used");
       if (err.code === "approval_denied") return t("denied");
       if (err.status === 404) return t("notFound");
+      // The renewal met a fault: the session is unread, and a reload asks again.
+      if (err.code === SESSION_UNCHECKED) return t("signInUnchecked");
       if (isBusy(err)) return t("busyGaveUp");
     }
     return messageOf(err);
