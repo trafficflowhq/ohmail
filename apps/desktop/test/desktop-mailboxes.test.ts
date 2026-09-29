@@ -4556,6 +4556,33 @@ describe("the row takes a new password without the mailbox being removed", () =>
     expect(el.textContent).toContain(copy.signInAgainDone!);
   });
 
+  /* A CONSENT IS ABOUT ONE SERVER (the doors review, ruled into this slice): a tick given
+     after one host's refusal retires when the asked-for server is edited, and the next press carries
+     no consent. Mutation watched red: the retire dropped from the host field's handler. */
+  it("a consent ticked for one server retires when the asked-for server is edited", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = sealsAnswer(
+      () => unknownServer({ provider: "imap", login: null, outgoingHost: null }),
+      () => plaintextOffered("imap"),
+    );
+    const el = await render("local");
+    await openAndType(el, "pw");
+    await submitSignIn(el);
+    const host = (): HTMLInputElement => el.querySelector<HTMLInputElement>("#mbx-server-host")!;
+    await act(async () => { type(host(), "plain.example.test"); });
+    await submitSignIn(el);
+    await tick(consentBox(el, "imap")!);
+    expect(consentBox(el, "imap")!.checked, "PREMISE: the consent was ticked").toBe(true);
+    await act(async () => { type(host(), "other.example.test"); });
+    expect(consentBox(el, "imap"), "the consent outlived the server it was given for").toBeNull();
+    await submitSignIn(el);
+    const last = JSON.parse(sentBodies.at(-1)!.body) as { imap: Record<string, unknown>; smtp?: unknown };
+    expect(sentBodies).toHaveLength(3);
+    expect(last.imap.host).toBe("other.example.test");
+    expect(last.imap.allowInsecure, "a consent given for another server travelled").toBeUndefined();
+    expect(last.smtp).toBeUndefined();
+  });
+
   it("CONTROL: a refusal that offers nothing asks for no consent", async () => {
     FACTS = [MAILBOX];
     bridgeReply = sealsAnswer(() => new Response(JSON.stringify({
@@ -4594,6 +4621,23 @@ describe("a store that cannot keep up is disclosed, with the retry beside it", (
     const row = addressRows(el)[0]!;
     expect(row.textContent, "the wedge stayed invisible — the released 0.20.0 shape")
       .toContain("Not connecting (storage)");
+  });
+
+  /* THE COUNT, when the engine states it (CLOUD-QUARANTINE-STRIP-COUNT-AND-CAP-STATE): the mailbox
+     connects, this computer's copy refused rows, so the cell says that and how many — through the
+     strip's own figure — never "Not connecting". The count-less row above is its control. */
+  it("an error/storage row that states its count says how many could not be stored", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage", storeRefusals: { count: 612, retrying: 500, exact: true } }];
+    const el = await render("cloud");
+    const row = addressRows(el)[0]!;
+    expect(row.textContent).toContain("Could not store 612 items");
+    expect(row.textContent, "a copy that could not store is not a connection failure").not.toContain("Not connecting");
+  });
+
+  it("and a floor is said as one", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage", storeRefusals: { count: 10_500, retrying: 500, exact: false } }];
+    const el = await render("cloud");
+    expect(addressRows(el)[0]!.textContent).toContain("Could not store more than 10,500 items");
   });
 
   it("and Sync now — the retry that re-pulls — is still offered and reaches the engine", async () => {

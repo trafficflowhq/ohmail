@@ -2236,6 +2236,8 @@ export function DesktopMailboxes(
               <p className="acct-fine">
                 {serverAsk?.id === shown.id ? t("signInAgainAskWhy") : t("signInAgainWhy")}
               </p>
+              {/* A consent is about one server: an edit of the asked-for server retires the offer and
+                  the tick, as the setup stage does (`FirstRun.tsx`'s `retireConsent`). */}
               {serverAsk?.id === shown.id ? (
                 <>
                   <SettingsField
@@ -2254,6 +2256,7 @@ export function DesktopMailboxes(
                       onChange={(e) => {
                         const host = e.target.value;
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, host } } : a));
+                        setPlaintextAsk(null);
                       }}
                       disabled={signInBusy}
                     />
@@ -2268,6 +2271,7 @@ export function DesktopMailboxes(
                       onChange={(e) => {
                         const port = e.target.value;
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, port } } : a));
+                        setPlaintextAsk(null);
                       }}
                       disabled={signInBusy}
                     />
@@ -2282,6 +2286,7 @@ export function DesktopMailboxes(
                       onChange={(e) => {
                         const user = e.target.value;
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, user } } : a));
+                        setPlaintextAsk(null);
                       }}
                       disabled={signInBusy}
                     />
