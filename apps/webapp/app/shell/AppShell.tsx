@@ -27,6 +27,7 @@ import {
   replySubject,
   forwardSubject,
   inverseMutations,
+  mirrorSuggestionIdOf,
   sendAndDonePlanFor,
   threadOf,
   type ComposeAttachment,
@@ -332,6 +333,42 @@ export function makeHydrateThread(
   return (messageIds) => {
     void engine.hydrateThread(messageIds);
   };
+}
+
+/**
+ * The panes' two body doors, routed as one unit: a row the mirror holds asks the engine — one row
+ * through {@link makeHydrateBody}, the held previews as ONE urgent batch — and a row only a page
+ * holds takes the session door (`older`), with a retry forwarded and nothing else.
+ */
+export function makeBodyDoors(
+  engine: {
+    read(): { get(type: string, id: string): unknown };
+    hydrateBody: (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => unknown;
+    hydrateBodies: (messageIds: string[], opts?: { urgent?: boolean }) => unknown;
+  },
+  older: (messageId: string, opts: { retry?: boolean }) => void,
+): {
+  hydrateBody: (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => void;
+  hydrateBodies: (messageIds: string[], opts?: { urgent?: boolean }) => void;
+} {
+  const one = makeHydrateBody(engine);
+  const inMirror = (id: string) => engine.read().get("message", id) !== undefined;
+  return {
+    hydrateBody: (messageId, opts) => {
+      if (inMirror(messageId)) one(messageId, opts);
+      else older(messageId, opts?.retry ? { retry: true } : {});
+    },
+    hydrateBodies: (messageIds, opts) => {
+      const held = messageIds.filter(inMirror);
+      if (held.length > 0) void engine.hydrateBodies(held, opts);
+      for (const id of messageIds) if (!inMirror(id)) older(id, {});
+    },
+  };
+}
+
+/** Which purchase a suggestion answer lands over: the mirror's own suggestion id for the sender. */
+export function mirrorSuggestionOfEngine(engine: { read(): Parameters<typeof mirrorSuggestionIdOf>[0] }) {
+  return (address: string) => mirrorSuggestionIdOf(engine.read(), address);
 }
 
 /**
@@ -1365,6 +1402,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        as `undefined`, so an absent prop leaves the hook on its documented default rather than
        being handed a hole. */
     ...(suggestWire ? { wire: suggestWire } : {}),
+    mirrorSuggestionOf: mirrorSuggestionOfEngine(engine),
   });
   /**
    * `presented`, NOT `engine.read()` — the Screener is the cutline's own
@@ -1665,7 +1703,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * the engine's outcome is a record the UI renders, so `void` states there is no promise worth
    * awaiting, not a discarded error.
    */
-  const engineHydrateBody = useMemo(() => makeHydrateBody(engine), [engine]);
   const hydrateThread = useMemo(() => makeHydrateThread(engine), [engine]);
 
   /**
@@ -1689,13 +1726,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const mayReadOlderBody = useStableCallback(() => syncMayRead(engine));
   const { open: openOlderBody, bodyFor: olderBodyFor } =
     useOlderBody(!demo, olderBodyWire, mayReadOlderBody);
-  const hydrateBody = useStableCallback((messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => {
-    if (engine.read().get<EngineMessage>("message", messageId) !== undefined) {
-      engineHydrateBody(messageId, opts);
-      return;
-    }
-    openOlderBody(messageId, opts?.retry ? { retry: true } : {});
-  });
+  const { hydrateBody, hydrateBodies } = useMemo(() => makeBodyDoors(engine, openOlderBody), [engine, openOlderBody]);
   const bodyOfMessage = useStableCallback((m: BodyTarget) => {
     const live = engine.read().get<EngineMessage>("message", m.id);
     if (live !== undefined) return bodyOf(engine.read(), live);
@@ -2695,6 +2726,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 settled={mailState.settled && screener.queueSettled}
                 owed={mailState.owed}
                 hydrateBody={hydrateBody}
+                hydrateBodies={hydrateBodies}
                 /* The reading pane's remote-image consent chrome, so a held preview blocks
                    and gates images exactly as the pane does. Absent on the demo. */
                 remoteImages={remoteImages}

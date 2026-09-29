@@ -1,7 +1,7 @@
 import {
   LEGACY_NEWS_FOLDER, canonicalDestination, isOrganizedFolder, retroPassWouldMove,
 } from "@trafficflow/core/destinations";
-import { consentIndex, placedRule, ruleTerms } from "./consent-cutline.js";
+import { consentIndex, messagePlacement, ruleTerms } from "./consent-cutline.js";
 import type { EntityReader } from "./store.js";
 import type { EngineMessage, Folder, MailboxProfileEntity, RuleDTO } from "./types.js";
 
@@ -9,6 +9,10 @@ import type { EngineMessage, Folder, MailboxProfileEntity, RuleDTO } from "./typ
 export type PressStayCause =
   /** A rule for a subject of this mail, from this address or its domain, files it elsewhere. */
   | "subject"
+  /** A rule for mail mentioning a term files it elsewhere; this client holds the text. */
+  | "body"
+  /** A rule for mail mentioning a term decides it, and this client does not hold the text. */
+  | "undecided"
   /** A rule for everyone at the domain outranks the pressed one. */
   | "domain"
   /** A domain press under a rule for one of its addresses, which outranks it. */
@@ -23,7 +27,7 @@ export interface PressStay {
   /** Where the list shows these rows, `null` for History. */
   place: Folder | null;
   messageIds: string[];
-  /** The rule keeping them there, for the three rule causes. */
+  /** The rule keeping them there, for the rule causes; for `undecided`, the rule that decides. */
   rule: RuleDTO | null;
 }
 
@@ -39,9 +43,10 @@ export interface PressOutcome {
 /**
  * THE AFTER-PRESS READING: where the LIST shows each pressed row — `presented` is the surface's own
  * projection over the mirror after the press, never the filed folder. A row away from the pressed
- * place is named by the rule the partition places it by ({@link placedRule}), else by the server
- * pass still to move it, else kept. Rows the lists do not show (a user's own folder, Sent) are not
- * the press's. The wait for another organizer is the caller's to say: nothing is read under it.
+ * place is named by the rule the partition places it by (`messagePlacement`, the bodies read from
+ * `presented`), or by the body rule whose text is not held (`undecided`), else by the server pass
+ * still to move it, else kept. Rows the lists do not show (a user's own folder, Sent) are not the
+ * press's. The wait for another organizer is the caller's to say: nothing is read under it.
  */
 export function pressOutcome(input: {
   presented: EntityReader;
@@ -61,9 +66,10 @@ export function pressOutcome(input: {
     const shown = input.presented.get<EngineMessage>("message", m.id);
     const where = shown === undefined ? null : canonicalDestination(shown.folder) as Folder;
     if (where !== null && canonicalDestination(where) === place) { atPlace.push(m.id); continue; }
-    const by = placedRule(index, m);
-    const ruled = by !== null && canonicalDestination(by.destination) !== place ? by : null;
-    const cause: PressStayCause = ruled !== null ? causeOf(ruled)
+    const placed = messagePlacement(index, m, input.presented);
+    const by = placed.undecided === null ? placed.rule : null;
+    const ruled = placed.undecided ?? (by !== null && canonicalDestination(by.destination) !== place ? by : null);
+    const cause: PressStayCause = placed.undecided !== null ? "undecided" : ruled !== null ? causeOf(ruled)
       : input.retro && retroPassWouldMove(m, input.wanted) ? "moving" : "kept";
     const key = JSON.stringify([cause, where, ruled?.id ?? null]);
     const held = groups.get(key);
@@ -86,6 +92,7 @@ export function pressGained(before: readonly string[], after: readonly string[])
 
 function causeOf(r: RuleDTO): PressStayCause {
   if (ruleTerms(r).subject !== null) return "subject";
+  if (ruleTerms(r).body !== null) return "body";
   return r.kind === "domain" ? "domain" : "address";
 }
 
@@ -98,24 +105,42 @@ function causeOf(r: RuleDTO): PressStayCause {
  */
 export type StayVerdict =
   | { key: "none" }
-  | { key: "kept"; count: number; kept: number; keptPlace: Folder; term: string; rule: RuleDTO }
+  /** `field` names which term the rule reads, so each surface says which one. */
+  | { key: "kept"; count: number; kept: number; keptPlace: Folder; term: string; field: "subject" | "body"; rule: RuleDTO }
   | { key: "keptMany"; count: number; kept: number }
   /** `folder` is the old folder's own name, the one any other mail app shows for it. */
   | { key: "stillLegacy"; count: number; still: number; ids: string[]; folder: string }
   | { key: "still"; count: number; still: number; stillPlace: string; ids: string[] }
+  /** Rows a rule for mail mentioning `term` decides, whose text this client does not hold. */
+  | { key: "undecided"; count: number; still: number; stillPlace: string; ids: string[]; term: string; rule: RuleDTO }
   | { key: "applying"; count: number };
 
 export function stayVerdict(out: PressOutcome, reader: EntityReader): StayVerdict {
   const of = (c: PressStayCause) => out.away.filter((g) => g.cause === c);
-  const ruled = [...of("subject"), ...of("domain"), ...of("address")];
+  const ruled = [...of("subject"), ...of("body"), ...of("domain"), ...of("address")];
   const only = ruled.length === 1 ? ruled[0]! : null;
-  if (only?.rule && ruleTerms(only.rule).subject !== null) {
+  const t = only?.rule ? ruleTerms(only.rule) : null;
+  if (only?.rule && t !== null && (t.subject !== null || t.body !== null)) {
+    const field = t.subject !== null ? "subject" as const : "body" as const;
     return {
       key: "kept", count: out.at, kept: only.messageIds.length, keptPlace: only.rule.destination,
-      term: only.rule.subjectContains!.trim(), rule: only.rule,
+      term: (field === "subject" ? only.rule.subjectContains : only.rule.bodyContains)!.trim(), field, rule: only.rule,
     };
   }
   if (ruled.length > 0) return { key: "keptMany", count: out.at, kept: ruled.reduce((n, g) => n + g.messageIds.length, 0) };
+  /* THE TEXT IS NOT HELD, SO NOTHING IS CLAIMED ABOUT WHERE IT GOES: the rows sit at the wire's
+     folder, the rule that decides them is named, and Move them stays on offer as for `still`. */
+  const unread = of("undecided");
+  if (unread.length > 0) {
+    const ids = unread.flatMap((g) => g.messageIds);
+    const widest = [...unread].sort((a, b) => b.messageIds.length - a.messageIds.length)[0]!;
+    const filed = reader.get<EngineMessage>("message", widest.messageIds[0]!);
+    return {
+      key: "undecided", count: out.at, still: ids.length, ids, rule: widest.rule!,
+      stillPlace: widest.place ?? (filed === undefined ? "" : filed.physicalFolder ?? filed.folder),
+      term: (widest.rule!.bodyContains ?? "").trim(),
+    };
+  }
   const left = of("kept");
   if (left.length > 0) {
     const ids = left.flatMap((g) => g.messageIds);

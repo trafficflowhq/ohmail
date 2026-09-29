@@ -26,6 +26,7 @@ import {
   encodeListCursor, encodeNullableKeysetCursor,
 } from "./pagination.js";
 import { requireUuid } from "./ids.js";
+import { heldOutByResurfacedFolds } from "./resurfaced-fold.js";
 import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
@@ -605,9 +606,14 @@ export class MessageService {
      * request waits behind them. `deleted: "include"` keeps the singular's exact selection: only
      * the round-trips change.
      */
-    const items = await materializeMessagesInOrder(
+    const page = await materializeMessagesInOrder(
       ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
     );
+    /* "NEW FOR YOU" FOLDS A RESURFACED CONVERSATION AS THE OHBOX DOES: every member of a thread a
+       pin brought back stands in that row, never here too. A page may come back short; the cursor
+       stays the SQL row's, so the walk goes on past what the fold held out. */
+    const held = view === "new_for_you" ? await heldOutByResurfacedFolds(ctx.db, ctx.accountId, page) : null;
+    const items = held === null || held.size === 0 ? page : page.filter((m) => !held.has(m.id));
     const last = pageRows[pageRows.length - 1];
     const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.date, last.id) : null;
     return { items, nextCursor };

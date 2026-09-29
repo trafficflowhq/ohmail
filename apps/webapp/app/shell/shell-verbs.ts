@@ -17,6 +17,7 @@ import {
   UNDO_CLASS,
   consentPartition,
   inverseMutations,
+  landingOfMoves,
   pressForecast,
   pressGained,
   ruleFingerprint,
@@ -53,6 +54,7 @@ import { senderHitOf } from "./sender-hit";
 import {
   RETRO_DEFAULT_ON,
   dispatchScreeningChange,
+  movesAtLanding,
   planScreeningChange,
   resolutionExtras,
   ruleMatchOf,
@@ -62,6 +64,7 @@ import {
   splitRoutingPlan,
   withResolution,
   worstStatus,
+  type PressMove,
   type ScreeningDest,
   type ScreeningPlan,
   type ScreeningPress,
@@ -271,6 +274,7 @@ export function useShellVerbs({
         } : {}),
         ...(v.key === "keptMany" ? { kept: v.kept } : {}),
         ...(v.key === "still" ? { still: v.still, stillPlace: placeLabel(v.stillPlace) } : {}),
+        ...(v.key === "undecided" ? { still: v.still, stillPlace: placeLabel(v.stillPlace), term: v.term } : {}),
         ...(v.key === "stillLegacy" ? { still: v.still, folder: v.folder, stillPlace: placeLabel(v.folder) } : {}),
       });
       const act = verdictAction(v, { scope, address: sender.address });
@@ -310,7 +314,13 @@ export function useShellVerbs({
       });
       return;
     }
-    if (plan.mutations.length === 0) { say("toastAlready"); return; }
+    /* THE MOVES THE LIST WILL SHOW AT THE PLACE, and no others (`movesAtLanding`): a row a rule of
+       theirs keeps elsewhere stays where it is, as the step said before the press. */
+    const pressMoves = movesAtLanding(
+      plan, press?.forecast ?? screeningForecast(messageId, address, dest, scope, makeRule, applyRetro),
+      press?.resolution ?? "keep",
+    );
+    if (plan.mutations.length === 0 && pressMoves.length === 0) { say("toastAlready"); return; }
     /* A SENDER AT THE GATE IS DECIDED THROUGH THE SCREENER'S DOOR — its delayed commit and its
        Undo, as the list's own decision is. Not a step that removes rules: that writes more than
        the list's Undo can take back, and goes at once as before. */
@@ -324,7 +334,7 @@ export function useShellVerbs({
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH. This one has not been since it
        shipped: the mail moved and the filing strip's count stayed stale until its next poll, up to
        thirty seconds later. Both Move arms already go through it. */
-    void dispatchScreeningChange(plan, (m) => fileAndRefresh(engine.mutate(m))).then(say);
+    void dispatchScreeningChange(plan, pressMoves, (m) => fileAndRefresh(engine.mutate(m))).then(say);
   });
 
   /**
@@ -382,9 +392,8 @@ export function useShellVerbs({
     const forecast = p.press?.forecast
       ?? screeningForecast(p.messageId, p.address, p.dest, p.scope, p.makeRule, p.applyRetro);
     const landing = new Set(forecast ? forecast[resolution].landing : []);
-    const { mail } = splitRoutingPlan(p.plan);
     // Only the rows the list will show at the place move: under "keep" a kept row stays put.
-    const moves = mail.filter((m) => m.kind === "move" && (forecast === null || landing.has(m.messageId)));
+    const moves = movesAtLanding(p.plan, forecast, resolution);
     const pre = engine.verbRead();
     const inverses = moves.flatMap((mu) => inverseMutations(pre, mu));
     const settled = moves.map((mu) => fileAndRefresh(engine.mutate(mu)));
@@ -435,7 +444,7 @@ export function useShellVerbs({
     // Nothing is known at the press without a forecast, so the sentence names no number.
     if (forecast === null) return t("screening.toastPressRuled", { place: p.place, sender: p.who });
     if (!p.applyRetro) {
-      return t(`screening.${screeningToast(p.plan, null)}`, {
+      return t(`screening.${screeningToast(p.plan, null, movesAtLanding(p.plan, forecast, resolution).length)}`, {
         sender: p.who, place: p.place, count: pressGained(p.before, forecast[resolution].landing),
       });
     }
@@ -496,7 +505,9 @@ export function useShellVerbs({
         });
         if (after === null) return;
         if (after.verdict.key === "none") toast(t("screening.verdictAll", { count: after.at, sender: p.who, place: p.place }));
-        else if (after.verdict.key === "still" || after.verdict.key === "stillLegacy") p.sayVerdict(after.verdict);
+        else if (after.verdict.key === "still" || after.verdict.key === "stillLegacy" || after.verdict.key === "undecided") {
+          p.sayVerdict(after.verdict);
+        }
       },
     });
   };
@@ -527,6 +538,8 @@ export function useShellVerbs({
 
   interface RoutingPressPlan {
     plan: ScreeningPlan;
+    /** The moves of the rows the press named — beside the plan, which carries none. */
+    moves: PressMove[];
     who: string;
     address: string;
     named: string[];
@@ -558,6 +571,7 @@ export function useShellVerbs({
       ...planned.ruleMutations,
       ...planned.mutations.filter((x) => x.kind === "screener_decide"),
     ]);
+    // Only the ladder and the decide; the plan carries no move (`movesAtLanding`).
     /**
      * AND THE NAMED MESSAGES ARE MOVED, whatever the plan's own past-mail half decided.
      *
@@ -569,14 +583,11 @@ export function useShellVerbs({
      */
     const wanted = FOLDER_OF_VIEW[view];
     const decided = planned.mutations.some((x) => x.kind === "screener_decide");
-    const named: EngineMutation[] = decided ? [] : [...only]
+    const named: PressMove[] = decided ? [] : [...only]
       .map((id) => read.get<EngineMessage>("message", id))
       .filter((msg): msg is EngineMessage => msg != null && wanted != null && msg.folder !== wanted)
       .map((msg) => ({ kind: "move", messageId: msg.id, folder: wanted! }));
-    const mutations = [
-      ...planned.mutations.filter((x) => kept.has(x)),
-      ...named,
-    ];
+    const mutations = planned.mutations.filter((x) => kept.has(x));
     /* The decide re-files the mail it holds itself, so its own count is the plan's to state;
        otherwise it is what this press actually names. */
     const moved = decided ? planned.moved : named.length;
@@ -586,12 +597,12 @@ export function useShellVerbs({
        commit re-reads the ladder from, and the named ids are what the overlay shows moved. The
        press does not re-derive either — a second derivation is how the row that moves and the
        rule that is written come to be about different people. */
-    return { plan: { ...planned, mutations, moved }, who, address: sender.address, named: [...only] };
+    return { plan: { ...planned, mutations, moved }, moves: named, who, address: sender.address, named: [...only] };
   });
 
   /** Whether a plan's routing half carries a Screener decision — see {@link fileThroughRouting}. */
   const decidesAtGate = (plan: ScreeningPlan): boolean =>
-    splitRoutingPlan(plan).routing.some((mu) => mu.kind === "screener_decide");
+    plan.mutations.some((mu) => mu.kind === "screener_decide");
 
   /**
    * ONE ROUTING PRESS — TWO HALVES AND ONE SENTENCE, and every Move arm comes through here. The
@@ -624,7 +635,7 @@ export function useShellVerbs({
     const subjects: string[] = [];
     let lost = false;
     for (const planned of input.plans) {
-      const { mail, routing: rules } = splitRoutingPlan(planned.plan);
+      const { mail, routing: rules } = splitRoutingPlan(planned.plan, planned.moves);
       for (const mu of mail) inverses.push(...inverseMutations(pre, mu));
       for (const mu of mail) void fileAndRefresh(engine.mutate(mu));
       if (rules.length === 0) continue;
@@ -670,14 +681,14 @@ export function useShellVerbs({
        state the strip's own filter makes all but unreachable — unwatchable, and the shape this
        arm shipped with. */
     const place = PLACE_LABEL[view] ?? view;
-    const said = screeningToast(planned.plan, null);
+    const said = screeningToast(planned.plan, null, planned.moves.length);
     const sentence = t(`screening.${said}`, {
       sender: planned.who, place, count: planned.plan.moved,
     });
     /* A DECIDE KEEPS ITS OWN PATH — see `fileThroughRouting`'s note. Its sentence is the one the
        server earned, awaited exactly as it always has been. */
     if (decidesAtGate(planned.plan)) {
-      void dispatchScreeningChange(planned.plan, (mu) => fileAndRefresh(engine.mutate(mu)))
+      void dispatchScreeningChange(planned.plan, planned.moves, (mu) => fileAndRefresh(engine.mutate(mu)))
         .then((key) => {
           toast(t(`screening.${key}`, { sender: planned.who, place, count: planned.plan.moved }));
         });
@@ -1408,7 +1419,7 @@ export function useShellVerbs({
            counts are what APPLIED, never what was picked. A sender whose rule the service
            refused is not a sender whose mail goes there now. */
         void Promise.all(decided.map((p) =>
-          dispatchScreeningChange(p.plan, (mu) => fileAndRefresh(engine.mutate(mu)))
+          dispatchScreeningChange(p.plan, p.moves, (mu) => fileAndRefresh(engine.mutate(mu)))
             .then((key) => ({ key, moved: p.plan.moved }))))
           .then((answers) => {
             const done = answers.filter((a) => a.key !== "toastRuleFailed" && a.key !== "toastDecideRefused");
@@ -1461,8 +1472,10 @@ export function useShellVerbs({
     let senders = 0;
     let messages = 0;
     let rules = 0;
+    const read = setRead();
+    const planned: ScreeningPlan[] = [];
     for (const id of ids) {
-      const s = senderScreening(setRead(), id);
+      const s = senderScreening(read, id);
       if (!s || seen.has(s.key)) continue;
       seen.add(s.key);
       /**
@@ -1474,13 +1487,23 @@ export function useShellVerbs({
        * would have claimed rules whose outcome this path does not await. Owed, not dropped:
        * bulk rule-creation needs its own confirm copy and its own three-outcome reporting.
        */
-      const plan = planScreeningChange(s, dest, "sender", false);
-      if (plan.mutations.length === 0) continue;
-      senders++;
-      messages += plan.moved;
-      if (plan.rule) rules++;
-      plans.push(...plan.mutations);
+      planned.push(planScreeningChange(s, dest, "sender", false));
       subject.push(...s.scopes.sender.messages);
+    }
+    /* THE MOVES THE LISTS WILL SHOW AT THE PLACE (`movesAtLanding`), over ONE partition for the
+       whole selection; the demo's lists are not partitioned, so every candidate lands there. */
+    const wanted = FOLDER_OF_VIEW[dest];
+    const landing = demo || !wanted ? null : landingOfMoves(
+      read, shellConsentOptions(consent, nowAt(), ownAddresses), planned.flatMap((p) => p.outOfPlace), wanted,
+    );
+    const forecast = landing === null ? null : { keep: { landing }, remove: { landing } };
+    for (const plan of planned) {
+      const moves = movesAtLanding(plan, forecast);
+      if (plan.mutations.length === 0 && moves.length === 0) continue;
+      senders++;
+      messages += plan.moved + moves.length;
+      if (plan.rule) rules++;
+      plans.push(...plan.mutations, ...moves);
     }
     return { senders, messages, rules, mutations: plans, subject };
   });

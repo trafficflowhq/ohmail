@@ -57,6 +57,12 @@ export interface SenderSuggestion {
   confidence: number;
   rationale: string;
   /**
+   * OVERLAY ONLY: the mirror's suggestion id for this sender when this answer landed here (`null`
+   * for none). A different id on the mirror later is a newer purchase from somewhere (another
+   * device, a re-ask, the worker) and wins the join. Absent keeps the overlay winning, as before.
+   */
+  over?: string | null;
+  /**
    * Why there is no answer, when there is none. A purchase does not always
    * come back with a verdict for every sender, and those rows used to
    * render blank — paid for, looking skipped, nothing saying why. It was
@@ -509,6 +515,11 @@ export function useScreenerSuggestions(opts: {
    * tell the shell's rows, or they go on promising a suggestion the next run cannot buy.
    */
   publishStanding?: (standing: SuggestStanding | null) => void;
+  /**
+   * The mirror's newest suggestion id for a sender (`mirrorSuggestionIdOf`), stamped on every
+   * overlay entry as it lands, so a newer purchase the mirror receives later wins the join.
+   */
+  mirrorSuggestionOf?: (address: string) => string | null;
 }): ScreenerSuggestions {
   const t = useTranslations("screener");
   const metered = useManagedService();
@@ -694,8 +705,12 @@ export function useScreenerSuggestions(opts: {
    * and make the cold-mirror retrigger below work by accident rather than by design. The effects
    * read `link.current`; the dependency list stays the four signals it claims to be.
    */
-  const link = useRef({ wire, publish: opts.publish, publishStanding: opts.publishStanding });
-  link.current = { wire, publish: opts.publish, publishStanding: opts.publishStanding };
+  const link = useRef({
+    wire, publish: opts.publish, publishStanding: opts.publishStanding, mirrorSuggestionOf: opts.mirrorSuggestionOf,
+  });
+  link.current = {
+    wire, publish: opts.publish, publishStanding: opts.publishStanding, mirrorSuggestionOf: opts.mirrorSuggestionOf,
+  };
   /**
    * THE SENTENCE FOR A REFUSAL, IN THE READER'S LANGUAGE WHERE THERE IS ONE.
    *
@@ -765,9 +780,12 @@ export function useScreenerSuggestions(opts: {
       // OUT TO THE HOST'S OVERLAY FIRST, when there is one. Absent on every surface that owns its
       // own — see the option — so this line changes nothing for the client this file ships in.
       link.current.publish?.(rows);
+      const over = link.current.mirrorSuggestionOf;
       setSuggestions((prev) => {
         const next = new Map(prev);
-        for (const r of rows) next.set(senderKey(r.address), r.suggestion);
+        for (const r of rows) {
+          next.set(senderKey(r.address), over ? { ...r.suggestion, over: over(r.address) } : r.suggestion);
+        }
         return next;
       });
     },

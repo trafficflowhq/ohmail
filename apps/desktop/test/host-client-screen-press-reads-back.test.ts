@@ -74,7 +74,8 @@ async function pairedWindow(rules: RuleDTO[]) {
   await engine.start();
   const press = async () => {
     const plan = planScreeningChange(senderScreening(engine.verbRead(), "m1")!, "ohbox");
-    await dispatchScreeningChange(plan, (m) => engine.mutate(m));
+    // A rule press: the server pass moves the backlog, so the press dispatches no moves of its own.
+    await dispatchScreeningChange(plan, [], (m) => engine.mutate(m));
     return screeningVerdict(engine.verbRead(), "m1", undefined, "ohbox", "sender", {
       consent: { known: true, standalone: false, dormancyDays: 60, screeningBaselineAt: null, screeningScope: "window", foldersEnabled: false },
       now: new Date("2026-08-19T10:00:00.000Z"), ownAddresses: [], retro: plan.retro,

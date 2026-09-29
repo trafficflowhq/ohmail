@@ -1147,7 +1147,9 @@ export function useDerivedVersion(): number {
   const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
   return useSyncExternalStore(
     subscribe,
-    () => engine.read().stampExcept(NOT_DERIVED_FROM),
+    // …AND A BODY THAT DECIDES A PLACEMENT: the partition reads the text of a message whose sender
+    // a body-term rule names, and the engine moves `placementStamp` for exactly those bodies.
+    () => Math.max(engine.read().stampExcept(NOT_DERIVED_FROM), engine.placementStamp()),
     () => 0,
   );
 }

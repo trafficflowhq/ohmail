@@ -17,6 +17,7 @@ import { apiConfigured, consent as consentApi, type ConsentStateWire } from "../
 import { readBootCache, writeBootCache } from "./boot-cache";
 import { normalizeLocale, type AppLocale } from "./locale";
 import { readOwner } from "./owner-cookie";
+import { storageOwnerState } from "./storage-owner";
 import type { TravelledChangeWire } from "./travelled-change";
 
 /**
@@ -479,6 +480,20 @@ const RESTING: ConsentState = {
   screeningScope: "window",
 };
 
+/**
+ * WHOSE CONSENT CACHE THIS IS — the remembered account, else the identity the HOST established
+ * (the desktop window's mounted mailbox, the host door's pairing), never the demo's. The cache
+ * holds the three partition inputs and authorises nothing, which is why a host identity is
+ * enough (`storage-owner.ts`); without it the paired desktop partitioned rules-only for as long
+ * as its consent read failed. One resolver for the read and both writes.
+ */
+export function consentCacheOwner(): string | null {
+  const cookie = readOwner();
+  if (cookie !== null) return cookie;
+  const s = storageOwnerState();
+  return s.source === "host" ? s.owner : null;
+}
+
 /** The `boot-cache.ts` scope this hook owns. Exported for the sign-out test and nothing else. */
 export const CONSENT_BOOT_SCOPE = "consent";
 
@@ -847,7 +862,7 @@ export function useConsentState(
         // it), from the same normalised values, under the same account id the read used —
         // and only the three fields `ConsentBootCache` names, which is the authorisation
         // boundary, not an economy.
-        const owner = readOwner();
+        const owner = consentCacheOwner();
         if (owner !== null) {
           const next: ConsentBootCache = {
             v: 1,
@@ -898,14 +913,14 @@ export function useConsentState(
     retryStep.current = 0;
     /**
      * The device's last answer, first — synchronously, before the fetch is issued, so the live
-     * answer can only land on top of the cache, never under it. Keyed by the remembered account
-     * id (`owner-cookie.ts`) — the same id that names the mirror the warm open paints from, so
-     * the cached window and the cached mail describe the same account. No cookie (first visit,
-     * desktop) ⇒ no cache; the boot waits for the server as before. The `prev.known` guard
-     * makes "the fetch already answered" win unconditionally; unreachable with the synchronous
-     * read above, kept because that is an ordering fact of this effect's body.
+     * answer can only land on top of the cache, never under it. Keyed by {@link consentCacheOwner}
+     * — the remembered account id, else the host's identity for the window it mounted, so the
+     * cached window and the cached mail describe the same mailbox. Neither (a first visit) ⇒ no
+     * cache; the boot waits for the server as before. The `prev.known` guard makes "the fetch
+     * already answered" win unconditionally; unreachable with the synchronous read above, kept
+     * because that is an ordering fact of this effect's body.
      */
-    const owner = readOwner();
+    const owner = consentCacheOwner();
     if (owner !== null) {
       const cached = readBootCache(CONSENT_BOOT_SCOPE, owner, acceptConsentCache);
       if (cached !== null) {
@@ -1148,7 +1163,7 @@ export function useConsentState(
     // cache partition inputs this tab never confirmed. Era-guarded like the state echo — a
     // cross-world completion must not write the departed account's flag into this device's
     // cache either.
-    const owner = readOwner();
+    const owner = consentCacheOwner();
     if (era.current === at && owner !== null && bootCache.current !== null) {
       const next: ConsentBootCache = { ...bootCache.current, foldersEnabledAt: res.foldersEnabledAt ?? null };
       writeBootCache(CONSENT_BOOT_SCOPE, owner, next);

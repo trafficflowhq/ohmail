@@ -293,15 +293,24 @@ function subjectOf(
  */
 export type ScreeningRuleState = "promoted" | "created" | "retargeted" | "already" | "none";
 
+/** What a plan may carry: every mutation but a `move`, which the type refuses. */
+export type PlanMutation = Exclude<EngineMutation, { kind: "move" }>;
+/** A press's move, asked of its forecast through {@link movesAtLanding}. */
+export type PressMove = Extract<EngineMutation, { kind: "move" }>;
+
 export interface ScreeningPlan {
-  /** What goes on the wire, in dispatch order. Empty means nothing to do. */
-  mutations: EngineMutation[];
+  /**
+   * The ladder and the decide, in dispatch order — never a `move`: the type refuses one. A
+   * press's moves are asked of its forecast through {@link movesAtLanding}, so no path can move a
+   * row the list keeps elsewhere. Empty with no moves means nothing to do.
+   */
+  mutations: PlanMutation[];
   /**
    * The prefix of {@link ScreeningPlan.mutations} that writes the rule — the SAME objects, so
    * the two cannot disagree about what was dispatched. Empty for `promoted` and `none`. The
    * caller awaits exactly these to decide what to claim; see {@link screeningToast}.
    */
-  ruleMutations: EngineMutation[];
+  ruleMutations: PlanMutation[];
   /** Which of the five things above happened. */
   ruleState: ScreeningRuleState;
   /**
@@ -316,10 +325,16 @@ export interface ScreeningPlan {
    * question it answers is whose future mail follows and not which row was written.
    */
   ruleScope: ScreeningScope | null;
+  /** The folder the press files to — the view's own. */
+  wanted: Folder;
   /**
-   * Messages this press files itself: the decide's held bag, or a no-rule move's visible mail
-   * (capped at {@link RETRO_VISIBLE_MOVES}). A rule's backlog is the server pass's and never
-   * counted here. {@link ScreeningPlan.matched} is the number the sheet shows before the click.
+   * The rows a no-rule press may file itself, newest first: out of place by the server pass's own
+   * wire test. {@link movesAtLanding} narrows them to the rows the list will show at the place.
+   */
+  outOfPlace: readonly EngineMessage[];
+  /**
+   * Messages the decide files itself — its held bag. A no-rule press's moves are counted by the
+   * caller from {@link movesAtLanding}; a rule's backlog is the server pass's and never here.
    */
   moved: number;
   /**
@@ -354,9 +369,9 @@ export interface ScreeningPlan {
 }
 
 /**
- * The mutations that put every message from `s` into `dest`, and the rule that makes the next one
- * follow. Order matters and is the correctness: the rule and the decide go first so each follow-up
- * `move` computes its optimistic effect against an overlay that already contains it (the overlay is
+ * The rule that makes the next message follow, the decide, and the rows a no-rule press may move.
+ * The rule and the decide go first and the moves after ({@link movesAtLanding}), so each move
+ * computes its optimistic effect against an overlay that already holds them (the overlay is
  * last-write-wins per entity) — the same ordering `screener-state.ts` documents. `makeRule`
  * defaults TRUE, because the default is where the requirement lives; `false` is the explicit
  * non-default the sheet keeps reachable, and what the BULK path passes — its confirm copy promises
@@ -372,7 +387,7 @@ export function planScreeningChange(
 ): ScreeningPlan {
   const wanted = FOLDER_OF_VIEW[dest];
   const subject = s.scopes[scope];
-  const mutations: EngineMutation[] = [];
+  const mutations: PlanMutation[] = [];
   const movedByDecide = new Set<string>();
   const promoted = subject.waiting && subject.representativeId != null;
 
@@ -385,14 +400,15 @@ export function planScreeningChange(
    * `sender` rule outranks a `domain` one); a subject- or body-term rule is one SLICE and never a twin. The created
    * rule's `match` and the moves below both come from `scope`, so a domain rule cannot ride one address's mail.
    */
-  const ruleMutations: EngineMutation[] = [];
+  const ruleMutations: PlanMutation[] = [];
   let ruleState: ScreeningRuleState = "none";
   if (promoted) {
     ruleState = "promoted";
   } else if (makeRule) {
     const press = pressOverTwins(s.rules, scope, ruleMatchOf(s, scope), wanted, applyRetro);
     ruleState = press.state;
-    ruleMutations.push(...press.writes);
+    // The ladder writes rules only; a move reaching here would be a plan the type refuses.
+    ruleMutations.push(...press.writes.filter((w): w is PlanMutation => w.kind !== "move"));
   }
   mutations.push(...ruleMutations);
 
@@ -442,8 +458,6 @@ export function planScreeningChange(
   const outOfPlace = subject.messages.filter(
     (m) => retroPassWouldMove(m, wanted) && !movedByDecide.has(m.id),
   );
-  const toMove = ruleState === "none" ? outOfPlace.slice(0, RETRO_VISIBLE_MOVES) : [];
-  for (const m of toMove) mutations.push({ kind: "move", messageId: m.id, folder: wanted });
 
   // Every state that leaves a rule in force can now be asked for the backlog: `created` and
   // `retargeted` as before, `already` through the re-arm above, and `promoted` through the decide.
@@ -455,7 +469,9 @@ export function planScreeningChange(
     ruleState,
     rule: ruleState !== "none",
     ruleScope: ruleState !== "none" ? scope : null,
-    moved: toMove.length + movedByDecide.size,
+    wanted,
+    outOfPlace: ruleState === "none" ? outOfPlace : [],
+    moved: movedByDecide.size,
     // What the sheet states before the click: how much of this subject's mail is out of place.
     // `movedByDecide` is included because the decide relocates it too.
     matched: outOfPlace.length + movedByDecide.size,
@@ -463,6 +479,26 @@ export function planScreeningChange(
     retro,
     unsubscribes: promoted && DECISION_OF_DEST[dest] === "no",
   };
+}
+
+/** What {@link movesAtLanding} reads of a forecast: the rows each answer lands at the place. */
+export type LandingForecast = Readonly<Record<PressResolution, { readonly landing: readonly string[] }>>;
+
+/**
+ * THE ONE DOOR A PRESS'S MOVES LEAVE BY: the no-rule press's out-of-place rows that its forecast
+ * lands at the place, newest first, capped at {@link RETRO_VISIBLE_MOVES}. A rule's backlog is
+ * the server pass's, so a plan with a rule in force moves nothing here. `forecast === null` is
+ * the demo's arm only: its lists are not partitioned, so every candidate lands.
+ */
+export function movesAtLanding(
+  plan: ScreeningPlan, forecast: LandingForecast | null, resolution: PressResolution = "keep",
+): PressMove[] {
+  if (plan.ruleState !== "none") return [];
+  const landing = forecast === null ? null : new Set(forecast[resolution].landing);
+  return plan.outOfPlace
+    .filter((m) => landing === null || landing.has(m.id))
+    .slice(0, RETRO_VISIBLE_MOVES)
+    .map((m) => ({ kind: "move", messageId: m.id, folder: plan.wanted }));
 }
 
 /** The answer the sheet's step gave, and the forecast it was given over. */
@@ -487,13 +523,14 @@ export function screeningPath(s: SenderScreening, scope: ScreeningScope, makeRul
 }
 
 /** The writes the answer "the press wins" adds to the ladder, as the forecast named them. */
-export function resolutionExtras(press: ScreeningPress | undefined): EngineMutation[] {
+export function resolutionExtras(press: ScreeningPress | undefined): PlanMutation[] {
   if (!press || press.resolution !== "remove") return [];
-  return press.forecast.remove.writes.filter((w) => !press.forecast.keep.writes.includes(w));
+  return press.forecast.remove.writes.filter((w) => !press.forecast.keep.writes.includes(w))
+    .filter((w): w is PlanMutation => w.kind !== "move");
 }
 
 /** The plan with those writes in it: before a decide, after the ladder, awaited as rule writes. */
-export function withResolution(plan: ScreeningPlan, extras: readonly EngineMutation[]): ScreeningPlan {
+export function withResolution(plan: ScreeningPlan, extras: readonly PlanMutation[]): ScreeningPlan {
   if (extras.length === 0) return plan;
   const promoted = plan.ruleState === "promoted";
   const mutations = promoted
@@ -504,31 +541,20 @@ export function withResolution(plan: ScreeningPlan, extras: readonly EngineMutat
 
 /**
  * THE TWO HALVES OF A ROUTING PRESS, and the split is what makes the press reversible. The MAIL
- * half is the plan's `move`s, which the engine reverses off the mirror, so they go now and the
- * reader sees their mail arrive. The ROUTING half is the rule and the decide — no wire inverse
- * between them — so it is HELD and sent unchanged when the window closes.
- */
-/**
- * Split by IDENTITY, not by kind: `ruleMutations` is an identity-shared prefix of `mutations`, so
- * the two readings cannot disagree about what was dispatched — `dispatchScreeningChange`'s own
- * property. A member that is none of the three goes to the ROUTING half: the conservative
- * direction, because a new member with no inverse would otherwise be offered an Undo.
+ * half is the press's moves ({@link movesAtLanding}, or the rows a Move press names), which the
+ * engine reverses off the mirror, so they go now and the reader sees their mail arrive. The
+ * ROUTING half is the plan — the rule and the decide, no wire inverse between them — HELD and
+ * sent unchanged when the window closes. A plan carries no move, so nothing is split by kind.
  */
 export interface RoutingSplit {
   /** Dispatched at the press. The engine reverses these. */
-  mail: EngineMutation[];
+  mail: PressMove[];
   /** Held for the window, then dispatched in the planner's own order. */
-  routing: EngineMutation[];
+  routing: PlanMutation[];
 }
 
-export function splitRoutingPlan(plan: ScreeningPlan): RoutingSplit {
-  const mail: EngineMutation[] = [];
-  const routing: EngineMutation[] = [];
-  for (const m of plan.mutations) {
-    if (m.kind === "move" && !plan.ruleMutations.includes(m)) mail.push(m);
-    else routing.push(m);
-  }
-  return { mail, routing };
+export function splitRoutingPlan(plan: ScreeningPlan, moves: readonly PressMove[]): RoutingSplit {
+  return { mail: [...moves], routing: [...plan.mutations] };
 }
 
 /**
@@ -549,6 +575,8 @@ export type ScreeningToastKey =
 export function screeningToast(
   plan: ScreeningPlan,
   ruleStatus: MutationStatus | null,
+  /** How many moves the press dispatched beside the plan — {@link movesAtLanding}'s, or named. */
+  moved: number,
 ): ScreeningToastKey {
   switch (plan.ruleState) {
     case "none":
@@ -585,7 +613,7 @@ export function screeningToast(
        * that had just moved. The discriminator is therefore the plan's own moves. Below the three
        * status arms, so this is only ever read of an ANSWER that applied.
        */
-      if (!plan.retro && plan.mutations.some((m) => m.kind === "move")) return "toastRuledMoved";
+      if (!plan.retro && moved > 0) return "toastRuledMoved";
       // THE BACKLOG DECLINED IS ITS OWN SENTENCE. With the past-mail switch off nothing moves, so
       // every count here is zero — and the `=0` arm of the sentences below reads "their mail is
       // already there", which is false of a sender whose mail the person asked us to leave alone.
@@ -624,6 +652,8 @@ export function worstStatus(results: readonly { status: MutationStatus }[]): Mut
  */
 export async function dispatchScreeningChange(
   plan: ScreeningPlan,
+  /** The press's moves, dispatched after the rules and the decide — {@link movesAtLanding}'s. */
+  pressMoves: readonly PressMove[],
   mutate: (m: EngineMutation) => Promise<{ status: MutationStatus }>,
 ): Promise<ScreeningToastKey> {
   const rules = plan.ruleMutations.map((m) => mutate(m));
@@ -632,15 +662,14 @@ export async function dispatchScreeningChange(
      for every move to settle: the caller reads the list back, and an unsettled move is still
      painted at the place it was sent to. */
   const decides: Array<Promise<{ status: MutationStatus }>> = [];
-  const moves: Array<Promise<unknown>> = [];
   for (const m of plan.mutations) {
     if (plan.ruleMutations.includes(m)) continue;
-    if (m.kind === "screener_decide") decides.push(mutate(m));
-    else moves.push(mutate(m));
+    decides.push(mutate(m));
   }
+  const moves = pressMoves.map((m) => mutate(m));
   const worst = worstStatus(await Promise.all([...rules, ...decides]));
   await Promise.allSettled(moves);
-  return screeningToast(plan, worst);
+  return screeningToast(plan, worst, pressMoves.length);
 }
 
 /**

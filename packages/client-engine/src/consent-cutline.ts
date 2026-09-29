@@ -3,8 +3,8 @@ import {
 } from "@trafficflow/core/sender-headers";
 import { ORGANIZED_FOLDERS, canonicalDestination, isConsentingDestination } from "@trafficflow/core/destinations";
 import {
-  bodyTermOf, bodyTermSatisfied, compareRules, effectForDestination, ruleMatchKey, subjectTermOf,
-  subjectTermSatisfied, type OrderedRule,
+  bodyTermOf, compareRules, effectForDestination, placingRule, ruleMatchKey, subjectTermOf,
+  type OrderedRule,
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
@@ -13,7 +13,7 @@ import {
 } from "./selectors.js";
 import {
   MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, type EngineMessage,
-  type Folder, type MailboxProfileEntity, type RuleDTO,
+  type Folder, type MailboxProfileEntity, type MessageBodyRecord, type RuleDTO,
 } from "./types.js";
 
 /** The router's key for a rule's `match`, for the press modules, which import no rule order. */
@@ -272,30 +272,95 @@ export function decidedDestination(
   return outranks(wide, exact) ? wide.destination : exact.destination;
 }
 
+/** Where a message's text is held on a client: its ready `message_body` record. */
+export type BodyTextReader = Pick<EntityReader, "get">;
+
+const bodyNamesCache = new WeakMap<EntityReader, { at: string; names: ReadonlySet<string> }>();
+
 /**
- * The rule the organizer FILES this message by — `evaluateRules`' first step: the winner among the
- * sender's rules whose terms this message satisfies, or `null`. A body term is not read here: the
- * mirror row does not carry the text the router matches, so a body-narrowed rule places nothing on
- * a client. Exported so a reader naming WHICH rule placed a row asks the partition's own answer.
+ * IS THIS SENDER NAMED BY A RULE WITH A BODY TERM — the one case in which a body is an input to
+ * the partition. `sender:<address>` and `domain:<domain>` keys over the local rules and every
+ * organizer's document, memoized on those two stamps. The engine asks it at each body write, so a
+ * body that can re-place a message moves the window's derived stamp and no other body does.
  */
-export function placedRule(index: ConsentIndex, m: EngineMessage): RuleDTO | null {
-  let winner: RuleDTO | null = null;
-  for (const list of rulesNaming(index, m.from.address, m.mailboxId)) {
-    for (const r of list) {
-      if (!subjectTermSatisfied(r, m.subject ?? "") || !bodyTermSatisfied(r, null)) continue;
-      if (winner === null || outranks(r, winner)) winner = r;
-    }
-  }
-  return winner;
+export function namedByBodyTerm(reader: EntityReader, address: string): boolean {
+  const names = bodyTermNames(reader);
+  if (names.size === 0) return false;
+  const key = senderKey(address);
+  const domain = domainOfAddress(key);
+  return names.has(`sender:${key}`) || (domain !== null && names.has(`domain:${domain}`));
 }
 
 /**
- * Where the organizer FILES this message — {@link placedRule}'s destination; with none, a standing
- * DENIAL is carried out, and a standing admission places nothing (`null`).
+ * The body-term keys, rebuilt only when the rule or document stamp moved. The engine warms it at
+ * every publish ({@link warmBodyTermNames}), so the rebuild lands on the publish that moved a rule
+ * — which re-derives the partition anyway — and a body publish reads a warm set, scanning nothing.
  */
-function placedDestination(index: ConsentIndex, m: EngineMessage): Folder | null {
-  const winner = placedRule(index, m);
-  if (winner !== null) return winner.destination;
+function bodyTermNames(reader: EntityReader): ReadonlySet<string> {
+  const at = `${reader.stampOf("rule")}:${reader.stampOf(MAILBOX_PROFILE_TYPE)}`;
+  let hit = bodyNamesCache.get(reader);
+  if (hit === undefined || hit.at !== at) {
+    const names = new Set<string>();
+    const rules = [...rulesList(reader), ...mailboxProfiles(reader).flatMap((p) => p.rules)];
+    for (const r of rules) {
+      if (r.enabled && bodyTermOf(r) !== null && (r.kind === "sender" || r.kind === "domain")) {
+        names.add(`${r.kind}:${ruleMatchKey(r.match)}`);
+      }
+    }
+    hit = { at, names };
+    bodyNamesCache.set(reader, hit);
+  }
+  return hit.names;
+}
+
+/** Rebuild {@link bodyTermNames} now if a stamp moved — the engine's call at each publish. */
+export function warmBodyTermNames(reader: EntityReader): void {
+  bodyTermNames(reader);
+}
+
+/** The rule a message is filed by, and the rule whose body term this client cannot read. */
+export interface MessagePlacement {
+  rule: RuleDTO | null;
+  /** A body-term rule that would outrank `rule` if it claims the message; its text is not held. */
+  undecided: RuleDTO | null;
+}
+
+/** The router's haystack as this client holds it: a ready, stored body's text, else `null`. */
+function heldText(bodies: BodyTextReader | null, id: string): string | null {
+  const rec = bodies?.get<MessageBodyRecord>("message_body", id);
+  return rec !== undefined && rec.state === "ready" && rec.withheld == null ? rec.text : null;
+}
+
+/**
+ * WHERE THE ORGANIZER FILES THIS MESSAGE, asked of the ONE claim (`placingRule`, core
+ * `rule-order.ts`) the router's `evaluateRules` asks. The body is read only when a rule naming the
+ * sender carries a body term; a text not held makes that rule `undecided`, never a guess. A reader
+ * naming WHICH rule placed a row asks this, the partition's own answer.
+ */
+export function messagePlacement(index: ConsentIndex, m: EngineMessage, bodies: BodyTextReader | null): MessagePlacement {
+  const rules = rulesNaming(index, m.from.address, m.mailboxId).flat();
+  const needsText = rules.some((r) => bodyTermOf(r) !== null);
+  const placed = placingRule(rules.map((r) => ({ ...r, effect: effectForDestination(r.destination), of: r })), {
+    author: senderKey(m.from.address), subject: m.subject ?? "",
+    text: needsText ? heldText(bodies, m.id) : null, headers: null,
+  });
+  return { rule: placed.rule?.of ?? null, undecided: placed.undecided?.of ?? null };
+}
+
+/** {@link messagePlacement}'s rule alone, for a reader that does not ask about an unread body. */
+export function placedRule(index: ConsentIndex, m: EngineMessage, bodies: BodyTextReader | null): RuleDTO | null {
+  return messagePlacement(index, m, bodies).rule;
+}
+
+/**
+ * Where the organizer FILES this message; with no rule, a standing DENIAL is carried out and a
+ * standing admission places nothing (`null`). An `undecided` placement projects nothing either:
+ * the row stays at the wire's folder until the organizer, which holds the text, has filed it.
+ */
+function placedDestination(index: ConsentIndex, m: EngineMessage, bodies: BodyTextReader | null): Folder | null {
+  const placed = messagePlacement(index, m, bodies);
+  if (placed.undecided !== null) return null;
+  if (placed.rule !== null) return placed.rule.destination;
   const standing = decidedDestination(index, m.from.address, m.mailboxId);
   return standing !== null && effectForDestination(standing) === "deny" ? standing : null;
 }
@@ -566,7 +631,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
      * queued, never cut to History — and never a letter's place. One projection stays: a DENY
      * rule's mail, the person's own answer, on the screened-out shelf.
      */
-    const placed = placedDestination(index, m);
+    const placed = placedDestination(index, m, reader);
     if (placed !== null || decided !== null) {
       placeOf.set(m.id, placed !== null && effectForDestination(placed) === "deny" ? placed : m.folder);
       if (m.folder === "ohmail/Screener" && !active) retiredDecided.add(key);

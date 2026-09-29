@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
-  accountSettings, auditAction, auditLog, destinationIsDecisionSql, folderState, mailboxes,
-  messages, recordRuleDelta, ruleNamesSenderSql, rules as rulesTbl, type LedgerTx, type Tx,
+  accountSettings, auditAction, auditLog, changeLog, destinationIsDecisionSql, folderState, mailboxes,
+  messages, recordRuleDelta, ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
@@ -215,10 +215,40 @@ export async function heldReleaseTotal(
 }
 
 /**
- * WHEN THE HELD SET LAST GAINED A MEMBER, in epoch ms — the latest instant one of its (message,
- * rule) pairs joined: the message placed at the gate, or its rule written or back from its walk.
- * Read back as `Date`s through the columns and compared in JavaScript, never in SQL, because the
- * server's stamps carry microseconds the stored anchor does not. 0 for no groups.
+ * DID THE HELD SET GAIN A MEMBER AFTER THE DISMISSAL — one clock, the account's change log: a
+ * change row past `anchor` placing one of the set's messages at the gate (`create`, `move`), or
+ * writing one of its rules (`create`, or `update` — back from its walk). The log's sequence is
+ * allocated under the account's row lock, so no writer's clock and no skew decides what is newer.
+ * The walk reads the change rows since the anchor, which is what happened since the "Not now".
+ */
+async function heldReleaseJoinedSince(
+  db: Tx, accountId: string, groups: readonly HeldReleaseGroup[], anchor: bigint,
+): Promise<boolean> {
+  const d = dialect(db);
+  const since = and(eq(changeLog.accountId, accountId), sql`${changeLog.seq} > ${anchor.toString()}`);
+  const placedAtGate = and(since, eq(changeLog.entityType, "message"), inArray(changeLog.op, ["create", "move"]));
+  if (groups.length === 0) return false;
+  // This account's own group keys, bounded by `HELD_RELEASE_GROUPS_MAX`, as in `heldReleaseTotal`.
+  const ids = groups.map((g) => g.ruleId);
+  const [placed] = await db.select({ one: sql`1` }).from(changeLog)
+    .innerJoin(messages, and(eq(messages.id, changeLog.entityId), eq(messages.accountId, changeLog.accountId)))
+    .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    .innerJoin(rulesTbl, and(eq(rulesTbl.accountId, messages.accountId), ruleClaimsSender(d)))
+    .where(and(placedAtGate, decidedRule(accountId), heldAtGate(accountId), inArray(rulesTbl.id, ids)))
+    .limit(1);
+  if (placed !== undefined) return true;
+  // scoped-by: `since` pins eq(changeLog.accountId, accountId)
+  const [decided] = await db.select({ one: sql`1` }).from(changeLog)
+    .where(and(since, eq(changeLog.entityType, "rule"), inArray(changeLog.op, ["create", "update"]), inArray(changeLog.entityId, ids)))
+    .limit(1);
+  return decided !== undefined;
+}
+
+/**
+ * THE LEGACY CLOCK ANCHOR, READ ONLY: a `<fp>@<ms>` dismissal a build before the sequence anchor
+ * wrote, compared as it was until the next "Not now" overwrites it — the latest instant one of the
+ * set's (message, rule) pairs joined. Nothing writes this form any more; gap row
+ * HELD-RELEASE-LEGACY-CLOCK-ANCHOR-READ-ARM removes the arm next release.
  */
 async function heldReleaseNewest(
   db: Tx, accountId: string, groups: readonly HeldReleaseGroup[],
@@ -245,17 +275,24 @@ async function heldReleaseNewest(
 }
 
 /**
- * A dismissal as stored: `<fingerprint>@<newest entry it covered, epoch ms>`, or a bare
- * fingerprint — what a press over a set that moved since its read records, and every dismissal
- * written before the anchor existed; both read by equality.
+ * A dismissal as stored: `<fingerprint>#<the account's change-log head when it was pressed>`; the
+ * legacy `<fingerprint>@<epoch ms>` (read only, {@link heldReleaseNewest}); or a bare fingerprint —
+ * what a press over a set that moved since its read records, read by equality.
  */
-const DISMISSAL_ANCHOR = "@";
-function readDismissal(stored: string | null): { fingerprint: string; anchor: number | null } | null {
+const SEQ_ANCHOR = "#";
+const LEGACY_CLOCK_ANCHOR = "@";
+function readDismissal(stored: string | null): { fingerprint: string; seq: bigint | null; ms: number | null } | null {
   if (stored === null || stored === "") return null;
-  const i = stored.lastIndexOf(DISMISSAL_ANCHOR);
-  const tail = i > 0 ? stored.slice(i + 1) : "";
-  if (!/^\d{1,16}$/.test(tail)) return { fingerprint: stored, anchor: null };
-  return { fingerprint: stored.slice(0, i), anchor: Number(tail) };
+  const at = (sep: string): { head: string; tail: string } | null => {
+    const i = stored.lastIndexOf(sep);
+    const tail = i > 0 ? stored.slice(i + 1) : "";
+    return /^\d{1,19}$/.test(tail) ? { head: stored.slice(0, i), tail } : null;
+  };
+  const seq = at(SEQ_ANCHOR);
+  if (seq !== null) return { fingerprint: seq.head, seq: BigInt(seq.tail), ms: null };
+  const clock = at(LEGACY_CLOCK_ANCHOR);
+  if (clock !== null && clock.tail.length <= 16) return { fingerprint: clock.head, seq: null, ms: Number(clock.tail) };
+  return { fingerprint: stored, seq: null, ms: null };
 }
 
 /** The whole screen in one read: the groups, their distinct total, and the dismissal state. */
@@ -272,28 +309,29 @@ export async function heldReleaseSummary(
   // "" (no groups) never reads dismissed: there is no offer to have said "not now" to.
   let dismissed = false;
   if (fingerprint !== "" && stored !== null) {
-    dismissed = stored.anchor === null
-      ? stored.fingerprint === fingerprint
-      : await heldReleaseNewest(db, accountId, groups) <= stored.anchor;
+    if (stored.seq !== null) dismissed = !(await heldReleaseJoinedSince(db, accountId, groups, stored.seq));
+    else if (stored.ms !== null) dismissed = await heldReleaseNewest(db, accountId, groups) <= stored.ms;
+    else dismissed = stored.fingerprint === fingerprint;
   }
   return { groups, total: await heldReleaseTotal(db, accountId, groups), fingerprint, dismissed };
 }
 
 /**
  * "NOT NOW" — record the offer the account dismissed. The fingerprint is the CLIENT'S, from the
- * read it showed: when it still names the set, the dismissal is anchored at the newest entry of
- * that set (never before this clock's now), and only mail joining after it re-offers; when the
- * set moved since the read, the bare fingerprint matches nothing and the offer stays. One row
- * per account, bounded before the write — the migration's CHECK is the belt. Clearing is not
- * offered: new held mail is the only honest way back.
+ * read it showed: when it still names the set, the dismissal is anchored at the account's
+ * change-log head, read in this transaction, and only mail or a rule joining after it re-offers
+ * ({@link heldReleaseJoinedSince}); when the set moved since the read, the bare fingerprint
+ * matches nothing and the offer stays. One row per account, bounded before the write — the
+ * migration's CHECK is the belt. Clearing is not offered: new held mail is the only honest way back.
  */
 export async function dismissHeldRelease(
   ctx: ServiceContext, opts: { fingerprint?: unknown },
 ): Promise<{ dismissed: true }> {
   const fp = opts.fingerprint;
-  // `@` is the stored form's separator, and no fingerprint the server issues carries one.
-  if (typeof fp !== "string" || fp.length === 0 || fp.length > 128
-      || fp.includes(DISMISSAL_ANCHOR)) {
+  // `#` and `@` are the stored forms' separators, and no fingerprint the server issues carries one;
+  // 100 leaves the anchor's room inside the column's 128.
+  if (typeof fp !== "string" || fp.length === 0 || fp.length > 100
+      || fp.includes(SEQ_ANCHOR) || fp.includes(LEGACY_CLOCK_ANCHOR)) {
     throw new ServiceError("validation_failed", 400, "fingerprint must be a short string");
   }
   /* THE DOORBELL, in the same transaction and after the row (`recordSettingsChange`'s lock
@@ -305,8 +343,8 @@ export async function dismissHeldRelease(
     const groups = await heldReleaseGroups(bridgeTx(t), ctx.accountId);
     let value = fp;
     if (groups.length > 0 && heldReleaseFingerprint(groups) === fp) {
-      const newest = await heldReleaseNewest(bridgeTx(t), ctx.accountId, groups);
-      value = `${fp}${DISMISSAL_ANCHOR}${Math.max(now.getTime(), newest)}`;
+      const head = (await seqBounds(bridgeTx(t), ctx.accountId)).max ?? 0n;
+      value = `${fp}${SEQ_ANCHOR}${head.toString()}`;
     }
     await t.insert(accountSettings)
       .values({ accountId: ctx.accountId, heldReleaseDismissed: value, updatedAt: now })

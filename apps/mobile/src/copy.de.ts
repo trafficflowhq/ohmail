@@ -973,10 +973,14 @@ export const DE: Deck = {
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`} nach deiner Regel »${term}« in ${keptPlace}.`,
   liveVerdictKeptDomain: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`} nach deiner Regel für alle bei ${domain} (Betreff enthält »${term}«) in ${keptPlace}.`,
+  liveVerdictKeptDomainBody: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>
+    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`} nach deiner Regel für alle bei ${domain} (Text enthält »${term}«) in ${keptPlace}.`,
   liveVerdictKeptMany: (count: number, place: string, kept: number) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`}, wo deine Regeln sie einsortieren.`,
   liveVerdictStill: (count: number, place: string, still: number, stillPlace: string) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${still === 1 ? "1 liegt" : `${still} liegen`} noch in ${stillPlace}.`,
+  liveVerdictUndecided: (count: number, place: string, still: number, stillPlace: string, term: string) =>
+    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${still === 1 ? "1 liegt" : `${still} liegen`} noch in ${stillPlace}, wo deine Regel für Text mit »${term}« sie halten kann.`,
   liveVerdictStillLegacy: (count: number, place: string, still: number, folder: string, stillPlace: string) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${still === 1 ? "1 liegt" : `${still} liegen`} noch im Ordner ${folder}, dem alten Namen von ${stillPlace}.`,
   liveVerdictApplying: (count: number, place: string) =>

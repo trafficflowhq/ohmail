@@ -27,7 +27,7 @@ import {
 } from "./search.js";
 import { isOwnSent, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
 import { outrankCoveringDomains } from "./address-rank.js";
-import { consentIndex, decidedDestination } from "./consent-cutline.js";
+import { consentIndex, decidedDestination, namedByBodyTerm, warmBodyTermNames } from "./consent-cutline.js";
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import {
@@ -2488,6 +2488,8 @@ export class OhmailEngine {
   private readonly bodyHealed = new Set<string>();
   /** The batch body read, or `null` when this adapter has none — see {@link FetchBodiesCapableAdapter}. */
   private readonly fetchBodiesFn: FetchBodiesFn | null;
+  /** See {@link placementStamp}. */
+  private placementBodyVersion = 0;
   /** The archive transport, or `null` when this client has no server behind it. */
   private readonly serverSearchFn: ServerSearchFn | null;
   /** The archive's ADDRESS transport, or `null` — resolved by the same rule, independently. */
@@ -4678,6 +4680,8 @@ export class OhmailEngine {
        incident's eager pass produced two thousand in one session — the `ui_vitals` line reports
        how many arrived in the last five minutes beside what the derivation cost. */
     countNotify();
+    // The body-term keys follow the rules here, so the next body write reads them warm.
+    warmBodyTermNames(this.read());
     for (const l of this.listeners) l();
   }
 
@@ -4980,6 +4984,16 @@ export class OhmailEngine {
   }
 
   /**
+   * THE SCREENER'S HELD PREVIEW: every held body of the selected sender in ONE request, `urgent`
+   * so it takes one slot ahead of background work (a person is reading it). One request, not one
+   * per message, so urgency is not the burst the limiter exists to stop. An adapter with no batch
+   * route asks per message, the newest {@link MAX_CONCURRENT_BODIES} urgent (`ids` oldest first).
+   */
+  hydrateBodies(messageIds: string[], opts: { urgent?: boolean } = {}): Promise<void> {
+    return this.hydrateMany(messageIds, { rendered: true, urgent: opts.urgent === true });
+  }
+
+  /**
    * THE DRAFT'S TEXT, ASKED FOR ONCE, FOR A MIRROR ROW THAT ARRIVED WITHOUT ONE. Returns the text, or `null` when
    * this client cannot get it — an adapter without the capability (the demo world, whose rows always carry a body), a
    * refusal, or a server that named no text. `null` is what compose must not seed an editor from and what autosave
@@ -5006,13 +5020,15 @@ export class OhmailEngine {
    */
   private hydrateMany(
     messageIds: string[],
-    opts: { rendered: boolean; stopped?: () => boolean },
+    opts: { rendered: boolean; stopped?: () => boolean; urgent?: boolean },
   ): Promise<void> {
     const fetchBodies = this.fetchBodiesFn;
     const ids = [...new Set(messageIds)];
+    const urgent = opts.urgent === true;
     if (!fetchBodies) {
       if (opts.rendered) {
-        return Promise.all(ids.map((id) => this.hydrateBody(id))).then(() => undefined);
+        const from = urgent ? ids.length - MAX_CONCURRENT_BODIES : ids.length;
+        return Promise.all(ids.map((id, i) => this.hydrateBody(id, i >= from ? { urgent: true } : {}))).then(() => undefined);
       }
       // The per-id fallback WITHOUT the pin write `hydrateBody` opens with — same admission,
       // same single-flight registration, no claim that a surface is rendering anything. A caller
@@ -5036,8 +5052,9 @@ export class OhmailEngine {
     const writes: Array<Promise<void>> = [];
     for (const id of ids) {
       if (opts.rendered) this.noteRendered(id);
-      // Already in the air, alone or in another batch — join it rather than ask twice.
-      if (this.bodyRequests.has(id)) continue;
+      // Already in the air, alone or in another batch — join it rather than ask twice; an urgent
+      // ask lets a queued one go now, as an open does (`promoteBodyRequest`).
+      if (this.bodyRequests.has(id)) { if (urgent) this.promoteBodyRequest(id); continue; }
       const plan = this.bodyPlan(id, false, opts.rendered);
       if (plan.kind === "purge") { writes.push(this.putBody(id, null)); continue; }
       if (plan.kind === "skip") continue;
@@ -5051,7 +5068,7 @@ export class OhmailEngine {
       const chunk = take.slice(i, i + BODIES_IDS_MAX);
       const chunkIds = chunk.map((c) => c.id);
       const run = this.markLoadingBatch(chunk)
-        .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped), chunkIds))
+        .then(() => this.bodySlot(urgent, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped), chunkIds))
         .finally(() => {
           for (const id of chunkIds) this.bodyRequests.delete(id);
         });
@@ -5634,8 +5651,25 @@ export class OhmailEngine {
   private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
     await this.store.putLocal("message_body", messageId, record);
     this.holdBody(messageId, record?.state === "ready");
+    this.notePlacementBodies([{ id: messageId, record }]);
     this.notify();
     await this.trimBodyCache();
+  }
+
+  /**
+   * A BODY THAT CAN RE-PLACE ITS MESSAGE MOVES {@link placementStamp}: the partition reads the
+   * text of a message whose sender a body-term rule names (`messagePlacement`), and the window's
+   * whole-mirror derivations key on a stamp that ignores bodies. Any other body leaves it alone.
+   */
+  private notePlacementBodies(entries: ReadonlyArray<{ id: string; record: MessageBodyRecord | null }>): void {
+    const read = this.read();
+    for (const e of entries) {
+      const m = read.get<EngineMessage>("message", e.id);
+      if (m !== undefined && namedByBodyTerm(read, m.from.address)) {
+        this.placementBodyVersion = read.version();
+        return;
+      }
+    }
   }
 
   /**
@@ -5658,6 +5692,7 @@ export class OhmailEngine {
       [],
     );
     for (const e of entries) this.holdBody(e.id, e.record?.state === "ready");
+    this.notePlacementBodies(entries);
     this.notify();
     await this.trimBodyCache();
   }
@@ -5731,6 +5766,8 @@ export class OhmailEngine {
     try {
       await this.store.commitLocal([], victims.map((id) => ({ type: "message_body", id })));
       for (const id of victims) this.heldBodies.delete(id);
+      // An evicted text that placed its message leaves it undecided again: that moves the stamp.
+      this.notePlacementBodies(victims.map((id) => ({ id, record: null })));
       this.notify();
     } finally {
       this.trimmingBodies = false;
@@ -8006,6 +8043,15 @@ export class OhmailEngine {
    */
   searchIndexRevision(): number {
     return this.searchIndexRev;
+  }
+
+  /**
+   * THE MIRROR VERSION OF THE LAST BODY THAT CAN RE-PLACE ITS MESSAGE, 0 before one — the window
+   * takes the larger of this and its body-blind stamp (`useDerivedVersion`), so a text that
+   * decides a placement reaches the partition and the eager pass's bodies do not.
+   */
+  placementStamp(): number {
+    return this.placementBodyVersion;
   }
 
   /**

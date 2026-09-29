@@ -3,7 +3,8 @@
  * router's `winningRule` and `standingRule` (`rules.ts`) and the client engine's consent index.
  * Two orders were how one sender's rule twins were filed by the server one way and presented by
  * the clients another. Import-free, so a browser, a phone bundle and a Node consumer all load it
- * from source; `listRules` states the same order in SQL and the two must agree literally.
+ * from source; `listRules` states the same order in SQL and the two must agree literally. The
+ * claim lives here too ({@link placingRule}): the router and every client ask it, never a copy.
  */
 
 /** Whether a rule lets the sender through the gate or holds them at it. */
@@ -132,19 +133,108 @@ export function bodyTermOf(r: Pick<OrderedRule, "bodyContains">): string | null 
 }
 
 /**
- * Does `subject` satisfy the rule's subject term — THE one term match, asked by the router's
- * `matches` and by the clients' per-message placement (`consent-cutline.ts`). Case-folded
- * substring and nothing cleverer; an absent term is satisfied, `""` satisfies no term.
+ * Does `subject` satisfy the rule's subject term? Case-folded substring and nothing cleverer: no
+ * regex (a user-supplied pattern is a ReDoS on the ingest path), no normalisation. An absent term
+ * is satisfied, `""` satisfies no term. Module-private: {@link ruleClaims} is the only door.
  */
-export function subjectTermSatisfied(r: Pick<OrderedRule, "subjectContains">, subject: string): boolean {
+function subjectTermSatisfied(r: Pick<OrderedRule, "subjectContains">, subject: string): boolean {
   const term = subjectTermOf(r);
   return term === null || subject.toLowerCase().includes(term);
 }
 
-/** The same for the body term; `null`, a text not known to the caller, satisfies no term. */
-export function bodyTermSatisfied(r: Pick<OrderedRule, "bodyContains">, text: string | null): boolean {
+/** The body twin, over `message_bodies.text`; `""` satisfies no term. Module-private too. */
+function bodyTermSatisfied(r: Pick<OrderedRule, "bodyContains">, text: string): boolean {
   const term = bodyTermOf(r);
-  return term === null || (text !== null && text.toLowerCase().includes(term));
+  return term === null || text.toLowerCase().includes(term);
+}
+
+/** A rule as the claim reads it: the order's fields plus who or what it names. */
+export interface ClaimingRule extends OrderedRule {
+  kind: string;
+  match: string;
+  enabled?: boolean;
+}
+
+/**
+ * What one message offers a rule. `text` is `message_bodies.text`, the router's haystack; `null`
+ * where the caller does not hold it (a client). `headers` likewise: `null` on a client. The server
+ * always passes both, so it never meets `unknown`.
+ */
+export interface PlacementInputs {
+  author: string | null;
+  subject: string;
+  text: string | null;
+  headers: Readonly<Record<string, readonly string[] | undefined>> | null;
+}
+
+/** A rule's answer about one message: it claims it, it does not, or what decides is not held. */
+export type RuleClaim = "claims" | "declines" | "unknown";
+
+function domainOf(addr: string): string {
+  const i = addr.indexOf("@");
+  return i >= 0 ? addr.slice(i + 1) : "";
+}
+
+/**
+ * Does this rule name this PERSON? The ONE spelling of the sender/domain claim, for the router's
+ * placement and its standing decision alike. `author === null` (absent, unparseable or ambiguous
+ * `From`) names nobody: a guessed author never inherits a decision made about somebody else. A
+ * `header` rule names a header, not a principal.
+ */
+export function namesAuthor(r: Pick<ClaimingRule, "kind" | "match">, author: string | null): boolean {
+  if (author === null) return false;
+  if (r.kind === "sender") return ruleMatchKey(r.match) === author;
+  if (r.kind === "domain") return ruleMatchKey(r.match) === domainOf(author);
+  return false;
+}
+
+/**
+ * THE ONE CLAIM: does `r` file this message? The principal (author or header), then the subject
+ * term, then the body term — conjuncts, so a term only ever turns a claim into a decline. A header
+ * rule without the headers, or a body term without the text, answers `unknown`, never a guess.
+ * `hasOwnProperty`: the header map comes back through `JSON.parse`, and `constructor` is no header.
+ */
+export function ruleClaims(r: ClaimingRule, m: PlacementInputs): RuleClaim {
+  let principal: RuleClaim;
+  if (r.kind === "sender" || r.kind === "domain") {
+    principal = namesAuthor(r, m.author) ? "claims" : "declines";
+  } else if (r.kind === "header") {
+    const name = r.match.toLowerCase();
+    if (name.length === 0) principal = "declines";
+    else if (m.headers === null) principal = "unknown";
+    else {
+      principal = Object.prototype.hasOwnProperty.call(m.headers, name) && (m.headers[name]?.length ?? 0) > 0
+        ? "claims" : "declines";
+    }
+  } else {
+    principal = "declines";
+  }
+  if (principal === "declines" || !subjectTermSatisfied(r, m.subject)) return "declines";
+  if (bodyTermOf(r) !== null) {
+    if (m.text === null) return "unknown";
+    if (!bodyTermSatisfied(r, m.text)) return "declines";
+  }
+  return principal;
+}
+
+/**
+ * THE RULE THIS MESSAGE IS FILED BY — the minimum under {@link compareRules} among the enabled
+ * rules that claim it. `undecided` is the best rule answering `unknown` when it would outrank that
+ * winner: the placement is then not knowable here, and a caller projects nothing on it.
+ */
+export function placingRule<R extends ClaimingRule>(
+  rules: readonly R[], m: PlacementInputs,
+): { rule: R | null; undecided: R | null } {
+  let rule: R | null = null;
+  let unknown: R | null = null;
+  for (const r of rules) {
+    if (r.enabled === false) continue;
+    const claim = ruleClaims(r, m);
+    if (claim === "claims") { if (rule === null || compareRules(r, rule) < 0) rule = r; }
+    else if (claim === "unknown") { if (unknown === null || compareRules(r, unknown) < 0) unknown = r; }
+  }
+  const undecided = unknown !== null && (rule === null || compareRules(unknown, rule) < 0) ? unknown : null;
+  return { rule, undecided };
 }
 
 /** A rule carrying the term outranks one without, within one kind: 0 wins. */

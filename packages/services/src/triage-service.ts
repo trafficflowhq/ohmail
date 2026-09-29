@@ -7,6 +7,7 @@ import {
   materializeMessage, materializeMessageState, materializeMessagesInOrder, sortAtOf, SORT_TOLERANCE_MS,
 } from "./dto/materialize.js";
 import { newForYouFilters } from "./message-service.js";
+import { heldOutByResurfacedFolds } from "./resurfaced-fold.js";
 import {
   clampLimit, decodeKeysetCursor, decodeListCursor, decodeReturnKeysetCursor, encodeListCursor,
   encodeReturnKeysetCursor,
@@ -14,6 +15,9 @@ import {
 import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
+
+/** How many folded rows one Power Through call steps past before it hands the cursor back. */
+export const POWER_THROUGH_FOLD_HOPS = 20;
 
 /**
  * `sortAtOf(date, arrived_at) ?? date` in SQL, over millisecond-truncated inputs so the value
@@ -337,16 +341,30 @@ export class TriageService {
    * none of which is in the group in front of them. The cursor is all a caller composes on.
    */
   async powerThrough(ctx: ServiceContext, opts: ListOptions = {}): Promise<PowerThroughView> {
-    const filters = newForYouFilters(ctx.db, ctx.accountId);
-    if (opts.cursor) filters.push(gt(messages.id, decodeListCursor(opts.cursor)));
-
-    // `limit(2)`: the row on screen, plus the sentinel that decides whether a cursor is owed.
-    // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
-    const rows = await ctx.db.select({ id: messages.id }).from(messages)
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .where(and(...filters)).orderBy(asc(messages.id)).limit(2);
-
-    if (rows.length === 0) return { current: null, remaining: 0, nextCursor: null };
+    const base = newForYouFilters(ctx.db, ctx.accountId);
+    /* THE ROW ON SCREEN IS NEVER A MEMBER OF A RESURFACED CONVERSATION — the group's own fold
+       (`heldOutByResurfacedFolds`). Each hop advances past one held-out row, at most
+       POWER_THROUGH_FOLD_HOPS per call; the next call goes on from the cursor it was handed. */
+    let after = opts.cursor ? decodeListCursor(opts.cursor) : null;
+    let rows: Array<{ id: string }> = [];
+    let current: MessageDTO | null = null;
+    let found = false;
+    for (let hop = 0; hop < POWER_THROUGH_FOLD_HOPS && !found; hop++) {
+      const page = [...base, ...(after ? [gt(messages.id, after)] : [])];
+      // `limit(2)`: the row on screen, plus the sentinel that decides whether a cursor is owed.
+      // scoped-by: `page` above leads with eq(messages.accountId, ctx.accountId)
+      rows = await ctx.db.select({ id: messages.id }).from(messages)
+        .innerJoin(folderState, eq(folderState.messageId, messages.id))
+        .where(and(...page)).orderBy(asc(messages.id)).limit(2);
+      if (rows.length === 0) return { current: null, remaining: 0, nextCursor: null };
+      current = await materializeMessage(ctx.db, ctx.accountId, rows[0]!.id);
+      found = current === null || !(await heldOutByResurfacedFolds(ctx.db, ctx.accountId, [current])).has(current.id);
+      if (!found) after = rows[0]!.id;
+    }
+    // Every hop met a folded row: nothing is on screen, and the cursor goes on from the last one.
+    if (!found) return { current: null, remaining: 0, nextCursor: encodeListCursor(after!) };
+    // The tally stays the SQL group's from the caller's cursor: a folded row is still counted in it.
+    const filters = [...base, ...(opts.cursor ? [gt(messages.id, decodeListCursor(opts.cursor))] : [])];
 
     // The count the caller is owed, as a scalar — never as the length of a materialized pile.
     // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
@@ -356,7 +374,6 @@ export class TriageService {
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters));
 
-    const current = await materializeMessage(ctx.db, ctx.accountId, rows[0]!.id);
     const nextCursor = rows.length > 1 ? encodeListCursor(rows[0]!.id) : null;
     return { current, remaining: Number(tally?.n ?? rows.length), nextCursor };
   }

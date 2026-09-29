@@ -2,8 +2,7 @@ import { parseMessageIds } from "./threading.js";
 import type { AuthVerdict } from "./sender-headers.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 import {
-  bodyTermSatisfied, compareRules, effectForDestination as effectOfDestination, ruleMatchKey,
-  subjectTermSatisfied, type RuleEffect,
+  compareRules, effectForDestination as effectOfDestination, namesAuthor, placingRule, type RuleEffect,
 } from "./rule-order.js";
 
 export type RuleKind = "sender" | "domain" | "header";
@@ -270,102 +269,20 @@ export function effectForDestination(destination: Destination): RuleEffect {
 }
 
 
-function domainOf(addr: string): string {
-  const i = addr.indexOf("@");
-  return i >= 0 ? addr.slice(i + 1) : "";
-}
-
-
 /**
- * Does the message's subject satisfy the rule's subject term? `true` when there is no term — the
- * term is a CONJUNCTION and an absent conjunct is satisfied, so every rule written before mail
- * 0050 keeps its exact pre-column behaviour. Case-folded substring, and deliberately nothing
- * cleverer: no regex (a user-supplied pattern is a ReDoS on the ingest path, and nobody typing
- * `[NinjaFirewall]` means a character class), no unicode normalisation, no whitespace collapsing.
- * `subject` is `string` — `mime.ts` writes `""` for an absent header — so an absent subject
- * satisfies no term, the fail-closed direction for a narrowing conjunct.
- */
-function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
-  return subjectTermSatisfied(r, msg.subject);
-}
-
-
-/**
- * Does the message's text satisfy the rule's body term? `true` when there is no term — an absent
- * conjunct is satisfied, so a rule with no body term keeps its behaviour. Case-folded substring over
- * {@link NormalizedMessage.textBody}, nothing cleverer: no regex (a ReDoS on the ingest path), no
- * normalisation. `textBody` is the byte-identical string `message_bodies.text` stores, so the
- * retro passes consult the same haystack; `""` satisfies no term — fail-closed. The fold
- * allocates a lowercased copy of the body per carrying rule, accepted knowingly: bodies are
- * capped upstream, accounts hold few body-carrying rules, and a shared fold cache would be a
- * place for the term and the haystack to disagree.
- */
-function bodySatisfies(r: Rule, msg: NormalizedMessage): boolean {
-  return bodyTermSatisfied(r, msg.textBody);
-}
-
-/**
- * Does this rule name this PERSON? The address half of {@link matches} with the term conjuncts
- * left out, and the ONE place the sender/domain claim is spelled — {@link matches} asks it of a
- * message, {@link standingRule} asks it of the account's standing decision about a sender, and a
- * second spelling is how those two came to disagree. `author === null` (absent, unparseable or
- * ambiguous `From`) names nobody: a guessed author must never inherit a decision made about
- * somebody else. A `header` rule names a header and not a principal, so it names nobody here.
- */
-function namesAuthor(r: Rule, author: string | null): boolean {
-  if (author === null) return false;
-  if (r.kind === "sender") return ruleMatchKey(r.match) === author;
-  if (r.kind === "domain") return ruleMatchKey(r.match) === domainOf(author);
-  return false;
-}
-
-/**
- * Does this rule fire on this message? The sender and domain arms are {@link namesAuthor} — one
- * spelling of the address claim, including its refusal to let a malformed `From` inherit a
- * decision the user made about somebody else. A `header` rule still fires here — it names a
- * header, not a principal, which is also why it names nobody there. `hasOwnProperty` rather
- * than `Boolean(msg.headers[name])`: the map comes back through `JSON.parse` and inherits from
- * `Object.prototype`, so a rule whose `match` is `constructor` matched EVERY message under the
- * old test. The subject term is checked FIRST and for every kind — an `AND` that can only make
- * this return `false` where it used to return `true`, and impossible for a new kind to forget.
- */
-function matches(r: Rule, msg: NormalizedMessage, author: string | null): boolean {
-  // Placed above the switch rather than inside the `sender` arm: a conjunct that lives in one arm is
-  // a conjunct the next arm can be written without, and the failure that produces is a rule whose
-  // stored term does nothing — indistinguishable from the column not shipping.
-  if (!subjectSatisfies(r, msg)) return false;
-  // The body term (mail 0052): the same conjunct one field deeper, in the same position and for
-  // the same reasons. An `AND`, so it can only ever turn a `true` into a `false`.
-  if (!bodySatisfies(r, msg)) return false;
-  switch (r.kind) {
-    case "sender":
-    case "domain":
-      return namesAuthor(r, author);
-    case "header": {
-      const name = r.match.toLowerCase();
-      return name.length > 0
-        && Object.prototype.hasOwnProperty.call(msg.headers, name)
-        && (msg.headers[name]?.length ?? 0) > 0;
-    }
-    default:
-      return false;
-  }
-}
-
-/**
- * The MINIMUM under {@link compareRules} among the enabled rules that fire — not "the first hit
- * in a pre-sorted array", so nothing about the input order can be load-bearing.
+ * The MINIMUM under {@link compareRules} among the enabled rules that claim the message — the one
+ * claim and fold, `placingRule` (`rule-order.ts`), which every client asks too. The router always
+ * holds the text (`textBody`, the byte-identical `message_bodies.text`) and the headers, so an
+ * `undecided` rule here is a caller that lost them: refused by name, never filed on a guess.
  */
 function winningRule(
   rules: readonly Rule[], msg: NormalizedMessage, author: string | null,
 ): Rule | null {
-  let winner: Rule | null = null;
-  for (const r of rules) {
-    if (!r.enabled) continue;
-    if (!matches(r, msg, author)) continue;
-    if (winner === null || compareRules(r, winner) < 0) winner = r;
+  const placed = placingRule(rules, { author, subject: msg.subject, text: msg.textBody, headers: msg.headers });
+  if (placed.undecided !== null) {
+    throw new Error(`rule ${placed.undecided.id} could not be judged: the router was handed no text or headers`);
   }
-  return winner;
+  return placed.rule;
 }
 
 /**
@@ -375,7 +292,8 @@ function winningRule(
  * consent cutline's `decided` predicate and the client's `consentIndex` take, and this is the
  * routing side of the same question, so the gate stops asking about somebody the account has
  * answered for. A rule pointing AT the Screener is the absence of a decision written down and is
- * not one. The winner is the minimum under {@link compareRules}, as {@link winningRule}'s is.
+ * not one. The winner is the minimum under {@link compareRules}, as {@link winningRule}'s is; the
+ * person is named by `namesAuthor`, the claim's own principal half (`rule-order.ts`).
  */
 export function standingRule(rules: readonly Rule[], author: string | null): Rule | null {
   let winner: Rule | null = null;

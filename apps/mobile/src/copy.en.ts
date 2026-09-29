@@ -1546,10 +1546,14 @@ const TABLE = {
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule »${term}«.`,
   liveVerdictKeptDomain: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule for everyone at ${domain}, subject contains »${term}«.`,
+  liveVerdictKeptDomainBody: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>
+    `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule for everyone at ${domain}, text contains »${term}«.`,
   liveVerdictKeptMany: (count: number, place: string, kept: number) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} where your rules file them.`,
   liveVerdictStill: (count: number, place: string, still: number, stillPlace: string) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${still === 1 ? "1 is" : `${still} are`} still in ${stillPlace}.`,
+  liveVerdictUndecided: (count: number, place: string, still: number, stillPlace: string, term: string) =>
+    `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${still === 1 ? "1 is" : `${still} are`} still in ${stillPlace}, where your rule for text containing »${term}« may keep ${still === 1 ? "it" : "them"}.`,
   liveVerdictStillLegacy: (count: number, place: string, still: number, folder: string, stillPlace: string) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${still === 1 ? "1 is" : `${still} are`} still in the folder ${folder}, the old name of ${stillPlace}.`,
   liveVerdictApplying: (count: number, place: string) =>

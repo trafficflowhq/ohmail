@@ -111,12 +111,16 @@ export function writtenRuleIds(
 
 /** The catalogue key a verdict is said in, under `screening`; a domain rule is named as one. */
 export function verdictKeyOf(v: Exclude<StayVerdict, { key: "none" }>): string {
-  if (v.key === "kept") return v.rule.kind === "domain" ? "verdictKeptDomain" : "verdictKept";
+  if (v.key === "kept") {
+    if (v.rule.kind !== "domain") return "verdictKept";
+    return v.field === "body" ? "verdictKeptDomainBody" : "verdictKeptDomain";
+  }
   return VERDICT_KEY[v.key];
 }
 
 const VERDICT_KEY = {
   keptMany: "verdictKeptMany", still: "verdictStill", stillLegacy: "verdictStillLegacy", applying: "verdictApplying",
+  undecided: "verdictUndecided",
 } as const;
 
 /** The one press a verdict's sentence offers. */
@@ -135,7 +139,7 @@ export function verdictAction(
       && ruleMatchKey(v.rule.match) === senderKey(pressed.address);
     return own ? { kind: "remove", ruleId: v.rule.id } : null;
   }
-  if (v.key === "still" || v.key === "stillLegacy") return { kind: "move", ids: [...v.ids] };
+  if (v.key === "still" || v.key === "stillLegacy" || v.key === "undecided") return { kind: "move", ids: [...v.ids] };
   return null;
 }
 

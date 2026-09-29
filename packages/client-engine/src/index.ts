@@ -243,13 +243,16 @@ export {
   domainOfAddress,
   historyView,
   mailboxProfiles,
+  messagePlacement,
   physicalFolderOf,
   presentationReader,
   senderActivity,
+  type BodyTextReader,
   type ConsentCounts,
   type ConsentIndex,
   type ConsentOptions,
   type ConsentPartition,
+  type MessagePlacement,
   type SenderActivity,
 } from "./consent-cutline.js";
 
@@ -379,6 +382,7 @@ export {
   unscreenedGroups,
   unscreenedTotalOf,
   screenerAdviceAi,
+  mirrorSuggestionIdOf,
   screenerSegments,
   screenerRowsOfStore,
   screenerWaitingOf,
@@ -832,6 +836,7 @@ export {
 } from "./press-outcome.js";
 // The press before it is made: where the list would show each row, and what the step asks.
 export {
+  landingOfMoves,
   planScreenCommit,
   pressForecast,
   readerWithEffects,

@@ -899,6 +899,12 @@ export interface ScreenerSenderDTO {
     dest: OhmailView | "screened" | "spam";
     confidence: number;
     rationale: string;
+    /**
+     * The mirror's `screener_suggestion` this came from — which purchase it is, for the one join
+     * of the mirror and the session's overlay (`joinSuggestion`). Absent on a fixture row and on
+     * an answer the overlay holds; client-side only, never on the wire.
+     */
+    id?: string;
     noAnswer?: "out_of_credits" | "over_quote" | "spend_unavailable" | "model_unavailable";
     /**
      * WHICH FACT OHMAIL CHECKED DECIDED THIS — a deterministic sender check the server ran before

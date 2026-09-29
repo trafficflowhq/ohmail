@@ -1,7 +1,8 @@
 import { canonicalDestination, isOrganizedFolder, retroPassWouldMove } from "@trafficflow/core/destinations";
 import { outrankCoveringDomains } from "./address-rank.js";
 import {
-  consentIndex, consentPartition, domainOfAddress, mailboxProfiles, outranks, placedRule, ruleMatchKey, ruleTerms,
+  consentIndex, consentPartition, domainOfAddress, mailboxProfiles, messagePlacement, outranks, ruleMatchKey,
+  ruleTerms,
   type ConsentOptions,
 } from "./consent-cutline.js";
 import { mutationEffects, type MutationEffect } from "./mutations.js";
@@ -132,7 +133,7 @@ export interface PressForecast {
  * lifted and applied exactly as `engine.mutate` does (`outrankCoveringDomains`, then
  * `mutationEffects`), so this is the optimistic overlay and not a model of it. Rows in reach of the
  * press are refiled where the router would put them, and the rows are placed by the surface's own
- * `consentPartition` and attributed by its `placedRule`.
+ * `consentPartition` and attributed by its `messagePlacement`.
  */
 export function pressForecast(input: PressInput): PressForecast {
   const rules = rulesList(input.reader);
@@ -189,8 +190,10 @@ function simulate(input: PressInput, writes: readonly EngineMutation[]): Simulat
   for (const m of input.subject) {
     const now = ruled.get<EngineMessage>("message", m.id) ?? m;
     if (!reach || !retroPassWouldMove(now, input.wanted)) continue;
-    const by = input.makeRule || input.decide ? placedRule(index, now) : null;
-    const to = (by?.destination ?? input.wanted) as Folder;
+    const placed = input.makeRule || input.decide ? messagePlacement(index, now, ruled) : null;
+    // The router's place is not knowable without the text: the row stays at its folder, unmoved.
+    if (placed?.undecided) continue;
+    const to = (placed?.rule?.destination ?? input.wanted) as Folder;
     if (canonicalDestination(to) === canonicalDestination(now.physicalFolder ?? now.folder)) continue;
     moves.push({ kind: "move", messageId: m.id, folder: to });
     moved.push({ type: "message", id: m.id, entity: { ...now, folder: to } });
@@ -205,6 +208,26 @@ function simulate(input: PressInput, writes: readonly EngineMutation[]): Simulat
   return { writes: sent, moves, after: ruled, placeOf, landing };
 }
 
+/**
+ * WHERE THE LIST WOULD SHOW ROWS A NO-RULE PRESS FILES TO `wanted` — the ids at the place after
+ * the moves, over ONE partition for however many senders the press covers (the bulk bar's), in
+ * the lists' own options. The same answer `pressForecast` gives a single no-rule press.
+ */
+export function landingOfMoves(
+  reader: EntityReader, options: ConsentOptions, rows: readonly EngineMessage[], wanted: Folder,
+): string[] {
+  const moved: MutationEffect[] = [];
+  for (const m of rows) {
+    if (retroPassWouldMove(m, wanted)) moved.push({ type: "message", id: m.id, entity: { ...m, folder: wanted } });
+  }
+  const placeOf = consentPartition(readerWithEffects(reader, moved), options).placeOf;
+  const place = canonicalDestination(wanted);
+  return rows
+    .filter((m) => isOrganizedFolder(m.physicalFolder ?? m.folder))
+    .filter((m) => { const p = placeOf.get(m.id); return p != null && canonicalDestination(p) === place; })
+    .map((m) => m.id);
+}
+
 /** The rules that would keep the subject's rows elsewhere after the press, one group per rule. */
 function conflictsOf(
   input: PressInput, after: EntityReader, placeOf: ReadonlyMap<string, Folder | null>,
@@ -212,12 +235,16 @@ function conflictsOf(
   const place = canonicalDestination(input.wanted);
   const index = consentIndex(rulesList(after), mailboxProfiles(after));
   const groups = new Map<string, ConflictGroup>();
+  const unjudged = new Set<string>();
   for (const m of input.subject) {
     if (!isOrganizedFolder(m.physicalFolder ?? m.folder)) continue;
     const shown = placeOf.get(m.id);
     if (shown != null && canonicalDestination(shown) === place) continue;
     const row = after.get<EngineMessage>("message", m.id) ?? m;
-    const by = placedRule(index, row);
+    const placed = messagePlacement(index, row, after);
+    // An undecided row is the body rule's, named uncounted below: its text is not held here.
+    if (placed.undecided !== null) unjudged.add(placed.undecided.id);
+    const by = placed.undecided === null ? placed.rule : null;
     if (by === null || canonicalDestination(by.destination) === place) continue;
     const cause = causeOf(input, by);
     if (cause === null) continue;
@@ -225,7 +252,8 @@ function conflictsOf(
     if (held) held.rows!.push(m.id);
     else groups.set(by.id, { cause, rule: by, place: shown ?? null, rows: [m.id] });
   }
-  // A body term is matched when mail is filed; the mirror row has no text, so it is never counted.
+  // A body rule this client could not judge for every row is named uncounted: rows whose text is
+  // not held are decided by it when they are filed, and a number would be a guess.
   for (const r of rulesList(after)) {
     if (!r.enabled || r.kind !== "sender" || ruleTerms(r).body === null) continue;
     if (canonicalDestination(r.destination) === place || groups.has(r.id)) continue;
@@ -237,13 +265,15 @@ function conflictsOf(
       cause: input.scope === "domain" ? "own-rule-inside" : "term-body", rule: r, place: r.destination, rows: null,
     });
   }
+  for (const g of groups.values()) if (unjudged.has(g.rule.id)) g.rows = null;
   return [...groups.values()];
 }
 
 function causeOf(input: PressInput, by: RuleDTO): ConflictCause | null {
   if (input.scope === "domain") return by.kind === "sender" ? "own-rule-inside" : null;
   if (by.kind === "domain") return "domain-outranks";
-  return ruleTerms(by).subject !== null ? "term-subject" : null;
+  if (ruleTerms(by).subject !== null) return "term-subject";
+  return ruleTerms(by).body !== null ? "term-body" : null;
 }
 
 /**
@@ -300,8 +330,8 @@ export interface RulesInPlay {
 
 /**
  * EVERY RULE DECIDING THE SUBJECT'S ROWS TODAY — the sheet's "Their rules", placed by the same
- * `placedRule` and counted over the same presented places as the list. A body-term rule naming the
- * subject is listed uncounted; identical rules collapse to one line.
+ * `messagePlacement` and counted over the same presented places as the list. A body-term rule is
+ * counted only where the text of every row it could claim is held; identical rules collapse.
  */
 export function rulesInPlay(input: {
   reader: EntityReader;
@@ -323,8 +353,11 @@ export function rulesInPlay(input: {
   const counts = new Map<string, number>();
   const insideSenders = new Set<string>();
   let insideCount = 0;
+  const unjudged = new Set<string>();
   for (const m of input.subject) {
-    const by = placedRule(index, m);
+    const placed = messagePlacement(index, m, input.reader);
+    if (placed.undecided !== null) unjudged.add(placed.undecided.id);
+    const by = placed.undecided === null ? placed.rule : null;
     const shown = input.placeOf.has(m.id) ? input.placeOf.get(m.id)! : m.folder;
     if (by === null || shown === null || canonicalDestination(shown) !== canonicalDestination(by.destination)) continue;
     if (input.scope === "domain" && by.kind === "sender") {
@@ -354,7 +387,8 @@ export function rulesInPlay(input: {
       if (line.count !== null) line.count += counts.get(r.id) ?? 0;
       continue;
     }
-    const fresh: RuleLine = { rules: [r], count: body ? null : counts.get(r.id) ?? 0 };
+    // A body rule is counted only where this client read every row it could claim.
+    const fresh: RuleLine = { rules: [r], count: body && unjudged.has(r.id) ? null : counts.get(r.id) ?? 0 };
     byPrint.set(key, fresh);
     lines.push(fresh);
   }

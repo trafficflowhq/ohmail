@@ -60,7 +60,6 @@ import { useListWindow } from "../shell/list-window";
 import { useBodyStalled, type BodyTarget } from "../shell/message-chrome";
 import { MessageFiles } from "../shell/MessageFiles";
 import { useDrawnBody, useDrawnStates } from "../shell/body-slice";
-import { heldBodyAsks } from "../shell/held-body-asks";
 import { goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
@@ -563,6 +562,7 @@ export function ScreenerView({
   owed,
   onSelect,
   hydrateBody,
+  hydrateBodies,
   remoteImages,
   onUnsubscribe,
   junk,
@@ -645,6 +645,8 @@ export function ScreenerView({
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
   /** Ask for one held message's body. `retry` marks a human asking again, `urgent` a body being read. */
   hydrateBody: (id: string, opts?: { retry?: boolean; urgent?: boolean }) => void;
+  /** Ask for the selected sender's held bodies as ONE request (oldest first), `urgent` being read. */
+  hydrateBodies: (ids: string[], opts?: { urgent?: boolean }) => void;
   /**
    * Unsubscribe one held message's sender, server-side. ABSENT on a client with no server (the
    * demo, a test) — the screened-out / spam previews then offer no unsubscribe control rather
@@ -999,12 +1001,12 @@ export function ScreenerView({
   // `heldOfCurrent` is resolved once, up beside the anchor, so the two effects that read this
   // sender's held mail cannot disagree about which rows they mean.
   const heldKey = heldOfCurrent.map((h) => h.id).join(",");
-  // The newest held bodies ask as an open message asks; see `heldBodyAsks`.
+  /* THE HELD BODIES ASK AS ONE URGENT REQUEST (`hydrateBodies`): a person is reading them, so they
+     do not queue behind background work, and one request for the whole list is not the burst
+     urgency for each of forty would be. */
   useEffect(() => {
-    for (const ask of heldBodyAsks(heldKey ? heldKey.split(",") : [])) {
-      hydrateBody(ask.id, ask.urgent ? { urgent: true } : undefined);
-    }
-  }, [heldKey, hydrateBody]);
+    if (heldKey) hydrateBodies(heldKey.split(","), { urgent: true });
+  }, [heldKey, hydrateBodies]);
   /** A human asking again — the only path allowed to re-ask a server that refused. */
   const retryBody = (id: string) => hydrateBody(id, { retry: true });
 

@@ -469,8 +469,13 @@ export function joinSuggestion(
   x: ScreenerSenderDTO, overlay: SuggestionOverlay | undefined,
 ): ScreenerSenderDTO {
   if (!overlay || x.derived !== true) return x;
-  const found = overlay.get(senderKey(x.from.address));
-  if (!found) return x;
+  const entry = overlay.get(senderKey(x.from.address));
+  if (!entry) return x;
+  /* THE NEWER ANSWER WINS, on one clock: the overlay entry names the mirror suggestion it landed
+     over, so a different one on the mirror now is a purchase made since, anywhere (a re-ask on
+     another device, the worker), carried by `/sync`. Unnamed, the overlay wins as before. */
+  const { over, ...found } = entry;
+  if (x.ai?.id !== undefined && over !== undefined && x.ai.id !== over) return x;
   // A refused act is the MIRROR's fact (its write and its clear ride the delta); the overlay
   // carries advice, never that, so it is kept from the row the mirror served.
   return { ...x, ai: x.ai?.actRefused ? { ...found, actRefused: true } : found };
@@ -1137,7 +1142,8 @@ export function useScreenerState(
         const subject = sender.scopes[d.scope].messages;
         const before = shownAt(subject, dest);
         let refused: Parameters<typeof organizerRefusalOf>[0] = undefined;
-        void dispatchScreeningChange(plan, (m) => engine.mutate(m).then((r) => {
+        // A rule press moves nothing itself: the server pass owns the backlog (`movesAtLanding`).
+        void dispatchScreeningChange(plan, [], (m) => engine.mutate(m).then((r) => {
           if (r.status === "rolled_back" && refused === undefined) refused = r.error;
           return r;
         })).then((key) => {

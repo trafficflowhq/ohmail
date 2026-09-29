@@ -3,6 +3,7 @@ import { opensWithForwardPrefix } from "@trafficflow/core/reply-subject";
 import { isAcknowledgementSubject } from "@trafficflow/core/ics";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
+import { resurfacedFolds } from "@trafficflow/core/conversation-fold";
 import type { EntityReader } from "./store.js";
 /* The address fold and the own-address predicate, from the leaf that owns both — never
    re-spelled here. A LEAF and not `consent-cutline.ts`: the partition imports this module, so
@@ -858,49 +859,24 @@ export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
   if (hit && hit.v === v) return hit.rows;
 
   const claims = winningStates(reader);
-  const byKey = new Map<string, EngineMessage[]>();
-  for (const m of messagesByDateDesc(reader)) {
-    const key = conversationKeyOf(m);
-    const held = byKey.get(key);
-    if (held) held.push(m);
-    else byKey.set(key, [m]);
-  }
-
+  /* THE MEMBERSHIP IS THE FOLD'S (`@trafficflow/core/conversation-fold`), which the server's
+     "New for you" holds out by too: one rule for which conversation a pin brings back. */
+  const members = messagesByDateDesc(reader).map((m) => {
+    const claim = claims.get(m.id);
+    return {
+      id: m.id, threadId: m.threadId, arrivedMs: arrivalMs(m), fromSomeone: isFromSomeone(m), unread: m.unread,
+      state: (claim?.state as string | undefined) ?? null, setAtMs: msOf(claim?.setAt ?? null), msg: m,
+    };
+  });
   const rows: ResurfacedThreadRow[] = [];
-  for (const [key, group] of byKey) {
-    const pinned = group.filter((m) => {
-      const s = claims.get(m.id)?.state as string | undefined;
-      return s === "resurfaced" || s === "bubbled_up";
-    });
-    if (pinned.length === 0) continue;
-    const hasResurfaced = pinned.some((m) => (claims.get(m.id)?.state as string | undefined) === "resurfaced");
-
+  for (const fold of resurfacedFolds(members)) {
+    const group = fold.members.map((x) => x.msg);
+    const pinned = fold.pinned.map((x) => x.msg);
     // The newest pin decides the row's "since": a conversation asked about twice is asked about
     // from the later ask, so re-parking a thread clears a badge the first pin had earned.
-    let sinceMs: number | null = null;
-    let resurfacedAt: string | null = null;
-    for (const m of pinned) {
-      const setAt = claims.get(m.id)?.setAt ?? null;
-      const t = msOf(setAt);
-      if (t === null) continue;
-      if (sinceMs === null || t > sinceMs) { sinceMs = t; resurfacedAt = setAt; }
-    }
-
-    const newSince = group.filter((m) => {
-      if (!m.unread || !isFromSomeone(m)) return false;
-      const t = arrivalMs(m);
-      return t !== null && sinceMs !== null && t > sinceMs;
-    });
-    // PULL-FORWARD: a conversation whose time has not come stands here anyway once somebody has
-    // written into it. Read state is not the question — a read reply still means the thread moved
-    // on — so this asks arrival, where the badge asks arrival AND unread.
-    const written = group.some((m) => {
-      if (!isFromSomeone(m)) return false;
-      const t = arrivalMs(m);
-      return t !== null && sinceMs !== null && t > sinceMs;
-    });
-    if (!hasResurfaced && !written) continue;
-
+    const newest = fold.pinned.find((m) => m.setAtMs !== null && m.setAtMs === fold.sinceMs);
+    const resurfacedAt = newest === undefined ? null : claims.get(newest.id)?.setAt ?? null;
+    const key = fold.key;
     // The newest member somebody ELSE wrote — see {@link resurfacedFocus}; a row keyed on the
     // account's own answer opened on the Sent copy (2026-09-21).
     const openTarget = resurfacedFocus(group, pinned);
@@ -909,6 +885,7 @@ export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
     // derivations of one number drift, and this row's badge and a list row's badge are the same
     // claim about the same conversation. A threadless pin ("msg:" key) stands for itself.
     const size = key.startsWith("msg:") ? undefined : threadSizeIndex(reader).get(key);
+    const newSince = fold.newSince.map((x) => x.msg);
 
     rows.push({
       key,
@@ -921,7 +898,7 @@ export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
       resurfacedAt,
       newSince,
       badge: newSince.length > 0,
-      pulledForward: !hasResurfaced,
+      pulledForward: fold.pulledForward,
     });
   }
 
@@ -1363,6 +1340,7 @@ function suggestionAi(s: ScreenerSuggestionEntity | undefined): ScreenerSenderDT
     dest,
     confidence: s.confidence,
     rationale: "",
+    id: s.id,
     ...(typeof s.actRefusal === "string" && s.actRefusal !== "" ? { actRefused: true as const } : {}),
     ...(code
       ? {
@@ -1395,6 +1373,11 @@ function newestAdviceBySender(reader: EntityReader): Map<string, ScreenerSuggest
  * no advice). The SAME `suggestionAi` reading the segments give their own rows; a caller never
  * re-derives a verdict from `destination` alone.
  */
+/** The mirror's newest suggestion for this sender, by entity id, or `null` — what an overlay entry is written over. */
+export function mirrorSuggestionIdOf(reader: EntityReader, address: string): string | null {
+  return newestAdviceBySender(reader).get(senderKey(address))?.id ?? null;
+}
+
 export function screenerAdviceAi(reader: EntityReader): Map<string, ScreenerSenderDTO["ai"]> {
   const out = new Map<string, ScreenerSenderDTO["ai"]>();
   for (const [key, s] of newestAdviceBySender(reader)) out.set(key, suggestionAi(s));

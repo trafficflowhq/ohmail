@@ -186,6 +186,11 @@ import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-sugge
 import {
   screenerActConsentFrom, screenerAutoActPass, type ScreenerAutoActSettings,
 } from "@trafficflow/worker/screener-auto-act";
+/* THE CORRESPONDENT RETRO, the worker's pass for `ruleRetroPass`'s reason: nobody this account
+   wrote to waits at the gate, and on this door no worker will ever walk the held set. */
+import {
+  CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
+} from "@trafficflow/worker/screener-correspondent-retro";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
@@ -2475,6 +2480,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * pays its GROUP BY. Zero so a launch's first drain takes one look (splits accumulated
      * while the app was closed), exactly the worker's gate seeding. */
     let lastJoinHealAt = 0;
+    /** When the correspondent retro last ran in THIS launch — zero, so a launch's first drain
+     * releases whoever it wrote to while the app was closed; then once per
+     * `CORRESPONDENT_RETRO_EVERY_MS`, the hosted cadence. */
+    let lastCorrespondentRetroAt = 0;
     /** When the inbound-quiet pass last ran in THIS launch — same seeding and cadence
      * (`LOCAL_INBOUND_QUIET_EVERY_MS`) as the heal above: zero so a launch's first drain takes
      * one look at what went quiet while the app was closed. */
@@ -5830,6 +5839,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              account, not per cycle. Behind the organizer gate, unlike `suggestNew`: filing a
              sender writes the rules the mailbox's organizer owns, so a reader never enters it. */
           if (organizing) await onceForTheAccount(() => actOnSuggestions(actSettings));
+          /* AND RELEASE WHO WE WROTE TO — the worker's correspondent retro: teach `contacts` our Sent
+             copies, release their held mail to the Ohbox, retire an auto-act spam rule over one.
+             Behind the organizer gate (it writes the mailbox's desired state and rules), time-gated
+             like the join heal, and CONTAINED: held mail stays held and the next gated drain asks. */
+          tail.phase("correspondent-retro");
+          const correspondentRetroDue = async (): Promise<void> => {
+            if (Date.now() - lastCorrespondentRetroAt < CORRESPONDENT_RETRO_EVERY_MS) return;
+            lastCorrespondentRetroAt = Date.now();
+            try {
+              const r = await screenerCorrespondentRetroPass(db as unknown as Tx, { accountId: world.accountId, now });
+              if (r.released > 0 || r.retired > 0 || r.learned > 0) {
+                log("correspondent_retro", { learned: r.learned, released: r.released, retired: r.retired });
+              }
+            } catch (err) {
+              log("correspondent_retro_failed", {
+                err,
+                reason: "nothing held was released and no rule was retired; each sender is its own " +
+                  "transaction, so the next gated drain re-reads the evidence and asks again",
+              });
+            }
+          };
+          if (organizing) await onceForTheAccount(correspondentRetroDue);
           /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
              suite pins rather than a preference. It is about rows that have been on this disk for as
              long as the install has existed, so nothing it does is urgent, and a cold launch's first

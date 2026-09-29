@@ -62,7 +62,7 @@ export const SCREENER_AUTO_FULL_EVERY_MS = 60 * 60_000;
  * next walk reads only held rows whose message moved in `change_log` since `headSeq`; a full walk is
  * due when the opt-in or the mailbox roster changed, the log was pruned past the mark, a change that
  * can re-admit a kept row landed (a rule disabled or deleted, a triage state, a draft or decision
- * withdrawn), or {@link SCREENER_AUTO_FULL_EVERY_MS} passed.
+ * withdrawn, our own writing changed), or {@link SCREENER_AUTO_FULL_EVERY_MS} passed.
  */
 export interface ScreenerAutoMark {
   autoApplyAt: string; roster: string; headSeq: bigint; fullAt: number;
@@ -153,6 +153,20 @@ const READMITS = sql`(${changeLog.entityType} = 'message_state'
   or (${changeLog.entityType} in ('rule', 'approval') and ${changeLog.op} in ('update', 'delete'))
   or (${changeLog.entityType} = 'draft' and ${changeLog.op} = 'delete'))`;
 
+/**
+ * …AND A CHANGE TO THE ACCOUNT'S OWN WRITING. Exclusion 5 reads our replies in the held row's
+ * thread, so our reply re-threaded away (`thread-service.ts`'s merge, the join heal) or deleted
+ * lifts it with no change row of the held message's own. Joined by `entity_id`: a tombstone keeps
+ * its row and joins; a purged row is gone and cannot, and waits for the hourly full walk.
+ */
+function ownWritingChanged(own: readonly string[]): SQL {
+  if (own.length === 0) return sql`false`;
+  return sql`(${changeLog.entityType} = 'message' and ${changeLog.op} in ('update', 'delete') and exists (
+    select 1 from ${messages} om
+     where om.id = ${changeLog.entityId} and om.account_id = ${changeLog.accountId}
+       and lower(om.from_address) in (${sql.join(own.map((a) => sql`${a}`), sql`, `)})))`;
+}
+
 /** True ⇒ sensitivity-flagged (`sensitivity_category` set OR `no_ai`) — never auto-moved. */
 function isSensitivityFlagged(row: AutoRow): boolean {
   return row.sensitivityCategory !== null || row.noAi;
@@ -204,7 +218,7 @@ export async function screenerAutoApplyPass(
   deps.walk?.resumes?.delete(accountId);
   const resume = held && held.next.autoApplyAt === autoApplyAt && held.next.roster === roster ? held : undefined;
   const plan = resume ? { changed: resume.changed, next: resume.next }
-    : await planWalk(db, deps, { accountId, autoApplyAt, roster, now: now() });
+    : await planWalk(db, deps, { accountId, autoApplyAt, roster, ownAddresses, now: now() });
   result.mode = plan.changed === null ? "full" : "incremental";
   let afterId: string | null = resume?.afterId ?? null;
   const pages = plan.changed === null ? maxPages : Math.ceil(plan.changed.length / batch);
@@ -344,7 +358,7 @@ export async function screenerAutoApplyPass(
  */
 async function planWalk(
   db: Tx, deps: ScreenerAutoDeps,
-  o: { accountId: string; autoApplyAt: string; roster: string; now: Date },
+  o: { accountId: string; autoApplyAt: string; roster: string; ownAddresses: readonly string[]; now: Date },
 ): Promise<{ changed: string[] | null; next: ScreenerAutoMark }> {
   if (deps.walk === undefined) {
     return { changed: null, next: { autoApplyAt: o.autoApplyAt, roster: o.roster, headSeq: 0n, fullAt: 0 } };
@@ -359,7 +373,8 @@ async function planWalk(
     pruned: accountSyncState.prunedThroughSeq,
     readmit: since === null ? sql<boolean>`false` : sql<boolean>`exists (
       select 1 from ${changeLog} where ${changeLog.accountId} = ${o.accountId}::uuid
-         and ${changeLog.seq} > ${since.toString()}::bigint and ${READMITS})`,
+         and ${changeLog.seq} > ${since.toString()}::bigint
+         and (${READMITS} or ${ownWritingChanged(o.ownAddresses)}))`,
     changed: since === null ? sql<string[] | null>`null` : sql<string[] | null>`(
       select array_agg(distinct cl.entity_id::text) from ${changeLog} cl
         join ${folderState} fs on fs.message_id = cl.entity_id

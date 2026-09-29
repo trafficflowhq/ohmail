@@ -285,7 +285,7 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
          comparing the two words raised a correction after every ordinary success. */
       const worst = worstStatus(results);
       if (worst === null || worst === "confirmed") return;
-      const key = screeningToast(plan, worst);
+      const key = screeningToast(plan, worst, 0);
       if (note) latest.current.toast(latest.current.copy.correction(key, note));
     },
 

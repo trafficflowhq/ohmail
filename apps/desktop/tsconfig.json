@@ -126,6 +126,7 @@
       "@trafficflow/core/pair-link": ["../../packages/core/src/pair-link.ts"],
       "@trafficflow/core/sender-headers": ["../../packages/core/src/sender-headers.ts"],
       "@trafficflow/core/rule-order": ["../../packages/core/src/rule-order.ts"],
+      "@trafficflow/core/conversation-fold": ["../../packages/core/src/conversation-fold.ts"],
       "@trafficflow/core/reader-refusal": ["../../packages/core/src/reader-refusal.ts"],
       "@trafficflow/core/outbound-text": ["../../packages/core/src/outbound-text.ts"],
       /* The one matcher that decides whether a configured model is on the endpoint's list —
