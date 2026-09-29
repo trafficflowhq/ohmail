@@ -367,5 +367,28 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"drafts\" ADD COLUMN \"forward_of_message_id\" text REFERENCES \"messages\"(\"id\") CONSTRAINT \"drafts_reply_xor_forward\" CHECK (\"in_reply_to_message_id\" IS NULL OR \"forward_of_message_id\" IS NULL);"
     ]
+  },
+  {
+    "name": "0138_device_search_stems.sql",
+    "statements": [
+      "DROP TRIGGER IF EXISTS messages_fts_after_insert;",
+      "DROP TRIGGER IF EXISTS messages_fts_after_delete;",
+      "DROP TRIGGER IF EXISTS messages_fts_after_update;",
+      "DROP TRIGGER IF EXISTS message_bodies_fts_after_insert;",
+      "DROP TRIGGER IF EXISTS message_bodies_fts_after_delete;",
+      "DROP TRIGGER IF EXISTS message_bodies_fts_after_update;",
+      "DROP TABLE IF EXISTS messages_fts;",
+      "DROP TABLE IF EXISTS message_bodies_fts;",
+      "CREATE VIRTUAL TABLE messages_fts USING fts5(\n  subject, from_address,\n  content='messages',\n  content_rowid='rowid',\n  tokenize='porter unicode61 remove_diacritics 2'\n);",
+      "CREATE VIRTUAL TABLE message_bodies_fts USING fts5(\n  text,\n  content='message_bodies',\n  content_rowid='rowid',\n  tokenize='porter unicode61 remove_diacritics 2'\n);",
+      "CREATE TRIGGER messages_fts_after_insert AFTER INSERT ON messages BEGIN\n  INSERT INTO messages_fts(rowid, subject, from_address) VALUES (new.rowid, new.subject, new.from_address);\nEND;",
+      "CREATE TRIGGER messages_fts_after_delete AFTER DELETE ON messages BEGIN\n  INSERT INTO messages_fts(messages_fts, rowid, subject, from_address) VALUES ('delete', old.rowid, old.subject, old.from_address);\nEND;",
+      "CREATE TRIGGER messages_fts_after_update AFTER UPDATE ON messages BEGIN\n  INSERT INTO messages_fts(messages_fts, rowid, subject, from_address) VALUES ('delete', old.rowid, old.subject, old.from_address);\n  INSERT INTO messages_fts(rowid, subject, from_address) VALUES (new.rowid, new.subject, new.from_address);\nEND;",
+      "CREATE TRIGGER message_bodies_fts_after_insert AFTER INSERT ON message_bodies BEGIN\n  INSERT INTO message_bodies_fts(rowid, text) VALUES (new.rowid, new.text);\nEND;",
+      "CREATE TRIGGER message_bodies_fts_after_delete AFTER DELETE ON message_bodies BEGIN\n  INSERT INTO message_bodies_fts(message_bodies_fts, rowid, text) VALUES ('delete', old.rowid, old.text);\nEND;",
+      "CREATE TRIGGER message_bodies_fts_after_update AFTER UPDATE ON message_bodies BEGIN\n  INSERT INTO message_bodies_fts(message_bodies_fts, rowid, text) VALUES ('delete', old.rowid, old.text);\n  INSERT INTO message_bodies_fts(rowid, text) VALUES (new.rowid, new.text);\nEND;",
+      "INSERT INTO messages_fts(messages_fts) VALUES('rebuild');",
+      "INSERT INTO message_bodies_fts(message_bodies_fts) VALUES('rebuild');"
+    ]
   }
 ] as const;

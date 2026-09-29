@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, partWordsOf } from "./index.js";
+import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, PART_WORD_TAILS, partWordsOf } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -17,31 +17,6 @@ export { assertDistinct };
 
 /** Fed to `to_tsvector`/`websearch_to_tsquery`; the literal is required for an immutable index. */
 const TEXT_SEARCH_CONFIG = "english";
-
-/**
- * The endings the english stemmer strips past a part's fourth letter: `elevatio` + `n` is
- * `elevation`, whose stem `elev` a prefix read of `elevatio` cannot reach. Measured over the two
- * system word lists (70 615 words): for every word and every part of it from four letters whose
- * stem does not start with the part, the rest of the word is one of these.
- */
-const PART_WORD_TAILS = `
-  c d e g i l m n r s t y al ce cs cy ds ed er es gs ic is le li ls ly ms ng ns nt on or rs sm ss
-  te ti ts ty ul us ve ze als ant ate ble bly cal ced ces cly dly ely ent ers ess ful gly ied ies
-  ing ion ism ity ive ize led les lis lly nal nce ncy ned ngs nts ons ors ous red rly sed ses sly
-  sms ted tes tis tly tor uls ves zed zer zes able ably ally ance ants ated ates ator bled bles
-  cals cate cies cing city edly ence ency ents ered fuls ible ibly ings ions isms itis ives ized
-  izer izes lied lies ling lism lity lize ment nals nces ness ngly ning nted ntly onal oned ring
-  rred sing ssed sses tely tful ties ting tion tive tors ully used usly vely vity ying zers zing
-  ables aling alism ality ately ating ation ative ators bling cally cated cates cator citis ement
-  eness ented ently ering essed esses fully ility ingly ional ities ively izers izing lisms litis
-  lized lizes llied llies lness lying ments nally ncies ntful nting onals oning ously rness rring
-  sness ssing tedly tions tives tness using vitis ations atives bility cality cately cating
-  cation cative cators cities ements encies enting essing ionals leness lities lizing llying
-  mented nalism nality nesses ningly ntedly ntness onally rative tative teness tfully tingly
-  tional tively ulness usness veness vities zation zingly ability bleness cations fulness ibility
-  ilities ionally iveness ization ntative ntfully ntingly onalism onality oningly tatives tionals
-  zations bilities ionalism izations lization ntatives tionally tiveness lizations tionalism
-`.trim().split(/\s+/);
 
 /**
  * The part-word arm's tsquery. Per word: itself and its stem; from four letters also every lexeme

@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable, assertJsonKey, PART_PREFIX_MIN_CHARS, partWordsOf } from "./index.js";
+import { assertComparable, assertJsonKey, PART_PREFIX_MIN_CHARS, PART_WORD_TAILS, partWordsOf } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -195,7 +195,10 @@ function phraseOf(text: string): string | null {
  * A typed query as FTS5 syntax that cannot refuse, read the way `websearch_to_tsquery` reads it:
  * a quoted span or a punctuated word is a phrase, `-` before a word excludes it (`--` does not), a
  * bare `or` between words is OR, and the server's stopwords are dropped. `"parts"` is the part-word
- * arm's reading: every word, from four letters also as the start of a longer one. `match` is null
+ * arm's reading, as the server's: every word, from four letters also as the start of a longer one
+ * or as itself plus a tail its stem drops (`elevat` → `elevation`, whose porter stem is `elev`),
+ * ONE parenthesised group per such word, because FTS5 binds AND tighter than OR (and ANDs groups
+ * only when told). `match` is null
  * when only exclusions are left (then `exclude` names them) or nothing is.
  */
 export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { match: string | null; exclude: string | null } {
@@ -203,7 +206,9 @@ export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { matc
     const words = partWordsOf(q);
     const kept = (words ?? []).filter((w, i) => !ENGLISH_STOPWORDS.has(w.toLowerCase())
       || (i === words!.length - 1 && [...w].length >= PART_PREFIX_MIN_CHARS));
-    const match = kept.map((w) => ([...w].length >= PART_PREFIX_MIN_CHARS ? `"${w}"*` : `"${w}"`)).join(" ");
+    const group = (w: string): string => `("${w}"* OR ${PART_WORD_TAILS.map((t) => `"${w}${t}"`).join(" OR ")})`;
+    // AND spelled out: FTS5 takes no implicit AND beside a parenthesised group.
+    const match = kept.map((w) => ([...w].length >= PART_PREFIX_MIN_CHARS ? group(w) : `"${w}"`)).join(" AND ");
     return { match: match === "" ? null : match, exclude: null };
   }
   const terms: string[] = [];
@@ -485,7 +490,8 @@ export function sqliteDialect(): Dialect {
         text: { pred: ftsRows(sql`b.rowid`, "message_bodies_fts", q), rank: sql`coalesce(m.date, 0)` },
       }),
       // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
-      // start of a longer one (`"elevat"*`). No stemmer here, so a prefix IS the whole-word reach.
+      // start of a longer one or as itself plus a tail (`ftsQueryOf`): the tables stem (porter,
+      // mail 0138), so a prefix alone misses `elevation`, whose stem `elev` is shorter than `elevat`.
       partWords: (q: string): MailWordArms | null => {
         if (partWordsOf(q) === null) return null;
         const recency = sql`coalesce(m.date, 0)`;
