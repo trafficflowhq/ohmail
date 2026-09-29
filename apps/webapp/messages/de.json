@@ -1042,7 +1042,8 @@
     "placeChip": "Historie"
   },
   "trash": {
-    "empty": "Der Papierkorb ist leer. Mails, die du in ohmail löschst, erscheinen hier.",
+    "emptyTitle": "Nichts in ohmail gelöscht.",
+    "empty": "Was du in ohmail löschst, landet hier und lässt sich zurücklegen.",
     "foot": "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.",
     "footLive": "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. Darunter, was im Papierkorb deines Mailservers liegt: nur lesbar, denn hier ist nicht festgehalten, wo diese Mails herkamen. Dein Mailserver entscheidet, wie lange er sie behält.",
     "deletedAt": "Gelöscht {when}",
@@ -1643,7 +1644,7 @@
     "yourMail": "Was mit deiner Post passiert"
   },
   "reader": {
-    "gone": "Diese Nachricht wurde in einem anderen Mailprogramm verschoben oder gelöscht.",
+    "gone": "Diese Nachricht wurde anderswo verschoben oder gelöscht.",
     "goneTrash": "Im Papierkorb nachsehen",
     "hint": "zum Zurückgehen",
     "back": "Zurück",

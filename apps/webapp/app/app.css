@@ -2124,6 +2124,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   padding-left: 14px;
   padding-right: 14px;
 }
+/* The end-of-list line inside `.rows` keeps the rows' gutter at every width: its own 30px sat at
+   46px, and the narrow `.view .tail-row` (20px) must not outrank it, hence `.view` here. */
+.view .rows .tail-row {
+  padding-left: 14px;
+  padding-right: 14px;
+}
 .scn-read .empty {
   padding-top: 96px;
 }
@@ -4224,6 +4230,10 @@ input.set-tag-input {
   }
   .view.split > .read-col {
     display: none;
+  }
+  /* Trash's live read in its sheet starts where the reader's own message does, under the way back. */
+  .reader .trash-live-read {
+    padding-top: 30px;
   }
   /* …and the header slot keeps the list's horizontal padding on a phone. */
   .tag-head {
@@ -6850,4 +6860,6 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
   .set-nav button{min-width:44px}
   /* The first row's strip was clipped 4px by the settings scroller's top edge. */
   .set-nav{padding-top:5px}
+  /* The reader sheet's one visible exit is drawn 38 between 641 and 900px; it is already fixed. */
+  .reader-close::before{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;translate:-50% -50%}
 }

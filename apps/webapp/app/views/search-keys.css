@@ -237,6 +237,14 @@ a.hit-addr:hover {
   font-size: calc(12px + var(--type-up));
   color: var(--ink2);
 }
+/* The device count is the caption's own half: `.empty b` (block, ink, 600) would make it a
+   second bold line between the sentence and the caption. */
+.empty .addr-scope .addr-device {
+  display: inline;
+  font-weight: 500;
+  color: var(--ink2);
+  margin: 0;
+}
 .empty .addr-scope .addr-archive {
   display: block;
   margin-top: 2px;

@@ -1345,6 +1345,7 @@ export function useShellKeys({
     search: t("rail.search"),
     compose: t("rail.compose"),
     drafts: t("rail.drafts"),
+    trash: t("rail.trash"),
     settings: t("rail.settings"),
   };
   const mobileTitle =

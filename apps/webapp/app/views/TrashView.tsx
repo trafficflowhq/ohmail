@@ -301,7 +301,7 @@ export function TrashView({
             </>
           ) : (
             /* "Trash is empty" only once the server's pages end; before that the tail row says so. */
-            <ListEmpty list={list} glyph="🗑" hint={t("empty")} silhouette={false} />
+            <ListEmpty list={list} glyph="🗑" title={t("emptyTitle")} hint={t("empty")} silhouette={false} />
           )}
 
           {/* THE END-OF-LIST LINE — the folder view's own `.tail-row`, carrying the scope
