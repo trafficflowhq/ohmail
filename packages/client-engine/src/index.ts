@@ -432,6 +432,8 @@ export {
 } from "./address-book.js";
 
 // Search.
+/** The stores' inside-a-word rule, re-exported so the phone says its reach with the same function. */
+export { substringOpen } from "@trafficflow/core/search-rank";
 export {
   addressMatchKey,
   SearchIndex,

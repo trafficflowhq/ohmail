@@ -15,7 +15,7 @@ import { Copy } from "../src/copy";
    allow-list is the rule, and the direction union rides out with the rest. */
 import { useNetworkNow } from "../src/net/network-door";
 import { addressShaped, unansweredSaid, type AddressDirection } from "../src/state/live";
-import { searchCountLine } from "../src/state/search-count";
+import { partReachSaid, searchCountLine } from "../src/state/search-count";
 import { useStoreSearch } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
 import { useTheme } from "../src/theme";
@@ -90,6 +90,8 @@ function SearchBody() {
     if (heights.record(i, height)) redraw();
   }, [heights]);
   const door = answer !== null ? addressShaped(trimmed) : null;
+  /* Where a part inside a word is looked for: the store's empty and closest-words answers only. */
+  const partsSaid = partReachSaid(trimmed, store);
   const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
     : store.verdict === "ready"
       ? `${searchCountLine(store)}${store.ms !== null ? ` · ${Copy.searchServerMs(store.ms)}` : ""}`
@@ -111,7 +113,8 @@ function SearchBody() {
             },
             {
               key: "similar", title: Copy.searchSimilarHead,
-              note: store.ready && store.importing ? Copy.searchSimilarHintSynced : Copy.searchSimilarHint, rows: shownSimilar,
+              note: `${store.ready && store.importing ? Copy.searchSimilarHintSynced : Copy.searchSimilarHint}${partsSaid ? ` ${Copy.searchPartReach}` : ""}`,
+              rows: shownSimilar,
             },
           ]
         : [];
@@ -250,6 +253,9 @@ function SearchBody() {
             ) : store.verdict === "searching" ? null : (
               <>
                 <Empty title={Copy.searchEmptyTitle} hint="" />
+                {partsSaid ? (
+                  <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 16, paddingTop: 8 }}>{Copy.searchPartReach}</Txt>
+                ) : null}
                 {door !== null ? (
                   /* THE ADDRESS DOOR — the web's empty-state sentence, and here it IS the
                      door: the press opens the two scopes it names. */

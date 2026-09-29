@@ -142,3 +142,22 @@ export function compoundForms(text: string): string[] {
 export function holdsPunctuation(q: string): boolean {
   return /[^\p{L}\p{N}\s]/u.test(q);
 }
+
+/** The substring arm's width floor — a trigram's, below which its index cannot select. */
+export const SUBSTRING_MIN_CHARS = 3;
+
+/** A quoted phrase or a `-term`: the reader asking for exactly these words, never parts of them. */
+export function exactAsked(q: string): boolean {
+  return q.includes('"') || /(^|\s)-\S/.test(q);
+}
+
+/**
+ * Is the query also looked for INSIDE words — the stores' substring arm, over subjects, senders,
+ * recipients and attachment names, never the message text? Shut when exactness is asked; open from
+ * a trigram's width, and below it for a punctuated query (`pha/Bet` inside `Alpha/Beta`). ONE
+ * function: the service opens its arm with it, and the web and the phone say that arm's reach.
+ */
+export function substringOpen(q: string): boolean {
+  if (exactAsked(q)) return false;
+  return [...q].length >= SUBSTRING_MIN_CHARS || holdsPunctuation(q);
+}

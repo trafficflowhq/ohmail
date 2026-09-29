@@ -1134,6 +1134,7 @@
     "resultsShown": "die ersten {shown} werden gezeigt",
     "junkScope": "Die Suche erreicht den eigenen {folder}-Ordner deines Mailservers nicht — ohmail spiegelt ihn nicht.",
     "junkScopeUnnamed": "Die Suche erreicht den eigenen Spam-Ordner deines Mailservers nicht — ohmail spiegelt ihn nicht.",
+    "partReach": "Ein Teil innerhalb eines Wortes wird in Betreff, Absendern, Empfängern und Namen von Anhängen gesucht, nicht im Text der Nachricht.",
     "emptyTitleIndexing": "Deine neuere Post wird noch gelesen.",
     "emptyAddressScopes": "Eine Adresse ist ihre eigene Suche — alles, was {address} gesendet hat, oder alles von und an sie.",
     "scopeIndexing": "Deine neuere Post wird noch gelesen — es kommen noch Treffer dazu.",

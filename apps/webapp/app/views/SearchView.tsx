@@ -24,7 +24,7 @@ import {
   type ServerSearchFilters,
   type ServerSearchSort,
 } from "@ohmail/client-engine";
-import { showSimilar } from "@trafficflow/core/search-rank";
+import { showSimilar, substringOpen } from "@trafficflow/core/search-rank";
 import { Facets, SearchBox, type FacetGroup } from "@ohmail/ui";
 import { useSessionReask } from "../shell/session-reask";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
@@ -369,6 +369,9 @@ export function SearchView({
   const similarOn = storeReady
     ? ready.tier === "similar" && storeLength > 0
     : showSimilar(exactRaw.length) && similarRaw.length > 0;
+  /* WHERE A PART INSIDE A WORD IS LOOKED FOR, said on the store's empty and closest-words answers
+     only. Not while the store is still indexing: its older rows are read by subject and sender alone. */
+  const partsSaid = storeReady && !ready.indexed && substringOpen(trimmed);
 
   const merged: MergedHit[] = useMemo(() => orderMerged(exactRaw, sort, NO_RANK), [exactRaw, sort]);
   const mergedSimilar: MergedHit[] = useMemo(
@@ -841,6 +844,7 @@ export function SearchView({
                   {junkReadable ? <> {ts("junkElsewhere")}</> : null}
                 </p>
               ) : null}
+              {partsSaid ? <p className="empty-reach" data-testid="search-part-reach">{t("partReach")}</p> : null}
             </div>
           ) : (
             <>
@@ -866,6 +870,7 @@ export function SearchView({
                       {similarOn ? (
                         <div className="results-head" data-similar="head">
                           <b>{t("similarHead")}</b> {ready?.importing && !ready.fromMirror ? t("similarHintSynced") : t("similarHint")}
+                          {partsSaid ? <span data-testid="search-part-reach"> {t("partReach")}</span> : null}
                         </div>
                       ) : null}
                       <div role="list" aria-label={t("title")}>

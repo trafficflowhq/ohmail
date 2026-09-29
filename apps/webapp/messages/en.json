@@ -1134,6 +1134,7 @@
     "resultsShown": "showing the first {shown}",
     "junkScope": "Search does not reach your mail server's own {folder} folder — ohmail does not mirror it.",
     "junkScopeUnnamed": "Search does not reach your mail server's own junk folder — ohmail does not mirror it.",
+    "partReach": "A part inside a word is looked for in subjects, senders, recipients and attachment names, not in the message text.",
     "emptyTitleIndexing": "Still reading your recent mail.",
     "emptyAddressScopes": "An address is its own search — everything {address} sent, or anything from or to them.",
     "scopeIndexing": "Still reading your recent mail — more results will appear.",

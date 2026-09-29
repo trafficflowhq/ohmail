@@ -1159,6 +1159,8 @@ const TABLE = {
   searchSimilarHint: "Nothing matched exactly, so these are the closest words.",
   searchSimilarHintSynced: "Nothing synced so far matched exactly, so these are the closest words.",
   searchEmptyTitle: "Nothing matched.",
+  /* Where the stores look for a part inside a word: the webapp's `search.partReach`, word for word. */
+  searchPartReach: "A part inside a word is looked for in subjects, senders, recipients and attachment names, not in the message text.",
   searchIndexing: "Still reading your recent mail.",
   /* THE WHOLE-MAILBOX VERDICT — the webapp's `search.scopeWhole*`, word for word. */
   searchWholeSearching: "Searching your whole mailbox…",

@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { holdsPunctuation, showSimilar, type SearchTier } from "@trafficflow/core/search-rank";
+import { exactAsked, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import { accountSettings, messages } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
@@ -29,8 +29,6 @@ const FUZZY_THRESHOLD = 0.3;
 const RRF_K = 60;
 /** Integer scores, so a page cursor compares exactly on every store. */
 const RRF_SCALE = 1_000_000_000;
-/** The substring arm's width floor — a trigram's, below which its index cannot select. */
-const SUBSTRING_MIN_CHARS = 3;
 /** The page ceiling for search — each arm reads {@link SEARCH_ARM_FACTOR} pages' worth. */
 const SEARCH_PAGE_MAX = 50;
 /**
@@ -62,21 +60,6 @@ const SEARCH_PART_WALK_FACTOR = 6;
 const LOCAL_ARM_READ_FACTOR = 4;
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
-
-/**
- * Does the substring arm run for this query? Shut for a quoted phrase or a `-term` — the reader
- * asking for exactness, which the word arms give — and below a trigram's width unless the query is
- * punctuated (`pha/Bet` inside `Alpha/Beta`, one lexeme to the word arms).
- */
-function substringOpen(q: string): boolean {
-  if (exactAsked(q)) return false;
-  return [...q].length >= SUBSTRING_MIN_CHARS || holdsPunctuation(q);
-}
-
-/** A quoted phrase or a `-term`: the reader asking for exactly these words, never parts of them. */
-function exactAsked(q: string): boolean {
-  return q.includes('"') || /(^|\s)-\S/.test(q);
-}
 
 export interface SearchFilters {
   folder?: string;            // a Destination (folder_state.desiredFolder, else native/INBOX)

@@ -754,6 +754,7 @@ export const DE: Deck = {
   searchSimilarHint: "Nichts stimmte genau überein — das sind die nächstliegenden Wörter.",
   searchSimilarHintSynced: "In der bisher synchronisierten Post stimmte nichts genau überein — das sind die nächstliegenden Wörter.",
   searchEmptyTitle: "Nichts gefunden.",
+  searchPartReach: "Ein Teil innerhalb eines Wortes wird in Betreff, Absendern, Empfängern und Namen von Anhängen gesucht, nicht im Text der Nachricht.",
   searchIndexing: "Deine neuere Post wird noch gelesen.",
   searchWholeSearching: "Dein ganzes Postfach wird durchsucht …",
   searchWhole: (n: number) => (n === 0 ? "Dein ganzes Postfach wurde durchsucht — nichts gefunden" : `Dein ganzes Postfach wurde durchsucht — ${n} gefunden`),
