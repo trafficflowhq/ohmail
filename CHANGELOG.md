@@ -302,6 +302,24 @@ connection drop, History, the address view and a letter's files recover on their
 answers again. An open History keeps its count right when older mail arrives or a message is deleted
 elsewhere. Enter in the command palette runs a "Go to" entry again.
 
+### A delete pressed just before the phone app closes is kept
+<!-- changes: fix-026-phone-says.md -->
+
+On the phone, a delete you make just before the app closes is no longer lost: the next launch
+moves the message to Trash and says so. Undo now shows "Undone." as soon as you press it.
+
+### Turning off the phone's organizing notification stops background organizing
+<!-- changes: fix-026-phone-says.md -->
+
+On Android, turning off the "Organizing" notification category stops the phone organizing in the
+background, and This phone says notifications are off, with the way to the setting.
+
+### A long mail store update on the phone says how far along it is
+<!-- changes: fix-026-phone-says.md -->
+
+When an update reworks the mail store on the phone, the launch counts the steps and says when a
+large mailbox may take several minutes.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
