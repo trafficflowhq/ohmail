@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import {
-  account, accessFeedFor, apiConfigured, onAccessFeed, putAwayCatchUp,
+  ApiError, account, accessFeedFor, apiConfigured, onAccessFeed, putAwayCatchUp,
   type AccessFeed, type AccountAccess, type AccountLifecycle,
 } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
@@ -120,11 +120,14 @@ async function readForStrip(): Promise<boolean> {
  */
 export function LifecycleBanner() {
   const t = useTranslations("accountLifecycle");
+  const tLock = useTranslations("accessLock");
   const active = !SELF_HOST_BUILD && apiConfigured();
   const entry = useSyncExternalStore(onAccessFeed, () => accessFeedFor(readOwner()), () => null);
   // Put away in THIS mount, so "Later" holds where the session store refuses the write.
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
+  /** Why the last press did not leave — the wall's two sentences, said where the press was. */
+  const [mintRefusal, setMintRefusal] = useState<"failed" | "unverified" | null>(null);
   const alive = useRef(true);
   const drawn = useRef(false);
   useEffect(() => () => { alive.current = false; }, []);
@@ -156,6 +159,7 @@ export function LifecycleBanner() {
 
   const toManage = useCallback(async () => {
     setBusy(true);
+    setMintRefusal(null);
     try {
       const link = await account.manageLink();
       const url = link?.url;
@@ -164,7 +168,13 @@ export function LifecycleBanner() {
         leaveForManagePage(url);
         return;
       }
-    } catch { /* the strip stays; the Subscription pane is the other way to the same page */ }
+      // No page here (the mint's 404), or an answer with no address: the press went nowhere.
+      if (alive.current) setMintRefusal("failed");
+    } catch (err) {
+      // A press is owed a sentence: an unconfirmed address is its own, anything else is "try again".
+      const unverified = err instanceof ApiError && err.status === 403 && err.code === "email_unverified";
+      if (alive.current) setMintRefusal(unverified ? "unverified" : "failed");
+    }
     if (alive.current) setBusy(false);
   }, [armPoll]);
 
@@ -199,6 +209,9 @@ export function LifecycleBanner() {
       {/* The way out is always there. A strip a person cannot put away is a strip that has to be
           right about how often it appears; this one is right about that AND can be put away. */}
       <button type="button" className="acct-later" onClick={putAway}>{t("later")}</button>
+      {mintRefusal !== null ? (
+        <span role="alert">{tLock(mintRefusal === "unverified" ? "mintUnverified" : "mintFailed")}</span>
+      ) : null}
     </div>
   );
 }
