@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, PART_WORD_TAILS, partWordsOf } from "./index.js";
+import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, partWordTails, partWordsOf } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -32,7 +32,7 @@ function partTsquery(q: string): SQL | null {
   const lit = (s: string): string => `'${s}'`;
   const groups = words.map((w, i) => {
     const long = [...w].length >= PART_PREFIX_MIN_CHARS;
-    const forms = long ? [w, ...PART_WORD_TAILS.map((t) => w + t)].join(" ") : w;
+    const forms = long ? [w, ...partWordTails(w).map((t) => w + t)].join(" ") : w;
     const stems = `strip(to_tsvector('${TEXT_SEARCH_CONFIG}', ${lit(forms)}))::text`;
     const extra = long ? `regexp_replace(${stems}, '''' || lower(${lit(w)}) || '[^'']*''', ' ', 'g')` : stems;
     const alts = `regexp_replace(btrim(${extra}), '\\s+', ' | ', 'g')`;

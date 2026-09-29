@@ -8,6 +8,7 @@
  * two copies of this package agree. Members with no caller yet were named by a census over the
  * engine's sources; each is exercised against a real store.
  */
+import { PART_WORD_TAILS_BY_ENDING } from "./part-tails.js";
 import { sql, type SQL } from "drizzle-orm";
 import { pgDialect } from "./pg.js";
 import { sqliteDialect } from "./sqlite.js";
@@ -211,32 +212,15 @@ export const PART_PREFIX_MIN_CHARS = 4;
 export const PART_MAX_WORDS = 8;
 
 /**
- * The endings a stemmer strips past a part's fourth letter: `elevatio` + `n` is `elevation`,
- * whose stem `elev` a prefix read of `elevatio` cannot reach. For every word and every part of it
- * from four letters whose stem does not start with the part, the rest of the word is one of these,
- * under BOTH stores' stemmers: the server's `english` (70 615 words of the two system lists) and
- * the device's FTS5 `porter` (74 986 words), which needs three more (`u`, `ivity`, `tivity`). Each
- * dialect reads the word plus each tail as whole words its stemmer reduces.
+ * The endings a stemmer strips past a part's fourth letter, for THIS part: `elevatio` + `n` is
+ * `elevation`, whose stem `elev` a prefix read of `elevatio` cannot reach. Keyed by the part's
+ * last two letters (`part-tails.ts`, derived under both stores' stemmers), so a part carries about
+ * 11 tails where the flat list carried 290; a part whose ending no word has carries none. Each
+ * dialect reads the part plus each tail as whole words its stemmer reduces.
  */
-export const PART_WORD_TAILS: readonly string[] = `
-  c d e g i l m n r s t u y al ce cs cy ds ed er es gs ic is le li ls ly ms ng ns nt on or rs sm
-  ss te ti ts ty ul us ve ze als ant ate ble bly cal ced ces cly dly ely ent ers ess ful gly ied
-  ies ing ion ism ity ive ize led les lis lly nal nce ncy ned ngs nts ons ors ous red rly sed ses
-  sly sms ted tes tis tly tor uls ves zed zer zes able ably ally ance ants ated ates ator bled
-  bles cals cate cies cing city edly ence ency ents ered fuls ible ibly ings ions isms itis ives
-  ized izer izes lied lies ling lism lity lize ment nals nces ness ngly ning nted ntly onal oned
-  ring rred sing ssed sses tely tful ties ting tion tive tors ully used usly vely vity ying zers
-  zing ables aling alism ality ately ating ation ative ators bling cally cated cates cator citis
-  ement eness ented ently ering essed esses fully ility ingly ional ities ively ivity izers izing
-  lisms litis lized lizes llied llies lness lying ments nally ncies ntful nting onals oning ously
-  rness rring sness ssing tedly tions tives tness using vitis ations atives bility cality cately
-  cating cation cative cators cities ements encies enting essing ionals leness lities lizing
-  llying mented nalism nality nesses ningly ntedly ntness onally rative tative teness tfully
-  tingly tional tively tivity ulness usness veness vities zation zingly ability bleness cations
-  fulness ibility ilities ionally iveness ization ntative ntfully ntingly onalism onality oningly
-  tatives tionals zations bilities ionalism izations lization ntatives tionally tiveness
-  lizations tionalism
-`.trim().split(/\s+/);
+export function partWordTails(part: string): readonly string[] {
+  return PART_WORD_TAILS_BY_ENDING[part.toLowerCase().slice(-2)] ?? [];
+}
 
 /**
  * The words of a query as the part-word arm reads them — letter and digit runs, as typed — or

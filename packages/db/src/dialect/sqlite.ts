@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable, assertJsonKey, PART_PREFIX_MIN_CHARS, PART_WORD_TAILS, partWordsOf } from "./index.js";
+import { assertComparable, assertJsonKey, PART_PREFIX_MIN_CHARS, partWordTails, partWordsOf } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -206,7 +206,7 @@ export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { matc
     const words = partWordsOf(q);
     const kept = (words ?? []).filter((w, i) => !ENGLISH_STOPWORDS.has(w.toLowerCase())
       || (i === words!.length - 1 && [...w].length >= PART_PREFIX_MIN_CHARS));
-    const group = (w: string): string => `("${w}"* OR ${PART_WORD_TAILS.map((t) => `"${w}${t}"`).join(" OR ")})`;
+    const group = (w: string): string => `(${[`"${w}"*`, ...partWordTails(w).map((t) => `"${w}${t}"`)].join(" OR ")})`;
     // AND spelled out: FTS5 takes no implicit AND beside a parenthesised group.
     const match = kept.map((w) => ([...w].length >= PART_PREFIX_MIN_CHARS ? group(w) : `"${w}"`)).join(" AND ");
     return { match: match === "" ? null : match, exclude: null };
