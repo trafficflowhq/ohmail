@@ -3578,7 +3578,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         };
         self = config.adapterFactory
           ? config.adapterFactory(imapConfig, ctx)
-          : new ImapAdapter(imapConfig, { onConnectionError: ctx.onConnectionError });
+          : new ImapAdapter(imapConfig, {
+            onConnectionError: ctx.onConnectionError,
+            log: (event, detail) => { log(event, { ...detail, mailboxId: mb.id }); },
+          });
         return self;
       };
 

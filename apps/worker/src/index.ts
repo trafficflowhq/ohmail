@@ -715,7 +715,10 @@ export async function startWorkerWithLock(
       config.leaseUnavailableDetachMs ?? DEFAULT_LEASE_UNAVAILABLE_DETACH_MS;
     const selection = selectionOf(config);
     const makeAdapter = config.adapterFactory
-      ?? ((cfg, ctx) => new ImapAdapter(cfg, { onConnectionError: ctx.onConnectionError }));
+      ?? ((cfg, ctx) => new ImapAdapter(cfg, {
+        onConnectionError: ctx.onConnectionError,
+        log: (event, detail) => { log.info(event, { ...detail, mailboxId: ctx.mailboxId, accountId: ctx.accountId }); },
+      }));
     /**
      * THIS DEPLOYMENT'S POLICY ON THE HOSTS IT MAY DIAL, decided once, here, for every attach
      * below. `loadConfig` supplies it for the deployed process; a programmatic caller that

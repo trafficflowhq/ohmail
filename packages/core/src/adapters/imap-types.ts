@@ -730,6 +730,8 @@ export interface ImapAdapterOpts {
    * `Date.now`; nothing in production supplies it.
    */
   nowMs?: () => number;
+  /** The host's log line, for the one fact the adapter says itself: `imap_delimiter_defaulted`. */
+  log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
 export interface PersistedFolderCursor {

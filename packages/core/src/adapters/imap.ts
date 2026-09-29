@@ -733,8 +733,8 @@ export async function verifySmtpLogin(
  */
 export class ImapConnectionClosedError extends Error {
   readonly code = "EIMAPCLOSED";
-  constructor() {
-    super("the IMAP connection closed");
+  constructor(because = "the IMAP connection closed") {
+    super(because);
     this.name = "ImapConnectionClosedError";
   }
 }
@@ -1031,7 +1031,12 @@ function leadWith(folders: readonly string[], lead: string | undefined): string[
 export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private client!: ImapFlow;
   private transporter: Transporter | null = null;
-  private delimiter = "/";
+  /**
+   * The mailbox's hierarchy delimiter, `null` until `connect()` has learned it. `/` was the start
+   * value and a learned answer at once, so a path built before the login read as a flat server's
+   * (IMAP-ADAPTER-UNLEARNED-DELIMITER-SILENT); every translator now refuses while it is null.
+   */
+  private delimiter: string | null = null;
   private sentFolder: string | null = null;
   /**
    * Where the News pile physically lives on THIS mailbox — `ohmail/News`, or the legacy
@@ -1398,9 +1403,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const one = (d: unknown): string | undefined =>
       (typeof d === "string" && d.length === 1 ? d : undefined);
     const ns = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
-    this.delimiter = one(ns[0]?.delimiter)
+    const answered = one(ns[0]?.delimiter)
       ?? one(list.find((f) => f.path.toUpperCase() === "INBOX")?.delimiter)
-      ?? one(list[0]?.delimiter) ?? "/";
+      ?? one(list[0]?.delimiter);
+    /* `/` when the server named none is a LEARNED default (a flat namespace is a decision), said
+       once so it cannot pass for a server that answered `/`. */
+    if (answered === undefined) this.opts.log?.("imap_delimiter_defaulted", {});
+    this.delimiter = answered ?? "/";
     this.sentFolder = this.findSent(list);
     // AFTER the delimiter and the Sent resolution, both of which it reads. See
     // {@link ImapAdapter.passiveFolders}: this is discovery for free, off a LIST already issued.
@@ -1648,6 +1657,20 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   /** The mailbox's real hierarchy delimiter — `folderOpsPass`'s `bad_name` check reads it. */
   hierarchyDelimiter(): string {
+    return this.learnedDelimiter();
+  }
+
+  /**
+   * The delimiter `connect()` learned, or a refusal: no server path is built from a value nobody
+   * learned. The class both hosts already read as a connection that ended, so they re-dial rather
+   * than count a failure; nothing in production reaches this before `connect()` resolves.
+   */
+  private learnedDelimiter(): string {
+    if (this.delimiter === null) {
+      throw new ImapConnectionClosedError(
+        "connect() has not completed: the hierarchy delimiter is not learned, so no server path can be built",
+      );
+    }
     return this.delimiter;
   }
 
@@ -2315,6 +2338,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
     // breach instead, so the cause survives the trip.
     this.assertUsable();
+    this.learnedDelimiter();
     return makeLeaseIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c), identity);
   }
 
@@ -2332,6 +2356,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
     // breach instead, so the cause survives the trip.
     this.assertUsable();
+    this.learnedDelimiter();
     return makeProfileIo(this.client as unknown as ProfileImapClient, (c) => this.toServerPath(c), identity);
   }
 
@@ -2350,6 +2375,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
     // breach instead, so the cause survives the trip.
     this.assertUsable();
+    this.learnedDelimiter();
     return makeLeasePeekIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
   }
 
@@ -2368,6 +2394,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // and that failure would be wrapped as a request fault, which is deliberately not this
     // mailbox's fault. Refuse with the breach instead, so the cause survives the trip.
     this.assertUsable();
+    this.learnedDelimiter();
     return makeRequestReaderIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
   }
 
@@ -2377,6 +2404,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   requestOrganizerIo(identity: MetaIdentity): RequestOrganizerIo {
     this.assertUsable();
+    this.learnedDelimiter();
     return makeRequestOrganizerIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c), identity);
   }
 
@@ -2396,7 +2424,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (namespaces.length > 0) return true;
     const prefix = found.slice(0, found.length - bare.length);
     if (prefix === "") return true;
-    const parent = prefix.slice(0, prefix.length - this.delimiter.length);
+    const parent = prefix.slice(0, prefix.length - this.learnedDelimiter().length);
     /**
      * The literal `INBOX` is a deliberate trade. The LIST-derived test reintroduces the defect
      * this function exists for: `Backup` IS a listed mailbox, so the derived test accepts
@@ -2422,15 +2450,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   private toServerPathRaw(canonical: string): string {
+    const delimiter = this.learnedDelimiter();
     if (canonical.toUpperCase() === "INBOX") return "INBOX";
-    if (this.delimiter === "/") return canonical;
-    return canonical.split("/").join(this.delimiter);
+    if (delimiter === "/") return canonical;
+    return canonical.split("/").join(delimiter);
   }
 
   toCanonical(serverPath: string): string {
+    const delimiter = this.learnedDelimiter();
     if (serverPath.toUpperCase() === "INBOX") return "INBOX";
-    if (this.delimiter === "/") return serverPath;
-    return serverPath.split(this.delimiter).join("/");
+    if (delimiter === "/") return serverPath;
+    return serverPath.split(delimiter).join("/");
   }
 
   /**
