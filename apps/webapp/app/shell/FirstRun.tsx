@@ -181,6 +181,12 @@ export interface FirstRunProps {
    */
   subjectVanished?: boolean;
   /**
+   * THE RUN NAMES NO MAILBOX AND THE INSTALL HOLDS SEVERAL — `firstRunSubject`'s `choose`: the
+   * mailboxes to choose between, and the press that names one. Absent on every other run.
+   */
+  subjectChoices?: ReadonlyArray<{ id: string; address: string }>;
+  onChooseMailbox?: (mailboxId: string) => void;
+  /**
    * WHO ORGANIZES THIS ACCOUNT'S MAIL, when anybody does — read from the rows the install already
    * holds (`accountOrganizer`), because the connect form is about a mailbox that does not exist yet
    * and has no holder of its own to read. Absent when nothing names one.
@@ -305,6 +311,8 @@ export function firstRunStep(
    * function can give for a null mailbox is a screen that acts on one.
    */
   vanished = false,
+  /** THE RUN NAMES NO MAILBOX AND THERE ARE SEVERAL — `firstRunSubject`'s `choose`, answered as `vanished` is. */
+  choose = false,
 ): OnboardingStep | null {
   /* ── FIRST, AND BEFORE THE CURSOR ──────────────────────────────────────────────────────────
    * A run about a mailbox that is not there has nothing to re-run, and the fall-through was not a
@@ -316,6 +324,7 @@ export function firstRunStep(
    * caught up with yet, and its form writes a row beside the others rather than replacing them.
    */
   if (vanished) return "vanished";
+  if (choose) return "choose";
   const derived = deriveOnboardingStep(facts);
   /**
    * Is there a claim question outstanding — read from the FACTS, not from `derived`, which
@@ -419,7 +428,7 @@ export function firstRunStep(
 export function FirstRun({
   host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
   mailboxId, organizedSince, rerun, add, screening, mailboxAddress, onConnected,
-  subjectVanished, accountOrganizer,
+  subjectVanished, subjectChoices, onChooseMailbox, accountOrganizer,
 }: FirstRunProps) {
   const t = useTranslations("onboarding");
   const tm = useTranslations("mailboxes");
@@ -510,6 +519,7 @@ export function FirstRun({
   const step = firstRunStep(
     facts, at, rerun === true, mailboxId !== null && claimAnsweredFor === mailboxId,
     add === true, heldStamp, asked, subjectVanished === true,
+    subjectChoices !== undefined && subjectChoices.length > 1,
   );
   useEffect(() => {
     /* ONLY WHILE THE QUESTION IS ACTUALLY ON SCREEN WITH A HOLDER ON IT. The floor is about what
@@ -778,9 +788,9 @@ export function FirstRun({
     setPlain({ imap: false, smtp: false });
   }, []);
   const openOffer = useCallback((err: unknown) => {
-    const opens = host.plaintextOffer?.(err, add === true ? "add" : "seed") ?? null;
+    const opens = host.plaintextOffer?.(err) ?? null;
     if (opens) setOffer((o) => ({ ...o, [opens]: true }));
-  }, [add, host]);
+  }, [host]);
   /** The same, for a refused connect, which then leaves as it came. */
   const offerAndRethrow = useCallback((err: unknown): never => { openOffer(err); throw err; }, [openOffer]);
 
@@ -1068,7 +1078,7 @@ export function FirstRun({
         {/* NO RAIL ON EITHER SCREEN THAT IS NOT A PHASE. `vanished` is not in the walk, so
             `railFound` answers -1 and the clamp below would light the LAST phase — a progress
             readout for a run that is not going anywhere. */}
-        {step === "welcome" || step === "vanished" ? null : (
+        {step === "welcome" || step === "vanished" || step === "choose" ? null : (
           <>
             <ol className="join-rail" aria-label={t("rail_mailbox")}>
               {rail.map((r, i) => (
@@ -1095,6 +1105,24 @@ export function FirstRun({
             <p className="sub">{t("vanishedLead")}</p>
             <SettingsActions>
               <Button variant="primary" type="submit" kbdHint="↵">{t("vanishedLeave")}</Button>
+            </SettingsActions>
+          </>
+        )) : null}
+
+        {/* ── WHICH MAILBOX, WHEN THE RUN NAMES NONE AND THERE ARE SEVERAL ──────────────────────
+            The person names it; each press is the named run's own route. No connect form (this
+            run's mode is `seed`), no rail. ↵ leaves, as on the refusal above. */}
+        {step === "choose" ? screen(onLeave, (
+          <>
+            <h1 id={`${ids}-title`}>{t("chooseTitle")}</h1>
+            <p className="sub">{t("chooseLead")}</p>
+            <SettingsActions>
+              {(subjectChoices ?? []).map((m) => (
+                <Button key={m.id} type="button" onClick={() => onChooseMailbox?.(m.id)}>{m.address}</Button>
+              ))}
+            </SettingsActions>
+            <SettingsActions>
+              <Button variant="primary" type="submit" kbdHint="↵">{t("chooseLeave")}</Button>
             </SettingsActions>
           </>
         )) : null}

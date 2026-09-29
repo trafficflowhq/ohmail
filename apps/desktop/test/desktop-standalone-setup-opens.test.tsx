@@ -244,8 +244,9 @@ describe("connecting on the standalone door opens guided setup", () => {
 
     /* THE WHOLE ASSERTION. `#/first-run` is the only route at which `AppShell` renders the stage
        at all, so this is "the guided flow opened" stated in the one term the shell reads. On the
-       released build this was `""` — the mail client, and nothing having asked anything. */
-    expect(window.location.hash).toBe("#/first-run");
+       released build this was `""` — the mail client, and nothing having asked anything. It names
+       the mailbox the engine serves, so the stage is about the one just connected. */
+    expect(window.location.hash).toBe("#/first-run?mailbox=mbx-fresh");
   });
 
   it("NOT A RE-RUN. The route is the first run's, so the flow opens where the facts say", async () => {
@@ -263,8 +264,8 @@ describe("connecting on the standalone door opens guided setup", () => {
     await type(el, "door-imap-host", "imap.example.test");
     await press(el, "Open this mailbox");
 
-    expect(window.location.hash).not.toBe("#/first-run/again");
-    expect(window.location.hash).toBe("#/first-run");
+    expect(window.location.hash).not.toMatch(/^#\/first-run\/again/);
+    expect(window.location.hash).toBe("#/first-run?mailbox=mbx-fresh");
   });
 
   it("THE HOSTED DOOR NAVIGATES NOWHERE — that account's setup is not this install's", async () => {
@@ -284,6 +285,90 @@ describe("connecting on the standalone door opens guided setup", () => {
        no host and `#/first-run` would draw nothing whatever the route said. Navigating there
        anyway would be a dead route on a working install. */
     expect(window.location.hash).toBe("");
+  });
+});
+
+/**
+ * AFTER A REFUSED FIRST DOOR UNDER ONE ADDRESS AND A SUCCESSFUL ONE UNDER ANOTHER, the install holds
+ * both rows, the refused attempt's first. The setup is about the mailbox just connected: its consent
+ * lands there and the bare row stays unconsented. Unnamed, the stage took the first row.
+ */
+function twoAttempts(): { organized: string[] } {
+  const organized: string[] = [];
+  const ids: Record<string, string> = { "typo@home.arpa": "mbx-typo", "mila@home.arpa": "mbx-mila" };
+  let status: Record<string, unknown> = { state: "not_configured", mode: null };
+  const row = (id: string, address: string, createdAt: string) => ({
+    id, address, status: "connected", errorCode: null, disabledReason: null, syncBlockedReason: null,
+    syncBlockedSince: null, lastSyncAt: null, initialImportCompletedAt: null, createdAt,
+    organizerRole: "reader", organizedBy: null, organizerState: null, organizeConsentedAt: null,
+    organizerChecked: true,
+  });
+  host.__TAURI_INTERNALS__ = {
+    transformCallback: () => 1,
+    invoke: async (command, payload) => {
+      if (command === "engine_configure") {
+        const config = payload!.config as { address?: string };
+        const address = config.address ?? "";
+        status = { state: "serving", mode: "local", address, mailboxId: ids[address] ?? "mbx-other", credentialState: "ready" };
+        return status;
+      }
+      if (command === "engine_status") return status;
+      if (command === "mailto_claim" || command === "plugin:event|listen") return null;
+      if (command === "engine_request") {
+        const url = String(payload!.url ?? "");
+        const method = String((payload as { method?: unknown }).method ?? "GET");
+        const one = /^\/mailboxes\/([^/?]+)$/.exec(url);
+        if (one && method === "GET") {
+          const address = Object.keys(ids).find((a) => ids[a] === one[1]) ?? "";
+          return encode(200, JSON.stringify({ id: one[1], address }));
+        }
+        const seal = /^\/local\/mailboxes\/([^/]+)$/.exec(url);
+        if (seal && method === "PATCH") {
+          if (seal[1] === "mbx-typo") {
+            return encode(400, JSON.stringify({ error: {
+              code: "mailbox_probe_failed", message: "The mail server refused that password.",
+              details: { reason: "auth", transport: "imap" },
+            } }), "Bad Request");
+          }
+          return encode(200, JSON.stringify({ id: seal[1] }));
+        }
+        const org = /^\/local\/mailboxes\/([^/]+)\/organize$/.exec(url);
+        if (org && method === "POST") { organized.push(org[1]!); return encode(200, "{}"); }
+        if (url.startsWith("/mailboxes")) {
+          return encode(200, JSON.stringify({ items: [
+            row("mbx-typo", "typo@home.arpa", "2026-09-29T08:00:00.000Z"),
+            row("mbx-mila", "mila@home.arpa", "2026-09-29T08:01:00.000Z"),
+          ] }));
+        }
+        if (url === "/health") return encode(200, '{"signedIn":true}');
+        if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
+        if (url.startsWith("/consent")) return encode(200, JSON.stringify({ dormancyDays: 60 }));
+        if (url.startsWith("/local/ai")) return encode(200, JSON.stringify({ provider: null }));
+        return encode(200, EMPTY_PAGE);
+      }
+      return null;
+    },
+  };
+  return { organized };
+}
+
+describe("the setup after a retried first door", () => {
+  it("is about the mailbox just connected — its consent lands there, the refused row keeps none", async () => {
+    const shell = twoAttempts();
+    const el = await render();
+    await openDoor(el, "On this computer");
+    await press(el, "Any other IMAP mailbox");
+    await type(el, "door-address", "typo@home.arpa");
+    await type(el, "door-password", "a-mailbox-password");
+    await type(el, "door-imap-host", "imap.home.arpa");
+    await press(el, "Open this mailbox");
+    expect(el.textContent, "control: the first attempt was refused").toContain("refused that password");
+    await type(el, "door-address", "mila@home.arpa");
+    await press(el, "Open this mailbox");
+    await press(el, "Continue");
+    await press(el, "Agree and start organizing");
+    expect(shell.organized, "the consent went to another mailbox").toEqual(["mbx-mila"]);
+    expect(window.location.hash).toBe("#/first-run?mailbox=mbx-mila");
   });
 });
 

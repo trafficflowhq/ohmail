@@ -16,9 +16,11 @@ import { Button } from "@ohmail/ui";
 import { shortPin } from "@ohmail/client-engine";
 
 import { ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
+import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
 import { hostsFor, providerById } from "../../webapp/app/shell/providers";
 import {
   EMPTY_LOCAL,
+  NO_CONSENT,
   PAIRED_DOOR_AVAILABLE,
   MIRROR_OWNER_MISMATCH,
   beginBrowserApproval,
@@ -37,6 +39,7 @@ import {
   signInToCloudWithCode,
   standingEngine,
   stopBrowserApproval,
+  type DoorConsent,
   type DoorResult,
   type HostLinkRefusal,
   type HostLinkStep,
@@ -53,6 +56,7 @@ import {
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { signInLead, type SignInCause } from "./cloud-session.js";
 import { DoorProblem } from "./DoorProblem.js";
+import { localPlaintextOffer } from "./local-first-run.js";
 import { offLinkCode, onLinkCode, openApprovalPage, openWeb } from "./native.js";
 
 /**
@@ -206,6 +210,13 @@ export function DoorChooser({
    * with an answer to a question nobody asked.
    */
   const [suggestion, setSuggestion] = useState<HostSuggestion | null>(null);
+  /**
+   * THE PLAINTEXT LINES THE LAST REFUSAL OFFERED — the Add form's consent, per transport, read off
+   * the engine's refusal by the one classifier (`localPlaintextOffer`). `suggestion`'s shape and
+   * for its reason: a remembered refusal, cleared wherever `problem` is, so a line never outlives
+   * the answer that offered it. The card holds the ticks and retires both on a server change.
+   */
+  const [plainOffer, setPlainOffer] = useState<DoorConsent>(NO_CONSENT);
 
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
@@ -215,10 +226,13 @@ export function DoorChooser({
     setBusy(true);
     setProblem(null);
     setSuggestion(null);
+    setPlainOffer(NO_CONSENT);
     try {
       const result = await run();
       setProblem(result.problem);
       setSuggestion(result.suggestion ?? null);
+      const offered = result.engineRefusal ? localPlaintextOffer(result.engineRefusal) : null;
+      if (offered !== null) setPlainOffer({ ...NO_CONSENT, [offered]: true });
       if (result.switchAccount) setMustSwitch(true);
       if (!result.problem) onEntered(result);
     } finally {
@@ -622,9 +636,11 @@ export function DoorChooser({
             busy={busy}
             problem={problem}
             suggestion={suggestion}
-            onBack={() => { setProblem(null); setSuggestion(null); setStep("doors"); }}
+            offer={plainOffer}
+            onRetireOffer={() => setPlainOffer(NO_CONSENT)}
+            onBack={() => { setProblem(null); setSuggestion(null); setPlainOffer(NO_CONSENT); setStep("doors"); }}
             onCancel={onCancel}
-            onSubmit={(fields) =>
+            onSubmit={(fields, consent) =>
               attempt(async () =>
                 /* THE STANDING ENGINE IS READ HERE, AT THE SUBMIT, AND THE ORDER OF THE DOOR
                    DEPENDS ON IT. Reconfiguring an install that already holds a sealed password
@@ -635,7 +651,7 @@ export function DoorChooser({
                    first-connect arm replaces the engine, which destroys the fact. Read at the
                    submit rather than captured at render, because this form is opened over a
                    running install from Settings and may sit on screen for minutes. */
-                enterLocalDoor(fields, providerById(fields.providerId), await standingEngine()),
+                enterLocalDoor(fields, providerById(fields.providerId), await standingEngine(), consent),
               )
             }
           />
@@ -826,6 +842,8 @@ function LocalDoor({
   busy,
   problem,
   suggestion,
+  offer,
+  onRetireOffer,
   onBack,
   onCancel,
   onSubmit,
@@ -834,13 +852,33 @@ function LocalDoor({
   problem: string | null;
   /** The host the last refusal named, or null. Offered as a press when there is a field for it. */
   suggestion: HostSuggestion | null;
+  /** The plaintext lines the last refusal offered (the Add form's consent), per transport. */
+  offer: DoorConsent;
+  /** A server changed: the offer is about the old one and goes, with the ticks. */
+  onRetireOffer: () => void;
   onBack: () => void;
   onCancel?: () => void;
-  onSubmit: (fields: LocalDoorFields) => void;
+  onSubmit: (fields: LocalDoorFields, consent: DoorConsent) => void;
 }) {
   const [fields, setFields] = useState<LocalDoorFields>(EMPTY_LOCAL);
   const set = <K extends keyof LocalDoorFields>(key: K, value: LocalDoorFields[K]): void =>
     setFields((cur) => ({ ...cur, [key]: value }));
+  /**
+   * THE TICKS, and only the press made with one carries it (`enterLocalDoor`'s consent). The Add
+   * form's rule: a consent is about ONE server, so a change to a server field or the provider
+   * retires the offer and the ticks together; the address and the password do not.
+   */
+  const [plain, setPlain] = useState<DoorConsent>(NO_CONSENT);
+  const retireConsent = (): void => {
+    setPlain(NO_CONSENT);
+    onRetireOffer();
+  };
+  const setServer = <K extends "imapHost" | "imapPort" | "smtpHost" | "smtpPort">(
+    key: K, value: LocalDoorFields[K],
+  ): void => {
+    set(key, value);
+    retireConsent();
+  };
 
   const preset = useMemo(
     () => (fields.providerId ? providerById(fields.providerId) : null),
@@ -855,7 +893,7 @@ function LocalDoor({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(fields);
+        onSubmit(fields, { imap: offer.imap && plain.imap, smtp: offer.smtp && plain.smtp });
       }}
     >
       <h1>{DOOR_COPY.localTitle}</h1>
@@ -865,6 +903,7 @@ function LocalDoor({
         value={fields.providerId || null}
         onChange={(id) => {
           const chosen = providerById(id);
+          retireConsent();
           setFields((cur) => ({
             ...cur,
             providerId: id,
@@ -910,7 +949,7 @@ function LocalDoor({
             className="join-input"
             spellCheck={false}
             value={fields.imapHost}
-            onChange={(e) => set("imapHost", e.target.value)}
+            onChange={(e) => setServer("imapHost", e.target.value)}
           />
           <label className="join-label" htmlFor="door-imap-port">{DOOR_COPY.localImapPort}</label>
           <input
@@ -918,7 +957,7 @@ function LocalDoor({
             className="join-input join-code"
             inputMode="numeric"
             value={fields.imapPort}
-            onChange={(e) => set("imapPort", e.target.value)}
+            onChange={(e) => setServer("imapPort", e.target.value)}
           />
           <label className="join-label" htmlFor="door-smtp-host">{DOOR_COPY.localSmtpHost}</label>
           <input
@@ -926,7 +965,7 @@ function LocalDoor({
             className="join-input"
             spellCheck={false}
             value={fields.smtpHost}
-            onChange={(e) => set("smtpHost", e.target.value)}
+            onChange={(e) => setServer("smtpHost", e.target.value)}
           />
           <label className="join-label" htmlFor="door-smtp-port">{DOOR_COPY.localSmtpPort}</label>
           <input
@@ -934,7 +973,7 @@ function LocalDoor({
             className="join-input join-code"
             inputMode="numeric"
             value={fields.smtpPort}
-            onChange={(e) => set("smtpPort", e.target.value)}
+            onChange={(e) => setServer("smtpPort", e.target.value)}
           />
           <label className="join-label" htmlFor="door-user">{DOOR_COPY.localUser}</label>
           <input
@@ -948,6 +987,11 @@ function LocalDoor({
         </>
       ) : null}
 
+      {/* THE ADD FORM'S CONSENT, one line per transport the refusal offered it for, and its warning. */}
+      <PlaintextConsent
+        id="door-plaintext" offer={offer} checked={plain}
+        onChange={(k, on) => setPlain((v) => ({ ...v, [k]: on }))}
+      />
       {/* ── THE REFUSAL, AND THE HOST IT NAMED, BESIDE THE BUTTON THAT WAS PRESSED ────────────
           `onUse` is passed ONLY while the host fields are on screen. Behind a named provider the
           host is this app's own fact and there is no field to fill, so the sentence names the
@@ -958,8 +1002,8 @@ function LocalDoor({
         atPress
         {...(manual
           ? {
-              onUse: (offer: HostSuggestion) =>
-                set(offer.transport === "smtp" ? "smtpHost" : "imapHost", offer.host),
+              onUse: (named: HostSuggestion) =>
+                setServer(named.transport === "smtp" ? "smtpHost" : "imapHost", named.host),
             }
           : {})}
       />

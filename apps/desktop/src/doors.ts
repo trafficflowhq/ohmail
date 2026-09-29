@@ -117,9 +117,10 @@ export function gateFor(shell: Shell): Gate {
       return { kind: "notice", reason, ...(failureClass === null ? {} : { failureClass }) };
     }
     default:
-      /* THE PENDING DOOR'S ENGINE IS A CHOOSER'S, whatever the file says: its claim writes the door
-         before the window relaunches the engine behind it, and mail cannot mount until then. */
-      if (status.identityPending === true) return { kind: "choose" };
+      /* A PENDING DOOR'S ENGINE IS A CHOOSER'S, whatever the file says: the hosted one's claim writes
+         the door before the window relaunches the engine behind it, and the first local door is
+         written only once its password is saved. Mail cannot mount until then. */
+      if (status.identityPending === true || status.doorPending === true) return { kind: "choose" };
       // `starting`, `restarting`, `stopped` and `serving`. A door HAS been chosen in every one of
       // them, so the client renders and the sync surface reports the rest — a window that hid the
       // mail every time the engine bounced would hide it for a second on every reconfigure.
@@ -1286,7 +1287,22 @@ export interface DoorResult {
    * instead of down the one-request one. See `DoorChooser`.
    */
   switchAccount?: boolean;
+  /**
+   * THE ENGINE'S REFUSAL AS IT SAID IT — its code and details, beside the sentence. Read by the
+   * door's plaintext offer (`localPlaintextOffer`), which a sentence cannot carry. Absent where
+   * the attempt was not refused by the engine.
+   */
+  engineRefusal?: { code: string | null; details: unknown } | null;
 }
+
+/** The plaintext consent a press carries, per transport: ticked lines only. */
+export interface DoorConsent {
+  imap: boolean;
+  smtp: boolean;
+}
+
+/** No line ticked — every door attempt's default, so a consent is never inherited. */
+export const NO_CONSENT: DoorConsent = { imap: false, smtp: false };
 
 /**
  * The transport a door attempt is about, as one value.
@@ -1375,7 +1391,12 @@ async function sealLocalPassword(
    * existed carries that — so the two must not be spelled the same.
    */
   smtpHost: string,
-): Promise<DoorRefusal | null> {
+  /**
+   * THE LINES THE PRESS TICKED — `allowInsecure` goes on exactly those blocks, and on no other
+   * press. The engine re-proves "no TLS, this network" before it stores the consent.
+   */
+  consent: DoorConsent,
+): Promise<(DoorRefusal & { refusal: { code: string | null; details: unknown } }) | null> {
   try {
     /* -- `/local/…`, AND THAT IS NOT A STYLE CHOICE ------------------------------------------
      * The shared `PATCH /mailboxes/:id` is `stepUp: true`, and this door's second-factor
@@ -1398,14 +1419,19 @@ async function sealLocalPassword(
 
            WITH NO OUTGOING SERVER NAMED there is nothing to settle and nothing to refuse: the
            block is absent, the probe never runs, and the key is left as it is. */
-        imap: { ...imap, pass: password, smtpHost, ...(smtp ? { smtpUnsettled: "" } : {}) },
+        imap: {
+          ...imap, pass: password, smtpHost, ...(smtp ? { smtpUnsettled: "" } : {}),
+          ...(consent.imap ? { allowInsecure: true } : {}),
+        },
         // The same password on both blocks: one form, one secret, two servers the person named.
-        ...(smtp ? { smtp: { ...smtp, pass: password } } : {}),
+        ...(smtp ? { smtp: { ...smtp, pass: password, ...(consent.smtp ? { allowInsecure: true } : {}) } } : {}),
       }),
     });
-    return res.ok ? null : await refusal(res);
+    if (res.ok) return null;
+    const { problem, code, details, suggestion } = await refused(res);
+    return { sentence: problem, suggestion, refusal: { code, details } };
   } catch (err) {
-    return { sentence: sentence(err), suggestion: null };
+    return { sentence: sentence(err), suggestion: null, refusal: { code: null, details: null } };
   }
 }
 
@@ -1490,6 +1516,8 @@ export async function enterLocalDoor(
    * may have been on screen for minutes and the order has to be chosen from what is true now.
    */
   standing: EngineStatus | null = null,
+  /** The plaintext lines this press ticked (the Add form's), both orders; none by default. */
+  consent: DoorConsent = NO_CONSENT,
 ): Promise<DoorResult> {
   const problem = localProblem(f);
   if (problem) return { status: null, problem };
@@ -1557,9 +1585,11 @@ export async function enterLocalDoor(
 
     /* SEAL, THEN COMMIT. Nothing about this install has changed yet, so a refusal here returns
        with the mailbox still on the configuration that was working. */
-    const refused = await sealLocalPassword(standing.mailboxId, imap, f.password, smtp, smtpHost);
+    const refused = await sealLocalPassword(standing.mailboxId, imap, f.password, smtp, smtpHost, consent);
     if (refused !== null) {
-      return { status: standing, problem: refused.sentence, suggestion: refused.suggestion };
+      return {
+        status: standing, problem: refused.sentence, suggestion: refused.suggestion, engineRefusal: refused.refusal,
+      };
     }
 
     /**
@@ -1586,9 +1616,19 @@ export async function enterLocalDoor(
     return { status: await engineStatus(), problem: null };
   }
 
+  /**
+   * ── ON AN INSTALL WITH NO DOOR, THE FIRST CONFIGURE IS PENDING ────────────────────────────
+   * The shell runs the engine from these settings and writes nothing (`LocalDoorConfig.pending`),
+   * so the seal below has a row to land on while no door exists on disk: a refused seal, a quit or
+   * a crash leaves an install the next launch opens on the chooser, never a mail client over a
+   * password nobody saved. The relaunch after the seal (the second configure) is the commit.
+   * "No door" is the shell's own answer at the submit — nothing chosen, or a pending engine left
+   * by an earlier press; a door switched from Settings writes as before (filed apart).
+   */
+  const noDoor = standing === null || standing.mode == null;
   let status: EngineStatus;
   try {
-    status = await engineConfigure(config);
+    status = await engineConfigure(noDoor ? { ...config, pending: true } : config);
   } catch (err) {
     return { status: null, problem: sentence(err) };
   }
@@ -1637,9 +1677,11 @@ export async function enterLocalDoor(
 
   /* THE PASSWORD, AND THE ONLY PLACE IT IS WRITTEN DOWN IS THE ENGINE'S OWN STORE. See
      {@link sealLocalPassword} for what the body carries and why it carries all of it. */
-  const refused = await sealLocalPassword(settled.mailboxId, imap, f.password, smtp, smtpHost);
+  const refused = await sealLocalPassword(settled.mailboxId, imap, f.password, smtp, smtpHost, consent);
   if (refused !== null) {
-    return { status: settled, problem: refused.sentence, suggestion: refused.suggestion };
+    return {
+      status: settled, problem: refused.sentence, suggestion: refused.suggestion, engineRefusal: refused.refusal,
+    };
   }
 
   /**
@@ -2151,7 +2193,7 @@ async function refusal(res: Response): Promise<DoorRefusal> {
  */
 async function refused(
   res: Response,
-): Promise<{ problem: string; code: string | null; suggestion: HostSuggestion | null }> {
+): Promise<{ problem: string; code: string | null; details: unknown; suggestion: HostSuggestion | null }> {
   let body = "";
   try {
     body = await res.text();
@@ -2167,13 +2209,16 @@ async function refused(
        also what the self-hosted door reads, so the two cannot diverge. */
     const sharper = probeTlsRefusal(parsed.error?.details);
     const message = sharper?.sentence ?? parsed.error?.message ?? parsed.error?.code;
-    if (message) return { problem: message, code, suggestion: sharper?.suggestion ?? null };
+    if (message) {
+      return { problem: message, code, details: parsed.error?.details ?? null, suggestion: sharper?.suggestion ?? null };
+    }
   } catch {
     /* not JSON */
   }
   return {
     problem: res.statusText ? `${res.status} ${res.statusText}` : `The request was refused (${res.status}).`,
     code: null,
+    details: null,
     suggestion: null,
   };
 }

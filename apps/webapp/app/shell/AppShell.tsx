@@ -247,7 +247,7 @@ import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField }
 import { senderHitOf } from "./sender-hit";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
-  go, goFolder, goScreener, goSettings, goTag, goTriage, nameFirstRunMailbox,
+  go, goFirstRun, goFolder, goScreener, goSettings, goTag, goTriage, nameFirstRunMailbox,
   useHashRoute,
   type Route,
 } from "./routing";
@@ -3686,6 +3686,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
              `facts.mailbox` is null for a row that LEFT and for an install that never had one, and
              those two want opposite screens. */
           subjectVanished={firstRunSubjectNow.state === "vanished"}
+          /* A RUN NAMING NO MAILBOX ON AN INSTALL WITH SEVERAL — the stage asks which, and the
+             press is that mailbox's own run (a re-run stays one). */
+          {...(firstRunSubjectNow.state === "choose" && facts
+            ? {
+                subjectChoices: facts.map((m) => ({ id: m.id, address: m.address })),
+                onChooseMailbox: (id: string) => goFirstRun({ rerun: route.firstRunRerun, mailboxId: id }),
+              }
+            : {})}
           /* WHO ORGANIZES THIS ACCOUNT'S MAIL — the one holder the connect form can read, since the
              mailbox it is about does not exist yet. */
           accountOrganizer={accountOrganizer(facts)}

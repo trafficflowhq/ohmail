@@ -467,6 +467,12 @@ export interface EngineStatus {
    */
   identityPending?: boolean;
   /**
+   * THE ENGINE RUNNING NOW IS THE FIRST LOCAL DOOR'S, BEFORE ITS PASSWORD IS SAVED — nothing is on
+   * disk, so `mode` is null and the chooser stays. Its own name, never `identityPending`: that one
+   * beside an address is the cue to relaunch behind an adopted door, which no local door may give.
+   */
+  doorPending?: boolean;
+  /**
    * A PAIRING STARTED FROM A DOOR HAS NOT BEEN ANSWERED: the shell still keeps the door it replaced,
    * on disk, until the pairing is committed or that door is put back. Absent otherwise.
    */
@@ -530,6 +536,13 @@ export interface LocalDoorConfig {
   smtp?: { host: string; port?: number; secure?: boolean };
   /** The address the mailbox is known by, when it differs from the IMAP login. */
   address?: string;
+  /**
+   * THE FIRST LOCAL DOOR BEFORE ITS PASSWORD IS SAVED — the local twin of
+   * {@link PendingCloudDoorConfig}'s `identityPending`. The shell runs the engine from these
+   * settings and writes nothing; the door's own next configure (this flag absent) writes the file,
+   * so a refused seal, a quit or a crash leaves no door. The exact `true`, on an install with none.
+   */
+  pending?: true;
 }
 
 /** The cloud door: a hosted ohmail account, mirrored. */

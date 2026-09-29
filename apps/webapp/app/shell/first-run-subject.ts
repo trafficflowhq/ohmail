@@ -25,7 +25,13 @@ export type FirstRunSubjectState =
    */
   | "pending"
   /** `GET /mailboxes` has not answered, or the install holds nothing. Nothing is known; nothing is claimed. */
-  | "none";
+  | "none"
+  /**
+   * The route names NO mailbox and the install holds more than one: which one is the person's to say, never
+   * the list's order. The stage asks. `rows[0]` put a first run on a refused attempt's bare row while the
+   * mailbox just connected stayed unconsented.
+   */
+  | "choose";
 
 export interface FirstRunSubject<T> {
   /** The row this run is about, or `null` — see {@link FirstRunSubjectState} for which null this is. */
@@ -34,8 +40,9 @@ export interface FirstRunSubject<T> {
 }
 
 /**
- * THE ROW A RUN IS ABOUT. The route names it (`#/first-run…?mailbox=<id>`) and the first row stands in only
- * when it names none — `rows[0]` alone showed the FIRST mailbox's state on a run about the second.
+ * THE ROW A RUN IS ABOUT. The route names it (`#/first-run…?mailbox=<id>`); the one row stands in only when
+ * it names none and there is exactly one, and with several the answer is `choose` — `rows[0]` alone showed
+ * the FIRST mailbox's state on a run about the second.
  *
  * An id the rows do not hold is answered two ways, and the split is the whole point: on an ADD run it is
  * `pending`, because that run's hash carries the id from the moment the create answers while the facts lag a
@@ -54,6 +61,7 @@ export function firstRunSubject<T extends { id: string }>(
     return { mailbox: null, state: add ? "pending" : "vanished" };
   }
   if (add) return { mailbox: null, state: "pending" };
+  if (rows.length > 1) return { mailbox: null, state: "choose" };
   const first = rows[0] ?? null;
   return { mailbox: first, state: first === null ? "none" : "mailbox" };
 }

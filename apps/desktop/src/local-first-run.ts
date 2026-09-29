@@ -213,12 +213,15 @@ export function localProbeMessage(err: unknown): string | null {
 
 /**
  * THE PLAINTEXT OFFER in the engine's refusal — `plaintextOfferOf`'s rule, against this door's
- * envelope. Only on an ADD: the seed's connect writes the shell's settings file, which carries no
- * consent, so a line there would be a promise the connect cannot keep.
+ * envelope: ONE reader for the first-run door, the stage and Settings, over anything carrying the
+ * engine's `{ code, details }` (a `LocalWireError`, a door result's `engineRefusal`). The seed is offered
+ * the line like any other door since it dials its credential row's consent (`seedDial`). A second
+ * argument is the door's name and decides nothing; the Settings pane still passes one.
  */
-export function localPlaintextOffer(err: unknown, mode: "seed" | "add"): "imap" | "smtp" | null {
-  if (mode !== "add" || !(err instanceof LocalWireError) || err.code !== "mailbox_probe_failed") return null;
-  const d = err.details as { transport?: unknown; tls?: { kind?: unknown; plaintext?: unknown } } | null | undefined;
+export function localPlaintextOffer(err: unknown, _door?: "seed" | "add"): "imap" | "smtp" | null {
+  const e = err as { code?: unknown; details?: unknown } | null | undefined;
+  if (typeof e !== "object" || e === null || e.code !== "mailbox_probe_failed") return null;
+  const d = e.details as { transport?: unknown; tls?: { kind?: unknown; plaintext?: unknown } } | null | undefined;
   if (d?.tls?.kind !== "tls_unavailable" || d.tls.plaintext !== "offered") return null;
   return d.transport === "smtp" ? "smtp" : "imap";
 }
@@ -369,10 +372,15 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
      * with is seconds old, immune to the step-up trap. */
     const problem = localProblem(doorFields(input));
     if (problem) throw new LocalWireError(problem, null, null);
+    /* THE LINES THE STAGE TICKED travel as the door's consent, and the refusal comes back with its
+       code and details, so the stage's own reader opens the Add form's line here too. */
     const result = await enterLocalDoor(
       doorFields(input), doorPreset(input), await standingEngine(),
+      { imap: input.imap.allowInsecure === true, smtp: input.smtp?.allowInsecure === true },
     );
-    if (result.problem !== null) throw new LocalWireError(result.problem, null, null);
+    if (result.problem !== null) {
+      throw new LocalWireError(result.problem, result.engineRefusal?.code ?? null, result.engineRefusal?.details ?? null);
+    }
     const id = result.status?.mailboxId;
     /* A door that reported no problem and no mailbox has not connected one. Saying so beats
        returning an empty id that the consent call would then address. */

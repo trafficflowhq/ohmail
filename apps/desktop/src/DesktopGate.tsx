@@ -214,8 +214,10 @@ const HOST_FRESHNESS_PROBE_MS = 20_000;
 function openSetupOnStandalone(status: EngineStatus | null): void {
   if (firstRunDoorFor(status) !== "local") return;
   /* BEFORE the status is delivered, so the first render of `AppShell` already carries the route
-     and the person does not see one frame of the Ohbox before the stage arrives. */
-  goFirstRun();
+     and the person does not see one frame of the Ohbox before the stage arrives. NAMING the mailbox
+     this engine serves — the one the door just connected: unnamed, the stage took the install's
+     first row, which after a refused first door under another address is that attempt's bare row. */
+  goFirstRun(status?.mailboxId ? { mailboxId: status.mailboxId } : {});
 }
 
 /**

@@ -13,15 +13,15 @@
  * THE SCREENS. Named for what they ask, not numbered — a number in a type is a step counter
  * wearing a different hat, and it would have to be renumbered every time a step is inserted.
  *
- * `welcome`, `pair` and `vanished` are the three that are not conditions: `welcome` is shown once at
- * the top of a run that has nothing behind it, `pair` is offered after the flow is otherwise finished,
- * and `vanished` is the refusal a run gets when the mailbox it names is not there. All three are in the
- * union because the stage renders them; none is ever RETURNED by {@link deriveOnboardingStep}, which
- * answers only with steps a truth-condition selects.
+ * Four are not conditions: `welcome` tops a run with nothing behind it, `pair` follows a finished
+ * flow, `vanished` refuses a run whose mailbox is gone, `choose` asks which of several a run naming
+ * none is about. The stage renders them; {@link deriveOnboardingStep} never RETURNS one — it answers
+ * only with steps a truth-condition selects.
  */
 export type OnboardingStep =
   | "welcome"
   | "vanished"
+  | "choose"
   | "mailbox"
   | "elsewhere"
   | "consent"

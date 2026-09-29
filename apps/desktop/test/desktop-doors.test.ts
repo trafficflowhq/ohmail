@@ -461,9 +461,13 @@ describe("the local door", () => {
     // …and the door waits for the replacement before it reports success.
     expect(order.lastIndexOf("engine_status")).toBeGreaterThan(order.lastIndexOf("engine_configure"));
 
-    // The replacement is a RELAUNCH — same settings, so nothing about the mailbox changes.
+    /* The replacement is the COMMIT: the same settings without the pending flag the first one
+       carried on an install with no door, so nothing about the mailbox changes and the door is
+       written only now that its password is saved. */
     const [first, second] = asked.filter((a) => a.command === "engine_configure");
-    expect(second!.payload!.config).toEqual(first!.payload!.config);
+    expect(first!.payload!.config).toEqual({ ...(second!.payload!.config as object), pending: true });
+    expect((second!.payload!.config as { pending?: unknown }).pending, "the commit left the door pending")
+      .toBeUndefined();
     // And still no secret in either of them.
     expect(JSON.stringify(second!.payload)).not.toContain("app-password-1234");
   });

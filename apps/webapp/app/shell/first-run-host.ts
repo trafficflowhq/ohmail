@@ -184,10 +184,10 @@ export interface FirstRunHost {
 
   /**
    * THE PLAINTEXT CONSENT A REFUSAL OFFERS — the protocol whose line may render, or `null`. The
-   * server offers it only for a server with no TLS on a private network. Absent, or `null` for a
-   * `mode` whose connect cannot carry a consent: the line would be a promise the door cannot keep.
+   * server offers it only for a server with no TLS on a private network. One reading for every
+   * connect this stage makes: each of them carries the consent its lines were ticked for.
    */
-  plaintextOffer?: (err: unknown, mode: "seed" | "add") => "imap" | "smtp" | null;
+  plaintextOffer?: (err: unknown) => "imap" | "smtp" | null;
 
   /**
    * THE STANDALONE DOOR'S AI PROVIDER FORM, injected. See the header. Absent everywhere else.
