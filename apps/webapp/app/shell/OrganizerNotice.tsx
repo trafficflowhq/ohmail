@@ -130,9 +130,11 @@ export function OrganizerNotice({
     );
   };
 
-  // The open condition above the settled one; each block keeps the rows in the order given.
-  const stopped = live.filter((n) => n.kind === "stopped");
-  const elsewhere = live.filter((n) => n.kind === "elsewhere");
+  // The open condition above the settled one; inside a block, the roster's order (DESIGN-026 §1.2).
+  const ofKind = (k: OrganizerNoticeKind) =>
+    live.filter((n) => n.kind === k).sort((x, y) => x.order - y.order);
+  const stopped = ofKind("stopped");
+  const elsewhere = ofKind("elsewhere");
   return (
     <>
       {stopped.length > 0 ? block("stopped", stopped) : null}

@@ -572,12 +572,14 @@ export interface OrganizerNotice {
   name: string | null;
   /** `organizerEventAt`, so a caller can order or date the line. */
   at: string;
+  /** The row's place in the roster, so a block lists its mailboxes in the roster's order. */
+  order: number;
 }
 
 export function organizerNotices(facts: ReadonlyArray<OrganizerRow> | null): OrganizerNotice[] {
   if (facts === null) return [];
   const out: OrganizerNotice[] = [];
-  for (const m of facts) {
+  for (const [order, m] of facts.entries()) {
     if (m.status === "disabled") continue;
     const at = m.organizerEventAt;
     if (at === null || at === undefined) continue;
@@ -600,6 +602,7 @@ export function organizerNotices(facts: ReadonlyArray<OrganizerRow> | null): Org
       kind,
       name: m.organizedBy?.name && m.organizedBy.name.trim() ? m.organizedBy.name : null,
       at,
+      order,
     });
   }
   return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));

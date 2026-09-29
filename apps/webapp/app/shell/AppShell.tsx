@@ -1465,16 +1465,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     refreshFacts();
     return answer;
   });
-  /**
-   * THE NOTICE'S TWO PLACEMENTS — the rail's foot at width, the topbar twin under 901px; one query
-   * in `app.css` shows exactly one. `undefined` when there is nothing to say, so the rail keeps no
-   * empty band. Withheld where no door can write the stamp (the demo; a host with no transport):
-   * a notice that cannot be acknowledged would stand for ever.
-   */
-  const organizerNotice = (variant: "rail" | "shell"): ReactNode =>
-    demo || organizerNoticeTransport === undefined || organizerChanges.length === 0
-      ? undefined
-      : <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant={variant} />;
+  // Withheld where no door can write the stamp (the demo; no transport): it would stand for ever.
+  const noticeOn = !demo && organizerNoticeTransport !== undefined && organizerChanges.length > 0;
   const screenerShownAt = useStableCallback((subject: readonly EngineMessage[], dest: ScreeningDest) =>
     screeningShown(engine.read(), subject, dest, { consent: demo ? null : consent, now: nowAt(), ownAddresses }));
   const screener = useScreenerState(
@@ -2266,7 +2258,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         {/* WHO ORGANIZES THESE MAILBOXES CHANGED — the narrow-width copy, beside the other
             app-level strips and never over the Ohbox rows; hidden at 901px and up, where the
             rail's foot carries it. */}
-        {organizerNotice("shell")}
+        {noticeOn ? (
+          <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant="shell" />
+        ) : null}
 
         {/* WHAT THE SERVICE SAYS ABOUT THIS ACCOUNT — the same slot and the same argument as the
             two strips above, and the same absence rule: nothing at all where the host supplied
@@ -2354,7 +2348,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
               hint: (m as { railHint?: string }).railHint ?? m.provider,
             }))}
             dock={railDock}
-            notice={organizerNotice("rail")}
+            /* The organizer notice's rail form — `undefined` when there is nothing to say, so the
+               foot keeps no empty band; the topbar twin above carries it under 901px. */
+            notice={noticeOn
+              ? <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant="rail" />
+              : undefined}
             /* THE MAILBOX'S OWN LINE, at the foot of the rail and above the dock. The same
                component and the same derivation as the strip below the topbar — one of the two
                is showing at any width, never both (see `SyncBar.tsx`). */
