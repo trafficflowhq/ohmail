@@ -299,8 +299,15 @@ export function useBarDensity(): {
         const btn = lab.closest<HTMLElement>(sel.button);
         const labW = lab.getBoundingClientRect().width;
         if (labW <= 0) continue;
-        const inner = btn ? parseFloat(getComputedStyle(btn).columnGap) || 0 : 0;
-        widest = Math.max(widest, labW + inner);
+        const bs = btn ? getComputedStyle(btn) : null;
+        const inner = bs ? parseFloat(bs.columnGap) || 0 : 0;
+        /* A button with a `min-width` (the 44px touch target under 640px) cannot shrink below it,
+           so the words save only what lies above that floor — counting the whole label let the
+           compact row paint wider than the room it was measured for. */
+        const btnW = btn ? btn.getBoundingClientRect().width : 0;
+        const minW = bs ? parseFloat(bs.minWidth) || 0 : 0;
+        const saves = btn && minW > 0 ? Math.min(labW + inner, Math.max(0, btnW - minW)) : labW + inner;
+        widest = Math.max(widest, saves);
       }
       if (widest > 0) {
         floor = base - widest;

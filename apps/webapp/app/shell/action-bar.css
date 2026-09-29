@@ -784,9 +784,10 @@
    layout was drawn around. */
 @media (max-width: 640px){
   .abar-b{min-height:44px}
-  /* The disclosure a thumb hunts for most, and the dot-only read switch: both 44 wide. */
+  /* The disclosure a thumb hunts for most, and the read switch at its dot-only compact floor:
+     both 44 wide. Unconditional here so the measurement's copy carries the same floor. */
   .abar-more{min-width:44px}
-  .abar[data-admit~="compact"] .abar-read{min-width:44px}
+  .abar-read{min-width:44px}
   .mm-item{min-height:44px}
   .abar-date{min-height:44px}
 }
