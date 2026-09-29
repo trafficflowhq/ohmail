@@ -49,33 +49,19 @@ import { durableRemove, durableSet, type DurableWrite } from "./durable";
 import { storageOwner } from "./storage-owner";
 
 /**
- * The record shape this build writes. `1` was every build through 0.14.0 and was not bumped when
- * 0.14.1 changed what a fingerprint hashes — which is why the legacy path below keys off the record's
- * shape, not this number. `2` is this build's; the next change to the fingerprint or the field set
- * bumps it. Higher values are records from a build this one has never seen: carried, never matched,
- * rewritten or deleted — a rolled-back install must not eat the evidence a newer one left behind.
+ * The record shape this build writes. `1` and `2` were 0.14.0 and 0.14.1, retired at {@link load};
+ * the next change to the fingerprint or the field set bumps this. Higher values are records from a
+ * build this one has never seen: carried, never rewritten or deleted, and resumed only where their
+ * fingerprint equals this build's own — a rolled-back install must not eat a newer one's evidence.
  */
 export const SEND_LOCK_FORMAT = 3;
 
 /**
- * THE LAST FORMAT WHOSE RECORDS THE 0.14.0 DECODE MAY FIRE ON — a literal, not `SEND_LOCK_FORMAT - 1`.
- *
- * {@link mayMatchLegacy} used to read `r.v < SEND_LOCK_FORMAT`, which was correct while that
- * constant was `2` and silently wrong the moment it moved: a `3` would have made every RELEASED
- * 0.14.1 record (`v: 2`) "a 0.14.0 record", rewritten it as nameless and unverified, and thrown
- * away the subject and session that are the only things naming the message it belongs to. The
- * predicate is about ONE released shape, so it names that shape's number.
+ * THE FORMATS 0.14.0 AND 0.14.1 WROTE, retired — a literal, never `SEND_LOCK_FORMAT - 1`, which would
+ * move with the format. Their records are dropped at {@link load}, and so is the nameless `v: 3`
+ * record the 0.14.0 rewrite made: a send eleven releases old is not one anybody is waiting on.
  */
-const LAST_0_14_0_FORMAT = 1;
-
-/**
- * THE LAST FORMAT WHOSE FINGERPRINT IS IN THE 0.14.1 ALGEBRA — the other half of the same idea.
- *
- * The released 0.14.1 build wrote `v: 2` and hashed the draft row into the fingerprint. This build
- * writes `v: 3` and does not. A record at or below this number is compared against
- * {@link legacySendFingerprint_0_14_1}; anything above it against {@link sendFingerprint}.
- */
-const LAST_0_14_1_FORMAT = 2;
+const LAST_RETIRED_FORMAT = 2;
 
 /** One lane's unsettled send. `v` names the shape; an unrecognised record is carried, not guessed. */
 export interface SendLock {
@@ -201,59 +187,6 @@ export function sendFingerprint(m: MailSend): string {
 }
 
 /**
- * The fingerprint 0.14.0 wrote, kept so its records can still be read. Copied field for field from
- * send-lock.ts at the released v0.14.0 tag and frozen: it is a decoder for jars already on disks, not
- * a second implementation — `sendFingerprint` above is the live one. What 0.14.0 hashed differently:
- * recipients by lowercased address only, joined with `,`; `html ?? body` as one field; no `threadId`;
- * attachments as `filename:contentType:contentBase64.length` (size, not content). Same `\u0000` join
- * and the same FNV-1a, which is why `fnv1a` is shared. The managed web app flips every browser at
- * once: an unresolved 0.14.0 record recognised under the new algebra is the difference between a
- * resumed key and a second delivery of mail the changelog promises is never sent twice.
- */
-export function legacySendFingerprint_0_14_0(m: MailSend): string {
-  const addrs = (xs: ReadonlyArray<{ address: string }> | undefined): string =>
-    (xs ?? []).map((a) => a.address.toLowerCase()).join(",");
-  const parts = [
-    m.inReplyTo ?? "", m.forwardOf ?? "", m.draftId ?? "", m.mailboxId ?? "",
-    addrs(m.to), addrs(m.cc), addrs(m.bcc),
-    m.subject ?? "", m.html ?? m.body ?? "", m.sendAt ?? "",
-    (m.attachments ?? []).map((a) => `${a.filename}:${a.contentType}:${a.contentBase64.length}`).join("|"),
-  ].join("\u0000");
-  return fnv1a(parts);
-}
-
-/**
- * The fingerprint 0.14.1 wrote, kept for the same reason the 0.14.0 one is. Copied field for field and join for join
- * from this file at the released 0.14.1 build. FROZEN: a decoder for jars on people's disks right now, not a second
- * implementation of the identity — {@link sendFingerprint} above is the live one. It differs from the live algebra in
- * exactly one place — it folds `m.draftId` into the hash — and that is the whole reason for the format bump: a
- * browser holding an unresolved 0.14.1 record when the managed web app flips computes a different hash for the same
- * unchanged message under the new algebra; unrecognised, a second key would be minted and the mail would go out
- * twice. A `v: 2` record is compared against THIS; a `v: 3` record against {@link sendFingerprint} — the version
- * tells them apart, which is why it was bumped ({@link SEND_LOCK_FORMAT}).
- */
-
-/**
- * `send-lock-durable.test.tsx` pins the OUTPUT of the released build's own code over fixed messages, extracted with
- * `git show` from the 0.14.1 tag's tree and run unmodified, so a transcription slip shows up as a mismatch rather
- * than two copies of one assumption.
- */
-export function legacySendFingerprint_0_14_1(m: MailSend): string {
-  const addrs = (xs: ReadonlyArray<{ name?: string | null; address: string }> | undefined): string =>
-    JSON.stringify((xs ?? []).map((a) => [a.name ?? null, a.address.toLowerCase()]));
-  const parts = [
-    m.inReplyTo ?? "", m.forwardOf ?? "", m.draftId ?? "", m.mailboxId ?? "",
-    m.threadId ?? "",
-    addrs(m.to), addrs(m.cc), addrs(m.bcc),
-    m.subject ?? "", m.body ?? "", m.html ?? "", m.sendAt ?? "",
-    JSON.stringify((m.attachments ?? []).map((a) => [
-      a.filename, a.contentType, a.contentBase64.length, fnv1a(a.contentBase64),
-    ])),
-  ].join("\u0000");
-  return fnv1a(parts);
-}
-
-/**
  * How long a persisted key is still worth resuming. Seven days, chosen against the SERVER's horizons:
  * `idempotency_keys` expires at 24 h, so past a day a resumed key no longer replays a stored RESPONSE — but
  * `outbound_sends` is a permanent reservation whose `UNIQUE (account_id, idempotency_key)` still refuses a second
@@ -295,7 +228,8 @@ function isLock(x: unknown): x is SendLock {
    * it. Refusing such a record here would DELETE it — `load` drops what it cannot recognise and
    * every writer saves the filtered list back — and deleting a newer install's record is how a
    * downgrade loses the only evidence that a message may already have been delivered. Nothing
-   * reads these fields off a higher-version record: it is never matched, rewritten or released.
+   * else is read off a higher-version record: it is never rewritten or released, and it is resumed
+   * only by a fingerprint equal to this build's own for its lane — the same key, never a second.
    */
   if (r.v > SEND_LOCK_FORMAT) return true;
   return typeof r.fp === "string"
@@ -305,25 +239,10 @@ function isLock(x: unknown): x is SendLock {
 }
 
 /**
- * The 0.14.0 record is rewritten once, here, and it never resumes a key. A record in the pre-0.14.1 shape ({@link
- * mayMatchLegacy}) is an unsettled send from the RELEASED build — one whose fate nobody observed. It used to be
- * decoded with 0.14.0's own algebra and, on a match, RESUMED its key — and that algebra is blind in four places this
- * one is not: recipients by address alone, `html ?? body` as one field, no `threadId`, and an attachment by byte
- * LENGTH rather than content. A message CHANGED in any of those ways hashed as the unchanged one, was handed the old
- * key, and the server replayed the first send's stored result: the editor read `confirmed`, cleared the scratch and
- * said "Sent." about a message that never left — the worse half of the pair this file prevents. The blind spots
- * cannot be narrowed from this side (the record carries one hash and no evidence of which fields produced it).
- */
-
-/**
- * So the decode answers a smaller question: the record becomes an UNRESOLVED record of this build's shape carrying
- * its 0.14.0 fingerprint and NO name — no `subject`, no `session`, because 0.14.0 recorded neither and inventing one
- * would park the wrong message. A nameless unresolved record parks by the only identity it has (`unresolvedNames` in
- * `mail-send.ts` compares BOTH algebras), so the surface shows the unconfirmed warning and Send is refused; the
- * person checks their Sent folder and decides, and a changed message is a different message with a key of its own. At
- * `load`, and idempotent: every reader comes through here, so the park is established before any press; `v` moves to
- * this build's format, making {@link mayMatchLegacy} false on the next pass. The fingerprint is NOT touched — it is
- * still a 0.14.0 hash, and the reader that compares it knows so.
+ * THE RETIRED RECORDS ARE DROPPED HERE, once, and the jar is saved without them: every `v` at or below
+ * {@link LAST_RETIRED_FORMAT}, and a `v: 3` record naming nothing (no `subject`, no `session`) — the shape
+ * the old 0.14.0 rewrite made, whose fingerprint is in an algebra this build no longer computes. A record
+ * this build or a later one wrote is untouched.
  */
 /**
  * `null` is not `[]`, and collapsing them was a fail-open. This returned `[]` for everything its `catch` swallowed,
@@ -336,11 +255,6 @@ function isLock(x: unknown): x is SendLock {
  * a `JSON.parse` failure keeps `[]`.
  */
 
-/**
- * A `v: 2` record is NOT rewritten: the decode below is 0.14.0's alone, and a released 0.14.1 record decodes fine
- * under {@link legacySendFingerprint_0_14_1} — rewriting would throw away the `subject` and `session` that are the
- * only names its message has.
- */
 function load(owner: string | null = storageOwner()): SendLock[] | null {
   let raw: string | null;
   try {
@@ -353,13 +267,8 @@ function load(owner: string | null = storageOwner()): SendLock[] | null {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const rows: SendLock[] = parsed.filter(isLock);
-    let decoded = false;
-    const out = rows.map((r) => {
-      if (!mayMatchLegacy(r)) return r;
-      decoded = true;
-      return { ...r, v: SEND_LOCK_FORMAT, unverified: true };
-    });
-    if (decoded) save(out, owner);
+    const out = rows.filter((r) => !retired(r));
+    if (out.length !== rows.length) save(out, owner);
     return out;
   } catch {
     return [];
@@ -455,9 +364,7 @@ export function resumeSendLock(
    * broke it: the record has to outlive the next press (it is the only thing naming the key a message may already
    * have gone under), so the lane now carries the unresolved ones alongside whichever ordinary claim is current.
    * Reading by `(lane, fingerprint)` is what keeps them apart — see {@link unverifiedSendIntents} for the other half.
-   * ONE COMPARISON, IN THIS BUILD'S ALGEBRA, AND NO DECODE: A press never decodes a 0.14.0 record and never resumes
-   * its key — see {@link load}, which rewrites such a record into a nameless UNRESOLVED one before any reader sees
-   * it.
+   * ONE COMPARISON, IN THIS BUILD'S ALGEBRA: the retired formats never reach a reader — {@link load} drops them.
    */
 
   /**
@@ -476,14 +383,14 @@ export function resumeSendLock(
    */
 
   /**
-   * A record with no session of its own (a reply, a forward, a 0.14.0 rewrite) is not scoped by this: it is named by
+   * A record with no session of its own (a reply, a forward) is not scoped by this: it is named by
    * the message it answers, which no session can change.
    */
   const sessionAdmits = (r: SendLock): boolean =>
     r.unverified === true || r.session === undefined || id.session === null
     || r.session === id.session;
   const found = live.find(
-    (r) => r.lane === lane && r.fp === fingerprintFor(r, id) && sessionAdmits(r),
+    (r) => r.lane === lane && r.fp === id.fp && sessionAdmits(r),
   );
   // A different fingerprint means the key does not name THIS content, so it cannot be resumed and
   // the record is spent — EXCEPT an unverified one, which is kept regardless. Deleting it is how
@@ -491,45 +398,17 @@ export function resumeSendLock(
   // been delivered. A record from a LATER format is exempt too: this build cannot read what its
   // fingerprint means, and a downgrade must not delete a newer install's evidence.
   const kept = live.filter((r) => !(
-    r.lane === lane && r.fp !== fingerprintFor(r, id) && r.unverified !== true
+    r.lane === lane && r.fp !== id.fp && r.unverified !== true
     && r.v <= SEND_LOCK_FORMAT
   ));
   if (kept.length !== rows.length) save(kept, owner);
   return found?.key ?? null;
 }
 
-/**
- * IS THIS RECORD IN THE PRE-0.14.1 SHAPE? — the only reliable way to spot a 0.14.0 record. `v` cannot answer it.
- * 0.14.0 wrote `v: 1` and 0.14.1 changed what a fingerprint hashes WITHOUT bumping it, so the number says the same
- * thing about two different algebras. The SHAPE does answer it: `subject` arrived with 0.14.1 and `session` with the
- * fix above it, and 0.14.0's record type had neither field — its whole interface was `v, lane, key, at, draftId, fp`.
- * So a record carrying neither name was written before either existed. A 0.14.1 record for a message this browser
- * could not name at all would also carry neither — but such a browser has no writable jar (`sendSubject` answers
- * `undefined` only when the session id could not be read, which is the same failure that stops the record being
- * saved), so it is not a state that reaches storage.
- */
-
-/**
- * `v < SEND_LOCK_FORMAT` is required as well, which keeps this off anything this build or a later one wrote — and it
- * is what makes {@link load}'s rewrite happen once: the rewrite moves `v`, so the next read is no longer a legacy
- * read. WHAT IT NO LONGER DOES is guard a resume. It named the records whose key a press was allowed to take over,
- * which is the decision {@link load}'s header withdraws: this predicate now only says "the outcome of this send was
- * never observed and this build cannot name what it was of".
- */
-function mayMatchLegacy(r: SendLock): boolean {
-  return r.v <= LAST_0_14_0_FORMAT && r.subject === undefined && r.session === undefined;
-}
-
-/**
- * WHICH SPELLING OF THIS MESSAGE A STORED RECORD'S FINGERPRINT IS IN — the version decides. `v: 2` is the released
- * 0.14.1 algebra ({@link legacySendFingerprint_0_14_1}, `draftId` folded in); `v: 3` is this build's. Comparing every
- * record against one hash is what made the 0.14.0 → 0.14.1 flip a duplicate-delivery window, and it is the same
- * window here. A record the 0.14.0 decode rewrote carries `v: 3` and a 0.14.0 fingerprint on purpose: it is NAMELESS
- * and must match no message by hash at all, which is exactly what comparing it against this build's algebra achieves.
- * Its park is `unresolvedNames`' nameless arm, which tries all three spellings.
- */
-function fingerprintFor(r: SendLock, id: SendIdentity): string {
-  return r.v <= LAST_0_14_1_FORMAT ? id.legacyFp0141 : id.fp;
+/** A record {@link load} drops — see its note. */
+function retired(r: SendLock): boolean {
+  return r.v <= LAST_RETIRED_FORMAT
+    || (r.v === SEND_LOCK_FORMAT && r.subject === undefined && r.session === undefined);
 }
 
 /**
@@ -541,24 +420,6 @@ function fingerprintFor(r: SendLock, id: SendIdentity): string {
 export interface SendIdentity {
   /** {@link sendFingerprint} — this build's algebra. */
   fp: string;
-  /**
-   * {@link legacySendFingerprint_0_14_0} — the released 0.14.0 algebra.
-   *
-   * NOT a resume comparison any more: no press decodes a 0.14.0 record (see {@link load}). It is
-   * the identity's second spelling, carried so a reader comparing this message against a NAMELESS
-   * unresolved record — whose fingerprint is in that algebra and is the only identity it has — has
-   * both hashes from the one assembly rather than re-hashing every attachment to get the second.
-   */
-  legacyFp: string;
-  /**
-   * {@link legacySendFingerprint_0_14_1} — the released 0.14.1 algebra, `draftId` folded in.
-   *
-   * The spelling every `v: 2` record in a jar on somebody's disk right now is written in. Carried
-   * on the identity rather than recomputed at each comparison for the reason the other two are:
-   * the hash walks every attachment's base64, and asking for it twice puts the bytes through a
-   * hash twice on the render path that decides whether Send is pressable.
-   */
-  legacyFp0141: string;
   /** {@link sendSubjects} — every name the message answers to. */
   subjects: ReadonlyArray<string>;
   /** The compose session the press is in, or `null` off the compose lane. */
@@ -570,8 +431,6 @@ export interface SendIdentity {
 export function sendIdentity(m: MailSend, session: string | null = null): SendIdentity {
   return {
     fp: sendFingerprint(m),
-    legacyFp: legacySendFingerprint_0_14_0(m),
-    legacyFp0141: legacySendFingerprint_0_14_1(m),
     subjects: sendSubjects(m, session),
     session,
     draftId: m.draftId ?? null,
@@ -579,16 +438,12 @@ export function sendIdentity(m: MailSend, session: string | null = null): SendId
 }
 
 /**
- * THE KEY FOR A FINGERPRINT ALONE — the door for a caller that has no message.
- *
- * It cannot ask the 0.14.0 question, and says so by handing the same fingerprint in as both: the
- * legacy branch is written to skip when they are equal, so this door is provably decode-free
- * rather than accidentally so. Every production press goes through {@link resumeSendLock} with a
- * real identity.
+ * THE KEY FOR A FINGERPRINT ALONE — the door for a caller that has no message. Every production press
+ * goes through {@link resumeSendLock} with a real identity.
  */
 export function readSendLock(lane: string, fp: string, nowMs: number, owner: string | null = storageOwner()): string | null {
   return resumeSendLock(lane, {
-    fp, legacyFp: fp, legacyFp0141: fp, subjects: [], session: null, draftId: null,
+    fp, subjects: [], session: null, draftId: null,
   }, nowMs, owner);
 }
 
@@ -621,11 +476,9 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
    * THE VERSION IS STAMPED HERE, not taken from the caller.
    *
    * A caller can never legitimately write an older shape, and `v` is what every later reader
-   * branches on — including the 0.14.0 decode, which must never fire on a record this build
-   * wrote. Leaving the number in the caller's hands made it a literal at the one call site that
-   * had to be remembered on every format change, and it was not remembered on the last one:
-   * 0.14.1 changed the fingerprint algebra and still wrote `v: 1`, which is why the decode below
-   * has to read the record's shape instead of its version.
+   * branches on — the retirement at {@link load} among them, which must never fire on a record this
+   * build wrote. Leaving the number in the caller's hands made it a literal at the one call site that
+   * had to be remembered on every format change, and 0.14.1 forgot it.
    */
   rows.push({ ...lock, v: SEND_LOCK_FORMAT });
   save(rows, owner);

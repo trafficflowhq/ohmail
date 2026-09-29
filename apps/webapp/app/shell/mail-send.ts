@@ -46,8 +46,7 @@ import {
 } from "./compose";
 import { durableRemove, durableSet } from "./durable";
 import {
-  allSendLocks, attachSendLockDraft, claimSendLock, holdOf, legacySendFingerprint_0_14_0,
-  legacySendFingerprint_0_14_1, markSendLockUnverified, recordForSendKey,
+  allSendLocks, attachSendLockDraft, claimSendLock, holdOf, markSendLockUnverified, recordForSendKey,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
   sendSubjects, unverifiedSendIntents, type Hold, type SendIntent,
 } from "./send-lock";
@@ -840,28 +839,6 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
   let fp: string | null = null;
   const fpOf = (): string => (fp ??= sendFingerprint(m));
   /**
-   * AND THE 0.14.0 FINGERPRINT, for the records that carry no name at all.
-   *
-   * A record with no names is a record from before the subject existed — a released 0.14.0 one —
-   * and its `fp` is in 0.14.0's algebra, so comparing it against the CURRENT fingerprint is false
-   * for every message. That would have parked nothing: a browser upgraded mid-uncertainty would
-   * have shown no warning and an unlocked Send for the very message whose fate is unknown. The
-   * legacy hash is cheap (it folds an attachment in by size, not by content), so it is asked
-   * first and the expensive one only if it misses.
-   */
-  let legacyFp: string | null = null;
-  const legacyFpOf = (): string => (legacyFp ??= legacySendFingerprint_0_14_0(m));
-  /**
-   * AND THE 0.14.1 ONE, for the same reason one step later. A `v: 2` record that carries no name at all — a 0.14.1
-   * browser that could not read its own session id — has its fingerprint in THAT build's algebra, which folded the
-   * draft row in. It is neither the 0.14.0 spelling nor this one, so without this line such a record parked nothing:
-   * no warning, Send live, for the very message whose fate is unknown. All three are tried because a nameless record
-   * does not say which build wrote it. Widening a fail-closed comparison in the closed direction costs a false park
-   * at worst; the other direction costs a second copy in somebody's mailbox.
-   */
-  let legacyFp0141: string | null = null;
-  const legacyFp0141Of = (): string => (legacyFp0141 ??= legacySendFingerprint_0_14_1(m));
-  /**
    * A session match is final; neither the row nor the fingerprint overrides it. A rule used to
    * stand here: where both sides named a draft row and the rows differed, the row decided. It
    * was written for one compose surface reopening drafts under a SINGLE session; the premise is
@@ -878,11 +855,11 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
    * `compose-autosave.ts`; this is the other half). And the content moves: any rule letting a fingerprint difference
    * unlock is the escape the park exists to close — type one character into a message whose outcome nobody knows, and
    * the press mints a fresh key at `crypto.randomUUID()` below. So the intersection is the whole answer; the one
-   * weaker comparison is a record that names NOTHING (see the fingerprint arm's note above).
+   * weaker comparison is a record that names NOTHING, compared by this build's fingerprint.
    */
   return state.unresolved.some((i) => {
     if (i.subjects.length === 0) {
-      return i.fp === legacyFpOf() || i.fp === legacyFp0141Of() || i.fp === fpOf();
+      return i.fp === fpOf();
     }
     return i.subjects.some((s) => subjects.includes(s));
   });
@@ -1962,15 +1939,7 @@ export function useMailSend(
          describe the message that went, not the buffer as it stands some time afterwards. */
       const bufferFp = key === COMPOSE_SEND_KEY ? composeBufferFingerprint() : null;
       const subject = id.subjects[0];
-      /**
-       * THROUGH THE IDENTITY, not the fingerprint alone — that is what lets a record written by
-       * the released 0.14.0 build be recognised. 0.14.1 changed what a fingerprint hashes, so the
-       * same unchanged message computes a different one; the managed web app flips every browser
-       * at once, and a browser holding an unresolved 0.14.0 record at that moment would not have
-       * been recognised, would have minted a second key, and would have delivered the mail twice
-       * where the first send had reached the server. `resumeSendLock` decodes such a record with
-       * 0.14.0's own algebra and rewrites it in this build's shape on the way past.
-       */
+      /* THROUGH THE IDENTITY, not the fingerprint alone: the session and the subjects scope the resume. */
       const resumed = resumeSendLock(key, id, now, owner.current);
       const sendKey = resumed ?? crypto.randomUUID();
       if (!resumed) {
