@@ -60,7 +60,7 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   },
   {
     // THE HEADER-DATE ORDER — `date desc nulls last, id desc` within one account, the order every
-    // page walked until mail 0138 moved them to the arrival key (the spec below). KEPT this release
+    // page walked until mail 0139 moved them to the arrival key (the spec below). KEPT this release
     // for an older API instance still serving it; dropped next release (DROP-MSG-ORDER-INDEX-NEXT-RELEASE).
     // `nulls last` is spelled here because it is NOT free: an index declared `date desc` is NULLS
     // FIRST, and the planner then reads rows FROM it and sorts them anyway — measured, plan kept
@@ -88,7 +88,7 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
       where "desired_folder" = 'ohmail/Screener' and "last_set_by" = 'us'`,
   },
   {
-    // THE READING ORDER since mail 0138 — `key desc, id desc` over `Dialect.arrivalKey`, which is
+    // THE READING ORDER since mail 0139 — `key desc, id desc` over `Dialect.arrivalKey`, which is
     // `msgOrder` in message-service.ts, the snapshot walk and History. PARTIAL like the one above;
     // unconditional for the same reason. The DDL is shared with the pre-migration build.
     name: "messages_account_arrival_order_idx",

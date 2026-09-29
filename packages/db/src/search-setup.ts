@@ -103,7 +103,7 @@ export const HISTORY_ORDER_PREBUILD_SPEC: ConcurrentIndexSpec = {
  * rule admits exactly these, and only in their spec's spelling minus `concurrently`.
  */
 /**
- * Mail 0138's arrival index, spelled ONCE: the key is the dialect's own text (no parameter, so the
+ * Mail 0139's arrival index, spelled ONCE: the key is the dialect's own text (no parameter, so the
  * planner matches the query's expression), and both journals carry it byte-equal (a test).
  */
 export const ARRIVAL_ORDER_INDEX_DDL = sql`create index concurrently if not exists "messages_account_arrival_order_idx"
@@ -111,7 +111,7 @@ export const ARRIVAL_ORDER_INDEX_DDL = sql`create index concurrently if not exis
       where "deleted_at" is null`;
 
 /**
- * Mail 0138's arrival index, built CONCURRENTLY ahead of the migrator on 0125's pattern, from the
+ * Mail 0139's arrival index, built CONCURRENTLY ahead of the migrator on 0125's pattern, from the
  * one DDL the hot-path spec also builds. The prerequisite is the column the key reads.
  */
 export const ARRIVAL_ORDER_PREBUILD_SPEC: ConcurrentIndexSpec = {
