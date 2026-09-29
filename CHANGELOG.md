@@ -285,11 +285,10 @@ built with the mail sender's fix the same way.
 <!-- changes: fix-026-one-settings-message.md -->
 
 ohmail keeps one settings message per mailbox in `ohmail/_meta` and removes the older copies, its
-own and the ones other ohmail installs left behind, a hundred at a time. While ohmail asks you about
-settings another install left there, that install's message stays beside this one until you answer.
-Where a server refuses to delete, one older copy of its own can stay beside them until it can be
-removed. Before, on servers that answer ohmail's search for these messages with nothing, every
-settings change added a copy that other mail apps showed and found in searches.
+own and the ones other ohmail installs left behind, a hundred at a time. Where a server refuses to
+delete, the folder holds two at most. Before, on servers that answer ohmail's search for these
+messages with nothing, every settings change added a copy that other mail apps showed and found in
+searches.
 
 ### A full ohmail/_meta folder no longer stops organizing
 <!-- changes: fix-026-the-lease-reads-every-claim.md -->
