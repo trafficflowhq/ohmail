@@ -12,6 +12,9 @@
 import type { BackupExclusion } from "./engine/backup-exclusion";
 import { isPinFailure } from "./net/host-pinning";
 
+/** Hoisted for {@link PIN_CHANGED}'s reason: `bootMigratingOf` counts under this sentence. */
+const BOOT_MIGRATING = "Updating the mail store on this phone…";
+
 /**
  * Hoisted out of the table because {@link TABLE.connectSyncFailed} interpolates it, and a member
  * that reads its own object inside that object's initializer leaves TypeScript unable to infer the
@@ -574,6 +577,11 @@ const TABLE = {
   connectToken: "Pairing token",
   connectGo: "Pair",
   connectBooting: "Opening the on-device mirror…",
+  /* THE ENGINE STORE'S UPGRADE ON A RELAUNCH, counted as the desktop counts it: shown only where
+     more than one entry is owed on a store that is not new, the second line after five seconds. */
+  bootMigrating: BOOT_MIGRATING,
+  bootMigratingOf: (applied: number, total: number) => `${BOOT_MIGRATING} (${applied} of ${total})`,
+  bootMigratingSlow: "This can take several minutes on a large mailbox.",
   connectRefusedTitle: "Refused",
   connectSyncing: "Syncing…",
   connectSyncNow: "Sync now",

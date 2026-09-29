@@ -10,12 +10,13 @@
  */
 import type { ConnectionState } from "../net/connection";
 import type { AccessRefusedFacts } from "../net/access-lock";
+import type { BootMigrating } from "../ui/boot-migrating";
 
 export type GateVerdict =
   | { to: "boot" }
   | { to: "wall"; facts: AccessRefusedFacts }
   | { to: "welcome" }
-  | { to: "connecting"; origin: string }
+  | { to: "connecting"; origin: string; migrating?: BootMigrating }
   | { to: "servers" }
   | { to: "mail" };
 
@@ -37,7 +38,11 @@ export function gateFor(
   if (state.k === "live" && lock !== null) return { to: "wall", facts: lock };
   if (state.k === "live") return { to: "mail" };
   if (state.k === "starting") return { to: "boot" };
-  if (state.k === "connecting") return { to: "connecting", origin: state.origin };
+  if (state.k === "connecting") {
+    return state.migrating === undefined
+      ? { to: "connecting", origin: state.origin }
+      : { to: "connecting", origin: state.origin, migrating: state.migrating };
+  }
   // A refusal or a death carries a sentence the reader must be able to see — Servers
   // renders it whatever the pairing count. Idle carries nothing: with no pairing the
   // connect flow starts over; with one, Servers holds the remedies.

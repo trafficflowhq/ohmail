@@ -13,6 +13,8 @@ import type { BackupExclusion } from "./engine/backup-exclusion";
 import { isPinFailure } from "./net/host-pinning";
 import type { Deck } from "./copy.en";
 
+const BOOT_MIGRATING = "Der Postspeicher auf diesem Telefon wird aktualisiert…";
+
 /** Hoisted for the same reason its English twin is — see `copy.en.ts`. */
 const PIN_CHANGED =
   "Die Identität dieses Computers hat sich geändert, seit du dich mit ihm gekoppelt hast, deshalb "
@@ -341,6 +343,9 @@ export const DE: Deck = {
   connectToken: "Kopplungstoken",
   connectGo: "Koppeln",
   connectBooting: "Der Spiegel auf dem Gerät wird geöffnet…",
+  bootMigrating: BOOT_MIGRATING,
+  bootMigratingOf: (applied: number, total: number) => `${BOOT_MIGRATING} (${applied} von ${total})`,
+  bootMigratingSlow: "Bei einem großen Postfach kann das einige Minuten dauern.",
   connectRefusedTitle: "Abgelehnt",
   connectSyncing: "Wird synchronisiert…",
   connectSyncNow: "Jetzt synchronisieren",

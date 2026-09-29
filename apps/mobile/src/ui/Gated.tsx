@@ -96,7 +96,8 @@ export function Gated({ children }: { children: ReactNode }) {
   // never flashes the welcome screen on its way to mail), a LOCAL boot passes through in
   // milliseconds with no text screen, and nothing here ever waits on the network (the
   // connection layer goes live off the on-device mirror; sync runs behind the mail UI).
-  if (verdict.to === "boot" || verdict.to === "connecting") return <BootShell />;
+  if (verdict.to === "boot") return <BootShell />;
+  if (verdict.to === "connecting") return <BootShell migrating={verdict.migrating} />;
   if (verdict.to === "welcome") return <Redirect href="/welcome" />;
   if (verdict.to === "servers") return <Redirect href="/servers" />;
   /* AHEAD OF THE APP, the way the browser tab swaps its own surface: a person whose account the

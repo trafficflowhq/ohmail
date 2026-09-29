@@ -14,6 +14,7 @@ import { useTheme } from "../theme";
 import { sayArg, type RefusalArg } from "../refusal";
 import { Panel, Screen, Txt } from "./base";
 import { TopBar } from "./chrome";
+import { BOOT_MIGRATING_SLOW_MS, bootMigratingLines, type BootMigrating } from "./boot-migrating";
 
 /** How long a wait may go unshaped — the webapp's `BOOT_SKELETON_GRACE_MS`, kept equal. */
 export const SKELETON_GRACE_MS = 300;
@@ -270,13 +271,29 @@ export function SkeletonList({
  * tens of milliseconds on a paired phone, so the common case is one quiet canvas frame, and
  * only a genuinely first-ever launch holds the silhouette long enough to breathe.
  */
-export function BootShell() {
+export function BootShell({ migrating }: { migrating?: BootMigrating | undefined } = {}) {
   const t = useTheme();
   const head: ViewStyle = { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 };
+  /* THE ONE SENTENCE THIS SHELL EVER SAYS: a long store upgrade, counted (`boot-migrating.ts`).
+     The clock re-renders once, when the slow line is due. */
+  const [now, setNow] = useState(() => Date.now());
+  const lines = bootMigratingLines(migrating, now);
+  const due = migrating === undefined ? null : migrating.since + BOOT_MIGRATING_SLOW_MS;
+  useEffect(() => {
+    if (due === null || lines.count === null || lines.slow !== null) return undefined;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, due - Date.now()));
+    return () => clearTimeout(timer);
+  }, [due, lines.count, lines.slow]);
   return (
     <Screen>
       <TopBar />
       <View style={{ paddingHorizontal: t.space.deckCompact, flex: 1 }}>
+        {lines.count === null ? null : (
+          <View style={{ paddingHorizontal: 10, paddingTop: 8, gap: 2 }} accessibilityRole="text">
+            <Txt variant="note" tone="ink2">{lines.count}</Txt>
+            {lines.slow === null ? null : <Txt variant="note" tone="ink3">{lines.slow}</Txt>}
+          </View>
+        )}
         <View style={head} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
           {/* The view head's h1 slot, as shape — same rhythm as the screens' own heads. */}
           <SkeletonHead />

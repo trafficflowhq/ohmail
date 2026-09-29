@@ -32,6 +32,18 @@ export interface SqliteMigrationTarget {
   all<T = Record<string, unknown>>(statement: string): Promise<T[]>;
 }
 
+/**
+ * WHAT AN OPEN MAY BE TOLD WHILE IT UPGRADES — narration, never load-bearing. `onEntry` is called
+ * BEFORE each owed entry with how many of THIS open's owed entries are done, of how many (never the
+ * journal's length), and whether the store is `fresh` (no ledger table before this open: every
+ * entry is owed and nobody is waiting on a number). `onApplied` follows each commit with its cost.
+ */
+export interface SqliteMigrationHooks {
+  onEntry?(applied: number, pending: number, name: string, fresh: boolean): void;
+  onApplied?(name: string, ms: number): void;
+  now?(): number;
+}
+
 /** Where applied entries are recorded. Named for the journal it tracks, not for a library. */
 export const SQLITE_MIGRATIONS_TABLE = "ohmail_sqlite_migrations";
 
@@ -48,6 +60,7 @@ export const SQLITE_MIGRATIONS_TABLE = "ohmail_sqlite_migrations";
 export async function migrateSqlite(
   target: SqliteMigrationTarget,
   journal: readonly SqliteJournalEntry[] = SQLITE_JOURNAL,
+  hooks: SqliteMigrationHooks = {},
 ): Promise<string[]> {
   const version = await target.all<{ version: string }>("select sqlite_version() as version");
   const options = await target.all<{ compile_options: string }>("pragma compile_options");
@@ -56,6 +69,10 @@ export async function migrateSqlite(
     compileOptions: options.map((o) => String(o.compile_options)),
   });
   await target.run("PRAGMA foreign_keys=ON");
+  const ledger = await target.all<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${SQLITE_MIGRATIONS_TABLE}'`,
+  );
+  const fresh = ledger.length === 0;
   await target.run(
     `CREATE TABLE IF NOT EXISTS ${SQLITE_MIGRATIONS_TABLE} (` +
       "name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
@@ -65,8 +82,12 @@ export async function migrateSqlite(
       .map((r) => r.name),
   );
   const applied: string[] = [];
+  const owed = journal.filter((entry) => !seen.has(entry.name)).length;
+  const clock = hooks.now ?? Date.now;
   for (const entry of journal) {
     if (seen.has(entry.name)) continue;
+    hooks.onEntry?.(applied.length, owed, entry.name, fresh);
+    const startedAt = clock();
     /* THE DOCUMENTED TABLE-ALTERING DANCE, and the reason every entry pays for it.
        This store cannot ALTER a constraint, so a constraint change is a table rebuild: create,
        copy, DROP, rename. With foreign keys ON, `DROP TABLE` performs an implicit DELETE FROM —
@@ -104,6 +125,7 @@ export async function migrateSqlite(
       await target.run("PRAGMA foreign_keys=ON").catch(() => {});
     }
     applied.push(entry.name);
+    hooks.onApplied?.(entry.name, clock() - startedAt);
   }
   return applied;
 }

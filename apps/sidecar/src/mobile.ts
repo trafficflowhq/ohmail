@@ -170,6 +170,17 @@ export interface PhoneEngineDeps {
    * cannot hold the line that a refusing submission server refuses the launch.
    */
   smtpDial?: SidecarConfig["smtpDial"];
+  /**
+   * THE STORE'S UPGRADE, AS IT GOES — before each owed journal entry, how many of this open's owed
+   * entries are done of how many, and whether the store is fresh (a first launch). Narration for a
+   * screen that is waiting; a throw here is the caller's and aborts nothing it did not start.
+   */
+  onMigrating?: (progress: { applied: number; pending: number; fresh: boolean }) => void;
+  /**
+   * TEST SEAM — the device journal this open applies. Production passes nothing and gets the
+   * shipped one; a guard plants a failing entry here to watch the refusal name it.
+   */
+  journal?: Parameters<typeof migrateSqlite>[1];
 }
 
 /**
@@ -466,8 +477,17 @@ export async function openPhoneStore(
   exec: PhoneSqlExecutor,
   /** TEST SEAM. Production takes {@link TRANSACTION_WAIT_MS}; a guard cannot wait thirty seconds. */
   transactionWaitMs = TRANSACTION_WAIT_MS,
+  /** Told before each owed entry — see {@link PhoneEngineDeps.onMigrating}. */
+  onMigrating?: PhoneEngineDeps["onMigrating"],
+  /** TEST SEAM — see {@link PhoneEngineDeps.journal}. */
+  journal?: PhoneEngineDeps["journal"],
 ): Promise<OpenLocalDb> {
-  await migrateSqlite({
+  /* THE UPGRADE COUNTS ITSELF: how many this open owed, how many ran and which one paid, the
+     desktop's `MigrationCensus` read off the migrator's own hooks, never off the journal's length. */
+  let pending = 0;
+  let slowest: { migration: string; ms: number } | null = null;
+  const migrateStarted = Date.now();
+  const applied = await migrateSqlite({
     run: async (statement: string): Promise<void> => { await exec.run(statement, []); },
     /* The migrator reads BY NAME (`version`, `compile_options`), so the positional rows are zipped
        back into objects with the statement's own column names. Zipped here rather than in the
@@ -478,7 +498,16 @@ export async function openPhoneStore(
       const { columns, rows } = await exec.all(statement, []);
       return rows.map((row) => Object.fromEntries(columns.map((c, i) => [c, row[i]])) as T);
     },
+  }, journal, {
+    onEntry: (done, owed, _name, fresh) => {
+      pending = owed;
+      onMigrating?.({ applied: done, pending: owed, fresh });
+    },
+    onApplied: (migration, ms) => {
+      if (slowest === null || ms > slowest.ms) slowest = { migration, ms };
+    },
   });
+  const migrateMs = Date.now() - migrateStarted;
 
   const db = drizzleSqliteProxy(
     async (sql, params, method) => {
@@ -515,11 +544,9 @@ export async function openPhoneStore(
     db: branded,
     dataDir: "",
     pgDataDir: "",
-    timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs: 0, compactMs: 0, searchSetupMs: 0 },
-    /* NO MIGRATOR RAN HERE, said rather than answered with zeros. The desktop's census counts the
-       journal entries this open applied; the phone's schema is the platform's, brought up to date
-       outside this handle, so a `0` here would be a reading nobody took. See `OpenLocalDb`. */
-    migrations: null,
+    timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs, compactMs: 0, searchSetupMs: 0 },
+    /* THE DEVICE JOURNAL'S OWN CENSUS — `boot_phases` carries it on the phone as on a computer. */
+    migrations: { pending, applied: applied.length, slowest },
     // A write-ahead checkpoint is a PGlite concept the engine calls where a drain ends.
     // On this store the journal is the platform's and there is nothing for a caller to reclaim, so
     // this answers zero rather than pretending to have flushed something.
@@ -718,7 +745,7 @@ async function composePhoneEngine(
      specifier is the shim the mail client's socket is built by. */
   (socketModule as { setSocketLog?: (l: Diagnostic) => void }).setSocketLog?.(log);
 
-  const store = await openPhoneStore(deps.exec);
+  const store = await openPhoneStore(deps.exec, TRANSACTION_WAIT_MS, deps.onMigrating, deps.journal);
   /**
    * THE DIAL, AND WHO SUPPLIES IT. A configured start uses what it was given; a sealed start reads
    * the row. A store with nothing to read ends here, with the store CLOSED — an engine left open

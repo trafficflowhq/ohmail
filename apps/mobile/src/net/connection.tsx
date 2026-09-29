@@ -26,8 +26,9 @@ import { decidedState, type DecidedState } from "./decided";
 import { deathRefusal, noteSessionDeath } from "./session-death";
 import {
   CLAIM_LAPSES_AFTER_MINUTES, PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
-  type ReopenOutcome, type StandaloneEngine,
+  type ReopenOutcome, type StandaloneEngine, type StoreMigrating,
 } from "../engine/standalone-door";
+import { migratingState, type BootMigrating } from "../ui/boot-migrating";
 import { phoneEngineReopen } from "../engine/engine-artifact";
 import { installGeneration, settleInstallGeneration } from "../state/install-marker";
 import { nativeServerProfiles } from "../state/servers-native";
@@ -64,7 +65,8 @@ export type ConnectionState =
   | { k: "starting" }
   /** No session: nothing paired yet, or the reader disconnected. The connect flow owns the screen. */
   | { k: "idle" }
-  | { k: "connecting"; origin: string }
+  /** `migrating`: the engine store's upgrade on a relaunch, as the engine announces it. */
+  | { k: "connecting"; origin: string; migrating?: BootMigrating }
   | { k: "live"; session: ConnectedSession }
   | { k: "refused"; reason: Refusal }
   /** A mid-use death: the server refused the session's token. One scan re-pairs. */
@@ -192,6 +194,8 @@ async function reopenWithBackground(
 }
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
+  /** Where a relaunch's store upgrade is told — set by the connect that is waiting on it, and only then. */
+  const migratingSink = useRef<((progress: StoreMigrating) => void) | null>(null);
   const env = useMemo<PairingEnv>(
     // `deviceKind` — what THIS phone is, declared at pairing time so the server's device list
     // and its staleness attribution name the install. `Platform.OS` is read here, in the one
@@ -245,6 +249,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             /* THE ENGINE'S OWN LOG — `engine-log.ts`. A relaunch has no screen in front of it, so
                this is the only place a dial that comes up and then files nothing can be read. */
             logSink: engineLogSink(),
+            onMigrating: (progress) => { migratingSink.current?.(progress); },
           }),
           /* AND THE TAKE-BACK'S ENGINE HALF. Behind the same dynamic import the platform is:
              `local-engine-native` reaches expo-sqlite and the keystore, neither loadable by the
@@ -508,7 +513,20 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         return { ok: false, reason: refuse("notPairedHere") };
       }
       if (stillCurrent()) enter({ k: "connecting", origin: row.origin });
-      const outcome = await connectProfileById(env, id);
+      /* THE STORE'S UPGRADE, onto the connecting state this connect entered and no other: a
+         superseded connect, or a state that has moved on (a refusal), is not told. */
+      const sink = (progress: StoreMigrating): void => {
+        if (!stillCurrent()) return;
+        const next = migratingState(live.now(), row.origin, progress, Date.now());
+        if (next !== null) enter(next);
+      };
+      migratingSink.current = sink;
+      let outcome: Awaited<ReturnType<typeof connectProfileById>>;
+      try {
+        outcome = await connectProfileById(env, id);
+      } finally {
+        if (migratingSink.current === sink) migratingSink.current = null;
+      }
       await refreshProfiles();
       if (!stillCurrent()) {
         if (outcome.kind === "connected") outcome.session.store.close();

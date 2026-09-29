@@ -220,6 +220,12 @@ export type StartPhoneEngine = (deps: {
 } & StartPhoneEngineLogging) => Promise<StandaloneEngine>;
 
 /**
+ * THE ENGINE STORE'S UPGRADE AS IT GOES — before each owed entry, how many of this open's owed
+ * entries are done of how many, and whether the store is fresh. The artifact's `onMigrating`.
+ */
+export interface StoreMigrating { readonly applied: number; readonly pending: number; readonly fresh: boolean }
+
+/**
  * The relaunch's entry — the same engine, started from what it sealed for itself. No `imap`
  * and no `address`: a phone's credential form exists once, and every later launch has only the
  * store — the first launch seals the typed password beside the coordinates it was proved
@@ -233,6 +239,7 @@ export type StartPhoneEngineFromSealed = (deps: {
   machineName: string;
   installId: string;
   keks?: Record<number, string>;
+  onMigrating?: (progress: StoreMigrating) => void;
 } & StartPhoneEngineLogging) => Promise<
   { kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }
 >;
@@ -468,6 +475,8 @@ export interface ReopenDeps {
   installId: () => Promise<string>;
   /** See {@link StandaloneDeps.logSink}. A relaunch has no screen, so it needs it more. */
   logSink?: EngineLogSink;
+  /** The store's upgrade, handed through to the screen that waits on it. See {@link StoreMigrating}. */
+  onMigrating?: (progress: StoreMigrating) => void;
 }
 
 /** The relaunch's answer. A refusal is a keyed sentence, never a fall-through to the chooser. */
@@ -495,6 +504,7 @@ export async function reopenStandaloneMailbox(deps: ReopenDeps): Promise<ReopenO
       installId: await deps.installId(),
       keks: platform.keks,
       ...(deps.logSink !== undefined ? { logSink: deps.logSink } : {}),
+      ...(deps.onMigrating !== undefined ? { onMigrating: deps.onMigrating } : {}),
     });
     if (started.kind === "no-credential") {
       return { ok: false, reason: refuse("standaloneNoSealedCredential") };
