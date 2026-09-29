@@ -138,7 +138,8 @@ import {
 } from "./live";
 import type { Scope } from "./model";
 import {
-  flushHeldDeletes, heldDeleteIds, runDeleteCeremony, subscribeHeldDeletes,
+  closeDeleteSession, flushHeldDeletes, heldDeleteIds, openDeleteSession, sayDeleteReplay,
+  runDeleteCeremony, subscribeHeldDeletes,
 } from "./held-delete";
 /* The routing window — Move's rule half, held for the same UNDO_MS the delete's press is. */
 import {
@@ -766,8 +767,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, [sessionKey]);
 
   /* Backgrounding commits every open delete window — the webapp's `pagehide`, in this runtime's
-     vocabulary. A hard kill inside the window loses the PRESS, not the mail (the safe
-     direction); `state/held-delete.ts` states the boundary and the gap row names it. */
+     vocabulary. A hard kill inside the window loses nothing: the press is on disk and the next
+     launch commits it (`state/held-delete.ts`, the delete session below). */
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {
       if (s !== "active") { flushHeldDeletes(); flushRouting(); }
@@ -1201,7 +1202,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       reverse: (mutations, intent) => (intent.v === 1 ? routingReversal(() => engine.read(), mutations) : null),
       onReplayed: (replay) => { for (const say of sayRoutingReplay(replay)) showToast(say); },
     });
-    return () => { closeRoutingSession(); };
+    /* THE DELETE WINDOW'S SESSION, beside it and on the same journal: the deletes a killed session
+       left commit here, before the first paint, re-read against the mirror — a message no longer
+       there is skipped, and one another device moved meanwhile is deleted as pressed. */
+    openDeleteSession({
+      journal,
+      dispatch: (id) => (engine.read().get("message", id) === undefined
+        ? Promise.resolve("nothing" as const)
+        : acts?.deleteMessage(id, { quiet: true }) ?? Promise.resolve(false)),
+      onReplayed: (replay) => { for (const say of sayDeleteReplay(replay)) showToast(say); },
+    });
+    return () => { closeRoutingSession(); closeDeleteSession(); };
   }, [engine, journal, showToast]);
 
   const locale = useLocale();
@@ -1408,13 +1419,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
                reader stays over the pill for the whole window (the device fix — Later/Park keep it
                and their pills render; delete used to navigate away in the same tick and its pill
                died with the route). Undo takes the row back and the reader keeps showing it. */
-            runDeleteCeremony({
+            void runDeleteCeremony({
               id,
               windowMs: UNDO_MS,
               toast: showToast,
               deleted: refuse("toastDeleted"),
               undone: refuse("deleteUndone"),
-              dispatchQuiet: () => void acts.deleteMessage(id, { quiet: true }),
+              /* The row is cleared once this settles: the outbox holds the delete from then on. */
+              dispatchQuiet: () => acts.deleteMessage(id, { quiet: true }),
               ...(opts?.onCommitted ? { onCommitted: opts.onCommitted } : {}),
             });
           },

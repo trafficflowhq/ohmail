@@ -1711,6 +1711,9 @@ const TABLE = {
       : `Moved ${n} messages that were waiting when ohmail closed.`,
   routingReplayExpired: (n: number) =>
     `${n === 1 ? "1 filing rule was" : `${n} filing rules were`} never made — too much time passed since you asked. File that mail again if you still want the rule.`,
+  /* A LAUNCH DROPPING A DELETE a killed session left past a day: the Move's rule, one verb over. */
+  deleteReplayExpired: (n: number) =>
+    `${n === 1 ? "1 message was" : `${n} messages were`} not moved to Trash — too much time passed since you asked. Delete it again if you still want it there.`,
   /** THE OHBOX'S UNDECIDED-SENDER OFFER — the web's `screener.unscreened*` sentences, word for word. */
   unscreenedLead: (n: number) =>
     n === 1

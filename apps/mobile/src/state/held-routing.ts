@@ -10,12 +10,10 @@
  */
 import {
   FOLDER_OF_VIEW,
-  ROUTING_JOURNAL_TYPE,
   createRoutingWindow,
   presentAt,
   routingIntentsKey,
   routingSubject,
-  type DurableWrite,
   type EngineMutation,
   type EntityReader,
   type Folder,
@@ -25,17 +23,11 @@ import {
   type RoutingOpen,
   type RoutingWindow,
   type ScreenIntent,
-  type StorageDoor,
 } from "@ohmail/client-engine";
+import { journalDoor, type HeldJournal, type JournalDoor } from "./held-journal";
 
-/** The part of the account's mirror the journal lives in — the app hands its `SqlMirrorStore`. */
-export interface RoutingJournal {
-  get<T = unknown>(type: string, id: string): T | undefined;
-  commitLocal(
-    puts: ReadonlyArray<{ type: string; id: string; entity: unknown }>,
-    deletes: ReadonlyArray<{ type: string; id: string }>,
-  ): Promise<void>;
-}
+/** The part of the account's mirror the journal lives in — `held-journal.ts`'s, one door for both windows. */
+export type RoutingJournal = HeldJournal;
 
 /** What a launch finished of the presses a killed session left, and what it could not make. */
 export interface RoutingReplay {
@@ -67,38 +59,6 @@ export interface RoutingSessionDeps {
    */
   reverse?: (mutations: readonly EngineMutation[], intent: AnyRoutingIntent) => (() => readonly EngineMutation[]) | null;
   now?: () => number;
-}
-
-/**
- * THE JOURNAL AS A DOOR over the mirror's client-local rows. The window's door is synchronous and
- * the mirror's write is not, so this answers from its own copy at once and queues the writes in
- * order behind it. Its "stored" is the COPY's answer: `landed` is the disk's, and only
- * {@link holdRouting} reads it, before a press may offer Undo.
- */
-interface JournalDoor extends StorageDoor {
-  landed: () => Promise<DurableWrite>;
-}
-
-function journalDoor(journal: RoutingJournal): JournalDoor {
-  const copy = new Map<string, string | null>();
-  const last = new Map<string, Promise<DurableWrite>>();
-  const write = (key: string, value: string | null): DurableWrite => {
-    copy.set(key, value);
-    const row = { type: ROUTING_JOURNAL_TYPE, id: key };
-    const put = value === null ? journal.commitLocal([], [row]) : journal.commitLocal([{ ...row, entity: { value } }], []);
-    last.set(key, put.then((): DurableWrite => "stored", (): DurableWrite => "lost"));
-    return "stored";
-  };
-  return {
-    get: (key) => {
-      if (copy.has(key)) return copy.get(key) ?? null;
-      const row = journal.get<{ value?: unknown }>(ROUTING_JOURNAL_TYPE, key);
-      return typeof row?.value === "string" ? row.value : null;
-    },
-    set: (key, value) => write(key, value),
-    remove: (key) => write(key, null),
-    landed: async () => ((await Promise.all(last.values())).includes("lost") ? "lost" : "stored"),
-  };
 }
 
 let live: RoutingWindow | null = null;
