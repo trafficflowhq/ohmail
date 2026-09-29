@@ -794,6 +794,7 @@
     },
     "markAllSpam": "Mark all spam",
     "heldReleaseLead": "{count, plural, one {1 message from a sender you already decided about is still in the Screener. Release it to its pile.} other {# messages from senders you already decided about are still in the Screener. Release them to their piles.}}",
+    "heldReleaseContactLine": "{sender} is in your contacts: {count, plural, one {1 message is} other {# messages are}} still in the Screener. Released, {count, plural, one {it goes} other {they go}} to your Ohbox.",
     "heldReleaseAll": "Release {count}",
     "heldReleaseNotNow": "Not now",
     "heldReleased": "Released {count}. Your rules file them on the next pass.",

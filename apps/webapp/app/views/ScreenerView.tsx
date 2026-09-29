@@ -1492,9 +1492,18 @@ export function ScreenerView({
                  absent only against a server too old to keep one, where a press that forgets
                  by tomorrow would be worse than no button. */
               <div className="scn-held" role="note">
-                <p className="scn-held-lead">
-                  {t("heldReleaseLead", { count: state.heldRelease.total })}
-                </p>
+                {state.heldRelease.rulesTotal > 0 ? (
+                  <p className="scn-held-lead">
+                    {t("heldReleaseLead", { count: state.heldRelease.rulesTotal })}
+                  </p>
+                ) : null}
+                {/* ONE LINE PER CONTACT nobody wrote a rule for: the press decides each into the
+                    Ohbox, which is a decision about a named person, so the person is named. */}
+                {state.heldRelease.senders.map((s) => (
+                  <p key={s.sender} className="scn-held-lead scn-held-sender">
+                    {t("heldReleaseContactLine", { count: s.count, sender: s.sender })}
+                  </p>
+                ))}
                 <Button
                   disabled={state.heldRelease.releasing}
                   aria-busy={state.heldRelease.releasing || undefined}

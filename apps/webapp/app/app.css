@@ -1797,6 +1797,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   line-height: 1.5;
   color: var(--ink2);
 }
+/* A contact nobody wrote a rule for: one line each under the lead, in the facts' register. */
+.scn-held-lead.scn-held-sender {
+  font-weight: 400;
+  color: var(--ink2);
+}
 .scn-relay {
   margin: 0;
   font-size:calc(11.5px + var(--type-up));

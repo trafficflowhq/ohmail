@@ -1,6 +1,6 @@
 import { and, asc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
-  accountSettings, approvals, autoReplyByUsWhere, contacts, drafts, folderState, mailboxes,
+  accountSettings, approvals, contactOnlyHeldWhere, drafts, folderState, mailboxes,
   messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl,
   AccountErasedError, readAccountErasedAt,
   CUTLINE_ALLOW_DESTINATIONS, ruleNamesSenderSql, type LedgerTx, type Tx,
@@ -100,20 +100,6 @@ function atTheGate(accountId: string) {
   );
 }
 
-/** Does an enabled `sender`/`domain` rule of this account claim this message's author? */
-const ruleClaimsAuthor = (t: Tx, side: "allow" | "any") => {
-  const d = dialect(t);
-  const allow = sql`(${sql.join(CUTLINE_ALLOW_DESTINATIONS.map((f) => sql`${f}`), sql`, `)})`;
-  return sql`exists (
-    select 1 from rules rg
-     where rg.account_id = ${messages.accountId}
-       and rg.enabled
-       and rg.kind in ('sender', 'domain')
-       ${side === "allow" ? sql`and rg.destination in ${allow}` : sql``}
-       and ${ruleNamesSenderSql(d, { kind: sql`rg.kind`, match: sql`rg.match` }, sql`lower(${messages.fromAddress})`)}
-  )`;
-};
-
 /**
  * THE PASS. Per account: arm the release on every allow rule the gate is still holding mail for,
  * release what it is holding from contact-only senders, and stamp the account once both are done.
@@ -205,40 +191,12 @@ export async function gateReleasePass(
       await recordRuleDelta(tx as unknown as LedgerTx, accountId, [r.id], "update");
     }
 
-    /* HALF TWO: THE SENDERS WHO ARE ONLY A CONTACT. No rule means nothing to arm, and
-       `heldReleaseGroups` is keyed on a rule, so this mail is reachable by no press. A `contacts`
+    /* HALF TWO: THE SENDERS WHO ARE ONLY A CONTACT. No rule means nothing to arm. A `contacts`
        row is what `evaluateRules` reads as a known sender and what admits their NEW mail past the
        gate, so the only reason theirs is held is that it arrived before the row existed — hence
-       the Ohbox. ANY enabled sender/domain rule excludes, not just an allow one: a contact
-       somebody later wrote a DENY rule for is the Screened-out tab's, and that rule's own walk is
-       what should move their mail. */
-    const filters = [
-      atTheGate(accountId),
-      sql`not ${ruleClaimsAuthor(tx as unknown as Tx, "any")}`,
-      sql`exists (
-        select 1 from ${contacts} cg
-         where cg.account_id = ${messages.accountId}
-           and lower(cg.address) = lower(${messages.fromAddress})
-      )`,
-    ];
-    if (own.length > 0) {
-      // The fifth exclusion, guarded on a non-empty list (`in ()` is a syntax error) and skipped
-      // for a NULL `thread_id`. `and not autoReplyByUsWhere(...)`: an automatic reply is the one
-      // thing here that looks like the person's action and is not.
-      filters.push(sql`not exists (
-        select 1 from ${messages} sent
-         where sent.account_id = ${messages.accountId}
-           and sent.thread_id = ${messages.threadId}
-           and ${messages.threadId} is not null
-           and lower(sent.from_address) in ${sql`(${sql.join(own.map((a) => sql`${a}`), sql`, `)})`}
-           and not ${autoReplyByUsWhere(dialect(tx as unknown as Tx), {
-             accountId: sql`sent.account_id`,
-             id: sql`sent.id`,
-             fromAddress: sql`sent.from_address`,
-             messageIdHeader: sql`sent.message_id_header`,
-           })}
-      )`);
-    }
+       the Ohbox. The one spelling of "held, and only a contact" (`contactOnlyHeldWhere`), which
+       the held-release offer's sender lines count and press by after this sweep has run. */
+    const filters = [atTheGate(accountId), ...contactOnlyHeldWhere(dialect(tx as unknown as Tx), { ownAddresses: own })];
 
     const rows = await tx.select({
       messageId: messages.id, observedFolder: folderState.observedFolder,

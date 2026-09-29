@@ -794,6 +794,7 @@
     },
     "markAllSpam": "Alles als Spam markieren",
     "heldReleaseLead": "{count, plural, one {1 Nachricht von einem Absender, \u00fcber den du schon entschieden hast, liegt noch im Screener. Gib sie in ihren Stapel frei.} other {# Nachrichten von Absendern, \u00fcber die du schon entschieden hast, liegen noch im Screener. Gib sie in ihre Stapel frei.}}",
+    "heldReleaseContactLine": "{sender} ist in deinen Kontakten: {count, plural, one {1 Nachricht liegt} other {# Nachrichten liegen}} noch im Screener. Freigegeben {count, plural, one {kommt sie} other {kommen sie}} in deine Ohbox.",
     "heldReleaseAll": "{count} freigeben",
     "heldReleaseNotNow": "Nicht jetzt",
     "heldReleased": "{count} freigegeben. Deine Regeln legen sie beim n\u00e4chsten Durchlauf ab.",

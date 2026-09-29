@@ -138,9 +138,21 @@ export interface HeldReleaseGroupWire {
   count: number;
 }
 
+/** A contact nobody wrote a rule for, whose mail is held at the gate: the address and the count. */
+export interface HeldReleaseSenderWire {
+  /** The address, lower-cased — this line's key, and what a press names in `senders`. */
+  sender: string;
+  count: number;
+}
+
 /** The read's answer: the groups, the DISTINCT message total, and the server's own group ceiling. */
 export interface HeldReleaseWire {
   groups: HeldReleaseGroupWire[];
+  /**
+   * Contact-only senders, one line each. Their mail is claimed by no rule, so it is OUTSIDE
+   * `total`, which stays the rule groups' figure. Absent from an older server: none offered.
+   */
+  senders?: HeldReleaseSenderWire[];
   /** Distinct messages across every group — never the sum of the counts. */
   total: number;
   /** How many groups one press may name. Read rather than hardcoded, so the client cannot drift. */
@@ -154,6 +166,9 @@ export interface HeldReleaseWire {
 /** The press's answer: the groups it released and the distinct messages they held. */
 export interface HeldReleaseResultWire {
   released: HeldReleaseGroupWire[];
+  /** The contact-only senders the press decided into the Ohbox. Absent from an older server. */
+  releasedSenders?: HeldReleaseSenderWire[];
+  /** Distinct messages across the released groups AND senders. */
   total: number;
 }
 
@@ -383,13 +398,14 @@ export interface EngineAdapter {
 
   /**
    * `POST /screener/held-releases` — THE PRESS. Releases the named groups, or every group when
-   * `ruleIds` is omitted.
+   * `ruleIds` is omitted, and decides each named contact-only sender into the Ohbox; an omitted
+   * `senders` decides none.
    *
    * It moves no mail itself: the server records your consent on each rule and re-opens that
    * rule's backlog, and the rule engine files the mail on its own pass. So the answer is what was
    * RELEASED, not what has already moved, and a second press over the same groups releases nothing.
    */
-  releaseHeld?(ruleIds?: readonly string[]): Promise<HeldReleaseResultWire>;
+  releaseHeld?(ruleIds?: readonly string[], senders?: readonly string[]): Promise<HeldReleaseResultWire>;
 
   /**
    * `GET /screener/unscreened` — the Ohbox's sender groups nobody ever decided about, with how

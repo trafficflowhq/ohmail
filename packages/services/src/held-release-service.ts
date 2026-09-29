@@ -1,7 +1,8 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
-  accountSettings, auditAction, auditLog, changeLog, destinationIsDecisionSql, folderState, mailboxes,
-  messages, recordRuleDelta, ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
+  AccountErasedError, accountSettings, applyScreenerDecision, auditAction, auditLog, changeLog,
+  contactOnlyHeldWhere, destinationIsDecisionSql, folderState, mailboxes, messages, recordRuleDelta,
+  ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
@@ -48,9 +49,22 @@ export interface HeldReleaseGroup {
   count: number;
 }
 
+/**
+ * A SENDER WHO IS ONLY A CONTACT, with mail held at the gate — no rule to key a group on, so the
+ * group is the address (`contactOnlyHeldWhere`). Beside the rule groups, never among them: an older
+ * client reads `groups` and `total` alone and never learns these exist.
+ */
+export interface HeldReleaseSenderGroup {
+  /** The address, lower-cased — what the press names back. */
+  sender: string;
+  count: number;
+}
+
 /** What a press did. `released` is the groups it acted on; a second press over the same set is empty. */
 export interface HeldReleaseResult {
   released: HeldReleaseGroup[];
+  /** The contact-only senders it released, decided into the Ohbox through the Screener's own door. */
+  releasedSenders: HeldReleaseSenderGroup[];
   /**
    * DISTINCT messages the press released — the headline number, and NOT the sum of the group
    * counts. One message can sit in two groups: a domain rule and a sender rule inside that domain
@@ -63,7 +77,10 @@ export interface HeldReleaseResult {
 /** The screen: the groups, how many distinct messages they hold, and the dismissal state. */
 export interface HeldReleaseSummary {
   groups: HeldReleaseGroup[];
+  /** Distinct messages across the RULE groups — unchanged for an older client. */
   total: number;
+  /** The contact-only senders beside them; their mail is claimed by no rule, so it adds to `total`. */
+  senders: HeldReleaseSenderGroup[];
   /** The identity of THIS set — what a dismissal names. Empty groups fingerprint to "". */
   fingerprint: string;
   /**
@@ -80,12 +97,14 @@ export interface HeldReleaseSummary {
  * no node builtins. Not a security boundary: the value only ever meets an equality check against
  * what the same function produced.
  */
-export function heldReleaseFingerprint(groups: readonly HeldReleaseGroup[]): string {
-  if (groups.length === 0) return "";
-  const text = groups
-    .map((g) => `${g.ruleId}:${g.destination}:${g.count}`)
-    .sort()
-    .join("\n");
+export function heldReleaseFingerprint(
+  groups: readonly HeldReleaseGroup[], senders: readonly HeldReleaseSenderGroup[] = [],
+): string {
+  if (groups.length === 0 && senders.length === 0) return "";
+  const text = [
+    ...groups.map((g) => `${g.ruleId}:${g.destination}:${g.count}`),
+    ...senders.map((g) => `sender:${g.sender}:${g.count}`),
+  ].sort().join("\n");
   let h = 0xcbf29ce484222325n;
   for (let i = 0; i < text.length; i++) {
     h ^= BigInt(text.charCodeAt(i));
@@ -192,6 +211,28 @@ export async function heldReleaseGroups(
   }));
 }
 
+/** The account's own addresses, lower-cased — the contact arm's own-reply exclusion reads them. */
+async function ownAddressesOf(db: Tx, accountId: string): Promise<string[]> {
+  const rows = await db.select({ address: mailboxes.address }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
+  return rows.map((r) => r.address.toLowerCase());
+}
+
+/** The contact-only senders with mail held at the gate, largest first — {@link HeldReleaseSenderGroup}. */
+export async function heldReleaseSenders(db: Tx, accountId: string): Promise<HeldReleaseSenderGroup[]> {
+  const d = dialect(db);
+  const own = await ownAddressesOf(db, accountId);
+  const sender = sql<string>`lower(${messages.fromAddress})`;
+  const rows = await db
+    .select({ sender, count: sql<number>`${d.castInt(sql`count(${messages.id})`)}` })
+    .from(folderState)
+    .innerJoin(messages, eq(messages.id, folderState.messageId))
+    .where(and(heldAtGate(accountId), ...contactOnlyHeldWhere(d, { ownAddresses: own })))
+    .groupBy(sender)
+    .orderBy(sql`count(${messages.id}) desc`, sender)
+    .limit(HELD_RELEASE_GROUPS_MAX);
+  return rows.map((r) => ({ sender: String(r.sender), count: Number(r.count) }));
+}
+
 /**
  * How many DISTINCT messages the given groups hold. Asked as its own query rather than summed,
  * for {@link HeldReleaseResult.total}'s reason: a message two rules both claim is one message.
@@ -222,11 +263,22 @@ export async function heldReleaseTotal(
  * The walk reads the change rows since the anchor, which is what happened since the "Not now".
  */
 async function heldReleaseJoinedSince(
-  db: Tx, accountId: string, groups: readonly HeldReleaseGroup[], anchor: bigint,
+  db: Tx, accountId: string, groups: readonly HeldReleaseGroup[], senders: readonly HeldReleaseSenderGroup[],
+  anchor: bigint,
 ): Promise<boolean> {
   const d = dialect(db);
   const since = and(eq(changeLog.accountId, accountId), sql`${changeLog.seq} > ${anchor.toString()}`);
   const placedAtGate = and(since, eq(changeLog.entityType, "message"), inArray(changeLog.op, ["create", "move"]));
+  if (senders.length > 0) {
+    // A contact-only sender's held mail placed since: the address list is the read's own, bounded.
+    const addresses = senders.map((g) => g.sender);
+    const [joined] = await db.select({ one: sql`1` }).from(changeLog)
+      .innerJoin(messages, and(eq(messages.id, changeLog.entityId), eq(messages.accountId, changeLog.accountId)))
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(placedAtGate, heldAtGate(accountId), inArray(sql`lower(${messages.fromAddress})`, addresses)))
+      .limit(1);
+    if (joined !== undefined) return true;
+  }
   if (groups.length === 0) return false;
   // This account's own group keys, bounded by `HELD_RELEASE_GROUPS_MAX`, as in `heldReleaseTotal`.
   const ids = groups.map((g) => g.ruleId);
@@ -300,7 +352,8 @@ export async function heldReleaseSummary(
   db: Tx, accountId: string,
 ): Promise<HeldReleaseSummary> {
   const groups = await heldReleaseGroups(db, accountId);
-  const fingerprint = heldReleaseFingerprint(groups);
+  const senders = await heldReleaseSenders(db, accountId);
+  const fingerprint = heldReleaseFingerprint(groups, senders);
   const [row] = await db
     .select({ dismissed: accountSettings.heldReleaseDismissed })
     .from(accountSettings)
@@ -309,11 +362,11 @@ export async function heldReleaseSummary(
   // "" (no groups) never reads dismissed: there is no offer to have said "not now" to.
   let dismissed = false;
   if (fingerprint !== "" && stored !== null) {
-    if (stored.seq !== null) dismissed = !(await heldReleaseJoinedSince(db, accountId, groups, stored.seq));
+    if (stored.seq !== null) dismissed = !(await heldReleaseJoinedSince(db, accountId, groups, senders, stored.seq));
     else if (stored.ms !== null) dismissed = await heldReleaseNewest(db, accountId, groups) <= stored.ms;
     else dismissed = stored.fingerprint === fingerprint;
   }
-  return { groups, total: await heldReleaseTotal(db, accountId, groups), fingerprint, dismissed };
+  return { groups, total: await heldReleaseTotal(db, accountId, groups), senders, fingerprint, dismissed };
 }
 
 /**
@@ -341,8 +394,9 @@ export async function dismissHeldRelease(
   await withAccountTx(ctx, async (t) => {
     const now = ctx.now();
     const groups = await heldReleaseGroups(bridgeTx(t), ctx.accountId);
+    const senders = await heldReleaseSenders(bridgeTx(t), ctx.accountId);
     let value = fp;
-    if (groups.length > 0 && heldReleaseFingerprint(groups) === fp) {
+    if ((groups.length > 0 || senders.length > 0) && heldReleaseFingerprint(groups, senders) === fp) {
       const head = (await seqBounds(bridgeTx(t), ctx.accountId)).max ?? 0n;
       value = `${fp}${SEQ_ANCHOR}${head.toString()}`;
     }
@@ -370,9 +424,19 @@ export async function dismissHeldRelease(
  * any more and a second press finds nothing to release. `ruleIds` absent releases every group.
  */
 export async function releaseHeld(
-  ctx: ServiceContext, opts: { ruleIds?: readonly string[] } = {},
+  ctx: ServiceContext, opts: { ruleIds?: readonly string[]; senders?: readonly string[] } = {},
 ): Promise<HeldReleaseResult> {
   const wanted = opts.ruleIds;
+  const wantedSenders = opts.senders;
+  if (wantedSenders !== undefined) {
+    if (!Array.isArray(wantedSenders)) throw new ServiceError("validation_failed", 400, "senders must be an array");
+    if (wantedSenders.length > HELD_RELEASE_GROUPS_MAX) {
+      throw new ServiceError("validation_failed", 400, "too many senders in one press");
+    }
+    if (wantedSenders.some((a) => typeof a !== "string" || a === "" || a.length > 320)) {
+      throw new ServiceError("validation_failed", 400, "senders must be addresses");
+    }
+  }
   if (wanted !== undefined) {
     if (!Array.isArray(wanted)) {
       throw new ServiceError("validation_failed", 400, "ruleIds must be an array");
@@ -392,14 +456,21 @@ export async function releaseHeld(
     // Read the groups INSIDE the transaction that acts on them: the count written to the audit row
     // is then the count the press released, not one measured before somebody else's decision landed.
     const groups = await heldReleaseGroups(bridgeTx(t), ctx.accountId);
+    // An absent `ruleIds` is every rule group, as before; an absent `senders` is NONE — an older
+    // client never saw a sender line, so its "release all" releases what it showed and no more.
     const named = wanted === undefined
       ? groups
       : groups.filter((g) => wanted.includes(g.ruleId));
-    if (named.length === 0) return { released: [], total: 0 };
+    const asked = new Set((wantedSenders ?? []).map((a) => a.trim().toLowerCase()));
+    const namedSenders = asked.size === 0 ? []
+      : (await heldReleaseSenders(bridgeTx(t), ctx.accountId)).filter((g) => asked.has(g.sender));
+    if (named.length === 0 && namedSenders.length === 0) return { released: [], releasedSenders: [], total: 0 };
     /* READ BEFORE THE WRITE, and that order is load-bearing: the re-arm below puts each rule in
        flight, which is exactly what {@link decidedRule} excludes, so the same count asked
        afterwards would be zero. */
-    const total = await heldReleaseTotal(bridgeTx(t), ctx.accountId, named);
+    // Contact-only mail is claimed by no rule, so its count adds to the rule groups' distinct total.
+    const total = await heldReleaseTotal(bridgeTx(t), ctx.accountId, named)
+      + namedSenders.reduce((n, g) => n + g.count, 0);
 
     const now = ctx.now();
     for (const g of named) {
@@ -430,6 +501,32 @@ export async function releaseHeld(
       });
     }
 
-    return { released: named, total };
+    /* A CONTACT-ONLY SENDER IS DECIDED THROUGH THE SCREENER'S OWN DOOR (`applyScreenerDecision`): a
+       rule the person made by pressing, their held mail desired into the Ohbox and the retro
+       re-armed for the rest — the same act as an Ohbox press over a waiting sender. It writes
+       desired state only; the reconciler moves the mail. */
+    for (const g of namedSenders) {
+      try {
+        // `t` is the fenced transaction, branded by the handle it came from: no hand carry.
+        await applyScreenerDecision(bridgeTx(t), {
+          accountId: ctx.accountId, scope: "sender", address: g.sender, appliedFolder: "INBOX", decision: "yes",
+          triggeringActionId: `held-release:${g.sender}`, now, stampBaseline: false, applyRetro: true,
+          decidedBy: "person",
+        });
+      } catch (err) {
+        if (err instanceof AccountErasedError) {
+          throw new ServiceError("account_erased", 410, "this account has been deleted; its settings cannot be changed");
+        }
+        throw err;
+      }
+      await t.insert(auditLog).values({
+        accountId: ctx.accountId,
+        action: auditAction("screener.held_release"),
+        payload: { sender: g.sender, count: g.count },
+        inverse: null,
+      });
+    }
+
+    return { released: named, releasedSenders: namedSenders, total };
   });
 }

@@ -21,6 +21,7 @@ export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js
 export { SEARCH_SOURCES, isSearchSource, type SearchSource } from "./search-sources.js";
 export { SCREENER_ACT_REFUSALS, isScreenerActRefusal, type ScreenerActRefusal } from "./screener-act-refusal.js";
 export { autoReplyByUsWhere } from "./auto-reply-by-us.js";
+export { contactOnlyHeldWhere } from "./contact-only-held.js";
 // "Did the person answer this sender" — ONE spelling, read by ohbox-tidy, rule-retro and
 // screener-auto. See the module: three copies asked thread membership instead.
 export { weAnsweredThisSenderWhere } from "./we-answered.js";

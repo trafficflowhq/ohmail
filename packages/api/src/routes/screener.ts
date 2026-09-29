@@ -48,14 +48,16 @@ export const screenerRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const { groups, total, fingerprint, dismissed } = await heldReleaseSummary(ctx.db, ctx.accountId);
+      const { groups, senders, total, fingerprint, dismissed } = await heldReleaseSummary(ctx.db, ctx.accountId);
       // `total` is DISTINCT messages and never the sum of the group counts — a domain rule and a
       // sender rule inside it both claim the same mail, honestly, and adding them up would tell a
       // person they hold more than they do. `max` travels so the client learns the ceiling by
       // READING it rather than carrying a constant of its own that drifts — `GET /screener`'s
       // `maxPerRequest` argument. `fingerprint` is this set's identity (what a dismissal names)
       // and `dismissed` whether the account already said "not now" to exactly this set.
-      return jsonResponse({ groups, total, max: HELD_RELEASE_GROUPS_MAX, fingerprint, dismissed });
+      // `senders` are contacts nobody wrote a rule for; their mail is outside `total`, because an
+      // older client reads `total` as the rule groups' figure.
+      return jsonResponse({ groups, senders, total, max: HELD_RELEASE_GROUPS_MAX, fingerprint, dismissed });
     },
   },
   {
@@ -80,8 +82,9 @@ export const screenerRoutes: Route[] = [
   {
     /**
      * THE PRESS. Releases the named groups — or every group when `ruleIds` is absent — by
-     * recording your consent on each rule and re-opening its backlog. It files nothing
-     * itself: `rule-retro` decides with the rule engine and the reconciler moves the mail.
+     * recording your consent on each rule and re-opening its backlog, and decides each named
+     * contact-only sender (`senders`) into the Ohbox through the Screener's own door. It files
+     * nothing itself: the rule engine decides and the reconciler moves the mail.
      *
      * Idempotent by the predicate rather than by a key: a released rule is in flight and is no
      * longer a group, so a replay releases nothing and says so. Same door rule as the read above.
@@ -93,12 +96,14 @@ export const screenerRoutes: Route[] = [
     replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const body = await readBody<{ ruleIds?: unknown }>(req);
+      const body = await readBody<{ ruleIds?: unknown; senders?: unknown }>(req);
       // Left `unknown` to the service on purpose: the service refuses a non-array, a non-string
-      // member and more than `HELD_RELEASE_GROUPS_MAX` ids, and a route that pre-narrowed them
-      // would be a second, weaker copy of that rule.
+      // member and more than `HELD_RELEASE_GROUPS_MAX` ids or senders, and a route that
+      // pre-narrowed them would be a second, weaker copy of that rule. An absent `senders`
+      // releases no contact-only sender: an older client never showed one.
       const result = await releaseHeld(ctx, {
         ruleIds: body.ruleIds as readonly string[] | undefined,
+        senders: body.senders as readonly string[] | undefined,
       });
       return jsonResponse(result);
     },

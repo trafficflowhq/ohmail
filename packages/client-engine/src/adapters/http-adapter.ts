@@ -30,7 +30,7 @@ import type {
   TrashRowWire,
 } from "../engine.js";
 import type {
-  AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseWire,
+  AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire,
   UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
   MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
 } from "./adapter.js";
@@ -1043,11 +1043,25 @@ export class HttpAdapter implements EngineAdapter {
     return { ruleId: r.ruleId, kind: r.kind, match: r.match, destination: r.destination, count };
   }
 
+  /** One contact-only sender line, or `null` — dropped for {@link heldGroupOf}'s reason. */
+  private static heldSenderOf(raw: unknown): HeldReleaseSenderWire | null {
+    const r = raw as Partial<HeldReleaseSenderWire>;
+    const count = typeof r.count === "number" && Number.isFinite(r.count) ? Math.trunc(r.count) : -1;
+    if (typeof r.sender !== "string" || r.sender === "" || count < 0) return null;
+    return { sender: r.sender.toLowerCase(), count };
+  }
+
+  private static heldSendersOf(raw: unknown): HeldReleaseSenderWire[] {
+    return Array.isArray(raw)
+      ? raw.map((g) => HttpAdapter.heldSenderOf(g)).filter((g): g is HeldReleaseSenderWire => g !== null)
+      : [];
+  }
+
   async heldReleases(): Promise<HeldReleaseWire> {
     const res = await this.request("GET", "/screener/held-releases");
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as {
-      groups?: unknown; total?: unknown; max?: unknown; fingerprint?: unknown; dismissed?: unknown;
+      groups?: unknown; senders?: unknown; total?: unknown; max?: unknown; fingerprint?: unknown; dismissed?: unknown;
     };
     const groups = Array.isArray(wire.groups)
       ? wire.groups.map((g) => HttpAdapter.heldGroupOf(g)).filter((g): g is HeldReleaseGroupWire => g !== null)
@@ -1058,6 +1072,7 @@ export class HttpAdapter implements EngineAdapter {
     // offer cannot be dismissed here" and "not dismissed", never as an invented identity.
     return {
       groups,
+      senders: HttpAdapter.heldSendersOf(wire.senders),
       total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
       fingerprint: typeof wire.fingerprint === "string" ? wire.fingerprint : "",
@@ -1168,19 +1183,23 @@ export class HttpAdapter implements EngineAdapter {
     if (!res.ok) throw await this.rejectionOf(res);
   }
 
-  async releaseHeld(ruleIds?: readonly string[]): Promise<HeldReleaseResultWire> {
+  async releaseHeld(ruleIds?: readonly string[], senders?: readonly string[]): Promise<HeldReleaseResultWire> {
     const res = await this.request("POST", "/screener/held-releases", {
-      // Omitted rather than `null`: absent means EVERY group, and a `null` on the wire would be a
-      // third state the server has to invent a meaning for.
-      body: ruleIds === undefined ? {} : { ruleIds: [...ruleIds] },
+      // Omitted rather than `null`: absent `ruleIds` means EVERY group, absent `senders` NONE, and
+      // a `null` on the wire would be a third state the server has to invent a meaning for.
+      body: {
+        ...(ruleIds === undefined ? {} : { ruleIds: [...ruleIds] }),
+        ...(senders === undefined ? {} : { senders: [...senders] }),
+      },
     });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { released?: unknown; total?: unknown };
+    const wire = (await res.json()) as { released?: unknown; releasedSenders?: unknown; total?: unknown };
     const released = Array.isArray(wire.released)
       ? wire.released.map((g) => HttpAdapter.heldGroupOf(g)).filter((g): g is HeldReleaseGroupWire => g !== null)
       : [];
     return {
       released,
+      releasedSenders: HttpAdapter.heldSendersOf(wire.releasedSenders),
       total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
     };
   }

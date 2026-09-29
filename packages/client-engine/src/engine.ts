@@ -5345,18 +5345,24 @@ export class OhmailEngine {
     h.answered = rang;
     h.owed = false;
     const before = this.read().list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
-    const keep = new Set(wire.groups.map((g) => g.ruleId));
-    await this.store.commitLocal(
-      wire.groups.map((g) => ({
-        type: HELD_RELEASE_TYPE,
-        id: g.ruleId,
-        entity: {
-          id: g.ruleId, kind: g.kind, match: g.match,
-          destination: g.destination as HeldReleaseGroupDTO["destination"], count: g.count, total: wire.total,
-          // An older door sends neither: "" reads "not dismissable here", false "not dismissed".
-          fingerprint: wire.fingerprint ?? "", dismissed: wire.dismissed === true,
-        } satisfies HeldReleaseGroupDTO,
+    const senders = wire.senders ?? [];
+    // Contact-only mail is claimed by no rule, so it is disjoint from the groups' distinct total.
+    const total = wire.total + senders.reduce((n, s) => n + s.count, 0);
+    // An older door sends neither: "" reads "not dismissable here", false "not dismissed".
+    const set = { total, fingerprint: wire.fingerprint ?? "", dismissed: wire.dismissed === true };
+    const rows = [
+      ...wire.groups.map((g): HeldReleaseGroupDTO => ({
+        id: g.ruleId, kind: g.kind, match: g.match,
+        destination: g.destination as HeldReleaseGroupDTO["destination"], count: g.count, ...set,
       })),
+      ...senders.map((s): HeldReleaseGroupDTO => ({
+        id: `sender:${s.sender}`, sender: s.sender, kind: "sender", match: s.sender,
+        destination: "INBOX", count: s.count, ...set,
+      })),
+    ];
+    const keep = new Set(rows.map((g) => g.id));
+    await this.store.commitLocal(
+      rows.map((g) => ({ type: HELD_RELEASE_TYPE, id: g.id, entity: g })),
       before.filter((g) => !keep.has(g.id)).map((g) => ({ type: HELD_RELEASE_TYPE, id: g.id })),
     );
     this.notify();
@@ -5465,17 +5471,18 @@ export class OhmailEngine {
   }
 
   /**
-   * THE PRESS. Releases the named groups — or every group when `ruleIds` is omitted — and re-reads.
+   * THE PRESS. Releases the named groups — or every group when `ruleIds` is omitted — and decides
+   * the named contact-only `senders` into the Ohbox (none when omitted), then re-reads.
    *
    * The re-read is not a courtesy: the server files nothing synchronously (it records the consent
    * and re-opens the rule's backlog; the rule engine moves the mail on its own pass), so the only
    * honest thing the screen can do straight afterwards is say what is left to release. Returns the
    * distinct message count the press released, which is what a surface reports.
    */
-  async releaseHeldMail(ruleIds?: readonly string[]): Promise<number> {
+  async releaseHeldMail(ruleIds?: readonly string[], senders?: readonly string[]): Promise<number> {
     const press = this.adapter.releaseHeld;
     if (!press) return 0;
-    const out = await press.call(this.adapter, ruleIds);
+    const out = await press.call(this.adapter, ruleIds, senders);
     await this.refreshHeldReleases();
     return out.total;
   }

@@ -1507,6 +1507,9 @@ function heldReleaseClaim(reader: EntityReader): (key: string) => boolean {
   const senders = new Set<string>();
   const domains = new Set<string>();
   for (const g of reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE)) {
+    // A contact-only sender is UNDECIDED: the offer is a shortcut beside their waiting row, not
+    // an answer that retires it — a person may still screen one contact out.
+    if (g.sender !== undefined) continue;
     const match = ruleMatchKey(g.match);
     if (match === "") continue;
     (g.kind === "domain" ? domains : senders).add(match);

@@ -169,13 +169,20 @@ interface PendingEntry {
  * render as no row, which is the same sentence; "you have none" is a claim this never makes.
  */
 export interface HeldReleaseOffer {
-  /** Distinct messages across every group — the number the row states. Never the sum of the counts. */
+  /** Distinct messages across every group and sender — the press's number. Never the sum of the counts. */
   total: number;
+  /** Distinct messages behind the RULE groups alone — the lead sentence's number; 0 with none. */
+  rulesTotal: number;
   /** One per rule, largest first: what would be filed, and where. */
   groups: HeldReleaseGroupDTO[];
+  /** Contacts nobody wrote a rule for, one line each, largest first. */
+  senders: Array<{ sender: string; count: number }>;
   /** A press is in flight; a second one is refused rather than queued. */
   releasing: boolean;
-  /** Release every group, or just the named rules. Re-reads afterwards and says what it released. */
+  /**
+   * Release every rule group AND every sender line shown, or just the named rules. Re-reads
+   * afterwards and says what it released.
+   */
   release: (ruleIds?: readonly string[]) => void;
   /**
    * "NOT NOW" — dismiss this exact set, persisted per account so the offer stays away on every
@@ -2098,7 +2105,10 @@ export function useScreenerState(
     });
   }, [engine]);
 
-  const heldGroups = useMemo(() => heldReleaseGroups(engine.read()), [engine, version]);
+  const heldRows = useMemo(() => heldReleaseGroups(engine.read()), [engine, version]);
+  const heldGroups = useMemo(() => heldRows.filter((g) => g.sender === undefined), [heldRows]);
+  const heldSenders = useMemo(() => heldRows.flatMap((g) =>
+    (g.sender === undefined ? [] : [{ sender: g.sender, count: g.count }])), [heldRows]);
   const heldTotal = useMemo(() => heldReleaseTotalOf(engine.read()), [engine, version]);
   const heldDismissed = useMemo(() => heldReleaseDismissedOf(engine.read()), [engine, version]);
   const heldFingerprint = useMemo(() => heldReleaseFingerprintOf(engine.read()), [engine, version]);
@@ -2114,7 +2124,9 @@ export function useScreenerState(
     setReleasing(true);
     // Before the account is confirmed the press waits for it (`sync-scheduler.ts#gatedPress`).
     if (syncIdentityOf(engine) === "unconfirmed") toast(t("heldReleaseWaiting"));
-    void engine.releaseHeldMail(ruleIds)
+    // "Release all" names every contact line it SHOWED; a press naming rules names no sender.
+    const senders = ruleIds === undefined && heldSenders.length > 0 ? heldSenders.map((s) => s.sender) : undefined;
+    void engine.releaseHeldMail(ruleIds, senders)
       .then((count) => {
         // The count the SERVER released, never the one on screen when the press happened: another
         // door may have decided a sender in between, and the sentence names what actually moved.
@@ -2140,9 +2152,11 @@ export function useScreenerState(
      DISMISSED hides it the same way: the account said "not now" to exactly this set, on some
      device, and the server re-offers by construction the moment the set changes. */
   const heldRelease: HeldReleaseOffer | null =
-    heldTotal > 0 && heldGroups.length > 0 && role.mode !== "blocked" && !heldDismissed
+    heldTotal > 0 && heldRows.length > 0 && role.mode !== "blocked" && !heldDismissed
       ? {
-          total: heldTotal, groups: heldGroups, releasing, release: pressHeldRelease,
+          total: heldTotal, groups: heldGroups, senders: heldSenders, releasing, release: pressHeldRelease,
+          // Contact lines are disjoint from the rule groups, so the rules' figure is the rest.
+          rulesTotal: heldTotal - heldSenders.reduce((n, s) => n + s.count, 0),
           dismiss: heldFingerprint === "" ? null : pressHeldDismiss,
         }
       : null;

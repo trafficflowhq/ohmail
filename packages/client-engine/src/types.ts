@@ -1757,10 +1757,16 @@ export const HELD_RELEASE_TYPE = "held_release_group";
  */
 export const RETIRED_DECIDED_TYPE = "consent_retired_decided";
 
-/** One group on the release screen: the rule, and how much of its mail is stuck at the gate. */
+/**
+ * One group on the release screen: the rule, and how much of its mail is stuck at the gate — or,
+ * with `sender` set, a CONTACT nobody wrote a rule for (row id `sender:<address>`, `kind`
+ * "sender", `match` the address, `destination` the Ohbox), which the press names in `senders`.
+ */
 export interface HeldReleaseGroupDTO {
   /** The rule's id — this row's own id, and what `releaseHeld` names. */
   id: string;
+  /** Set on a contact-only sender's line: the address the press names. Absent on a rule's group. */
+  sender?: string;
   kind: "sender" | "domain";
   /** The address, or the domain, the rule matches — lower-cased as stored. */
   match: string;
