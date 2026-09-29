@@ -13,7 +13,7 @@
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type {
-  AttachmentWire, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire, ScreenerWaitingWire,
+  AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire, ScreenerWaitingWire,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -240,6 +240,8 @@ interface SupersedeEffect {
   undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }>;
   /** A retired same-key send had a create out whose answer was unreadable — the newer verb carries it. */
   createAttempted?: true;
+  /** A retired same-key send had made its row — the newer verb sends that row, as this session would. */
+  createdRow?: CreatedDraftRow;
   /**
    * Requests on the wire this call marked superseded — see
    * {@link PendingMutation.supersededBy}. The mark is made BEFORE
@@ -298,6 +300,11 @@ interface PendingMutation {
    * it is carried on the verb and persisted with it, and handed back on every later attempt.
    */
   createAttempted?: boolean;
+  /**
+   * The draft row this send's create made, reported before the send request went. A reload's
+   * adapter is handed it back, so the replay sends that row rather than creating another.
+   */
+  createdRow?: CreatedDraftRow;
   /** The Send + Done release — see {@link MutationResult.andDone}. Persisted with the row. */
   andDone?: SendAndDonePlan;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
@@ -414,6 +421,8 @@ interface PersistedOutboxEntry {
    * information those builds had already lost at the reload — so no version bump.
    */
   createAttempted?: boolean;
+  /** See {@link PendingMutation.createdRow}. Added to `v: 3` in place, as `createAttempted` was. */
+  createdRow?: CreatedDraftRow;
   /**
    * TRUE once a newer verb for the same target has been expressed — see
    * {@link OhmailEngine.planAbandonedSupersession}. Retrying such a record would overwrite the newer
@@ -518,8 +527,16 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...(p.waitIsServerNamed !== undefined ? { waitIsServerNamed: p.waitIsServerNamed } : {}),
     ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
     ...(p.createAttempted === true ? { createAttempted: true } : {}),
+    ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
     ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
   };
+}
+
+/** A persisted created row read back defensively: a malformed one is no row, never a guess. */
+function isCreatedRow(v: unknown): v is CreatedDraftRow {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.id === "string" && r.id.length > 0 && (r.revision === null || typeof r.revision === "string");
 }
 
 /** A persisted release read back defensively: a malformed one is a plain Send, never a guess. */
@@ -3083,6 +3100,7 @@ export class OhmailEngine {
         // THE WHOLE POINT OF PERSISTING IT: this replay runs through a FRESH adapter, whose own
         // memory of the unreadable create is gone. Without this the replay re-POSTs the create.
         ...(e.createAttempted === true ? { createAttempted: true } : {}),
+        ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
         ...(e.mutation.kind === "mail_send" && isAndDonePlan(e.andDone) ? { andDone: e.andDone } : {}),
         /**
          * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
@@ -5804,6 +5822,7 @@ export class OhmailEngine {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
       ...(superseded.createAttempted ? { createAttempted: true } : {}),
+      ...(superseded.createdRow !== undefined ? { createdRow: superseded.createdRow } : {}),
       // With the send's durable row, never in a surface's memory: the arm outlives the surface.
       ...(opts.andDone !== undefined && enriched.kind === "mail_send" ? { andDone: opts.andDone } : {}),
     };
@@ -6103,6 +6122,17 @@ export class OhmailEngine {
    * cannot be persisted must still be SENT". That is right for almost every verb and wrong for
    * exactly one, so the caller now gets to decide instead of this method deciding for all of them.
    */
+  /**
+   * THE ROW A SEND MADE, ON DISK BEFORE THE SEND REQUEST: a reload that replays this send then sends
+   * that row instead of creating another. Written through the same door as every entry write, under
+   * the generation fence; a refused write leaves today's shape. A withdrawn key is never re-written.
+   */
+  private async recordCreatedRow(p: PendingMutation, row: CreatedDraftRow): Promise<void> {
+    p.createdRow = row;
+    if (this.withdrawnKeys.has(p.key)) return;
+    await this.putOutbox(p);
+  }
+
   private async putOutbox(p: PendingMutation): Promise<boolean> {
     const entry = outboxEntryOf(p);
     try {
@@ -6245,6 +6275,7 @@ export class OhmailEngine {
       // A record whose create already went out unread keeps saying so: Try again on it, in this
       // session or the next, must not repeat a create the route cannot deduplicate.
       ...(p.createAttempted === true ? { createAttempted: true } : {}),
+      ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
       // Its Send + Done release, for the Try again that confirms it (`retryAbandonedOnce`).
       ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
     };
@@ -6439,6 +6470,7 @@ export class OhmailEngine {
       restored: true, attempts: 0,
       // Try again on a record whose create went out unread is still not a second create.
       ...(e.createAttempted === true ? { createAttempted: true } : {}),
+      ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
       // A Send + Done given up on and tried again still files its source once it is confirmed.
       ...(e.mutation.kind === "mail_send" && isAndDonePlan(e.andDone) ? { andDone: e.andDone } : {}),
     };
@@ -6799,6 +6831,7 @@ export class OhmailEngine {
     if (this.queue.length === 0) return { retired, narrowed, undo, markedInFlight };
     let changed = false;
     let createAttempted = false;
+    let createdRow: CreatedDraftRow | undefined;
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
       const qm = q.mutation;
@@ -6812,6 +6845,7 @@ export class OhmailEngine {
         this.overlays.delete(q.id);
         retired.push(q.id);
         if (q.createAttempted === true) createAttempted = true;
+        if (q.createdRow !== undefined) createdRow = q.createdRow;
         changed = true;
         continue;
       }
@@ -6876,7 +6910,11 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
     }
-    return { retired, narrowed, undo, markedInFlight, ...(createAttempted ? { createAttempted: true as const } : {}) };
+    return {
+      retired, narrowed, undo, markedInFlight,
+      ...(createAttempted ? { createAttempted: true as const } : {}),
+      ...(createdRow !== undefined ? { createdRow } : {}),
+    };
   }
 
   /**
@@ -6948,6 +6986,10 @@ export class OhmailEngine {
       const outcome = await this.adapter.mutate(p.mutation, {
         idempotencyKey: p.key,
         ...(p.createAttempted === true ? { createAttempted: true } : {}),
+        ...(p.mutation.kind === "mail_send" ? {
+          ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
+          onDraftRow: (row: CreatedDraftRow) => this.recordCreatedRow(p, row),
+        } : {}),
       });
       /**
        * THE 202 ARM, BEFORE ANYTHING ELSE IN THIS METHOD. Everything below settles: it applies an
@@ -7225,6 +7267,7 @@ export class OhmailEngine {
           attempts: p.attempts ?? 0,
           lastError: { message: rejection.message, code, status: rejection.status },
           ...(p.createAttempted === true ? { createAttempted: true } : {}),
+          ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
           ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
           ...(code === "send_unverified" ? {} : { retryRefused: code ?? "refused" }),
         };

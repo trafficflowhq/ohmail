@@ -113,6 +113,12 @@ export interface MutationQueued {
  */
 export type MutationAnswer = MutationOutcome | MutationQueued;
 
+/** The draft row a send created under its key, and the revision the create answered with. */
+export interface CreatedDraftRow {
+  id: string;
+  revision: string | null;
+}
+
 /**
  * One attachment's metadata as the server sends it
  * (`GET /messages/:id/attachments`). Deliberately the wire shape,
@@ -255,9 +261,19 @@ export interface EngineAdapter {
    * a non-idempotent create went out and its answer was unreadable. The adapter's own memory of
    * that dies with the adapter; the outbox entry carrying it does not.
    */
+  /**
+   * `createdRow` is the same hand-back for a send whose create WAS answered: the row this key made,
+   * and the revision it was made at, so a replay sends that row instead of making another.
+   * `onDraftRow` is how the adapter reports that row, awaited before the send request goes.
+   */
   mutate(
     m: EngineMutation,
-    opts: { idempotencyKey: string; createAttempted?: boolean },
+    opts: {
+      idempotencyKey: string;
+      createAttempted?: boolean;
+      createdRow?: CreatedDraftRow;
+      onDraftRow?: (row: CreatedDraftRow) => Promise<void>;
+    },
   ): Promise<MutationAnswer>;
   /**
    * Fetch one message's body text, or `null` when this adapter serves no

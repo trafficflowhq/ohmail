@@ -30,7 +30,7 @@ import type {
   TrashRowWire,
 } from "../engine.js";
 import type {
-  AttachmentWire, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseWire,
+  AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseWire,
   UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
   MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
 } from "./adapter.js";
@@ -1292,7 +1292,10 @@ export class HttpAdapter implements EngineAdapter {
 
   async mutate(
     m: EngineMutation,
-    opts: { idempotencyKey: string; createAttempted?: boolean },
+    opts: {
+      idempotencyKey: string; createAttempted?: boolean;
+      createdRow?: CreatedDraftRow; onDraftRow?: (row: CreatedDraftRow) => Promise<void>;
+    },
   ): Promise<MutationAnswer> {
     switch (m.kind) {
       case "move": {
@@ -1450,7 +1453,7 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "mail_send":
-        return this.mailSend(m, opts.idempotencyKey, opts.createAttempted === true);
+        return this.mailSend(m, opts.idempotencyKey, opts.createAttempted === true, opts.createdRow, opts.onDraftRow);
 
       /**
        * THIS CASE IS WHERE TAGS REACH THE WIRE. It threw `UnsupportedMutationError` until it existed, which made a
@@ -1984,6 +1987,8 @@ export class HttpAdapter implements EngineAdapter {
     m: Extract<EngineMutation, { kind: "mail_send" }>,
     idempotencyKey: string,
     createAttemptedBefore = false,
+    createdRow?: CreatedDraftRow,
+    onDraftRow?: (row: CreatedDraftRow) => Promise<void>,
   ): Promise<MutationOutcome> {
     /**
      * THE MESSAGE MAY ALREADY BE A ROW: A compose autosaves through `draft_save`, so by the time Send is pressed the
@@ -2001,6 +2006,16 @@ export class HttpAdapter implements EngineAdapter {
      * it finds. The staleness is bounded by the debounce and by the fact that the composer wrote on every pause; a
      * network that cannot take a PUT is unlikely to take the send either, and that failure IS reported.
      */
+    /* THE ROW THIS KEY ALREADY MADE, handed back after a reload: this adapter's memory of it is
+       seeded as the adapter that made it would hold it, so the send goes to that row with the
+       revision its create answered, and no PUT rewrites a row the server may already be sending. */
+    if (createdRow && !this.draftForKey.has(idempotencyKey)) {
+      this.draftForKey.set(idempotencyKey, createdRow.id);
+      if (createdRow.revision) {
+        this.revisionForKey.set(idempotencyKey, createdRow.revision);
+        this.noteDraftRevision(createdRow.id, createdRow.revision);
+      }
+    }
     let draftId = this.draftForKey.get(idempotencyKey) ?? m.draftId;
     if (draftId && !this.draftForKey.has(idempotencyKey)) {
       this.draftForKey.set(idempotencyKey, draftId);
@@ -2196,10 +2211,15 @@ export class HttpAdapter implements EngineAdapter {
       this.draftForKey.set(idempotencyKey, draftId);
       // The row this press made a moment ago — vouched for on the send exactly as an existing
       // row's is, so the field is on every send this client makes rather than on most of them.
-      if (typeof draft.contentRevision === "string" && draft.contentRevision.length > 0) {
-        this.revisionForKey.set(idempotencyKey, draft.contentRevision);
-        this.noteDraftRevision(draftId, draft.contentRevision);
+      const revision = typeof draft.contentRevision === "string" && draft.contentRevision.length > 0
+        ? draft.contentRevision : null;
+      if (revision) {
+        this.revisionForKey.set(idempotencyKey, revision);
+        this.noteDraftRevision(draftId, revision);
       }
+      // The row is reported BEFORE the send request, so a reload replays this row, not a new one.
+      // A report that fails costs only that; the send still goes.
+      if (onDraftRow) await onDraftRow({ id: draftId, revision }).catch(() => undefined);
     }
 
     // ── SEND LATER (mail 0077): the press becomes an APPOINTMENT, not a delivery ─────────────
