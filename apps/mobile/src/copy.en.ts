@@ -291,7 +291,7 @@ const TABLE = {
     + "moment.",
   /* WHAT A STOP LEFT OFF THE MAILBOX — `settingsLeftLine`. The stop itself went through. */
   settingsStopLeftOther:
-    "This phone's settings stayed on this phone: the mailbox keeps the settings another ohmail saved there.",
+    "This phone's settings stayed on this phone: the mailbox holds settings from a newer ohmail this one cannot read.",
   settingsStopLeftUnsaved:
     "This phone's settings could not be saved to the mailbox, so they are on this phone only.",
   /**
@@ -2558,7 +2558,7 @@ const TABLE = {
   pfiSavedByPhone: (when: string) => `Saved ${when} by ohmail on a phone.`,
   pfiSavedBy: (when: string) => `Saved ${when}.`,
   pfiWillDo:
-    "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say and marked read; nothing else in your mail changes. Until you choose, the settings you make in this ohmail stay here and do not travel with the mailbox.",
+    "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say and marked read; nothing else in your mail changes. Until you choose, both stay in the mailbox: these settings beside the ones you make here.",
   /* What the organizer files while the card is unanswered (`PlanDeps.importHold`). */
   pfiHeldRouting:
     "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",
@@ -2582,7 +2582,7 @@ const TABLE = {
     `${address} carries settings saved by a newer version of ohmail, which this ohmail cannot read — update ohmail to import them.`,
   pfiSavedTitle: (address: string) => `Settings saved on ${address}`,
   pfiSavedBody:
-    "You chose Not now, so they stay in the mailbox, and the settings you make in this ohmail do not travel with it until you choose.",
+    "You chose Not now, so they stay in the mailbox beside the settings you make here until you choose.",
   pfiReplace: "Save this ohmail's settings to the mailbox",
   pfiReplacing: "Saving…",
   pfiReplaceNote: (details: string) =>

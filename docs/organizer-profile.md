@@ -344,17 +344,22 @@ The mail itself needs no line here: it never left the mailbox.
 IMAP has no in-place update. The new copy is appended first, read back, and
 the copy it replaces expunged after, so a crash between the steps leaves two
 documents rather than none; readers coalesce by `updatedAt` (newest wins).
-Exactly one current profile message is the steady state, and the folder never
-holds more than two ohmail settings messages: while an older copy is still
-there, the next write removes it instead of appending.
+Exactly one current profile message is the steady state. While the organizer
+asks the person about settings another install left in the folder, that
+install's message stays beside the organizer's own until the question is
+answered, so the folder holds at most the organizer's current copy, that held
+message and one older copy of the organizer's own that a server would not let
+it remove yet: while such an older copy is still there, the next write removes
+it instead of appending.
 
 Settings messages are found by reading every message's headers in
 `ohmail/_meta`, checked against the folder's message count — never by a header
 SEARCH, which some servers answer with nothing. The organizer removes
 superseded copies: its own at once, another install's once the current
 document is ten minutes newer and that install holds no fresh claim. It never
-removes the current document, a claim, or a message that is not an ohmail
-settings message.
+removes the current document, the message it holds for an unanswered
+found-settings question, a claim, or a message that is not an ohmail settings
+message.
 
 Only the active organizer writes — the organizer lease already serializes
 writers, so last-incumbent-wins and no merge algorithm exists.

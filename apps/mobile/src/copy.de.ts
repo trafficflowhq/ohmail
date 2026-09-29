@@ -167,7 +167,7 @@ export const DE: Deck = {
     "Dieses Telefon konnte dieses Postfach nicht zurückgeben und organisiert es weiter. Versuche "
     + "es in einem Moment noch einmal.",
   settingsStopLeftOther:
-    "Die Einstellungen dieses Telefons sind auf diesem Telefon geblieben: Das Postfach behält die Einstellungen, die ein anderes ohmail dort gespeichert hat.",
+    "Die Einstellungen dieses Telefons sind auf diesem Telefon geblieben: Das Postfach enthält Einstellungen aus einem neueren ohmail, die dieses nicht lesen kann.",
   settingsStopLeftUnsaved:
     "Die Einstellungen dieses Telefons konnten nicht im Postfach gespeichert werden und sind nur auf diesem Telefon.",
   /* Ein Blick, der nicht angekommen ist — eigener Satz, nicht der darüber: hier ist auf diesem
@@ -1714,7 +1714,7 @@ export const DE: Deck = {
   pfiSavedByPhone: (when: string) => `Gespeichert ${when} von ohmail auf einem Telefon.`,
   pfiSavedBy: (when: string) => `Gespeichert ${when}.`,
   pfiWillDo:
-    "Der Import fügt sie den Einstellungen dieses Kontos hinzu. Post, die dieses ohmail im Screener zurückgehalten hat, wird für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen, und als gelesen markiert; sonst ändert sich an deiner Mail nichts. Bis du dich entscheidest, bleiben die Einstellungen aus diesem ohmail hier und wandern nicht mit dem Postfach.",
+    "Der Import fügt sie den Einstellungen dieses Kontos hinzu. Post, die dieses ohmail im Screener zurückgehalten hat, wird für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen, und als gelesen markiert; sonst ändert sich an deiner Mail nichts. Bis du dich entscheidest, bleiben beide im Postfach: diese Einstellungen neben denen, die du hier festlegst.",
   pfiHeldRouting:
     "Bis du antwortest, bleibt Mail von Absendern, die diese Einstellungen durchlassen, dort, wo sie angekommen ist; andere neue Absender werden wie gewohnt gescreent.",
   pfiImport: "Einstellungen importieren",
@@ -1737,7 +1737,7 @@ export const DE: Deck = {
     `${address} trägt Einstellungen aus einer neueren ohmail-Version, die dieses ohmail nicht lesen kann — aktualisiere ohmail, um sie zu importieren.`,
   pfiSavedTitle: (address: string) => `In ${address} gespeicherte Einstellungen`,
   pfiSavedBody:
-    "Du hast sie nicht importiert. Sie bleiben im Postfach, und die Einstellungen aus diesem ohmail wandern nicht mit dem Postfach, bis du dich entscheidest.",
+    "Du hast sie nicht importiert. Sie bleiben im Postfach neben den Einstellungen, die du hier festlegst, bis du dich entscheidest.",
   pfiReplace: "Einstellungen dieses ohmail im Postfach speichern",
   pfiReplacing: "Speichere …",
   pfiReplaceNote: (details: string) =>
