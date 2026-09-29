@@ -96,8 +96,17 @@ export interface ProfileBlock {
    * second clock that could disagree with itself.
    */
 export interface MailboxConnectionState {
-  /** False from the first observation of death until a re-dial completes. */
+  /**
+   * False from the first observation of death until a re-dial completes — and while nothing has
+   * dialled this runtime at all ({@link dialled}), since no dial has reached anything.
+   */
   reachable: boolean;
+  /**
+   * HAS THIS RUNTIME DIALLED ON THIS LAUNCH. False only where the launch was skipped for want of a
+   * password: a password stored afterwards is dialled by the next launch, so the runtime is neither
+   * reachable nor in an outage, and a surface says nothing about a connection nobody tried.
+   */
+  dialled: boolean;
   /**
    * When it was FIRST observed dead in the current outage, or null while reachable.
    *

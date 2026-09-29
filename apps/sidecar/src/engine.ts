@@ -6940,7 +6940,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                cannot have — so a mailbox with no password answered `true` and Settings said "Up
                to date" over one that had never read a byte. See {@link needsCredential}: it is
                the state's own name, and the surfaces rank it above the outage arm. */
-            reachable: outageSince === null && !needsCredential,
+            reachable: outageSince === null && !needsCredential && !launchSkipped,
+            /* AND WHETHER ANYTHING HAS DIALLED THIS RUNTIME AT ALL: a password sealed onto a launch
+               that was skipped is dialled by the NEXT launch, never here, so until then it is not
+               reachable and not an outage either — nothing was tried and nothing failed. */
+            dialled: !launchSkipped,
             unreachableSince: outageSince,
             /* NO PASSWORD ON THIS INSTALL — the state, not a diagnosis of the server. Rides
                beside `unreachableSince` rather than inside it: there is no outage clock to
@@ -8172,6 +8176,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  the field reads an absent one as `false`, which is the state this install was in
                  before the field existed. */
               needsCredential: r.connection.needsCredential,
+              /* NOTHING HAS DIALLED THIS RUNTIME YET — see the getter; absent reads as dialled. */
+              dialled: r.connection.dialled,
               /* THE STORED-PASSWORD BLOCK, as the object it is — a state and whether a second
                  read confirmed it. Two flat fields would admit "confirmed" with nothing to be
                  confirmed about. No server name and no address, like every other field here. */

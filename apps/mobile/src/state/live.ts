@@ -5418,6 +5418,7 @@ export function connectionSay(
     signInRefused: boolean;
     certificateRefused?: boolean;
     needsCredential?: boolean;
+    dialled?: boolean;
   } | null,
   now: Date,
   zone: string,
@@ -5434,6 +5435,10 @@ export function connectionSay(
      nothing was dialled, so "Connection lost. Reconnecting…" is a promise nothing is keeping and
      an outage clock is a duration there is no start for. The remedy is a password. */
   if (here.needsCredential === true) return { kind: "needsCredential" };
+  /* NOTHING HAS DIALLED IT YET — a password sealed onto a skipped launch is dialled by the next
+     one. Nothing was tried and nothing failed, so no verdict: "Reconnecting…" would promise a
+     re-dial nothing is making, and the freshness stamp speaks meanwhile. */
+  if (here.dialled === false) return null;
   if (here.reachable) return { kind: "reachable" };
   const stamp = here.unreachableSince;
   if (stamp === null) return { kind: "lost" };

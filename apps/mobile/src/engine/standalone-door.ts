@@ -173,6 +173,11 @@ export interface StandaloneEngine {
        * absent must read as "the engine did not say" rather than as a password to ask for.
        */
       needsCredential?: boolean;
+      /**
+       * NOTHING HAS DIALLED THIS RUNTIME ON THIS LAUNCH — a password sealed onto a skipped launch
+       * is dialled by the next one. Optional for `needsCredential`'s reason; absent reads as dialled.
+       */
+      dialled?: boolean;
       /** THE SERVER'S CERTIFICATE WAS REFUSED — optional for `needsCredential`'s reason. */
       certificateRefused?: boolean;
       /**

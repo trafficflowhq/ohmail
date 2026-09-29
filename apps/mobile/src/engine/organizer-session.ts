@@ -264,6 +264,11 @@ export interface StandaloneHere {
    */
   readonly needsCredential: boolean;
   /**
+   * HAS ANYTHING DIALLED THIS MAILBOX ON THIS LAUNCH — `false` only where the engine says its
+   * launch was skipped and nothing has dialled since; `true` while unsaid (an older engine).
+   */
+  readonly dialled: boolean;
+  /**
    * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`,
    * `produced_nothing_readable`, or `null` while the engine has not said, exactly as the two
    * fields above are. The engine's own word, unmodified: this app re-spells no engine value.
@@ -296,6 +301,7 @@ export function standaloneHere(): StandaloneHere | null {
   let signInRefused = false;
   let certificateRefused = false;
   let needsCredential = false;
+  let dialled = true;
   /** `null` until the engine has said — see the field. */
   let firstSync: string | null = null;
   /**
@@ -367,6 +373,8 @@ export function standaloneHere(): StandaloneHere | null {
       /* `some`, like the refusal beside it and unlike `reachable`: the news is that a mailbox on
          this phone is waiting for a password, and a second healthy link does not answer it. */
       needsCredential = conn.some((c) => c.needsCredential === true);
+      /* `every`, like `reachable`: one undialled mailbox is a connection nobody has tried yet. */
+      dialled = conn.every((c) => c.dialled !== false);
       const since = conn
         .map((c) => c.unreachableSince)
         .filter((d): d is Date => d instanceof Date)
@@ -392,7 +400,7 @@ export function standaloneHere(): StandaloneHere | null {
   }
   return {
     id, address: held.address, organizing, releaseRequestedAt, heldBy, reachable,
-    unreachableSince, signInRefused, certificateRefused, needsCredential, firstSync,
+    unreachableSince, signInRefused, certificateRefused, needsCredential, dialled, firstSync,
   };
 }
 
