@@ -1100,7 +1100,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * reaches a component that must be mountable alone.
    */
   const {
-    mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts, pulled,
+    mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts, pulled, importOver: importOverById,
   } = useMailState();
   /**
    * THE MIRROR AS IT IS. Where each message physically sits on the server.
@@ -1506,6 +1506,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         // and a `?? null` at this seam is what destroyed the distinction the last two times.
         organizeConsentedAt: firstRunMailbox.organizeConsentedAt,
         initialImportCompletedAt: firstRunMailbox.initialImportCompletedAt,
+        importOver: importOverById.get(firstRunMailbox.id), // the strip's own end (`importOver`)
       },
       account: { onboardingCompletedAt: consent.onboardingCompletedAt },
       ai: firstRun.ai,
@@ -1515,7 +1516,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       queuedSenders: (facts.length ?? 0) > 1 ? firstRunQueue.length : screener.waitingCount,
     };
   }, [firstRun, facts, firstRunMailbox, firstRunQueue, consent.onboardingCompletedAt,
-    screener.waitingCount]);
+    screener.waitingCount, importOverById]);
   /**
    * The one sender the guided decision is about — the head of the real queue, decided through the real
    * `ScreenerState`, not a fabricated card: the first decision a person makes in the flow IS a decision
@@ -1874,7 +1875,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
     receiptsNew,
     accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
-    aboutSection, desktopSection, devicesSection, onUnread,
+    aboutSection, desktopSection, devicesSection, onUnread, savedSettings: profileImportOffer.declined.length > 0,
     runArmedUndo,
     allOhbox, presented, pressSendAndDone,
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
@@ -3097,9 +3098,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    be a form posting to a server this tab is not talking to. The demo keeps
                    the fixture list, which is the honest thing for it to show. */
                 mailboxSection={demo ? undefined : mailboxSection}
-                /* "Not now" answers standing in a mailbox, over the card's own transport. */
-                savedSettingsSection={demo ? undefined : (
-                  <SavedProfileSection mailboxes={facts} transport={profileImportTransport} />
+                /* "Not now" answers standing in a mailbox, read by the shell (`useProfileImport`), so the
+                   pane exists on a surface with no mailbox node of its own while one stands. */
+                savedSettingsSection={demo || profileImportOffer.declined.length === 0 ? undefined : (
+                  <SavedProfileSection rows={profileImportOffer.declined} transport={profileImportTransport} />
                 )}
                 /* THE DOOR BACK TO THE REVIEW. Built here rather than injected from
                    `CloudShell` like the four panes above it, because the only thing it does

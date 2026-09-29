@@ -140,6 +140,8 @@ export interface ShellKeysInput {
   /** The settings panes this surface offers — one list with the nav and with the palette. */
   accountSection: ReactNode | undefined;
   mailboxSection: ReactNode | undefined;
+  /** A declined settings document stands, so the Mailboxes pane exists even with no mailbox node. */
+  savedSettings: boolean;
   aiSection: ReactNode | undefined;
   billingSection: ReactNode | undefined;
   invitesSection: ReactNode | undefined;
@@ -224,7 +226,7 @@ export function useShellKeys({
   facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
   receiptsNew,
   accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
-  aboutSection, desktopSection, devicesSection, onUnread,
+  aboutSection, desktopSection, devicesSection, onUnread, savedSettings,
   runArmedUndo,
   allOhbox, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
   ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
@@ -862,7 +864,7 @@ export function useShellKeys({
      the props withhold is a pane the palette must not name. `WiredPanes` is total, so a pane
      added to `settingsPanes` refuses to compile here until this record answers for it. ── */
   const settingsWired: WiredPanes = useMemo(() => ({
-    mailboxes: !demo && mailboxSection != null,
+    mailboxes: !demo && (mailboxSection != null || savedSettings),
     // Non-demo always: the pane's default node is built into the props (`?? <ScreeningSection />`).
     screener: !demo,
     ai: !demo && aiSection != null,
@@ -879,7 +881,7 @@ export function useShellKeys({
     account: !demo && accountSection != null,
     // The demo gets its own About node (two true sentences about the fixture world).
     about: demo || aboutSection != null,
-  }), [demo, mailboxSection, aiSection, awaySupported, consent.known, consent.foldersStorable, consent.signaturesKnown, facts, desktopSection, devicesSection, billingSection, invitesSection, securitySection, accountSection, aboutSection]);
+  }), [demo, mailboxSection, savedSettings, aiSection, awaySupported, consent.known, consent.foldersStorable, consent.signaturesKnown, facts, desktopSection, devicesSection, billingSection, invitesSection, securitySection, accountSection, aboutSection]);
 
   /* ── the palette command map (every command from the prototype) ── */
   const moveKey = useEnabledBinding("m");

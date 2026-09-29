@@ -29,6 +29,7 @@ import {
   deriveMailState,
   firstRunProgress,
   growthStep,
+  importOver,
   pulledCount,
   seedGrowth,
   wantsImportCounts,
@@ -163,6 +164,12 @@ interface MailStateBinding {
    * of a large mailbox.
    */
   pulled: number;
+  /**
+   * WHETHER EACH MAILBOX'S FIRST IMPORT IS OVER, by the strip's own reading (`importOver`), keyed
+   * by id — the setup stage's pull ends on it, so the two cannot disagree. Absent is a mailbox the
+   * facts do not name, which the stage reads by the stamp.
+   */
+  importOver: ReadonlyMap<string, boolean>;
   /**
    * THE FRESHNESS VERDICT the ladder judged — the probed one on the desktop (the sidecar's stamp
    * against the hosted account), the engine's own everywhere else.
@@ -492,12 +499,20 @@ export function MailStateProvider({
   }, [sync.standingDown]);
   const refresh = useCallback(() => readRef.current().catch(() => { /* the state says so */ }), []);
 
+  /* Keyed by the verdicts themselves, so the binding moves only when one of them does and the
+     clock that drives the floor release does not re-render every consumer. */
+  const importOverKey = JSON.stringify((facts ?? [])
+    .map((m) => [m.id, importOver(m, growth, sync, pulled, facts, beat)] as const));
+  const importOverById = useMemo<ReadonlyMap<string, boolean>>(
+    () => new Map(JSON.parse(importOverKey) as Array<[string, boolean]>),
+    [importOverKey],
+  );
   const binding = useMemo<MailStateBinding>(
     () => ({
       state, mailboxes: facts, rosterProbed: probe !== undefined, mirrored, pulled, freshness,
-      refresh,
+      refresh, importOver: importOverById,
     }),
-    [state, facts, probe, mirrored, pulled, freshness, refresh],
+    [state, facts, probe, mirrored, pulled, freshness, refresh, importOverById],
   );
 
   return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;

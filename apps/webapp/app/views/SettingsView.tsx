@@ -474,7 +474,8 @@ export function SettingsView({
   /**
    * The settings documents answered "Not now" that still stand in a mailbox, with their Import and
    * Replace presses (`ProfileImportCard.tsx#SavedProfileSection`). Rendered under
-   * {@link mailboxSection} in the same pane, so it exists only where that pane does.
+   * {@link mailboxSection} in the same pane; a host hands it in only while a row exists, and then
+   * the pane exists on a surface with no mailbox node of its own (the desktop's served client).
    */
   savedSettingsSection?: ReactNode;
   /**
@@ -858,7 +859,7 @@ export function SettingsView({
      stay on the section docblocks above. */
   const panes: Array<[PaneId, string]> = settingsPanes(
     {
-      mailboxes: Boolean(mailboxSection),
+      mailboxes: Boolean(mailboxSection) || Boolean(savedSettingsSection),
       screener: screenerPane,
       ai: Boolean(aiSection),
       away: Boolean(awaySection),
@@ -1207,7 +1208,7 @@ export function SettingsView({
               account (the built-tested-unreachable branch). The node names its own mode; the nav
               entry above is present only when it is wired. See {@link mailboxSection}. */}
           {shown === "mailboxes" ? mailboxSection : null}
-          {shown === "mailboxes" && mailboxSection ? savedSettingsSection : null}
+          {shown === "mailboxes" ? savedSettingsSection : null}
 
           {shown === "ai" ? aiSection : null}
 

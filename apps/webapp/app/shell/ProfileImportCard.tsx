@@ -135,6 +135,12 @@ export interface ProfileImportState {
   notNow: () => void;
   /** Leave the `done` confirmation. */
   acknowledge: () => void;
+  /**
+   * The documents answered "Not now" that still stand — the SAME answers the card's check reads,
+   * no second request — held by the shell so a surface with no Mailboxes node of its own still
+   * shows the pane while one stands. A "Not now" here adds its row at once.
+   */
+  declined: SavedRow[];
 }
 
 const HOSTED: ProfileImportTransport = {
@@ -221,6 +227,7 @@ export function useProfileImport(
 ): ProfileImportState {
   const mailboxes = askableMailboxes(listed);
   const [offers, setOffers] = useState<ProfileImportOffer[]>([]);
+  const [declined, setDeclined] = useState<SavedRow[]>([]);
   const [phase, setPhase] = useState<ProfileImportPhase>({ kind: "offer" });
   const [beat, setBeat] = useState(0);
   /* A ring that met an ask in flight is OWED: the ask may predate the find, so it runs again. */
@@ -276,6 +283,7 @@ export function useProfileImport(
         if (current !== undefined && !keep.includes(current)) setPhase({ kind: "offer" });
         return keep;
       });
+      setDeclined((prev) => (prev.every((r) => known.has(r.mailboxId)) ? prev : prev.filter((r) => known.has(r.mailboxId))));
     }
     const via = held.current ?? (apiConfigured() ? HOSTED : null);
     if (!via) return;
@@ -299,6 +307,12 @@ export function useProfileImport(
           if (!mounted.current) return;
           // Answered here while this ask flew: its answer predates the person's, so it is stale.
           if ((answered.current.get(m.id) ?? 0) !== epoch) return;
+          /* The same answer says whether a "Not now" stands: a `declined` document is a row. */
+          const saved = asDeclined(dto);
+          setDeclined((prev) => [
+            ...prev.filter((r) => r.mailboxId !== m.id),
+            ...(saved ? [{ mailboxId: m.id, address: m.address, candidate: saved }] : []),
+          ]);
           const candidate = asOffer(dto); // unrecognised answers — including `none` — are no offer
           if (candidate === null) {
             // An authoritative non-offer RETIRES a standing card for this mailbox: another
@@ -379,7 +393,16 @@ export function useProfileImport(
         // The dismissal is DURABLE and server-side before the card goes: a card that only hid
         // locally would re-ask on the next tab, which is the nagging this record exists to end.
         await via.decline(mailboxId, subject);
-        if (mounted.current) retire(mailboxId);
+        if (mounted.current) {
+          retire(mailboxId);
+          /* The document just declined IS the row the server now answers, so no ask is needed. */
+          if (candidate.state === "found") {
+            setDeclined((prev) => [
+              ...prev.filter((r) => r.mailboxId !== mailboxId),
+              { mailboxId, address: offer.address, candidate: { ...candidate, state: "declined" } },
+            ]);
+          }
+        }
       } catch (err) {
         if (mounted.current) setPhase({ kind: "failed", message: failureSentence(err, held.current !== undefined) });
       }
@@ -412,7 +435,7 @@ export function useProfileImport(
     return () => { live = false; };
   }, [importingKey, doorbell, statusBeat]);
 
-  return { offer, phase, importNow, notNow, acknowledge };
+  return { offer, phase, importNow, notNow, acknowledge, declined };
 }
 
 /** The counts, in plain words, joined the way the locale joins a list. Zero-count parts vanish. */
@@ -584,31 +607,25 @@ type SavedRowPhase =
   | { kind: "imported"; applied: ProfileImportAppliedWire }
   | { kind: "replaced" };
 
-interface SavedRow { mailboxId: string; address: string; candidate: DeclinedCandidate }
+export interface SavedRow { mailboxId: string; address: string; candidate: DeclinedCandidate }
 
 /**
- * SETTINGS → MAILBOXES: THE DECLINED DOCUMENTS. "Not now" keeps the found settings in the mailbox
- * and this install's own off it; this is where the person later imports them, or replaces them
- * with this ohmail's. Asked once when the pane opens, over the card's transport; a failed ask
- * shows nothing, and each row keeps its buttons through a refused press.
+ * THE DECLINED DOCUMENTS STANDING IN THE MAILBOXES, read once per mailbox set over the card's
+ * transport. The SHELL holds the answer, so a surface with no Mailboxes pane of its own (the
+ * desktop's served host client) still has a pane while a row exists. A failed ask is no row;
+ * `null` mailboxes asks nothing.
  */
-export function SavedProfileSection({
-  mailboxes: listed, transport,
-}: {
-  mailboxes: ReadonlyArray<{ id: string; address: string; status?: string | null }> | null;
-  transport?: ProfileImportTransport;
-}) {
+export function useSavedProfiles(
+  listed: ReadonlyArray<{ id: string; address: string; status?: string | null }> | null,
+  transport?: ProfileImportTransport,
+): SavedRow[] {
   const mailboxes = askableMailboxes(listed);
-  const t = useTranslations("profileImport");
-  const locale = useLocale();
-  const format = useFormatter();
   const [rows, setRows] = useState<SavedRow[]>([]);
-  const [phases, setPhases] = useState<Record<string, SavedRowPhase>>({});
   const held = useRef(transport);
   held.current = transport;
   const list = useRef(mailboxes);
   list.current = mailboxes;
-  const idsKey = (mailboxes ?? []).map((m) => m.id).sort().join(",");
+  const idsKey = mailboxes === null ? null : mailboxes.map((m) => m.id).sort().join(",");
 
   useEffect(() => {
     const via = held.current ?? (apiConfigured() ? HOSTED : null);
@@ -627,6 +644,30 @@ export function SavedProfileSection({
     });
     return () => { live = false; };
   }, [idsKey]);
+  return rows;
+}
+
+/**
+ * SETTINGS → MAILBOXES: THE DECLINED DOCUMENTS. "Not now" keeps the found settings in the mailbox
+ * and this install's own off it; this is where the person later imports them, or replaces them
+ * with this ohmail's. `rows` is the shell's own read ({@link useSavedProfiles}); without it the
+ * section reads for itself. Each row keeps its buttons through a refused press.
+ */
+export function SavedProfileSection({
+  mailboxes: listed, transport, rows: given,
+}: {
+  mailboxes?: ReadonlyArray<{ id: string; address: string; status?: string | null }> | null;
+  transport?: ProfileImportTransport;
+  rows?: SavedRow[];
+}) {
+  const t = useTranslations("profileImport");
+  const locale = useLocale();
+  const format = useFormatter();
+  const read = useSavedProfiles(given === undefined ? listed ?? null : null, transport);
+  const rows = given ?? read;
+  const [phases, setPhases] = useState<Record<string, SavedRowPhase>>({});
+  const held = useRef(transport);
+  held.current = transport;
 
   const press = useCallback((row: SavedRow, verb: "import" | "replace") => {
     const via = held.current ?? (apiConfigured() ? HOSTED : null);

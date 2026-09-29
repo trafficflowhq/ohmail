@@ -111,7 +111,7 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
    * the lock, so no second check stands before the call.
    */
   const attempt = useCallback(async (n: number): Promise<void> => {
-    const ok = await resumeSession({ mayProceed: stillMine });
+    const ok = await resumeSession({ mayProceed: stillMine }) === "resumed";
     // The jar changed while this waited for the lock: the browser holds somebody else's session.
     if (!ok && !stillMine()) { window.location.reload(); return; }
     const report = lastRefreshReport();

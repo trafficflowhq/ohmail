@@ -541,7 +541,9 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
      * then: a request this client may no longer make gets no recovery attempt on somebody else's credential.
      */
     mustHold();
-    if (!(await resumeSession())) throw err;
+    const resumed = await resumeSession();
+    if (resumed === "unavailable") throw renewalUnavailableError();
+    if (resumed !== "resumed") throw err;
     // The refresh rewrites the whole jar, so the question has to be asked again before the
     // retry: a refresh that landed as a different account must not be retried as this one.
     mustHold();
@@ -558,11 +560,32 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 }
 
 /**
+ * A RENEWAL THAT MET A FAULT (a 5xx, the network) learned nothing about the session, so it is
+ * answered as the desktop's door answers it (`cloud-auth.ts` `offlineResponse`): 503
+ * `offline_read_only`, retryable, no Retry-After. The engine's outbox keeps such a press and sends
+ * it again after the next renewal; a renewal the server REFUSED is still the refusal.
+ */
+const RENEWAL_UNAVAILABLE = {
+  code: "offline_read_only",
+  message: "the session could not be renewed right now, so this waits and is sent again once it is",
+} as const;
+
+function renewalUnavailableError(): ApiError {
+  return new ApiError(503, RENEWAL_UNAVAILABLE.code, RENEWAL_UNAVAILABLE.message, undefined, { coded: true, retryable: true });
+}
+
+function renewalUnavailableResponse(): Response {
+  return new Response(JSON.stringify({ error: { ...RENEWAL_UNAVAILABLE, retryable: true } }), {
+    status: 503, headers: { "content-type": "application/json" },
+  });
+}
+
+/**
  * THE ENGINE'S CREDENTIAL DOOR ON THE WEB. Every press, `/sync` page and body read the mirror makes
  * leaves through the adapter `shell/engine-config.ts` builds on this, so it makes `api()`'s one
  * recovery: a refusal only the lapsed access explains renews through the single refresh and is sent
  * ONCE more, unchanged but for the renewed jar's CSRF token — the same `Idempotency-Key`, so the
- * server reads one press. A failed renewal or a second refusal is the answer the caller sees.
+ * server reads one press. A refused renewal or a second refusal is the answer the caller sees.
  */
 async function sessionTransport(url: string, init?: RequestInit): Promise<Response> {
   const first = await fetch(url, init);
@@ -571,7 +594,12 @@ async function sessionTransport(url: string, init?: RequestInit): Promise<Respon
   if (!isRecoverable(first.status, await refusalCodeOf(first))) return first;
   // `api()`'s two questions around its refresh: never renew, nor re-send, on another account's jar.
   if (!apiOwnerHolds(path)) return first;
-  if (!(await resumeSession())) return first;
+  const resumed = await resumeSession();
+  if (resumed === "unavailable") {
+    void first.body?.cancel().catch(() => undefined);
+    return renewalUnavailableResponse();
+  }
+  if (resumed !== "resumed") return first;
   if (!apiOwnerHolds(path)) return first;
   void first.body?.cancel().catch(() => undefined);
   return fetch(url, withFreshCsrf(init));

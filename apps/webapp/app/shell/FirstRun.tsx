@@ -26,7 +26,7 @@ import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset }
 import { noPortProbeKey } from "./no-port-sentence";
 import { PlaintextConsent } from "./PlaintextConsent";
 import {
-  deriveOnboardingStep, onboardingPath, sendingLine,
+  deriveOnboardingStep, importOverOf, onboardingPath, sendingLine,
   type OnboardingFacts, type OnboardingStep,
 } from "./onboarding";
 import type {
@@ -364,7 +364,7 @@ export function firstRunStep(
    * when the import drains went unread and the screen said "reading the mailbox" for ever. Once the
    * import is over the run goes on to what the walk holds after the pull — row 7's rule, `=== null`
    * is running and absent is a build that cannot tell. */
-  const cursor = kept === "pull" && mb !== null && mb.initialImportCompletedAt !== null
+  const cursor = kept === "pull" && mb !== null && importOverOf(mb)
     ? nextStep(onboardingPath(facts, add), "pull") ?? null
     : kept;
   /* A re-run is an intent, and it outranks the completion stamp. `rerun`
@@ -1532,7 +1532,7 @@ export function FirstRun({
              * every other answer has nothing left to ask and a re-run ends at the summary. */
             const keep = rerun === true
               ? (on && host.door === "local" ? ("provider" as const) : ("summary" as const))
-              : on || facts.mailbox?.initialImportCompletedAt !== null
+              : on || facts.mailbox === null || importOverOf(facts.mailbox)
                 ? undefined
                 : ("pull" as const);
             void run(async () => { await host.setAiEnabled!(on); }, keep);

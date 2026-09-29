@@ -1307,6 +1307,25 @@ export function importFloorSpeaks(
   return now - growth.lastRiseAt < IMPORT_END_IDLE_MS;
 }
 
+/**
+ * IS THIS MAILBOX'S FIRST IMPORT OVER — the strip's own reading, for every surface that ends on it
+ * (the strip's arm 2b, the setup stage's pull, the first-run cursor): the server's stamp, the
+ * device holding the account's total, or the bounded floor released. One predicate, so the pull
+ * screen cannot stay up over an import the strip has stopped announcing.
+ */
+export function importOver(
+  mailbox: MailboxFacts,
+  growth: MirrorGrowth,
+  sync: { bootstrapping: boolean; failures: number },
+  pulled: number,
+  mailboxes: readonly MailboxFacts[] | null,
+  now: number,
+): boolean {
+  return mailbox.initialImportCompletedAt !== null
+    || mirrorCaughtUp(mailboxes, pulled)
+    || !importFloorSpeaks(mailbox, growth, sync, now);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    THE LADDER
    ══════════════════════════════════════════════════════════════════════════════════════════ */
@@ -2193,8 +2212,7 @@ function climb(input: MailStateInputs): MailState {
 
   // …and `mirrorCaughtUp` is its END: the account's own total reached means there is no import
   // left to claim, whatever the stamp says. See that function for the claim this closes.
-  if (mirrored > 0 && !mirrorCaughtUp(mailboxes, pulled)
-      && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
+  if (mirrored > 0 && connected.some((m) => !importOver(m, growth, sync, pulled, mailboxes, now))) {
     return { ...QUIET, key: "importing", clock: true, count: pulled, total: totalIfAhead, continuesAtFolder };
   }
 

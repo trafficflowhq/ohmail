@@ -67,8 +67,11 @@ function imageResponse(contentType: string, body: Uint8Array): Response {
       "Content-Security-Policy": "default-src 'none'; sandbox",
       "Content-Disposition": "inline",
       /* A day, privately: a re-opened message takes its images from the reader's own cache.
-         Refusals are `errorResponse`'s and carry no lifetime. */
+         Refusals are `errorResponse`'s and carry no lifetime. Keyed on the session too, so a
+         browser that ignores the sign-out's Clear-Site-Data cannot answer the url for the next
+         session: the cookie rotates at each renewal, so a picture is kept until then at most. */
       "Cache-Control": "private, max-age=86400",
+      "Vary": "Cookie",
       "Referrer-Policy": "no-referrer",
     },
   });

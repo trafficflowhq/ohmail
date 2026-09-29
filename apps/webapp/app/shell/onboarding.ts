@@ -120,6 +120,17 @@ export interface OnboardingMailbox {
    * failure that established it.
    */
   initialImportCompletedAt?: string | null;
+  /**
+   * WHETHER THE FIRST IMPORT IS OVER by the strip's own reading (`importOver`, `mail-state.ts`):
+   * the stamp, the device holding the account's total, or the bounded floor released. Absent is a
+   * caller that cannot say, and the stamp rule above stands — read through {@link importOverOf}.
+   */
+  importOver?: boolean;
+}
+
+/** The one reading of "is the import over" every setup surface takes. */
+export function importOverOf(mb: OnboardingMailbox): boolean {
+  return mb.importOver ?? (mb.initialImportCompletedAt !== null);
 }
 
 /** The account-level facts, from `GET /consent`. */
@@ -210,7 +221,7 @@ export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | n
   // predates the column and cannot answer, and a build that cannot tell must not park somebody in
   // front of a progress bar with no end. This is `mail-state.ts`'s import-floor rule, and the
   // measured failure behind it is a permanent "Syncing your mail" over a finished mirror.
-  if (mb.initialImportCompletedAt === null) return "pull";
+  if (!importOverOf(mb)) return "pull";
 
   // ROW 8 — SOMEBODY IS WAITING IN THE SCREENER. Skipped SILENTLY at zero: the guided decision
   // needs a sender to decide about, and an empty queue is an ordinary outcome (every sender in
@@ -292,9 +303,9 @@ export function ONBOARDING_STATUS_COUNTERS(facts: OnboardingFacts): boolean {
   // Consent first: before it there is no organizing to report on, and the mirror that is building
   // is the reader mirror, which the ordinary sync strip already narrates.
   if (!mb.organizeConsentedAt) return false;
-  // `=== null`, on row 7's rule: absent is "cannot tell", and a build that cannot tell must not
-  // put a permanent pair of counters on the strip.
-  return mb.initialImportCompletedAt === null;
+  // Row 7's reading: absent is "cannot tell", and a build that cannot tell must not put a
+  // permanent pair of counters on the strip.
+  return !importOverOf(mb);
 }
 
 /**

@@ -25,8 +25,16 @@ import {
 /** The one path that carries `tf_refresh`. Must equal `REFRESH_PATH` in `next.config.mjs`. */
 export const REFRESH_ENDPOINT = "/auth/refresh";
 
+/**
+ * WHAT ONE RESUME ANSWERS. `resumed` is a 204; `refused` is a verdict or a resume this caller may
+ * not make (the refresh door's coded refusal, an erased account, a jar that moved); `unavailable`
+ * is a fault that learned nothing about the session — a 5xx, the network — which a press waits
+ * out as the desktop's door does, instead of being refused.
+ */
+export type ResumeAnswer = "resumed" | "refused" | "unavailable";
+
 /** The in-flight refresh, or null. Module-scoped: one per tab; the jar is shared wider. */
-let inFlight: Promise<boolean> | null = null;
+let inFlight: Promise<ResumeAnswer> | null = null;
 
 /** The in-flight refresh's request, so a sign-in that minted past it can drop its late answer. */
 let inFlightRequest: AbortController | null = null;
@@ -221,7 +229,7 @@ export class SessionBusyError extends Error {
   }
 }
 
-async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
+async function withCrossTabLock(fn: () => Promise<ResumeAnswer>): Promise<ResumeAnswer> {
   try {
     // BOTH the property lookup and the request live inside this try: a `navigator.locks`
     // accessor that THROWS (hardened embedders) and a `request()` that REJECTS asynchronously
@@ -230,13 +238,13 @@ async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
     // contract breaks, and because `fn`'s own `finally` never ran, `inFlight` would cache the
     // rejection for the tab's whole life, every later refresh failing instantly with no
     // fetch. `fn` itself never rejects (its body is one try/catch/finally answering
-    // booleans), and this origin never uses `steal`, so anything caught here means the
+    // a `ResumeAnswer`), and this origin never uses `steal`, so anything caught here means the
     // callback was never granted: the lock-less run below is the single run it was owed,
     // never a double refresh.
     const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
     if (locks?.request) {
       // `request` resolves with the callback's settled value once the grant releases.
-      return (await locks.request(REFRESH_LOCK, { mode: "exclusive" }, fn)) as boolean;
+      return (await locks.request(REFRESH_LOCK, { mode: "exclusive" }, fn)) as ResumeAnswer;
     }
   } catch {
     /* fall through to the lock-less run */
@@ -298,7 +306,7 @@ export interface ResumeOptions {
   mayProceed?: () => boolean;
 }
 
-export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> {
+export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAnswer> {
   if (inFlight) return inFlight;
   inFlight = withCrossTabLock(async () => {
     /*
@@ -318,7 +326,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       // left the module's dedupe holding a settled promise for the life of the page and every
       // later resume — including `api()`'s recovery — answered `false` without asking anything.
       // Found by running the cases in file order rather than one at a time.
-      if (opts.mayProceed && !opts.mayProceed()) return false;
+      if (opts.mayProceed && !opts.mayProceed()) return "refused";
       /*
        * The CSRF header is required here — the old "none is needed" comment was wrong in production:
        * `withCsrf` keys off the SESSION, not the route, so a POST arriving with a live `tf_session` is
@@ -359,7 +367,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
         recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
         noteSessionMinted();
         markSessionAlive();
-        return true;
+        return "resumed";
       }
       // THE ACCOUNT WAS ERASED: the erased door's, never `markSessionDead` — no heal schedule
       // can mint a session for an account that is gone (`shell/account-erased.ts`).
@@ -370,7 +378,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
           outcome: heard ? "revoked" : "unavailable", status: 410, code: "account_erased", errorClass: null,
           retryAfterMs: null,
         });
-        return false;
+        return heard ? "refused" : "unavailable";
       }
       // Read ONCE, for both facts: whether the envelope is ours, and which code it names. Only the
       // refresh door's own refusal is a verdict (`isSessionRefusal`, the phone's reading too).
@@ -378,7 +386,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       if (isSessionRefusal(res.status, code)) {
         recordRefresh({ outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null });
         markSessionDead();
-        return false;
+        return "refused";
       }
       // Everything else: an uncoded 401 or one naming another code (a platform interposing), a
       // 5xx, a 403, a body this client cannot read. The refresh did not happen and nothing was
@@ -387,14 +395,14 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
         outcome: "unavailable", status: res.status, code: code ?? await faultCode(res), errorClass: null,
         retryAfterMs: retryAfterMsOf(res) ?? null,
       });
-      return false;
+      return "unavailable";
     } catch (err) {
       if (request.signal.aborted) return superseded(err);
       // Offline, aborted, DNS — not resumable right now, and no answer to read a code from.
       recordRefresh({
         outcome: "unavailable", status: 0, code: null, errorClass: classOf(err), retryAfterMs: null,
       });
-      return false;
+      return "unavailable";
     } finally {
       if (inFlightRequest === request) inFlightRequest = null;
     }
@@ -415,11 +423,11 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
 }
 
 /** A sign-in minted past this refresh: nothing it learned is about the jar that holds now. */
-function superseded(err: unknown): false {
+function superseded(err: unknown): "refused" {
   recordRefresh({
     outcome: "superseded", status: 0, code: null, errorClass: err === null ? null : classOf(err), retryAfterMs: null,
   });
-  return false;
+  return "refused";
 }
 
 /**
@@ -566,7 +574,7 @@ async function renew(attempt: number): Promise<void> {
   if (tabHidden()) { renewOwed = true; return; }
   const owner = armed.owner;
   // A 204 publishes a revival, and the revival re-arms from its own moment.
-  if (await resumeSession({ mayProceed: renewalOwed })) return;
+  if (await resumeSession({ mayProceed: renewalOwed }) === "resumed") return;
   if (!renewalOwed()) {
     if (armed !== null && readOwner() === owner) armRenewal();
     return;
