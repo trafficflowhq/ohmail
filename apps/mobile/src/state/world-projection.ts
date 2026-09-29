@@ -139,7 +139,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       const base = hiddenMessagesReader(raw, inp.heldDeletes);
       const world = presentedWorld(base, v.now, foldersOn, posture, inp.ownAddresses);
       return {
-        base, history: world.history,
+        base, history: world.history, world,
         pres: routingReader(world.reader, inp.heldPlaces),
         options: presentedOptions(v.now, foldersOn, posture, inp.ownAddresses),
       };
@@ -247,10 +247,13 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       signatures: inp.signatures,
       resurfaceTime: inp.resurfaceTime,
       remember: inp.rememberResurfaceTime,
+      /* The reader opens from the UNHIDDEN mirror; with no delete held that is the projection
+         already made, handed in so a render is not a partition. While a delete is held the reader
+         partitions the raw mirror itself, as it always did. */
       message: (id) => liveMessage(engine, id, {
         now: new Date(), zone, locale, foldersEnabled: foldersOn,
         ownAddresses: inp.ownAddresses, mailboxes, screening: posture, tags,
-      }),
+      }, base === raw ? presented.world : undefined),
       filesOf: (id) => liveFiles(engine, id),
       search: liveSearch(engine, base, v),
       store: {

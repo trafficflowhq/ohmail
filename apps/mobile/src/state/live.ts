@@ -297,12 +297,19 @@ export function presentedWorld(
   screening: ScreeningPosture = SCREENING_UNSUPPLIED,
   ownAddresses?: readonly string[],
 ): PresentedWorld {
+  partitions += 1;
   const partition = consentPartition(reader, presentedOptions(now, foldersEnabled, screening, ownAddresses));
   return {
     reader: presentationReader(reader, partition),
     history: partition.history,
     cutlinePending: screening.state === "unanswered",
   };
+}
+
+/** How many whole-mirror partitions this process ran — the ratchet's counter for the cost that dominates a run. */
+let partitions = 0;
+export function partitionRuns(): number {
+  return partitions;
 }
 
 /**
@@ -1697,13 +1704,18 @@ export function historyRow(raw: EntityReader, m: EngineMessage, v: WorldView): W
  * strip from the engine's own items — whose nameless-ICS fallback (`invite.ics`) the engine
  * already mints, matching the webapp and the download names.
  */
-export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): WorldMail | undefined {
+export function liveMessage(
+  engine: OhmailEngine, id: string, v: WorldView,
+  /** The projection of the raw mirror under this same view, when the caller already holds it. */
+  presented?: PresentedWorld,
+): WorldMail | undefined {
   // The view's own folder flag rides into the projection — a folder-filed message opened from
   // the folder screen is otherwise a History drop (`placeOf` null ⇒ `get` answers undefined)
   // and the reader says "no longer here" over mail the list just showed. The CUTLINE answer
   // rides in for exactly the same reason and it is the same failure: a row a list showed under
-  // the account's window must open under it too, never under this package's default.
-  const world = presentedWorld(
+  // the account's window must open under it too, never under this package's default. A caller
+  // that holds that projection hands it in: a reader renders often, the partition is the cost.
+  const world = presented ?? presentedWorld(
     engine.read(), v.now, v.foldersEnabled === true, postureOf(v), v.ownAddresses,
   );
   /* A HISTORY ROW OPENS FROM THE RAW MIRROR, the same answer the webapp's reader gives it
