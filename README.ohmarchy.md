@@ -43,7 +43,8 @@ AGPL-3.0, no account.
 Someone new who writes to you waits at the Screener — not in your inbox — unless
 you wrote to them first. The Ohbox holds the people you said yes to, the rules
 that file your mail are listed under Settings → Rules to change or revoke, and a
-tracking pixel is never requested unless you turn the blocker off.
+tracking pixel the blocker recognises before it loads is never requested unless
+you turn the blocker off.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/feature-wall-ohmarchy/01-ohbox-dark.webp">

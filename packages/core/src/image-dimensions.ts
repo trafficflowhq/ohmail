@@ -78,9 +78,10 @@ function webp(b: Uint8Array): ImageSize | null {
 }
 
 /**
- * An AVIF, sized from the source libavif decodes, which the MAJOR brand names: `avif` is the
- * primary item even when tracks exist, `avis` is the first colour track, and any other brand is
- * that track if there is one, else the primary item. The primary item's `ispe` is found through
+ * An AVIF by its MAJOR brand. `avif` is the primary item even when tracks exist, which is what the
+ * browser engines draw. `avis` reads the first colour track, and any other brand that track if there
+ * is one, else the primary item: the engines choose more narrowly for both, so a file built to make
+ * the two disagree can read as a size it is not drawn at. The primary item's `ispe` is found through
  * `pitm` and `ipma`, never the first `ispe` in the file (a thumbnail's or a grid tile's).
  */
 function avif(b: Uint8Array): ImageSize | null {
@@ -145,8 +146,9 @@ function trackSize(b: Uint8Array, moov: Box): ImageSize | null {
 }
 
 /**
- * The track libavif decodes as the picture: an `av01` sample entry in `stsd`, and no `auxl`
- * reference, which marks the alpha track. A `trak` with only a `tkhd` names a size nothing decodes.
+ * The track read as a sequence's picture: an `av01` sample entry in `stsd`, and no `auxl` reference,
+ * which marks the alpha track. A `trak` with only a `tkhd` names a size nothing decodes. The engines
+ * also pass over a track with no chunks, a zero id or a sound handler; this does not.
  */
 function colourTrack(b: Uint8Array, trak: Box[]): boolean {
   const tref = trak.find((x) => x.type === "tref");
