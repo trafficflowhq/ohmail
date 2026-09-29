@@ -69,6 +69,9 @@ export const OFFLINE_CODE = "network_unreachable";
  */
 export const SESSION_ENDED_REFUSAL_CODE = "session_ended";
 
+/** The browser's code for a renewal it could not check; nothing here answers with it either. */
+export const SESSION_UNCHECKED = "session_unchecked";
+
 interface RequestOptions {
     method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
     body?: unknown;
