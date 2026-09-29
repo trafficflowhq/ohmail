@@ -1063,6 +1063,28 @@ export function onAccessRefused(_sink: (facts: AccessRefusedFacts) => void): () 
     return () => {};
 }
 
+/**
+ * THE ACCESS FEED, answered on this file's own rule: a standalone install has no hosted account,
+ * so there is never an answer to hold. The shared strip subscribes at first render, and a refusal
+ * there would be a crash; no answer is the branch it takes before any account has been read.
+ */
+export interface AccessFeed {
+    owner: string | null;
+    answer: AccountAccess;
+    caughtUp: { since: string } | null;
+    at: number;
+}
+
+export function accessFeedFor(_owner: string | null): AccessFeed | null {
+    return null;
+}
+
+export function onAccessFeed(_listener: () => void): () => void {
+    return () => {};
+}
+
+export function putAwayCatchUp(_owner: string | null): void {}
+
 export const messageOf: (err: unknown) => string = absent;
 
 export const codeOf: (err: unknown) => string = absent;
