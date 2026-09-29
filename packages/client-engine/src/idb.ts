@@ -6,7 +6,7 @@ import {
   type DurableWrite,
 } from "./durable.js";
 import { BaseMirrorStore, MirrorGenerationChanged, keyMayCarry, wipeKeepUnion } from "./store.js";
-import type { Cursor } from "./types.js";
+import { OUTBOX_TYPE, type Cursor } from "./types.js";
 
 /**
  * WHICH STORE LOST A WRITE, for the notice's log line. The mirror's stable label and not the
@@ -715,6 +715,47 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     this.generation = generationOf(this.meta.get(GEN_KEY));
     this.meta.delete(GEN_KEY);
     this.ver++;
+  }
+
+  sharedDiskName(): string {
+    return this.dbName;
+  }
+
+  /**
+   * THE COMPARE-AND-SET behind {@link BaseMirrorStore.adoptOrphanedOutbox}: the outbox's key range read and re-stamped
+   * inside one write transaction under the generation fence, so two tabs adopting at once serialize here and the
+   * second sees the first's stamp. A key range, never the whole store: a drive asks this, and a mailbox has 74k rows.
+   */
+  protected async adoptOrphans(
+    me: string, live: ReadonlySet<string>, exclude: ReadonlySet<string>,
+  ): Promise<MirrorRecord[]> {
+    // The key range is the browser's; an environment without one adopts nothing rather than walk the store.
+    const KeyRange = (globalThis as { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange;
+    if (KeyRange === undefined) return [];
+    const db = await this.open();
+    const tx = db.transaction([ENTITIES, META], "readwrite");
+    const entities = tx.objectStore(ENTITIES);
+    const meta = tx.objectStore(META);
+    const found = generationOf(await requestDone(meta.get(GEN_KEY)));
+    if (found !== this.generation) {
+      // `persist`'s answer to the same fence: adopt the new baseline and say so; the caller re-reads.
+      const expected = this.generation;
+      this.generation = found;
+      try { tx.abort(); } catch { /* already settled */ }
+      throw new MirrorGenerationChanged(expected, found);
+    }
+    const range = KeyRange.bound(`${OUTBOX_TYPE}:`, `${OUTBOX_TYPE}:\uffff`);
+    const rows = await requestDone(entities.getAll(range)) as MirrorRecord[];
+    const taken: MirrorRecord[] = [];
+    for (const rec of rows) {
+      const owner = (rec.entity as { owner?: unknown } | null)?.owner;
+      if (typeof owner !== "string" || owner === me || live.has(owner) || exclude.has(rec.id)) continue;
+      const next: MirrorRecord = { ...rec, entity: { ...(rec.entity as object), owner: me } };
+      entities.put(next, `${rec.type}:${rec.id}`);
+      taken.push(next);
+    }
+    await commitWrite(tx);
+    return taken;
   }
 
   protected async persist(

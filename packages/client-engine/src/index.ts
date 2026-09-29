@@ -625,6 +625,7 @@ export {
   // How long a request may wait on the organizer before the surface says so out loud. Exported
   // so the sentence's guard reads the shipped bound rather than a copy of it.
   ORGANIZER_REQUEST_SLOW_MS,
+  type EngineLocks,
   type EngineOptions,
   type MutationResult,
   type MutationStatus,

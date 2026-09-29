@@ -1,6 +1,6 @@
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 import { beginDerive, noteMirrorMessages } from "./client-vitals.js";
-import { MAILBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
+import { MAILBOX_TYPE, OUTBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
 
 /**
@@ -180,6 +180,18 @@ export interface MirrorStore extends EntityReader {
     puts: ReadonlyArray<{ type: string; id: string; entity: unknown }>,
     deletes: ReadonlyArray<{ type: string; id: string }>,
   ): Promise<void>;
+  /**
+   * THE DISK OTHER ENGINES SHARE, by name — `null` for a store no other engine opens (memory, the
+   * phone's own database). Only an engine over a shared disk stamps and adopts outbox owners.
+   */
+  sharedDiskName?(): string | null;
+  /**
+   * ADOPT THE OUTBOX ENTRIES WHOSE OWNER IS GONE: every entry naming an owner that is neither `me`
+   * nor in `live`, and not in `exclude`, is re-stamped to `me` inside ONE write transaction and
+   * handed back — so of two engines adopting at once exactly one takes each entry. An entry naming
+   * no owner is never taken. See `OhmailEngine`'s outbox adoption.
+   */
+  adoptOrphanedOutbox?(me: string, live: ReadonlySet<string>, exclude: ReadonlySet<string>): Promise<unknown[]>;
   /**
    * HARD-DELETE EVERY RECORD CARRYING EXACTLY `seq` — the abandoned-snapshot-prefix sweep. A snapshot stamps every
    * row it emits with the SAME `seq` (its `asOfSeq`), so one seq value names one snapshot's output exactly. That
@@ -827,6 +839,40 @@ export abstract class BaseMirrorStore implements MirrorStore {
     for (const d of deletes) this.records.delete(recordKey(d.type, d.id));
     this.ver++;
     this.stampTypes([...recs.map((r) => r.type), ...deletes.map((d) => d.type)]);
+  }
+
+  /**
+   * ADOPT THE OUTBOX ENTRIES A DEAD OWNER LEFT — see {@link MirrorStore.adoptOrphanedOutbox}. Serialized with every
+   * other local write, and memory learns only what the disk's own transaction took.
+   */
+  async adoptOrphanedOutbox(
+    me: string, live: ReadonlySet<string>, exclude: ReadonlySet<string>,
+  ): Promise<unknown[]> {
+    return this.serializeWrite(async () => {
+      await this.settleWipe();
+      let taken: MirrorRecord[];
+      try {
+        taken = await this.adoptOrphans(me, live, exclude);
+      } catch (err) {
+        // Another tab wiped the disk under this store: take its baseline, as a flush would, and ask once more.
+        if (!(err instanceof MirrorGenerationChanged)) throw err;
+        await this.adoptWipedBaseline();
+        taken = await this.adoptOrphans(me, live, exclude);
+      }
+      for (const rec of taken) this.records.set(recordKey(rec.type, rec.id), rec);
+      if (taken.length > 0) {
+        this.ver++;
+        this.stampTypes([OUTBOX_TYPE]);
+      }
+      return taken.map((r) => r.entity);
+    });
+  }
+
+  /** The disk's half of {@link adoptOrphanedOutbox}. A store no other engine shares adopts nothing. */
+  protected async adoptOrphans(
+    _me: string, _live: ReadonlySet<string>, _exclude: ReadonlySet<string>,
+  ): Promise<MirrorRecord[]> {
+    return [];
   }
 
   /** See {@link MirrorStore.putLocal} — seq 0, latest wins, never through the seq guard. */

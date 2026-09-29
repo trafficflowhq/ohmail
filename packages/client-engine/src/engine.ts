@@ -305,6 +305,8 @@ interface PendingMutation {
    * adapter is handed it back, so the replay sends that row rather than creating another.
    */
   createdRow?: CreatedDraftRow;
+  /** The Web Lock of the engine that holds this verb — see {@link OhmailEngine.adoptOrphanedOutbox}. */
+  owner?: string;
   /** The Send + Done release — see {@link MutationResult.andDone}. Persisted with the row. */
   andDone?: SendAndDonePlan;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
@@ -423,6 +425,8 @@ interface PersistedOutboxEntry {
   createAttempted?: boolean;
   /** See {@link PendingMutation.createdRow}. Added to `v: 3` in place, as `createAttempted` was. */
   createdRow?: CreatedDraftRow;
+  /** See {@link PendingMutation.owner}. In place on `v: 3`; absent is an older build's, never adopted. */
+  owner?: string;
   /**
    * TRUE once a newer verb for the same target has been expressed — see
    * {@link OhmailEngine.planAbandonedSupersession}. Retrying such a record would overwrite the newer
@@ -528,6 +532,7 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
     ...(p.createAttempted === true ? { createAttempted: true } : {}),
     ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
+    ...(p.owner !== undefined ? { owner: p.owner } : {}),
     ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
   };
 }
@@ -1697,8 +1702,29 @@ export const RECEIVED_MESSAGES_META = "receivedMessages";
  */
 export type { FreshnessState, MirrorFreshness } from "@trafficflow/core/drain-policy";
 
+/**
+ * The Web Locks surface an engine asks about outbox owners — `navigator.locks`, injected so a test
+ * can model tabs closing. `null`: this engine stamps no owner and adopts nothing.
+ */
+export interface EngineLocks {
+  request(name: string, options: { mode: "exclusive" }, callback: (lock: unknown) => Promise<unknown>): Promise<unknown>;
+  query(): Promise<{ held?: ReadonlyArray<{ name?: string }> }>;
+}
+
+/** The browser's Web Locks, where it has them; `null` elsewhere (a webview without them, node). */
+function defaultEngineLocks(): EngineLocks | null {
+  const locks = (globalThis as { navigator?: { locks?: EngineLocks } }).navigator?.locks;
+  return locks && typeof locks.request === "function" && typeof locks.query === "function" ? locks : null;
+}
+
 export interface EngineOptions {
   adapter: EngineAdapter;
+  /**
+   * THE OUTBOX'S OWNERSHIP between tabs over one shared mirror — see {@link OhmailEngine.adoptOrphanedOutbox}. Omitted:
+   * the browser's `navigator.locks`. `null`: no ownership, today's shape, and a store that no other engine shares
+   * (memory, the phone's database) never uses it either way.
+   */
+  locks?: EngineLocks | null;
   /**
    * Override the archive transport. The shipped path takes it from the adapter (see
    * {@link ServerSearchCapableAdapter}); this exists so a test can drive the whole seam
@@ -2163,6 +2189,10 @@ export class OhmailEngine {
   private readonly syncLimit: number | undefined;
   private readonly now: () => Date;
   private readonly uuid: () => string;
+  /** See {@link EngineOptions.locks}. */
+  private readonly locks: EngineLocks | null;
+  /** This engine's lock name, set only once the lock is HELD — an entry stamped earlier could be adopted from a live tab. */
+  private ownerName: string | null = null;
 
   private readonly overlays = new Map<string, MutationEffect[]>();
   private overlayRev = 0;
@@ -2678,6 +2708,8 @@ export class OhmailEngine {
     this.now = opts.now ?? (() => new Date());
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
+    this.locks = opts.locks === undefined ? defaultEngineLocks() : opts.locks;
+    this.holdOwnerLock();
     this.readerView = new OverlayReader(this.store, this.overlays, () => this.overlayRev);
     this.resolvedView = oneSourceReader(this.readerView);
     this.storeTruth = oneSourceReader(this.store);
@@ -2857,6 +2889,7 @@ export class OhmailEngine {
     // NOT `restoreOutbox()` — see {@link restoreOutboxIfLoaded}. The drive can be reached before
     // `hydrate()` resolves, and latching there loses the previous session's verbs for good.
     this.restoreOutboxIfLoaded();
+    await this.adoptOrphanedOutbox();
     await this.replayOutbox();
     await this.drainPublishing();
   }
@@ -3048,74 +3081,7 @@ export class OhmailEngine {
     if (rows.length === 0) return;
     let restored = false;
     for (const e of rows) {
-      this.outboxSeq = Math.max(this.outboxSeq, e.n + 1);
-      /**
-       * A WITHDRAWN ROW IS NEVER REPLAYED. Cancel marked it before the composer closed, the mark
-       * is what survives the restart, and this boot drops the row rather than queueing it — the
-       * person cancelled that send, so no later session may deliver it.
-       */
-      if (e.withdrawn === true) {
-        void this.dropOutbox(e.id);
-        continue;
-      }
-      /**
-       * AN ENTRY THIS SESSION IS ALREADY HANDLING IS NOT A RESTART'S ENTRY. The latch does not guarantee this method
-       * runs before the first mutation: an engine driven without ever hydrating reaches here through its first drive,
-       * and that drive can be the very `syncFresh` a confirmed mutation just issued — at which point that mutation's
-       * entry is still on disk (its terminal cleanup runs after the drive starts) and re-queueing it would dispatch
-       * the SAME verb twice in one session. Every live mutation holds either its overlay (in flight, or awaiting its
-       * echo) or a queue slot (retryable), so those two are the skip. An entry skipped here that then fails its
-       * cleanup simply replays next session, idempotently — the safe direction.
-       */
-      if (this.overlays.has(e.id) || this.queue.some((q) => q.id === e.id)) continue;
-      /**
-       * AN UNKEYED CREATE PAST THE SERVER'S DEDUPE HORIZON IS NOT REPLAYED. The server's idempotency records live
-       * 24 h (`idempotency_keys.expires_at`); within that window every replay is exact. Past it, the state verbs still
-       * converge on their own (absolute values, unique names, permanent send reservations) and keep replaying at any
-       * age — but a `rule_create` has no uniqueness constraint and a compose's first `draft_save` mints a fresh row,
-       * so replaying one after a day-plus-dead app mints a duplicate. Nor is it deleted in silence: it may hold the
-       * only copy of what somebody wrote, so it moves to the abandoned list saying why, and the person discards it.
-       */
-      // The same predicate `retryAbandoned` applies — see {@link pastCreateDedupe}. It was two
-      // copies of one rule for as long as there was only one caller.
-      if (pastCreateDedupe(e, this.now().getTime())) {
-        void this.expireAtRestore(e);
-        continue;
-      }
-      try {
-        // The verb's OWN moment, not the restart's: a leave-commit restored the next morning
-        // must not stamp its waterline (or any optimistic `updatedAt`) with boot time — the
-        // effects are rebuilt under the clock the verb was expressed at.
-        const asExpressed = () => new Date(e.at);
-        const effects = mutationEffects(this.verbView, e.mutation, { now: asExpressed, uuid: this.uuid });
-        if (effects.length > 0) this.overlays.set(e.id, effects);
-        else this.unpaintedRestored.add(e.id);
-      } catch { /* a malformed or out-of-vocabulary mutation paints nothing; the wire decides */ }
-      this.queue.push({
-        id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n, restored: true,
-        // A `v: 1` record carries none of these; `?? 0` is what makes it a valid `v: 2` in memory
-        // and gives it the full ceiling rather than retiring it on arrival.
-        attempts: e.attempts ?? 0,
-        ...(e.nextAt !== undefined ? { nextAt: e.nextAt } : {}),
-        // THE WHOLE POINT OF PERSISTING IT: this replay runs through a FRESH adapter, whose own
-        // memory of the unreadable create is gone. Without this the replay re-POSTs the create.
-        ...(e.createAttempted === true ? { createAttempted: true } : {}),
-        ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
-        ...(e.mutation.kind === "mail_send" && isAndDonePlan(e.andDone) ? { andDone: e.andDone } : {}),
-        /**
-         * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
-         * 2` shape in place, so records written before it can carry a `nextAt` that came from a `Retry-After` and no
-         * way to say so. Reading the absent flag as `false` makes the explicit-flush path ignore an interval the
-         * SERVER chose — the one wait this client has no right to override. So the ambiguity resolves toward
-         * obedience: a `v: 2` record that has a wait is assumed to have been told to wait. `v: 1` had no `nextAt` at
-         * all and is unaffected; `v: 3` always carries the flag explicitly, which is what the version bump is for.
-         */
-        ...(e.waitIsServerNamed !== undefined
-          ? { waitIsServerNamed: e.waitIsServerNamed }
-          : (e.v === 2 && e.nextAt !== undefined ? { waitIsServerNamed: true } : {})),
-        ...(e.lastError !== undefined ? { lastError: e.lastError } : {}),
-      });
-      restored = true;
+      if (this.restoreEntry(e)) restored = true;
     }
     /**
      * A VERB IN BOTH COLLECTIONS IS A CRASH RESIDUE, AND THE LIVE ROW WINS. `abandon()` writes the abandoned record
@@ -3147,6 +3113,122 @@ export class OhmailEngine {
    * settled has none to show. At the verb's own moment, as the restore paints it. True when any
    * overlay moved.
    */
+  /**
+   * ONE STORED ENTRY INTO THE QUEUE — the boot restore's body, and an adoption's ({@link adoptOrphanedOutbox}). `true`
+   * when it was queued; a withdrawn, already-held or expired entry is settled here and answers `false`.
+   */
+  private restoreEntry(e: PersistedOutboxEntry): boolean {
+    this.outboxSeq = Math.max(this.outboxSeq, e.n + 1);
+    /**
+     * A WITHDRAWN ROW IS NEVER REPLAYED. Cancel marked it before the composer closed, the mark
+     * is what survives the restart, and this boot drops the row rather than queueing it — the
+     * person cancelled that send, so no later session may deliver it.
+     */
+    if (e.withdrawn === true) {
+      void this.dropOutbox(e.id);
+      return false;
+    }
+    /**
+     * AN ENTRY THIS SESSION IS ALREADY HANDLING IS NOT A RESTART'S ENTRY. The latch does not guarantee this method
+     * runs before the first mutation: an engine driven without ever hydrating reaches here through its first drive,
+     * and that drive can be the very `syncFresh` a confirmed mutation just issued — at which point that mutation's
+     * entry is still on disk (its terminal cleanup runs after the drive starts) and re-queueing it would dispatch
+     * the SAME verb twice in one session. Every live mutation holds either its overlay (in flight, or awaiting its
+     * echo) or a queue slot (retryable), so those two are the skip. An entry skipped here that then fails its
+     * cleanup simply replays next session, idempotently — the safe direction.
+     */
+    if (this.overlays.has(e.id) || this.queue.some((q) => q.id === e.id)) return false;
+    /**
+     * AN UNKEYED CREATE PAST THE SERVER'S DEDUPE HORIZON IS NOT REPLAYED. The server's idempotency records live
+     * 24 h (`idempotency_keys.expires_at`); within that window every replay is exact. Past it, the state verbs still
+     * converge on their own (absolute values, unique names, permanent send reservations) and keep replaying at any
+     * age — but a `rule_create` has no uniqueness constraint and a compose's first `draft_save` mints a fresh row,
+     * so replaying one after a day-plus-dead app mints a duplicate. Nor is it deleted in silence: it may hold the
+     * only copy of what somebody wrote, so it moves to the abandoned list saying why, and the person discards it.
+     */
+    // The same predicate `retryAbandoned` applies — see {@link pastCreateDedupe}. It was two
+    // copies of one rule for as long as there was only one caller.
+    if (pastCreateDedupe(e, this.now().getTime())) {
+      void this.expireAtRestore(e);
+      return false;
+    }
+    try {
+      // The verb's OWN moment, not the restart's: a leave-commit restored the next morning
+      // must not stamp its waterline (or any optimistic `updatedAt`) with boot time — the
+      // effects are rebuilt under the clock the verb was expressed at.
+      const asExpressed = () => new Date(e.at);
+      const effects = mutationEffects(this.verbView, e.mutation, { now: asExpressed, uuid: this.uuid });
+      if (effects.length > 0) this.overlays.set(e.id, effects);
+      else this.unpaintedRestored.add(e.id);
+    } catch { /* a malformed or out-of-vocabulary mutation paints nothing; the wire decides */ }
+    this.queue.push({
+      id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n, restored: true,
+      // A `v: 1` record carries none of these; `?? 0` is what makes it a valid `v: 2` in memory
+      // and gives it the full ceiling rather than retiring it on arrival.
+      attempts: e.attempts ?? 0,
+      ...(e.nextAt !== undefined ? { nextAt: e.nextAt } : {}),
+      // THE WHOLE POINT OF PERSISTING IT: this replay runs through a FRESH adapter, whose own
+      // memory of the unreadable create is gone. Without this the replay re-POSTs the create.
+      ...(e.createAttempted === true ? { createAttempted: true } : {}),
+      ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
+      ...(e.mutation.kind === "mail_send" && isAndDonePlan(e.andDone) ? { andDone: e.andDone } : {}),
+      /**
+       * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
+       * 2` shape in place, so records written before it can carry a `nextAt` that came from a `Retry-After` and no
+       * way to say so. Reading the absent flag as `false` makes the explicit-flush path ignore an interval the
+       * SERVER chose — the one wait this client has no right to override. So the ambiguity resolves toward
+       * obedience: a `v: 2` record that has a wait is assumed to have been told to wait. `v: 1` had no `nextAt` at
+       * all and is unaffected; `v: 3` always carries the flag explicitly, which is what the version bump is for.
+       */
+      ...(e.waitIsServerNamed !== undefined
+        ? { waitIsServerNamed: e.waitIsServerNamed }
+        : (e.v === 2 && e.nextAt !== undefined ? { waitIsServerNamed: true } : {})),
+      ...(e.lastError !== undefined ? { lastError: e.lastError } : {}),
+      // This engine replays it now, so a later adopter asks about THIS engine's lock.
+      ...(this.ownerName !== null ? { owner: this.ownerName } : {}),
+    });
+    return true;
+  }
+
+  /**
+   * THIS ENGINE'S LOCK, held for its whole life: the lock's name is the `owner` field every entry it writes carries, and the
+   * browser drops the lock when the tab goes — which is what tells another tab the entries are orphaned. Only over a
+   * store other engines share; the name is recorded once the lock is GRANTED, never before.
+   */
+  private holdOwnerLock(): void {
+    const disk = this.store.sharedDiskName?.() ?? null;
+    if (this.locks === null || disk === null || typeof this.store.adoptOrphanedOutbox !== "function") return;
+    const name = `ohmail.engine.${disk}.${this.uuid()}`;
+    void this.locks.request(name, { mode: "exclusive" }, () => {
+      this.ownerName = name;
+      return new Promise<never>(() => { /* held until the tab goes */ });
+    }).catch(() => { this.ownerName = null; });
+  }
+
+  /**
+   * A VERB A CLOSED TAB LEFT IS DELIVERED BY A LIVE ONE, ONCE. Every entry naming an owner whose lock is no longer held
+   * is adopted by a compare-and-set inside one store transaction (so of two tabs adopting at once, one takes it) and
+   * queued like a restored entry. A live owner's entry, an entry naming no owner, and every entry when this engine
+   * cannot ask about locks are left alone. At the head of every drive, and after a 410 re-bootstrap.
+   */
+  private async adoptOrphanedOutbox(): Promise<void> {
+    const me = this.ownerName;
+    if (me === null || this.locks === null || !this.outboxLoadable() || typeof this.store.adoptOrphanedOutbox !== "function") return;
+    let live: Set<string>;
+    try {
+      const held = (await this.locks.query()).held ?? [];
+      live = new Set(held.map((h) => h.name).filter((n): n is string => typeof n === "string"));
+    } catch { return; }
+    const mine = new Set<string>([...this.overlays.keys(), ...this.queue.map((q) => q.id), ...this.inFlight.keys()]);
+    const taken = await this.store.adoptOrphanedOutbox(me, live, mine).catch(() => [] as unknown[]);
+    let restored = false;
+    for (const e of taken) if (isPersistedOutboxEntry(e) && this.restoreEntry(e)) restored = true;
+    if (!restored) return;
+    this.queue.sort((a, b) => (a.at - b.at) || (a.n - b.n));
+    this.overlayRev++;
+    this.notify();
+  }
+
   private repaintRestored(): boolean {
     let moved = false;
     for (const id of [...this.unpaintedRestored]) {
@@ -3295,6 +3377,8 @@ export class OhmailEngine {
           // verb and every abandoned record. It was also a second writer of a rule the store
           // already owned for the cross-tab case.
           await this.store.resetForBootstrap(); // cursor → "0"
+          // The wipe re-put every carried row on disk, a closed tab's among them: adopt what is orphaned.
+          await this.adoptOrphanedOutbox();
           // The wipe took the held-release answer too; the settle's bell asks for it again.
           this.heldRelease.owed = true;
           // …and the queue's page, for the same reason.
@@ -5825,6 +5909,7 @@ export class OhmailEngine {
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
       ...(superseded.createAttempted ? { createAttempted: true } : {}),
       ...(superseded.createdRow !== undefined ? { createdRow: superseded.createdRow } : {}),
+      ...(this.ownerName !== null ? { owner: this.ownerName } : {}),
       // With the send's durable row, never in a surface's memory: the arm outlives the surface.
       ...(opts.andDone !== undefined && enriched.kind === "mail_send" ? { andDone: opts.andDone } : {}),
     };
