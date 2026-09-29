@@ -389,7 +389,7 @@ describe("the window's lift and first paint", () => {
 describe("a refused sign-out on the lock screen", () => {
   it("says so under the button, with the shell's reason, and the button presses again", async () => {
     fakeBridge(() => ({ status: 200, body: "{}" }));
-    const internals = (globalThis as { __TAURI_INTERNALS__: { invoke: (c: string, p?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+    const internals = (globalThis as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, p?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
     const inner = internals.invoke;
     internals.invoke = async (command, payload) => {
       if (command === "engine_logout") throw "the shell could not sign out";
