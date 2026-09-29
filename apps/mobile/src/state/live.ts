@@ -2288,9 +2288,11 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
 /**
  * THE SENTENCE A FAILED SEND EARNS. A session that never secured its connection or had its login
  * refused offered nothing, and says which step stopped it; a mailbox with no sign-in here says so
- * with the file's own sentence; every other failure keeps the plain one.
+ * with the file's own sentence; a forward whose original the server could not load says so,
+ * because asking again cannot help; every other failure keeps the plain one.
  */
-export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyNotSignedIn" | "replyFailed";
+export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyNotSignedIn"
+  | "replyForwardOriginalUnavailable" | "replyFailed";
 
 export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   const code = r?.error?.code;
@@ -2298,7 +2300,8 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
     : code === "send_login_refused" ? "replyLoginRefused"
       : code === "send_unreachable" ? "replyUnreachable"
         : code === "mailbox_not_signed_in" ? "replyNotSignedIn"
-          : "replyFailed";
+          : code === "forward_original_unavailable" ? "replyForwardOriginalUnavailable"
+            : "replyFailed";
 }
 
 /** The refused send's sentence as a refusal, each key spelled out so the refusal census reads it. */
@@ -2307,7 +2310,8 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
     : kind === "replyLoginRefused" ? refuse("replyLoginRefused")
       : kind === "replyUnreachable" ? refuse("replyUnreachable")
         : kind === "replyNotSignedIn" ? refuse("replyNotSignedIn")
-          : refuse("replyFailed");
+          : kind === "replyForwardOriginalUnavailable" ? refuse("replyForwardOriginalUnavailable")
+            : refuse("replyFailed");
 }
 
 /**

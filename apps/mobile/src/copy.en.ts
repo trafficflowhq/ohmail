@@ -1892,6 +1892,7 @@ const TABLE = {
   replyLoginRefused: "Not sent. Your mail server refused the sign-in.",
   replyUnreachable: "Not sent. Your mail server couldn't be reached.",
   replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
+  replyForwardOriginalUnavailable: "Not sent. The original could not be loaded, so it was not forwarded.",
   /* The refused send while this phone cannot reach its mail server — said in the composer. */
   composeNotSentOffline: "Not sent. This phone can't reach your mail server. It's kept in Drafts — send it again once you're back online.",
   /* Send pressed again over an unconfirmed send: a second copy could reach them twice. */
