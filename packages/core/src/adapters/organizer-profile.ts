@@ -684,6 +684,12 @@ export function isMalformedProfile(r: ProfileRecord): r is MalformedProfile {
 
 const asString = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
+/** Exactly what `Date.prototype.toISOString` writes — the one form `makeProfileDoc` stamps. */
+function isWrittenInstant(s: string): boolean {
+  const t = Date.parse(s);
+  return Number.isFinite(t) && new Date(t).toISOString() === s;
+}
+
 /** The tolerant reader of one section entry. Drops entries missing their natural key. */
 function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
   const screener: ProfileScreenerEntry[] = [];
@@ -845,12 +851,17 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
     return { status: "newer", v, installId, ...(ref === undefined ? {} : { ref }) };
   }
 
+  /* THE ONE SPELLING THE WRITER EMITS. `updatedAt` decides which document is current, and any
+     other string is parsed however the platform likes, so two installs could disagree about it. */
+  const updatedAt = asString(rawDoc.updatedAt) ?? "";
+  if (!isWrittenInstant(updatedAt)) return malformed("updatedAt is not the ISO form ohmail writes");
+
   const payload = readPayload(rawDoc);
   const producerRaw = typeof rawDoc.producer === "object" && rawDoc.producer !== null
     ? rawDoc.producer as Record<string, unknown> : {};
   const doc: OrganizerProfileDoc = {
     v,
-    updatedAt: asString(rawDoc.updatedAt) ?? "",
+    updatedAt,
     producer: {
       kind: asString(producerRaw.kind) ?? "unknown",
       version: asString(producerRaw.version) ?? "",
@@ -1055,14 +1066,33 @@ function headerBlockOf(raw: string): string {
 
 /**
  * THE DATE GROUP a settings message falls in: its `Date` header's second. Every ohmail writer
- * since v1 writes `Date` as `updatedAt` cut to the second, so a document in an older second is
- * strictly older than every document in a newer one. `null`: the header is absent or unparseable.
+ * writes `Date` as `updatedAt` cut to the second (`toUTCString`), but a server may serve the same
+ * instant in RFC 5322's numeric-zone spelling, and the write's read-back, the held record's locator
+ * and the listing's groups all compare this second. So the INSTANT is read, from an RFC 5322
+ * date-time only (weekday checked when present, zone `GMT`, `UT`, `UTC` or `±hhmm`); any other
+ * spelling is `null`, and a copy with no date group is kept, never removed.
  */
 function dateSecondOf(headerBlock: string): number | null {
   const m = /^Date[ \t]*:(.*)$/im.exec(headerBlock.replace(/\r?\n[ \t]+/g, " "));
-  const at = m ? Date.parse(m[1]!.trim()) : NaN;
-  return Number.isFinite(at) ? Math.floor(at / 1000) : null;
+  // A trailing comment (`+0000 (UTC)`) is RFC 5322 CFWS: the instant is the text before it.
+  const text = m ? m[1]!.replace(/(?:[ \t]*\([^()]*\))+[ \t]*$/, "").trim().replace(/[ \t]+/g, " ") : "";
+  const d = m ? RFC5322_DATE.exec(text) : null;
+  if (d === null) return null;
+  const [, weekday, day, mon, year, hh, mm, ss, zone] = d;
+  const month = (MONTHS as readonly string[]).indexOf(mon!);
+  const local = Date.UTC(Number(year), month, Number(day), Number(hh), Number(mm), Number(ss ?? "0"));
+  const check = new Date(local);
+  if (check.getUTCDate() !== Number(day) || Number(hh) > 23 || Number(mm) > 59 || Number(ss ?? "0") > 60) return null;
+  if (weekday !== undefined && WEEKDAYS[check.getUTCDay()] !== weekday) return null;
+  const offset = /^[+-]\d{4}$/.test(zone!)
+    ? (zone![0] === "-" ? -1 : 1) * (Number(zone!.slice(1, 3)) * 60 + Number(zone!.slice(3))) : 0;
+  return Math.floor((local - offset * 60_000) / 1000);
 }
+
+/** RFC 5322 `date-time`: `[Mon, ]28 Sep 2026 10:00[:00] GMT|UT|UTC|+hhmm` — never the obsolete letter zones. */
+const RFC5322_DATE = /^(?:(Mon|Tue|Wed|Thu|Fri|Sat|Sun), ?)?(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4}) (\d{2}):(\d{2})(?::(\d{2}))? (GMT|UTC?|[+-]\d{4})$/;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 /**
  * A {@link ProfileIo} bound to a LIVE connection — the same connection the adapter already
@@ -1481,9 +1511,8 @@ function malformedProfile(reason: string, ref: unknown): MalformedProfile {
  */
 function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
   return [...ok].sort((a, b) => {
-    const at = Date.parse(a.doc!.updatedAt);
-    const bt = Date.parse(b.doc!.updatedAt);
-    const d = (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
+    // Both are the writer's ISO spelling — the parser admits no other — so both parse the same everywhere.
+    const d = Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt);
     if (d !== 0) return d;
     /* THE SAME RULE AS `byCodeUnit`'s header, and this one decides WHICH DOCUMENT WINS: under
        `localeCompare` two installs reading the same folder could pick DIFFERENT documents. */
