@@ -287,6 +287,9 @@ the apps name the computer that actually organizes a mailbox, and a claim writte
 is named as unknown. The note on a mailbox that is not being synced now appears after four minutes,
 once the automatic reconnect has had its turn.
 
+A self-hosted worker now refuses to start unless `TF_SYNC_BLOCK_GRACE_MS` is longer than
+`TF_LEASE_UNAVAILABLE_DETACH_MS`, `POLL_INTERVAL_MS` and `TF_ROSTER_INTERVAL_MS` together.
+
 ### A draft keeps what it answers
 <!-- changes: fix-026-draft-keeps-answer.md -->
 
