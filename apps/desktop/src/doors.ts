@@ -1902,6 +1902,13 @@ export type ApprovalStep =
 export const APPROVAL_NOT_OFFERED = "approval_not_offered";
 
 /**
+ * THE REQUEST A PRESS IS STILL MAKING. Its door's configure re-keys the gate, and the chooser the
+ * gate mounts then reads `/health` before the request exists; {@link readApprovalVerdict} reads
+ * after this settles, so that chooser resumes the wait the press asked for.
+ */
+let approvalBeginning: Promise<ApprovalBegun> | null = null;
+
+/**
  * START THE ONE-CONFIRM SIGN-IN: configure the door if it is not already (the engine holds the
  * verifier, so the order is {@link beginBrowserSignIn}'s), then ask the engine for a request. On a
  * door already serving — the sign-in coming back — the address is not needed and not read.
@@ -1912,6 +1919,16 @@ export async function beginBrowserApproval(
   /** The first-run door: boot the hosted door with NO address; the claim names the account. */
   pending = false,
 ): Promise<ApprovalBegun> {
+  const begun = beginApproval(address, configured, pending);
+  approvalBeginning = begun;
+  try {
+    return await begun;
+  } finally {
+    if (approvalBeginning === begun) approvalBeginning = null;
+  }
+}
+
+async function beginApproval(address: string, configured: boolean, pending: boolean): Promise<ApprovalBegun> {
   let settled: EngineStatus | null = null;
   if (!configured && pending) {
     try {
@@ -2010,6 +2027,7 @@ export type ApprovalVerdictReading =
 
 export async function readApprovalVerdict(): Promise<ApprovalVerdictReading | null> {
   try {
+    if (approvalBeginning) await approvalBeginning.catch(() => undefined);
     const res = await bridgeFetch("/health", { signal: AbortSignal.timeout(5_000) });
     if (!res.ok) return null;
     const said = ((await res.json().catch(() => null)) as { approval?: unknown } | null)?.approval as

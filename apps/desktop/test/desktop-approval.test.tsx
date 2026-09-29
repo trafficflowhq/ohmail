@@ -45,6 +45,19 @@ let verdict: Record<string, unknown> | null;
 /** How many times the window ended a wait at the engine (`DELETE /cloud/signin/approval`). */
 let stops: number;
 
+/** The error code a framed engine answer carries when its status is a refusal, else null. */
+function refusedCode(framed: Uint8Array): string | null {
+  const metaLength = new DataView(framed.buffer, framed.byteOffset).getUint32(0, false);
+  const meta = JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + metaLength))) as { status: number };
+  if (meta.status < 400) return null;
+  const body = new TextDecoder().decode(framed.subarray(4 + metaLength));
+  try {
+    return (JSON.parse(body) as { error?: { code?: string } }).error?.code ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const pending = (note?: string): Uint8Array =>
   encode(202, JSON.stringify({ status: "pending", retryAfterMs: 2000, ...(note ? { note } : {}) }));
 
@@ -76,7 +89,13 @@ beforeEach(() => {
           return approval();
         }
         if (url === "/health") return encode(200, JSON.stringify({ ok: true, ...(verdict ? { approval: verdict } : {}) }));
-        if (url === "/cloud/signin") return polls.length > 1 ? polls.shift()! : polls[0]!;
+        if (url === "/cloud/signin") {
+          const answer = polls.length > 1 ? polls.shift()! : polls[0]!;
+          // As the engine does: a refused poll ENDS the verdict with its code (`cloud-engine.ts`).
+          const ended = refusedCode(answer);
+          if (ended !== null && verdict !== null) verdict = { state: "ended", code: ended, expiresAt: verdict.expiresAt };
+          return answer;
+        }
         return encode(404, "{}", "Not Found");
       }
       if (command === "open_link") return null;
@@ -323,5 +342,91 @@ describe("the wait belongs to the engine, not to the chooser", () => {
     root = createRoot(mountPoint);
     await act(async () => { root!.render(h(DoorChooser, { start: "doors", onEntered: () => undefined })); });
     expect(asked.some((a) => a.payload?.url === "/health")).toBe(false);
+  });
+});
+
+/**
+ * THE PRESS THE GATE RE-ROUTES. Switching to Cloud from Settings configures the door first, and the
+ * configure re-keys the gate: the overlay's chooser goes and the pre-auth chooser mounts while the
+ * request is still being made (measured on the lane's own build: the new chooser read `/health`
+ * 300 ms before the engine logged the request, showed the password form, and no page opened). The
+ * mount read waits for a request in flight; the press that outlived its chooser still opens the page;
+ * a stopping press made meanwhile ends the request at the engine. Mutations watched red: the wait
+ * for the request in flight dropped; the outlived press's page not opened; its stop not sent; the
+ * switch labelled by `viaBrowser` alone.
+ */
+describe("a press the gate re-routes keeps its wait", () => {
+  let release: () => void = () => undefined;
+  const holdTheRequest = (): void => {
+    const held = new Promise<void>((r) => { release = r; });
+    const inner = host.__TAURI_INTERNALS__!.invoke;
+    host.__TAURI_INTERNALS__!.invoke = async (command, payload) => {
+      if (command === "engine_request" && payload?.url === "/cloud/signin/approval" && payload?.method !== "DELETE") {
+        await held;
+      }
+      return inner(command, payload);
+    };
+  };
+  const pagesOpened = (): number =>
+    asked.filter((a) => a.command === "open_link" && a.payload?.request === ID).length;
+  const shared = async () => {
+    vi.resetModules();
+    const { DoorChooser } = await import("../src/DoorChooser.js");
+    mountPoint = document.createElement("div");
+    document.body.appendChild(mountPoint);
+    root = createRoot(mountPoint);
+    const render = async (key: string, cloudAction: "configure" | "signIn") => {
+      await act(async () => { root!.render(h(DoorChooser, { key, start: "cloud", cloudAction, onEntered: () => undefined })); });
+    };
+    return { el: mountPoint, render };
+  };
+
+  it("the chooser mounted while the request is made resumes it, and the page opens once", async () => {
+    holdTheRequest();
+    const { el, render } = await shared();
+    await render("overlay", "configure");
+    await click(buttonSaying(el, "Sign in with browser"));
+    await type(el, "cloud-address", "mila@ohmail.app");
+    await click(buttonSaying(el, "Open ohmail.app"));
+    await render("pre-auth", "signIn");
+    await act(async () => { release(); });
+    await elapse(0);
+    expect(el.textContent, "the re-routed chooser did not resume the wait").toContain("Waiting for your browser…");
+    expect(pagesOpened(), "the press's page did not open").toBe(1);
+    expect(stops).toBe(0);
+  });
+
+  it("a stopping press made while the request is made ends it at the engine", async () => {
+    holdTheRequest();
+    const { el, render } = await shared();
+    await render("card", "signIn");
+    await click(buttonSaying(el, "Sign in with browser"));
+    await click(buttonSaying(el, "Open ohmail.app"));
+    await click(buttonSaying(el, "Type a code instead"));
+    await act(async () => { release(); });
+    await elapse(0);
+    expect(stops, "the request a stopped press made was left at the engine").toBe(1);
+    expect(pagesOpened()).toBe(0);
+  });
+
+  it("a wait resumed on the password card offers the password, and that press ends the wait", async () => {
+    verdict = { state: "pending", note: null, expiresAt: new Date(Date.now() + 300_000).toISOString() };
+    const { el } = await mount("signIn");
+    await elapse(0);
+    expect(el.textContent).toContain("Waiting for your browser…");
+    await click(buttonSaying(el, "Use my password instead"));
+    expect(stops).toBe(1);
+    expect(el.querySelector("#cloud-password"), "the press did not open the password form").not.toBeNull();
+  });
+
+  it("CONTROL: a press nothing re-routes opens its page once and resumes nothing twice", async () => {
+    const { el, render } = await shared();
+    await render("card", "signIn");
+    await click(buttonSaying(el, "Sign in with browser"));
+    await click(buttonSaying(el, "Open ohmail.app"));
+    await elapse(0);
+    expect(el.textContent).toContain("Waiting for your browser…");
+    expect(pagesOpened()).toBe(1);
+    expect(stops).toBe(0);
   });
 });
