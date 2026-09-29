@@ -3688,8 +3688,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
            cancels it and NOTHING is sent — see {@link oneShot}. Past that, the inverse rides the
            same chain and can no longer pass the verb it undoes. */
         if (leaving?.() === true) { toast(refuse("toastUndone")); return; }
+        /* SAID AT THE PRESS, as the verbs say theirs: the overlay has already put the row back,
+           and a refused or organizer-queued inverse overrides the sentence when it answers. */
+        toast(refuse("toastUndone"));
         void Promise.all(inv.map((mu) => dispatch(mu))).then((vs) => {
-          saidAll(vs, refuse("toastUndone"), refuse("liveSaveFailed"));
+          saidAll(vs, null, refuse("liveSaveFailed"));
         });
       },
     };
@@ -4004,10 +4007,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
            the sentence, so a late press cannot say no rule was made over a rule that was. */
         const cancelled = undoRouting(subject);
         const ruleBack = cancelled ? null : takeRoutingReversal(pressId);
+        // At the press, as `undoable` says it; a refusal overrides it when the inverse answers.
+        toast(refuse(cancelled ? "toastRoutingUndone" : "toastUndone"));
         void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then(async (vs) => {
           const back = ruleBack ? await ruleBack : [];
           const rs = await Promise.all(back.map((mu) => watched(engine.mutate(mu))));
-          saidAll([...vs, ...rs], refuse(cancelled ? "toastRoutingUndone" : "toastUndone"), refuse("liveSaveFailed"));
+          saidAll([...vs, ...rs], null, refuse("liveSaveFailed"));
         });
       },
     });
@@ -4681,8 +4686,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       shown: () => { restartRouting(subjectKey); },
       undo: () => {
         const cancelled = undoRouting(subjectKey);
+        // At the press, as `undoable` says it; a refusal overrides it when the inverse answers.
+        toast(refuse(cancelled ? "screeningRoutingUndoneRules" : "toastUndone"));
         void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then((vs) => {
-          saidAll(vs, refuse(cancelled ? "screeningRoutingUndoneRules" : "toastUndone"), refuse("liveSaveFailed"));
+          saidAll(vs, null, refuse("liveSaveFailed"));
         });
       },
     });
