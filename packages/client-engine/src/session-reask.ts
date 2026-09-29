@@ -4,6 +4,8 @@
  * store's: the read asks for the renewal itself, counts as loading while it is out, and asks again
  * on the renewal the platform publishes. Bounded three ways: one renewal per refusal, one re-ask
  * per renewal, and the store's own ceiling ends the wait. A server fault is said at once.
+ * A read the WIRE failed (no answer reached us) is asked again on each drain that completes — the
+ * server answering again — at most {@link REASK_MAX} times per episode.
  */
 import { STORE_ANSWER_TIMEOUT_MS } from "./store-timeline.js";
 
@@ -17,6 +19,12 @@ export interface SessionRenewalDoor {
   ended(): boolean;
 }
 
+/** The engine's completed drains (`drainsCompleted`, heard through `subscribe`) — a server answering again. */
+export interface DrainDoor {
+  completed(): number;
+  subscribe(cb: () => void): () => void;
+}
+
 /** One store read, as the walkers expose it. */
 export interface StoreReadSource {
   subscribe(cb: () => void): () => void;
@@ -26,11 +34,31 @@ export interface StoreReadSource {
   answered(): boolean;
   /** Ask the store again. */
   reask(): void;
+  /** Where a read the wire failed hears the server answer again; absent, it waits for a press. */
+  drains?: DrainDoor;
 }
 
 /** Is this failure a refused credential? The engine's `errorClassOf` reads `<name> <status> <code>`. */
 export function sessionRefused(cause: string | null): boolean {
   return cause !== null && cause.split(" ").includes("401");
+}
+
+/** Re-asks per episode of a wire failure: the drain that completed says the server answers, not that this read will. */
+export const REASK_MAX = 3;
+
+/**
+ * DID THE WIRE FAIL — no answer reached us — rather than the server answer? `network` and `timeout`
+ * (the HTTP adapter's codes; `timeout` is also a walker's own ceiling), a bare `TypeError` or
+ * `AbortError` from a raw fetch, and `offline_read_only` (the paired desktop's refusal while the
+ * account is out of reach). Never a 401 (the session's door) or any other status: those are answers.
+ */
+export function wireFailed(cause: string | null): boolean {
+  if (cause === null) return false;
+  const words = cause.split(" ");
+  if (words.includes("offline_read_only")) return true;
+  if (words.some((w) => /^\d{3}$/.test(w))) return false;
+  return words.includes("network") || words.includes("timeout")
+    || (words.length === 1 && (words[0] === "TypeError" || words[0] === "AbortError"));
 }
 
 export interface SessionReask {
@@ -88,19 +116,51 @@ export function createSessionReask(
     }, ceilingMs);
   };
 
+  /* THE WIRE'S EPISODE: from a wire failure to an answer, a failure that is an answer, or a
+     re-ask nobody here made (the person's Try again, a new visit). Our own re-asks stay in it. */
+  let wireAsks = 0;
+  let wireSeen = 0;
+  let ourAsk = false;
+  const watchWire = (): void => {
+    if (read.answered()) { wireAsks = 0; ourAsk = false; return; }
+    const cause = read.cause();
+    if (cause === null) {
+      if (!ourAsk) { wireAsks = 0; wireSeen = read.drains?.completed() ?? 0; }
+      return;
+    }
+    ourAsk = false;
+    if (!wireFailed(cause)) wireAsks = 0;
+  };
+  const onDrain = (): void => {
+    const drains = read.drains;
+    if (!drains || read.answered() || !wireFailed(read.cause())) return;
+    const n = drains.completed();
+    if (n <= wireSeen) return;
+    wireSeen = n;
+    if (wireAsks >= REASK_MAX) return;
+    wireAsks += 1;
+    ourAsk = true;
+    read.reask();
+  };
+
   return {
     attach() {
-      const offRead = read.subscribe(observe);
+      const offRead = read.subscribe(() => { observe(); watchWire(); });
       const offDoor = door?.onRenewed(() => {
         if (!refused) return;
         set("reasked");
         read.reask();
       });
+      const offDrains = read.drains?.subscribe(onDrain);
       refused = false;
+      wireAsks = 0;
+      ourAsk = false;
+      wireSeen = read.drains?.completed() ?? 0;
       observe();
       return () => {
         offRead();
         offDoor?.();
+        offDrains?.();
         stopTimer();
       };
     },

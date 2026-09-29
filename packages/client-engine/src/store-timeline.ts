@@ -56,6 +56,8 @@ export class PagedWalk<A> {
   private epoch = 0;
   private heldKey = "";
   private heldRows: { start: number; items: readonly EngineMessage[] }[] = [];
+  /** Rows kept drawn at their slots while a new frame's pages are asked — {@link reframe}. */
+  private stand: { start: number; items: readonly EngineMessage[] }[] = [];
   /** Rows placed above every position so far — an answer asked before a move lands that much lower. */
   private moved = 0;
   /** The slot past the last row, once a page answered that it was the last. */
@@ -90,6 +92,7 @@ export class PagedWalk<A> {
     this.end = null;
     this.reached = 0;
     this.heldKey = "";
+    this.stand = [];
   }
 
   /** The walk ended: answers still in the air are not read. */
@@ -118,11 +121,42 @@ export class PagedWalk<A> {
 
   /** The row in slot `i`: a message, `"gone"` where it was deleted, `null` not fetched. */
   rowAt(i: number): EngineMessage | "gone" | null {
+    const row = this.freshAt(i) ?? this.standingAt(i);
+    return row === null ? null : this.engine.storePageRow(row) ?? "gone";
+  }
+
+  /** A held page's row at slot `i` — what the walk has read in its present frame. */
+  private freshAt(i: number): EngineMessage | null {
     for (const h of this.held()) {
       const k = i - h.start;
-      if (k >= 0 && k < h.items.length) return this.engine.storePageRow(h.items[k]!) ?? "gone";
+      if (k >= 0 && k < h.items.length) return h.items[k]!;
     }
     return null;
+  }
+
+  /** Every page drawn now — the held ones and the standing ones — at its slot. */
+  drawn(): { start: number; items: readonly EngineMessage[] }[] {
+    return [...this.held(), ...this.stand];
+  }
+
+  private standingAt(i: number): EngineMessage | null {
+    for (const h of this.stand) {
+      const k = i - h.start;
+      if (k >= 0 && k < h.items.length) return h.items[k]!;
+    }
+    return null;
+  }
+
+  /**
+   * THE STORE'S NEW FRAME, TAKEN WHILE THE VISIT IS OPEN — a change below the pages read (an older
+   * arrival, a message taken away) moved positions this walk cannot place. Every position goes and
+   * page one lands at once; the rows `stand` names stay drawn at their slots until pages asked again
+   * cover them, so no mounted slot reads null in between.
+   */
+  reframe(pageOne: Extract<PageAnswer<A>, { state: "ready" }>, stand: { start: number; items: readonly EngineMessage[] }[]): void {
+    this.reset();
+    this.stand = stand;
+    this.land(0, null, false, pageOne);
   }
 
   /** Ask the page that starts at `start`, from `anchor`; a `transient` step only learns positions. */
@@ -163,6 +197,11 @@ export class PagedWalk<A> {
         ...this.runs.filter((r) => r.start !== start && this.source.peek(r.anchor) !== undefined),
         { start, anchor },
       ];
+      // A standing page goes once every slot it drew is read again.
+      if (this.stand.length > 0) {
+        this.heldKey = "";
+        this.stand = this.stand.filter((h) => h.items.some((_, k) => this.freshAt(h.start + k) === null));
+      }
     }
     this.hooks.landed?.(start, transient, out);
     this.hooks.changed();
@@ -183,6 +222,7 @@ export class PagedWalk<A> {
     if (this.end !== null) this.end += k;
     this.reached += k;
     this.heldKey = "";
+    this.stand = this.stand.map((h) => ({ start: h.start + k, items: h.items }));
     if (pageOne !== null) this.land(0, null, false, pageOne);
     else this.hooks.changed();
   }
@@ -227,15 +267,16 @@ export class PagedWalk<A> {
 
   /** Ask for the pages covering `[start, hi)` — at most one request per direction in flight. */
   want(start: number, hi: number): void {
+    // A standing row is drawn, not read: its slot is asked like one nothing holds.
     let firstHeld = -1;
     for (let i = Math.max(0, start); i < hi; i++) {
-      if (this.rowAt(i) !== null) {
+      if (this.freshAt(i) !== null) {
         firstHeld = i;
         break;
       }
     }
     const missing = (from: number, to: number, step: 1 | -1): number => {
-      for (let i = from; step > 0 ? i < to : i >= to; i += step) if (this.rowAt(i) === null) return i;
+      for (let i = from; step > 0 ? i < to : i >= to; i += step) if (this.freshAt(i) === null) return i;
       return -1;
     };
     this.ask(missing(firstHeld < 0 ? Math.max(0, start) : firstHeld, hi, 1), "down");
@@ -295,10 +336,12 @@ export class StoreTimelineWalker {
   private shift = 0;
   /** Slot 0's position when page one was read: where the rows an arrival brings are counted from. */
   private topKey: StoreKeyset | null = null;
-  private arrivalsSeen = 0;
+  private changesSeen = 0;
   private refreshing = false;
   private refreshOwed = false;
   private unsubscribe: (() => void) | null = null;
+  /** The range the view last asked for — what a re-read of the frame asks again at once. */
+  private lastWant: [number, number] = [0, 0];
 
   constructor(private readonly engine: OhmailEngine, clock: () => number = Date.now) {
     this.walk = new PagedWalk<StoreKeyset>(engine, {
@@ -337,6 +380,11 @@ export class StoreTimelineWalker {
   /** For `useSyncExternalStore`: bumped on every change a render can see. */
   readonly subscribe = (fn: () => void): (() => void) => this.signal.subscribe(fn);
   readonly revision = (): number => this.signal.revision();
+  /** The engine's completed drains — where a visit the wire failed hears the server answer again. */
+  readonly drains = {
+    completed: (): number => this.engine.drainsCompleted(),
+    subscribe: (fn: () => void): (() => void) => this.engine.subscribe(fn),
+  };
 
   /** A visit starts from the store's present: the timeline and page one, together. */
   start(): void {
@@ -354,7 +402,7 @@ export class StoreTimelineWalker {
     this.walk.reset();
     this.signal.bump();
     if (!this.engine.storePagesAvailable()) return;
-    this.arrivalsSeen = this.engine.storeArrivals();
+    this.changesSeen = this.engine.storeChanges();
     this.unsubscribe = this.engine.subscribe(this.onEngine);
     this.engine.resetStorePages("all");
     void this.engine.timeline().then((out) => {
@@ -387,11 +435,11 @@ export class StoreTimelineWalker {
     this.unsubscribe = null;
   }
 
-  /** An applied page brought mail the mirror had no record of: the open visit's top is owed. */
+  /** An applied page changed the store's list (an arrival, a message taken away): the open visit is owed a re-read. */
   private readonly onEngine = (): void => {
-    const n = this.engine.storeArrivals();
-    if (n === this.arrivalsSeen) return;
-    this.arrivalsSeen = n;
+    const n = this.engine.storeChanges();
+    if (n === this.changesSeen) return;
+    this.changesSeen = n;
     this.refreshOwed = true;
     this.refresh();
   };
@@ -417,9 +465,9 @@ export class StoreTimelineWalker {
   /**
    * THE NEW PAGE ONE, ABOVE WHAT WAS READ. The rows below it move by `s`: where the old page one
    * is held, the last row both pages hold says by how much (a row deleted or added inside it is
-   * counted), else the rows newer than the old top. The store's months are taken when they agree
-   * with the walk; a change below that the walk has not read keeps the visit's frame, as a
-   * deletion does, until the next visit.
+   * counted), else the rows newer than the old top. The store's months and total are taken either
+   * way: where they agree with the walk its positions move by `s`; a change below the pages read
+   * (an older arrival, a message taken away) re-reads the frame, the drawn rows standing meanwhile.
    */
   private placeTop(timeline: StoreTimeline, page: { items: EngineMessage[]; nextCursor: string | null }): void {
     const old = this.engine.peekStorePage("all");
@@ -438,18 +486,25 @@ export class StoreTimelineWalker {
     const segs = timelineSegments(timeline);
     const now = segs.reduce((n, x) => n + x.count, 0);
     if (s > 0 && s === items.length) s = Math.max(s, now - was);
+    this.topKey = items[0] ? keysetOf(items[0]) : null;
+    this.shift += s;
     if (now === was + s || this.segs.length === 0) {
       this.timeline = timeline;
       this.segs = segs;
-    } else {
-      this.timeline = { ...this.timeline!, total: this.timeline!.total + s };
-      this.segs = this.segs.map((x, k) => (k === 0 ? { ...x, count: Math.max(0, x.count + s) } : { ...x, start: x.start + s }));
+      // Held only where page one is: a put beside the reader's deep pages would evict them.
+      if (old !== undefined) this.engine.holdStorePage("all", {}, page, 0);
+      this.walk.place(s, old !== undefined ? { state: "ready", items, next: null } : null);
+      return;
     }
-    this.topKey = items[0] ? keysetOf(items[0]) : null;
-    this.shift += s;
-    // Held only where page one is: a put beside the reader's deep pages would evict them.
-    if (old !== undefined) this.engine.holdStorePage("all", {}, page, 0);
-    this.walk.place(s, old !== undefined ? { state: "ready", items, next: null } : null);
+    const stand = this.walk.drawn().map((h) => ({ start: h.start + s, items: h.items }));
+    this.timeline = timeline;
+    this.segs = segs;
+    // Every cached page is of the old frame: asked again, never read from the cache.
+    this.engine.resetStorePages("all");
+    this.engine.holdStorePage("all", {}, page, 0);
+    this.walk.reframe({ state: "ready", items, next: null }, stand);
+    const [a, b] = this.lastWant;
+    this.walk.want(a + s, Math.min(b + s, this.length(0)));
   }
 
   /** Rows placed above the list's first row since this walker began — what a view holds its reader by. */
@@ -491,6 +546,7 @@ export class StoreTimelineWalker {
 
   /** Ask for the pages covering `[start, end)` — at most one request per direction in flight. */
   want(start: number, end: number): void {
+    this.lastWant = [start, end];
     if (this.state() !== "ready") return;
     this.walk.want(start, Math.min(end, this.length(0)));
   }

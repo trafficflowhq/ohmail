@@ -58,6 +58,7 @@ export function useStoreHistory(): PhoneHistory {
     cause: () => walker.failureCause(),
     answered: () => walker.state() === "ready",
     reask: () => walker.start(),
+    drains: walker.drains,
   } : null), [walker]);
   const renewing = useSessionReask(w.store.renewal, read);
   const state = walker ? (renewing ? "loading" : walker.state()) : "unavailable";

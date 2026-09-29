@@ -1221,7 +1221,8 @@ export function errorClassOf(err: unknown): string {
 export type ServerAddressOutcome =
   | { state: "unavailable" }
   | { state: "ready"; items: EngineMessage[]; total: number; direction: ServerAddressDirection; importing?: true }
-  | { state: "failed"; error: string };
+  /** `errorClass` is `errorClassOf`'s — which door refused, for the sentence and the wire's re-ask. */
+  | { state: "failed"; error: string; errorClass: string };
 
 /**
  * The outcome of one page of out-of-window mail. It NEVER rejects — see {@link OhmailEngine.listOlder}. Deliberately
@@ -2578,8 +2579,10 @@ export class OhmailEngine {
   /** In-flight store pages by key, and the one in-flight timeline read. */
   private readonly storePageCalls = new Map<string, Promise<StorePageOutcome>>();
   private timelineCall: Promise<StoreTimelineOutcome> | null = null;
-  /** Moves with every applied page that brings a message this mirror had no record of — {@link storeArrivals}. */
-  private storeArrivalsRev = 0;
+  /** Moves with every applied page that changes the store's list — {@link storeChanges}. */
+  private storeChangesRev = 0;
+  /** Drains that reached the settle — {@link drainsCompleted}. */
+  private drainsDone = 0;
   /** The store's last timeline answer and whether this mirror held all of it then — {@link storeCoverage}. */
   private coverageRead: { timeline: StoreTimeline; wasWhole: boolean } | null = null;
   /** The last ask found no timeline (`unavailable`, or a refusal): the store cannot say. */
@@ -3467,6 +3470,7 @@ export class OhmailEngine {
       // before this drain began now has its echo IN the mirror, so retiring it changes what is
       // rendered from "the overlay's claim" to "the server's identical statement".
       this.sweepAwaitingEcho(epoch);
+      this.drainsDone += 1;
       // THE SETTLE'S ONE PUBLISH, after the stamp {@link OhmailEngine.freshness} reads: the last
       // page, the prune, the retired copies and overlays and the stamp are one snapshot, never
       // the new rows under the old "as of". `one-notify-per-poll.test.ts` and
@@ -4098,20 +4102,23 @@ export class OhmailEngine {
     this.settleOrganizerRequests(changes);
     this.noteMessagesRemoved(changes);
     this.noteGateArrivals(changes);
-    this.noteStoreArrivals(changes);
+    this.noteStoreChanges(changes);
     this.noteQueueChanges(changes);
     this.noteOfferChanges(changes);
     this.storePages.adopt(changes);
   }
 
   /**
-   * DID THIS PAGE BRING MAIL THE MIRROR HAS NO RECORD OF — read before the apply, like the count.
-   * A new message, or one a coalesced page carries as its latest update; a row the mirror holds
-   * is a page cache adoption, never an arrival. An open History re-asks its first page on it.
+   * DID THIS PAGE CHANGE THE STORE'S LIST — read before the apply, like the count. Mail the mirror
+   * has no record of (a new message, or one a coalesced page carries as its latest update), or a
+   * message taken away that was not already a tombstone here. A row the mirror holds changing in
+   * place is a page cache adoption, not a change of list. An open History re-reads on it.
    */
-  private noteStoreArrivals(changes: SyncChange[]): void {
-    if (changes.some((ch) => ch.type === "message" && ch.op !== "delete" && this.store.record("message", ch.id) === undefined)) {
-      this.storeArrivalsRev += 1;
+  private noteStoreChanges(changes: SyncChange[]): void {
+    if (changes.some((ch) => ch.type === "message" && (ch.op === "delete"
+      ? this.store.record("message", ch.id)?.entity !== null
+      : this.store.record("message", ch.id) === undefined))) {
+      this.storeChangesRev += 1;
     }
   }
 
@@ -8197,6 +8204,7 @@ export class OhmailEngine {
       .catch((err: unknown): ServerAddressOutcome => ({
         state: "failed",
         error: err instanceof Error ? err.message : String(err),
+        errorClass: errorClassOf(err),
       }))
       .finally(() => {
         this.serverAddressSearches.delete(key);
@@ -8483,9 +8491,18 @@ export class OhmailEngine {
     this.storePages.put(storePageKey(view, opts, limit), page, at, "all");
   }
 
-  /** Moves when an applied page brought mail the mirror had no record of — an open History's cue. */
-  storeArrivals(): number {
-    return this.storeArrivalsRev;
+  /** Moves when an applied page changed the store's list (an arrival, or a message taken away) — an open History's cue. */
+  storeChanges(): number {
+    return this.storeChangesRev;
+  }
+
+  /**
+   * DRAINS THAT COMPLETED — bumped only at the settle, after the freshness stamp and before its one
+   * publish, so a subscriber reading it sees a server that answered a whole drain. A drain that
+   * throws never reaches it. A read that failed for want of the network is asked again on it.
+   */
+  drainsCompleted(): number {
+    return this.drainsDone;
   }
 
   /** Drop the cached pages — a History visit starts from the store's present; `list` narrows it. */

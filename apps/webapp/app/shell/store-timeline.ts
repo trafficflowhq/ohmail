@@ -57,6 +57,7 @@ export function useStoreTimeline(
     cause: () => walker.failureCause(),
     answered: () => walker.state() === "ready",
     reask: () => walker.start(),
+    drains: walker.drains,
   }), [walker]);
   const renewing = useSessionReask(read);
   return useMemo(() => ({

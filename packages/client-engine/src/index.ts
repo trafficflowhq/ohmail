@@ -54,7 +54,10 @@ export {
 /** A store read the session refused is asked again once it renews — one rule, browser and phone. */
 export {
   createSessionReask,
+  REASK_MAX,
   sessionRefused,
+  wireFailed,
+  type DrainDoor,
   type SessionReask,
   type SessionRenewalDoor,
   type StoreReadSource,
