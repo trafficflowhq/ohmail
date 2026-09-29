@@ -487,7 +487,7 @@ const ADMIN_AUTH_EVENTS = [
   "refresh_reuse_revoked", "refresh_recovered", "refresh_replayed",
 ] as const satisfies readonly AuthAuditEvent["event"][];
 type MissingAuthEvent = Exclude<AuthAuditEvent["event"], (typeof ADMIN_AUTH_EVENTS)[number]>;
-export const ADMIN_AUTH_EVENTS_EXHAUSTIVE: MissingAuthEvent extends never ? true : never = true;
+const ADMIN_AUTH_EVENTS_EXHAUSTIVE: MissingAuthEvent extends never ? true : never = true;
 const authEventWord = (v: string): string => (ADMIN_AUTH_EVENTS as readonly string[]).includes(v) ? v : "other";
 
 /** `devices.kind` has no CHECK; the kinds the seams admit, and `other` for anything else. */
@@ -495,7 +495,7 @@ const ADMIN_DEVICE_KINDS = [
   "web", "macos", "desktop-linux", "desktop-macos", "desktop-windows", "mobile-android", "mobile-ios",
 ] as const satisfies readonly DeviceKind[];
 type MissingDeviceKind = Exclude<DeviceKind, (typeof ADMIN_DEVICE_KINDS)[number]>;
-export const ADMIN_DEVICE_KINDS_EXHAUSTIVE: MissingDeviceKind extends never ? true : never = true;
+const ADMIN_DEVICE_KINDS_EXHAUSTIVE: MissingDeviceKind extends never ? true : never = true;
 const deviceKindWord = (v: string): string => (ADMIN_DEVICE_KINDS as readonly string[]).includes(v) ? v : "other";
 
 /** `release_refusal` is closed at its writer and has no CHECK, so the read narrows it too. */
