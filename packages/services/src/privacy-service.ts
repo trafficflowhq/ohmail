@@ -1,6 +1,7 @@
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { accountSettings, messages, messageBodies, trackerEvents, type Tx } from "@trafficflow/db";
 import { hostOf, isKnownTracker, isBeaconUrl } from "@trafficflow/core/mail";
+import { imageDimensions } from "@trafficflow/core/image-dimensions";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { requireUuid } from "./ids.js";
@@ -159,24 +160,6 @@ const TRANSPARENT_GIF = Uint8Array.from([
 ]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** GIF/PNG intrinsic dimensions from the leading bytes, or null if unknown. */
-function imageDimensions(body: Uint8Array): { w: number; h: number } | null {
-  // GIF: "GIF87a"/"GIF89a", logical screen width/height at bytes 6..9 (LE).
-  if (body.length >= 10 && body[0] === 0x47 && body[1] === 0x49 && body[2] === 0x46) {
-    return { w: body[6]! | (body[7]! << 8), h: body[8]! | (body[9]! << 8) };
-  }
-  // PNG: \x89PNG\r\n\x1a\n then IHDR; width bytes 16..19, height 20..23 (BE).
-  if (
-    body.length >= 24 &&
-    body[0] === 0x89 && body[1] === 0x50 && body[2] === 0x4e && body[3] === 0x47
-  ) {
-    const be = (o: number): number =>
-      (body[o]! << 24) | (body[o + 1]! << 16) | (body[o + 2]! << 8) | body[o + 3]!;
-    return { w: be(16) >>> 0, h: be(20) >>> 0 };
-  }
-  return null;
-}
 
 /**
  * PrivacyService — the spy-pixel blocker.
@@ -436,8 +419,20 @@ export class PrivacyService {
       );
     }
 
+    /**
+     * A BODY WE CANNOT SIZE IS NOT RELAYED. The sizer reads every family `GET /img` serves, so an
+     * unsized body is a format no label admits under a false label (a decoder picks by bytes) or a
+     * truncated header — and relaying it is how a disguised 1×1 would be drawn unrecorded. Refused
+     * before any event is written and whatever the pixel switch says: this is "an image we cannot
+     * name is not an image we will serve", applied to the bytes.
+     */
     const dims = imageDimensions(fetched.body);
-    const pixelByDims = dims != null && dims.w <= 1 && dims.h <= 1;
+    if (dims === null) {
+      throw new ServiceError(
+        "upstream_failed", UPSTREAM_STATUS, "the remote image's format could not be read", undefined, false,
+      );
+    }
+    const pixelByDims = dims.w <= 1 && dims.h <= 1;
     const detected = sawTracker || pixelByDims;
 
     if (detected) {
