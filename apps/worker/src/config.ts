@@ -141,15 +141,14 @@ export const DEFAULT_HEALTH_PORT = 8080;
 export const DEFAULT_ROSTER_INTERVAL_MS = 30_000;
 /**
  * How long a mailbox may go unserved before its row has to say so (mail 0029). A DURATION, not a
- * count of passes: "after N roster passes" is a proxy for time that silently retunes itself whenever
- * {@link DEFAULT_ROSTER_INTERVAL_MS} changes (N = 4 is two minutes today, eight the day somebody
- * quadruples the roster interval), so the property measured in wall clock has a knob in wall clock.
- * And it must stay below `DEFAULT_ALERT_THRESHOLDS.syncLagMs` (15 min): the `sync_lag` alert fires when
- * an on-duty mailbox has not synced for `syncLagMs`, and the row is the only thing that can EXPLAIN
- * that alert — set the grace above the threshold and the page arrives while the row is still pristine.
- * The constraint is ASSERTED (`config.test.ts`), and {@link syncBlockGraceMsFrom} refuses an env value that breaks it.
+ * count of roster passes, so it cannot silently retune itself when {@link DEFAULT_ROSTER_INTERVAL_MS}
+ * moves. Bounded on both sides: ABOVE the remedy it waits for — the lease detach, a poll and the
+ * re-attaching roster pass ({@link assertGraceCoversItsRemedy}) — and BELOW
+ * `DEFAULT_ALERT_THRESHOLDS.syncLagMs` (15 min), because the row is the only thing that can explain
+ * the `sync_lag` alert. Both are asserted over the defaults (`config.test.ts`) and refused at boot
+ * over the resolved values ({@link syncBlockGraceMsFrom}).
  */
-export const DEFAULT_SYNC_BLOCK_GRACE_MS = 120_000;
+export const DEFAULT_SYNC_BLOCK_GRACE_MS = 240_000;
 /**
  * How long a cycle may keep failing to read the organizer lease before the mailbox is detached. In
  * one incident every served mailbox emitted over a hundred `sync_cycle_lease_unavailable` over most
@@ -654,6 +653,24 @@ function leaseUnavailableDetachMsFrom(env: NodeJS.ProcessEnv): number {
   return ms;
 }
 
+/**
+ * THE ROW WAITS OUT ITS REMEDY (SYNC-BLOCK-GRACE-IS-SHORTER-THAN-ITS-REMEDY): an unreadable lease
+ * detaches at the first cycle past its bound, up to a poll late, and the next roster pass
+ * re-attaches before the block rows are written — so the row may speak only after all three.
+ * Refused at boot over the four RESOLVED values, naming every variable, never clamped.
+ */
+export function assertGraceCoversItsRemedy(v: {
+  syncBlockGraceMs: number; leaseUnavailableDetachMs: number; pollIntervalMs: number; rosterIntervalMs: number;
+}): void {
+  const remedy = v.leaseUnavailableDetachMs + v.pollIntervalMs + v.rosterIntervalMs;
+  if (v.syncBlockGraceMs > remedy) return;
+  throw new WorkerConfigError("TF_SYNC_BLOCK_GRACE_MS",
+    `TF_SYNC_BLOCK_GRACE_MS (${v.syncBlockGraceMs}) must be greater than TF_LEASE_UNAVAILABLE_DETACH_MS ` +
+    `(${v.leaseUnavailableDetachMs}) + POLL_INTERVAL_MS (${v.pollIntervalMs}) + TF_ROSTER_INTERVAL_MS ` +
+    `(${v.rosterIntervalMs}) = ${remedy}; a shorter grace writes the row before the detach and re-attach ` +
+    `that may clear it have run`);
+}
+
 // ── KEK loading: ONE implementation, in `@trafficflow/core`. ───────────────────
 // The worker used to own a private `TF_KEK_V1`-only parser, and the API host had
 // none — the two could silently disagree about the key that decrypts every mailbox
@@ -856,6 +873,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   if (shardIndex >= shards) {
     throw new WorkerConfigError("TF_SHARD_INDEX", `TF_SHARD_INDEX must be < TF_SHARDS (got ${shardIndex} of ${shards})`);
   }
+  const pollIntervalMs = pollIntervalMsFrom(env);
+  const rosterIntervalMs = optInt(env, "TF_ROSTER_INTERVAL_MS", DEFAULT_ROSTER_INTERVAL_MS);
+  const syncBlockGraceMs = syncBlockGraceMsFrom(env);
+  const leaseUnavailableDetachMs = leaseUnavailableDetachMsFrom(env);
+  assertGraceCoversItsRemedy({ syncBlockGraceMs, leaseUnavailableDetachMs, pollIntervalMs, rosterIntervalMs });
   return {
     databaseUrl: url,
     entitlements: loadEntitlements(env),
@@ -873,7 +895,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     // from the API's own variable so the two cannot disagree about one operator's network.
     dialHostGuard: dialHostGuardFromEnv(env),
     kek: kekEnvIdentity(env),
-    pollIntervalMs: pollIntervalMsFrom(env),
+    pollIntervalMs,
     sentDomain: env.TF_SENT_DOMAIN ?? "trafficflow.ch",
     maxMailboxes: optInt(env, "TF_MAX_MAILBOXES", DEFAULT_MAX_MAILBOXES),
     cycleLanes: cycleLanesFrom(env),
@@ -882,10 +904,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     healthPort: optInt(env, "PORT", DEFAULT_HEALTH_PORT),
     standbyRetryMs: optInt(env, "TF_STANDBY_RETRY_MS", DEFAULT_STANDBY_RETRY_MS),
     servingNothingMaxMs: servingNothingMaxMsFrom(env),
-    rosterIntervalMs: optInt(env, "TF_ROSTER_INTERVAL_MS", DEFAULT_ROSTER_INTERVAL_MS),
+    rosterIntervalMs,
     lockHeartbeatMs: optInt(env, "TF_LOCK_HEARTBEAT_MS", DEFAULT_LOCK_HEARTBEAT_MS),
-    syncBlockGraceMs: syncBlockGraceMsFrom(env),
-    leaseUnavailableDetachMs: leaseUnavailableDetachMsFrom(env),
+    syncBlockGraceMs,
+    leaseUnavailableDetachMs,
     mailboxRetryMs: optInt(env, "TF_MAILBOX_RETRY_MS", DEFAULT_MAILBOX_RETRY_MS),
     maxSyncFailures: optInt(env, "TF_MAX_SYNC_FAILURES", DEFAULT_MAX_SYNC_FAILURES),
     // Exchange/M365 OAuth2 — the ENV BOOTSTRAP for the application registration. The authority is the
