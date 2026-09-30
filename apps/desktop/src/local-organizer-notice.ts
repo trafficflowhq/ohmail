@@ -21,6 +21,10 @@ export const organizerNoticeOverBridge: OrganizerNoticeTransport = async (mailbo
     `/mailboxes/${encodeURIComponent(mailboxId)}/organizer-notice/dismiss`,
     { method: "POST" },
   );
-  if (!res.ok) throw new Error(`${res.status}`);
+  // The status and code travel on the error: the notice says why from them (offline, 402 access).
+  if (!res.ok) {
+    const code = await res.json().then((b: { error?: { code?: unknown } }) => b?.error?.code, () => undefined);
+    throw Object.assign(new Error(`${res.status}`), { status: res.status, code });
+  }
   return undefined;
 };

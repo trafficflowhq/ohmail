@@ -82,10 +82,11 @@ const all = (): Factory[] =>
 describe("apps/desktop/test — a mock factory spreads importActual", () => {
   it("finds the mock factories at all", () => {
     // Anti-vacuity: the case below is a filter over this list, and a filter over nothing passes.
-    // The bridge-fetch rigs are named because they are the measured subject.
+    // The bridge-fetch rigs are named because they are the measured subject. A floor, not a pin:
+    // a new rig is an addition the case below judges, not a reason for this one to redden.
     const found = all();
     expect(found.length).toBeGreaterThanOrEqual(8);
-    expect(found.filter((f) => f.specifier === "../src/bridge-fetch.js").length).toBe(7);
+    expect(found.filter((f) => f.specifier === "../src/bridge-fetch.js").length).toBeGreaterThanOrEqual(7);
   });
 
   it("every factory spreads the real module", () => {

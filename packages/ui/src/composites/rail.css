@@ -147,6 +147,8 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
 .rn-verbs button{font-size:calc(11.5px + var(--type-up));font-weight:600;color:var(--accent-ink);
   border-radius:var(--r-pill);padding:2px 9px;margin-left:-9px}
 .rn-verbs button:hover{background:var(--accent-soft)}
+/* A refused Mark read: one plain line under the verbs, the block's own register. */
+.rn-refused{margin:0 0 0 13px;color:var(--ink)}
 .rail-dock{margin-top:auto;padding-top:10px;box-shadow:inset 0 1px 0 var(--hair-soft);
   display:flex;align-items:stretch;gap:4px}
 .rail-dock .ritem{width:auto}
