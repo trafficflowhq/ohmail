@@ -460,26 +460,30 @@ export type ConnectOutcome =
    */
   | { kind: "refused"; reason: Refusal; needsRepair?: boolean; died?: SessionDeath };
 
+/** A connect answered by a death of the slot's manager: said by the one function, re-paired unless erased. */
+function diedOutcome(died: SessionDeath): ConnectOutcome {
+  return { kind: "refused", reason: deathRefusal(died), died, needsRepair: died !== "erased" };
+}
+
 const bareFetch = (): FetchLike => globalThis.fetch.bind(globalThis) as FetchLike;
 
 /**
  * The BearerManager's persistence, bound to one profile's slot in the keystore — the ONLY caller
- * of the store's three credential writes, each of which lands only over the token its manager held.
+ * of the store's three credential writes, each of which lands only over a token its manager held.
  * An ERASED death owes the forget BEFORE the credential goes, so a kill between the two leaves the
  * debt the next launch pays before it connects (`drainPendingWipes`). The debt names the account,
- * not the family, so it is not fenced; a full queue still clears, and the Forget reports it.
+ * not the family, so it is not fenced. A mark that cannot be written skips the clear: the next
+ * launch presents the token, hears the erasure again, and marks it again.
  */
 function vaultFor(profiles: ServerProfileStore, row: Pick<ServerProfile, "id" | "origin" | "accountId">): RefreshVault {
   const { id } = row;
   return {
-    save: (t, presented) => profiles.saveRefreshToken(id, t, presented),
-    clear: async (presented, why) => {
-      if (why === "erased") {
-        await profiles.markPendingWipe(id, mirrorOwnerKey(row.origin, row.accountId)).catch(() => undefined);
-      }
-      return profiles.clearRefreshToken(id, presented);
+    save: (t, held) => profiles.saveRefreshToken(id, t, held),
+    clear: async (held, why) => {
+      if (why === "erased") await profiles.markPendingWipe(id, mirrorOwnerKey(row.origin, row.accountId));
+      return profiles.clearRefreshToken(id, held);
     },
-    armAttempt: (a, presented) => profiles.armRefreshAttempt(id, a, presented),
+    armAttempt: (a, head, held) => profiles.armRefreshAttempt(id, a, head, held),
   };
 }
 
@@ -1241,19 +1245,20 @@ async function buildSession(
   if (profile.origin !== LOCAL_ENGINE_ORIGIN && env.standalone?.door() != null) {
     await env.standalone.standDownAway();
   }
-  /* A SLOT WHOSE MANAGER DIED IN THIS PROCESS answers with that death, whoever was listening —
-     ahead of the owed-forget refusal, because an erased death owes a forget nobody pressed. The
-     read builds nothing; one function says every cause, and an erased account is not re-paired. */
-  const died = (env.bearers ?? processBearers).deathOf(profile.id);
-  if (died !== null) {
-    return { kind: "refused", reason: deathRefusal(died), died, needsRepair: died !== "erased" };
-  }
+  /* A SLOT WHOSE MANAGER DIED IN THIS PROCESS answers with that death, whoever was listening; the
+     read builds nothing, and one function says every cause. An ERASED death answers ahead of the
+     owed-forget refusal, because it owes a Forget nobody pressed; any other death answers after
+     it, so a Forget somebody pressed is still said as one. */
+  const slots = env.bearers ?? processBearers;
+  const known = slots.deathOf(profile.id);
+  if (known === "erased") return diedOutcome(known);
   if (await env.profiles.isOwedForget(profile.id)) {
     return {
       kind: "refused",
       reason: refuse("forgetStillPending"),
     };
   }
+  if (known !== null) return diedOutcome(known);
   /**
    * The mailbox on this phone — this arm's position is load-bearing. Ahead of
    * the admission: `LOCAL_ENGINE_ORIGIN` is `http://sidecar` and `admitOrigin`
@@ -1300,7 +1305,7 @@ async function buildSession(
     }
   }
 
-  const bearer = (env.bearers ?? processBearers).managerFor(profile.id, () => ({
+  const bearer = slots.managerFor(profile.id, () => ({
     origin: profile.origin,
     refreshToken: profile.refreshToken,
     // The attempt a rotation killed between submit and adopt left owed: the relaunch repeats it.
@@ -1315,8 +1320,11 @@ async function buildSession(
   // wherever a session could be built, because a null-credential bearer is the one shape the
   // "dies on first wire touch" rule below cannot catch: with no refresh token to present,
   // `rotate()` returns false without ever firing `onSessionDead`, and an adopted session
-  // would render cached mail behind an endless quiet 401 instead of routing to re-pair.
+  // would render cached mail behind an endless quiet 401 instead of routing to re-pair. A held
+  // manager that died since the read above (another holder's last request) answers as its death.
   if (!bearer.paired()) {
+    const dying = bearer.deathSettled();
+    if (dying !== null) return diedOutcome(await dying);
     return {
       kind: "refused",
       needsRepair: true,
@@ -1346,14 +1354,12 @@ async function buildSession(
     auth: { headers: () => bearer.headers(), fetch: paired },
   });
   if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
-  // The boot makes NO request any more (boot-from-local, `engine/boot.ts`), so the bearer
-  // cannot die inside it — the "ready-but-dead" window a `bearer.paired()` check used to
-  // close here has moved, not vanished. A revoked cold profile now boots ready over its own
-  // cached mirror and dies on the FIRST wire touch (the deferred identity probe or the first
-  // drain, whichever 401s into the refused rotation first) — and both of those are started
-  // by the connection layer AFTER it subscribes `onSessionDead` in `adopt`, so the death
-  // always lands on a listener and tears down to the same one-gesture sentence.
-  // `pairing.test.ts` pins that ordering-free version of the property.
+  // The boot makes NO request, but the manager is the slot's, so another holder's last request
+  // (a torn-down tree's) can end it while the boot runs. That death still reaches the session:
+  // `onSessionDead` tells a subscriber that arrives after the death once, on a microtask, so
+  // `adopt`'s listener tears down to the same one-gesture sentence either way. A revoked cold
+  // profile boots ready over its own cached mirror and dies on its first wire touch, which the
+  // connection layer starts only after it subscribes. `pairing.test.ts` pins that ordering.
   return {
     kind: "connected",
     session: {

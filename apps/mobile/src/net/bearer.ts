@@ -6,6 +6,7 @@
  * held by `bearer-registry.ts`, is what keeps a token from being presented twice. An activity
  * recreate rebuilds the React tree in the same runtime while a rotation can be in flight, so a
  * manager per session is two presenters. Every attempt carries a name persisted before it submits.
+ * A death is this manager's own fact: settled once, and told to a listener that subscribes late.
  */
 
 import { ACCOUNT_ERASED, ERASED_ANSWER_HEADER, readRefreshAnswer, sessionEndedResponse } from "@ohmail/client-engine";
@@ -21,20 +22,20 @@ export interface BearerTokens {
 /**
  * Where the refresh token survives an app kill. The profile store binds this to the profile's
  * slot in expo-secure-store; tests bind a recorder. `save` is awaited by the rotation before it
- * resolves; `clear` is a refusal's take-back. Every write names the token the manager HELD
- * (`presented`), and the store writes only over that token: a re-pair's newer family is not
- * this manager's to overwrite or clear.
+ * resolves; `clear` is a refusal's take-back. Every write carries `held`, every token this
+ * manager has held, and the store writes only over one of them: a re-pair's newer family is not
+ * this manager's to touch, and a write that failed is caught up by the next one.
  */
 export interface RefreshVault {
-  save(refreshToken: string, presented: string | null): Promise<RefreshWrite>;
+  save(refreshToken: string, held: ReadonlySet<string>): Promise<RefreshWrite>;
   /** `why` is the death this clear follows: an erased account's copy is owed before the token goes. */
-  clear(presented: string | null, why: SessionDeath): Promise<RefreshWrite>;
+  clear(held: ReadonlySet<string>, why: SessionDeath): Promise<RefreshWrite>;
   /**
-   * Persist the name of the attempt about to be submitted, beside the token it will spend. The
-   * store clears it in the same write that saves the answer, so adopting IS clearing and no
-   * caller can forget to.
+   * Persist the name of the attempt about to be submitted, beside `head`, the token it will
+   * spend — written together, so a failed save is repaired here and a kill after this write
+   * relaunches on a pair the server can answer. Adopting clears the name.
    */
-  armAttempt(attemptId: string, presented: string | null): Promise<RefreshWrite>;
+  armAttempt(attemptId: string, head: string, held: ReadonlySet<string>): Promise<RefreshWrite>;
 }
 
 /**
@@ -120,6 +121,12 @@ export class BearerManagerRN implements SessionRenewalDoor {
   private attempt: string | null;
   private readonly deadListeners = new Set<(why: SessionDeath) => void>();
   private readonly renewedListeners = new Set<() => void>();
+  /** Every refresh token this manager has held, in order: the one it was built with, then each adopted. */
+  private readonly chain: string[] = [];
+  /** The death, settled after its listeners heard it; `null` while this manager lives. */
+  private settled: SessionDeath | null = null;
+  /** The death in progress or settled; `null` for a manager that has not died. */
+  private dying: Promise<SessionDeath> | null = null;
 
   constructor(opts: {
     /** `https://host` or plain `http://192.168…` — the door this credential belongs to. */
@@ -143,6 +150,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     this.accountId = opts.accountId ?? null;
     this.access = opts.accessToken ?? null;
     this.refresh = opts.refreshToken;
+    if (opts.refreshToken !== null) this.chain.push(opts.refreshToken);
     this.attempt = opts.refreshAttempt ?? null;
     this.vault = opts.vault;
     // Bind the global — RN's fetch is a plain function today, but the illegal-invocation trap
@@ -155,14 +163,30 @@ export class BearerManagerRN implements SessionRenewalDoor {
     return this.refresh !== null;
   }
 
+  /** How this manager died, or `null` while it lives — set once every listener has heard it. */
+  get death(): SessionDeath | null {
+    return this.settled;
+  }
+
+  /** The death in progress or settled, resolving to its cause; `null` for a manager that has not died. */
+  deathSettled(): Promise<SessionDeath> | null {
+    return this.dying;
+  }
+
+  /** The chain as a write carries it: the store admits a write only over one of these tokens. */
+  private held(): ReadonlySet<string> {
+    return new Set(this.chain);
+  }
+
   /**
    * Adopt a freshly minted pair — every successful rotation's answer. Memory is updated
    * synchronously (the next stamp must carry the new token); the returned promise is the vault
    * write, which `rotate()` awaits and other callers may ignore.
    */
   adopt(tokens: BearerTokens): Promise<void> {
-    // The token this pair replaces, read BEFORE the assignment: the store writes over it only.
-    const presented = this.refresh;
+    // The chain before this pair: the row holds one of its tokens, whichever write last landed.
+    const held = this.held();
+    this.chain.push(tokens.refreshToken);
     this.access = tokens.accessToken;
     this.refresh = tokens.refreshToken;
     this.generation++;
@@ -174,7 +198,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     for (const cb of [...this.renewedListeners]) {
       try { cb(); } catch { /* the pair is adopted either way */ }
     }
-    return this.vault.save(tokens.refreshToken, presented).then(() => undefined, () => {
+    return this.vault.save(tokens.refreshToken, held).then(() => undefined, () => {
       /* A keystore refusal: the session lives until the next kill, then one scan re-pairs. */
     });
   }
@@ -205,27 +229,44 @@ export class BearerManagerRN implements SessionRenewalDoor {
   /**
    * End the session locally and tell the connection layer. Never throws, and IDEMPOTENT: the
    * routed logout below can die inside its own recovery (the refresh refused mid-logout), and
-   * the funeral must not be held twice — one dead signal per session, whoever reports it.
+   * the funeral must not be held twice — one dead signal per session, whoever reports it. The
+   * death is settled AFTER the listener loop: a listener that subscribed during the clear is
+   * told by the loop, one that subscribes afterwards by `onSessionDead`, and nobody twice.
    */
-  private async die(why: SessionDeath): Promise<void> {
-    if (this.access === null && this.refresh === null) return;
-    const presented = this.refresh;
+  private die(why: SessionDeath): Promise<void> {
+    if (this.access === null && this.refresh === null) {
+      return this.dying === null ? Promise.resolve() : this.dying.then(() => undefined);
+    }
     this.access = null;
     this.refresh = null;
     this.attempt = null;
-    await this.vault.clear(presented, why).catch(() => {
-      /* already gone, or the keystore refused — either way this session is over locally */
-    });
-    for (const cb of [...this.deadListeners]) cb(why);
+    const dying = (async (): Promise<SessionDeath> => {
+      await this.vault.clear(this.held(), why).catch(() => {
+        /* already gone, or the keystore refused — either way this session is over locally */
+      });
+      for (const cb of [...this.deadListeners]) cb(why);
+      this.settled = why;
+      return why;
+    })();
+    this.dying = dying;
+    return dying.then(() => undefined);
   }
 
   /**
    * Subscribe to the session ending. The callback is told WHY, because "pair again" with no
    * reason is what a person meets today and `revoked` is the one death worth naming: somebody
-   * presented a token this family had already spent.
+   * presented a token this family had already spent. A subscriber to a manager that has already
+   * died is told once, on a microtask: never synchronously, so a caller that paints `live` right
+   * after subscribing is not painted over.
    */
   onSessionDead(cb: (why: SessionDeath) => void): () => void {
     this.deadListeners.add(cb);
+    const settled = this.settled;
+    if (settled !== null) {
+      void Promise.resolve().then(() => {
+        if (this.deadListeners.has(cb)) cb(settled);
+      });
+    }
     return () => this.deadListeners.delete(cb);
   }
 
@@ -248,7 +289,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
       // ordering a retry cannot recover from.
       const attemptId = this.attempt ?? mintAttemptId();
       this.attempt = attemptId;
-      await this.vault.armAttempt(attemptId, presented).catch(() => {
+      await this.vault.armAttempt(attemptId, presented, this.held()).catch(() => {
         /* The keystore refused. The attempt is still named on the wire and in memory, so a retry
            inside this process is recognised; only one that outlives the process is not — which
            is exactly where every phone stood before the name existed. */

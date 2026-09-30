@@ -4,9 +4,9 @@
  * carries the engine + store; only the connection screens drive transitions. Teardown awaits
  * the in-flight drain (a closed mirror reopens under a live drain's next flush); a refused
  * boot is a refusal, not a degraded mode; a failed sync re-hydrates. Every transition runs
- * through the {@link TransitionGate}, serialized last-wins — two managers on one profile would
- * present one refresh token twice, and strict reuse would revoke the pairing. Profiles cross
- * as ids, re-read from the keystore inside the gate; the dead signal lands on `ended`.
+ * through the {@link TransitionGate}, serialized last-wins; the bearer manager is the slot's,
+ * one per profile for the process (`bearer-registry.ts`). Profiles cross as ids, re-read from
+ * the keystore inside the gate; the dead signal lands on `ended`.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppState, Platform } from "react-native";

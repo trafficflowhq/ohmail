@@ -1,11 +1,9 @@
 /**
- * The transition gate — connection transitions run one at a time, and the last request wins. Two profile taps
- * overlapping, or a switch racing the launch connect, would run two `connectProfile` flows at once; each builds a
- * BearerManager, two managers on one profile present the family's one refresh token twice, and strict reuse
- * (correctly) revokes the family. The single-flight inside one manager cannot help across managers, so serialization
- * lives where managers are born. Two guarantees: one at a time (a transition starts only after the previous settled),
- * and last-wins — a superseded transition still runs to completion (its manager may already have rotated; abandoning
- * it mid-flight loses the fresh token), but the caller checks `stillCurrent()` before adopting: a stale outcome is
+ * The transition gate — connection transitions run one at a time, and the last request wins. The bearer manager is
+ * no longer born here: `bearer-registry.ts` holds one per pairing slot for the process, so two overlapping connects of
+ * one profile share one manager and one single-flight rotation. What the gate still orders is the connection state.
+ * Two guarantees: one at a time (a transition starts only after the previous settled), and last-wins — a superseded
+ * transition still runs to completion, but the caller checks `stillCurrent()` before adopting: a stale outcome is
  * torn down, never rendered. React-free on purpose, so the node suite drives it directly.
  */
 export class TransitionGate {

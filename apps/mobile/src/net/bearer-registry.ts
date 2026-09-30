@@ -32,14 +32,8 @@ export interface SlotRedeem {
   fetchImpl?: FetchLike;
 }
 
-interface Slot {
-  manager: BearerManagerRN;
-  /** How the slot's manager died, heard whoever else listens; `null` while it lives. */
-  death: SessionDeath | null;
-}
-
 export class BearerRegistry {
-  private readonly slots = new Map<string, Slot>();
+  private readonly slots = new Map<string, BearerManagerRN>();
   /** Writes the one log line per death; the app's is `noteSessionDeath`. */
   private readonly note: (why: SessionDeath) => void;
 
@@ -50,7 +44,7 @@ export class BearerRegistry {
   /** The slot's manager: built on the first ask from `row()`, the held one on every later ask. */
   managerFor(profileId: string, row: () => SlotRow): BearerManagerRN {
     const held = this.slots.get(profileId);
-    if (held !== undefined) return held.manager;
+    if (held !== undefined) return held;
     return this.hold(profileId, new BearerManagerRN({ ...row(), accessToken: null }));
   }
 
@@ -64,9 +58,9 @@ export class BearerRegistry {
   }
 
   /**
-   * How the slot's manager died in this process, or `null` — a read that builds nothing. A death
-   * nobody was subscribed to (a launch's wake drain, a torn-down tree's last request) is still
-   * answered here, so the next connect says it instead of reading a cleared row.
+   * How the slot's manager died in this process, or `null` — the manager's own fact, read without
+   * building anything. A death nobody was subscribed to (a launch's wake drain, a torn-down tree's
+   * last request) is answered here, so the next connect says it instead of reading a cleared row.
    */
   deathOf(profileId: string): SessionDeath | null {
     return this.slots.get(profileId)?.death ?? null;
@@ -77,14 +71,11 @@ export class BearerRegistry {
     this.slots.delete(profileId);
   }
 
-  /** Hold `manager` as the slot's, hearing its death first. A replaced manager's death is not the slot's. */
+  /** Hold `manager` as the slot's and log its death, once. A replaced manager's death is not the slot's. */
   private hold(profileId: string, manager: BearerManagerRN): BearerManagerRN {
-    const slot: Slot = { manager, death: null };
-    this.slots.set(profileId, slot);
+    this.slots.set(profileId, manager);
     manager.onSessionDead((why) => {
-      if (this.slots.get(profileId) !== slot) return;
-      slot.death = why;
-      this.note(why);
+      if (this.slots.get(profileId) === manager) this.note(why);
     });
     return manager;
   }
