@@ -112,16 +112,18 @@ function lazily<T>(bag: Record<string, unknown>, name: string, build: () => T): 
   });
 }
 
+/** This host on every usage line: a literal, never read from the environment, so the program's
+ *  per-host figure cannot be written under two names. */
+const USAGE_HOST = "api" as const;
+
 function buildServices(cfg: HostConfig): ApiServices {
   const { authConfig, keyProvider } = cfg;
   /**
-   * The cost recorder, built once per configuration and shared by both AI clients below.
-   * `makePooledDb` memoises by URL, so this names the same connection `buildDeps` hands every
-   * request. `host: "api"` is a literal, never derived from the environment: it is in the
-   * cost table's primary key, and three processes writing under one name would make "which
-   * arm stopped recording" unanswerable. On this host the recorder writes per call and the
-   * client awaits the promise: a serverless process can be frozen the instant its response
-   * is written, so a floating write may never land.
+   * THE PROCESS-LEVEL REPORTER, shared by both AI clients below: one `ai_call` line per model
+   * call, greppable in the log drain and carrying Anthropic's request id. It records nothing.
+   * What a call cost reaches the entitlements program on the RELEASE of the work that made it
+   * (the Screener's and the draft's), attributed by the per-call hook the service passes and
+   * priced by the program; `USAGE_HOST` names this host on those lines.
    */
   const onUsage = (r: AnthropicCallReport): void => {
     console.log(JSON.stringify({ event: "ai_call", ...r }));
@@ -198,7 +200,7 @@ function buildServices(cfg: HostConfig): ApiServices {
     schedules: scheduleService,
     /* The drafting call is cut before this host's kill, so a charge that bought nothing is
        returned by the request that took it (`draftWindow`); the ceiling is the route's own. */
-    drafting: makeDraftingService({ invocationBudgetMs: API_MAX_DURATION_MS }),
+    drafting: makeDraftingService({ invocationBudgetMs: API_MAX_DURATION_MS, usageHost: USAGE_HOST }),
     /* THE AI SPEND GATE IS COMPOSED ONCE, NOT PER ROUTE — see `entitlementsPort` below.
      *
      * This was `aiCredits`, a factory building a `debit_draft` gate per request with
@@ -301,6 +303,7 @@ function buildServices(cfg: HostConfig): ApiServices {
      * derive from it — a second copy would drift silently when the duration changes.
      */
     invocationBudgetMs: API_MAX_DURATION_MS,
+    usageHost: USAGE_HOST,
     /* THE SCREENER'S TERMS ARE THE ACTION'S, and this is where they used to be chosen.
      *
      * The exclusive claim that closes the concurrent double-purchase race, and the `withSetupPool`
@@ -412,10 +415,8 @@ function buildServices(cfg: HostConfig): ApiServices {
 
   // The live drafter. `POST /messages/:id/draft` calls this; absent, the route 500s cleanly.
   // Lazy: `makeAnthropicClient` builds a closure and retry policy no health probe needs.
-  // `onUsage` goes both to the `console.log` line (`ai_call` is greppable in the log drain
-  // and carries Anthropic's request id) and to `ai_usage_daily` through the recorder above —
-  // awaited here, buffered on the worker. The screener's classifier is deliberately not
-  // wired in this block: a model call per eligible held row on every `list` was the hazard,
+  // `onUsage` is the `ai_call` log line above; the draft's usage rides its release. The
+  // screener's classifier is deliberately not wired in this block: a model call per eligible held row on every `list` was the hazard,
   // closed by persisting suggestions behind `POST /screener/suggest`; the classifier is
   // constructed inside the screener block above, and this client is tuned for one drafting
   // call (25 s, one retry), not a batch of classifications.
