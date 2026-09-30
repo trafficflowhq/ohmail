@@ -8,16 +8,17 @@
  * its own. An empty mailbox renders an honest empty state, never sample mail.
  * The rows go through `MailList`, which mounts a window of them, not the mailbox.
  */
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { View } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useIsFocused } from "expo-router";
 import { Copy } from "../../src/copy";
 import {
   onOrganizerState, organizerStateVersion, readingAtConnectSaid, sayReadingAtConnect,
 } from "../../src/engine/organizer-session";
+import { heldWhileHidden } from "../../src/state/held-while-hidden";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
-import { useEngineQueuesAsk, useWorld, type WorldMail, type WorldUnscreened } from "../../src/state/world";
+import { useEngineQueuesAsk, useWorld, type World, type WorldMail, type WorldUnscreened } from "../../src/state/world";
 import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -50,7 +51,12 @@ function OhboxBody() {
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
   const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
-  const { resurfaced, fresh, seen, total, meta } = w.ohbox;
+  /* Under a pushed reader this screen is hidden: it keeps what it showed (`held-while-hidden.ts`). */
+  const focused = useIsFocused();
+  const kept = useRef<{ ohbox: World["ohbox"]; doorbell: World["doorbell"] } | null>(null);
+  const shown = heldWhileHidden(focused, kept.current, () => ({ ohbox: w.ohbox, doorbell: w.doorbell }));
+  kept.current = shown;
+  const { resurfaced, fresh, seen, total, meta } = shown.ohbox;
   /* WHO ORGANIZES THIS MAILBOX, said where the connect lands when it is not this phone. Scoped to
      the standalone session: the notice is about the engine in this app, never another account. */
   useSyncExternalStore(
@@ -83,8 +89,8 @@ function OhboxBody() {
           <>
             <ViewHeadOhbox
               meta={metaWhen(surface, meta)}
-              unread={w.ohbox.unreadIds.length}
-              onMarkAll={() => w.actions.markAllSeen(w.ohbox.unreadIds)}
+              unread={shown.ohbox.unreadIds.length}
+              onMarkAll={() => w.actions.markAllSeen(shown.ohbox.unreadIds)}
             />
             {reading ? (
               <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
@@ -99,10 +105,10 @@ function OhboxBody() {
                 />
               </Panel>
             ) : null}
-            <UnscreenedOffer offer={w.ohbox.unscreened} screen={w.actions.screenUnscreened} />
+            <UnscreenedOffer offer={shown.ohbox.unscreened} screen={w.actions.screenUnscreened} />
             {/* Who organizes this mailbox, where it is news — the Settings card's own claim. */}
             <OrganizerStrip />
-            <Doorbell initials={w.doorbell.initials} count={w.doorbell.count} />
+            <Doorbell initials={shown.doorbell.initials} count={shown.doorbell.count} />
           </>
         }
         empty={
