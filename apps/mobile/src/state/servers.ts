@@ -398,6 +398,13 @@ export class ServerProfileStore {
         throw new StoreFault("pairing_not_recorded", `this phone could not record the pairing "${profile.id}" before storing it`);
       }
       await this.writeProfile(profile);
+      // AND THE VALUE IS READ BACK. A re-pair keeps the row id, so a write that resolved without
+      // storing leaves the previous family's row, which the new pairing's manager can never write
+      // (its chain holds only the redeem's token). Refused, so the pairing seam closes the minted
+      // session and says the pairing was not stored.
+      if ((await this.readProfile(profile.id))?.refreshToken !== profile.refreshToken) {
+        throw new StoreFault("pairing_not_recorded", `this phone could not store the pairing "${profile.id}"`);
+      }
       return profile;
     });
   }
