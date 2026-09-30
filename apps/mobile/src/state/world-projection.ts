@@ -69,6 +69,8 @@ export interface ProjectionInputs {
   images: ImageRoute;
   zone: string;
   locale: string;
+  /** The clock this run draws with — read by the provider at the run (`world-clock.ts` ticks it). */
+  now: Date;
   foldersOn: boolean;
   foldersPending: boolean;
   foldersStorable: boolean;
@@ -122,7 +124,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
     const { engine, zone, locale, foldersOn, posture } = inp;
     const raw = engine.read();
     const stamp = raw.stampExcept(NOT_DERIVED_FROM);
-    const now = new Date();
+    const now = inp.now;
     const day = zonedDayNumber(now, zone);
     const mailboxes = inp.mailboxes ?? EMPTY_MAILBOXES;
     /* The tags keep their identity while they read the same, so a mail change does not re-key every row. */
@@ -221,7 +223,9 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
         return kept("scheduled", [engine, stamp, v], () => liveScheduled(raw, v));
       },
       get drafts() {
-        return kept("drafts", [engine, stamp, v], () => liveDrafts(raw, v));
+        /* A send's state is read against THIS run's clock, never the kept view's: the view is kept
+           for the day, and a send left `sending` turns interrupted ten minutes later. */
+        return kept("drafts", [engine, stamp, v, now.getTime()], () => liveDrafts(raw, { ...v, now }));
       },
       folders: {
         enabled: foldersOn,
@@ -249,7 +253,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
          already made, handed in so a render is not a partition. While a delete is held the reader
          partitions the raw mirror itself, as it always did. */
       message: (id) => liveMessage(engine, id, {
-        now: new Date(), zone, locale, foldersEnabled: foldersOn,
+        now, zone, locale, foldersEnabled: foldersOn,
         ownAddresses: inp.ownAddresses, mailboxes, screening: posture, tags,
       }, base === raw ? presented.world : undefined),
       filesOf: (id) => liveFiles(engine, id),

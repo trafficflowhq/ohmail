@@ -57,6 +57,7 @@ import { askEngineQueues, drainReads } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
 import { createProjector, type Projected } from "./world-projection";
 import { usePrefs } from "./store";
+import { nextClockEdge, worldClock } from "./world-clock";
 import {
   connectionSay, firstSyncSay,
   dispatchHeldRouting,
@@ -1220,7 +1221,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     [machine],
   );
 
-  const zone = useMemo(readerZone, []);
+  /* Read again when the app comes back from the background: a trip across zones changes the day. */
+  const [zone, setZone] = useState(readerZone);
   /*
    * WHICH LANGUAGE THE ENGINE NAMES A DAY IN — the seam `live.ts` already had and nothing ever
    * filled. Every date the mirror puts on screen goes through `messageDisplayTime`,
@@ -1421,7 +1423,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         setOutcomeSeq((n) => n + 1);
       });
     // `conn.syncing` falling is the drain-completed signal; `outcomeSeq` re-checks after a flush.
-    // `zone` is a mount-stable memo; it is named because the appointment sentence reads it.
+    // `zone` is the reader's zone, read again on resume; it is named because the appointment sentence reads it.
   }, [conn.syncing, engine, acts, showToast, outcomeSeq, zone]);
   // The outgoing session's ledger must not answer for the next session's keys.
   useEffect(() => {
@@ -1534,6 +1536,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * shaped the comparison.
    */
   const [freshBeat, setFreshBeat] = useState(0);
+  /* THE LISTS' OWN CLOCK (`world-clock.ts`): a tick at the next edge a list reads — local midnight,
+     a send turning interrupted — so an idle phone re-draws when time alone changes what it says. */
+  const [clockBeat, setClockBeat] = useState(0);
 
   /**
    * THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH. This phone's mirror
@@ -1576,6 +1581,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const projector = useMemo(() => (engine ? createProjector() : null), [engine]);
   /* The cost of the lists, on the engine log once a minute (`ui_vitals`): a device reads its own. */
   useEffect(() => (engine === null ? undefined : startUiVitals(takeClientEngineVitals)), [engine]);
+  useEffect(() => {
+    if (engine === null) return undefined;
+    const clock = worldClock({ edge: () => nextClockEdge(engine.read(), new Date(), zone), tick: () => setClockBeat((n) => n + 1) });
+    clock.arm();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      const here = readerZone();
+      if (here !== zone) setZone(here);
+      else clock.resume();
+    });
+    return () => { clock.stop(); sub.remove(); };
+  }, [engine, zone, derivedStamp, clockBeat]);
   const projected = useMemo<Projected | null>(() => {
     if (engine === null || session === null || projector === null) return null;
     /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
@@ -1591,7 +1608,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         ? { get name(): string { return Copy.standaloneName; }, email: rows?.[0]?.address ?? "" }
         : { name: session.profile.origin.replace(/^https?:\/\//, ""), email: rows?.[0]?.address ?? "" },
       images: imageRouteOf(session),
-      zone, locale, foldersOn, foldersPending, foldersStorable, setFoldersEnabled,
+      zone, locale, now: new Date(), foldersOn, foldersPending, foldersStorable, setFoldersEnabled,
       folderSummary: (folderId: string) => readFolderSummary(session, folderId),
       signatures, resurfaceTime, rememberResurfaceTime, posture, scopes,
       screenerServer, relayed, leavingWaiting, heldDeletes, heldPlaces,
@@ -1602,9 +1619,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         presentedOptionsNow.current = options;
       },
     });
-    // The derived stamp IS the mailbox dependency; the day rolls over on `freshBeat`'s tick.
+    // The derived stamp IS the mailbox dependency; time alone moves the lists on `clockBeat`, and
+    // every run reads a fresh clock.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, projector, session, scopes, zone, locale, actions, derivedStamp, freshBeat, searchRev, walker, searchWalker,
+  }, [engine, projector, session, scopes, zone, locale, actions, derivedStamp, freshBeat, clockBeat, searchRev, walker, searchWalker,
     offMirrorRev, foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
     resurfaceTime, rememberResurfaceTime, screening, screenerServer, relayed, leavingWaiting, heldDeletes,
     heldPlaces, mailboxes]);
