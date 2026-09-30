@@ -431,6 +431,7 @@ export {
 export {
   UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, isSpendMetered,
   parkedAccountsOf, PARKED_READ_CONCURRENCY, type ParkedAccountsReader,
+  inPlaneRounds, ParkedReadUnfinished, type PlaneReadBound,
   UNPRICED, pricingOf, type ActionPricing, type ActionPrices, type AiPricingMarker,
   type EntitlementsPort, type EntitlementsComposition,
   type SpendPort, type SpendComposition, type SpendMeta, type AccessPort,

@@ -449,6 +449,8 @@ async function alertPass(
       // pages rather than only that something did. Closed codes and counts — the vendor's own
       // sentence is already in `sinkErrors` above, which this endpoint's credential gates.
       sinkHealth: result.sinkHealth,
+      // The rules this pass did not read, with why: a partial storage reading is named here.
+      unread: result.unread,
     });
   } catch (err) {
     // `raw` means there is no error envelope above this handler, so it must never throw.

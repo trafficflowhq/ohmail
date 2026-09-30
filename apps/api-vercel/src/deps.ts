@@ -6,6 +6,7 @@ import {
 import type { AccountsAtCapReader } from "@trafficflow/db/cloud";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRecorder, accountsAtCapOf,
+  ALERT_PARKED_READ_BOUND,
   makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS, readDbTls,
   type EntitlementsClient,
 } from "@trafficflow/db/cloud";
@@ -512,8 +513,10 @@ function alertReadersFor(cfg: HostConfig): HostAlertReaders {
   const port = () => servicesFor(cfg).entitlementsPort as EntitlementsComposition;
   const readers: HostAlertReaders = cfg.entitlements
     ? {
+      // BOUNDED: this host is no roster, and a hung plane must neither hold the page only this
+      // arm sends nor the console's read. An unfinished read throws, and the rule says so.
       parkedAccounts: (ids, now, recheck) => {
-        const read = parkedAccountsOf(port());
+        const read = parkedAccountsOf(port(), ALERT_PARKED_READ_BOUND);
         return read ? read(ids, now, recheck) : Promise.resolve(new Set<string>());
       },
       accountsAtCap: (db, now) => {

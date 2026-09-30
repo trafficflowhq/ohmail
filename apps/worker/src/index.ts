@@ -146,6 +146,7 @@ import {
   readLeasePeek, answerLeasePeek, deriveRequestKey, makeClockCorrectionWatch,
   type OrganizerIntent,
 } from "@trafficflow/core/adapters/organizer-lease";
+import { maintenanceGate } from "./maintenance-gate.js";
 
 /** How often the leader runs the global maintenance pass (expired-idempotency-key sweep). */
 export const MAINTENANCE_EVERY_MS = 60 * 60 * 1000;
@@ -800,7 +801,7 @@ export async function startWorkerWithLock(
        say. Written in the same statement as `dutyAccounts`, so the two never disagree. */
     let dutyMailboxes: readonly EnabledMailbox[] = [];
     // Time-gate for the global maintenance pass; starts "due" so a fresh leader sweeps once.
-    let lastMaintenanceAt = 0;
+    const maintenanceDue = maintenanceGate(MAINTENANCE_EVERY_MS);
     /**
      * The staging bucket's client, built ONCE per run rather than per pass — it is a closure over
      * three strings and a `fetch`, so rebuilding it hourly would be pure waste. `null` when this
@@ -818,7 +819,7 @@ export async function startWorkerWithLock(
       : null;
     /**
      * Time-gate for the bubble-up pass. Starts "due" for the same reason
-     * `lastMaintenanceAt` does, and here it matters more: a message whose `bubble_up_at` fell
+     * `maintenanceDue` does, and here it matters more: a message whose `bubble_up_at` fell
      * due while the previous leader was being replaced must resurface on the new leader's FIRST
      * cycle, not one {@link BUBBLE_UP_EVERY_MS} after the takeover.
      */
@@ -5044,11 +5045,7 @@ export async function startWorkerWithLock(
         // platform cron because the worker is already the single elected writer, so exactly one
         // process runs it, and a failure is a logged warning, never a cycle abort.
         shard: true,
-        gate: () => {
-          if (Date.now() - lastMaintenanceAt < MAINTENANCE_EVERY_MS) return false;
-          lastMaintenanceAt = Date.now();
-          return true;
-        },
+        gate: maintenanceDue,
         run: async () => {
           try {
             const pruned = await pruneIdempotencyKeys(db as unknown as Tx, new Date());

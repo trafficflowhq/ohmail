@@ -2632,6 +2632,14 @@ export interface AlertPassResult {
    * surface has to say so rather than leave it out.
    */
   sinkHealth: AlertSinkHealth[];
+  /** The rules this pass did not read and why, sorted: a rule listed here cleared nothing. */
+  unread: Array<{ kind: AlertKind; reason: UnreadReason }>;
+}
+
+/** An evaluation's unread rules as a closed, sorted list. */
+function unreadListOf(scope: EvaluationScope): Array<{ kind: AlertKind; reason: UnreadReason }> {
+  return [...scope.unreadReasons].map(([kind, reason]) => ({ kind, reason }))
+    .sort((a, b) => a.kind.localeCompare(b.kind));
 }
 
 /** One sink's standing health, as published. Closed codes only — see {@link sinkHealthOf}. */
@@ -2927,6 +2935,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       sinkOutcomes: outcomes,
       sinkDegraded: behindAcct.sinkDegraded,
       sinkHealth: sinkHealthOf(sinks, behindStreak),
+      unread: unreadListOf(scope),
     };
   }
 
@@ -3217,6 +3226,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       // Published on a pass that attempted nothing, and that is the point: standing health is
       // what the last ATTEMPT established, and a quiet pass neither confirms nor disturbs it.
       sinkHealth: sinkHealthOf(sinks, streak),
+      unread: unreadListOf(scope),
     };
   }
 
@@ -3299,6 +3309,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     sinkOutcomes: outcomes,
     sinkDegraded,
     sinkHealth: sinkHealthOf(sinks, streak),
+    unread: unreadListOf(scope),
   };
 }
 

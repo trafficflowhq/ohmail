@@ -666,7 +666,8 @@ export interface AccountDetailV2 {
   devices: AdminDevice[];
   sessions: AdminSessionFacts;
   authEvents: AdminAuthEvent[];
-  owedReversals: AdminOwedReversals | null;
+  /** `"withheld"` for a reader the entitlements program would not serve credits to (`ops`). */
+  owedReversals: AdminOwedReversals | "withheld" | null;
   staffActions: StaffEvent[];
   audit: AuditEntry[];
   securityEvents: SecurityEvent[];

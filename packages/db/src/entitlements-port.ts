@@ -296,6 +296,12 @@ export interface EntitlementsPort {
    */
   accessOrFault(accountId: string): Promise<AccessVerdict | "fault">;
   /**
+   * How many `access` dials this process made that the program did not answer, ever. A bounded
+   * reader reads it before and after a round to stop asking a program that is not answering;
+   * a port without it is judged by its `UNMETERED_ACCESS` answers alone.
+   */
+  accessFaults?(): number;
+  /**
    * Charge one AI action against `attemptKey`, which names the unit of WORK so retries are free.
    * `attemptKey` is the BARE key — the message, `<messageId>:<hashed client key>`, the run id —
    * never a composed ledger source. Both implementations compose the source through the one
@@ -440,24 +446,86 @@ export interface AtCapReading {
 /** Reads the at-cap population through the pass's own handle; the hosted barrel builds one. */
 export type AccountsAtCapReader = (db: Tx, now: Date) => Promise<AtCapReading>;
 
-export function parkedAccountsOf(entitlements: EntitlementsComposition): ParkedAccountsReader | null {
+/**
+ * A plane read's own bound: no round starts past `boundMs`, a round still out at it is abandoned,
+ * and no round starts once the dials this read caused have faulted `faultCeiling` times. So a
+ * program that hangs costs the caller `boundMs`, and one that fails fast costs a round of rows.
+ */
+export interface PlaneReadBound {
+  boundMs: number;
+  faultCeiling: number;
+}
+
+const ROUND_TIMED_OUT = Symbol("round timed out");
+
+/** Resolves `p`, or `ROUND_TIMED_OUT` after `ms`; the timer never outlives the answer. */
+async function within<V>(p: Promise<V>, ms: number): Promise<V | typeof ROUND_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<typeof ROUND_TIMED_OUT>((res) => { timer = setTimeout(() => res(ROUND_TIMED_OUT), Math.max(0, ms)); });
+  try {
+    return await Promise.race([p, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * `ask` for every item, {@link PARKED_READ_CONCURRENCY} at a time. Without a bound every item is
+ * answered; with one, `complete` is false when the bound stopped it, and `answered` holds only
+ * the rounds that finished.
+ */
+export async function inPlaneRounds<T>(
+  entitlements: EntitlementsPort, items: readonly T[], ask: (item: T) => Promise<AccessVerdict>,
+  bound?: PlaneReadBound,
+): Promise<{ answered: Array<[T, AccessVerdict]>; complete: boolean }> {
+  const deadline = bound ? Date.now() + bound.boundMs : Infinity;
+  const base = entitlements.accessFaults?.();
+  let unanswered = 0;
+  const answered: Array<[T, AccessVerdict]> = [];
+  for (let i = 0; i < items.length; i += PARKED_READ_CONCURRENCY) {
+    if (bound) {
+      const faults = base === undefined ? unanswered : entitlements.accessFaults!() - base;
+      if (faults >= bound.faultCeiling || Date.now() >= deadline) return { answered, complete: false };
+    }
+    const chunk = items.slice(i, i + PARKED_READ_CONCURRENCY);
+    const round = Promise.all(chunk.map(ask));
+    round.catch(() => undefined);
+    const verdicts = bound ? await within(round, deadline - Date.now()) : await round;
+    if (verdicts === ROUND_TIMED_OUT) return { answered, complete: false };
+    chunk.forEach((item, j) => {
+      const v = verdicts[j]!;
+      if (v === UNMETERED_ACCESS) unanswered++;
+      answered.push([item, v]);
+    });
+  }
+  return { answered, complete: true };
+}
+
+/** A bounded parked read that did not finish: which accounts are parked is not known. */
+export class ParkedReadUnfinished extends Error {
+  constructor(readonly read: number, readonly total: number) {
+    super(`parked read stopped at its bound: ${read} of ${total} accounts read`);
+    this.name = "ParkedReadUnfinished";
+  }
+}
+
+export function parkedAccountsOf(
+  entitlements: EntitlementsComposition, bound?: PlaneReadBound,
+): ParkedAccountsReader | null {
   if (!isMetered(entitlements)) return null;
   return async (accountIds, _now, recheck) => {
-    const parked = new Set<string>();
-    for (let i = 0; i < accountIds.length; i += PARKED_READ_CONCURRENCY) {
-      const chunk = accountIds.slice(i, i + PARKED_READ_CONCURRENCY);
-      /* A REFUSAL IS ASKED AGAIN FOR A RECHECKED ACCOUNT (mail 0135): its row was kicked, and the
-         reopening door kicks in the statement that clears the block, so a refusal held from
-         before the kick may predate the clear. Only a refusal is asked twice; an allow stands. */
-      const verdicts = await Promise.all(chunk.map(async (id) => {
-        const held = await entitlements.access(id);
-        return held.ok || !recheck?.accounts.has(id)
-          ? held
-          : entitlements.access(id, { askedAfter: recheck.since });
-      }));
-      chunk.forEach((id, j) => { if (!verdicts[j]!.ok) parked.add(id); });
-    }
-    return parked;
+    /* A REFUSAL IS ASKED AGAIN FOR A RECHECKED ACCOUNT (mail 0135): its row was kicked, and the
+       reopening door kicks in the statement that clears the block, so a refusal held from before
+       the kick may predate the clear. Only a refusal is asked twice; an allow stands. */
+    const { answered, complete } = await inPlaneRounds(entitlements, accountIds, async (id) => {
+      const held = await entitlements.access(id);
+      return held.ok || !recheck?.accounts.has(id)
+        ? held
+        : entitlements.access(id, { askedAfter: recheck.since });
+    }, bound);
+    // A partial parked set would call every unread account on duty, so an unfinished read throws.
+    if (!complete) throw new ParkedReadUnfinished(answered.length, accountIds.length);
+    return new Set(answered.filter(([, v]) => !v.ok).map(([id]) => id));
   };
 }
 

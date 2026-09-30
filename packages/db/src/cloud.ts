@@ -135,7 +135,8 @@ export {
 /* Who is at their storage cap, read for the two alert drivers, and the one reader bag a host
  * composes for them. CLOUD-ONLY: the reader reads a table and asks the entitlements program. */
 export {
-  accountsAtCapOf, alertReadersOf, AT_CAP_READ_LIMIT, type AlertReaders,
+  accountsAtCapOf, alertReadersOf, AT_CAP_READ_LIMIT, AT_CAP_READ_BOUND, ALERT_PARKED_READ_BOUND,
+  type AlertReaders,
 } from "./at-cap-reader.js";
 
 export {

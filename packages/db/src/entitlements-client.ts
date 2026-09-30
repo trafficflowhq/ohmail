@@ -486,6 +486,8 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     }
   };
 
+  /** Every `/v1/access` dial that ended without a verdict, for {@link EntitlementsPort.accessFaults}. */
+  let accessFaultCount = 0;
   /** One read of the program: the verdict it cached, or `null` for every fault (then held). */
   const ask = async (accountId: string, flight: Flight): Promise<AccessVerdict | null> => {
     const at = clock();
@@ -509,6 +511,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         return verdict;
       }
     }
+    accessFaultCount += 1;
     // Expired holds leave as a new one is written, so the map keeps one budget's faults.
     const now = clock();
     for (const [id, until] of faultHeldUntil) if (until <= now) faultHeldUntil.delete(id);
@@ -579,6 +582,8 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     async accessOrFault(accountId: string): Promise<AccessVerdict | "fault"> {
       return (await shared(accountId)) ?? "fault";
     },
+
+    accessFaults: () => accessFaultCount,
 
     async spend(
       accountId: string, action: SpendAction, attemptKey: string, meta?: SpendMeta,

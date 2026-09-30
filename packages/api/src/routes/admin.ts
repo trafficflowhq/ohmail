@@ -404,8 +404,12 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: (req, deps, params) =>
-      adminRoute("overview", "read.overview", (_req, ctx) => overview(ctx, deps.admin?.parkedAccounts))(req, deps, params),
+    // The read closes over the parked reader alone, never `deps`: the staff read reaches only
+    // its five-key context and that one bounded capability.
+    handler: (req, deps, params) => {
+      const parked = deps.admin?.parkedAccounts;
+      return adminRoute("overview", "read.overview", (_req, ctx) => overview(ctx, parked))(req, deps, params);
+    },
   },
   {
     method: "GET",

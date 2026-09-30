@@ -475,6 +475,13 @@ export const readerMasksAddresses = (reader: AdminReader): boolean =>
   !reader.roles.includes("owner") && reader.roles.includes("ops")
   && !reader.roles.includes("support") && !reader.roles.includes("billing");
 
+/**
+ * The roles the entitlements program serves its whole account view to (support, billing,
+ * owner): owed reversals follow it, so a reader holding only `ops` is told they are withheld.
+ */
+export const readerSeesOwedReversals = (reader: AdminReader): boolean =>
+  reader.roles.some((r) => r === "support" || r === "billing" || r === "owner");
+
 export function maskAddress(address: string): string {
   const at = address.lastIndexOf("@");
   return at < 0 ? "•••" : `•••${address.slice(at)}`;
@@ -666,7 +673,8 @@ export async function adminAccountDetail(
     .from(authEvents)
     .where(and(eq(authEvents.accountId, id), sql`${authEvents.at} >= ${since}::timestamptz`))
     .orderBy(desc(authEvents.at)).limit(ADMIN_LIST_LIMIT * 2);
-  const [owed] = await db
+  const seesOwed = readerSeesOwedReversals(reader);
+  const [owed] = !seesOwed ? [] : await db
     .select({
       count: sql<number>`count(*)::int`,
       oldestOwedAt: sql<string | null>`min(${creditRefundObligations.owedAt})`,
@@ -708,7 +716,7 @@ export async function adminAccountDetail(
       lastSeenAt: iso(sessionRow?.lastSeenAt ?? null),
     },
     authEvents: authRows.map((a) => ({ userId: a.userId, event: authEventWord(a.event), at: asDate(a.at).toISOString() })),
-    owedReversals: owed && int(owed.count) > 0 && owed.oldestOwedAt
+    owedReversals: !seesOwed ? "withheld" : owed && int(owed.count) > 0 && owed.oldestOwedAt
       ? { count: int(owed.count), oldestOwedAt: asDate(owed.oldestOwedAt).toISOString(), tries: int(owed.tries), lastFault: faultWord(owed.lastFault) }
       : null,
     staffActions,
@@ -1147,8 +1155,22 @@ export async function adminAlerts(
 export async function adminAlertReading(
   db: AdminDb, now: Date, readers: AdminAlertReaders = {},
 ): Promise<{ alerts: AlertSummary[]; unread: AdminAlertUnread[] }> {
+  // A parked read that did not finish (the host bounds it) leaves `sync_lag` counting accounts
+  // that may be parked: the evaluator says so on the row, and this read lists the rule as partial.
+  let parkedUnfinished = false;
+  const parked = readers.parkedAccounts;
+  const parkedAccounts: EvaluateOptions["parkedAccounts"] = parked
+    ? async (ids, at, recheck) => {
+      try {
+        return await parked(ids, at, recheck);
+      } catch (err) {
+        parkedUnfinished = true;
+        throw err;
+      }
+    }
+    : parked;
   const { alerts: firing, scope } = await evaluateAlertsWithScope(db, {
-    now, ...(readers.parkedAccounts !== undefined ? { parkedAccounts: readers.parkedAccounts } : {}),
+    now, ...(parkedAccounts !== undefined ? { parkedAccounts } : {}),
   });
   // THROUGH THE DB PACKAGE'S OWN READER, never a select of the table from here: resolution marks
   // rather than deletes, so a read without `resolved_at IS NULL` renders fixed history as live.
@@ -1204,7 +1226,9 @@ export async function adminAlertReading(
       fixHref: r.fixHref,
     } satisfies AlertSummary));
 
-  const unread = [...scope.unreadReasons]
+  const reasons = new Map(scope.unreadReasons);
+  if (parkedUnfinished && !reasons.has("sync_lag")) reasons.set("sync_lag", "partial");
+  const unread = [...reasons]
     .map(([kind, reason]) => ({ kind: kind as AdminAlertUnread["kind"], reason }))
     .sort((a, b) => a.kind.localeCompare(b.kind));
   return { alerts: [...evaluated, ...unevaluated], unread };
