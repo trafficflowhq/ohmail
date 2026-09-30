@@ -2193,7 +2193,7 @@ const PAGE_IS_NOT_CONTENT: ReadonlySet<string> = new Set(["ask", "walked"]);
 /**
  * Do these puts restate exactly the stored rows of their type — same ids, same entities? Compared
  * as key-sorted JSON (the rows are small and bounded: one queue page, the offer's groups), with
- * `ignore` naming top-level fields that number a write rather than state anything.
+ * `ignore` naming fields — at any depth — that number a write rather than state anything.
  */
 function sameStoredEntities(
   stored: ReadonlyArray<{ id: string; entity: unknown }>,

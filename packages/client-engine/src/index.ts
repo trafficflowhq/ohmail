@@ -776,16 +776,16 @@ export {
   type ServerGuess,
 } from "./providers.js";
 
-/**
- * WHAT THE CLIENT ENGINE COSTS THE WINDOW — the whole-mirror derivation's time (the worst pass,
- * and the median and p95 of the window beside it) and how many
- * version bumps asked for it, counted in `client-vitals.ts` and read once every five minutes by
- * the shell's `ui_vitals` report. Exported from the barrel rather than as a leaf: the only caller
- * is the shell, which already compiles this package.
- */
 /** The derived stamp's deny list, shared by the web shell and the phone. */
 export { NOT_DERIVED_FROM } from "./derived-stamp.js";
 
+/**
+ * WHAT THE CLIENT ENGINE COSTS THE WINDOW — the whole-mirror derivation's time (the worst pass,
+ * and the median and p95 of the window beside it) and how many
+ * version bumps asked for it, counted in `client-vitals.ts` and read by the `ui_vitals` reports
+ * of the web shell (every five minutes) and the phone (every minute). Exported from the barrel
+ * rather than as a leaf: both callers already compile this package.
+ */
 export {
   beginDerive,
   countNotify,

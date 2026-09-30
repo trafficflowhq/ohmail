@@ -374,8 +374,8 @@ export function useShellDerivations({
    * made it, so every callback here reads through a ref
    * (`stable-callback.ts` is the account of that mechanism). */
   /* The row being read keeps its conversation in "New" until it is left or answered — the engine
-     holds it (`holdOpenRow`) and moves the overlay revision when it does, so `derived` re-runs this
-     on the hold as well. */
+     holds it (`holdOpenRow`); a hold from nothing changes no view and moves no version, so the
+     held id is a key of the memo itself. */
   const openHeld = engine.openRowHeld();
   const ohbox = useMemo(() => ohboxView(presented, openHeld), [presented, derived, openHeld]);
   /* One row per resurfaced conversation, and the badge for what arrived since the pin went up —
