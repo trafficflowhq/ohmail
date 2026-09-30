@@ -333,7 +333,8 @@ export function MessageActions({
    * was asked for (the earlier of the two), so it earns no sentence.
    */
   /* Per reader day and chosen hour, not per render: the reader re-renders on every body and bar change. */
-  const horizonDay = new Date().toDateString();
+  const today = new Date();
+  const horizonDay = today.getFullYear() * 10_000 + today.getMonth() * 100 + today.getDate();
   const { tomorrow, nextWeek } = useMemo(
     () => ({ tomorrow: tomorrowAt(new Date(), resurfaceTime), nextWeek: nextWeekAt(new Date(), resurfaceTime) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

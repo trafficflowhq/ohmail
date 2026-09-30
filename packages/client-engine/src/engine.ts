@@ -4624,9 +4624,9 @@ export class OhmailEngine {
    * surface names the message it opens out of "New for you" here BEFORE it saves the read, and
    * `ohboxView(read(), openRowHeld())` keeps it in New at its arrival slot until the reader moves
    * on or answers it. Held only if it stands in New now: a read row, or a resurfaced one, holds
-   * nothing and ends the previous hold. It moves the overlay revision, so the read's paint and the
-   * hold reach every subscriber in one snapshot — a React state beside the paint lost that race to
-   * the notify.
+   * nothing and ends the previous hold. The hold is the engine's own state, so the read's paint and
+   * the hold reach every subscriber in one snapshot — a React state beside the paint lost that race
+   * to the notify.
    */
   holdOpenRow(id: string): boolean {
     if (id === this.openRow) return true;
@@ -4646,9 +4646,17 @@ export class OhmailEngine {
     return this.openRow;
   }
 
+  /**
+   * A HOLD FROM NOTHING CHANGES NO LIST: {@link holdOpenRow} holds only a row already in "New for
+   * you" at this version, so every view reads the same with it or without it and the version stays —
+   * a derivation keyed on it keeps its answer (a large mailbox re-derived every list on each open).
+   * The hold counts from the next change, which every reader of `openRowHeld()` keys on. Ending or
+   * switching a hold can move a row, so that moves the overlay revision.
+   */
   private setOpenRow(id: string | null): void {
+    const ends = this.openRow !== null;
     this.openRow = id;
-    this.overlayRev++;
+    if (ends) this.overlayRev++;
     this.notify();
   }
 

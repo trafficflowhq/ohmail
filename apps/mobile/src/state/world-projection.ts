@@ -1,12 +1,10 @@
 /**
  * THE MAILBOX AS THE SCREENS READ IT — the world's projection, renderer-free so a test drives the
  * shipped derivation over a real engine. `WorldProvider` builds one projector per engine and calls
- * it as its one memo body.
- *
- * Every list is computed when a screen first reads it and kept until an input IT reads moves: the
- * presented reader is kept across runs until the mailbox's derived stamp (bodies excluded), the
+ * it as its one memo body. Every list is computed when a screen first reads it and kept until an
+ * input IT reads moves: the presented reader is kept until the derived stamp (bodies excluded), the
  * reader's day or a presentation input moves, so a run caused by a settings or queue answer reuses
- * it and the engine's own memos hit; each list keys on that reader, the view and its own extras;
+ * it and the engine's memos hit; each list keys on that reader, the view and its own extras;
  * History's rows are built only when read. Getters read the caches, never a run's locals.
  */
 import { Copy } from "../copy";
