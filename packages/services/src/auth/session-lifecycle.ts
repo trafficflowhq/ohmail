@@ -182,10 +182,21 @@ export class SessionLifecycle {
     return runInTransaction(ctx, fn);
   }
 
-  async logout(ctx: ServiceContext, b: { allDevices?: boolean } = {}): Promise<void> {
-    if (!ctx.userId) throw new ServiceError("unauthorized", 401, "no active session");
+  /**
+   * Sign out, and name the families this call revoked (the hosted override prunes by them). Three
+   * arms: every session of the user (`allDevices`), the family a presented REFRESH TOKEN names
+   * (`refreshToken`, the web's door — {@link logoutByRefresh}), or the session this request
+   * resolved. The user refusal lives in the two arms that need a user: the refresh arm serves a
+   * browser whose access token a rotation it never heard about has already replaced.
+   */
+  async logout(
+    ctx: ServiceContext, b: { allDevices?: boolean; refreshToken?: string } = {},
+  ): Promise<{ familyIds: string[] }> {
     const db = asTx(ctx);
     const now = ctx.now();
+    if (!b.allDevices && b.refreshToken !== undefined) return this.logoutByRefresh(ctx, b.refreshToken, now);
+    const userId = this.requireUser(ctx);
+    let familyIds: string[] = [];
     if (b.allDevices) {
       // MASS LOGOUT IS DEVICE REVOCATION IN EFFECT, so it takes device revocation's gate.
       // Without this, any full session could sign out EVERY session and refresh family of the
@@ -195,16 +206,66 @@ export class SessionLifecycle {
       // ungated: taking back your own credential must never be hard, and it can only reduce
       // risk. `allDevices` reduces EVERYBODY's — which is the same act `revokeDevice` gates.
       await this.requireStepUp(ctx);
-      await db.update(sessions).set({ revokedAt: now })
-        .where(and(eq(sessions.userId, ctx.userId), isNull(sessions.revokedAt)));
+      const revoked = await db.update(sessions).set({ revokedAt: now })
+        .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)))
+        .returning({ familyId: sessions.familyId });
       await db.update(refreshTokens).set({ revokedAt: now })
-        .where(and(eq(refreshTokens.userId, ctx.userId), isNull(refreshTokens.revokedAt)));
+        .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+      familyIds = [...new Set(revoked.map((r) => r.familyId))];
     } else if (ctx.sessionId) {
       const s = (await db.select().from(sessions).where(eq(sessions.id, ctx.sessionId)).limit(1))[0];
-      if (s) await this.revokeFamily(db, s.familyId, now);
+      if (s) {
+        await this.revokeFamily(db, s.familyId, now);
+        familyIds = [s.familyId];
+      }
     }
-    const u = (await db.select().from(users).where(eq(users.id, ctx.userId)).limit(1))[0];
+    const u = (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0];
     if (u) await this.audit(db, u, "logout", undefined, ctx);
+    return { familyIds };
+  }
+
+  /**
+   * THE WEB'S SIGN-OUT: the family the presented refresh token names, in ANY state — live,
+   * consumed, expired or revoked, because a sign-out mints nothing — plus the family of the
+   * session this request resolved. A tab whose renewal answer was lost holds a replaced access
+   * token and the spent refresh token of a live family; only the second still names it. No
+   * cross-account refusal: that exists for MINTING, and a 409 here would leave the other family
+   * live in this jar. Revoke and audit are one transaction, and a bookkeeping fault never vetoes
+   * the revoke (the reuse sweep's rule). Nothing named at all is a 401 the door clears the jar on.
+   */
+  private async logoutByRefresh(
+    ctx: ServiceContext, presented: string, now: Date,
+  ): Promise<{ familyIds: string[] }> {
+    const db = asTx(ctx);
+    const [row] = await db.select({
+      familyId: refreshTokens.familyId, userId: refreshTokens.userId, sessionId: refreshTokens.sessionId,
+    }).from(refreshTokens).where(eq(refreshTokens.tokenHash, hashToken(presented))).limit(1);
+    const sessionId = ctx.sessionId ?? null;
+    const [own] = sessionId
+      ? await db.select({ familyId: sessions.familyId, userId: sessions.userId })
+        .from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+      : [];
+    // family → whose sign-out it is, for the audit row: the token's session, else the resolved one.
+    const named = new Map<string, { userId: string; sessionId: string }>();
+    if (row) named.set(row.familyId, { userId: row.userId, sessionId: row.sessionId });
+    if (own && sessionId && !named.has(own.familyId)) named.set(own.familyId, { userId: own.userId, sessionId });
+    if (named.size === 0) throw new ServiceError("unauthorized", 401, "nothing to sign out");
+    const familyIds = [...named.keys()];
+    try {
+      await this.inTransaction(ctx, async (txCtx) => {
+        const tx = asTx(txCtx);
+        for (const [familyId, who] of named) {
+          await this.revokeFamily(tx, familyId, now);
+          const [user] = await tx.select().from(users).where(eq(users.id, who.userId)).limit(1);
+          await this.audit(tx, user ?? null, "logout", undefined, txCtx,
+            `family=${familyId} session=${who.sessionId} by=refresh`);
+        }
+      });
+    } catch {
+      // The revoke alone, on the request's own handle: the family dies even when its record cannot.
+      for (const familyId of familyIds) await this.revokeFamily(db, familyId, now);
+    }
+    return { familyIds };
   }
 
   /**

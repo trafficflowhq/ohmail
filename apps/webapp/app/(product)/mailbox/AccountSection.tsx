@@ -96,7 +96,7 @@ export function AccountSection() {
   const [signOutBlocked, setSignOutBlocked] = useState(false);
   /** This browser will not say what it holds, so the wipe cannot be proved complete. */
   const [signOutUnverified, setSignOutUnverified] = useState(false);
-  /** `POST /auth/logout` refused or never arrived, so the SESSION is still live. See `doSignOut`. */
+  /** The sign-out door refused or never answered, so the SESSION may still be live. See `doSignOut`. */
   const [signOutServerRefused, setSignOutServerRefused] = useState<string | null>(null);
   /** The erasure landed and the local wipe did not. See `erase`. */
   const [eraseMirrorBlocked, setEraseMirrorBlocked] = useState(false);

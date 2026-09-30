@@ -34,6 +34,17 @@ export const API_BASE = "/api";
 export const REFRESH_PATH = "/auth/refresh";
 
 /**
+ * THE WEB'S SIGN-OUT DOOR, below the refresh cookie's path because the door revokes by the family
+ * that cookie names and a browser sends it nowhere else. It gets the refresh path's treatment at
+ * every layer: its own bare rewrite (the `/api` prefix would reach it without the cookie), and no
+ * edge function or page-body refusal in front of it.
+ */
+export const SIGN_OUT_PATH = `${REFRESH_PATH}/logout`;
+
+/** The two paths below `REFRESH_PATH` this origin forwards unprefixed. */
+export const REFRESH_SCOPED_PATHS = Object.freeze([REFRESH_PATH, SIGN_OUT_PATH]);
+
+/**
  * THE SPLIT, ENUMERATED. Every path this deployment answers ITSELF, and therefore every
  * path the `/api/*` proxy does not get to see.
  *
@@ -228,7 +239,7 @@ export const STATIC_REWRITES = Object.freeze([...FLATHUB_VERIFICATION]);
 
 /**
  * The non-API paths a ROUTE HANDLER answers, and the rewrite sources that land on one: the only
- * paths besides `/api/*` and `/auth/refresh` where `middleware.ts` lets a request body through.
+ * paths besides `/api/*` and `REFRESH_SCOPED_PATHS` where `middleware.ts` lets a request body through.
  * Every other path this origin answers is a page, and no page takes a body.
  */
 export const HANDLER_PATHS = Object.freeze((() => {
@@ -263,5 +274,6 @@ export function rewritesFor(origin) {
     ...STATIC_REWRITES,
     { source: `${API_BASE}/:path*`, destination: `${origin}/:path*` },
     { source: REFRESH_PATH, destination: `${origin}${REFRESH_PATH}` },
+    { source: SIGN_OUT_PATH, destination: `${origin}${SIGN_OUT_PATH}` },
   ].map((r) => ({ ...r }));
 }

@@ -627,11 +627,12 @@ const NEVER_REFRESH = [
   "/auth/verify-email",
   "/auth/2fa/",
   /*
-   * `/auth/logout` — a 401 here is the server saying the session is ALREADY GONE, which is the
-   * outcome being asked for. `sign-out.ts` reads it exactly that way. Refreshing first re-mints
-   * a session in order to revoke it, which is absurd on its own terms; it also took the sign-out
-   * through a nested acquire of the ceremony lock, which is how the whole sign-out came to hang.
-   * The reentrancy above makes that survivable; this makes it not happen.
+   * `/auth/logout`, and the web's sign-out door below `/auth/refresh`, which that entry already
+   * covers: a 401 at either is an answer, never an accident. Refreshing first re-mints a session
+   * in order to revoke it, which is absurd on its own terms; it also took the sign-out through a
+   * nested acquire of the ceremony lock, which is how the whole sign-out came to hang. The door's
+   * coded 401 is its verdict on the family (`sign-out.ts` reads it so); `/auth/logout`'s says only
+   * that its access token did not resolve, which is why the web no longer presses it.
    */
   "/auth/logout",
   /*

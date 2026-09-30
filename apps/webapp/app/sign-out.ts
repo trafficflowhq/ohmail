@@ -22,14 +22,14 @@ import { ERASED_KEY } from "./shell/account-erased";
 import { postSignedOut } from "./signed-out-signal";
 
 /**
- * The one correct way to sign out of the web client. `POST /auth/logout` revokes the session and clears
- * cookies; the browser is where the mail is, and a sign-out that leaves the mirror behind leaves a
- * readable mailbox on a machine the user just said they are done with. The server call goes first (the
- * failure worth reporting) and the wipe runs REGARDLESS. The name goes with the mail in one act:
- * the `tf_owner` cookie is cleared in the same `finally` as the wipe. It reports what it could not take back: an
- * IndexedDB delete is BLOCKED while another tab holds the database, so tab A once said "signed out"
- * leaving the mirror on disk while tab B was open — the result names what survived and the pane says so.
- * The sign-out guard asserts every `auth.logout` call goes through here.
+ * The one correct way to sign out of the web client. `POST /auth/refresh/logout` revokes the session
+ * family this jar's refresh cookie names and clears cookies; the browser is where the mail is, and a
+ * sign-out that leaves the mirror behind leaves a readable mailbox on a machine the user is done with.
+ * The server call goes first (the failure worth reporting) and the wipe runs REGARDLESS. The name goes
+ * with the mail in one act: the `tf_owner` cookie is cleared in the same `finally` as the wipe. It reports
+ * what it could not take back: an IndexedDB delete is BLOCKED while another tab holds the database, so tab
+ * A once said "signed out" leaving the mirror on disk while tab B was open — the result names what
+ * survived and the pane says so. The sign-out guard asserts every `auth.logout` call goes through here.
  */
 export interface SignOutResult {
   /** True only when this browser is verifiably holding no mirror any more. */
@@ -298,23 +298,19 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
     await auth.logout();
   } catch (err) {
     /**
-     * 401 and 403 are "already gone", not "refused" — without this the retry the copy asks for
-     * could never succeed: a blocked wipe keeps the pane up AFTER the logout landed and cleared the
-     * cookies, so the second `auth.logout()` answers 401 — the session it would revoke is gone.
-     * Read as a refusal, that turned a completed sign-out into a permanent "the session may still
-     * be live". The outcome asked for is "this session no longer exists", and a 401 says exactly
-     * that. 403 is NOT in the set (it was): this API answers 403 for refusals that leave the
-     * session alive — a step-up gate, a suspension — so accepting it would report a completed
-     * sign-out over a live credential. Only 401.
+     * THE DOOR'S ANSWER IS THE VERDICT. A 204, or a 401 in OUR envelope: the sign-out door read
+     * the jar's refresh cookie and the session, found nothing live to end, and cleared the jar in
+     * the same answer — which is also what the retry after a blocked wipe hears. Everything else
+     * is refused, because the session may still be live: a 401 with no envelope is something in
+     * front of us, a 403 is a refusal that leaves the session alive, and offline is no answer.
+     * The old rule took any 401 from `/auth/logout`, which answers 401 for a replaced access
+     * token before it looks at the family — and so read a live session as ended.
      */
-    // A STRUCTURAL READ OF `status`, not `err instanceof ApiError`, and the difference is not
-    // style. Callers' tests mock `./api-client` — one of them supplies `{ auth }` and nothing
-    // else — so `ApiError` can be `undefined` at runtime, and `x instanceof undefined` THROWS
-    // from inside this catch: the whole local cleanup would be skipped and the sign-out would
-    // leave the name and the mail on the machine, which is the exact failure this file exists
-    // to prevent. Reading the field cannot throw, and `ApiError` is the only thing that sets it.
+    // STRUCTURAL READS, not `err instanceof ApiError`: callers' tests mock `./api-client` with
+    // `{ auth }` alone, and `x instanceof undefined` THROWS here, skipping the local cleanup.
     const status = (err as { status?: unknown } | null)?.status;
-    const alreadyGone = status === 401;
+    const coded = (err as { wire?: { coded?: unknown } } | null)?.wire?.coded === true;
+    const alreadyGone = status === 401 && coded;
     serverRefused = alreadyGone ? null : err instanceof Error ? err.message : String(err);
   }
   {

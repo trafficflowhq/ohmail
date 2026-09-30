@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
-import { API_BASE, HANDLER_PATHS, REFRESH_PATH } from "./routes.mjs";
+import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS } from "./routes.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
 import { cookieFromStore } from "./app/shell/cookie-jar";
 import {
@@ -44,9 +44,9 @@ import {
  *    nonce CSP on the credential screens. They cost one edge invocation and NOT a fetch:
  *    the session gate runs on `/` and nowhere else.
  *
- * `/api/*`, `/auth/refresh`, `/_next/*`, `/demo/*` and the icons are deliberately NOT
- * matched. They are proxied or static, they are the hot path, and putting a function in
- * front of them would buy nothing — `next.config.mjs`'s `headers()` covers them.
+ * `/api/*`, `/auth/refresh` and the sign-out door below it, `/_next/*`, `/demo/*` and the
+ * icons are deliberately NOT matched. They are proxied or static, they are the hot path, and
+ * putting a function in front of them would buy nothing — `next.config.mjs`'s `headers()` covers them.
  *
  * ## Caching
  *
@@ -174,11 +174,13 @@ function clientKey(request: NextRequest): string {
  * BEFORE it looks the action up, and that decoder is where the React Server Components
  * denial-of-service advisories live; this app has no Server Action. So a page answers GET and
  * HEAD only, a `Next-Action` header is refused on any method, and the refusal is a bare 405
- * that reads nothing of the body. `/api/*`, `/auth/refresh` and `HANDLER_PATHS` are not pages.
+ * that reads nothing of the body. `/api/*`, `REFRESH_SCOPED_PATHS` and `HANDLER_PATHS` are not
+ * pages.
  */
 function refusesPageBody(request: NextRequest): boolean {
   const { pathname } = request.nextUrl;
-  if (pathname === API_BASE || pathname.startsWith(`${API_BASE}/`) || pathname === REFRESH_PATH) return false;
+  if (pathname === API_BASE || pathname.startsWith(`${API_BASE}/`)) return false;
+  if (REFRESH_SCOPED_PATHS.includes(pathname)) return false;
   if (HANDLER_PATHS.includes(pathname)) return false;
   return (request.method !== "GET" && request.method !== "HEAD") || request.headers.has("next-action");
 }
@@ -416,15 +418,15 @@ function withPathname(request: NextRequest, pathname: string): URL {
  *
  * The two arms reach EVERY page — the catch-all and `/demo` too — but only for a request that
  * carries `Next-Action` or a body type, the only requests Next's action decoder reads; a plain
- * GET off the list still costs no edge invocation, and `/api`, `/auth/refresh` and `/_next` never
- * run this function.
+ * GET off the list still costs no edge invocation, and `/api`, the two refresh-scoped paths and
+ * `/_next` never run this function.
  */
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
     "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/de", "/privacy", "/imprint",
     "/subprocessors",
-    { source: "/((?!api(?:/|$)|auth/refresh$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
-    { source: "/((?!api(?:/|$)|auth/refresh$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
+    { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
+    { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
   ],
 };

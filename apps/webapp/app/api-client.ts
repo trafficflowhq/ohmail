@@ -11,7 +11,7 @@
 
 import { csrfToken as readCsrfToken } from "./csrf";
 import {
-  isRecoverable, mayRefreshFor, resumeSession, retryAfterMsOf, withSessionCookieLock,
+  REFRESH_ENDPOINT, isRecoverable, mayRefreshFor, resumeSession, retryAfterMsOf, withSessionCookieLock,
 } from "./session-refresh";
 import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
 import type { TravelledChangeWire } from "./shell/travelled-change";
@@ -37,6 +37,15 @@ function said(key: string, english: string): string {
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
 export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
+
+/**
+ * THE SIGN-OUT DOOR, ASKED AT ITS BARE PATH — the refresh's own rule (`session-refresh.ts`).
+ * `tf_refresh` is `Path=/auth/refresh`, so only a request below that path carries the credential
+ * the door revokes by; under the `/api` prefix the same route answers without it, and its coded
+ * 401 would read as a completed sign-out over a family nobody revoked. Module-local on purpose:
+ * the desktop's stand-in mirrors every export of this file.
+ */
+const SIGN_OUT_PATH = `${REFRESH_ENDPOINT}/logout` as const;
 
 /** Is this build wired to a server at all? `false` ⇒ demo/gate only. */
 export const apiConfigured = (): boolean => typeof API_BASE === "string" && API_BASE.length > 0;
@@ -157,6 +166,8 @@ const OWNER_FREE_EXACT = [
   "/auth/register",
   "/auth/refresh",
   "/auth/logout",
+  // The web's sign-out door: its retry after a refused press must still leave a blocked client.
+  SIGN_OUT_PATH,
   "/auth/verify-email",
   // The sign-in ceremony's second factor. VERIFY only — enrolment and generation are account
   // management and stay gated; see the header.
@@ -331,10 +342,10 @@ export function accountHeaderCapability(): boolean | null {
  * owner", which is the one conclusion that must never be reached by default.
  */
 /**
- * The two census paths that only ever CLEAR the jar. A cleared session establishes nothing, so a
+ * The census paths that only ever CLEAR the jar. A cleared session establishes nothing, so a
  * header on one of these names an account that is on its way out — never a new owner.
  */
-const CLEARS_ONLY = ["/auth/logout", "/account"] as const;
+const CLEARS_ONLY = ["/auth/logout", SIGN_OUT_PATH, "/account"] as const;
 
 /**
  * Derived from the census, not remembered — and the derivation is the correction. The first
@@ -449,7 +460,7 @@ let writesSent = 0;
 /**
  * One request. Returns the parsed body, or throws {@link ApiError}.
  *
- * 204 answers `undefined` — `/auth/logout` and `/auth/refresh` (cookie branch) both use it,
+ * 204 answers `undefined` — the sign-out door and `/auth/refresh` (cookie branch) both use it,
  * and `res.json()` on an empty body throws.
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -657,6 +668,7 @@ const COOKIE_WRITING_PATHS = [
   "/auth/verify-email",          // enrollmentCookies / sessionCookies
   "/auth/login",                 // sessionCookies on the enrollment arm
   "/auth/logout",                // clears the jar
+  SIGN_OUT_PATH,                 // clears the jar — the web's sign-out
   "/auth/2fa/totp/verify",       // sessionCookies
   "/auth/2fa/recovery-codes/verify",
   "/auth/2fa/webauthn/assert/verify",
@@ -776,7 +788,7 @@ async function attempt<T>(
 
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, {
+    res = await fetch(path === SIGN_OUT_PATH ? path : `${API_BASE}${path}`, {
       method,
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
@@ -789,7 +801,7 @@ async function attempt<T>(
     );
   }
 
-  // BEFORE the 204 shortcut: `/auth/logout` and the refresh's cookie branch both answer
+  // BEFORE the 204 shortcut: the sign-out door and the refresh's cookie branch both answer
   // empty, and an early return would skip the one thing this function is here to read.
   if (seen) seen.account = res.headers.get(OWNER_HEADER);
 
@@ -1359,7 +1371,11 @@ export const auth = {
   session: (opts: { signal?: AbortSignal; ceremony?: boolean } = {}) =>
     api<{ user: SessionUser; scope: "full" | "enrollment" }>("/auth/session", opts),
 
-  logout: () => api<void>("/auth/logout", { method: "POST", body: {} }),
+  /**
+   * The sign-out door: it revokes the family this jar's refresh cookie names, which survives a
+   * renewal in another tab whose answer never arrived. No body, the refresh request's own shape.
+   */
+  logout: () => api<void>(SIGN_OUT_PATH, { method: "POST" }),
 
   // ── 2FA enrollment (the enrollment-session surface: the seven `enrollmentOk` routes) ──
 

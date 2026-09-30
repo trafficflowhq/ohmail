@@ -10,14 +10,14 @@ import { sessionEnded } from "../session-end.js";
 import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
 
 /**
- * The session lifecycle routes — `/auth/refresh` and `/auth/logout`, carved out of `core.ts` so a
- * composition that runs sessions without the sign-in ceremony can mount them: the hosted service
- * (through `coreRoutes`, exactly where they were) and the desktop-host door, where a paired phone
- * rotates the bearer pair the redeem minted. What a session IS — rotation, reuse detection,
- * family revocation — is `SessionLifecycle`'s; these handlers are transport, mounted by both
- * tables as the same objects so the doors cannot drift. The cookie branches are real code on the
- * hosted surface and dead code on any bearer-only host: `cookieSurface(deps)` reads
- * `allowCookieAuth`, and the zero-Set-Cookie census stands on this gate.
+ * The session lifecycle routes — `/auth/refresh`, `/auth/logout` and the web's sign-out door below
+ * the refresh path — carved out of `core.ts` so a composition that runs sessions without the sign-in
+ * ceremony can mount them: the hosted service (through `coreRoutes`, exactly where they were) and the
+ * desktop-host door, where a paired phone rotates the bearer pair the redeem minted. What a session IS
+ * — rotation, reuse detection, family revocation — is `SessionLifecycle`'s; these handlers are
+ * transport, mounted by both tables as the same objects so the doors cannot drift. The cookie branches
+ * are real code on the hosted surface and dead code on any bearer-only host: `cookieSurface(deps)`
+ * reads `allowCookieAuth`, and the zero-Set-Cookie census stands on this gate.
  */
 
 /**
@@ -37,9 +37,20 @@ export function sessionLifecycle(deps: ApiDeps): SessionLifecycle {
   return svc;
 }
 
+/**
+ * THE ONE READER OF THE REFRESH COOKIE, in either spelling — a census holds it here, and both doors
+ * under the cookie's path ask it. Gated on the cookie surface: a bearer-only host reads no `tf_*`
+ * value at all. An empty value is no presentation.
+ */
+function presentedRefreshCookie(jar: Readonly<Record<string, string>>, deps: ApiDeps): string | undefined {
+  const value = cookieSurface(deps) ? jarCookie(jar, "tf_refresh") : undefined;
+  return value === "" ? undefined : value;
+}
+
 export const sessionLifecycleRoutes: Route[] = [
   {
-    // enrollmentOk: abandoning a half-finished enrollment must always be possible.
+    // enrollmentOk: abandoning a half-finished enrollment must always be possible. The body's ONE
+    // field is handed on alone: the service's refresh-token arm is the sign-out door's below.
     method: "POST",
     pattern: "/auth/logout",
     relay: true,
@@ -47,7 +58,41 @@ export const sessionLifecycleRoutes: Route[] = [
     options: { enrollmentOk: true },
     handler: async (req, deps) => {
       const body = await readBody<{ allDevices?: boolean }>(req);
-      await sessionLifecycle(deps).logout(serviceContext(deps, req), body);
+      await sessionLifecycle(deps).logout(serviceContext(deps, req), { allDevices: body.allDevices });
+      return sessionEnded(noContent(cookieSurface(deps) ? clearSessionCookies() : []));
+    },
+  },
+  {
+    // THE WEB'S SIGN-OUT. Under `/auth/refresh` because that is the only path `tf_refresh` reaches,
+    // and after a renewal whose answer was lost it is the one credential in the jar that still
+    // names the live family — `/auth/logout` sees only the replaced access token and 401s before
+    // its handler. Revokes that family and the resolved session's; `{ refreshToken }` in the body
+    // is the same arm for a bearer client. The jar is cleared on the 204 and on the door's own 401
+    // (nothing named), never on a fault: the retry needs the cookie the fault left in place.
+    method: "POST",
+    pattern: "/auth/refresh/logout",
+    relay: false,  /* resolves a credential from the request */
+    cost: "ceremony",
+    options: { public: true },
+    handler: async (req, deps) => {
+      let presented = presentedRefreshCookie(parseCookies(req.headers.get("cookie")), deps);
+      if (presented === undefined) {
+        const body = await readBody<{ refreshToken?: unknown }>(req);
+        if (body.refreshToken !== undefined && typeof body.refreshToken !== "string") {
+          throw new ServiceError("validation_failed", 400, "refreshToken must be a string");
+        }
+        presented = body.refreshToken === "" ? undefined : body.refreshToken;
+      }
+      try {
+        await sessionLifecycle(deps).logout(serviceContext(deps, req), { refreshToken: presented });
+      } catch (err) {
+        if (classifyRefreshFailure(err) !== "session_refused") throw err;
+        const refusal = err as ServiceError;
+        return sessionEnded(json(
+          { error: { code: refusal.code, message: refusal.message } }, refusal.httpStatus,
+          cookieSurface(deps) ? clearSessionCookies() : [],
+        ));
+      }
       return sessionEnded(noContent(cookieSurface(deps) ? clearSessionCookies() : []));
     },
   },
@@ -67,8 +112,7 @@ export const sessionLifecycleRoutes: Route[] = [
     options: { public: true, credentialSubject: true, replaySafe: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
       const jar = parseCookies(req.headers.get("cookie"));
-      // THE ONE READER OF THE REFRESH CREDENTIAL, in either spelling — a census holds it here.
-      const cookieRefresh = cookieSurface(deps) ? jarCookie(jar, "tf_refresh") : undefined;
+      const cookieRefresh = presentedRefreshCookie(jar, deps);
       if (cookieRefresh) {
         // A REFUSED cookie refresh must clear the jar, not just refuse. The browser is told to
         // resume by `tf_resume`, which outlives a refresh token that has been revoked, rotated

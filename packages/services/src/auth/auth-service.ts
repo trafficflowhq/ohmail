@@ -3036,9 +3036,11 @@ export class AuthService extends SessionLifecycle {
    * statements leaves the row live and unremovable. A session with NO device row prunes nothing:
    * web-push rows carry `device_id = NULL`, and deleting them all would silence another browser.
    */
-  override async logout(ctx: ServiceContext, b: { allDevices?: boolean } = {}): Promise<void> {
-    await this.inTransaction(ctx, async (txCtx) => {
-      await super.logout(txCtx, b);
+  override async logout(
+    ctx: ServiceContext, b: { allDevices?: boolean; refreshToken?: string } = {},
+  ): Promise<{ familyIds: string[] }> {
+    return this.inTransaction(ctx, async (txCtx) => {
+      const out = await super.logout(txCtx, b);
       const db = asTx(txCtx);
       if (b.allDevices) {
         // ── SCOPED TO THIS USER'S DEVICES, because that is what the base logout revoked ───────
@@ -3052,7 +3054,7 @@ export class AuthService extends SessionLifecycle {
         // Deviceless rows (a browser's web-push) are not reached, and cannot be: nothing on them
         // names a user. That is the residue named on its own row, not a gap to guess at here.
         const mine = txCtx.userId;
-        if (!mine) return;
+        if (!mine) return out;
         await db.delete(pushSubscriptions).where(and(
           eq(pushSubscriptions.accountId, txCtx.accountId),
           inArray(
@@ -3061,17 +3063,22 @@ export class AuthService extends SessionLifecycle {
               .where(and(eq(devices.accountId, txCtx.accountId), eq(devices.userId, mine))),
           ),
         ));
-        return;
+        return out;
       }
-      if (!txCtx.sessionId) return;
-      const row = (await db.select({ deviceId: sessions.deviceId }).from(sessions)
-        .where(eq(sessions.id, txCtx.sessionId)).limit(1))[0];
-      const deviceId = row?.deviceId ?? null;
-      if (deviceId === null) return;
-      await db.delete(pushSubscriptions).where(and(
-        eq(pushSubscriptions.accountId, txCtx.accountId),
-        eq(pushSubscriptions.deviceId, deviceId),
-      ));
+      // THE FAMILIES THE BASE REVOKED, each session's device in that session's OWN account: the
+      // refresh door may resolve no session at all, so the request's account can name nothing.
+      for (const familyId of out.familyIds) {
+        const owned = await db.select({ accountId: sessions.accountId, deviceId: sessions.deviceId })
+          .from(sessions).where(and(eq(sessions.familyId, familyId), isNotNull(sessions.deviceId)));
+        for (const { accountId, deviceId } of owned) {
+          if (deviceId === null) continue;
+          await db.delete(pushSubscriptions).where(and(
+            eq(pushSubscriptions.accountId, accountId),
+            eq(pushSubscriptions.deviceId, deviceId),
+          ));
+        }
+      }
+      return out;
     });
   }
 
