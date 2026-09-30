@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.6] — 2026-09-30
+
 ### The AI call log is complete again
 <!-- changes: plane-026-ai-usage.md -->
 
@@ -226,11 +233,6 @@ so taps take effect at once instead of after several seconds. On a foldable's co
 large display sizes nothing is cut off: destinations without room move into More, the reader keeps
 Reply and Forward on its bar, a reply stays open and above the keyboard when you fold or unfold the
 phone, and the lists move on to the new day at midnight without a sync.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.5] — 2026-09-29
 
@@ -10666,7 +10668,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.5...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.6...HEAD
+[0.25.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.6
 [0.25.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.5
 [0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
 [0.25.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.3

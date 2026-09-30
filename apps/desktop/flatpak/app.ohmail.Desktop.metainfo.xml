@@ -74,6 +74,37 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.6" date="2026-09-30">
+      <description>
+        <ul>
+          <li>The AI call log is complete again</li>
+          <li>Edits made during a takeover reach the mailbox</li>
+          <li>A browser sign-in in the desktop app waits through a closed window</li>
+          <li>Refused and blocked states say what happened</li>
+          <li>Signing in again asks before sending a password unencrypted</li>
+          <li>Setup, Settings and a press follow what the app already knows</li>
+          <li>Search on the phone finds the other forms of a word</li>
+          <li>Search says where it looks for part of a word</li>
+          <li>Search keeps saying "synced so far" through a long first import</li>
+          <li>The first search results on a device match what the full search finds</li>
+          <li>The phone app no longer closes when the outgoing server refuses the settings, or when you stop and remove a mailbox</li>
+          <li>On ohmail Cloud, pictures in older messages are no longer listed as files</li>
+          <li>The Screener places mail by the same rules everywhere</li>
+          <li>Held mail from your contacts can be let in</li>
+          <li>Put back what the Screener filed on its own</li>
+          <li>Stored-mail counts on the desktop, and arrival order below the list</li>
+          <li>A failed read no longer takes the way to subscribe away</li>
+          <li>A file fault says which side failed, and a tracking pixel is recognised in every picture format</li>
+          <li>Forwarding a message that is only attachments sends it with them</li>
+          <li>Builds install the dependency versions that were tested</li>
+          <li>Who organizes your mailboxes is said once, at the foot of the sidebar</li>
+          <li>Forward stands beside Reply on the message bar</li>
+          <li>A first mailbox without encryption, set up on the first launch</li>
+          <li>The phone no longer signs itself out after a display, font or language change</li>
+          <li>The phone keeps up with a large mailbox</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.5" date="2026-09-29">
       <description>
         <ul>
@@ -294,63 +325,6 @@
           <li>Removing a mailbox on the desktop deletes all of its rows</li>
           <li>Changes made on the desktop while Cloud is unreachable are kept until they reach it</li>
           <li>A Move made just before ohmail closed is no longer lost on the phone</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.1" date="2026-09-26">
-      <description>
-        <ul>
-          <li>A desktop left open for days keeps syncing</li>
-          <li>A sender's message list names the rule that decides</li>
-          <li>A phone control that cannot be pressed now dims</li>
-          <li>Every pairing refusal is in your language</li>
-          <li>Pressing Ohbox on a screened-out sender brings their mail back</li>
-          <li>The sender sheet shows where their mail is, and a decision overrides older rules</li>
-          <li>A pairing another computer refuses leaves your desktop as it was</li>
-          <li>A retried workflow creation from a proposal returns its first answer</li>
-          <li>The first page of a broad search on ohmail Cloud comes back sooner</li>
-          <li>Switching views is quick on large mailboxes</li>
-          <li>Long lists scroll by exactly what you scroll</li>
-          <li>Screen readers hear how long a list is</li>
-          <li>The desktop's first import makes far fewer file-system calls</li>
-          <li>The desktop's first import plans its database statements once</li>
-          <li>The desktop engine's check for mail deleted on the server reads the mailbox once</li>
-          <li>Pressing a year in History opens that year</li>
-          <li>Opening a message marks it read everywhere, even if you close the tab right after</li>
-          <li>Escape in the address suggestions closes the suggestions, not the message</li>
-          <li>Search's empty state reads as separate sentences</li>
-          <li>The phone stays signed in through a Wi-Fi sign-in page or a blocked network</li>
-          <li>Editing a rule made before the News rename no longer moves it</li>
-          <li>The browser stays signed in when a proxy answers a session renewal</li>
-          <li>The message list is no longer downloaded again on every sync</li>
-          <li>A refused connection is said next to the Connect button</li>
-          <li>An idle account no longer makes the app download its message list again</li>
-          <li>Rules that file into News are one place</li>
-          <li>The phone's History shows each message's folder</li>
-          <li>The phone's About says what the app does</li>
-          <li>No endless indexing sentence on the phone</li>
-          <li>History rows keep their own height on the phone</li>
-          <li>Settings names who files each mailbox</li>
-          <li>A mailbox's message count leaves deleted mail out</li>
-          <li>A self-hosted install no longer calls itself ohmail Cloud</li>
-          <li>A self-hosted server's certificate authority is read from one file</li>
-          <li>Signing in again works on a mailbox that was signed out</li>
-          <li>Signing in again works for mailboxes signed out on an earlier version</li>
-          <li>Forward is always offered</li>
-          <li>The phone answers under the option you pressed</li>
-          <li>Messages with many images open without a wait</li>
-          <li>An account is erased only when the entitlements program confirms it</li>
-          <li>Account reminders wait for the entitlements program's answer</li>
-          <li>Server alerts repeat less and leave closed accounts out</li>
-          <li>Your own mail stays out of the Screener</li>
-          <li>Settings shows Folders only where your server keeps the setting</li>
-          <li>The sent-mail review asks nothing when there is nobody to ask about</li>
-          <li>The Screener says where older mail from undecided senders is</li>
-          <li>Dismissing the held-mail offer reaches every device</li>
-          <li>A resurface set for a later date shows that date</li>
-          <li>An open phone paired to ohmail Cloud keeps receiving mail</li>
-          <li>The Screener shows a held message's full text on the desktop app too</li>
-          <li>Screening a sender into the Ohbox moves every message the list shows, and says what stays</li>
         </ul>
       </description>
     </release>
