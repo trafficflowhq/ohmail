@@ -27,7 +27,7 @@
     "htmlparser2": "^12.0.0",
     "imapflow": "^1.0.164",
     "jszip": "^3.10.1",
-    "mailparser": "^3.7.0",
+    "mailparser": "^3.9.32",
     "nodemailer": "^6.9.15",
     "sanitize-html": "^2.17.6",
     "tldts": "^7.4.9",
