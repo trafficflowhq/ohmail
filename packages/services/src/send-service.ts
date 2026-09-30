@@ -20,7 +20,7 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState" | "applyExternalFlag">;
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
-import { verifiedPart, type FetchedBytes, type OpenAdapter } from "./attachments-service.js";
+import type { OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
@@ -315,24 +315,6 @@ function forwardTooLarge(): ServiceError {
   return new ServiceError("payload_too_large", 413, `the forwarded attachments exceed ${FORWARD_MAX_TOTAL_BYTES} bytes`);
 }
 /**
- * A forwarded part is the row's file or the send stops before any SMTP write: the same gate the
- * download door runs ({@link verifiedPart}), worded for a send, because a wrong file forwarded goes
- * to a third party.
- */
-function verifiedForward(part: ForwardPart, fetched: FetchedBytes, log: Logger): FetchedBytes {
-  try {
-    return verifiedPart(part, fetched, log);
-  } catch (err) {
-    if (!(err instanceof ServiceError) || err.code !== "attachment_part_mismatch") throw err;
-    throw new ServiceError(
-      "attachment_part_mismatch", 409,
-      "Nothing was sent. One of the forwarded attachments could not be verified: the mail server " +
-        "returned a different part of the original. The file is still in your mailbox.",
-      err.details, false,
-    );
-  }
-}
-/**
  * A failed read of a husked original's words: a sentence already chosen (moved, the mail server's
  * own refusal) stands; over the ceiling is the parts' 413; anything else is "could not be loaded".
  * Never a send with the words dropped.
@@ -395,9 +377,6 @@ export function dedupeStagedIds(ids: readonly string[] | undefined): string[] {
 
 /** One original part to re-stream on a forward — metadata only; the bytes are fetched at send. */
 interface ForwardPart {
-  /** The attachment row, and the fingerprint its streamed bytes are checked against. */
-  id: string;
-  contentSha256: string | null;
   partId: string | null;
   filename: string;
   contentType: string;
@@ -1284,7 +1263,7 @@ export class SendService {
       throw forwardOriginalUnavailable();
     }
     if (reservation.forward && deps.openFetchAdapter) {
-      await this.streamForwardOriginal(ctx, reservation.forward, msg, deps.openFetchAdapter, deps.log ?? defaultLog);
+      await this.streamForwardOriginal(ctx, reservation.forward, msg, deps.openFetchAdapter);
     }
   }
 
@@ -1660,7 +1639,6 @@ export class SendService {
         // then name a file the recipient never got while omitting one they did.
         // scoped-by: orig was loaded by (id, accountId) earlier in this send
         const attRows = await tx.select({
-          id: attachments.id, contentSha256: attachments.contentSha256,
           filename: attachments.filename, contentType: attachments.contentType,
           partId: attachments.partId, contentId: attachments.contentId, inline: attachments.inline,
         }).from(attachments).where(eq(attachments.messageId, orig.id))
@@ -1694,8 +1672,6 @@ export class SendService {
           messageId: orig.id,
           locator: orig.locator as NativeLocator,
           parts: attRows.map((a) => ({
-            id: a.id,
-            contentSha256: a.contentSha256,
             partId: a.partId,
             filename: a.filename ?? "attachment",
             contentType: a.contentType,
@@ -1924,7 +1900,6 @@ export class SendService {
     forward: ForwardSource,
     msg: OutboundMessage,
     openFetchAdapter: OpenAdapter,
-    log: Logger,
   ): Promise<void> {
     if (forward.parts.length === 0 && forward.words.kind === "stored") return;
     // The forward's original is read from the person's own mail server: the send's dial rule.
@@ -1981,7 +1956,7 @@ export class SendService {
       const fetched: NonNullable<OutboundMessage["attachments"]> = [];
       let total = 0;
       for (const part of forward.parts) {
-        const bytes = verifiedForward(part, await read((loc) => adapter.fetchPart(loc, part.partId)), log);
+        const bytes = await read((loc) => adapter.fetchPart(loc, part.partId));
         total += bytes.body.byteLength;
         if (total > FORWARD_MAX_TOTAL_BYTES) throw forwardTooLarge();
         fetched.push({

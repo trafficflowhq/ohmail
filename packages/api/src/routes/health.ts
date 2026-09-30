@@ -1148,21 +1148,6 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
      replaced under its name). Against a 0133 database every message over the download ceiling is
      refused at ingest by the old CHECK and stays a failure row: invisible, the state it fixes. */
   ["message_bodies_withheld_reason", "too_large"],
-  // Mail 0140_body_tsv_bounded — `data_too_large` joins the failure codes (the 0041 constraint,
-  // replaced under its name). Against a 0139 database a message past a store limit cannot be
-  // recorded as written off, so the cursor of its folder holds and the cycle fails every pass.
-  ["message_failures_code_closed", "data_too_large"],
-];
-
-/**
- * The MAIL trigger functions probed by BODY — see {@link FunctionDefinitionMarker}. Always probed,
- * like the CHECK-definition list: a local engine runs this journal too.
- */
-export const MAIL_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
-  // Mail 0140_body_tsv_bounded — the body vector over the first 65,536 characters. Against a 0139
-  // database `body_tsv` is still generated over the whole text, and a long body of distinct words
-  // fails its ingest with 54000. The newest entry: the sentence about the tag moves with it.
-  ["message_bodies_body_tsv_bounded", "left(coalesce(NEW.text, ''), 65536)"],
 ];
 
 /**
@@ -1182,8 +1167,7 @@ export const MAIL_COLUMN_TYPE_MARKERS: ReadonlyArray<ColumnTypeMarker> = [
 
 export const MAIL_EXPECTED_MARKERS =
   MAIL_SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + SCHEMA_CHECK_MARKERS.length +
-  MAIL_CHECK_DEFINITION_MARKERS.length + MAIL_FUNCTION_MARKERS.length + SCHEMA_FK_MARKERS.length +
-  MAIL_COLUMN_TYPE_MARKERS.length;
+  MAIL_CHECK_DEFINITION_MARKERS.length + SCHEMA_FK_MARKERS.length + MAIL_COLUMN_TYPE_MARKERS.length;
 
 /**
  * The newest entry of the MAIL journal, which {@link MAIL_SCHEMA_MARKERS} is reconciled to; a
@@ -1198,7 +1182,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0140_body_tsv_bounded";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0139_messages_arrival_order";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
@@ -1270,11 +1254,12 @@ export async function probeDatabase(
    */
   extraIndexMarkers: ReadonlyArray<IndexMarker> = [],
   /**
-   * Trigger/helper FUNCTIONS whose BODY is probed — see {@link FunctionDefinitionMarker}. Defaults
-   * to {@link MAIL_FUNCTION_MARKERS}, the mail tier's own set, and like `checkDefinitionMarkers` a
-   * caller passing its own list REPLACES it, so a hosted caller passes the union of both tiers.
+   * Trigger/helper FUNCTIONS whose BODY is probed — see {@link FunctionDefinitionMarker}.
+   * Defaults to none, on the same rule as the two parameters above: every entry so far names a
+   * Cloud function (`CLOUD_FUNCTION_MARKERS` in `health-cloud.ts`) and this module ships in the
+   * desktop engine, so the names arrive as a parameter rather than living here.
    */
-  functionDefinitionMarkers: ReadonlyArray<FunctionDefinitionMarker> = MAIL_FUNCTION_MARKERS,
+  functionDefinitionMarkers: ReadonlyArray<FunctionDefinitionMarker> = [],
   /**
    * FOREIGN KEYS probed by DEFINITION beyond {@link SCHEMA_FK_MARKERS} — the sixth class, and it
    * EXTENDS rather than replaces, like `extraIndexMarkers` and for the same reason: the shared
@@ -1638,13 +1623,13 @@ export const healthRoutes: Route[] = [
       const probe = await probeDatabase(
         deps.db,
         fullCensus ? fullCensus.markers : MAIL_SCHEMA_MARKERS,
-        // The check-DEFINITION and function lists are classes a mail-tier host DOES carry: mail
-        // 0102 widens a mail CHECK and the body vector is kept by a mail trigger function, so a
-        // local engine's database is incomplete without them. The index list stays empty — every
-        // entry there names a Cloud table.
+        // The check-DEFINITION list is the one class a mail-tier host DOES carry: mail 0102
+        // widens a mail CHECK, so `MAIL_CHECK_DEFINITION_MARKERS` names a mail table and a local
+        // engine's database is incomplete without it. The index and function lists stay empty —
+        // every entry there names a Cloud table or a Cloud function.
         fullCensus ? fullCensus.checkDefinitions : MAIL_CHECK_DEFINITION_MARKERS,
         fullCensus ? fullCensus.indexMarkers : [],
-        fullCensus ? fullCensus.functionDefinitions : MAIL_FUNCTION_MARKERS,
+        fullCensus ? fullCensus.functionDefinitions : [],
         fullCensus ? fullCensus.foreignKeys : [],
       );
       // BOTH TRANSPORT HOPS (`HealthConfig.dbTls`), read after the probe so its handshake is counted.

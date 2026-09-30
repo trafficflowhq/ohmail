@@ -22,6 +22,7 @@ import {
   staffAuditEvents,
   STAFF_ROLES,
   type ContentBlind,
+  type EvaluateOptions,
 } from "@trafficflow/db/cloud";
 import { narrowedDetail, STAFF_AUDIT_ACTIONS, STAFF_REASON_CODES } from "./staff-audit-detail.js";
 import type { AuthAuditEvent, DeviceKind } from "./auth/types.js";
@@ -30,7 +31,7 @@ import type {
   AccountBatch, AccountDetailV2, AdminLifecycleNotice, AdminSearchMatchedOn, AdminSearchPage,
   AdminSearchResult, OpenSyncFacts, StaffActivityPage, StaffEvent, StaffRole, SyncRosterPage,
   AccountPage, AccountQuery, AccountSummary, ActionCatalog, ActionSpec,
-  AdminAlertDriver, AdminPlatformSignal, AlertSummary, AuditEntry,
+  AdminAlertDriver, AdminAlertUnread, AdminPlatformSignal, AlertSummary, AuditEntry,
   FunnelSnapshot, FunnelStage, MailboxHealth, SecurityEvent,
   StaleSend, WorkerInstanceHealth, WorkerSnapshot,
 } from "./admin-dto.js";
@@ -1127,8 +1128,28 @@ export async function adminPlatformSignals(
   }));
 }
 
-export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[]> {
-  const { alerts: firing, scope } = await evaluateAlertsWithScope(db, { now });
+/** The inputs the console's read takes from its host: the alert route's own parked reader. */
+export interface AdminAlertReaders {
+  parkedAccounts?: EvaluateOptions["parkedAccounts"];
+}
+
+export async function adminAlerts(
+  db: AdminDb, now: Date, readers: AdminAlertReaders = {},
+): Promise<AlertSummary[]> {
+  return (await adminAlertReading(db, now, readers)).alerts;
+}
+
+/**
+ * The console's alert list AND the rules it did not read, each with its reason, so a rule with
+ * no reader here is said by name rather than read as zero. The parked reader is the host's own;
+ * no at-cap reader is composed, because a console request is not a pass.
+ */
+export async function adminAlertReading(
+  db: AdminDb, now: Date, readers: AdminAlertReaders = {},
+): Promise<{ alerts: AlertSummary[]; unread: AdminAlertUnread[] }> {
+  const { alerts: firing, scope } = await evaluateAlertsWithScope(db, {
+    now, ...(readers.parkedAccounts !== undefined ? { parkedAccounts: readers.parkedAccounts } : {}),
+  });
   // THROUGH THE DB PACKAGE'S OWN READER, never a select of the table from here: resolution marks
   // rather than deletes, so a read without `resolved_at IS NULL` renders fixed history as live.
   const open = await listOpenAlerts(db);
@@ -1183,7 +1204,10 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
       fixHref: r.fixHref,
     } satisfies AlertSummary));
 
-  return [...evaluated, ...unevaluated];
+  const unread = [...scope.unreadReasons]
+    .map(([kind, reason]) => ({ kind: kind as AdminAlertUnread["kind"], reason }))
+    .sort((a, b) => a.kind.localeCompare(b.kind));
+  return { alerts: [...evaluated, ...unevaluated], unread };
 }
 
 export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapshot> {

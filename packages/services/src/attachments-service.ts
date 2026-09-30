@@ -1,10 +1,9 @@
 import JSZip from "jszip";
-import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray } from "drizzle-orm";
 import { attachments, messages } from "@trafficflow/db";
 import {
-  CALENDAR_FALLBACK_FILENAME, createLogger, isCalendarMime, isMessageGone,
-  type Logger, type NativeLocator, type EmailAddress,
+  CALENDAR_FALLBACK_FILENAME, isCalendarMime, isMessageGone,
+  type NativeLocator, type EmailAddress,
 } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -76,42 +75,7 @@ export interface AttachmentAdapter {
 /** Injected factory: open a connected adapter for a mailbox. */
 export type OpenAdapter = (mailboxId: string) => Promise<AttachmentAdapter>;
 
-export interface FetchDeps {
-  openAdapter: OpenAdapter;
-  /** Where the part gate's lines go. Absent: the attachments logger on stdout. */
-  log?: Logger;
-}
-
-const defaultLog = createLogger({ service: "attachments" });
-
-/** What the part gate reads off a row: its id, the section it asks for and the bytes' fingerprint. */
-export interface PartRow { id: string; partId: string | null; contentSha256: string | null }
-
-/**
- * THE FETCHED BYTES ARE THE ROW'S FILE, OR NONE OF THEM IS SERVED. A stored `part_id` is mailparser's
- * section at ingest, and 3.9.18 numbered a part inside a multipart after a sibling multipart one
- * level too deep, so the server answered with another part's bytes or none under this row's name.
- * `content_sha256` was taken from the decoded bytes at ingest and the fetch hands back decoded bytes,
- * fully buffered, so they are compared before anything leaves. A null sha is a part mailparser could
- * not decode: served as before, and said. Log lines carry ids and sha prefixes, never a name or bytes.
- */
-export function verifiedPart(row: PartRow, fetched: FetchedBytes, log: Logger = defaultLog): FetchedBytes {
-  if (row.contentSha256 === null) {
-    log.info("attachment_part_unverified", { partRowId: row.id, partId: row.partId });
-    return fetched;
-  }
-  const served = createHash("sha256").update(fetched.body).digest("hex");
-  if (served === row.contentSha256) return fetched;
-  const fields = { partRowId: row.id, partId: row.partId, storedSha: row.contentSha256.slice(0, 8), servedSha: served.slice(0, 8) };
-  log.warn("attachment_part_mismatch", fields);
-  throw new ServiceError(
-    "attachment_part_mismatch", 409,
-    "This attachment could not be verified: the mail server returned a different part of the message, " +
-      "so it was not downloaded. The file is still in your mailbox.",
-    { attachmentId: row.id, partId: row.partId, storedSha: fields.storedSha, servedSha: fields.servedSha },
-    false,
-  );
-}
+export interface FetchDeps { openAdapter: OpenAdapter; }
 
 export interface FilesFilter { type?: "all" | "big"; minSizeBytes?: number; q?: string }
 
@@ -262,7 +226,6 @@ interface ResolvedPart {
   filename: string | null;
   contentType: string;
   partId: string | null;
-  contentSha256: string | null;
   mailboxId: string;
   locator: NativeLocator;
   /** Metadata size — used for the pre-flight ceiling check (the fetch enforces the real one). */
@@ -323,9 +286,7 @@ export class AttachmentsService {
       // THE REAL GUARD. Safe to pass here and nowhere else: this adapter serves exactly one part
       // and the `finally` below closes it, so the poisoned-connection cost of a mid-stream abort is
       // a connection we were about to discard anyway.
-      const fetched = verifiedPart(
-        part, await adapter.fetchPart(part.locator, part.partId, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES }), deps.log,
-      );
+      const fetched = await adapter.fetchPart(part.locator, part.partId, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES });
       // Prefer the DB filename (stable), then what IMAP reported; a part nameless in BOTH
       // places downloads under the type-aware fallback (invite.ics for a calendar part) rather
       // than the route's bare "attachment" — see {@link partFallbackName}.
@@ -449,11 +410,8 @@ export class AttachmentsService {
               maxBytes: DOWNLOAD_ALL_MAX_BYTES - fetchedBytes,
             });
             fetchedBytes += fetched.body.byteLength;
-            zip.file(name, verifiedPart(part, fetched, deps.log).body);
+            zip.file(name, fetched.body);
           } catch (err) {
-            // The whole archive refuses, naming the row: a zip holding a wrong file under a right name
-            // is the defect the gate exists for, and `_errors.txt` is read after the files are.
-            if (err instanceof ServiceError && err.code === "attachment_part_mismatch") throw err;
             if (isTooLarge(err)) {
               poisoned = true;
               errors.push(
@@ -599,7 +557,6 @@ export class AttachmentsService {
       filename: attachments.filename,
       contentType: attachments.contentType,
       partId: attachments.partId,
-      contentSha256: attachments.contentSha256,
       sizeBytes: attachments.sizeBytes,
       mailboxId: messages.mailboxId,
       nativeLocator: messages.nativeLocator,
@@ -630,7 +587,7 @@ export class AttachmentsService {
     for (const r of rows) {
       const locator = r.nativeLocator as NativeLocator | null;
       if (!locator) continue;   // a message with no native locator cannot be fetched
-      out.push({ id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, contentSha256: r.contentSha256, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes });
+      out.push({ id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes });
     }
     return out;
   }
@@ -642,7 +599,6 @@ export class AttachmentsService {
       filename: attachments.filename,
       contentType: attachments.contentType,
       partId: attachments.partId,
-      contentSha256: attachments.contentSha256,
       sizeBytes: attachments.sizeBytes,
       mailboxId: messages.mailboxId,
       nativeLocator: messages.nativeLocator,
@@ -657,7 +613,7 @@ export class AttachmentsService {
     if (!locator) {
       throw new ServiceError("not_found", 404, "this message was deleted from the mailbox, so its attachment can no longer be loaded");
     }
-    return { id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, contentSha256: r.contentSha256, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes };
+    return { id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes };
   }
 
   private async ownedRow(ctx: ServiceContext, attachmentId: string): Promise<typeof attachments.$inferSelect> {

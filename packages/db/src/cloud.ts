@@ -36,7 +36,6 @@ export {
   POOLED_TIMEOUTS, API_MAX_DURATION_MS, ROLE_DEFAULT_TIMEOUTS,
   POOLED_ACQUIRE_TIMEOUT_MS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_MAX_CONNECTIONS,
   DbAcquireTimeoutError, isDbAcquireTimeout, DbParameterTypeError,
-  BindLimitError, MAX_BIND_PARAMETERS, withBindLimit,
   type OwnedDb,
 } from "./client.js";
 

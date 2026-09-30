@@ -367,7 +367,7 @@ export {
   ADMIN_BATCH_MAX, ADMIN_SEARCH_LIMIT, ADMIN_STAFF_ACTIONS_ON_PAGE, ADMIN_STAFF_ACTIVITY_PAGE,
   ADMIN_SYNC_ROSTER_MAX, WORKER_ROSTER_INTERVAL_SECONDS, type AdminReader,
   adminFunnel, adminWorker, adminWorkerInstances,
-  adminAlerts, adminAlertDrivers, adminPlatformSignals, adminActions, adminAttentionRank,
+  adminAlerts, adminAlertReading, adminAlertDrivers, adminPlatformSignals, adminActions, adminAttentionRank,
   ADMIN_LIST_LIMIT, ADMIN_DEFAULT_PAGE_SIZE, ADMIN_MAX_PAGE_SIZE, ADMIN_OPTIONS_LIMIT,
   ADMIN_ROSTER_LIMIT,
   ADMIN_WRITES_UNAVAILABLE, ADMIN_ACTIONS_PRECONDITION, STAFF_STEP_UP_WINDOW_SECONDS,

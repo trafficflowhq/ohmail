@@ -42,6 +42,7 @@
     "string_decoder": "1.3.0",
     "util": "0.12.5",
     "@ohmail/client-engine": "*",
-    "@ohmail/tokens": "*"
+    "@ohmail/tokens": "*",
+    "@ohmail/ui": "*"
   }
 }

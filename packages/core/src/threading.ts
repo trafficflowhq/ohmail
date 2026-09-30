@@ -1,4 +1,4 @@
-import { isStorableMessageId, MAX_MESSAGE_ID_BYTES, normalizeMessageId } from "./identity.js";
+import { normalizeMessageId } from "./identity.js";
 import { baseSubject, SUBJECT_PREFIX_PATTERN } from "./reply-subject.js";
 import { isCorroboratedCounterparty, type CounterpartyEvidence } from "./sender-headers.js";
 import type { RepoPort } from "./ports.js";
@@ -15,9 +15,21 @@ import type { EmailAddress } from "./types.js";
  * the `(account_id, root_message_id_header)` unique index.
  */
 
-/* The message-id bound lives in `identity.ts`, where the stored id is made; re-exported here for
-   the readers that took it from threading. */
-export { isStorableMessageId, MAX_MESSAGE_ID_BYTES };
+/**
+ * The longest message-id this code will look up or store, in bytes. A wedge guard: the two btree
+ * indexes cap a tuple at roughly 2704 bytes and Postgres raises `54000` on the INSERT —
+ * `References` tokens are sender-chosen, so without a cap ONE hostile 3 KB reference aborts the
+ * persist transaction, the sync cursor never advances, and the worker re-plans the same message
+ * for ever: the mailbox stops syncing because of a header. 998 is RFC 5322's line-length limit,
+ * so no legitimately authored `msg-id` exceeds it; an over-long token is DROPPED, not truncated —
+ * a truncated id is a DIFFERENT id that could collide.
+ */
+export const MAX_MESSAGE_ID_BYTES = 998;
+
+/** Under the btree ceiling, so it can be looked up and stored without wedging ingest. */
+export function isStorableMessageId(id: string): boolean {
+  return Buffer.byteLength(id, "utf8") <= MAX_MESSAGE_ID_BYTES;
+}
 
 /**
  * Every message-id (RFC 5322) in a header's raw values, normalized the way
@@ -65,43 +77,6 @@ export interface ThreadKey {
 }
 
 /**
- * The most message ids one message's thread lookup or correspondent check names. A sender writes
- * In-Reply-To and References, and each id is one bind parameter, so the count is ours to set: 100
- * is past the ancestry any client keeps (RFC 5322 lets a long References keep only its first and
- * newest ids), and every statement built from these lists stays small on every store.
- */
-export const MAX_THREAD_CANDIDATES = 100;
-
-/**
- * The most people one thread's `participants` lists. Every message folded in can add its sender and
- * recipients, so without a bound the jsonb grows toward the store's ceiling one crafted message at a
- * time; 100 is past any conversation a person reads, and an address already listed is never dropped.
- */
-export const MAX_THREAD_PARTICIPANTS = 100;
-
-/**
- * The ids a message names, nearest first — In-Reply-To, then References newest first — without
- * `own` or a repeat, at most {@link MAX_THREAD_CANDIDATES}. Past the bound the root (the first
- * References id) is kept in the last place, because it is the conversation's anchor.
- */
-export function boundedReferenceIds(
-  own: string | null, inReplyTo: readonly string[], references: readonly string[],
-): string[] {
-  const seen = new Set<string>();
-  const all: string[] = [];
-  for (const id of [...inReplyTo, ...[...references].reverse()]) {
-    if (id === own || seen.has(id)) continue;
-    seen.add(id);
-    all.push(id);
-  }
-  if (all.length <= MAX_THREAD_CANDIDATES) return all;
-  const kept = all.slice(0, MAX_THREAD_CANDIDATES - 1);
-  const root = references[0];
-  kept.push(root !== undefined && root !== own && !kept.includes(root) ? root : all[MAX_THREAD_CANDIDATES - 1]!);
-  return kept;
-}
-
-/**
  * Derive {@link ThreadKey} from a message's own id and its raw headers.
  *
  * The message's OWN id is excluded from the candidate list. A sender that puts its own
@@ -116,7 +91,15 @@ export function threadKeyOf(
   const h = headers ?? {};
   const inReplyTo = parseMessageIds(h["in-reply-to"]);
   const references = parseMessageIds(h["references"]);
-  const candidates = boundedReferenceIds(messageIdHeader, inReplyTo, references);
+
+  const ordered = [...inReplyTo, ...[...references].reverse()];
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const id of ordered) {
+    if (id === messageIdHeader || seen.has(id)) continue;
+    seen.add(id);
+    candidates.push(id);
+  }
 
   // `parseMessageIds` has already dropped over-long tokens, so falling through to the next
   // fallback is automatic. The message's OWN id is capped here for the same reason — an ingest

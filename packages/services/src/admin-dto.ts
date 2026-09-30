@@ -227,6 +227,18 @@ export interface OverviewSnapshot {
    * carries both.
    */
   alertsUnavailable: boolean;
+  /**
+   * The rules this read did not evaluate, and why: `no_reader` (this host composes no input for
+   * it — the console runs no at-cap reader), `refused` (the blind role holds no grant for it) or
+   * `partial`. A rule named here is not "nothing wrong"; the console says which it is.
+   */
+  alertsUnread: AdminAlertUnread[];
+}
+
+/** One rule the console's read did not evaluate, with the reason. */
+export interface AdminAlertUnread {
+  kind: AdminAlertKind;
+  reason: "no_reader" | "refused" | "partial";
 }
 
 /* ── accounts ──────────────────────────────────────────────────────────────────────────── */

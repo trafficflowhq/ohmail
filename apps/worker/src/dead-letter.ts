@@ -52,12 +52,6 @@ export type MessageFailureCode =
   | "data_exception"
   /** Postgres class 23 — a constraint refused the row. NOT assumed deterministic. */
   | "constraint_violation"
-  /**
-   * A value or statement this message made exceeds a limit of the store: a routine of
-   * {@link MESSAGE_LIMIT_ROUTINES}, or our own client's refusal of an over-limit statement.
-   * Deterministic in the bytes AND the schema, so the next look is a new build.
-   */
-  | "data_too_large"
   /** Anything we cannot name. Retried before it is ever skipped. */
   | "unclassified";
 
@@ -99,8 +93,7 @@ const INFRA_SQLSTATE_CLASSES: readonly string[] = [
   "25",   // invalid_transaction_state
   "40",   // transaction_rollback (serialization failure, deadlock) — retryable, never terminal
   "53",   // insufficient_resources (disk_full 53100 — an early production outage)
-  "54",   // program_limit_exceeded — the cluster's unless MESSAGE_LIMIT_ROUTINES names the routine
-  "55",   // object_not_in_prerequisite_state (55P03 lock_not_available): shared contention
+  "54",   // program_limit_exceeded (kept on the infra side; see `STORAGE_SQLSTATES`, mailboxes.ts)
   "57",   // operator_intervention (query_canceled, admin_shutdown)
   "58",   // system_error
   "XX",   // internal_error
@@ -142,26 +135,8 @@ const codeOf = (err: unknown): string => {
 };
 
 /**
- * THE CLASS-54 ROUTINES THAT ARE ONE MESSAGE'S OWN VALUE, each measured here (postgres.js on 16 and
- * PGlite name the same): a tsvector over 1 MiB, a btree key over a page's third, an index tuple over
- * 8 KB. Every other 54xxx is the cluster's (a full NOTIFY queue at COMMIT, ID or MultiXact wraparound,
- * a routine nobody has seen) and stays shared, so a run of them writes nothing off.
- */
-const MESSAGE_LIMIT_ROUTINES: ReadonlySet<string> = new Set([
-  "make_tsvector", "tsvector_concat", "_bt_check_third_page", "index_form_tuple_context",
-]);
-
-/** Is this throw a store limit attributable to the one statement that raised it — never shared? */
-const isMessageLimit = (err: unknown): boolean => {
-  const code = codeOf(err);
-  if (code === "OHMAIL_BIND_LIMIT") return true;  // our client refused it in the caller's own call
-  const routine = (err as { routine?: unknown } | null)?.routine;
-  return sqlStateClass(code) === "54" && typeof routine === "string" && MESSAGE_LIMIT_ROUTINES.has(routine);
-};
-
-/**
  * Classify one ingest throw. It MAY read the error's message; it may never store it — the output
- * is a six-value enum, exactly as `classifyMailboxError` is a seven-value one.
+ * is a five-value enum, exactly as `classifyMailboxError` is a seven-value one.
  *
  * Note what is NOT here: `ClassifierFaultError` and `LeaseUnavailableError`. Those are exempted BY
  * CLASS at their own arms in `index.ts` and must keep propagating untouched, so `sync.ts` rethrows
@@ -214,9 +189,6 @@ export function classifyIngestFault(err: unknown): IngestFault {
     // and then written off as a durable failure of mail that is still on the server, which is the
     // lie this module exists to prevent. Duck-typed on the code, like the bound above.
     if (code === "EIMAPEPOCHUNKNOWN") return { domain: "infrastructure" };
-    // A store limit this message's own statement met, attributed exactly (see isMessageLimit).
-    // The driver's MAX_PARAMETERS_EXCEEDED is not one: it can land on another caller's query.
-    if (isMessageLimit(err)) return { domain: "message", code: "data_too_large", deterministic: true };
     // Both sets, because on the ingest path the only socket is the database's.
     if (PG_DRIVER_CODES.has(code) || TRANSPORT_ERRNOS.has(code)) return { domain: "infrastructure" };
     const cls = sqlStateClass(code);
@@ -255,7 +227,6 @@ export function isDatabaseFault(err: unknown): boolean {
   const code = codeOf(err);
   if (!code) return false;
   if (PG_DRIVER_CODES.has(code)) return true;
-  if (isMessageLimit(err)) return false;
   const cls = sqlStateClass(code);
   return cls !== null && INFRA_SQLSTATE_CLASSES.includes(cls);
 }
@@ -285,7 +256,6 @@ const DATA_SQLSTATE_CLASSES: readonly string[] = [
  * wrong one costs isolation). */
 export function isSharedDatabaseFault(err: unknown): boolean {
   if (err instanceof DatabaseFaultError) {
-    if (isMessageLimit(err.cause)) return false;
     const cls = sqlStateClass(codeOf(err.cause));
     return cls === null || !DATA_SQLSTATE_CLASSES.includes(cls);
   }
@@ -365,7 +335,7 @@ export function nextAttemptAfter(
  * repo method cannot import this app's types, so the caller passes this list; this is its one definition.
  */
 export const DETERMINISTIC_MESSAGE_FAILURE_CODES = [
-  "mime_too_large", "mime_unparseable", "data_exception", "data_too_large",
+  "mime_too_large", "mime_unparseable", "data_exception",
 ] as const satisfies readonly MessageFailureCode[];
 
 /**
@@ -533,6 +503,6 @@ export class DeadLetterLedger {
 
 /** Is `code` a member of the closed set? A stored value outside it reads as `unclassified`. */
 function isMessageFailureCode(code: string): code is MessageFailureCode {
-  return code === "mime_too_large" || code === "mime_unparseable" || code === "data_exception"
-    || code === "data_too_large" || code === "constraint_violation" || code === "unclassified";
+  return code === "mime_too_large" || code === "mime_unparseable"
+    || code === "data_exception" || code === "constraint_violation" || code === "unclassified";
 }

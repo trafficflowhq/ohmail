@@ -1,13 +1,13 @@
 import { silentLogger, type Logger } from "@trafficflow/core";
 import {
-  adminAccountDetail, adminAccounts, adminActions, adminAlerts,
+  adminAccountDetail, adminAccounts, adminActions, adminAlertReading,
   adminAlertDrivers, adminPlatformSignals, adminWorker,
   adminWorkerInstances, adminFunnel, adminAccountsByIds, adminSearch, adminStaffActivity,
   adminSyncRoster, maskAddress, readerMasksAddresses, isUuid, ADMIN_BATCH_MAX, ADMIN_SYNC_ROSTER_MAX,
   type AccountQuery, type AdminDb, type AdminReader, type ApiHealth, type OverviewSnapshot,
   type StaffAuditAction, type StaffRole,
 } from "@trafficflow/services";
-import { DEFAULT_ALERT_THRESHOLDS, alertSchemaReadable } from "@trafficflow/db/cloud";
+import { DEFAULT_ALERT_THRESHOLDS, alertSchemaReadable, type EvaluateOptions } from "@trafficflow/db/cloud";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { actorOf, resolveStaffSession } from "./admin-staff.js";
 import {
@@ -19,7 +19,7 @@ import { healthFault, probeDatabase } from "./health.js";
 // is a hosted surface and the local route table does not mount it.
 import {
   EXPECTED_MARKERS, SCHEMA_MARKER_JOURNAL_TAG, CLOUD_TIER_MARKERS,
-  CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS, FUNCTION_DEFINITION_MARKERS, CLOUD_FK_MARKERS,
+  CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS, CLOUD_FUNCTION_MARKERS, CLOUD_FK_MARKERS,
 } from "./health-cloud.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route, RouteParams } from "../router.js";
@@ -65,11 +65,10 @@ async function apiHealthFor(req: Request, deps: ApiDeps): Promise<ApiHealth> {
   // `health.ts` (that module ships in the desktop engine); the console is a hosted surface and
   // must measure against both journals — cloud 0011 is invisible to name-only probes, cloud
   // 0013's index name cannot live in `health.ts`, cloud 0014 is a replaced function body, and the
-  // definition and function lists are both halves (mail 0100 widens a mail CHECK, mail 0140 adds a
-  // mail trigger function).
+  // definition list is both halves (`CHECK_DEFINITION_MARKERS`; mail 0100 widens a mail CHECK).
   const probe = await probeDatabase(
     deps.db, CLOUD_TIER_MARKERS, CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS,
-    FUNCTION_DEFINITION_MARKERS, CLOUD_FK_MARKERS,
+    CLOUD_FUNCTION_MARKERS, CLOUD_FK_MARKERS,
   );
   const base = {
     host,
@@ -140,6 +139,8 @@ export interface StaffContext {
    * never the handle. A fixed record of scalars cannot express an application row.
    */
   apiHealth(): Promise<ApiHealth>;
+  /** The alert route's parked reader (`AdminConfig.parkedAccounts`): a capability, never a handle. */
+  parkedAccounts?: EvaluateOptions["parkedAccounts"];
 }
 
 /**
@@ -182,7 +183,10 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
   // itself, with the same marker the alert preflight uses: a missing column and an ungranted
   // column are equally invisible to `information_schema`, and both mean these reads must not run.
   const schemaReady = api.schemaOk && await alertSchemaReadable(ctx.db);
-  const alerts = schemaReady ? await adminAlerts(ctx.db, now) : [];
+  const reading = schemaReady
+    ? await adminAlertReading(ctx.db, now, { ...(ctx.parkedAccounts !== undefined ? { parkedAccounts: ctx.parkedAccounts } : {}) })
+    : { alerts: [], unread: [] };
+  const alerts = reading.alerts;
   // SEQUENTIAL, on the deadlock note above — these are two more reads on the same `max: 1` blind
   // pool and a `Promise.all` here would reintroduce exactly the circular wait that comment
   // records. Both are bounded: two rows from `alert_pass_runs` by primary key, and one grouped
@@ -205,6 +209,7 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
     // console cannot derive this from `api.schemaOk`, because the grant half of it leaves that
     // flag true.
     alertsUnavailable: !schemaReady,
+    alertsUnread: reading.unread,
   };
 }
 
@@ -350,6 +355,7 @@ function adminRoute(name: string, action: StaffAuditAction, read: StaffRead, pol
             environment: cfg.environment ?? "production",
             logger: log,
             apiHealth: () => apiHealthFor(req, deps),
+            ...(cfg.parkedAccounts !== undefined ? { parkedAccounts: cfg.parkedAccounts } : {}),
           };
           return read(req, ctx, params, reader);
         }),

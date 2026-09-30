@@ -157,6 +157,12 @@ export interface AdminConfig {
    * assertion_unarmed`; there is no fallback key.
    */
   assertion?: StaffSigningKey | null;
+  /**
+   * The alert route's parked reader, the same instance: the board's `sync_lag` reads duty as the
+   * pager does. Absent reads as unstated. The console composes no at-cap reader — a pass is
+   * periodic, a console request is not — so that rule is unread here and says so.
+   */
+  parkedAccounts?: EvaluateOptions["parkedAccounts"];
 }
 
 /**
@@ -195,7 +201,8 @@ export interface AlertsConfig {
    * THE TWO POPULATIONS THE RULES CANNOT READ FROM THIS DATABASE — who is parked, and who is at
    * their storage cap. Both arrive as readers the host composes. The parked reader is the one
    * the worker's roster uses (`parkedAccountsOf`), `null` where nobody parks; absent, the pass
-   * pages without claiming its stale mailboxes are on duty. Absent `accountsAtCap`: nobody.
+   * pages without claiming its stale mailboxes are on duty. `accountsAtCap` `null` states that
+   * nobody is capped; absent is no reader, and the rule is unread rather than zero.
    */
   parkedAccounts?: EvaluateOptions["parkedAccounts"];
   accountsAtCap?: EvaluateOptions["accountsAtCap"];

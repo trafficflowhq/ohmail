@@ -3,8 +3,9 @@ import {
   type AccessPort, type AiPricingMarker, type EntitlementsComposition, type ParkedAccountsReader,
   type SpendPort, type Tx,
 } from "@trafficflow/db";
+import type { AccountsAtCapReader } from "@trafficflow/db/cloud";
 import {
-  API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRow,
+  API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRecorder, accountsAtCapOf,
   makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS, readDbTls,
   type EntitlementsClient,
 } from "@trafficflow/db/cloud";
@@ -375,28 +376,16 @@ function buildServices(cfg: HostConfig): ApiServices {
         baseUrl: cfg.entitlements.url,
         secret: cfg.entitlements.secret,
         /*
-         * WHERE A CREDIT-CHECK OUTAGE GOES TO BE COUNTED (cloud 0033). `entitlementsFaultRow`
-         * owns the mapping: a SYNTHETIC route, so these never double-count the route's own 503
-         * row, and `"api"` because the table's CHECK admits no third arm yet.
-         *
-         * A fresh pooled handle with the same short acquire ceiling the 5xx recorder uses — an
-         * abandoned insert must not sit on the pool in front of the next request. Awaited,
-         * because serverless is killed the moment it answers, and a throw is swallowed so a dark
-         * board never becomes the customer's error. The row carries no timing; this line does.
+         * WHERE A CREDIT-CHECK OUTAGE GOES TO BE COUNTED (cloud 0033): the one recorder the worker
+         * uses too, arm `api` (the host), one row per call under a synthetic route. A fresh pooled
+         * handle per row with the 5xx recorder's short acquire ceiling, so an abandoned insert never
+         * sits in front of the next request. Awaited by the client, because serverless is killed
+         * the moment it answers; a failed write is a warn line, never the customer's error.
          */
-        onCallFault: async (f) => {
-          const row = entitlementsFaultRow(f, "api", new Date());
-          hostLogger(cfg).warn("entitlements_call_fault", {
-            route: row.route, status: f.status, errorClass: row.errorClass,
-            elapsedMs: f.elapsedMs, budgetMs: f.budgetMs,
-          });
-          await recordApiFault(
-            makePooledDb(cfg.databaseUrlPooled, {
-              acquireTimeoutMs: API_FAULT_RECORD_BUDGET_MS,
-            }) as unknown as Tx,
-            row,
-          );
-        },
+        onCallFault: entitlementsFaultRecorder(
+          () => makePooledDb(cfg.databaseUrlPooled, { acquireTimeoutMs: API_FAULT_RECORD_BUDGET_MS }) as unknown as Tx,
+          "api", { log: hostLogger(cfg) },
+        ),
         // This platform freezes an instance once it answers; the refresh behind a read route
         // runs after the answer, so it is handed to the platform to finish.
         waitUntil,
@@ -508,16 +497,33 @@ function customerMailerFor(cfg: HostConfig): MailService | null {
 let sinksCache: { key: object; sinks: AlertSink[] } | null = null;
 
 /**
- * The pager's parked set: the worker roster's reader over this host's memoised client, so both
- * alert drivers and the roster answer "on duty" alike. `null` without a meter; lazy, so a request
- * that never runs a pass never composes the client.
+ * THIS HOST'S ONE ALERT READER BAG, over its memoised client and built once per config: the parked
+ * reader the alert route AND the console read (one instance), and the at-cap reader the route
+ * alone takes, because a pass is periodic and a console request is not. `null` members without
+ * a meter; lazy, so a request that never evaluates never composes the client.
  */
-function parkedAccountsFor(cfg: HostConfig): ParkedAccountsReader | null {
-  if (!cfg.entitlements) return null;
-  return (ids, now) => {
-    const read = parkedAccountsOf(servicesFor(cfg).entitlementsPort as EntitlementsComposition);
-    return read ? read(ids, now) : Promise.resolve(new Set<string>());
-  };
+let readersCache: { key: object; readers: HostAlertReaders } | null = null;
+interface HostAlertReaders {
+  parkedAccounts: ParkedAccountsReader | null;
+  accountsAtCap: AccountsAtCapReader | null;
+}
+function alertReadersFor(cfg: HostConfig): HostAlertReaders {
+  if (readersCache && readersCache.key === cfg) return readersCache.readers;
+  const port = () => servicesFor(cfg).entitlementsPort as EntitlementsComposition;
+  const readers: HostAlertReaders = cfg.entitlements
+    ? {
+      parkedAccounts: (ids, now, recheck) => {
+        const read = parkedAccountsOf(port());
+        return read ? read(ids, now, recheck) : Promise.resolve(new Set<string>());
+      },
+      accountsAtCap: (db, now) => {
+        const read = accountsAtCapOf(port());
+        return read ? read(db, now) : Promise.resolve({ atCap: [], read: 0, total: 0 });
+      },
+    }
+    : { parkedAccounts: null, accountsAtCap: null };
+  readersCache = { key: cfg, readers };
+  return readers;
 }
 
 function alertSinksFor(cfg: HostConfig): AlertSink[] {
@@ -760,7 +766,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         cronSecret: cfg.alerts.cronSecret ?? undefined,
         sinks: alertSinksFor(cfg),
         environment: cfg.environment,
-        parkedAccounts: parkedAccountsFor(cfg),
+        parkedAccounts: alertReadersFor(cfg).parkedAccounts,
+        accountsAtCap: alertReadersFor(cfg).accountsAtCap,
       }
       : undefined,
     // ABSENT ⇒ every `GET /admin/*` answers 404 — a deployment with no
@@ -771,6 +778,9 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         secret: cfg.admin.secret,
         environment: cfg.environment,
         assertion: staffSigningKeyOf(cfg.admin.assertionKey, cfg.admin.assertionKid),
+        // The alert route's own parked reader, so the board's sync_lag reads duty as the pager
+        // does; no at-cap reader, which the console never runs.
+        parkedAccounts: alertReadersFor(cfg).parkedAccounts,
       }
       : undefined,
     // The content-blind staff connection, armed by `DATABASE_URL_ADMIN` ALONE.
@@ -892,6 +902,7 @@ function hostLogger(cfg: HostConfig): Logger {
 export function resetServices(): void {
   servicesCache = null;
   sinksCache = null;
+  readersCache = null;
   loggerCache = null;
   // Cleared with the logger it was built from: a sink outliving its logger would keep a torn-down
   // test's logger alive and attribute the next test's notices to it.

@@ -1,6 +1,6 @@
 import {
   MAIL_SCHEMA_MARKERS, SCHEMA_INDEX_MARKERS, SCHEMA_CHECK_MARKERS,
-  MAIL_CHECK_DEFINITION_MARKERS, MAIL_FUNCTION_MARKERS, SCHEMA_FK_MARKERS, MAIL_COLUMN_TYPE_MARKERS,
+  MAIL_CHECK_DEFINITION_MARKERS, SCHEMA_FK_MARKERS, MAIL_COLUMN_TYPE_MARKERS,
   MAIL_SCHEMA_MARKER_JOURNAL_TAG, type SchemaMarker, type CheckDefinitionMarker,
   type FunctionDefinitionMarker, type ForeignKeyMarker, type IndexMarker,
 } from "./health.js";
@@ -296,15 +296,9 @@ export const CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
   ...CLOUD_CHECK_DEFINITION_MARKERS,
 ];
 
-/* Both tiers' function bodies, for the same reason: the mail tier has one too, the body vector's. */
-export const FUNCTION_DEFINITION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
-  ...MAIL_FUNCTION_MARKERS,
-  ...CLOUD_FUNCTION_MARKERS,
-];
-
 /**
- * Columns + indexes (both halves) + checks + check DEFINITIONS (both halves) + function BODIES (both
- * halves) + column TYPES (mail). What a hosted `/health` measures against.
+ * Columns + indexes (both halves) + checks + check DEFINITIONS (both halves) + function BODIES +
+ * column TYPES (mail). What a hosted `/health` measures against.
  *
  * The check-DEFINITION term is BOTH halves since mail 0100 — a hosted database ran the mail
  * journal too, so a hosted probe that measured only the Cloud definitions would certify it
@@ -313,7 +307,7 @@ export const FUNCTION_DEFINITION_MARKERS: ReadonlyArray<FunctionDefinitionMarker
 export const EXPECTED_MARKERS =
   SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + CLOUD_INDEX_MARKERS.length +
   SCHEMA_CHECK_MARKERS.length + CHECK_DEFINITION_MARKERS.length +
-  FUNCTION_DEFINITION_MARKERS.length + SCHEMA_FK_MARKERS.length + CLOUD_FK_MARKERS.length +
+  CLOUD_FUNCTION_MARKERS.length + SCHEMA_FK_MARKERS.length + CLOUD_FK_MARKERS.length +
   MAIL_COLUMN_TYPE_MARKERS.length;
 
 /** Alias that names the role rather than the shape, for the composition root. */
@@ -347,7 +341,7 @@ registerSchemaCensus({
   markers: SCHEMA_MARKERS,
   checkDefinitions: CHECK_DEFINITION_MARKERS,
   indexMarkers: CLOUD_INDEX_MARKERS,
-  functionDefinitions: FUNCTION_DEFINITION_MARKERS,
+  functionDefinitions: CLOUD_FUNCTION_MARKERS,
   foreignKeys: CLOUD_FK_MARKERS,
   expected: EXPECTED_MARKERS,
   through: SCHEMA_MARKER_JOURNAL_TAG,

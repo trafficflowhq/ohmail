@@ -18,27 +18,6 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.25.8] — 2026-10-01
-
-### A crafted message body can no longer stall mail sync
-<!-- changes: hotfix-0.25.8.md -->
-
-A message whose text is a very long run of distinct words is now stored whole instead of being
-fetched again on every sync while the mail behind it waits. A message that exceeds another storage
-limit is set aside on its own: it stays on your mail server and the next version tries it again.
-For mail stored from this version on, search reads the first 65,536 characters of a message's text.
-Update the desktop app as well: an older one shows a mailbox as offline once the server has stored
-such a message.
-
-## [0.25.7] — 2026-10-01
-
-### A crafted address header can no longer stall mail sync, and attachments are verified
-<!-- changes: hotfix-0.25.7.md -->
-
-A crafted address header can no longer stall mail sync. Attachments inside nested messages download
-correctly for mail received from now on; for older mail the app refuses a file it cannot verify
-instead of serving the wrong one.
-
 ## [0.25.6] — 2026-09-30
 
 ### The AI call log is complete again
@@ -4343,7 +4322,7 @@ sent to it. Only Screener decisions travelled. All of them travel now, each carr
 ### Search answers while you type
 
 Searching a large mailbox used to freeze the window. Senders, subjects and previews now match as
-you type; the text of your mail is searched in the archive, which answers a moment later.
+you type; the full text of your mail is searched in the archive, which answers a moment later.
 
 ### Attachments land in your Downloads folder
 
@@ -10689,9 +10668,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.8...HEAD
-[0.25.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.8
-[0.25.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.7
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.6...HEAD
 [0.25.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.6
 [0.25.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.5
 [0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
