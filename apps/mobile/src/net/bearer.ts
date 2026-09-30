@@ -1,15 +1,16 @@
 /**
  * The bearer manager, on React Native — this app's whole credential, in one small object. A
  * port of `apps/desktop/src/host-client/bearer.ts` semantics — single-flight rotation, one reading
- * of the refresh answer, generation-bound replay, refusal-only sign-out — with two narrowing
- * substitutions: the refresh token persists in the device keystore, and `navigator.locks` is
- * dropped because RN is one JS runtime with no sibling presenters. A lost rotation response used
- * to end the pairing: strict reuse read the retry of the retained token as theft. Every attempt
- * now carries a name persisted BEFORE it submits and repeated until an answer lands.
+ * of the refresh answer, generation-bound replay, refusal-only sign-out — with the refresh token in
+ * the device keystore and no `navigator.locks`: one manager per pairing slot for the whole process,
+ * held by `bearer-registry.ts`, is what keeps a token from being presented twice. An activity
+ * recreate rebuilds the React tree in the same runtime while a rotation can be in flight, so a
+ * manager per session is two presenters. Every attempt carries a name persisted before it submits.
  */
 
 import { ACCOUNT_ERASED, ERASED_ANSWER_HEADER, readRefreshAnswer, sessionEndedResponse } from "@ohmail/client-engine";
 import type { SessionRenewalDoor } from "@ohmail/client-engine";
+import type { RefreshWrite } from "../state/servers";
 
 /** The wire pair the redeem and the refresh both answer — the desktop manager's exact shape. */
 export interface BearerTokens {
@@ -18,19 +19,22 @@ export interface BearerTokens {
 }
 
 /**
- * Where the refresh token survives an app kill. The profile store binds this to the active
- * server profile's slot in expo-secure-store; tests bind a recorder. `save` is awaited by the
- * rotation before it resolves (the residual above); `clear` is a refusal's take-back.
+ * Where the refresh token survives an app kill. The profile store binds this to the profile's
+ * slot in expo-secure-store; tests bind a recorder. `save` is awaited by the rotation before it
+ * resolves; `clear` is a refusal's take-back. Every write names the token the manager HELD
+ * (`presented`), and the store writes only over that token: a re-pair's newer family is not
+ * this manager's to overwrite or clear.
  */
 export interface RefreshVault {
-  save(refreshToken: string): Promise<void>;
-  clear(): Promise<void>;
+  save(refreshToken: string, presented: string | null): Promise<RefreshWrite>;
+  /** `why` is the death this clear follows: an erased account's copy is owed before the token goes. */
+  clear(presented: string | null, why: SessionDeath): Promise<RefreshWrite>;
   /**
    * Persist the name of the attempt about to be submitted, beside the token it will spend. The
    * store clears it in the same write that saves the answer, so adopting IS clearing and no
    * caller can forget to.
    */
-  armAttempt(attemptId: string): Promise<void>;
+  armAttempt(attemptId: string, presented: string | null): Promise<RefreshWrite>;
 }
 
 /**
@@ -157,6 +161,8 @@ export class BearerManagerRN implements SessionRenewalDoor {
    * write, which `rotate()` awaits and other callers may ignore.
    */
   adopt(tokens: BearerTokens): Promise<void> {
+    // The token this pair replaces, read BEFORE the assignment: the store writes over it only.
+    const presented = this.refresh;
     this.access = tokens.accessToken;
     this.refresh = tokens.refreshToken;
     this.generation++;
@@ -168,7 +174,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     for (const cb of [...this.renewedListeners]) {
       try { cb(); } catch { /* the pair is adopted either way */ }
     }
-    return this.vault.save(tokens.refreshToken).catch(() => {
+    return this.vault.save(tokens.refreshToken, presented).then(() => undefined, () => {
       /* A keystore refusal: the session lives until the next kill, then one scan re-pairs. */
     });
   }
@@ -203,10 +209,11 @@ export class BearerManagerRN implements SessionRenewalDoor {
    */
   private async die(why: SessionDeath): Promise<void> {
     if (this.access === null && this.refresh === null) return;
+    const presented = this.refresh;
     this.access = null;
     this.refresh = null;
     this.attempt = null;
-    await this.vault.clear().catch(() => {
+    await this.vault.clear(presented, why).catch(() => {
       /* already gone, or the keystore refused — either way this session is over locally */
     });
     for (const cb of [...this.deadListeners]) cb(why);
@@ -226,8 +233,8 @@ export class BearerManagerRN implements SessionRenewalDoor {
    * Rotate the pair once, single-flighted. Resolves `true` when a fresh pair is held. A REFUSAL
    * (`readRefreshAnswer`) clears the session; everything else — a network failure, a 503, a
    * sign-in page, a firewall's 403 — clears nothing and resolves `false`.
-   * No lock and no storage re-read around the critical section: one runtime, one presenter
-   * (the header's second paragraph).
+   * No lock and no storage re-read around the critical section: the registry holds one
+   * manager per slot for the process, so this flight is the slot's only presenter.
    */
   private rotate(): Promise<boolean> {
     return (this.rotating ??= (async (): Promise<boolean> => {
@@ -241,7 +248,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
       // ordering a retry cannot recover from.
       const attemptId = this.attempt ?? mintAttemptId();
       this.attempt = attemptId;
-      await this.vault.armAttempt(attemptId).catch(() => {
+      await this.vault.armAttempt(attemptId, presented).catch(() => {
         /* The keystore refused. The attempt is still named on the wire and in memory, so a retry
            inside this process is recognised; only one that outlives the process is not — which
            is exactly where every phone stood before the name existed. */

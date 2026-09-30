@@ -196,6 +196,13 @@ function readWipe(raw: unknown): PendingWipe[] {
   return [{ id: typeof w.id === "string" ? w.id : "", owner: w.owner }];
 }
 
+/**
+ * What a credential write answered. `superseded`: the row holds another token than the writer
+ * presented (a re-pair replaced the family, or the writer holds none), so nothing was written.
+ * `no_row`: the profile is gone. A writer can only be the holder of the row's current token.
+ */
+export type RefreshWrite = "landed" | "superseded" | "no_row";
+
 /** Keystore-safe, unique-per-device id. Not a credential — collision-resistance suffices. */
 function mintId(): string {
   return `p${Date.now().toString(36)}${Math.floor(Math.random() * 36 ** 6).toString(36)}`;
@@ -490,33 +497,40 @@ export class ServerProfileStore {
   }
 
   /**
+   * THE HOLDER'S WRITE, compared and set inside the queue `add` runs in. `presented` is the token
+   * the writer held; a row holding another one belongs to a newer family (a re-pair) and is left
+   * alone. Checked here and not at the caller, because a check before `enqueue` is stale by the
+   * time the write runs. A writer holding no token writes nothing.
+   */
+  private holderWrite(
+    id: string, presented: string | null, next: (p: ServerProfile) => ServerProfile,
+  ): Promise<RefreshWrite> {
+    return this.enqueue(async () => {
+      const p = await this.readProfile(id);
+      if (p === null) return "no_row"; // forgotten mid-rotation — nothing to persist into
+      if (presented === null || p.refreshToken !== presented) return "superseded";
+      await this.writeProfile(next(p));
+      return "landed";
+    });
+  }
+
+  /**
    * The BearerManager vault's write half — every successful rotation lands here. It CLEARS the
    * armed attempt in the same write, because adopting the answer is exactly what makes the
    * attempt answered; two writes could leave a fresh token beside a stale attempt id if the
-   * process died between them. Harmless if it ever did — an unconsumed token's row names no
-   * attempt, so the id could only miss — but one write cannot go half-way, and one writer means
-   * the clearing is not something a later caller can forget.
+   * process died between them. `presented` is the token the rotation spent.
    */
-  saveRefreshToken(id: string, refreshToken: string): Promise<void> {
-    return this.enqueue(async () => {
-      const p = await this.readProfile(id);
-      if (p === null) return; // forgotten mid-rotation — nothing to persist into
-      await this.writeProfile({ ...p, refreshToken, refreshAttempt: null });
-    });
+  saveRefreshToken(id: string, refreshToken: string, presented: string | null): Promise<RefreshWrite> {
+    return this.holderWrite(id, presented, (p) => ({ ...p, refreshToken, refreshAttempt: null }));
   }
 
   /**
    * ARM AN ATTEMPT — durably, BEFORE the refresh request is submitted. That order is the whole
    * point: a name written after the answer would not exist in the one case it is for, the answer
-   * that never comes. A missing row is the same no-op as {@link saveRefreshToken}'s, and for the
-   * same reason.
+   * that never comes. `presented` is the token the attempt is about to present.
    */
-  armRefreshAttempt(id: string, attemptId: string): Promise<void> {
-    return this.enqueue(async () => {
-      const p = await this.readProfile(id);
-      if (p === null) return;
-      await this.writeProfile({ ...p, refreshAttempt: attemptId });
-    });
+  armRefreshAttempt(id: string, attemptId: string, presented: string | null): Promise<RefreshWrite> {
+    return this.holderWrite(id, presented, (p) => ({ ...p, refreshAttempt: attemptId }));
   }
 
   /**
@@ -539,16 +553,11 @@ export class ServerProfileStore {
   /**
    * The vault's take-back — a refresh REFUSAL (the server judged the token) clears the
    * credential but KEEPS the profile row, so the picker can say "pairing ended — scan again"
-   * instead of the server silently vanishing from the list.
+   * instead of the server silently vanishing from the list. The attempt goes with it. Only the
+   * holder of the row's token clears it: an old family's death must not end a re-pair.
    */
-  clearRefreshToken(id: string): Promise<void> {
-    return this.enqueue(async () => {
-      const p = await this.readProfile(id);
-      if (p === null) return;
-      // The attempt goes with it: the family this id names is judged and gone, and a re-pair
-      // starts a new one. Leaving it would hand the next rotation a name that can only miss.
-      await this.writeProfile({ ...p, refreshToken: null, refreshAttempt: null });
-    });
+  clearRefreshToken(id: string, presented: string | null): Promise<RefreshWrite> {
+    return this.holderWrite(id, presented, (p) => ({ ...p, refreshToken: null, refreshAttempt: null }));
   }
 
   /* ── the owed deletions (see {@link Index.wipes}) ─────────────────────────────────────── */

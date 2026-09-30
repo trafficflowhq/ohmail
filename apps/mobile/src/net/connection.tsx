@@ -23,7 +23,7 @@ import {
 import { engineLogSink, logNetwork } from "../engine/engine-log";
 import { accessLock, clearAccessLock, onAccessLock } from "./access-lock";
 import { decidedState, type DecidedState } from "./decided";
-import { deathRefusal, noteSessionDeath } from "./session-death";
+import { deathRefusal } from "./session-death";
 import {
   CLAIM_LAPSES_AFTER_MINUTES, PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
   type ReopenOutcome, type StandaloneEngine, type StoreMigrating,
@@ -424,12 +424,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
          a server to judge and no `ended` state this session can reach. A faked manager here would
          have made this line compile and the state unreachable. */
       offDead.current = session.bearer?.onSessionDead((why) => {
-        // The server judged this family's token. Render mail no further: tear down, write the
-        // cause to the device's log, and give the person the one sentence every door shows for
-        // this — which ends in the remedy, because "signed out" with no way back is what they
-        // used to meet (`net/session-death.ts`).
+        // The server judged this family's token. Render mail no further: tear down and give the
+        // person the one sentence every door shows for this — which ends in the remedy, because
+        // "signed out" with no way back is what they used to meet (`net/session-death.ts`). The
+        // cause goes to the device's log from the registry, which hears every death.
         const closed = teardown(session);
-        noteSessionDeath(why);
         enter({ k: "ended", reason: deathRefusal(why) });
         if (why !== "erased") {
           void refreshProfiles();
@@ -531,6 +530,18 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       if (!stillCurrent()) {
         if (outcome.kind === "connected") outcome.session.store.close();
         return { ok: false, reason: SUPERSEDED() };
+      }
+      if (outcome.kind === "refused" && outcome.died !== undefined) {
+        /* THE SLOT'S MANAGER DIED WITH NOBODY LISTENING (a launch's wake drain, a torn-down tree's
+           last request): answered as the dead-signal listener answers, with its state and, for an
+           erased account, its Forget — no store was opened, so there is nothing to close. */
+        enter({ k: "ended", reason: outcome.reason });
+        if (outcome.died === "erased") {
+          void forgetProfile(env, id, { revoke: async () => true })
+            .catch(() => undefined)
+            .then(() => refreshProfiles());
+        }
+        return { ok: false, reason: outcome.reason };
       }
       if (outcome.kind === "refused") {
         enter({ k: "refused", reason: outcome.reason });
@@ -641,7 +652,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     return () => {
       { const at = live.now(); if (at.k === "live") teardown(at.session); }
     };
-    // Mount-only: the provider outlives every screen; later transitions come through the API.
+    // Mount-only, per provider — and the provider does NOT outlive an activity recreate: the tree
+    // is rebuilt in the same runtime and this runs again while the old tree's rotation may still
+    // be in flight. `bearer-registry.ts` keeps that to one manager per slot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

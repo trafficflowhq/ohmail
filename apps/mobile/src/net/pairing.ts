@@ -24,7 +24,9 @@ import {
 } from "../engine/organizer-session";
 import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door";
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
-import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
+import type { BearerManagerRN, FetchLike, RefreshVault, SessionDeath } from "./bearer";
+import { bearers as processBearers, type BearerRegistry } from "./bearer-registry";
+import { deathRefusal } from "./session-death";
 import { withAccessLock } from "./access-lock";
 import { forgetAccessFeed } from "./account";
 import { networkNow } from "./network-door";
@@ -441,6 +443,8 @@ export interface PairingEnv {
      */
     standDownAway: () => Promise<void>;
   };
+  /** The slot registry (`bearer-registry.ts`). Absent: the process's own — tests pass one. */
+  bearers?: BearerRegistry;
 }
 
 export type PairOutcome =
@@ -449,17 +453,33 @@ export type PairOutcome =
 
 export type ConnectOutcome =
   | { kind: "connected"; session: ConnectedSession }
-  /** `needsRepair`: the credential is gone (a refusal cleared it) — one scan re-pairs. */
-  | { kind: "refused"; reason: Refusal; needsRepair?: boolean };
+  /**
+   * `needsRepair`: the credential is gone (a refusal cleared it) — one scan re-pairs. `died`: the
+   * slot's manager died in this process with nobody listening, and this is how; the connection
+   * layer answers it as its dead-signal listener would.
+   */
+  | { kind: "refused"; reason: Refusal; needsRepair?: boolean; died?: SessionDeath };
 
 const bareFetch = (): FetchLike => globalThis.fetch.bind(globalThis) as FetchLike;
 
-/** The BearerManager's persistence, bound to one profile's slot in the keystore. */
-function vaultFor(profiles: ServerProfileStore, id: string): RefreshVault {
+/**
+ * The BearerManager's persistence, bound to one profile's slot in the keystore — the ONLY caller
+ * of the store's three credential writes, each of which lands only over the token its manager held.
+ * An ERASED death owes the forget BEFORE the credential goes, so a kill between the two leaves the
+ * debt the next launch pays before it connects (`drainPendingWipes`). The debt names the account,
+ * not the family, so it is not fenced; a full queue still clears, and the Forget reports it.
+ */
+function vaultFor(profiles: ServerProfileStore, row: Pick<ServerProfile, "id" | "origin" | "accountId">): RefreshVault {
+  const { id } = row;
   return {
-    save: (t) => profiles.saveRefreshToken(id, t),
-    clear: () => profiles.clearRefreshToken(id),
-    armAttempt: (a) => profiles.armRefreshAttempt(id, a),
+    save: (t, presented) => profiles.saveRefreshToken(id, t, presented),
+    clear: async (presented, why) => {
+      if (why === "erased") {
+        await profiles.markPendingWipe(id, mirrorOwnerKey(row.origin, row.accountId)).catch(() => undefined);
+      }
+      return profiles.clearRefreshToken(id, presented);
+    },
+    armAttempt: (a, presented) => profiles.armRefreshAttempt(id, a, presented),
   };
 }
 
@@ -815,7 +835,18 @@ export async function pairWithServer(
       refuse(closed ? "pairNotStoredClosed" : "pairNotStoredOpen", faultDetail(err)),
     );
   }
-  const connected = await buildSession(env, profile, tokens.accessToken);
+  /* A REDEEM IS A NEW FAMILY FOR THE SLOT, and a re-pair keeps the row id (`add`): the slot's
+     manager — dead after a sign-out, or alive — is replaced by one holding the redeem's pair.
+     Only after `add` resolved: a pairing that was not stored replaces nothing. */
+  (env.bearers ?? processBearers).adoptRedeem(profile.id, {
+    origin,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    accountId: identity.accountId,
+    vault: vaultFor(env.profiles, profile),
+    ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
+  });
+  const connected = await buildSession(env, profile);
   if (connected.kind === "refused") return { kind: "refused", reason: connected.reason };
   return { kind: "paired", session: connected.session };
 }
@@ -823,12 +854,11 @@ export async function pairWithServer(
 /**
  * Best-effort SERVER-SIDE revocation of a profile's session — what "forget this server" owes
  * beyond deleting the local row: without it the refresh family stays live on the server until
- * it ages out. Ridden through a throwaway manager's `fetch` on purpose: a stored profile holds
- * only the refresh token, so the logout's first attempt carries no access token, 401s, and the
- * manager's one recovery spends the refresh into a fresh access token and replays — which
- * revokes the session (`allDevices` stays step-up-gated server-side, so this can only ever end
- * ITSELF). Never throws — but it does ANSWER: `false` means the server was not told, and the
- * caller must not report a forget over it. See {@link forgetProfile}.
+ * it ages out. Ridden through the slot's manager, or a throwaway one when this process holds
+ * none: a cold manager's logout 401s, its one recovery spends the refresh token and replays, and
+ * that revokes the session (`allDevices` stays step-up-gated server-side, so this can only end
+ * ITSELF). Never throws, and ANSWERS: `false` means the server was not told. The slot is then
+ * nobody's. See {@link forgetProfile}.
  */
 export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Promise<boolean> {
   /**
@@ -841,25 +871,28 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
    * that; `false` shows the Devices-list remedy, the only one left.
    */
   if (profile.refreshToken === null) return false;
-  const bearer = new BearerManagerRN({
+  const slots = env.bearers ?? processBearers;
+  const bearer = slots.managerFor(profile.id, () => ({
     origin: profile.origin,
-    accessToken: null,
     refreshToken: profile.refreshToken,
-    // A throwaway vault: the profile is being forgotten, so nothing should persist into it —
-    // the armed attempt included, which is why the third member is a no-op and not a write.
-    vault: { save: async () => undefined, clear: async () => undefined, armAttempt: async () => undefined },
+    refreshAttempt: null,
+    accountId: null,
+    // A throwaway vault, used only when no manager holds the slot: the profile is being
+    // forgotten, so nothing persists into it — the armed attempt included.
+    vault: { save: async () => "no_row", clear: async () => "no_row", armAttempt: async () => "no_row" },
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
-  });
+  }));
   try {
-    const res = await bearer.fetch(`${profile.origin}/auth/logout`, { method: "POST" });
-    // 401 counts as told only when the family was actually JUDGED — the manager clears its
-    // credential on a refusal and clears nothing on a transient one, so a 401 with the token
-    // still held means the recovery could not run and the session is still open. See
-    // `BearerManagerRN.logout` for the same rule and the reason it is not obvious.
-    return (res.status >= 200 && res.status < 300) || (res.status === 401 && !bearer.paired());
+    // A manager that already died holds nothing to revoke with — the same answer as a cleared row.
+    if (bearer.ended()) return false;
+    // 401 counts as told only when the family was JUDGED — the manager clears its credential on a
+    // refusal and nothing on a transient one; `BearerManagerRN.logout` states the rule.
+    return await bearer.logout();
   } catch {
     /* unreachable server — the server-side session ages out; the phone forgot it already */
     return false;
+  } finally {
+    slots.evict(profile.id);
   }
 }
 
@@ -944,6 +977,8 @@ export async function forgetProfile(
     : opts.revoke ? await opts.revoke().catch(() => false)
     : row !== null ? await revokeProfile(env, row)
     : true;
+  // The slot's manager has presented its logout (or never existed): nobody holds this slot now.
+  (env.bearers ?? processBearers).evict(profileId);
 
   /* ── THE MAILBOX ON THIS PHONE HAS A FOURTH STORE, AND IT IS THE AUTHORITY ────────────────
    *
@@ -1092,25 +1127,22 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
 export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> {
   const stillOwed: string[] = [];
   /**
-   * ONE MANAGER PER PROFILE, FOR ALL OF ITS DEBTS, built from a row re-read at that moment.
-   *
-   * A snapshot taken once with a manager per debt is the collision {@link connectProfileById}
-   * already names: the first manager rotates, the keystore holds the successor, and the second
-   * is handed the SNAPSHOT's consumed token. Presenting it is the reuse signal, so a phone with
-   * two wake debts on one account revoked its own pairing while paying them, during launch. One
-   * manager also single-flights its rotation, so the second debt spends nothing at all.
+   * THE SLOT'S OWN MANAGER, for every debt of it — the registry's, which the session this launch
+   * boots then uses too. A manager per debt was the collision: the first rotates, the second
+   * presents the consumed token, and the reuse signal revoked a good pairing during launch. A
+   * slot whose manager already died is the null arm, like a row with no token: the debt is
+   * dropped, never retried on a dead credential.
    */
-  const managers = new Map<string, { bearer: BearerManagerRN; profile: ServerProfile } | null>();
+  const slots = env.bearers ?? processBearers;
   const managerFor = async (
     profileId: string,
   ): Promise<{ bearer: BearerManagerRN; profile: ServerProfile } | null> => {
-    const held = managers.get(profileId);
-    if (held !== undefined) return held;
     const profile = (await env.profiles.list()).find((p) => p.id === profileId);
-    const built = profile === undefined || profile.refreshToken === null ? null : new BearerManagerRN({
+    if (profile === undefined || profile.refreshToken === null) return null;
+    const bearer = slots.managerFor(profile.id, () => ({
       origin: profile.origin,
-      accessToken: null,
       refreshToken: profile.refreshToken,
+      accountId: profile.accountId,
       /* The attempt this phone may still owe an answer for — a launch that pays these debts is
          exactly where a rotation killed mid-flight comes back, and the retry has to be the same
          attempt or the server reads it as a replay. */
@@ -1125,12 +1157,10 @@ export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> 
        * presenting a consumed token is the reuse signal that revokes the
        * family — paying a "stop waking me" debt would end a good pairing.
        */
-      vault: vaultFor(env.profiles, profile.id),
+      vault: vaultFor(env.profiles, profile),
       ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
-    });
-    const entry = built === null ? null : { bearer: built, profile: profile! };
-    managers.set(profileId, entry);
-    return entry;
+    }));
+    return bearer.paired() ? { bearer, profile } : null;
   };
 
   for (const owed of await env.profiles.pendingWakeDrops()) {
@@ -1159,7 +1189,7 @@ export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> 
  * built, so this is a plain delegation.
  */
 export async function connectProfile(env: PairingEnv, profile: ServerProfile): Promise<ConnectOutcome> {
-  return buildSession(env, profile, null);
+  return buildSession(env, profile);
 }
 
 /**
@@ -1178,13 +1208,13 @@ export async function connectProfileById(env: PairingEnv, id: string): Promise<C
 
 /**
  * The engine composition, fed through the manager's two seams instead of a hand-typed static
- * header — the same shape the desktop's host client uses. A cold launch holds no access token;
- * the first 401 buys one through the rotation — which is the machine `bearer.test.ts` pins.
+ * header — the same shape the desktop's host client uses. The manager is the slot's (the
+ * registry's): a pairing's redeem put its pair there, a cold launch builds one with no access
+ * token, and the first 401 buys one through the rotation — the machine `bearer.test.ts` pins.
  */
 async function buildSession(
   env: PairingEnv,
   profile: ServerProfile,
-  accessToken: string | null,
 ): Promise<ConnectOutcome> {
   /**
    * A profile the person asked to forget is not bootable. A forget whose
@@ -1208,6 +1238,13 @@ async function buildSession(
    */
   if (profile.origin !== LOCAL_ENGINE_ORIGIN && env.standalone?.door() != null) {
     await env.standalone.standDownAway();
+  }
+  /* A SLOT WHOSE MANAGER DIED IN THIS PROCESS answers with that death, whoever was listening —
+     ahead of the owed-forget refusal, because an erased death owes a forget nobody pressed. The
+     read builds nothing; one function says every cause, and an erased account is not re-paired. */
+  const died = (env.bearers ?? processBearers).deathOf(profile.id);
+  if (died !== null) {
+    return { kind: "refused", reason: deathRefusal(died), died, needsRepair: died !== "erased" };
   }
   if (await env.profiles.isOwedForget(profile.id)) {
     return {
@@ -1261,15 +1298,16 @@ async function buildSession(
     }
   }
 
-  const bearer = new BearerManagerRN({
+  const bearer = (env.bearers ?? processBearers).managerFor(profile.id, () => ({
     origin: profile.origin,
-    accessToken,
     refreshToken: profile.refreshToken,
+    // The attempt a rotation killed between submit and adopt left owed: the relaunch repeats it.
+    refreshAttempt: profile.refreshAttempt,
     // What an erased answer must name for this session to end as `erased` (`bearer.ts`).
     accountId: profile.accountId,
-    vault: vaultFor(env.profiles, profile.id),
+    vault: vaultFor(env.profiles, profile),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
-  });
+  }));
   // A CREDENTIAL-LESS BEARER IS REFUSED HERE, STRUCTURALLY — not left to the caller's guard.
   // `connectProfile` already refuses a `refreshToken: null` row, but the property must hold
   // wherever a session could be built, because a null-credential bearer is the one shape the
