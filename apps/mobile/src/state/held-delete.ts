@@ -38,7 +38,11 @@ interface HeldPress {
 }
 
 const held = new Map<string, HeldPress>();
-/** Presses whose Undo is saving: disarmed, still out of the lists, never flushed as a delete. */
+/**
+ * Presses whose Undo is saving: disarmed, still out of the lists, never flushed as a delete — and
+ * never READ as a row ({@link readRows}). Module state, so it outlives a session reopened over the
+ * same mirror: that session's replay would otherwise send a press the person just took back.
+ */
 const undoing = new Set<string>();
 const listeners = new Set<() => void>();
 /** The snapshot the projection subscribes to — a NEW set per change, `useSyncExternalStore`'s contract. */
@@ -66,6 +70,8 @@ function readRows(door: JournalDoor): DeleteIntent[] {
       const ids = Array.isArray(row.messageIds)
         ? row.messageIds.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
       if (ids.length === 0) continue;
+      // A row under undo is already taken back: never replayed, never written back by a rewrite.
+      if (typeof row.id === "string" && undoing.has(row.id)) continue;
       out.push({ id: typeof row.id === "string" && row.id.length > 0 ? row.id : ids[0]!, messageIds: ids, at: row.at, kind: "delete" });
     }
     return out;
@@ -146,8 +152,9 @@ export function undoHeldDelete(id: string): Promise<DurableWrite> | null {
   clearTimeout(press.timer);
   held.delete(id);
   if (press.door === null) { publish(); return Promise.resolve("stored"); }
-  undoing.add(id);
+  // The removal FIRST: once the id is under undo, {@link readRows} no longer sees its row.
   forgetRow(press.door, id);
+  undoing.add(id);
   publish();
   return press.door.landed().then((stored) => {
     undoing.delete(id);
