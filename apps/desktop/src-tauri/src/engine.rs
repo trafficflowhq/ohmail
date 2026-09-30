@@ -5289,6 +5289,21 @@ pub fn server_link_for(config: Option<&Config>) -> Result<String, String> {
     Ok(url)
 }
 
+/// What `open_link` opens for [`SERVER_MAILBOXES_KEY`]: the key takes NO value — a challenge or a
+/// request offered to it is refused, so neither can ride to the operator's page — and the page is
+/// [`server_link_for`] over the door this shell configured.
+#[cfg(feature = "local-engine")]
+pub fn server_open_target(
+    challenge: Option<&str>,
+    request: Option<&str>,
+    config: Option<&Config>,
+) -> Result<String, String> {
+    if named(challenge) || named(request) {
+        return Err(format!("ohmail: {SERVER_MAILBOXES_KEY} takes no value"));
+    }
+    server_link_for(config)
+}
+
 /// What `open_link` opens: the approval page by its request, every other key by [`link_url_for`].
 /// A value offered to the wrong key is refused, so neither parameter can reach the other's page.
 #[cfg(feature = "local-engine")]
@@ -5543,10 +5558,8 @@ fn open_link(
     request: Option<String>,
 ) -> Result<(), String> {
     if key == SERVER_MAILBOXES_KEY {
-        if named(challenge.as_deref()) || named(request.as_deref()) {
-            return Err(format!("ohmail: {key} takes no value"));
-        }
-        return spawn_opener(&server_link_for(shell.paths.config().as_ref())?);
+        let config = shell.paths.config();
+        return spawn_opener(&server_open_target(challenge.as_deref(), request.as_deref(), config.as_ref())?);
     }
     let target = open_target(&key, challenge.as_deref(), request.as_deref())?;
     spawn_opener(&target)

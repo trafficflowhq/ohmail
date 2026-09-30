@@ -3296,6 +3296,22 @@ fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
     assert!(server_link_for(None).is_err(), "no door");
     // The key is not a row of the ohmail.app table, so the table's own resolver refuses it.
     assert!(link_for(SERVER_MAILBOXES_KEY).is_none());
+
+    /* THE KEY TAKES NO VALUE: what `open_link` runs for it. A value
+       offered beside it is refused even on the self-hosted door, and blank is no value. */
+    let door = self_hosted("https://mail.example.org/api");
+    assert_eq!(
+        server_open_target(None, None, Some(&door)).unwrap(),
+        "https://mail.example.org/mailbox?settings=mailboxes#/settings",
+    );
+    assert!(server_open_target(Some("  "), Some(""), Some(&door)).is_ok(), "blank is no value");
+    const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
+    assert!(server_open_target(Some(GOOD), None, Some(&door)).is_err(), "a challenge rode along");
+    assert!(
+        server_open_target(None, Some("00000000-0000-0000-0000-000000000000"), Some(&door)).is_err(),
+        "a request rode along",
+    );
+    assert!(server_open_target(None, None, None).is_err(), "no door");
 }
 
 /// THE ONE PLACE A VALUE FROM THE WINDOW REACHES AN ADDRESS, AND THE GATE ON IT.
