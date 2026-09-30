@@ -1198,7 +1198,7 @@ export async function markMailboxStoodDown(
       and ${mailboxes.organizedByInstallId} is not distinct from ${installId}
       and ${mailboxes.organizedByName} is not distinct from ${holderName}
       and ${mailboxes.organizerState} is not distinct from ${state}
-      then ${mailboxes.organizerEventAt} else ${(opts.now ?? new Date()).toISOString()}::timestamptz end`,
+      then ${mailboxes.organizerEventAt} else ${dialect(db as unknown as Tx).ts(opts.now ?? new Date())} end`,
   }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
   // The handover, then the arrangement's doorbell: a reader serves the organizer's document for
   // this mailbox from here on, and a surface learns it from the delta, not at its next boot.
@@ -1485,7 +1485,7 @@ export async function clearOrganizerStandDown(
       // (a press standing past the promotion that spent an older one) keeps its instant, or a
       // dismissed notice comes back on the next cycle. The SET reads the row's PRE-update role.
       organizerEventAt: sql`case when ${mailboxes.organizerRole} = 'reader'
-        then ${(opts.now ?? new Date()).toISOString()}::timestamptz else ${mailboxes.organizerEventAt} end`,
+        then ${dialect(db as unknown as Tx).ts(opts.now ?? new Date())} else ${mailboxes.organizerEventAt} end`,
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
     .returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
