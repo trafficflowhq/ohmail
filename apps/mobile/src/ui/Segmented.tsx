@@ -96,8 +96,8 @@ export function Segmented<T extends string>({
             onPress={() => onChange(seg.value)}
             style={[
               {
-                flex: fill ? 1 : 0,
-                ...basis,
+                /* One sizing rule per face: `flex` would override the basis on the device. */
+                ...(basis ?? { flex: fill ? 1 : 0 }),
                 minHeight: stacked ? 44 : 34,
                 flexDirection: stacked ? "column" : "row",
                 alignItems: "center",

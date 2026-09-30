@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
+import { useKeyboardLift } from "./keyboard-lift";
 import { usePosture } from "./posture";
 import { Tap, Txt } from "./base";
 import { Icon, type IconName } from "./Icon";
@@ -66,6 +67,7 @@ export function Sheet({
   children: ReactNode;
 }) {
   const t = useTheme();
+  const keyboardLift = useKeyboardLift();
   const insets = useSafeAreaInsets();
   const bounds = useSheetPanelBounds();
   if (!open) return null;
@@ -102,7 +104,7 @@ export function Sheet({
       {avoidKeyboard ? (
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={{ flex: 1, justifyContent: "flex-end" }}
+          style={{ flex: 1, justifyContent: "flex-end", paddingBottom: keyboardLift }}
         >
           {body}
         </KeyboardAvoidingView>

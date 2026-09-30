@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { JUNK_REFILL_BOUND_MS, type WorldAttachment } from "../state/live";
 import { junkLeaving, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
-import { ActivityIndicator, Platform, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { ActivityIndicator, Platform, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useBodyStamp, useWorld } from "../state/world";
@@ -29,6 +29,9 @@ import { paneScrollOf, recordPaneScroll } from "./pane-memory";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
+/** The window width below which the reader's from-line puts the address under the name. */
+export const FROM_LINE_SPLIT_DP = 360;
+
 export function MessageReader({
   id,
   inPane = false,
@@ -42,6 +45,8 @@ export function MessageReader({
 }) {
   const t = useTheme();
   const w = useWorld();
+  /* Below 360 dp the address takes its own line under the name (`FROM_LINE_SPLIT_DP`). */
+  const narrowFrom = useWindowDimensions().width < FROM_LINE_SPLIT_DP;
   // The reader draws the body, so it subscribes to it: a body landing redraws this pane alone.
   useBodyStamp();
   const m = w.message(id);
@@ -156,18 +161,27 @@ export function MessageReader({
         scrollEventThrottle={64}
       >
         <View style={{ paddingHorizontal: 20, paddingTop: 18 }}>
+          {/* THE NAME IS THE FACT, THE ADDRESS THE DETAIL: the address yields first, and below 360 dp
+              it takes its own line under the name, so a name is the last thing to truncate. */}
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 9 }}>
-            <Txt variant="button" style={{ flexShrink: 1 }} numberOfLines={1}>
+            <Txt variant="button" style={{ flexShrink: 0, maxWidth: "60%" }} numberOfLines={1}>
               {m.from.name}
             </Txt>
-            <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ flexShrink: 2 }}>
-              {m.from.address}
-            </Txt>
+            {narrowFrom ? null : (
+              <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ flexShrink: 1, minWidth: 0 }}>
+                {m.from.address}
+              </Txt>
+            )}
             <View style={{ flex: 1 }} />
-            <Txt variant="caption" tone="ink3" tabular>
+            <Txt variant="caption" tone="ink3" tabular style={{ flexShrink: 0 }}>
               {m.time}
             </Txt>
           </View>
+          {narrowFrom ? (
+            <Txt variant="caption" tone="ink3" numberOfLines={1}>
+              {m.from.address}
+            </Txt>
+          ) : null}
 
           <Txt variant="h2" style={{ marginTop: 14, marginBottom: 14 }}>
             {m.subject}
@@ -264,7 +278,7 @@ export function MessageReader({
           the thumb, the desktop ActionBar pinned at this pane's foot, or the right-edge rail.
           A confirmed delete leaves this reader at once: the tombstone already dropped the row,
           and "no longer here" over the reader's own act would read as a failure. */}
-      <MessageActions m={m} onDeleted={onClose} onBack={onClose} />
+      <MessageActions m={m} onDeleted={onClose} onBack={onClose} inPane={inPane} />
     </Screen>
   );
 }

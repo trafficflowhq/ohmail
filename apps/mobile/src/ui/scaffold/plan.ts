@@ -89,6 +89,16 @@ export function listNavClearance(plan: ScaffoldPlan, dockClearance: number): Nav
 }
 
 /**
+ * Where a floating reader bar may stand: a full-window reader beside the rail starts past the
+ * rail's column; a reader in the pair's pane, or under a dock, spans its own width.
+ */
+export function readerBarClearance(plan: ScaffoldPlan, inPane: boolean): { left: number; right: number } {
+  if (inPane || plan.nav !== "rail") return { left: 0, right: 0 };
+  const { left, right } = listNavClearance(plan, 0);
+  return { left, right };
+}
+
+/**
  * The two panes' split along the plan's axis, in dp — the FIRST pane's size and the gap
  * between them. Row mode: list then reader, the list ending at the hinge when one crosses the
  * window (the seam is the divider); no hinge, the canonical ~42% list. Column mode (tabletop):

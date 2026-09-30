@@ -65,7 +65,7 @@ import { Button, Rule, Tap, Txt } from "./base";
 import { GlassActionBar, GlassPill, nextRoom, type BarVerbSpec } from "./glass";
 import type { RailAction } from "./glass/GlassRail";
 import { usePosture } from "./posture";
-import { scaffoldPlan } from "./scaffold/plan";
+import { readerBarClearance, scaffoldPlan } from "./scaffold/plan";
 import { publishReaderRail } from "./reader-rail";
 import {
   readerVerbMode,
@@ -98,6 +98,7 @@ import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
 import { holdReader } from "./reader-held";
 import { failedSendLine } from "./send-failed";
+import { useKeyboardLift } from "./keyboard-lift";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -138,8 +139,11 @@ export function MessageActions({
   m,
   onDeleted,
   onBack,
+  inPane = false,
 }: {
   m: WorldMail;
+  /** Drawn in the list-detail pair's reading pane, which already starts past the rail. */
+  inPane?: boolean;
   /**
    * Leaves the reader when a confirmed delete COMMITS — the window's close, not the press. The
    * delete opens an 8 s undo window and the tombstone drops only at its end, so the reader stays
@@ -204,6 +208,7 @@ export function MessageActions({
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const mode = readerVerbMode(plan);
+  const barRail = readerBarClearance(plan, inPane);
   /* This bar stands at the foot, so it reports how far up it reaches and the toast clears it
      (`bottom-chrome.ts`); on the rail postures nothing stands here and the slot says so. */
   const standing = useBottomChromeSlot("reader-bar");
@@ -376,8 +381,10 @@ export function MessageActions({
           onLayout={(e) => standing(Math.max(insets.bottom, 12) + e.nativeEvent.layout.height)}
           style={{
             position: "absolute",
-            left: 0,
-            right: 0,
+            /* A full-window reader beside the rail starts past the rail's column, from the same
+               clearance `Screen` reads; the pane of a pair already does. */
+            left: barRail.left,
+            right: barRail.right,
             bottom: Math.max(insets.bottom, 12),
             alignItems: "center",
             zIndex: t.zLayer.tabBar,
@@ -1038,6 +1045,7 @@ export function ComposeSheet({
   onClose: () => void;
 }) {
   const t = useTheme();
+  const keyboardLift = useKeyboardLift();
   const insets = useSafeAreaInsets();
   const w = useWorld();
   /** The composer never straddles a hinge and stays bounded on wide windows (`Sheet.tsx`). */
@@ -1399,7 +1407,7 @@ export function ComposeSheet({
     <Modal transparent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={closeComposer}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1, justifyContent: "flex-end" }}
+        style={{ flex: 1, justifyContent: "flex-end", paddingBottom: keyboardLift }}
       >
         <Pressable style={{ flex: 1 }} accessibilityLabel={Copy.replyCancel} onPress={closeComposer} />
         <View
@@ -1808,8 +1816,10 @@ export function ComposeSheet({
               {keepNote === "failed" ? Copy.composeKeepFailed : Copy.composeKeepFiles}
             </Txt>
           ) : null}
-          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-            <Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} />
+          {/* The footer WRAPS on a narrow sheet: Cancel keeps the left edge on its own line and the
+              send verbs stay right-aligned under it — nothing starts off-screen (the attach row's grammar). */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", columnGap: 8, rowGap: 8 }}>
+            <Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
             {/* SEND LATER stands beside Send because it is the same act on a different clock,
                 under the SAME lock: a message that may not be sent now may not be scheduled
                 either, and one predicate owns both buttons. A forward is never offered it —
