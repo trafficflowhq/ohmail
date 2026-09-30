@@ -2183,8 +2183,12 @@ export const OPTIMISTIC_SENT_TTL_MS = 10 * 60 * 1000;
  */
 export const SENT_FORWARD_MAX_PARTS = 100;
 
-/** The page row's write number, which is not part of what the queue says. */
-const ASK_IS_NOT_CONTENT: ReadonlySet<string> = new Set(["ask"]);
+/**
+ * What the page row carries beside the queue: its write number, and how far a walk has read past it
+ * (`noteQueueWalk`). An equal first page keeps both — dropping `walked` made the walk write it back
+ * page by page after every ask, and each write re-derived the lists.
+ */
+const PAGE_IS_NOT_CONTENT: ReadonlySet<string> = new Set(["ask", "walked"]);
 
 /**
  * Do these puts restate exactly the stored rows of their type — same ids, same entities? Compared
@@ -2205,12 +2209,16 @@ function sameStoredEntities(
   return true;
 }
 
+/* The ignored keys are dropped while each object is rebuilt, never through the replacer's `this`:
+   Hermes does not hand the replacer its holder, so a `this` test ignored nothing on the phone and
+   every equal queue answer wrote. */
 function sortedJson(v: unknown, ignore: ReadonlySet<string>): string {
-  return JSON.stringify(v, function (this: unknown, key: string, value: unknown) {
-    if (this !== null && typeof this === "object" && !Array.isArray(this) && ignore.has(key)) return undefined;
+  return JSON.stringify(v, (_key: string, value: unknown) => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
     const out: Record<string, unknown> = {};
-    for (const k of Object.keys(value as Record<string, unknown>).sort()) out[k] = (value as Record<string, unknown>)[k];
+    for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+      if (!ignore.has(k)) out[k] = (value as Record<string, unknown>)[k];
+    }
     return out;
   });
 }
@@ -5624,10 +5632,10 @@ export class OhmailEngine {
     const stored = this.store.entries(SCREENER_WAITING_TYPE);
     const gone = stored.filter((e) => !keep.has(e.id))
       .map((e) => ({ type: SCREENER_WAITING_TYPE, id: e.id }));
-    // An answer equal to the stored queue moves nothing. The page row's `ask` is left out of the
-    // comparison: it numbers the write, and the web's onward walk keys on it, so an unchanged page
-    // keeps the ask it was written under.
-    if (gone.length === 0 && sameStoredEntities(stored, puts, ASK_IS_NOT_CONTENT)) return;
+    // An answer equal to the stored queue moves nothing. The page row's `ask` and `walked` are left
+    // out of the comparison: the web's onward walk keys on the ask, and an unchanged page keeps
+    // both it was written under.
+    if (gone.length === 0 && sameStoredEntities(stored, puts, PAGE_IS_NOT_CONTENT)) return;
     await this.store.commitLocal(puts, gone);
     this.notify();
   }
