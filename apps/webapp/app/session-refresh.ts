@@ -351,6 +351,12 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         },
         cache: "no-store",
         credentials: "same-origin",
+        /* The server spends the presented token the moment it claims it, so an answer that dies with its
+         * page (the tab closed, a link followed out) leaves the jar holding a spent token, whose next
+         * presentation past the grace window is swept as reuse. `keepalive` lets the browser finish the
+         * request and store the rotated cookies after the page is gone; a mint's abort still stops it
+         * while the page lives. */
+        keepalive: true,
         signal: request.signal,
       });
       if (request.signal.aborted) return superseded(null);
