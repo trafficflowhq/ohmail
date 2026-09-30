@@ -212,6 +212,21 @@ password in use, and the status bar says when a mailbox has no password instead 
 Setup asks about the mailbox just connected, and with several mailboxes connected, "Run setup again"
 and the setup link on the web ask which mailbox the setup is for.
 
+### The phone no longer signs itself out after a display, font or language change
+<!-- changes: fix-026-one-bearer.md -->
+
+The phone no longer signs itself out after a display-size, font-size or language change, or after
+being closed while it was renewing its session.
+
+### The phone keeps up with a large mailbox
+<!-- changes: phone-026-fast-and-fits-on-a-foldable.md -->
+
+On a large mailbox the phone app no longer redraws its lists after every sync when nothing changed,
+so taps take effect at once instead of after several seconds. On a foldable's cover screen and at
+large display sizes nothing is cut off: destinations without room move into More, the reader keeps
+Reply and Forward on its bar, a reply stays open and above the keyboard when you fold or unfold the
+phone, and the lists move on to the new day at midnight without a sync.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
