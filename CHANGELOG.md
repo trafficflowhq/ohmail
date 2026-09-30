@@ -18,6 +18,15 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.25.7] — 2026-09-30
+
+### A crafted address header can no longer stall mail sync, and attachments are verified
+<!-- changes: hotfix-0.25.7.md -->
+
+A crafted address header can no longer stall mail sync. Attachments inside nested messages download
+correctly for mail received from now on; for older mail the app refuses a file it cannot verify
+instead of serving the wrong one.
+
 ## [0.25.6] — 2026-09-30
 
 ### The AI call log is complete again
@@ -10668,7 +10677,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.6...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.7...HEAD
+[0.25.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.7
 [0.25.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.6
 [0.25.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.5
 [0.25.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.4
