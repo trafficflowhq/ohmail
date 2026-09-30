@@ -5227,6 +5227,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * written any more: `disabled` means tombstone or plan-disable, full stop, and a
            * reader carrying a stand-down reason would be a row saying two things about itself.
            */
+          const sdKind = organizerKindColumn(outcome.by?.kind ?? outcome.reason.split(":")[1]);
+          const sdName = organizerDisplayName(outcome.by?.displayName ?? null);
           const handed = await db.transaction(async (tx) => {
             const exported = wasOrganizing
               ? await exportPendingMovesOnStandDown(tx as unknown as Tx, {
@@ -5243,7 +5245,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  string and this store has no CHECK to catch it: `organized_by_kind` is widenable,
                  so the device's refusal is `organizerKindColumn` and nothing else. An unrankable
                  peer becomes `unknown`, which every reader downstream fails closed on. */
-              organizedByKind: organizerKindColumn(outcome.by?.kind ?? outcome.reason.split(":")[1]),
+              organizedByKind: sdKind,
               /* Mail 0092 — AND DELIBERATELY NO INSTALL ID HERE. The kind above falls back to a word cut
                  out of a reason string; an identity manufactured that way, in a column a release decision
                  is made on, would satisfy the compare and never refresh — a fabrication that outranks the
@@ -5251,7 +5253,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  NULL fails closed, which is the safe direction. Do not "complete" this by deriving one. */
               // Header-safe and capped at the write — this is another install's machine name,
               // arriving out of an RFC822 header it wrote.
-              organizedByName: organizerDisplayName(outcome.by?.displayName ?? null),
+              organizedByName: sdName,
               organizedSince: outcome.by?.claimedAt ?? null,
               organizerState: outcome.state,
               // Mail 0089 — the fifth holder column, from the SAME verdict.
@@ -5267,7 +5269,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 then null else ${mailboxes.takeoverAuthorizedAt} end`,
               // Mail 0088 — the demotion half, and the fifth writer of the triple. Stamped in the
               // same statement as the role and the holder columns it is announcing.
-              organizerEventAt: now(),
+              // …ONLY ON A CHANGE of (role, holder, state), the hosted twin's rule: a row already a
+              // reader of this holder in this state keeps its instant, or a dismissed notice returns.
+              organizerEventAt: sql`case when ${mailboxes.organizerRole} = 'reader'
+                and ${mailboxes.organizedByKind} is not distinct from ${sdKind}
+                and ${mailboxes.organizedByName} is not distinct from ${sdName}
+                and ${mailboxes.organizerState} is not distinct from ${outcome.state ?? null}
+                then ${mailboxes.organizerEventAt} else ${dialect(db).ts(now())} end`,
             })
             .where(eq(mailboxes.id, mb.id));
             // A reader now: a surface presents this mailbox by the organizer's cached document.

@@ -1119,6 +1119,9 @@ export async function markMailboxStoodDown(
   // widenable set, which the device store carries no CHECK for at all — this is the refusal on
   // both dialects, and an unrankable peer becomes `unknown` exactly as it did.
   const kind = organizerKindColumn(opts.by?.kind ?? safe.split(":")[1]);
+  const installId = opts.by?.installId ?? null;
+  const holderName = organizerDisplayName(opts.by?.displayName ?? null);
+  const state = opts.by?.state ?? null;
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     // Mail 0083: the role, not the status. This used to write `status: "disabled"` plus the reason,
     // and the mailbox left the roster. A loser is now a READER — connected, syncing, mirroring — so
@@ -1142,16 +1145,16 @@ export async function markMailboxStoodDown(
     releaseRequestedAt: spendOneShot(mailboxes.releaseRequestedAt, opts.asRead?.releaseRequestedAt),
     organizedByKind: kind,
     // Mail 0092 — WHICH install, beside WHAT kind. See `StandDownHolder.installId`.
-    organizedByInstallId: opts.by?.installId ?? null,
+    organizedByInstallId: installId,
     // Header-safe and capped at the write site — this is a CUSTOMER'S MACHINE NAME arriving out
     // of another install's RFC822 header. Empty becomes NULL: "the claim did not say" is a
     // different fact from "the claim named the empty string", and only one of them renders.
-    organizedByName: organizerDisplayName(opts.by?.displayName ?? null),
+    organizedByName: holderName,
     organizedSince: opts.by?.claimedAt ?? null,
     // The occupancy as THIS read saw it. Persisted now  because a reader cycle
     // refreshes it every pass — see the column's own note for why `lease.ts` argued it must not
     // be, and why that premise moved.
-    organizerState: opts.by?.state ?? null,
+    organizerState: state,
     // Mail 0089 — the fifth holder column, on the same read. Whether a request may be OFFERED to
     // this reader rests on this and `organizerState` together (`readRequestEligibility`).
     organizedByCapabilities: capabilitiesColumn(opts.by?.capabilities),
@@ -1187,8 +1190,15 @@ export async function markMailboxStoodDown(
     // rendering yesterday's sentence, with nothing anywhere to notice it. `organizer_event_seen_at` is
     // deliberately NOT cleared — the notice is `event_at > seen_at`, so advancing `event_at` is the
     // whole of "show this again", and clearing the acknowledgement would lose the record of an older
-    // dismissal for no gain.
-    organizerEventAt: opts.now ?? new Date(),
+    // dismissal for no gain. AND ONLY ON A CHANGE: a row already a reader of this same holder in
+    // this same state (a standing press that lost to it again) keeps its instant, or a notice the
+    // person dismissed comes back about nothing. The SET reads the PRE-update row.
+    organizerEventAt: sql`case when ${mailboxes.organizerRole} = 'reader'
+      and ${mailboxes.organizedByKind} is not distinct from ${kind}
+      and ${mailboxes.organizedByInstallId} is not distinct from ${installId}
+      and ${mailboxes.organizedByName} is not distinct from ${holderName}
+      and ${mailboxes.organizerState} is not distinct from ${state}
+      then ${mailboxes.organizerEventAt} else ${(opts.now ?? new Date()).toISOString()}::timestamptz end`,
   }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
   // The handover, then the arrangement's doorbell: a reader serves the organizer's document for
   // this mailbox from here on, and a surface learns it from the delta, not at its next boot.
