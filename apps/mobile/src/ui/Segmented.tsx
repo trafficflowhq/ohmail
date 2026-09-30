@@ -89,7 +89,9 @@ export function Segmented<T extends string>({
           : { flexGrow: 1, flexShrink: 0, flexBasis: (stacked ? labelW(i) : labelW(i) + countW(i)) + SEGMENT_PAD };
         return (
           <Tap
-            key={seg.value}
+            /* Keyed on the face: Android keeps a `flex` the next render removes, so a face change
+               mounts the segment afresh rather than leaving it sized by the old rule. */
+            key={`${seg.value}:${face}`}
             accessibilityRole={a11yRole("tab", Platform.OS === "ios" ? "ios" : "android")}
             accessibilityState={{ selected: on, disabled: disabled === true }}
             disabled={disabled === true}
