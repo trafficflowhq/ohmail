@@ -45,7 +45,7 @@ export interface AnthropicCallReport {
 }
 
 /**
- * ONE CALL'S OWN USAGE HOOK, beside the process-level the model client's process-level `onUsage`.
+ * ONE CALL'S OWN USAGE HOOK, beside the model client's process-level `onUsage`.
  *
  * Opaque by design: it is handed the report and learns nothing about who asked. A host that
  * needs the account or the action holds them in the closure it passes, so attribution stays out

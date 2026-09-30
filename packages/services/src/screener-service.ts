@@ -26,9 +26,10 @@ import {
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
 import type {
-  AccessPort, ActionPricing, AiCreditGate, AiRefusalReason, SpendPort,
+  AccessPort, ActionPricing, AiCreditGate, AiRefusalReason, AiUsageHost, SpendPort,
 } from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import { usageLines } from "./ai-usage-lines.js";
 import type {
   AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy, SenderReasonCode,
   SenderSignals,
@@ -161,6 +162,12 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    * itself, stated and never inferred.
    */
   invocationBudgetMs?: number;
+  /**
+   * WHICH HOST THIS IS, for the usage line each release carries: the model call's tokens,
+   * attributed to the account and `screener`, priced by the entitlements program. Stated by the
+   * composition root; ABSENT, no line is made and a release carries what it always carried.
+   */
+  usageHost?: AiUsageHost;
   /**
    * THE BALANCE READ that answers "how much is left", beside the gate that spends it. A separate
    * dep, not a method on `SpendPort`: the gate is the permission question, this is a read with no
@@ -1736,9 +1743,11 @@ export class ScreenerService extends ScreenerReadService {
   private readonly invocationBudgetMs?: number;
   /** The price question. See {@link ScreenerSuggestDeps.pricing}. */
   private readonly pricing: ActionPricing;
+  /** See {@link ScreenerSuggestDeps.usageHost}. */
+  private readonly usageHost?: AiUsageHost;
 
   constructor(deps: ScreenerSuggestDeps) {
-    const { classifier, credits, access, remaining, invocationBudgetMs, pricing, ...readOnly } = deps;
+    const { classifier, credits, access, remaining, invocationBudgetMs, pricing, usageHost, ...readOnly } = deps;
     super(readOnly);
     this.classifier = classifier;
     this.credits = credits;
@@ -1746,6 +1755,7 @@ export class ScreenerService extends ScreenerReadService {
     this.remaining = remaining;
     this.invocationBudgetMs = invocationBudgetMs;
     this.pricing = pricing ?? UNPRICED;
+    this.usageHost = usageHost;
   }
 
   /**
@@ -2031,14 +2041,16 @@ export class ScreenerService extends ScreenerReadService {
       /** Set only where the gate hands this lane the claim; `inflight` names another holder. */
       let claimed = false;
       let released = false;
+      /** The model call's usage, carried by the release below — a model fault's line included. */
+      const usage = usageLines(this.usageHost, ctx.accountId, "screener");
       /** Give the claim back ONCE — `released` set before the await, so a fault is not retried. */
       const releaseClaim = async (): Promise<void> => {
         if (!gate || !claimed || released) return;
         released = true;
         const meta = { messageId: r.messageId };
         await gate.release(ctx.accountId, chargedAttempt === null
-          ? { action: "screener", attemptKey, refund: false, meta }
-          : { action: "screener", attemptKey, refund: true, attempt: chargedAttempt, meta });
+          ? { action: "screener", attemptKey, refund: false, meta, ...usage.field() }
+          : { action: "screener", attemptKey, refund: true, attempt: chargedAttempt, meta, ...usage.field() });
       };
       try {
         if (gate) {
@@ -2147,7 +2159,7 @@ export class ScreenerService extends ScreenerReadService {
             snippet: r.snippet,
             ...(ohboxBar ? { ohboxBar } : {}),
             ...(facts ? { senderFacts: facts } : {}),
-          });
+          }, usage.call);
         } catch (err) {
           console.error(`[screener] AI suggestion failed for message ${r.messageId}:`, err);
           refused[index] = { sender, reason: "model_unavailable" };

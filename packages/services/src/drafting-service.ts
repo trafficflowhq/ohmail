@@ -6,11 +6,14 @@ import { messages, draftAttemptKey, type IdempotencyKey } from "@trafficflow/db"
 /* The PORT, from the root barrel — not `@trafficflow/db/cloud`, which is the half that
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
-import type { AccessPort, RefundObligationPort, SpendPort } from "@trafficflow/db";
+import type {
+  AccessPort, AiUsageHost, RefundObligationPort, ReleaseReceipt, SpendPort,
+} from "@trafficflow/db";
 import {
-  plainTextToOutboundBody, screenModelInput, MODEL_SINK_REFUSAL_SENTENCE,
-  type DraftInput, type DraftPort,
+  createLogger, plainTextToOutboundBody, screenModelInput, MODEL_SINK_REFUSAL_SENTENCE,
+  type AiCallOptions, type DraftInput, type DraftPort,
 } from "@trafficflow/core/mail";
+import { usageLines } from "./ai-usage-lines.js";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { refuseAiSpend } from "./ai-refusal.js";
@@ -28,6 +31,8 @@ import { SEARCH_QUERY_MAX_CHARS } from "./search-service.js";
  */
 const KB_HINT_SNIPPET_CHARS = 120;
 
+const log = createLogger({ service: "drafting" });
+
 /** How many KB entries and thread messages to retrieve as grounding context. */
 const DEFAULT_KB_K = 5;
 const MAX_THREAD_MESSAGES = 20;
@@ -43,6 +48,16 @@ export const DRAFT_ADMISSION = {
   spendCallCeilingMs: 5_000,
   minModelMs: 10_000,
   closeReserveMs: 6_000,
+} as const;
+
+/**
+ * WHAT A DELIVERED DRAFT'S USAGE RELEASE MUST LEAVE AFTER ITSELF before the platform's kill: the
+ * fault record a timed-out call writes (the API's `API_FAULT_RECORD_BUDGET_MS`, restated for the
+ * reason above; a test in `packages/api` pins the two) and the response itself.
+ */
+export const DRAFT_USAGE_RELEASE = {
+  faultRecordMs: 1_000,
+  responseMarginMs: 500,
 } as const;
 
 /** When the spend may still start, and when the model call is cut — or `null` where nothing kills a request. */
@@ -134,6 +149,12 @@ export class DraftingService {
       invocationBudgetMs?: number;
       /** Test seam: the arithmetic's three numbers. Default {@link DRAFT_ADMISSION}. */
       admission?: typeof DRAFT_ADMISSION | { spendCallCeilingMs: number; minModelMs: number; closeReserveMs: number };
+      /**
+       * WHICH HOST THIS IS, for the usage line the draft's release carries. Stated by the
+       * composition root; ABSENT, no line is made and a delivered draft is released by nobody,
+       * as before.
+       */
+      usageHost?: AiUsageHost;
     } = {},
   ) {}
 
@@ -255,6 +276,34 @@ export class DraftingService {
     const attemptKey = deps.credits ? this.debitKey(target.id, deps) : null;
     /** The attempt THIS request charged, or null. The port's `attempt` is the refund memory. */
     let chargedAttempt: string | null = null;
+    /** The drafter's usage, carried by whichever release runs — a failed call's line included. */
+    const usage = usageLines(this.opts.usageHost, ctx.accountId, "draft");
+    let released = false;
+    /**
+     * THE ONE DOOR TO THE GATE'S RELEASE, once per request (`released` set before the await). A
+     * reversal only for an attempt THIS request charged, and THE DEBT IS WRITTEN BEFORE THE
+     * REVERSAL IS TRIED: this request is the only thing that knows a charge bought nothing, so an
+     * unreachable program must still leave the debt behind. Idempotent per (account, attempt).
+     * `null` when nothing was released: unmetered, or the door already used.
+     */
+    const releaseClaim = async (refund: boolean): Promise<ReleaseReceipt | null> => {
+      if (!deps.credits || !attemptKey || released) return null;
+      released = true;
+      const meta = { messageId: target.id };
+      if (!refund || chargedAttempt === null) {
+        return deps.credits.release(
+          ctx.accountId, { action: "draft", attemptKey, refund: false, meta, ...usage.field() });
+      }
+      await deps.obligations!.owe({
+        accountId: ctx.accountId, action: "draft", attemptKey,
+        attempt: chargedAttempt, reason: "drafter_failed", meta,
+      });
+      const receipt = await deps.credits.release(ctx.accountId, {
+        action: "draft", attemptKey, refund: true, attempt: chargedAttempt, meta, ...usage.field(),
+      });
+      if (receipt === "settled") await deps.obligations!.settle(ctx.accountId, chargedAttempt);
+      return receipt;
+    };
     if (deps.credits && attemptKey) {
       const outcome = await deps.credits.spend(
         ctx.accountId, "draft", attemptKey, { messageId: target.id });
@@ -329,33 +378,20 @@ export class DraftingService {
     //    into unlimited free drafts.
     let result;
     try {
-      result = await draftWithin(deps.drafter, input, window?.modelDeadline ?? null);
+      result = await draftWithin(deps.drafter, input, window?.modelDeadline ?? null, usage.call);
     } catch (err) {
       // `refund: true` only for an attempt THIS request charged. A `duplicate` names an earlier
       // attempt whose work may have been delivered, and reversing that one because this request
       // failed would hand back a charge for a draft the customer already has.
       if (deps.credits && attemptKey) {
-        const meta = { messageId: target.id };
         if (chargedAttempt === null) {
           // Nothing moved, so nothing is owed: the claim goes back and the caller's own error
           // stands. A lost release here costs the customer nothing — the attempt stays open and
           // the retry is free.
-          await deps.credits.release(ctx.accountId, { action: "draft", attemptKey, refund: false, meta });
+          await releaseClaim(false);
           throw err;
         }
-        // THE DEBT IS WRITTEN BEFORE THE REVERSAL IS TRIED. That order is the whole fix: a refund
-        // attempted as a best-effort side effect leaves nothing behind when the program is
-        // unreachable, and this request is the only thing that ever knew a charge bought nothing.
-        // Idempotent per (account, attempt), so a same-key retry that fails again owes one debt.
-        await deps.obligations!.owe({
-          accountId: ctx.accountId, action: "draft", attemptKey,
-          attempt: chargedAttempt, reason: "drafter_failed", meta,
-        });
-        const receipt = await deps.credits.release(
-          ctx.accountId,
-          { action: "draft", attemptKey, refund: true, attempt: chargedAttempt, meta },
-        );
-        if (receipt === "settled") await deps.obligations!.settle(ctx.accountId, chargedAttempt);
+        const receipt = await releaseClaim(true);
         // AND THE PERSON IS TOLD WHICH OF THE TWO HAPPENED. Two states, two sentences, never one
         // optional field: `returned` is money already back, `owed` is money a pass will return.
         // The underlying error rides as `cause` — it is what the fault record and the log want —
@@ -373,6 +409,29 @@ export class DraftingService {
       throw err;
     }
 
+    // THE USAGE RELEASE, sent after the store below: the lesser fact. A plain release moves no money on this
+    // action, so it carries the line and nothing else, and only while the release, the fault
+    // record a timed-out one writes and the response all fit before the platform's kill. A skip
+    // or a fault is a line in the log, never the person's error.
+    const unrecorded = (why: string, err?: unknown): void => log.warn("draft_usage_unrecorded", {
+      accountId: ctx.accountId, messageId: target.id, why, ...(err === undefined ? {} : { err }),
+    });
+    const sendUsage = async (): Promise<void> => {
+      if (usage.count === 0 || !deps.credits || !attemptKey) return;
+      const admission = this.opts.admission ?? DRAFT_ADMISSION;
+      const tail = admission.spendCallCeilingMs + DRAFT_USAGE_RELEASE.faultRecordMs + DRAFT_USAGE_RELEASE.responseMarginMs;
+      if (window !== null && Date.now() + tail > window.modelDeadline + admission.closeReserveMs) {
+        unrecorded("no_time");
+        return;
+      }
+      try {
+        if ((await releaseClaim(false)) === "unreachable") unrecorded("unreachable");
+      } catch (err) {
+        // A release that threw is this log line, never the person's error.
+        unrecorded("release_failed", err);
+      }
+    };
+
     // 6. STORE as a `drafts` row (status 'draft') via DraftsService — the `draft` change row
     // in-tx; never sent. With an idempotency handle, the verbatim 202 is claimed in the SAME
     // transaction, so a same-key retry replays it instead of storing a second draft. A failure
@@ -383,16 +442,26 @@ export class DraftingService {
     // `body` alongside it and derives the text half from the SANITIZED markup — the rule that
     // makes the two parts unable to disagree. An empty promotion stores a plain draft.
     const promoted = plainTextToOutboundBody(result.body);
-    const { draft, seq } = await this.drafts.create(ctx, {
-      mailboxId: target.mailboxId,
-      threadId: target.threadId ?? null,
-      inReplyToMessageId: target.id,
-      subject: result.subject,
-      ...(promoted.html ? { html: promoted.html } : { body: result.body }),
-      rationale: result.rationale,
-    }, { idempotency: deps.idempotency });
+    let stored: Awaited<ReturnType<DraftsService["create"]>>;
+    try {
+      stored = await this.drafts.create(ctx, {
+        mailboxId: target.mailboxId,
+        threadId: target.threadId ?? null,
+        inReplyToMessageId: target.id,
+        subject: result.subject,
+        ...(promoted.html ? { html: promoted.html } : { body: result.body }),
+        rationale: result.rationale,
+      }, { idempotency: deps.idempotency });
+    } catch (err) {
+      // The model call happened and was paid for; the store's own error is what the caller gets.
+      if (usage.count > 0 && deps.credits && attemptKey) unrecorded("store_failed");
+      await sendUsage();
+      throw err;
+    }
+    // 7. The usage, now that the draft is durable.
+    await sendUsage();
 
-    return { draftId: draft.id, seq };
+    return { draftId: stored.draft.id, seq: stored.seq };
   }
 
   /**
@@ -452,9 +521,10 @@ export class DraftingService {
  * the caller's catch takes its one door — the owed row, then the release with `refund: true`.
  */
 async function draftWithin(
-  drafter: DraftPort, input: DraftInput, deadline: number | null,
+  drafter: DraftPort, input: DraftInput, deadline: number | null, call: AiCallOptions | undefined,
 ): Promise<Awaited<ReturnType<DraftPort["draft"]>>> {
-  if (deadline === null) return drafter.draft(input);
+  // The usage hook rides BOTH arms: an arm without it is a call nobody attributes.
+  if (deadline === null) return call ? drafter.draft(input, call) : drafter.draft(input);
   const cut = (): ServiceError =>
     new ServiceError("ai_unavailable", 503, "the drafting model did not answer in time; please retry");
   const left = deadline - Date.now();
@@ -463,7 +533,7 @@ async function draftWithin(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      drafter.draft(input, { signal: ac.signal }),
+      drafter.draft(input, { ...call, signal: ac.signal }),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => { ac.abort(); reject(cut()); }, left);
       }),
@@ -476,6 +546,8 @@ async function draftWithin(
 export const draftingService = new DraftingService();
 
 /** A drafting service for a host that states the ceiling it kills a request at (see the constructor). */
-export function makeDraftingService(opts: { invocationBudgetMs?: number } = {}): DraftingService {
+export function makeDraftingService(
+  opts: { invocationBudgetMs?: number; usageHost?: AiUsageHost } = {},
+): DraftingService {
   return new DraftingService(undefined, undefined, opts);
 }

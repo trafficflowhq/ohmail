@@ -43,6 +43,7 @@ export * from "./message-search.js";
 // A consumer of this entry point can be HANDED a classifier or a drafter and can describe one;
 // it cannot construct one, and nothing here tells it what model would answer.
 export type { ClassifierInput, ClassifierResult, ClassifierPort } from "./classifier-port.js";
+export type { AiCallOptions, AnthropicCallReport } from "./ai-call-report.js";
 export type {
   DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort, DraftCallOptions,
 } from "./draft-port.js";
