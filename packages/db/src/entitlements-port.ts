@@ -213,6 +213,13 @@ export function aiUsageLineOf(
   };
 }
 
+/**
+ * What `recordUsage` answers. `refused` is the program answering a 4xx, `no_door` its 404 (an
+ * older program without `/v1/usage`, which no retry will change) and `unreachable` no answer at
+ * all. Each drops the batch; they are said apart so a refusal is never logged as an outage.
+ */
+export type UsageReceipt = "settled" | "refused" | "no_door" | "unreachable";
+
 /** Why a spend bought nothing. The `credit_refund_obligations_reason_check` set, as words. */
 export type RefundObligationReason =
   /** The model call this spend paid for threw. Nothing was produced and nothing was stored. */
@@ -326,7 +333,7 @@ export interface EntitlementsPort {
    * and drops it, so the record under-counts and never over-counts. OPTIONAL: an older program
    * and an unmetered host record nothing. Never throws.
    */
-  recordUsage?(lines: readonly AiUsageLine[]): Promise<ReleaseReceipt>;
+  recordUsage?(lines: readonly AiUsageLine[]): Promise<UsageReceipt>;
   /**
    * The one customer-facing door the managed service has: plan choice for an account with no
    * subscription, and plan status for one that has. A KNOWN account always gets a URL, so this is

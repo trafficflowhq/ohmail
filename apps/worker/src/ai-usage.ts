@@ -1,5 +1,5 @@
 import type { ClassifierPort, DraftPort, Logger, WorkflowPort } from "@trafficflow/core";
-import { AI_USAGE_LINES_PER_POST, type AiUsageLine, type ReleaseReceipt } from "@trafficflow/db";
+import { AI_USAGE_LINES_PER_POST, type AiUsageLine, type UsageReceipt } from "@trafficflow/db";
 import { usageLineOf, type UsageHook } from "./ai-usage-line.js";
 
 export { screenerUsageHook, type UsageHook } from "./ai-usage-line.js";
@@ -11,7 +11,7 @@ export const AI_USAGE_BUFFER_MAX = 5_000;
 
 /** The one method of the entitlements port a buffer needs. */
 export interface UsageRecorder {
-  recordUsage(lines: readonly AiUsageLine[]): Promise<ReleaseReceipt>;
+  recordUsage(lines: readonly AiUsageLine[]): Promise<UsageReceipt>;
 }
 
 export interface AiUsageBuffer {
@@ -40,9 +40,11 @@ export function makeAiUsageBuffer(opts: {
   let held: AiUsageLine[] = [];
   let droppedOldest = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  /** Set by a 404: the program has no `/v1/usage`, so nothing more is held or sent this process. */
+  let noDoor = false;
 
   const arm = (): void => {
-    if (timer !== null) return;
+    if (timer !== null || noDoor) return;
     timer = setTimeout(() => { timer = null; void flush(); }, flushMs);
     (timer as { unref?: () => void }).unref?.();
   };
@@ -57,24 +59,34 @@ export function makeAiUsageBuffer(opts: {
     droppedOldest = 0;
     const deadline = Date.now() + opts.budgetMs;
     let sent = 0;
-    let failed = 0;
+    const failed = { refused: 0, unreachable: 0 };
     for (let i = 0; i < lines.length; i += AI_USAGE_LINES_PER_POST) {
       const batch = lines.slice(i, i + AI_USAGE_LINES_PER_POST);
       const left = deadline - Date.now();
-      const receipt = left <= 0 ? "unreachable" : await within(opts.port.recordUsage(batch), left);
+      const receipt: UsageReceipt = left <= 0 ? "unreachable" : await within(opts.port.recordUsage(batch), left);
       if (receipt === "settled") sent += batch.length;
-      else failed += batch.length;
+      else if (receipt === "no_door") {
+        // Refused, and for good: the rest of this flush and every later line are dropped unsent.
+        failed.refused += lines.length - i;
+        noDoor = true;
+        opts.log.warn("ai_usage_recording_stopped", { why: "no_usage_door" });
+        break;
+      } else failed[receipt] += batch.length;
     }
-    if (sent > 0 || (failed === 0 && dropped > 0)) {
+    if (sent > 0 || (failed.refused + failed.unreachable === 0 && dropped > 0)) {
       opts.log.info("ai_usage_flushed", { lines: sent, droppedOldest: dropped });
     }
-    if (failed > 0) {
-      opts.log.warn("ai_usage_flush_failed", { lines: failed, status: "unreachable", droppedOldest: dropped });
+    // One line per class: a refusal is the program's answer, never logged as an outage.
+    for (const status of ["refused", "unreachable"] as const) {
+      if (failed[status] > 0) {
+        opts.log.warn("ai_usage_flush_failed", { lines: failed[status], status, droppedOldest: dropped });
+      }
     }
   }
 
   return {
     push(line) {
+      if (noDoor) return;
       held.push(line);
       if (held.length > max) {
         droppedOldest += held.length - max;
@@ -88,12 +100,12 @@ export function makeAiUsageBuffer(opts: {
 }
 
 /** A receipt, or `unreachable` when the bound passes first. The call itself is never awaited past it. */
-async function within(p: Promise<ReleaseReceipt>, ms: number): Promise<ReleaseReceipt> {
+async function within(p: Promise<UsageReceipt>, ms: number): Promise<UsageReceipt> {
   let t: ReturnType<typeof setTimeout> | undefined;
-  const bound = new Promise<ReleaseReceipt>((resolve) => { t = setTimeout(() => resolve("unreachable"), ms); });
+  const bound = new Promise<UsageReceipt>((resolve) => { t = setTimeout(() => resolve("unreachable"), ms); });
   (t as { unref?: () => void } | undefined)?.unref?.();
   try {
-    return await Promise.race([p.catch((): ReleaseReceipt => "unreachable"), bound]);
+    return await Promise.race([p.catch((): UsageReceipt => "unreachable"), bound]);
   } finally {
     if (t !== undefined) clearTimeout(t);
   }

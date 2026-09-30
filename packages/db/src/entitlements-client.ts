@@ -2,7 +2,7 @@ import {
   AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, UNMETERED_ACCESS,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
-  type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
+  type ReleaseOutcome, type ReleaseReceipt, type UsageReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease, type ReturnConfirmOutcome,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
@@ -638,7 +638,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       return res?.status === 200 ? "settled" : "unreachable";
     },
 
-    async recordUsage(lines: readonly AiUsageLine[]): Promise<ReleaseReceipt> {
+    async recordUsage(lines: readonly AiUsageLine[]): Promise<UsageReceipt> {
       // AT MOST ONCE: the caller logs an `unreachable` batch and drops it, because a retried
       // POST with no identity would count its lines twice. Chunking is the caller's.
       if (lines.length > AI_USAGE_LINES_PER_POST) {
@@ -651,6 +651,8 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       }
       if (batch.length === 0) return "settled";
       const res = await post("/v1/usage", { lines: batch });
+      if (res?.status === 404) return "no_door";
+      if (res && res.status >= 400 && res.status < 500) return "refused";
       if (res?.status !== 200) return "unreachable";
       if (!usageRecordedIn(res)) {
         usageUnrecorded({ path: "/v1/usage", lines: batch.length, why: "no_usage_recorded_field" });
