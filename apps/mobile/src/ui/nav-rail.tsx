@@ -17,6 +17,7 @@ import { gateFor } from "../state/gate";
 import { useWorld } from "../state/world";
 import { useTheme } from "../theme";
 import { GlassRail, type RailAction } from "./glass";
+import { railDestinationFixed } from "./glass/fold";
 import type { IconName } from "./Icon";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { publishFolded } from "./nav-fold";
@@ -86,7 +87,7 @@ export function NavRail() {
         on: d.id === active,
         role: "tab" as const,
         /* More never folds: it is where everything that folded is reached. */
-        fixed: d.id === "more",
+        fixed: railDestinationFixed(d.id),
         onPress: () => {
           if (d.id !== active) router.navigate(d.path);
         },

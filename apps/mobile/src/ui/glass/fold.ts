@@ -42,6 +42,11 @@ export interface RailFold {
  * that shows the folded set behind ⋯ must include a fixed More entry in its groups — folding
  * cannot create the room More itself would need.
  */
+/** Which navigation destinations never fold off the rail: More, where every folded one is reached. */
+export function railDestinationFixed(id: string): boolean {
+  return id === "more";
+}
+
 export function railFold(groups: readonly (readonly RailEntry[])[], availableHeight: number): RailFold {
   const kept: RailEntry[][] = groups.map((g) => [...g]);
   const folded: RailEntry[] = [];
