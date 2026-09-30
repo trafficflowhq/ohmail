@@ -984,9 +984,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * discipline the outcome ledger and the reconnect flush carry).
    */
   const current = useRef<ReturnType<typeof foldersFlag> | null>(null);
-  /* The consent and relay reads of the live session, so a local writer can tell them (`localWrite`). */
+  /* The consent, relay and queue reads of the live session, so a local writer can tell them (`localWrite`). */
   const consentReadNow = useRef<FreshestRead<FoldersConsent> | null>(null);
   const relayReadNow = useRef<FreshestRead<readonly RelayedDecision[]> | null>(null);
+  const queueReadNow = useRef<FreshestRead<readonly ServerWaitingSender[]> | null>(null);
   /**
    * One {@link faceScope} per session, beside the folders machine and built with it — it
    * closes over the same `session`, so a superseded machine cannot write to a server the app
@@ -1053,7 +1054,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        stale together, because the drain this fires after is the one that landed the moves the
        queue is derived from. Its own route, its own epoch — a refused queue read must not hold
        up the folders answer or the roster, and each keeps the last thing it knew. */
-    const queueRead = freshestRead<readonly ServerWaitingSender[]>((ans) => {
+    const queueRead = queueReadNow.current = freshestRead<readonly ServerWaitingSender[]>((ans) => {
       if (current.current === m) setScreenerServer(ans);
     });
     const relayRead = relayReadNow.current = freshestRead<readonly RelayedDecision[]>((ans) => {
@@ -1312,7 +1313,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            per session by design, so a captured value would reconcile against the queue as it
            stood at construction. The rule itself is `waitingAfterDecide`, beside the shelf it
            describes; nothing here decides who leaves. */
-        forgetWaiting: (decided) => setScreenerServer((prev) => waitingAfterDecide(prev, decided)),
+        forgetWaiting: (decided) => {
+          queueReadNow.current?.localWrite();
+          setScreenerServer((prev) => waitingAfterDecide(prev, decided));
+        },
         /* The standalone door sends nothing (its one-click port refuses), so it says nothing. */
         autoUnsubscribe: () => !standaloneNow.current && autoUnsubscribeNow.current,
         /* THE PRESS THAT WAS SENT, MARKED AT ONCE; the next read confirms or replaces it. */
