@@ -52,7 +52,7 @@ import { imageRouteOf, type ImageRoute } from "../mail/remote-images";
 import * as Crypto from "expo-crypto";
 import type { FaceName } from "../theme/face";
 import { faceScope } from "./face-scope";
-import { foldersFlag, freshestRead } from "./folders-flag";
+import { foldersFlag, freshestRead, type FreshestRead } from "./folders-flag";
 import { askEngineQueues, drainReads } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
 import { createProjector, type Projected } from "./world-projection";
@@ -984,6 +984,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * discipline the outcome ledger and the reconnect flush carry).
    */
   const current = useRef<ReturnType<typeof foldersFlag> | null>(null);
+  /* The consent and relay reads of the live session, so a local writer can tell them (`localWrite`). */
+  const consentReadNow = useRef<FreshestRead<FoldersConsent> | null>(null);
+  const relayReadNow = useRef<FreshestRead<readonly RelayedDecision[]> | null>(null);
   /**
    * One {@link faceScope} per session, beside the folders machine and built with it — it
    * closes over the same `session`, so a superseded machine cannot write to a server the app
@@ -1022,7 +1025,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // protects the flag against a user's write; nothing writes signatures from this phone, so
     // freshest-successful-read-wins is the whole rule (`freshestRead`). Identity-gated like
     // `apply` — a superseded session's late answer applies nothing.
-    const sigRead = freshestRead<FoldersConsent>((ans) => {
+    const sigRead = consentReadNow.current = freshestRead<FoldersConsent>((ans) => {
       if (current.current !== m) return;
       setSignatures(ans.signatures);
       // The resurface time off the SAME answer and the same rule — one read, every fact on it.
@@ -1053,7 +1056,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const queueRead = freshestRead<readonly ServerWaitingSender[]>((ans) => {
       if (current.current === m) setScreenerServer(ans);
     });
-    const relayRead = freshestRead<readonly RelayedDecision[]>((ans) => {
+    const relayRead = relayReadNow.current = freshestRead<readonly RelayedDecision[]>((ans) => {
       if (current.current === m) setRelayed(ans);
     });
     const m = foldersFlag({
@@ -1140,7 +1143,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       setAutoActPending(true);
       try {
         const res = await writeAutoAct(session, on);
-        if (current.current === m) setAutoAct((prev) => (prev === null ? prev : { ...prev, on: res.on }));
+        if (current.current === m) {
+          consentReadNow.current?.localWrite();
+          setAutoAct((prev) => (prev === null ? prev : { ...prev, on: res.on }));
+        }
         return res.on;
       } finally {
         if (current.current === m) setAutoActPending(false);
@@ -1182,7 +1188,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // comes back. `current` always names the live one (see its docblock).
       const m = current.current;
       const stored = await writeResurfaceTime(session, hhmm);
-      if (current.current === m) setResurfaceTime(stored);
+      if (current.current === m) {
+        consentReadNow.current?.localWrite();
+        setResurfaceTime(stored);
+      }
       return stored;
     },
     [session],
@@ -1307,7 +1316,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         /* The standalone door sends nothing (its one-click port refuses), so it says nothing. */
         autoUnsubscribe: () => !standaloneNow.current && autoUnsubscribeNow.current,
         /* THE PRESS THAT WAS SENT, MARKED AT ONCE; the next read confirms or replaces it. */
-        relayedHere: (decided) => setRelayed((prev) => withSentHere(prev, decided)),
+        relayedHere: (decided) => {
+          relayReadNow.current?.localWrite();
+          setRelayed((prev) => withSentHere(prev, decided));
+        },
         // The hold is its own object, so a release takes back exactly the press that made it.
         leaveWaiting: (decided) => {
           const hold = { ...decided };

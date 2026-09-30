@@ -50,16 +50,24 @@ export interface FoldersFlag {
  * read has APPLIED, and a `null` (could-not-ask) applies nothing: issuance alone supersedes
  * nothing, exactly the flag machine's round-3 rule.
  */
-export function freshestRead<T>(
-  apply: (ans: T) => void,
-): (ask: () => Promise<T | null>) => Promise<T | null> {
+export interface FreshestRead<T> {
+  (ask: () => Promise<T | null>): Promise<T | null>;
+  /**
+   * A writer on this device changed the state the answers land in (an auto-act echo, a stored
+   * resurface time, a decision marked sent here): the last applied answer no longer describes
+   * that state, so the next answer applies even when it equals it.
+   */
+  localWrite(): void;
+}
+
+export function freshestRead<T>(apply: (ans: T) => void): FreshestRead<T> {
   let seq = 0;
   let applied = 0;
   /* AN EQUAL ANSWER IS NOT A CHANGE. Every drain re-asks these reads, and each apply hands the
      screens a fresh object that re-derives every list; an answer that says what the last applied
      one said is taken as current (it still supersedes older reads) and applies nothing. */
   let last: { ans: T } | null = null;
-  return async (ask) => {
+  const read = async (ask: () => Promise<T | null>): Promise<T | null> => {
     const mine = ++seq;
     const ans = await ask();
     if (ans !== null && mine > applied) {
@@ -70,6 +78,7 @@ export function freshestRead<T>(
     }
     return ans;
   };
+  return Object.assign(read, { localWrite: () => { last = null; } });
 }
 
 /** Structural equality over JSON-shaped answers, object keys compared in sorted order. */
