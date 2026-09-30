@@ -79,7 +79,8 @@ export function compactFit(args: {
 }): { standing: string[]; overflow: string[]; leadIcon: boolean } {
   const { widths, room, lead } = args;
   const verbs = args.verbs.filter((id) => id !== lead);
-  if (widths === null || room === null) return { standing: [], overflow: [...verbs], leadIcon: false };
+  /* Unmeasured, every verb is in the sheet, the lead included: Forward is never on neither. */
+  if (widths === null || room === null || !(room > 0)) return { standing: [], overflow: [...args.verbs], leadIcon: false };
   const line = barLineWidth(room);
   const reply = widths["__reply"] ?? 0;
   /* THE LEAD NEVER LEAVES THE ROW: its word when Reply + gap + word fits the line, else its icon. */
