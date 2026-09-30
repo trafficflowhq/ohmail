@@ -12,6 +12,9 @@ import { logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import { HELD_PRESS_TTL_MS, journalDoor, type HeldJournal, type JournalDoor } from "./held-journal";
 
+/** The disk's answer, as the journal door gives it (the engine's type, through the one door). */
+type DurableWrite = Awaited<ReturnType<JournalDoor["landed"]>>;
+
 /**
  * THE WEBAPP'S ROW GRAMMAR (`delete-intents.ts`), one delete shape across surfaces: a press id,
  * the ids it named, the press's clock and the held verb. `kind` absent is a delete; a verb this
@@ -35,6 +38,8 @@ interface HeldPress {
 }
 
 const held = new Map<string, HeldPress>();
+/** Presses whose Undo is saving: disarmed, still out of the lists, never flushed as a delete. */
+const undoing = new Set<string>();
 const listeners = new Set<() => void>();
 /** The snapshot the projection subscribes to — a NEW set per change, `useSyncExternalStore`'s contract. */
 let snapshot: ReadonlySet<string> = new Set();
@@ -42,7 +47,7 @@ let snapshot: ReadonlySet<string> = new Set();
 let session: { door: JournalDoor; now: () => number } | null = null;
 
 function publish(): void {
-  snapshot = new Set(held.keys());
+  snapshot = new Set([...held.keys(), ...undoing]);
   for (const cb of listeners) cb();
 }
 
@@ -130,18 +135,26 @@ export function armHeldDelete(id: string, windowMs: number, commit: () => unknow
 }
 
 /**
- * Take the press back. `true` only when a window was open — nothing restored is not an undo. The
- * row goes in the SAME synchronous act as the timer, or the next launch would delete what the
- * reader had just taken back.
+ * Take the press back: `null` when no window was open (nothing restored is not an undo), else the
+ * disk's answer. The timer is disarmed and the row's removal written in the same synchronous act;
+ * the row stays out of the lists until that removal LANDED, because until then the next launch
+ * would still delete it. `lost`: the delete the undo could not take back is committed now.
  */
-export function undoHeldDelete(id: string): boolean {
+export function undoHeldDelete(id: string): Promise<DurableWrite> | null {
   const press = held.get(id);
-  if (!press) return false;
+  if (!press) return null;
   clearTimeout(press.timer);
   held.delete(id);
+  if (press.door === null) { publish(); return Promise.resolve("stored"); }
+  undoing.add(id);
   forgetRow(press.door, id);
   publish();
-  return true;
+  return press.door.landed().then((stored) => {
+    undoing.delete(id);
+    publish();
+    if (stored !== "stored") settle(id, press);
+    return stored;
+  });
 }
 
 /** Commit every open window now — backgrounding, and the session teardown. Leaving is not undo. */
@@ -244,7 +257,10 @@ export interface DeleteCeremony {
   /** The screens' toast — sentence plus the pill's Undo and its hold. */
   toast: (say: RefusalArg, opts?: { undo?: () => void; holdMs?: number }) => void;
   deleted: RefusalArg;
+  /** Said once the undo is ON DISK — never at the press, or a kill could make it false. */
   undone: RefusalArg;
+  /** Said when the undo could not be saved and the delete went ahead. */
+  undoLost: RefusalArg;
   /** The QUIET wire dispatch at the window's close — the pill already spoke "Moved to Trash." */
   dispatchQuiet: () => unknown;
   /** Leave the reader when the delete COMMITS (window closed), never at the press, never on Undo. */
@@ -279,7 +295,9 @@ export async function runDeleteCeremony(d: DeleteCeremony): Promise<void> {
   if (!held.has(d.id)) { d.toast(d.deleted); return; }
   d.toast(d.deleted, {
     holdMs: d.windowMs,
-    // Nothing restored is not an undo — the sentence rides only a window that took.
-    undo: () => { if (undoHeldDelete(d.id)) d.toast(d.undone); },
+    // Nothing restored is not an undo; the sentence waits for the disk's answer.
+    undo: () => {
+      void undoHeldDelete(d.id)?.then((stored) => d.toast(stored === "stored" ? d.undone : d.undoLost));
+    },
   });
 }

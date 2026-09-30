@@ -1178,6 +1178,7 @@ export const DE: Deck = {
   undo: "Rückgängig",
   toastUndone: "Rückgängig gemacht.",
   deleteUndone: "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
+  deleteUndoLost: "Das Rückgängigmachen konnte nicht gespeichert werden — die Nachricht ist im Papierkorb.",
   toastRoutingUndone: "Die Post ist wieder da, wo sie war, und es wurde keine Regel angelegt.",
   /* Siehe `copy.en.ts`. Der Doppelpunkt vor dem Ort nimmt keinen Fall — `toastMoved`s Regel. */
   routingReplayedTo: (n: number, place: string) =>

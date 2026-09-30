@@ -1497,6 +1497,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
               toast: showToast,
               deleted: refuse("toastDeleted"),
               undone: refuse("deleteUndone"),
+              undoLost: refuse("deleteUndoLost"),
               /* The row is cleared once this settles: the outbox holds the delete from then on. */
               dispatchQuiet: () => acts.deleteMessage(id, { quiet: true }),
               ...(opts?.onCommitted ? { onCommitted: opts.onCommitted } : {}),
