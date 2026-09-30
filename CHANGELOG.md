@@ -176,6 +176,42 @@ fails with "The original could not be loaded"; it goes out with every attachment
 whose stored copy was dropped under the storage limit, and a message in Junk, forward with their
 text read from your mailbox when you send. On the phone, a forward that is still refused says why.
 
+### Builds install the dependency versions that were tested
+<!-- changes: fix-026-published-build-tested-tree.md -->
+
+The desktop apps, the Android app and the self-host images are now built from the dependency
+versions the project is tested with. Before, the published lockfile was resolved from the package
+registry each time a release was published, so a build could pick up newer releases of indirect
+dependencies than the ones that were tested, among them native modules of the Android app. These
+builds also run no dependency install scripts.
+
+### Who organizes your mailboxes is said once, at the foot of the sidebar
+<!-- changes: fix-026-notice-steps-aside.md -->
+
+Nothing is said any more when this install starts organizing a mailbox, so reopening a paused
+account no longer stacks a line per mailbox over the Ohbox. When another install takes a mailbox
+over, or the one organizing it stops, a short note stands at the foot of the sidebar (above the top
+bar on a narrow window), several mailboxes behind a count; Mark read clears it on every device, and
+it comes back only for a new change.
+
+### Forward stands beside Reply on the message bar
+<!-- changes: fix-026-notice-steps-aside.md -->
+
+On the web and desktop apps Forward is always on the message bar beside Reply, at every window
+width; it was only in the More menu on a narrow window or a phone. On the narrowest screens Forward
+and then Reply show just their icon rather than run off the bar.
+
+### A first mailbox without encryption, set up on the first launch
+<!-- changes: fix-026-first-door.md -->
+
+On the first launch of the desktop app, "On this computer" now shows why a mail server on your own
+network that offers no encryption was refused and offers the same consent line as adding a mailbox,
+instead of opening the app over a mailbox with no password. With the line ticked, the mailbox is
+connected and syncs. A "Sign in again" that the mail server refuses no longer keeps the refused
+password in use, and the status bar says when a mailbox has no password instead of "Connected".
+Setup asks about the mailbox just connected, and with several mailboxes connected, "Run setup again"
+and the setup link on the web ask which mailbox the setup is for.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
