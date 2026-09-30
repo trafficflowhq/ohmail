@@ -13,6 +13,39 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A message a rule screens leaves the phone's inbox when its body arrives
+<!-- changes: fix-026-bundle-and-placement-key.md -->
+
+On the phone, a message a rule screens by what its text says moves out of the inbox as soon as its
+body arrives, not at the next change to the mailbox.
+
+### Closing a tab while your session renews no longer signs you out
+<!-- changes: fix-026-web-session-survives-navigation.md -->
+
+If you closed the ohmail.app tab, or followed a link out of it, at the moment your session renewed,
+coming back a few minutes later could ask you to sign in again. The renewal now finishes after the
+page is gone.
+
+### A self-hosted desktop manages its mailboxes on its own server
+<!-- changes: fix-026-app-says-what-happened.md -->
+
+On a desktop signed in to a server you run, Settings → Mailboxes names that server's web app and
+opens its Mailboxes page, instead of sending you to ohmail.app.
+
+### A Mark read that did not go through says why
+<!-- changes: fix-026-app-says-what-happened.md -->
+
+When a Mark read on an organizer note does not go through, the note stays and one line under it
+says why: you're offline, the account is not active, or try again.
+
+### Undo on the phone says "Not deleted" once it is saved
+<!-- changes: fix-026-app-says-what-happened.md -->
+
+After Delete, Undo on the phone says "Not deleted" only once the undo is stored on the device, so
+closing the app at that moment no longer moves the message to Trash on the next launch. If the undo
+cannot be stored, the phone says the message is in Trash. An undo still being stored is no longer
+sent to Trash when the app reconnects in that moment.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
