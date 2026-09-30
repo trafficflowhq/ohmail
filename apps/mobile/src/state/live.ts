@@ -5603,6 +5603,9 @@ export type {
 
 /** The derived stamp's deny list and the reader's day number, through this seam. */
 export { NOT_DERIVED_FROM, zonedDayNumber, beginDerive, takeClientEngineVitals };
+/* The world clock's inputs (`world-clock.ts`): the zone arithmetic and the send thresholds. */
+export { zonedFields, zonedInstant, HELD_SEND_RECHECK_MS, SENDING_STALE_AFTER_MS };
+export type { EngineDraft };
 
 /**
  * ONE MESSAGE'S BODY, read at the moment a surface draws it — the list rows carry none (see

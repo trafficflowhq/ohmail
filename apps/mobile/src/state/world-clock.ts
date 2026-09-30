@@ -8,7 +8,7 @@
 import {
   HELD_SEND_RECHECK_MS, SENDING_STALE_AFTER_MS, zonedFields, zonedInstant,
   type EngineDraft, type EntityReader,
-} from "@ohmail/client-engine";
+} from "./live";
 
 /** The next instant after `now` at which a clock-read list says something different. */
 export function nextClockEdge(reader: EntityReader, now: Date, zone: string): number {
