@@ -130,6 +130,17 @@ export async function openWeb(place: WebPlace, challenge?: string): Promise<void
 }
 
 /**
+ * Open Settings → Mailboxes on the SELF-HOSTED server this install is signed in to. A key and
+ * still no address: the shell composes the page from the door its own configuration holds, and
+ * refuses on any other door — so this window cannot point the browser anywhere by it.
+ */
+export async function openServerMailboxes(): Promise<void> {
+  const shell = internals();
+  if (!shell) return;
+  await shell.invoke(OPEN_COMMAND, { key: "server-mailboxes" });
+}
+
+/**
  * Open the approval page for the request the engine holds. `request` IS A VALUE, NOT A URL, for
  * {@link openWeb}'s reason: the shell owns the address and admits exactly a request id (36
  * characters, hex and hyphens) after its own parameter name. The verifier never leaves the engine.

@@ -53,7 +53,7 @@ import {
 } from "./sign-in-again-server.js";
 import { LocalWireError, localPlaintextOffer } from "./local-first-run.js";
 import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
-import { openWeb } from "./native.js";
+import { openServerMailboxes, openWeb } from "./native.js";
 
 /** Whether this install can reach ONE mailbox's server right now — see {@link MailboxReachSlice}. */
 export interface MailboxReach {
@@ -647,7 +647,7 @@ function statusOf(door?: string | null): EngineStatus | null {
  * confirmation states the extra consequence only when it is true.
  */
 export function DesktopMailboxes(
-  { door, host, flavor, onShellStatus }: {
+  { door, host, flavor, server, onShellStatus }: {
     door?: string | null;
     /**
      * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it reads through one.
@@ -661,6 +661,8 @@ export function DesktopMailboxes(
     host?: string | null;
     /** The hosted door's server, as `flavorOf` reads it — it decides who a hosted row says files. */
     flavor?: string | null;
+    /** A SELF-HOSTED door's server, by host (`selfHostedServerOf`): the place its mailboxes are managed. */
+    server?: string | null;
     onShellStatus?: (next: EngineStatus) => void;
   },
 ) {
@@ -954,6 +956,9 @@ export function DesktopMailboxes(
   /* PAIRED: a cloud door whose far side is a computer of the person's own. Everything the ENGINE
      does is the cloud door's; what changes is what this pane may claim. */
   const paired = cloud && !!host;
+  /* SELF-HOSTED: a cloud door on a server the person runs. Its mailboxes are managed on THAT
+     server's web app, never ohmail.app, where this install has no account. */
+  const selfHosted = cloud && !paired && flavor === "selfhost" && !!server;
   /* WHO FILES WHAT THIS DOOR SHOWS, for the heading and the one organizer sentence a hosted or
      paired row can carry — the refused stop. This computer on its own door; ohmail Cloud, the
      self-hosted server or the other computer on the rest. */
@@ -2045,7 +2050,13 @@ export function DesktopMailboxes(
     <SettingsSection>
       <h2 className="acct-h">{heading}</h2>
       {listed.length === 0 ? (
-        <p className="set-note-inline">{cloud ? t("desktopNoneCloud") : t("desktopNoneLocal")}</p>
+        <p className="set-note-inline">
+          {paired
+            ? t("desktopNoneHost", { host: host! })
+            : selfHosted
+              ? t("desktopNoneServer", { host: server! })
+              : cloud ? t("desktopNoneCloud") : t("desktopNoneLocal")}
+        </p>
       ) : null}
       {/* ── ADD MAILBOX — ABOVE THE LIST, because it is about the list, not a row. The route
           (`POST /local/mailboxes`) writes the row, proves its password against its own server
@@ -2464,6 +2475,21 @@ export function DesktopMailboxes(
         <SettingsRow
           label={t("desktopManageOnHost", { host: host! })}
           description={t("desktopManageOnHostWhy", { host: host! })}
+        />
+      ) : selfHosted ? (
+        <SettingsRow
+          label={t("desktopManageOnServer")}
+          description={t("desktopManageOnServerWhy", { host: server! })}
+          control={
+            <Button
+              onClick={() =>
+                void openServerMailboxes().catch(() =>
+                  setProblem(t("desktopNoBrowserServer", { host: server! })))
+              }
+            >
+              {t("desktopOpenServer", { host: server! })}
+            </Button>
+          }
         />
       ) : cloud ? (
         <SettingsRow

@@ -418,6 +418,20 @@ fn is_self_hosted_cloud(cloud_url: &str) -> bool {
     }
 }
 
+/// The origin a SELF-HOSTED door's web app is served from — `scheme://authority` of the address this
+/// shell configured (`<origin>/api`), the path dropped — or `None` on every other door: the managed
+/// service, a paired computer (its address is another desktop, not a web app) and the local door.
+/// It is what the window's "Open <server>" press opens, so it answers only from this file's door.
+pub fn self_hosted_origin(config: &Config) -> Option<String> {
+    let Config::Cloud(c) = config else { return None };
+    if c.flavor.as_deref() == Some(DESKTOP_HOST_FLAVOR) || !is_self_hosted_cloud(&c.cloud_url) {
+        return None;
+    }
+    let (scheme, rest) = c.cloud_url.trim().split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().filter(|a| !a.is_empty())?;
+    Some(format!("{}://{authority}", scheme.to_ascii_lowercase()))
+}
+
 /// The file an operator drops their own certificate authority's root into.
 ///
 /// The same name the engine's refusal tells them to use and the same name the door's address step

@@ -3258,6 +3258,46 @@ fn the_browser_can_only_be_sent_where_this_table_says() {
     assert_eq!(link_for("Account"), None);
 }
 
+/// THE SELF-HOSTED DOOR'S MAILBOXES PAGE IS ITS OWN SERVER'S, AND NO OTHER DOOR HAS ONE.
+///
+/// A desktop signed in to a server the person runs was sent to ohmail.app, where it has no account.
+/// The key opens `<its origin>/mailbox?settings=mailboxes#/settings`, composed from the door this
+/// shell configured; the managed, paired and local doors and no door at all are refusals.
+#[test]
+fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
+    let self_hosted = |url: &str| Config::Cloud(crate::config::CloudDoor {
+        cloud_url: url.to_string(),
+        address: Some("someone@example.org".to_string()),
+        flavor: None,
+        host_pin: None,
+        identity_pending: false,
+    });
+    assert_eq!(
+        server_link_for(Some(&self_hosted("https://mail.example.org/api"))).unwrap(),
+        "https://mail.example.org/mailbox?settings=mailboxes#/settings",
+    );
+    assert_eq!(
+        server_link_for(Some(&self_hosted("http://localhost:28611/api"))).unwrap(),
+        "http://localhost:28611/mailbox?settings=mailboxes#/settings",
+        "a loopback server with its port",
+    );
+    assert!(server_link_for(Some(&self_hosted("https://api.ohmail.app"))).is_err(), "the managed service");
+    assert!(server_link_for(Some(&paired_door(Some(FIXTURE_PIN)))).is_err(), "a paired computer");
+    let local = Config::Local(crate::config::LocalDoor {
+        imap_host: "imap.example.org".to_string(),
+        imap_user: "someone".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: None,
+        pending: false,
+    });
+    assert!(server_link_for(Some(&local)).is_err(), "the local door");
+    assert!(server_link_for(None).is_err(), "no door");
+    // The key is not a row of the ohmail.app table, so the table's own resolver refuses it.
+    assert!(link_for(SERVER_MAILBOXES_KEY).is_none());
+}
+
 /// THE ONE PLACE A VALUE FROM THE WINDOW REACHES AN ADDRESS, AND THE GATE ON IT.
 ///
 /// `link_url_for` is where the sign-in commitment is appended. The window contributes 43 characters

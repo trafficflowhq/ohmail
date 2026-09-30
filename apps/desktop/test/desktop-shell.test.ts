@@ -1056,8 +1056,12 @@ describe("the Rust side", () => {
        `engine_tests.rs`. A THIRD parameter, or a rename that let something else through, still
        fails here. */
     // The third is `request`: the approval page's exact-shape id, admitted for `approve` alone
-    // (`open_target` refuses it elsewhere and a challenge there — `engine_tests.rs`).
-    expect(engine).toMatch(/fn open_link\(key: String, challenge: Option<String>, request: Option<String>\)/);
+    // (`open_target` refuses it elsewhere and a challenge there — `engine_tests.rs`). The `shell`
+    // state before them is Tauri's injection, never the window's: `server-mailboxes` reads the
+    // door this shell configured through it, so the self-hosted page is composed here too.
+    expect(engine).toMatch(
+      /fn open_link\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*key: String,\s*challenge: Option<String>,\s*request: Option<String>,\s*\)/,
+    );
     expect(engine).toMatch(/fn is_request_id\(value: &str\) -> bool/);
     expect(engine).toMatch(/fn open_target\(key: &str, challenge: Option<&str>, request: Option<&str>\)/);
     expect(engine).not.toMatch(/fn open_link\([^)]*url/);

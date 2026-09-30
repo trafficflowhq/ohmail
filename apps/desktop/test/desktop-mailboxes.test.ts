@@ -246,7 +246,10 @@ function addressRows(el: HTMLElement): HTMLElement[] {
   ) as HTMLElement[];
 }
 
-async function render(door: string | null): Promise<HTMLElement> {
+async function render(
+  door: string | null,
+  extra: { flavor?: string; server?: string; host?: string } = {},
+): Promise<HTMLElement> {
   /* Imported inside, so the module graph is built after `vi.mock` is registered. */
   const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
   mountPoint = document.createElement("div");
@@ -262,6 +265,7 @@ async function render(door: string | null): Promise<HTMLElement> {
           { storageKey: "ohmail.theme" },
           h(ToastHost, null, h(DesktopMailboxes, {
             door,
+            ...extra,
             /* The gate's own sink. Withheld by the ONE case that drives a shell which cannot be
                told — see "a shell that cannot be told". */
             ...(SHELL_SINK
@@ -720,6 +724,83 @@ describe("the desktop mailbox pane on the hosted door", () => {
     expect(text).toContain("Asking the mail engine");
     expect(text).not.toContain("Mailboxes are managed in ohmail on the web");
     expect(openButton(el)).toBeNull();
+  });
+});
+
+/**
+ * ── EACH DOOR NAMES ITS OWN PLACE (SELF-HOSTED-DESKTOP-MAILBOXES-SAYS-MANAGED-ON-THE-WEB) ──────
+ *
+ * A desktop signed in to a server the person runs said "managed in ohmail on the web" and offered
+ * "Open ohmail.app" — a service that install has no account with. The self-hosted door names its
+ * own server and opens that server's page through a KEY the shell resolves from its own door.
+ */
+describe("the hand-off row names the door's own place", () => {
+  const rows: ReadonlyArray<{
+    door: string; extra: { flavor?: string; server?: string; host?: string };
+    says: string | null; button: string | null; key: string | null; never: string[];
+  }> = [
+    { door: "local", extra: { flavor: "local" }, says: null, button: null, key: null,
+      never: ["managed in ohmail on the web", "your server's web app", "Open ohmail.app"] },
+    { door: "cloud", extra: { flavor: "managed" }, says: "Mailboxes are managed in ohmail on the web",
+      button: "Open ohmail.app", key: "mailboxes", never: ["your server's web app"] },
+    { door: "cloud", extra: { flavor: "selfhost", server: "mail.example.test" },
+      says: "Mailboxes are managed on your server's web app", button: "Open mail.example.test",
+      key: "server-mailboxes", never: ["ohmail on the web", "ohmail.app"] },
+    { door: "cloud", extra: { flavor: "desktop-host", host: "Kitchen Mac" },
+      says: "Mailboxes are managed on Kitchen Mac", button: null, key: null,
+      never: ["ohmail on the web", "Open ohmail.app", "your server's web app"] },
+  ];
+  for (const r of rows) {
+    it(`${r.door} / ${r.extra.flavor}: ${r.says ?? "no hand-off row"}`, async () => {
+      const el = await render(r.door, r.extra);
+      const text = el.textContent ?? "";
+      if (r.says !== null) expect(text).toContain(r.says);
+      for (const n of r.never) expect(text, `the ${r.extra.flavor} door said "${n}"`).not.toContain(n);
+      if (r.button === null) {
+        expect(buttonSaying(el, "Open "), "a door with nowhere to send somebody offered a way out").toBeNull();
+        return;
+      }
+      const b = buttonSaying(el, r.button);
+      expect(b, `no "${r.button}" press`).not.toBeNull();
+      await act(async () => { b!.click(); });
+      expect(invoked, "the window named something other than a key").toEqual([
+        { command: "open_link", payload: { key: r.key } },
+      ]);
+    });
+  }
+
+  it("a self-hosted install with no mailbox is pointed at its server, not at ohmail on the web", async () => {
+    FACTS = [];
+    const text = (await render("cloud", { flavor: "selfhost", server: "mail.example.test" })).textContent ?? "";
+    expect(text).toContain("Connecting one happens in the web app on mail.example.test.");
+    expect(text).not.toContain("ohmail on the web");
+  });
+
+  it("a paired install with no mailbox is pointed at the other computer", async () => {
+    FACTS = [];
+    const text = (await render("cloud", { flavor: "desktop-host", host: "Kitchen Mac" })).textContent ?? "";
+    expect(text).toContain("Connecting one happens in ohmail on Kitchen Mac.");
+    expect(text).not.toContain("ohmail on the web");
+  });
+
+  it("the gate hands the pane a server only on a self-hosted door", async () => {
+    const { selfHostedServerOf } = await import("../src/doors.js");
+    const at = (mode: string, cloudUrl?: string, flavor?: string) =>
+      selfHostedServerOf({ state: "serving", mode, ...(cloudUrl ? { cloudUrl } : {}), ...(flavor ? { flavor } : {}) } as never);
+    expect(at("cloud", "https://mail.example.test/api")).toBe("mail.example.test");
+    expect(at("cloud", "http://localhost:28611/api"), "a non-default port is part of the name").toBe("localhost:28611");
+    expect(at("cloud", "https://api.ohmail.app"), "the managed service is not a server of the person's own").toBeNull();
+    expect(at("cloud", "https://kitchen.tail.test", "desktop-host"), "a paired computer is not a server").toBeNull();
+    expect(at("local")).toBeNull();
+  });
+
+  it("a browser that will not open names the server's page, not ohmail.app", async () => {
+    host.__TAURI_INTERNALS__!.invoke = async () => { throw new Error("no browser on this machine"); };
+    const el = await render("cloud", { flavor: "selfhost", server: "mail.example.test" });
+    await act(async () => { buttonSaying(el, "Open mail.example.test")!.click(); });
+    const text = el.textContent ?? "";
+    expect(text).toContain("The page is at mail.example.test.");
+    expect(text).not.toContain("The page is at ohmail.app.");
   });
 });
 

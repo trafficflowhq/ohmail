@@ -209,6 +209,20 @@ export function flavorOf(status: EngineStatus | null): DoorFlavor {
   return door === originHost(CLOUD_URL) ? "managed" : "selfhost";
 }
 
+/**
+ * THE SERVER A SELF-HOSTED DOOR IS SIGNED IN TO, as its sentences name it: the host (and a
+ * non-default port) of the configured address. `null` on every other door, so no sentence about
+ * "your server" can be said to a managed, paired or local install.
+ */
+export function selfHostedServerOf(status: EngineStatus | null): string | null {
+  if (flavorOf(status) !== "selfhost" || status?.mode !== "cloud") return null;
+  try {
+    return new URL(status.cloudUrl ?? "").host || null;
+  } catch {
+    return null;
+  }
+}
+
 function originHost(url: string | null | undefined): string | null {
   const m = /^https?:\/\/([^/?#\s:]+)/i.exec((url ?? "").trim());
   return m?.[1] ? m[1].toLowerCase().replace(/\.$/, "") : null;

@@ -62,7 +62,7 @@ import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor, imagesFromComputer,
   hostDoorFor, isDesktopHost, isManagedDoor, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
-  restorePairingSwitch, suggestDoorFor, type HostedSession, type Shell,
+  restorePairingSwitch, selfHostedServerOf, suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
@@ -1253,6 +1253,7 @@ export function DesktopGate() {
                  would be both. */
               host={paired ? hostLabel : null}
               flavor={flavorOf(status)}
+              server={selfHostedServerOf(status)}
               onShellStatus={onStatus}
             />
             {/* THE SELF-CHECK, on the local door only: its engine holds the mirror it compares. */}

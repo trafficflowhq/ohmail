@@ -5270,6 +5270,25 @@ fn named(value: Option<&str>) -> bool {
     value.map(str::trim).is_some_and(|v| !v.is_empty())
 }
 
+/// Settings → Mailboxes on the self-hosted server this install is signed in to.
+///
+/// A key of its own and not a row of [`LINKS`], whose every address is ohmail.app's: this page is
+/// on the operator's server. The window still names no address — [`server_link_for`] composes it
+/// from the door THIS shell's configuration holds, and refuses on any other door.
+#[cfg(feature = "local-engine")]
+pub const SERVER_MAILBOXES_KEY: &str = "server-mailboxes";
+
+/// The self-hosted server's Settings → Mailboxes page for `config`, through the external gate.
+#[cfg(feature = "local-engine")]
+pub fn server_link_for(config: Option<&Config>) -> Result<String, String> {
+    let origin = config
+        .and_then(config::self_hosted_origin)
+        .ok_or_else(|| "ohmail: this install is not signed in to a server of its own".to_string())?;
+    let url = format!("{origin}/mailbox?settings=mailboxes#/settings");
+    external_url(&url)?;
+    Ok(url)
+}
+
 /// What `open_link` opens: the approval page by its request, every other key by [`link_url_for`].
 /// A value offered to the wrong key is refused, so neither parameter can reach the other's page.
 #[cfg(feature = "local-engine")]
@@ -5517,7 +5536,18 @@ fn spawn_file_opener(path: &Path) -> Result<(), String> {
 /// after one parameter name of its own choosing, for one key.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn open_link(key: String, challenge: Option<String>, request: Option<String>) -> Result<(), String> {
+fn open_link(
+    shell: tauri::State<'_, Arc<Shell>>,
+    key: String,
+    challenge: Option<String>,
+    request: Option<String>,
+) -> Result<(), String> {
+    if key == SERVER_MAILBOXES_KEY {
+        if named(challenge.as_deref()) || named(request.as_deref()) {
+            return Err(format!("ohmail: {key} takes no value"));
+        }
+        return spawn_opener(&server_link_for(shell.paths.config().as_ref())?);
+    }
     let target = open_target(&key, challenge.as_deref(), request.as_deref())?;
     spawn_opener(&target)
 }
