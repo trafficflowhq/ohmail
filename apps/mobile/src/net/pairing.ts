@@ -875,7 +875,9 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
   const bearer = slots.managerFor(profile.id, () => ({
     origin: profile.origin,
     refreshToken: profile.refreshToken,
-    refreshAttempt: null,
+    // The attempt a killed rotation left owed: the logout's recovery retries as itself, not as a
+    // stranger presenting a spent token, so the logout lands instead of sweeping the family.
+    refreshAttempt: profile.refreshAttempt,
     accountId: null,
     // A throwaway vault, used only when no manager holds the slot: the profile is being
     // forgotten, so nothing persists into it — the armed attempt included.
