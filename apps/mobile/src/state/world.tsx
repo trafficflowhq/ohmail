@@ -4,8 +4,8 @@
  * the consent projection, `engine.mutate` behind every action, watched ({@link useWorldToast}).
  * Without a live session the world is empty — no account, no-op actions; honestly nothing,
  * never sample data (the navigation gate keeps mail screens off-screen; the empty world covers
- * a deep link restored mid-boot). Projected by `world-projection.ts` on the derived stamp (bodies
- * excluded) and shared through context; each list is computed when a screen reads it and kept
+ * a deep link restored mid-boot). Projected by `world-projection.ts` on the list stamp (bodies
+ * excluded unless one decides a placement) and shared through context; each list is computed when a screen reads it and kept
  * until what it reads moves. `world.actions` is one object for the app's life.
  */
 import {
@@ -55,7 +55,7 @@ import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead, type FreshestRead } from "./folders-flag";
 import { askEngineQueues, drainReads } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
-import { createProjector, type Projected } from "./world-projection";
+import { createProjector, listStamp, type Projected } from "./world-projection";
 import { usePrefs } from "./store";
 import { useListsClock } from "./use-lists-clock";
 import {
@@ -83,7 +83,6 @@ import {
   sendingMailboxId,
   liveTags,
   liveBody,
-  NOT_DERIVED_FROM,
   takeClientEngineVitals,
   liveTagged,
   mirrorSettled,
@@ -769,12 +768,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const offMirrorRev = useSyncExternalStore(subscribeOffMirror, offMirrorRevision, offMirrorRevision);
 
   /* The engine's own change signal — the exact idiom `LiveFacts` (servers.tsx) established. */
-  /* WHAT THE LISTS DERIVE FROM: the engine's stamp minus the bodies (`NOT_DERIVED_FROM`, the web's
-     `useDerivedVersion`). A body write re-derives nothing; a surface that draws a body subscribes
-     to the body stamp itself (`useBodyStamp`). */
+  /* WHAT THE LISTS DERIVE FROM: `listStamp`, the stamp minus the bodies except one that decides a
+     placement (the web's `useDerivedVersion`). Any other body write re-derives nothing; a surface
+     that draws a body subscribes to the body stamp itself (`useBodyStamp`). */
   const derivedStamp = useSyncExternalStore(
     useCallback((cb: () => void) => (engine ? engine.subscribe(cb) : () => undefined), [engine]),
-    () => (engine ? engine.read().stampExcept(NOT_DERIVED_FROM) : 0),
+    () => (engine ? listStamp(engine) : 0),
   );
 
   /* WHICH SEARCH INDEX ANSWERED — the engine notifies when a build settles, with no record

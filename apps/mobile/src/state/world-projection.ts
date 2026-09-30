@@ -2,7 +2,7 @@
  * THE MAILBOX AS THE SCREENS READ IT — the world's projection, renderer-free so a test drives the
  * shipped derivation over a real engine. `WorldProvider` builds one projector per engine and calls
  * it as its one memo body. Every list is computed when a screen first reads it and kept until an
- * input IT reads moves: the presented reader is kept until the derived stamp (bodies excluded), the
+ * input IT reads moves: the presented reader is kept until the list stamp ({@link listStamp}), the
  * reader's day or a presentation input moves, so a run caused by a settings or queue answer reuses
  * it and the engine's memos hit; each list keys on that reader, the view and its own extras;
  * History's rows are built only when read. Getters read the caches, never a run's locals.
@@ -57,6 +57,15 @@ import { routingReader } from "./held-routing";
 import type { World } from "./world";
 
 type OhmailEngineLike = Parameters<typeof liveMessage>[0];
+
+/**
+ * THE STAMP THE LISTS KEY ON, the web's `useDerivedVersion`: the engine's stamp minus the bodies,
+ * or the last body that decides a placement (a body-term rule reads its text) when that is newer.
+ * The provider's memo and the presented reader both read it here, so neither keeps a row where a
+ * fresh projection would no longer place it, and the eager pass's bodies re-derive nothing.
+ */
+export const listStamp = (engine: OhmailEngineLike): number =>
+  Math.max(engine.read().stampExcept(NOT_DERIVED_FROM), engine.placementStamp());
 
 /** What one run reads — every field is the provider's own state or a stable callback. */
 export interface ProjectionInputs {
@@ -123,7 +132,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
     stats.runs += 1;
     const { engine, zone, locale, foldersOn, posture } = inp;
     const raw = engine.read();
-    const stamp = raw.stampExcept(NOT_DERIVED_FROM);
+    const stamp = listStamp(engine);
     const now = inp.now;
     const day = zonedDayNumber(now, zone);
     const mailboxes = inp.mailboxes ?? EMPTY_MAILBOXES;
