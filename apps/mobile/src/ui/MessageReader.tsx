@@ -107,7 +107,7 @@ export function MessageReader({
 
   if (!m) {
     return (
-      <Screen>
+      <Screen fullWindow={!inPane}>
         {bare ? null : <DetailBar />}
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
@@ -136,7 +136,7 @@ export function MessageReader({
     recordPaneScroll(scrollKey, e.nativeEvent.contentOffset.y);
 
   return (
-    <Screen>
+    <Screen fullWindow={!inPane}>
       {/* A message in one of the user's OWN folders is titled by that folder's leaf — the
           place-name fallback would say "Ohbox" about mail that is not there. A History message
           is titled History for the same reason: it presents in no pile, so `place` falls to the

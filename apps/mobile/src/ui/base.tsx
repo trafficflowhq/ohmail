@@ -27,7 +27,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { listInsets, type ListInsets } from "./list-insets";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import { usePosture } from "./posture";
-import { listNavClearance, scaffoldPlan } from "./scaffold/plan";
+import { listNavClearance, scaffoldPlan, screenRailClearance } from "./scaffold/plan";
 import { topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
@@ -92,19 +92,24 @@ export function useListInsets(): ListInsets {
  * notch is the same inset on the other axis. Top and bottom stay the strips' and the
  * Scroller's, as before.
  */
-export function Screen({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+export function Screen({ children, style, fullWindow = false }: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  /** This screen fills the window even on a two-pane posture (a pushed reader beside the rail). */
+  fullWindow?: boolean;
+}) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
-  /* A ONE-PANE RAIL OWNS ITS COLUMN: every screen starts past it — the title, the reader, its bar,
-     the composer — so nothing is drawn under the rail. Two panes pay their own rail padding. */
+  /* THE RAIL OWNS ITS COLUMN: a screen beside it starts past it — the title, the reader, its bar,
+     the composer. Two panes pay their own rail padding, unless this screen fills the window. */
   const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
-  const rail = plan.nav === "rail" && plan.panes === 1 ? listNavClearance(plan, 0) : null;
+  const rail = screenRailClearance(plan, fullWindow);
   return (
     <View
       style={[
         {
           flex: 1, backgroundColor: t.c.canvas,
-          paddingLeft: insets.left + (rail?.left ?? 0), paddingRight: insets.right + (rail?.right ?? 0),
+          paddingLeft: insets.left + rail.left, paddingRight: insets.right + rail.right,
         },
         style,
       ]}

@@ -99,6 +99,17 @@ export function readerBarClearance(plan: ScaffoldPlan, inPane: boolean): { left:
 }
 
 /**
+ * What a SCREEN pays for the rail: a one-pane rail's column, for every screen; and on a two-pane
+ * posture, a screen that still fills the window (a full-window reader beside the rail) pays it too —
+ * the same clearance its floating bar takes, from the same source.
+ */
+export function screenRailClearance(plan: ScaffoldPlan, fullWindow: boolean): { left: number; right: number } {
+  if (plan.nav !== "rail" || !(plan.panes === 1 || fullWindow)) return { left: 0, right: 0 };
+  const { left, right } = listNavClearance(plan, 0);
+  return { left, right };
+}
+
+/**
  * The two panes' split along the plan's axis, in dp — the FIRST pane's size and the gap
  * between them. Row mode: list then reader, the list ending at the hinge when one crosses the
  * window (the seam is the divider); no hinge, the canonical ~42% list. Column mode (tabletop):
