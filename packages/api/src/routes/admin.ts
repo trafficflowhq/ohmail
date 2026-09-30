@@ -139,8 +139,6 @@ export interface StaffContext {
    * never the handle. A fixed record of scalars cannot express an application row.
    */
   apiHealth(): Promise<ApiHealth>;
-  /** The alert route's parked reader (`AdminConfig.parkedAccounts`): a capability, never a handle. */
-  parkedAccounts?: EvaluateOptions["parkedAccounts"];
 }
 
 /**
@@ -161,7 +159,13 @@ interface StaffReadPolicy {
   audit?: (req: Request, params: RouteParams, secret: string) => AuditExtra;
 }
 
-async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
+/**
+ * The overview, given the alert route's own parked reader (`AdminConfig.parkedAccounts`) by the
+ * route below rather than through the staff context, whose five keys are a pinned contract.
+ */
+async function overview(
+  ctx: StaffContext, parkedAccounts?: EvaluateOptions["parkedAccounts"],
+): Promise<OverviewSnapshot> {
   const now = ctx.now();
   // Sequential on purpose — this was `Promise.all`, and it deadlocked every time: the blind pool
   // is `max: 1`, and one of these reads opens a transaction; with a sibling query queued on the
@@ -184,7 +188,7 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
   // column are equally invisible to `information_schema`, and both mean these reads must not run.
   const schemaReady = api.schemaOk && await alertSchemaReadable(ctx.db);
   const reading = schemaReady
-    ? await adminAlertReading(ctx.db, now, { ...(ctx.parkedAccounts !== undefined ? { parkedAccounts: ctx.parkedAccounts } : {}) })
+    ? await adminAlertReading(ctx.db, now, { ...(parkedAccounts !== undefined ? { parkedAccounts } : {}) })
     : { alerts: [], unread: [] };
   const alerts = reading.alerts;
   // SEQUENTIAL, on the deadlock note above — these are two more reads on the same `max: 1` blind
@@ -355,7 +359,6 @@ function adminRoute(name: string, action: StaffAuditAction, read: StaffRead, pol
             environment: cfg.environment ?? "production",
             logger: log,
             apiHealth: () => apiHealthFor(req, deps),
-            ...(cfg.parkedAccounts !== undefined ? { parkedAccounts: cfg.parkedAccounts } : {}),
           };
           return read(req, ctx, params, reader);
         }),
@@ -401,7 +404,8 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: adminRoute("overview", "read.overview", (_req, ctx) => overview(ctx)),
+    handler: (req, deps, params) =>
+      adminRoute("overview", "read.overview", (_req, ctx) => overview(ctx, deps.admin?.parkedAccounts))(req, deps, params),
   },
   {
     method: "GET",
