@@ -57,7 +57,7 @@ import { askEngineQueues, drainReads } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
 import { createProjector, type Projected } from "./world-projection";
 import { usePrefs } from "./store";
-import { nextClockEdge, worldClock } from "./world-clock";
+import { useListsClock } from "./use-lists-clock";
 import {
   connectionSay, firstSyncSay,
   dispatchHeldRouting,
@@ -1552,9 +1552,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * shaped the comparison.
    */
   const [freshBeat, setFreshBeat] = useState(0);
-  /* THE LISTS' OWN CLOCK (`world-clock.ts`): a tick at the next edge a list reads — local midnight,
-     a send turning interrupted — so an idle phone re-draws when time alone changes what it says. */
-  const [clockBeat, setClockBeat] = useState(0);
 
   /**
    * THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH. This phone's mirror
@@ -1597,18 +1594,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const projector = useMemo(() => (engine ? createProjector() : null), [engine]);
   /* The cost of the lists, on the engine log once a minute (`ui_vitals`): a device reads its own. */
   useEffect(() => (engine === null ? undefined : startUiVitals(takeClientEngineVitals)), [engine]);
-  useEffect(() => {
-    if (engine === null) return undefined;
-    const clock = worldClock({ edge: () => nextClockEdge(engine.read(), new Date(), zone), tick: () => setClockBeat((n) => n + 1) });
-    clock.arm();
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state !== "active") return;
-      const here = readerZone();
-      if (here !== zone) setZone(here);
-      else clock.resume();
-    });
-    return () => { clock.stop(); sub.remove(); };
-  }, [engine, zone, derivedStamp, clockBeat]);
+  /* THE LISTS' OWN CLOCK (`use-lists-clock.ts`): a beat at the next edge a list reads — local
+     midnight, a send turning interrupted — so an idle phone re-draws when time alone changes it. */
+  const clockBeat = useListsClock({ engine, zone, derivedStamp, onZone: setZone });
   const projected = useMemo<Projected | null>(() => {
     if (engine === null || session === null || projector === null) return null;
     /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
