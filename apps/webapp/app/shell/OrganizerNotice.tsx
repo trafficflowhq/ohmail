@@ -37,23 +37,26 @@ export function OrganizerNotice({
 }) {
   const t = useTranslations("mailboxes");
   /**
-   * Rows acknowledged in this session, so the block leaves on the press rather than on the poll.
-   * Optimistic and NOT authoritative: the row decides. A row whose write REJECTED is removed from
-   * here again, so it comes back alone — a smaller block, the truthful outcome.
+   * Changes acknowledged in this session, so the block leaves on the press rather than on the poll.
+   * Keyed by `${id}@${at}` — the CHANGE, not the mailbox: a later real change on a mailbox dismissed
+   * earlier carries a new instant and shows. Optimistic and NOT authoritative: the row decides. A
+   * change whose write REJECTED is removed from here again, so it comes back alone.
    */
   const [acknowledged, setAcknowledged] = useState<ReadonlySet<string>>(() => new Set());
   /** Which blocks show their mailboxes. Local UI state, remembered nowhere. */
   const [open, setOpen] = useState<ReadonlySet<OrganizerNoticeKind>>(() => new Set());
-  const live = notices.filter((n) => !acknowledged.has(n.id));
+  const ackKey = (n: OrganizerNoticeFact): string => `${n.id}@${n.at}`;
+  const live = notices.filter((n) => !acknowledged.has(ackKey(n)));
   if (live.length === 0) return null;
 
-  const acknowledge = (ids: readonly string[]): void => {
-    setAcknowledged((s) => new Set([...s, ...ids]));
-    for (const id of ids) {
-      void onAcknowledge(id).catch(() => {
+  const acknowledge = (rows: readonly OrganizerNoticeFact[]): void => {
+    setAcknowledged((s) => new Set([...s, ...rows.map(ackKey)]));
+    for (const n of rows) {
+      // The transport takes the bare mailbox id; the row's stamp answers the change standing now.
+      void onAcknowledge(n.id).catch(() => {
         setAcknowledged((s) => {
           const next = new Set(s);
-          next.delete(id);
+          next.delete(ackKey(n));
           return next;
         });
       });
@@ -122,7 +125,7 @@ export function OrganizerNotice({
               {t("noticeOpenMailboxes")}
             </button>
           ) : null}
-          <button type="button" onClick={() => acknowledge(rows.map((n) => n.id))}>
+          <button type="button" onClick={() => acknowledge(rows)}>
             {t("noticeDismiss")}
           </button>
         </div>
