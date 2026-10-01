@@ -462,6 +462,11 @@ export class RulesService {
     if (patch.match !== undefined) set.match = this.validMatch(patch.match);
     if (patch.priority !== undefined) set.priority = this.validPriority(patch.priority);
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
+    /* A PERSON NAMING WHERE A RULE FILES MAKES THE RULE THEIRS. A rule the Screener promoted or the
+       sent-mail seed inferred stays an inference, and `people_only` files an inference's automated
+       mail to News: a sheet press "all their mail -> Ohbox" over such a twin left the next newsletter
+       in News under the rule just pressed. `manual` is what every explicit rule already is. */
+    if (patch.destination !== undefined) set.provenance = "manual";
     const applyRetro = this.validApplyRetro(patch.applyRetro);
     /**
      * ASKING AN EXISTING RULE FOR THE BACKLOG — the field PRESENT and true, never the default.

@@ -797,6 +797,8 @@ interface FoundRule {
   enabled: boolean;
   subjectContains: string | null;
   bodyContains: string | null;
+  /** Never a request's to write; read so a person's press can make an inferred rule theirs. */
+  provenance: string;
 }
 
 /** The oldest row matching the four-field key — deterministic, see the family header. */
@@ -805,7 +807,7 @@ async function findRuleByKey(tx: Tx, accountId: string, key: RuleKey): Promise<F
     id: rulesTbl.id, destination: rulesTbl.destination,
     priority: rulesTbl.priority, enabled: rulesTbl.enabled,
     subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
-    createdAt: rulesTbl.createdAt,
+    provenance: rulesTbl.provenance, createdAt: rulesTbl.createdAt,
   })
     .from(rulesTbl)
     .where(and(
@@ -851,6 +853,8 @@ function ruleCreateDiff(found: FoundRule, want: ValidatedRuleCreate): Partial<ty
       : found[column] === want[field];
     if (!same) diff[column] = want[field];
   }
+  // A create is a person's press (the header): an inferred twin under the key becomes theirs, once.
+  if (found.provenance !== "manual") diff.provenance = "manual";
   return diff as Partial<typeof rulesTbl.$inferInsert>;
 }
 
@@ -947,6 +951,8 @@ export async function applyRuleRequest(
   }
   if (payload.set.priority !== undefined) set.priority = payload.set.priority;
   if (payload.set.enabled !== undefined) set.enabled = payload.set.enabled;
+  // A person naming where the rule files makes it theirs: `people_only` refiles an inference's mail.
+  if (payload.set.destination !== undefined) set.provenance = "manual";
 
   /* RE-OPEN THE BACKLOG ONLY WHEN THE ROUTING ACTUALLY MOVED, compared against the STORED value.
      The key fields cannot move (the validator refuses that), so `destination` is the only term of
