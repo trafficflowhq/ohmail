@@ -52,6 +52,12 @@ export type MessageFailureCode =
   | "data_exception"
   /** Postgres class 23 — a constraint refused the row. NOT assumed deterministic. */
   | "constraint_violation"
+  /**
+   * A value or statement built from this message exceeds a limit of the store or its driver
+   * (Postgres class 54: a btree key, a tsvector, a row; postgres.js `MAX_PARAMETERS_EXCEEDED`).
+   * Deterministic in the bytes AND the schema, so the next look is a new build.
+   */
+  | "data_too_large"
   /** Anything we cannot name. Retried before it is ever skipped. */
   | "unclassified";
 
@@ -93,7 +99,7 @@ const INFRA_SQLSTATE_CLASSES: readonly string[] = [
   "25",   // invalid_transaction_state
   "40",   // transaction_rollback (serialization failure, deadlock) — retryable, never terminal
   "53",   // insufficient_resources (disk_full 53100 — an early production outage)
-  "54",   // program_limit_exceeded (kept on the infra side; see `STORAGE_SQLSTATES`, mailboxes.ts)
+  "55",   // object_not_in_prerequisite_state (55P03 lock_not_available): shared contention
   "57",   // operator_intervention (query_canceled, admin_shutdown)
   "58",   // system_error
   "XX",   // internal_error
@@ -136,7 +142,7 @@ const codeOf = (err: unknown): string => {
 
 /**
  * Classify one ingest throw. It MAY read the error's message; it may never store it — the output
- * is a five-value enum, exactly as `classifyMailboxError` is a seven-value one.
+ * is a six-value enum, exactly as `classifyMailboxError` is a seven-value one.
  *
  * Note what is NOT here: `ClassifierFaultError` and `LeaseUnavailableError`. Those are exempted BY
  * CLASS at their own arms in `index.ts` and must keep propagating untouched, so `sync.ts` rethrows
@@ -189,6 +195,11 @@ export function classifyIngestFault(err: unknown): IngestFault {
     // and then written off as a durable failure of mail that is still on the server, which is the
     // lie this module exists to prevent. Duck-typed on the code, like the bound above.
     if (code === "EIMAPEPOCHUNKNOWN") return { domain: "infrastructure" };
+    // A STATEMENT WE BUILT FROM THE MESSAGE, refused before any socket was used: its parameter
+    // count is the message's shape. Ahead of the driver codes below, which name the database.
+    if (code === "MAX_PARAMETERS_EXCEEDED") {
+      return { domain: "message", code: "data_too_large", deterministic: true };
+    }
     // Both sets, because on the ingest path the only socket is the database's.
     if (PG_DRIVER_CODES.has(code) || TRANSPORT_ERRNOS.has(code)) return { domain: "infrastructure" };
     const cls = sqlStateClass(code);
@@ -198,6 +209,9 @@ export function classifyIngestFault(err: unknown): IngestFault {
       // NUL in a subject, a date outside the timestamp range). Deterministic in the bytes, so it
       // needs no second attempt to prove itself.
       if (cls === "22") return { domain: "message", code: "data_exception", deterministic: true };
+      // Class 54 is a program LIMIT: a value or statement this message made is too large for the
+      // store. No member of the class clears by itself, so a retry repeats it until a new build.
+      if (cls === "54") return { domain: "message", code: "data_too_large", deterministic: true };
       // Class 23 is a constraint. `23505` can also be a concurrent second ingest of the same mail
       // rather than a defect in it, so this one earns its retries before it is written off.
       if (cls === "23") return { domain: "message", code: "constraint_violation", deterministic: false };
@@ -234,7 +248,7 @@ export function isDatabaseFault(err: unknown): boolean {
 /**
  * SQLSTATE classes in which Postgres is answering about the VALUE WE SENT, not about itself.
  *
- * The same two {@link classifyIngestFault} maps to the message domain, and named here rather than
+ * The same three {@link classifyIngestFault} maps to the message domain, and named here rather than
  * derived from it because the two questions are genuinely different: that one asks "may this
  * message be written off", this one asks "may this mailbox be quarantined". They agree today, and
  * a change to either must be an explicit change to both.
@@ -242,6 +256,7 @@ export function isDatabaseFault(err: unknown): boolean {
 const DATA_SQLSTATE_CLASSES: readonly string[] = [
   "22",   // data_exception — a decoded NUL in a subject, a timestamp out of range
   "23",   // integrity_constraint_violation
+  "54",   // program_limit_exceeded — a btree key, a tsvector or a row too large for the store
 ];
 
 /**
@@ -256,7 +271,9 @@ const DATA_SQLSTATE_CLASSES: readonly string[] = [
  * wrong one costs isolation). */
 export function isSharedDatabaseFault(err: unknown): boolean {
   if (err instanceof DatabaseFaultError) {
-    const cls = sqlStateClass(codeOf(err.cause));
+    const code = codeOf(err.cause);
+    if (code === "MAX_PARAMETERS_EXCEEDED") return false;
+    const cls = sqlStateClass(code);
     return cls === null || !DATA_SQLSTATE_CLASSES.includes(cls);
   }
   return isDatabaseFault(err);
@@ -335,7 +352,7 @@ export function nextAttemptAfter(
  * repo method cannot import this app's types, so the caller passes this list; this is its one definition.
  */
 export const DETERMINISTIC_MESSAGE_FAILURE_CODES = [
-  "mime_too_large", "mime_unparseable", "data_exception",
+  "mime_too_large", "mime_unparseable", "data_exception", "data_too_large",
 ] as const satisfies readonly MessageFailureCode[];
 
 /**
@@ -503,6 +520,6 @@ export class DeadLetterLedger {
 
 /** Is `code` a member of the closed set? A stored value outside it reads as `unclassified`. */
 function isMessageFailureCode(code: string): code is MessageFailureCode {
-  return code === "mime_too_large" || code === "mime_unparseable"
-    || code === "data_exception" || code === "constraint_violation" || code === "unclassified";
+  return code === "mime_too_large" || code === "mime_unparseable" || code === "data_exception"
+    || code === "data_too_large" || code === "constraint_violation" || code === "unclassified";
 }
