@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { simpleParser, type AddressObject, type Attachment } from "mailparser";
 import { canonicalId } from "./identity.js";
 import type { NormalizedMessage, EmailAddress, AttachmentMeta } from "./types.js";
+import type { Logger } from "./log.js";
 import { CALENDAR_MESSAGE_CONTENT_CLASS, icsMethodOfContentType, isCalendarMime } from "./ics.js";
 
 /**
@@ -268,7 +269,7 @@ function rawByteLength(raw: Buffer | string): number {
  * sender's own `data:` URI is {@link prepareHtmlForStorage}'s job. `raw` is attacker-controlled;
  * this resolves with a usable message or rejects with one of the two typed errors — nothing else.
  */
-export async function normalizeMime(raw: Buffer | string): Promise<NormalizedMessage> {
+export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger } = {}): Promise<NormalizedMessage> {
   const bytes = rawByteLength(raw);
   if (bytes > MAX_RAW_MESSAGE_BYTES) throw new MimeTooLargeError(bytes);
 
@@ -282,16 +283,23 @@ export async function normalizeMime(raw: Buffer | string): Promise<NormalizedMes
   // limit just refused to do). The user gets the html; only the derived text is given up.
   let parsed: Awaited<ReturnType<typeof simpleParser>>;
   let htmlToTextRefused = false;
+  const startedAt = Date.now();
   try {
-    parsed = await simpleParser(raw, PARSE_OPTIONS);
-  } catch (err) {
-    if (!isHtmlToTextRefusal(err)) throw new MimeParseError(err);
-    htmlToTextRefused = true;
     try {
-      parsed = await simpleParser(raw, { ...PARSE_OPTIONS, skipHtmlToText: true });
-    } catch (err2) {
-      throw new MimeParseError(err2);
+      parsed = await simpleParser(raw, PARSE_OPTIONS);
+    } catch (err) {
+      if (!isHtmlToTextRefusal(err)) throw new MimeParseError(err);
+      htmlToTextRefused = true;
+      try {
+        parsed = await simpleParser(raw, { ...PARSE_OPTIONS, skipHtmlToText: true });
+      } catch (err2) {
+        throw new MimeParseError(err2);
+      }
     }
+  } finally {
+    // Every parse's wall time, refusals included, so a slow shape is measured where it runs.
+    const ms = Date.now() - startedAt;
+    opts.log?.[ms > 2000 ? "warn" : "info"]("mime_parse_ms", { ms, bytes });
   }
 
   // A lowercased header-name → raw-values map from the raw header lines (parsed.headers folds

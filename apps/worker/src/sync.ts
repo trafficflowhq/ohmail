@@ -1325,7 +1325,7 @@ async function syncCycleWithin(
   const ownAddresses = await ownAddressesFor(deps, readerMode, batch.creates);
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
+      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
       await fencedIngest(deps, async (txRepo) => {
         // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
         // ran outside any transaction and may have spent a classifier call there, which is exactly
@@ -1707,7 +1707,7 @@ async function retryFailedMessages(
       // `own_copy` for a Sent twin of mail we hold.
       try {
         const correspondenceSince = await consentPointFor(deps, readerMode, [change]);
-        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode });
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log });
         // THROUGH THE INGEST'S OWN COMMIT DOOR, and never a second fence. `planChange` above ran
         // outside every transaction exactly as the ordinary path's does, so a removal lands in the
         // same gap and this commit needs the same question asked inside the same transaction —

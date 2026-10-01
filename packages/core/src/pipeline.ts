@@ -1,4 +1,5 @@
 import { countRealFiles, normalizeMime } from "./mime.js";
+import type { Logger } from "./log.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import { searchBodyOf } from "./message-search.js";
 import {
@@ -515,6 +516,8 @@ export interface PlanDeps {
   repo: RepoPort;
   accountId: string;
   mailboxId: string;
+  /** The caller's log: each message's parse time goes to it as `mime_parse_ms`. */
+  log?: Logger;
   /**
    * This install is a READER of this mailbox, not its organizer. REQUIRED: an omitted
    * `readerMode` routes as an ORGANIZER — two installs moving one person's mail. A census pins
@@ -835,7 +838,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
   // the resolved value as REQUIRED so no call site is silently on the wrong side of it.
   const ohboxPolicy: OhboxPolicy = deps.ohboxPolicy ?? DEFAULT_OHBOX_POLICY;
 
-  const normalized = await normalizeMime(change.raw);
+  const normalized = await normalizeMime(change.raw, { log: deps.log });
   const { key, existing, upgrade } =
     await resolveExisting(repo, accountId, mailboxId, normalized, change.ownAuthored === true);
 
