@@ -20,6 +20,7 @@ import {
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
 import { foldMessageIdDomain } from "../identity.js";
+import { MAX_THREAD_PARTICIPANTS } from "../threading.js";
 import { MAX_STORED_ADDRESS_CHARS, storedAddress, storedMessageId, storedSubject } from "../stored-values.js";
 // THE ONE DOOR for a UIDVALIDITY comparison — `epoch.ts`. A bare `===` between two generations
 // reads two unknowns as agreement, which is the fail-open this module must not re-invent; the
@@ -750,6 +751,13 @@ function dueNow(col: AnyPgColumn): SQL | undefined {
  */
 /** Rows per `recordChanges` INSERT inside the rename swap — see the chunk note at the call. */
 const RENAME_CHANGE_CHUNK = 2000;
+
+/**
+ * Rows per INSERT where a message decides how many rows there are: no statement's parameter count
+ * may grow with what a sender attached or addressed. Under every store's bound-parameter ceiling
+ * (postgres.js refuses 65,534, SQLite 32,766) at every width these tables have.
+ */
+const MESSAGE_ROWS_CHUNK = 100;
 
 /**
  * An INBOX instance recorded beside a row that still stands on its Sent copy — what the ingest
@@ -1554,23 +1562,24 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return reserved ? "stored" : "withheld";
   }
 
-  /** Persist attachment metadata (never bytes) in the ambient tx. No-op when empty. */
+  /** Persist attachment metadata (never bytes) in the ambient tx, {@link MESSAGE_ROWS_CHUNK} rows to a statement. */
   async insertAttachments(messageId: string, accountId: string, rows: AttachmentMeta[]): Promise<void> {
-    if (rows.length === 0) return;
-    await this.db.insert(attachmentsTbl).values(rows.map((a) => ({
-      accountId, messageId,
-      filename: a.filename,
-      contentType: a.contentType,
-      sizeBytes: a.sizeBytes,
-      partId: a.partId,
-      contentId: a.contentId,
-      inline: a.inline,
-      // The content digest computed at parse. Persisted so an operator can answer
-      // "are these two attachments the same file" without the bytes — which we do not have and
-      // must not store (§13.2/§14). The FINGERPRINT reads the in-memory value, never this column,
-      // for the reason the ruling prohibits a backfill: a stored column is not what ingest hashes.
-      contentSha256: a.contentSha256,
-    })));
+    for (let at = 0; at < rows.length; at += MESSAGE_ROWS_CHUNK) {
+      await this.db.insert(attachmentsTbl).values(rows.slice(at, at + MESSAGE_ROWS_CHUNK).map((a) => ({
+        accountId, messageId,
+        filename: a.filename,
+        contentType: a.contentType,
+        sizeBytes: a.sizeBytes,
+        partId: a.partId,
+        contentId: a.contentId,
+        inline: a.inline,
+        // The content digest computed at parse. Persisted so an operator can answer
+        // "are these two attachments the same file" without the bytes — which we do not have and
+        // must not store (§13.2/§14). The FINGERPRINT reads the in-memory value, never this column,
+        // for the reason the ruling prohibits a backfill: a stored column is not what ingest hashes.
+        contentSha256: a.contentSha256,
+      })));
+    }
   }
 
   async getFolderState(messageId: string): Promise<FolderStateRow | null> {
@@ -2077,7 +2086,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       accountId: input.accountId,
       rootMessageIdHeader: input.rootMessageIdHeader,
       subject: input.subject,
-      participants: input.participants,
+      participants: input.participants.slice(0, MAX_THREAD_PARTICIPANTS),
       lastMessageAt: input.lastMessageAt,
     }).onConflictDoUpdate({
       target: [threads.accountId, threads.rootMessageIdHeader],
@@ -2096,7 +2105,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         accountId: input.accountId,
         rootMessageIdHeader: input.rootMessageIdHeader,
         subject: input.subject,
-        participants: input.participants,
+        participants: input.participants.slice(0, MAX_THREAD_PARTICIPANTS),
         lastMessageAt: input.lastMessageAt,
       }).returning({ id: threads.id });
       if (!created) throw new Error("upsertThread: the insert returned no row");
@@ -2142,7 +2151,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     let grew = false;
     for (const p of input.participants) {
       const key = p.address.toLowerCase();
-      if (!key || byAddress.has(key)) continue;
+      if (!key || byAddress.has(key) || byAddress.size >= MAX_THREAD_PARTICIPANTS) continue;
       byAddress.set(key, p);
       grew = true;
     }
@@ -2348,12 +2357,15 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // An address no transport delivers to is no correspondent, and it would not fit the index.
     const unique = [...new Set(addresses.map((a) => a.trim().toLowerCase())
       .filter((a) => a.includes("@") && a.length <= MAX_STORED_ADDRESS_CHARS))];
-    if (unique.length === 0) return 0;
-    const rows = await this.db.insert(contactsTbl)
-      .values(unique.map((address) => ({ accountId, address })))
-      .onConflictDoNothing({ target: [contactsTbl.accountId, contactsTbl.address] })
-      .returning({ id: contactsTbl.id });
-    return rows.length;
+    let created = 0;
+    for (let at = 0; at < unique.length; at += MESSAGE_ROWS_CHUNK) {
+      const rows = await this.db.insert(contactsTbl)
+        .values(unique.slice(at, at + MESSAGE_ROWS_CHUNK).map((address) => ({ accountId, address })))
+        .onConflictDoNothing({ target: [contactsTbl.accountId, contactsTbl.address] })
+        .returning({ id: contactsTbl.id });
+      created += rows.length;
+    }
+    return created;
   }
 
   async listScreenerBacklog(

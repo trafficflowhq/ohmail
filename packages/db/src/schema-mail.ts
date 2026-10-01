@@ -1131,13 +1131,11 @@ export const messageBodies = pgTable("message_bodies", {
    * block); an already-withheld row keeps its first reason.
    */
   withheldReason: text("withheld_reason"),
-  // ── Migration 0008: the body-text lexical index lives HERE
-  // (on `message_bodies`, not `messages`), over the full stored `text`. Bodies are stored
-  // unredacted (the mailbox on the server holds them in full anyway), so search reaches all of
-  // the reader's own mail. DB-generated; the app never writes it. ──
-  bodyTsv: tsvector("body_tsv").generatedAlwaysAs(
-    sql`to_tsvector('english', coalesce(text, ''))`,
-  ),
+  // ── Migration 0008: the body-text lexical index lives HERE (on `message_bodies`, not
+  // `messages`). Kept by a trigger since mail 0140, over the first 65,536 characters of `text`:
+  // a generated column over the whole body overflowed the tsvector ceiling. The app never writes
+  // it; `text` itself is never cut. ──
+  bodyTsv: tsvector("body_tsv"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   ixBodyTsv: index("message_bodies_body_tsv_idx").using("gin", t.bodyTsv),

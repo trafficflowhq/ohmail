@@ -4,7 +4,7 @@ import {
   messageInstances, messages, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import { parseMessageIds } from "./threading.js";
+import { boundedReferenceIds, MAX_THREAD_CANDIDATES, parseMessageIds } from "./threading.js";
 import { SENT_SHAPED_PATHS } from "./types.js";
 
 /**
@@ -27,6 +27,8 @@ export const CORRESPONDENT_SCAN_ROWS = 1000;
 
 /** Held senders whose representative's reference headers one `"held"` read may examine. */
 export const CORRESPONDENT_HELD_ROWS = 500;
+/** Ids per reply-arm statement: a page of senders binds this many at most, under every store's limit. */
+const REPLY_ARM_IDS_PER_STATEMENT = 1_000;
 
 /**
  * The evidence for each of `senders` (lower-cased keys), absent for a stranger. `references` are
@@ -52,7 +54,7 @@ export async function correspondentsAmong(db: Tx, args: {
   const refsBySender = new Map<string, string[]>();
   for (const s of senders) {
     const refs = references?.get(s) ?? [];
-    if (refs.length > 0) refsBySender.set(s, [...refs]);
+    if (refs.length > 0) refsBySender.set(s, refs.slice(0, MAX_THREAD_CANDIDATES));
   }
   const allRefs = [...new Set([...refsBySender.values()].flat())];
   const replyOnly = (args.arms ?? "all") === "reply";
@@ -67,20 +69,22 @@ export async function correspondentsAmong(db: Tx, args: {
   };
 
   if (allRefs.length > 0) {
-    const replied = await db.select({
-      header: messages.messageIdHeader, arrivedAt: messages.arrivedAt, date: messages.date,
-      createdAt: messages.createdAt,
-    }).from(messages)
-      .innerJoin(messageInstances, eq(messageInstances.messageId, messages.id))
-      .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
-      .leftJoin(accountSettings, eq(accountSettings.accountId, messages.accountId))
-      .where(and(inArray(messages.messageIdHeader, allRefs), ...ownWriting));
     const byHeader = new Map<string, Date>();
-    for (const r of replied) {
-      if (!r.header) continue;
-      const at = sentAtOf(r);
-      const prev = byHeader.get(r.header);
-      if (!prev || at > prev) byHeader.set(r.header, at);
+    for (let at = 0; at < allRefs.length; at += REPLY_ARM_IDS_PER_STATEMENT) {
+      const replied = await db.select({
+        header: messages.messageIdHeader, arrivedAt: messages.arrivedAt, date: messages.date,
+        createdAt: messages.createdAt,
+      }).from(messages)
+        .innerJoin(messageInstances, eq(messageInstances.messageId, messages.id))
+        .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
+        .leftJoin(accountSettings, eq(accountSettings.accountId, messages.accountId))
+        .where(and(inArray(messages.messageIdHeader, allRefs.slice(at, at + REPLY_ARM_IDS_PER_STATEMENT)), ...ownWriting));
+      for (const r of replied) {
+        if (!r.header) continue;
+        const sent = sentAtOf(r);
+        const prev = byHeader.get(r.header);
+        if (!prev || sent > prev) byHeader.set(r.header, sent);
+      }
     }
     for (const [s, refs] of refsBySender) {
       for (const ref of refs) {
@@ -223,8 +227,8 @@ async function heldReferences(
   const out = new Map<string, string[]>();
   for (const r of rows) {
     const key = r.from.trim().toLowerCase();
-    const ids = [...parseMessageIds(headerLines(r.inReplyTo)), ...parseMessageIds(headerLines(r.references))];
-    if (ids.length > 0) out.set(key, [...(out.get(key) ?? []), ...ids]);
+    const ids = boundedReferenceIds(null, parseMessageIds(headerLines(r.inReplyTo)), parseMessageIds(headerLines(r.references)));
+    if (ids.length > 0) out.set(key, [...(out.get(key) ?? []), ...ids].slice(0, MAX_THREAD_CANDIDATES));
   }
   return out;
 }

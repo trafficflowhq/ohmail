@@ -74,6 +74,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.8" date="2026-10-01">
+      <description>
+        <ul>
+          <li>A crafted message body can no longer stall mail sync</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.7" date="2026-10-01">
       <description>
         <ul>
@@ -188,124 +195,6 @@
           <li>Nothing tells you that you stopped organizing a mailbox the closure paused</li>
           <li>After you subscribe again, your mailboxes are organized again straight away</li>
           <li>Known issue — Android</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.3" date="2026-09-27">
-      <description>
-        <ul>
-          <li>The desktop app recovers when its window stops</li>
-          <li>The server does much less database work while nothing changes</li>
-          <li>The phone names a mail server certificate it will not accept</li>
-          <li>Closing the phone's composer keeps what you wrote</li>
-          <li>A Screener decision on the phone moves the older mail in your mailbox</li>
-          <li>The phone's hand-back no longer fails on a dropped connection</li>
-          <li>Photos attach at the web's picture quality</li>
-          <li>Renewing after a trial or a lapsed subscription takes you back to a working mailbox</li>
-          <li>A sent message deleted in another mail app leaves ohmail</li>
-          <li>A removed mailbox's conversations leave every device</li>
-          <li>A computer that only reads a mailbox shows the organizer's arrangement</li>
-          <li>"Not now" keeps the settings saved in your mailbox</li>
-          <li>On the phone, the account screen lifts by itself once the account is open again</li>
-          <li>ohmail unsubscribes you automatically only from senders you screened out</li>
-          <li>The phone says when screening a sender out also unsubscribes you</li>
-          <li>A rule's past mail is moved by the server, and mail you acted on stays put</li>
-          <li>An AI draft that cannot finish in time stops with a clear sentence</li>
-          <li>Setup asks before it takes a mailbox over</li>
-          <li>Mail over STARTTLS on the phone</li>
-          <li>A decision made where you read your mailbox reaches the install that organizes it</li>
-          <li>ohmail opens again after being closed while it set up a mailbox</li>
-          <li>The phone says when it has no network, and catches up as soon as it is back</li>
-          <li>Changing a rule lists every place, and says what happens to the mail already filed</li>
-          <li>On the phone, a Move says when it decides where a sender's mail goes, and Undo takes back both</li>
-          <li>An open History shows new mail</li>
-          <li>The staff-role hardening script can be run again</li>
-          <li>Files are listed on a message wherever it is opened</li>
-          <li>The app says what happened</li>
-          <li>A message sent from the phone with no network waits, and goes once it is back</li>
-          <li>Files are shown on held mail and on every open card</li>
-          <li>Removing a mailbox leaves the other mailboxes as they were</li>
-          <li>Punctuated searches answer alike everywhere, and the closest words come sooner</li>
-          <li>A self-hosted server says only what it keeps after an account is deleted</li>
-          <li>Security updates for the mail parser and the web pages</li>
-          <li>The Screener counts every waiting sender, however large the mailbox</li>
-          <li>New mail is filed without waiting for background work</li>
-          <li>The phone answers for settings saved in the mailbox</li>
-          <li>A found settings document no longer lets strangers past the Screener</li>
-          <li>A change kept while Cloud is out of reach survives a power cut</li>
-          <li>A code mail sent as HTML only is recognised again</li>
-          <li>The message you are reading keeps its place until you move on</li>
-          <li>Failed sign-ins lock the device that made them, not your account</li>
-          <li>A paired device keeps the changes made while the computer is out of reach</li>
-          <li>A phone started again shows its mail while it signs in</li>
-          <li>Accepting a sender says how many of their messages are now there</li>
-          <li>The demo's Earlier card describes the order read mail keeps</li>
-          <li>The app downloads less on every visit</li>
-          <li>Moving one letter leaves the sender's other mail where it is</li>
-          <li>A refused decision says it was refused</li>
-          <li>b in the Resurface pile opens the chooser</li>
-          <li>Move, Delete and Restore keys work in News, Receipts and Trash</li>
-          <li>A refused rule change says why</li>
-          <li>A Screener decision on a mailbox nothing organizes says so</li>
-          <li>A Screener row the phone holds no mail of can be decided</li>
-          <li>Your own mail leaves the Screener after a change of device</li>
-          <li>Signing out clears the browser's cache</li>
-          <li>z undoes a Screener decision</li>
-          <li>The found-settings card appears as soon as ohmail finds the settings</li>
-          <li>A press made as the web session renews is carried out</li>
-          <li>Search says what it covered while the first sync runs</li>
-          <li>Deleting your account clears this browser</li>
-          <li>Move from the command palette</li>
-          <li>Tags on the phone</li>
-          <li>Search on the desktop answers a common word in milliseconds</li>
-          <li>A picture with a size in its address is shown</li>
-          <li>A phone's server settings are checked, and can be changed after connecting</li>
-          <li>A Screener decision writes the waiting mail it moves in sets</li>
-          <li>A machine that stopped organizing is not called out of date</li>
-          <li>A change already sent is not offered again after a power cut</li>
-          <li>A burst of new mail no longer stops the phone's sync</li>
-          <li>A machine that stopped organizing is not named as the organizer</li>
-          <li>The phone says when a message could not be sent</li>
-          <li>The read repair pass writes its letters in sets</li>
-          <li>A letter sent on Gmail is one message in Sent Mail</li>
-          <li>Search on a self-hosted server answers a common word in its budget</li>
-          <li>A deleted account leaves no copy on your other devices</li>
-          <li>Self-hosted upgrades: the log says what migrated, and page loads wait through the swap</li>
-          <li>Escape closes the reply editor again</li>
-          <li>A screen that failed to load can be tried again</li>
-          <li>One press changes the language, and the 60-day default stays choosable</li>
-          <li>Send says when your mail server could not be reached</li>
-          <li>On a phone, the last Screener decision returns to the list</li>
-          <li>Importing saved settings finishes on a slow mail provider</li>
-          <li>Plain-text line breaks survive in every panel of a conversation</li>
-          <li>The Screener says why no suggestion is coming</li>
-          <li>A one-click unsubscribe the list refused no longer reads as done</li>
-          <li>Saved settings travel on every mail server</li>
-          <li>The phone hands the mailbox back as it leaves the screen</li>
-          <li>Sending says what your mail server refused</li>
-          <li>Keyboard focus follows what opens and closes</li>
-          <li>The More menu shows which item has focus</li>
-          <li>Address fields are named</li>
-          <li>Alerts close by themselves when nothing confirms them, and a sampled 5xx window no longer clears one</li>
-          <li>The Screener and Settings → Rules fit a phone</li>
-          <li>What you type in the composer survives every way out of it</li>
-          <li>A self-hosted server no longer quotes AI credits or calls another server ohmail Cloud</li>
-          <li>The self-hosted compose file pulls the release it came with</li>
-          <li>The umbrelOS draft says it is out of date</li>
-          <li>A letter you sent to yourself and deleted elsewhere leaves the Ohbox</li>
-          <li>A move for a letter the server no longer holds</li>
-          <li>A server's "not now" is shown as a wait, and the desktop app re-dials when the network returns</li>
-          <li>The Screener and the Ohbox agree about who you have decided on</li>
-          <li>Load older mail appears only where there is older mail, and lists only what this device does not hold</li>
-          <li>A letter to yourself shows in the Ohbox</li>
-          <li>The found-settings card appears on a slow mail provider</li>
-          <li>Checking a pairing link works from every door and refuses a used link first</li>
-          <li>Every answer from Check the link reads in your language</li>
-          <li>A pairing that does not finish turns hosting back on</li>
-          <li>A pairing that does not finish leaves the other computer's Devices list</li>
-          <li>Signing out closes every tab</li>
-          <li>Signing in ends the session the browser held before</li>
-          <li>The no-AI Screening switch no longer files on a suggestion</li>
         </ul>
       </description>
     </release>
