@@ -34,8 +34,8 @@ export type ImapBoundKind =
  * {@link IMAP_SAMPLE_MAX_ROWS} truncates its answer but abandons a running command, and a
  * retirement is reported — it needed its own code rather than borrowing `read_deadline`;
  * `page_rows` covers a server over-answering a bounded page. The census
- * (`imap-bounds-census.test.ts`) asserts every declared kind is raised somewhere. Residual: a
- * folder dropped for path length is not reported — at 1024 characters, a known gap.
+ * (`imap-bounds-census.test.ts`) asserts every declared kind is raised somewhere. A folder dropped
+ * for its path's length is reported by the adapter as `imap_folder_paths_dropped`, a count only.
  */
 
 /**
@@ -120,6 +120,28 @@ export const IMAP_LIST_MAX_FOLDERS = 10_000;
  * over one unnameable folder would take the other 136 down with it.
  */
 export const IMAP_FOLDER_PATH_MAX_CHARS = 1024;
+
+/**
+ * The same path in UTF-8 BYTES, which is what a btree keys on. Every folder column is in one
+ * (`mailbox_folders`, the three locators, `folder_state.desired_folder`) and the narrowest refuses
+ * past 2,660 bytes (`54000`), which 1,024 three-byte characters reach: the INSERT failed and every
+ * cycle of the mailbox with it. 2,600 keeps margin under that and admits every path that fit.
+ */
+export const IMAP_FOLDER_PATH_MAX_BYTES = 2600;
+
+/** UTF-8 length without an encoder (the adapter runs on the phone); a lone surrogate is 3, as sent. */
+export function utf8ByteLength(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length
+      && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) { n += 4; i++; }
+    else n += 3;
+  }
+  return n;
+}
 
 /**
  * UIDs one folder enumeration may collect. `enumerateUids` pushed every UID in the folder into an
@@ -526,16 +548,21 @@ export interface ListLike { path: string }
  *  · one unusably-named folder is dropped and the rest proceed, because refusing 10 000 good
  *    folders over one bad name is a worse answer than not scanning the bad one.
  */
-export function boundListResponse<T extends ListLike>(list: readonly T[]): T[] {
+export function boundListResponse<T extends ListLike>(
+  list: readonly T[], onDropped?: (count: number) => void,
+): T[] {
   if (list.length > IMAP_LIST_MAX_FOLDERS) {
     throw new ImapBoundExceeded("list_folders", IMAP_LIST_MAX_FOLDERS, list.length);
   }
   const out: T[] = [];
+  let dropped = 0;
   for (const entry of list) {
     if (typeof entry.path !== "string") continue;
-    if (entry.path.length > IMAP_FOLDER_PATH_MAX_CHARS) continue;
+    if (entry.path.length > IMAP_FOLDER_PATH_MAX_CHARS) { dropped++; continue; }
+    if (utf8ByteLength(entry.path) > IMAP_FOLDER_PATH_MAX_BYTES) { dropped++; continue; }
     out.push(entry);
   }
+  if (dropped > 0) onDropped?.(dropped);
   return out;
 }
 

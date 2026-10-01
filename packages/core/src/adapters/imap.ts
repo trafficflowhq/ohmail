@@ -1365,8 +1365,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const list = await this.bounded(
       opts === undefined ? this.client.list() : this.client.list(opts),
     );
-    return boundListResponse(list);
+    // A count and never the name, once per change: the same folder is dropped on every LIST.
+    return boundListResponse(list, (dropped) => {
+      if (dropped === this.droppedPathsLogged) return;
+      this.droppedPathsLogged = dropped;
+      this.opts.log?.("imap_folder_paths_dropped", { dropped });
+    });
   }
+
+  /** The last count `imap_folder_paths_dropped` reported on this adapter. */
+  private droppedPathsLogged = 0;
 
   /**
    * EVERY SEARCH in this class goes through here — the ceiling applied BEFORE the caller copies,
