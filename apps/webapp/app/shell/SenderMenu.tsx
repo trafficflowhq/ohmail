@@ -42,7 +42,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { useTranslations } from "next-intl";
 import {
   VIEW_OF_FOLDER, type ConflictGroup, type Folder, type PressForecast, type RuleDTO, type RulesInPlay,
-  ruleMatchKey,
+  type StayedWhy, ruleMatchKey, ruleTwins, twinWinner,
 } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { Avatar, InfoNote, Kbd } from "@ohmail/ui";
@@ -58,12 +58,38 @@ import {
   RETRO_DEFAULT_ON,
   SCREENING_DESTS,
   planScreeningChange,
+  ruleMatchOf,
   type ScreeningDest,
   type ScreeningPlace,
   type ScreeningPress,
   type ScreeningScope,
   type SenderScreening,
 } from "./sender-screening";
+
+/** Rows one ask names — the server's own ceiling (`WHY_STAYED_IDS_MAX`). */
+const STAYED_ASK_MAX = 100;
+
+/** One line per place and reason, in the order the rows came: the newest first. */
+export function stayedLines(
+  elsewhere: ReadonlyArray<{ id: string; place: ScreeningPlace }>, why: ReadonlyMap<string, StayedWhy>,
+): Array<{ place: ScreeningPlace; why: StayedWhy; ids: string[] }> {
+  const lines = new Map<string, { place: ScreeningPlace; why: StayedWhy; ids: string[] }>();
+  for (const e of elsewhere) {
+    const w = why.get(e.id);
+    if (w === undefined) continue;
+    const k = `${e.place}\u0000${w}`;
+    const line = lines.get(k) ?? { place: e.place, why: w, ids: [] };
+    line.ids.push(e.id);
+    lines.set(k, line);
+  }
+  return [...lines.values()];
+}
+
+/** The key of each reason's sentence; a failed check offers no move. */
+const STAYED_KEY: Record<StayedWhy, string> = {
+  replied: "stayedReplied", "set-aside": "stayedSetAside",
+  "filed-elsewhere": "stayedFiledElsewhere", "failed-checks": "stayedFailedChecks",
+};
 
 /** The sheet's id, which its opener names in `aria-controls` while it stands. */
 export const SENDER_SHEET_ID = "sender-sheet";
@@ -105,6 +131,8 @@ export function SenderMenu({
   onChoose,
   onOpenDetail,
   onSubjectRule,
+  stayedFor,
+  onMoveToo,
   autoUnsubscribe = true,
   forecastFor,
   rulesFor,
@@ -144,6 +172,13 @@ export function SenderMenu({
    * `chrome.openSubjectRule` uses one layer up.
    */
   onSubjectRule?: () => void;
+  /**
+   * WHY THE ROWS ELSEWHERE STAYED — asked of the server once a rule's pass has finished and some of
+   * the subject's mail is still shown elsewhere (`GET /screener/stayed`). Absent: no reason named.
+   */
+  stayedFor?: (ids: readonly string[]) => Promise<ReadonlyMap<string, StayedWhy>>;
+  /** "Move it too": the same move a verdict's "Move them" makes, to the rule's place. */
+  onMoveToo?: (ids: readonly string[], dest: ScreeningDest) => void;
   /**
    * Will a screen-out actually send the one-click request? — the account switch (mail 0054) and the
    * build, ANDed one layer up (`AppShell#autoUnsubscribeDiscloses`). The second half of the
@@ -222,6 +257,22 @@ export function SenderMenu({
   const canScope = sender.domain !== "";
   const subject = sender.scopes[scope];
   const inPlay = rulesFor?.(scope) ?? null;
+  /* THE ROWS A FINISHED PASS LEFT ELSEWHERE, AND WHY. Asked only when the rule deciding the subject
+     was asked for its backlog and the pass has finished; while it runs, a row elsewhere is on its
+     way, not left. Each line counts rows of one place and one reason, so the lines and the split
+     above read the same mail; a row the server names no reason for is not listed. */
+  const winner = twinWinner(ruleTwins(sender.rules, scope, ruleMatchOf(sender, scope)));
+  const passDone = winner?.retro?.requestedAt != null && winner.retro.doneAt != null;
+  const askIds = passDone ? (subject.elsewhere ?? []).slice(0, STAYED_ASK_MAX).map((e) => e.id) : [];
+  const askKey = askIds.join(",");
+  const [why, setWhy] = useState<{ key: string; map: ReadonlyMap<string, StayedWhy> } | null>(null);
+  useEffect(() => {
+    if (!stayedFor || askKey === "") return;
+    let live = true;
+    void stayedFor(askKey.split(",")).then((map) => { if (live) setWhy({ key: askKey, map }); });
+    return () => { live = false; };
+  }, [askKey, stayedFor]);
+  const stayed = why && why.key === askKey ? stayedLines(subject.elsewhere ?? [], why.map) : [];
   /** A place the lists show mail in, by the names the rail uses. */
   const placeName = (p: ScreeningPlace): string =>
     p === "screener" ? t("placeScreener") : p === "history" ? t("placeHistory") : piles[p];
@@ -350,6 +401,21 @@ export function SenderMenu({
               })
             : t("nowSpread", { count: subject.messages.length })}
       </div>
+
+      {stayed.length > 0 && subject.ruled !== null ? (
+        <div className="sm-stayed">
+          {stayed.map((line) => (
+            <div className="sm-stayed-line" key={`${line.place}:${line.why}`}>
+              <span>{t(STAYED_KEY[line.why], { count: line.ids.length, place: placeName(line.place) })}</span>
+              {line.why !== "failed-checks" && onMoveToo ? (
+                <button type="button" className="sm-stayed-move" onClick={() => onMoveToo(line.ids, subject.ruled!)}>
+                  {t("stayedMoveToo", { count: line.ids.length })}
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {inPlay?.worthShowing ? (
         <div className="sm-rules">

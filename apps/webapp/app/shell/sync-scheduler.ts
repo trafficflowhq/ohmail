@@ -933,6 +933,11 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.heldReleases
           ? { heldReleases: gatedRead(adapter.heldReleases.bind(adapter), "the mail held at your gate") }
           : {}),
+        /* WHY A SENDER'S ROWS STAYED — the sender sheet's split. A read over the caller's own
+           messages, gated like the held-mail read for the same reason. */
+        ...(adapter.whyStayed
+          ? { whyStayed: gatedRead(adapter.whyStayed.bind(adapter), "why some of a sender's mail stayed") }
+          : {}),
         /**
          * THE PRESS IS GATED ON `holds`, not on `mayReadIdentity` — `mutate`'s rule, not
          * `gatedRead`'s. It records consent on the account's own rules and re-opens their backlog,

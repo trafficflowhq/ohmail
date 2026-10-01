@@ -151,6 +151,10 @@ export interface HeldReleaseSenderWire {
 }
 
 /** The read's answer: the groups, the DISTINCT message total, and the server's own group ceiling. */
+/** Why a message stayed when its sender's rule moved the rest (`GET /screener/stayed`). */
+export type StayedWhy = "failed-checks" | "set-aside" | "replied" | "filed-elsewhere";
+export interface StayedWire { id: string; why: StayedWhy }
+
 export interface HeldReleaseWire {
   groups: HeldReleaseGroupWire[];
   /**
@@ -405,6 +409,13 @@ export interface EngineAdapter {
    * mailbox and tracker facts work. Cheap — one grouped, indexed read; no mailbox is opened.
    */
   heldReleases?(): Promise<HeldReleaseWire>;
+
+  /**
+   * `GET /screener/stayed` — why each named message stayed where it is when its sender's rule
+   * moved the rest: a reply, a triage state, a filing in another mail app, a failed check. Asked,
+   * never mirrored: who placed a message and whether it was answered are the server's facts.
+   */
+  whyStayed?(ids: readonly string[]): Promise<StayedWire[]>;
 
   /**
    * `POST /screener/held-releases` — THE PRESS. Releases the named groups, or every group when

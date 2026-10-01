@@ -656,6 +656,27 @@ export interface ValidatedRuleUpdate {
    * `retroAsked`, and the two must stay one rule.
    */
   retroAsked: boolean;
+  /**
+   * An undo, not a press: the stored provenance is KEPT whatever the request names. It can never
+   * set a provenance. Absent on every request but a reversal's.
+   */
+  keepProvenance?: boolean;
+  /** With `keepProvenance` only: the inferred value an undo puts back over a `manual` row. */
+  restoreProvenance?: RestorableProvenance;
+}
+
+/**
+ * WHAT AN UNDO MAY PUT BACK — the inferred values, never `manual`. The phone's way back from a
+ * committed Move read the rule before the Move's own PATCH made it the person's, and returns it
+ * as it was. Admitted only beside `keepProvenance` and only over a `manual` row
+ * ({@link restoredProvenanceSql}): it can undo a claim and never make one. Both doors read this.
+ */
+export const RESTORABLE_PROVENANCE: ReadonlySet<string> = new Set(["promoted", "seeded-from-sent", "migrated"]);
+export type RestorableProvenance = "promoted" | "seeded-from-sent" | "migrated";
+
+/** The compare-and-set: the restored value only where the stored row is `manual`, else what it is. */
+export function restoredProvenanceSql(restore: RestorableProvenance): SQL {
+  return sql`case when ${rulesTbl.provenance} = 'manual' then ${restore} else ${rulesTbl.provenance} end`;
 }
 
 /** `rule.delete`'s payload, validated. */
@@ -764,7 +785,16 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
     }
     // An update naming nothing is not a change — the same rule `profile.update` follows.
     if (Object.keys(set).length === 0) return null;
-    return { op: "update", key, set, applyRetro, retroAsked: o.applyRetro === true };
+    if (o.keepProvenance !== undefined && typeof o.keepProvenance !== "boolean") return null;
+    // A restore travels only with the keep, and only as an inferred value: refused whole otherwise.
+    const restore = o.restoreProvenance;
+    if (restore !== undefined && (o.keepProvenance !== true || typeof restore !== "string"
+      || !RESTORABLE_PROVENANCE.has(restore))) return null;
+    return {
+      op: "update", key, set, applyRetro, retroAsked: o.applyRetro === true,
+      ...(o.keepProvenance === true ? { keepProvenance: true } : {}),
+      ...(restore === undefined ? {} : { restoreProvenance: restore as RestorableProvenance }),
+    };
   }
 
   return null;   // a kind this function was not asked about
@@ -952,7 +982,11 @@ export async function applyRuleRequest(
   if (payload.set.priority !== undefined) set.priority = payload.set.priority;
   if (payload.set.enabled !== undefined) set.enabled = payload.set.enabled;
   // A person naming where the rule files makes it theirs: `people_only` refiles an inference's mail.
-  if (payload.set.destination !== undefined) set.provenance = "manual";
+  // An undo (`keepProvenance`) names the old place without being a press, so it keeps the row's.
+  if (payload.set.destination !== undefined && payload.keepProvenance !== true) set.provenance = "manual";
+  else if (payload.keepProvenance === true && payload.restoreProvenance !== undefined) {
+    (set as Record<string, unknown>).provenance = restoredProvenanceSql(payload.restoreProvenance);
+  }
 
   /* RE-OPEN THE BACKLOG ONLY WHEN THE ROUTING ACTUALLY MOVED, compared against the STORED value.
      The key fields cannot move (the validator refuses that), so `destination` is the only term of

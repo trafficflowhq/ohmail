@@ -109,6 +109,11 @@ export interface ScreeningSubject {
   representativeId: string | null;
   /** How many distinct addresses this subject covers — 1 for `sender`, N for `domain`. */
   senders: number;
+  /**
+   * With a decision, the rows the lists show anywhere but its place — newest first, the rows the
+   * sheet asks the server WHY about (`stayedFor`). Empty without one. Absent reads as empty.
+   */
+  elsewhere?: Array<{ id: string; place: ScreeningPlace }>;
 }
 
 export interface SenderScreening {
@@ -267,10 +272,19 @@ function subjectOf(
   }
   const held = messages.filter((m) => m.folder === FOLDER_OF_VIEW.screener);
   const current = counts.size === 1 ? [...counts.keys()][0]! : null;
+  const ruled = decided === null ? (current === "screener" || current === "history" ? null : current) : pileOf(decided);
+  const elsewhere: Array<{ id: string; place: ScreeningPlace }> = [];
+  if (ruled !== null) {
+    for (const m of messages) {
+      const p = shown(m);
+      if (p && p !== ruled) elsewhere.push({ id: m.id, place: p });
+    }
+  }
   return {
     messages,
     current,
-    ruled: decided === null ? (current === "screener" || current === "history" ? null : current) : pileOf(decided),
+    ruled,
+    elsewhere,
     places: [...counts].map(([place, count]) => ({ place, count })).sort((a, b) => b.count - a.count),
     waiting: held.length > 0,
     // The newest HELD message, because `POST /screener/:id` resolves `:id` against held mail
@@ -313,6 +327,11 @@ export interface ScreeningPlan {
   ruleMutations: PlanMutation[];
   /** Which of the five things above happened. */
   ruleState: ScreeningRuleState;
+  /**
+   * `already` over a rule ohmail inferred: the press made it the person's, so their automated
+   * mail follows it from now on ({@link pressOverTwins}). Absent reads as false.
+   */
+  claimed?: boolean;
   /**
    * Whether a rule will be in force for this subject afterwards — true for every state except
    * `none`, INCLUDING `already`, because the question the copy asks is "will future mail
@@ -402,11 +421,13 @@ export function planScreeningChange(
    */
   const ruleMutations: PlanMutation[] = [];
   let ruleState: ScreeningRuleState = "none";
+  let claimed = false;
   if (promoted) {
     ruleState = "promoted";
   } else if (makeRule) {
     const press = pressOverTwins(s.rules, scope, ruleMatchOf(s, scope), wanted, applyRetro);
     ruleState = press.state;
+    claimed = press.claimed;
     // The ladder writes rules only; a move reaching here would be a plan the type refuses.
     ruleMutations.push(...press.writes.filter((w): w is PlanMutation => w.kind !== "move"));
   }
@@ -467,6 +488,7 @@ export function planScreeningChange(
     mutations,
     ruleMutations,
     ruleState,
+    claimed,
     rule: ruleState !== "none",
     ruleScope: ruleState !== "none" ? scope : null,
     wanted,
@@ -569,6 +591,7 @@ export function splitRoutingPlan(plan: ScreeningPlan, moves: readonly PressMove[
  */
 export type ScreeningToastKey =
   | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled" | "toastAlreadyRuledRetro"
+  | "toastClaimed" | "toastClaimedRetro"
   | "toastRuledFuture" | "toastRuledMoved" | "toastRuleQueued" | "toastRuleFailed" | "toastMoved"
   | "toastRuleOrganizer" | "toastDecideRefused";
 
@@ -585,6 +608,8 @@ export function screeningToast(
       // A press on a rule that already files there used to do nothing, and the sentence said so.
       // With the past-mail option on it re-arms that rule for the backlog, so the sentence names
       // the thing that just happened rather than only the thing that already had.
+      // Over a rule ohmail inferred the press is not "already": it made the rule the person's.
+      if (plan.claimed === true) return plan.retro ? "toastClaimedRetro" : "toastClaimed";
       return plan.retro ? "toastAlreadyRuledRetro" : "toastAlreadyRuled";
     /**
      * THE DECIDE SPEAKS FROM ITS OWN ANSWER. Its rule is written inside the decision's own

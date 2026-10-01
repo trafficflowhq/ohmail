@@ -1453,6 +1453,13 @@ export type EngineMutation =
        * Absent means the caller has nothing to say and the server's own rule stands.
        */
       applyRetro?: boolean;
+      /**
+       * An undo, not a press: the rule goes back to its old place and keeps the provenance it has.
+       * Absent on every press, which makes the rule the person's (`RulesService.update`).
+       */
+      keepProvenance?: boolean;
+      /** With `keepProvenance`: the inferred value the undo read, restored only over a `manual` row. */
+      restoreProvenance?: "promoted" | "seeded-from-sent" | "migrated";
     }
   /**
    * Make a rule from past the gate — the verb that did not exist. Creating a rule must also

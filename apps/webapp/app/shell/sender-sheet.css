@@ -93,6 +93,34 @@
   line-height: 1.5;
   color: var(--ink2);
 }
+/* ── what a finished rule pass left elsewhere, and why; the move is the line's own ── */
+.sm-stayed {
+  padding: 0 18px 10px;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.5;
+  color: var(--ink2);
+}
+.sm-stayed-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.sm-stayed-line > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sm-stayed-move {
+  flex: none;
+  padding: 2px 6px;
+  margin-right: -6px;
+  border-radius: calc(var(--r-ctl) * 6 / 8);
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+.sm-stayed-move:hover {
+  background: var(--tint);
+}
 /* ── "Their rules": every rule deciding this subject's mail, the count on the right ── */
 .sm-rules {
   padding: 0 18px 10px;

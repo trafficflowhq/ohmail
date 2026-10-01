@@ -30,7 +30,7 @@ import type {
   TrashRowWire,
 } from "../engine.js";
 import type {
-  AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire,
+  AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
   UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
   MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
 } from "./adapter.js";
@@ -1057,6 +1057,19 @@ export class HttpAdapter implements EngineAdapter {
       : [];
   }
 
+  async whyStayed(ids: readonly string[]): Promise<StayedWire[]> {
+    if (ids.length === 0) return [];
+    const res = await this.request("GET", `/screener/stayed?ids=${ids.map(encodeURIComponent).join(",")}`);
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json().catch(() => null)) as { stayed?: unknown } | null;
+    const known = new Set<string>(["failed-checks", "set-aside", "replied", "filed-elsewhere"]);
+    // A row this client cannot read is dropped: no reason is better than a wrong one.
+    return Array.isArray(wire?.stayed)
+      ? (wire.stayed as Partial<StayedWire>[]).filter((r): r is StayedWire =>
+        typeof r.id === "string" && typeof r.why === "string" && known.has(r.why))
+      : [];
+  }
+
   async heldReleases(): Promise<HeldReleaseWire> {
     const res = await this.request("GET", "/screener/held-releases");
     if (!res.ok) throw await this.rejectionOf(res);
@@ -1737,6 +1750,9 @@ export class HttpAdapter implements EngineAdapter {
             // rule to my old mail" even when the destination did not move. Sending the default
             // anyway would make every habit-click PATCH a whole-backlog walk.
             ...(m.applyRetro === undefined ? {} : { applyRetro: m.applyRetro }),
+            // An undo keeps the rule's provenance; a press omits it and makes the rule the person's.
+            ...(m.keepProvenance === true ? { keepProvenance: true } : {}),
+            ...(m.keepProvenance === true && m.restoreProvenance !== undefined ? { restoreProvenance: m.restoreProvenance } : {}),
           },
           idempotencyKey: opts.idempotencyKey,
         });

@@ -960,6 +960,10 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         id: rule.id,
         entity: {
           ...rule, destination: m.destination, updatedAt: iso,
+          // The server's answer, not a guess: a press naming the place makes the rule the person's,
+          // an undo keeps what it was — so the Rules page's origin does not flip under the echo.
+          provenance: m.keepProvenance !== true ? "manual"
+            : m.restoreProvenance !== undefined && rule.provenance === "manual" ? m.restoreProvenance : rule.provenance,
           ...(m.priority === undefined ? {} : { priority: m.priority }),
           // The server re-arms the backlog on a retarget unless told not to, and on an explicit
           // yes; the finished stamp is its own to write, never this overlay's.

@@ -66,6 +66,7 @@ export {
   HELD_RELEASE_GROUPS_MAX, HELD_RELEASE_AUDIT_ACTION,
   type HeldReleaseGroup, type HeldReleaseResult, type HeldReleaseSummary,
 } from "./held-release-service.js";
+export { whyStayed, WHY_STAYED_IDS_MAX, type StayedItem } from "./why-stayed-service.js";
 export {
   autoFiledSummary, undoAutoFiled, AUTO_FILED_PAGE_MAX,
   type AutoFiledItem, type AutoFiledPage, type AutoFiledUndoResult,

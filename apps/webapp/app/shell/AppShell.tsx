@@ -1876,7 +1876,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * nothing else. `openTagPicker` travels with them.
    */
   const {
-    bulkToggleTag, bulkVerbs, canDeleteMessage, canReplyAllTo, changeScreening, confirmSubjectRule,
+    bulkToggleTag, bulkVerbs, canDeleteMessage, canReplyAllTo, changeScreening, moveStayed, stayedFor, confirmSubjectRule,
     createTag, createTagAlone, dropTag, actedIds, lastActed, onMessageAction, onStageClickCapture,
     onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
     revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
@@ -3616,6 +3616,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // The subject sheet resolves the message's SENDER (`subjectRuleContext`), so under an
           // override the row is withheld rather than offered about somebody the sheet never named.
           onSubjectRule={senderMenu!.address == null ? () => openSubjectRule(senderMenu!.messageId, null) : undefined}
+          // Why a finished rule pass left some of their mail elsewhere, and the move past it.
+          stayedFor={stayedFor}
+          onMoveToo={(ids, dest) => { setSenderMenu(null); moveStayed(ids, dest); }}
           onClose={() => setSenderMenu(null)}
         />
       ) : null}

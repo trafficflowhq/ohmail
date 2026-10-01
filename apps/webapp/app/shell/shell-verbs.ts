@@ -114,7 +114,7 @@ function withRow(read: EntityReader, row: EngineMessage): EntityReader {
 /** The press sentences a re-read of the list may replace; every other one is a wait or a refusal. */
 const READS_BACK: ReadonlySet<string> = new Set([
   "toastAlready", "toastMoved", "toastRuled", "toastRetargeted", "toastAlreadyRuled",
-  "toastAlreadyRuledRetro", "toastRuledFuture", "toastRuledMoved",
+  "toastAlreadyRuledRetro", "toastRuledFuture", "toastRuledMoved", "toastClaimed", "toastClaimedRetro",
 ]);
 export interface ShellVerbsInput {
   engine: OhmailEngine;
@@ -211,6 +211,25 @@ export function useShellVerbs({
    * so every test was green. So `plan.ruleMutations` — and nothing else — is awaited, and `screeningToast` picks the
    * sentence from what the server actually said.
    */
+
+  /**
+   * "MOVE IT TOO" — the sender sheet's press over the rows a finished rule pass left where they were
+   * for a reason the person may overrule (a reply, a triage state, a filing in another mail app).
+   * The same move through the same door as the verdict's "Move them": `moveInBatches` over
+   * `engine.mutate`, each batch answered before the next, the outcome said the same way.
+   */
+  const moveStayed = useStableCallback((ids: readonly string[], dest: ScreeningDest) => {
+    const wanted = FOLDER_OF_VIEW[dest];
+    const place = PLACE_LABEL[dest] ?? dest;
+    void moveInBatches(ids, wanted, (m) => fileAndRefresh(engine.mutate(m))).then((r) => {
+      if (r.moved > 0) toast(t("screening.verdictMoved", { place, count: r.moved }));
+      if (r.refused > 0) toast(t("ohbox.pressPartlyRefused", { count: r.refused }));
+      else if (r.waiting > 0) toast(t("ohbox.pressPartlyQueued", { count: r.waiting }));
+    });
+  });
+
+  /** The sheet's "why did these stay" read; stable, so the sheet's effect asks once per row set. */
+  const stayedFor = useStableCallback((ids: readonly string[]) => engine.whyStayed(ids));
 
   /**
    * The branch lives beside the sentences in `sender-screening.ts`, never here.
@@ -1589,6 +1608,8 @@ export function useShellVerbs({
     canDeleteMessage,
     canReplyAllTo,
     changeScreening,
+    moveStayed,
+    stayedFor,
     confirmSubjectRule,
     createTag,
     createTagAlone,

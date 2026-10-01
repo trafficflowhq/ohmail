@@ -15,8 +15,13 @@ export type TwinPressState = "created" | "retargeted" | "already";
 
 export interface TwinPress {
   state: TwinPressState;
-  /** In dispatch order: the retargets, then the re-arms, or the one create. */
+  /** In dispatch order: the retargets, then the re-arms (or claims), or the one create. */
   writes: EngineMutation[];
+  /**
+   * `already`, over a winner ohmail inferred: the press makes it the person's, so their automated
+   * mail follows it too (`people_only` refiles an inference's). The toast says that, not "already".
+   */
+  claimed: boolean;
 }
 
 /** `match` is the caller's normalized address or domain — the string a created rule carries. */
@@ -50,18 +55,24 @@ export function pressOverTwins(
 ): TwinPress {
   const twins = ruleTwins(rules, kind, match);
   if (twins.length === 0) {
-    return { state: "created", writes: [{ kind: "rule_create", ruleKind: kind, match, destination: wanted, applyRetro }] };
+    return { state: "created", writes: [{ kind: "rule_create", ruleKind: kind, match, destination: wanted, applyRetro }], claimed: false };
   }
   const retargets: EngineMutation[] = twinsElsewhere(twins, kind, match, wanted)
     .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro }));
   // An explicit `applyRetro: true` on a PATCH that does not move the rule is the server's re-arm,
   // in the STORED spelling: a re-arm moves nothing, so it never rewrites a pre-0.22 News rule.
-  const rearms: EngineMutation[] = applyRetro
-    ? twins.filter((r) => r.destination === wanted)
-      .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: storedRuleDestination(r), applyRetro: true }))
-    : [];
+  // With the backlog declined, the WINNER at the place is still CLAIMED when ohmail inferred it:
+  // the same PATCH with `applyRetro: false` makes it the person's and moves nothing. A manual
+  // winner, or a losing twin the router does not file by, is left alone.
+  const winner = twinWinner(twins)!;
+  const already = winner.destination === wanted;
+  const claimed = already && winner.provenance !== "manual";
+  const there = applyRetro ? twins.filter((r) => r.destination === wanted) : claimed ? [winner] : [];
+  const rearms: EngineMutation[] = there
+    .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: storedRuleDestination(r), applyRetro }));
   return {
-    state: twinWinner(twins)!.destination === wanted ? "already" : "retargeted",
+    state: already ? "already" : "retargeted",
     writes: [...retargets, ...rearms],
+    claimed,
   };
 }

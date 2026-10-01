@@ -13,7 +13,7 @@
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type {
-  AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire, ScreenerWaitingWire,
+  AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -5445,6 +5445,21 @@ export class OhmailEngine {
    * A door that cannot answer leaves the mirror EMPTY, which every surface reads as "no release row
    * here" — never as zero held mail, which is a different sentence.
    */
+  /**
+   * WHY THESE STAYED — the server's reading of the rule pass's leave-alone set for named messages,
+   * asked when the sender sheet shows a finished rule with mail left elsewhere. Not mirrored. A door
+   * that cannot answer, or fails, answers nothing: the sheet then names no reason, never a wrong one.
+   */
+  async whyStayed(ids: readonly string[]): Promise<Map<string, StayedWhy>> {
+    const ask = this.adapter.whyStayed;
+    if (!ask || ids.length === 0) return new Map();
+    try {
+      return new Map((await ask.call(this.adapter, ids)).map((r) => [r.id, r.why] as const));
+    } catch {
+      return new Map();
+    }
+  }
+
   async refreshHeldReleases(): Promise<void> {
     const ask = this.adapter.heldReleases;
     if (!ask) return;

@@ -2123,7 +2123,12 @@ export function routingReversal(read: () => EntityReader, writes: readonly Engin
   const prior = new Map(rulesList(read()).map((r) => [r.id, r] as const));
   const back: EngineMutation[] = writes.flatMap((w): EngineMutation[] => {
     const r = w.kind === "rule_update" ? prior.get(w.ruleId) : undefined;
-    return r ? [{ kind: "rule_update", ruleId: r.id, destination: storedRuleDestination(r), priority: r.priority, applyRetro: false }] : [];
+    // An undo, not a press: the rule goes back as it was read, provenance included (the Move's own
+    // PATCH made it the person's on the server; an inferred value is put back over that).
+    return r ? [{
+      kind: "rule_update", ruleId: r.id, destination: storedRuleDestination(r), priority: r.priority, applyRetro: false,
+      keepProvenance: true, ...(r.provenance === "manual" ? {} : { restoreProvenance: r.provenance }),
+    }] : [];
   });
   const made = writes.filter((w) => w.kind === "rule_create");
   return () => [...back, ...made.flatMap((c): EngineMutation[] => {

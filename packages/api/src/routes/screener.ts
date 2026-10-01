@@ -1,7 +1,7 @@
 import {
   ServiceError, dismissHeldRelease, heldReleaseSummary, releaseHeld, HELD_RELEASE_GROUPS_MAX,
   screenUnscreened, unscreenedSummary, OHBOX_UNSCREENED_GROUPS_MAX,
-  autoFiledSummary, undoAutoFiled, AUTO_FILED_PAGE_MAX,
+  autoFiledSummary, undoAutoFiled, AUTO_FILED_PAGE_MAX, whyStayed, WHY_STAYED_IDS_MAX,
   type ScreenBody,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
@@ -34,6 +34,25 @@ import { pagingNumber } from "../query-bounds.js";
 interface SuggestBody { senders?: unknown; dryRun?: unknown }
 
 export const screenerRoutes: Route[] = [
+  {
+    /**
+     * WHY THESE STAYED — the sender sheet asks it about the rows a finished rule pass left where
+     * they were, so the split names a reason rather than a bare count. A read over the caller's own
+     * messages: `ids` comma-separated, at most `WHY_STAYED_IDS_MAX`, only classified rows answered.
+     */
+    method: "GET",
+    pattern: "/screener/stayed",
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const raw = new URL(req.url).searchParams.get("ids") ?? "";
+      // Bounded before it is split: an id is 36 characters and a comma.
+      if (raw.length > WHY_STAYED_IDS_MAX * 37) throw new ServiceError("validation_failed", 400, "too many ids");
+      const ids = raw === "" ? [] : raw.split(",");
+      return jsonResponse({ stayed: await whyStayed(ctx.db, ctx.accountId, ids), max: WHY_STAYED_IDS_MAX });
+    },
+  },
   {
     /**
      * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — the groups, and the count

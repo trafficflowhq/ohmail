@@ -520,7 +520,7 @@ export {
 // Adapters.
 export type {
   CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
-  ScreenerWaitingItemWire, ScreenerWaitingWire,
+  ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire,
 } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
 export {

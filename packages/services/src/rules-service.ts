@@ -1,5 +1,8 @@
 import { and, asc, eq } from "drizzle-orm";
-import { rules, recordRuleDelta, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
+import {
+  rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql,
+  type OrganizedBy, type Tx,
+} from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
 import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX } from "@trafficflow/core/rule-order";
@@ -68,7 +71,18 @@ export interface CreateRuleBody {
    */
   applyRetro?: boolean;
 }
-export type PatchRuleBody = Partial<CreateRuleBody>;
+export type PatchRuleBody = Partial<CreateRuleBody> & {
+  /**
+   * An undo, not a press: the PATCH names the rule's old place and the stored provenance is KEPT.
+   * It never sets one. Only the phone's way back from a committed Move sends it.
+   */
+  keepProvenance?: boolean;
+  /**
+   * With `keepProvenance` only: the inferred value the undo read before the Move made the rule the
+   * person's. Written only over a `manual` row (`restoredProvenanceSql`); it never makes a claim.
+   */
+  restoreProvenance?: string;
+};
 
 /**
  * Idempotency handle threaded in by the route; the row is written IN the create tx.
@@ -213,6 +227,8 @@ function ruleRequestPayload(
   key: RuleKeyFields,
   set?: Record<string, unknown>,
   applyRetro?: boolean,
+  keepProvenance?: boolean,
+  restoreProvenance?: string,
 ): Record<string, unknown> {
   return {
     key: {
@@ -221,6 +237,8 @@ function ruleRequestPayload(
     },
     ...(set === undefined ? {} : { set }),
     ...(applyRetro === undefined ? {} : { applyRetro }),
+    ...(keepProvenance === true ? { keepProvenance: true } : {}),
+    ...(restoreProvenance === undefined ? {} : { restoreProvenance }),
   };
 }
 
@@ -466,7 +484,10 @@ export class RulesService {
        sent-mail seed inferred stays an inference, and `people_only` files an inference's automated
        mail to News: a sheet press "all their mail -> Ohbox" over such a twin left the next newsletter
        in News under the rule just pressed. `manual` is what every explicit rule already is. */
-    if (patch.destination !== undefined) set.provenance = "manual";
+    const keepProvenance = this.validKeepProvenance(patch.keepProvenance);
+    const restoreProvenance = this.validRestoreProvenance(patch.restoreProvenance, keepProvenance);
+    if (patch.destination !== undefined && !keepProvenance) set.provenance = "manual";
+    else if (restoreProvenance !== undefined) set.provenance = restoredProvenanceSql(restoreProvenance as never);
     const applyRetro = this.validApplyRetro(patch.applyRetro);
     /**
      * ASKING AN EXISTING RULE FOR THE BACKLOG — the field PRESENT and true, never the default.
@@ -580,7 +601,7 @@ export class RulesService {
            organizer applies the request and republishes its document. */
         travel = await fanOutRuleEdit(
           bridgeTx(tx), ctx, plan, "rule.update",
-          ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro),
+          ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance),
         );
         const unchanged = await materializeRule(asDb(tx), ctx.accountId, id);
         if (!unchanged) throw new ServiceError("not_found", 404, "rule not found");
@@ -622,7 +643,7 @@ export class RulesService {
       if (!travelled(plan)) return { rule, seq: Number(seq) };
       travel = await fanOutRuleEdit(
         bridgeTx(tx), ctx, plan, "rule.update",
-        ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro),
+        ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance),
       );
       return { rule, seq: Number(seq), travel };
     });
@@ -752,6 +773,25 @@ export class RulesService {
    * and silently reading a client's attempt to DECLINE as consent to move thousands of messages
    * is the failure mode this check exists for.
    */
+  /** An undo's restore: only beside `keepProvenance`, only an inferred value, else a 400. */
+  private validRestoreProvenance(v: unknown, keep: boolean): string | undefined {
+    if (v === undefined) return undefined;
+    if (!keep || typeof v !== "string" || !RESTORABLE_PROVENANCE.has(v)) {
+      throw new ServiceError("validation_failed", 400,
+        "restoreProvenance must be promoted, seeded-from-sent or migrated, and needs keepProvenance");
+    }
+    return v;
+  }
+
+  /** `keepProvenance`: absent is false; a non-boolean is a 400, for `validApplyRetro`'s reason. */
+  private validKeepProvenance(v: unknown): boolean {
+    if (v === undefined) return false;
+    if (typeof v !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "keepProvenance must be a boolean");
+    }
+    return v;
+  }
+
   private validApplyRetro(v: unknown): boolean {
     if (v === undefined) return true;
     if (typeof v !== "boolean") {

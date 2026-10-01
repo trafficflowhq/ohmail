@@ -107,6 +107,8 @@ export {
 export {
   planInferredPressRepair, applyInferredPressRepair, type InferredPressPlan, type InferredPressRepairResult,
 } from "./inferred-press-repair.js";
+// Why a message stayed when its sender's rule moved the rest — the sender sheet's split.
+export { whyTheyStayed, WHY_STAYED_IDS_MAX, type StayedWhy } from "./why-stayed.js";
 
 /* NO REQUEST-KEY EXPORTS HERE, and the absence replaces a module that used to exist.
  *
@@ -199,6 +201,7 @@ export {
   type RuleKey, type RuleRefusal, type ValidatedRuleRequest,
   type ValidatedRuleCreate, type ValidatedRuleUpdate, type ValidatedRuleDelete,
   type ApplyRuleRequestInput, type ApplyRuleRequestResult,
+  RESTORABLE_PROVENANCE, restoredProvenanceSql,
 } from "./request-apply.js";
 
 export {
