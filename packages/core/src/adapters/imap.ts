@@ -62,7 +62,9 @@ import {
   // the service layer can recognise the refusal without importing this file (and `imapflow` with
   // it); `MessageGoneError` is built from it here so the class and the predicate cannot drift.
   MESSAGE_GONE_CODE,
+  type MimeStructure,
 } from "../mail.js";
+import { structureOf } from "./imap-structure.js";
 import {
   WATCHED_FOLDERS, OHMAIL_FOLDERS, DEFAULT_NET_TIMEOUTS, DEFAULT_SENT_SCAN_MESSAGES,
   DEFAULT_SENT_HISTORY_MESSAGES,
@@ -891,6 +893,23 @@ interface InternalCreate {
   internalDate?: Date;
   /** Refused on size: `raw` is the header block alone — see {@link Change.oversizeBytes}. */
   oversizeBytes?: number;
+  /** The server's BODYSTRUCTURE from the same FETCH as `raw` — see {@link Change.structure}. */
+  structure?: MimeStructure;
+}
+
+/**
+ * THE ONE BODY FETCH WITHOUT A BODYSTRUCTURE, and why it exists: every other `source` fetch asks
+ * for the tree in the same command, and a server that cannot serialize one for a message (iCloud
+ * already withholds rows over an ENVELOPE it cannot produce) would then withhold that message from
+ * both fetches, turning live mail into `unanswered` or `gone_from_server`. Asked only for UIDs
+ * both fetches withheld; its creates carry no structure and every file keeps mailparser's id.
+ */
+const STRUCTURE_FREE_LAST_RESORT = { uid: true, flags: true, source: true, internalDate: true } as const;
+
+/** The tree, when the server answered one; carried only when present. */
+function structureField(bodyStructure: unknown): { structure?: MimeStructure } {
+  const structure = structureOf(bodyStructure);
+  return structure === undefined ? {} : { structure };
 }
 interface InternalDelete { folder: string; uidValidity: bigint; uid: number; messageId: string | null; }
 
@@ -2733,7 +2752,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
     for await (const m of this.client.fetch(
       take,
-      { uid: true, flags: true, envelope: true, source: true, internalDate: true },
+      { uid: true, flags: true, envelope: true, source: true, internalDate: true, bodyStructure: true },
       { uid: true },
     )) {
       bodyDeadline.check(folder);
@@ -2769,6 +2788,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
           ? { internalDate: m.internalDate }
           : {}),
+        ...structureField(m.bodyStructure),
       });
       /**
        * Not `dates.set(...)` here, though the body fetch carries both fields. Every UID in `take`
@@ -2803,11 +2823,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const withheld = take.filter((u) => !answered.has(u));
     let unanswered: number[] = [];
     if (withheld.length > 0) {
-      for await (const m of this.client.fetch(
-        withheld,
-        { uid: true, flags: true, source: true, internalDate: true },
-        { uid: true },
-      )) {
+      const retried = (m: FetchMessageObject): void => {
         // ── THE RETRY IS A BODY FETCH TOO, AND IT WAS THE HOLE IN THE ACCOUNTING ────────────
         //
         // The byte accounting above was applied to the FIRST body fetch only, which left the
@@ -2815,7 +2831,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // the first fetch — the exact iCloud behaviour this retry exists for, so it is a shape the
         // adapter already expects rather than a contrived one — and then returns an arbitrarily
         // large body here, past every size ceiling. Same per-message and batch-total rules, same
-        // clock.
+        // clock, for both retries.
         bodyDeadline.check(folder);
         const arrivedRetry = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
         const declaredRetry = sizes.get(m.uid);
@@ -2843,7 +2859,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
             ? { internalDate: m.internalDate }
             : {}),
+          ...structureField(m.bodyStructure),
         });
+      };
+      for await (const m of this.client.fetch(
+        withheld,
+        { uid: true, flags: true, source: true, internalDate: true, bodyStructure: true },
+        { uid: true },
+      )) retried(m);
+      const bare = withheld.filter((u) => !answered.has(u));
+      if (bare.length > 0) {
+        for await (const m of this.client.fetch(bare, STRUCTURE_FREE_LAST_RESORT, { uid: true })) retried(m);
       }
       unanswered = withheld.filter((u) => !answered.has(u));
     }
@@ -3576,6 +3602,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // writes `last_set_by = 'external'` itself.
         ...(passiveFolders.has(c.folder) ? { passive: true } : {}),
         ...(c.oversizeBytes !== undefined ? { oversizeBytes: c.oversizeBytes } : {}),
+        ...(c.structure !== undefined ? { structure: c.structure } : {}),
       })),
       moves: correlated.moves,
       flagChanges,
@@ -3652,7 +3679,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       if (take.length > 0) {
         for await (const m of this.client.fetch(
           take,
-          { uid: true, flags: true, envelope: true, source: true, internalDate: true },
+          { uid: true, flags: true, envelope: true, source: true, internalDate: true, bodyStructure: true },
           { uid: true },
         )) {
           creates.push({
@@ -3669,6 +3696,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             // route a retried Sent message through `new` instead of `own_copy` and file the user's
             // own reply as an inbound message.
             ...(sent !== null && folder === sent ? { ownAuthored: true } : {}),
+            ...structureField(m.bodyStructure),
           });
         }
       }
@@ -3683,11 +3711,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const answered = new Set(creates.map((c) => parseRef(c.locator.ref).uid));
       const withheld = take.filter((u) => !answered.has(u));
       if (withheld.length > 0) {
-        for await (const m of this.client.fetch(
-          withheld,
-          { uid: true, flags: true, source: true, internalDate: true },
-          { uid: true },
-        )) {
+        const retried = (m: FetchMessageObject): void => {
+          answered.add(m.uid);
           creates.push({
             type: "create",
             locator: { folder, ref: makeRef(curUidValidity, m.uid) },
@@ -3697,7 +3722,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
               ? { internalDate: m.internalDate }
               : {}),
             ...(sent !== null && folder === sent ? { ownAuthored: true } : {}),
+            ...structureField(m.bodyStructure),
           });
+        };
+        for await (const m of this.client.fetch(
+          withheld,
+          { uid: true, flags: true, source: true, internalDate: true, bodyStructure: true },
+          { uid: true },
+        )) retried(m);
+        const bare = withheld.filter((u) => !answered.has(u));
+        if (bare.length > 0) {
+          for await (const m of this.client.fetch(bare, STRUCTURE_FREE_LAST_RESORT, { uid: true })) retried(m);
         }
       }
       // Asked for: a UID over the MIME ceiling comes back as its header block, as in `changesSince`.
@@ -4577,6 +4612,24 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         filename: dl.meta?.filename ?? null,
         body: new Uint8Array(body),
       };
+    } finally {
+      lock.release();
+    }
+  }
+
+  /**
+   * The message's BODYSTRUCTURE, for the attachment door's repair — see {@link
+   * MailboxAdapter.fetchStructure}. Under the mailbox lock and the epoch guard, as {@link
+   * fetchPart} is: a recycled folder must not describe a stranger's message to a door about to
+   * rewrite a row from it. `null` when the server holds no such UID or answered no structure.
+   */
+  async fetchStructure(locator: NativeLocator): Promise<MimeStructure | null> {
+    const { uid } = parseRef(locator.ref);
+    const lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(locator.folder)));
+    try {
+      this.assertLocatorEpoch(locator);
+      const m = await this.bounded(this.client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true }));
+      return m ? structureOf(m.bodyStructure) ?? null : null;
     } finally {
       lock.release();
     }

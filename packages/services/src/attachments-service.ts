@@ -1,12 +1,12 @@
 import JSZip from "jszip";
 import { createHash } from "node:crypto";
-import { and, asc, eq, gt, gte, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNull } from "drizzle-orm";
 import { attachments, messages } from "@trafficflow/db";
 import {
-  CALENDAR_FALLBACK_FILENAME, createLogger, isCalendarMime, isMessageGone,
-  type Logger, type NativeLocator, type EmailAddress,
+  CALENDAR_FALLBACK_FILENAME, candidateSections, createLogger, isCalendarMime, isMessageGone,
+  type Logger, type MimeStructure, type NativeLocator, type EmailAddress,
 } from "@trafficflow/core/mail";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { Page } from "./dto/types.js";
@@ -70,6 +70,11 @@ export interface AttachmentAdapter {
    * makes that forward refuse rather than go out without them.
    */
   fetchRaw?(locator: NativeLocator, opts?: { maxBytes?: number }): Promise<Uint8Array>;
+  /**
+   * The message's MIME tree as the server declares it, for {@link repairedPart}. Optional: a door
+   * without it cannot repair an older row, and a mismatch refuses as it always has.
+   */
+  fetchStructure?(locator: NativeLocator): Promise<MimeStructure | null>;
   close(): Promise<void>;
 }
 
@@ -111,6 +116,104 @@ export function verifiedPart(row: PartRow, fetched: FetchedBytes, log: Logger = 
     { attachmentId: row.id, partId: row.partId, storedSha: fields.storedSha, servedSha: fields.servedSha },
     false,
   );
+}
+
+/** How many rows one request may repair; past it a mismatch refuses as it did before repair. */
+export const REPAIRS_PER_REQUEST = 10;
+/** How many of the server's sections one row may download looking for its file. */
+export const REPAIR_DOWNLOADS_PER_ROW = 3;
+
+/** What the repair reads off a row: the gate's three, and the two its candidate order ranks by. */
+export interface RepairRow extends PartRow { contentType: string; filename: string | null }
+
+/** One row's reads from the mail server, already bound to the message's locator and ceiling. */
+export interface PartReader {
+  fetchPart(partId: string | null): Promise<FetchedBytes>;
+  fetchStructure?(): Promise<MimeStructure | null>;
+}
+
+/** The per-request repair allowance, shared by every row of one archive or forward. */
+export interface RepairBudget { rows: number }
+
+/** A reader over one adapter at one locator, every download under the caller's own ceiling. */
+export function readerFor(adapter: AttachmentAdapter, locator: NativeLocator, opts: { maxBytes?: number } = {}): PartReader {
+  return {
+    fetchPart: (partId) => adapter.fetchPart(locator, partId, opts),
+    ...(adapter.fetchStructure ? { fetchStructure: () => adapter.fetchStructure!(locator) } : {}),
+  };
+}
+
+const shaHex = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+
+/**
+ * THE GATE, WITH ONE BOUNDED REPAIR FOR AN OLDER ROW. The stored section is fetched; equal bytes
+ * are served, a null sha is served and said ({@link verifiedPart}). On a mismatch the server's
+ * tree is asked once and at most {@link REPAIR_DOWNLOADS_PER_ROW} of its sections, in
+ * `candidateSections`' order, are downloaded under the same ceiling; the first sha-equal one is
+ * served and written back. Nothing else is served, and with no equal section the 409 stands.
+ */
+export async function repairedPart(
+  row: RepairRow, read: PartReader, ctx: ServiceContext, opts: { log?: Logger; budget?: RepairBudget } = {},
+): Promise<FetchedBytes> {
+  const log = opts.log ?? defaultLog;
+  let fetched: FetchedBytes;
+  let known: MimeStructure | null = null;
+  try {
+    fetched = await read.fetchPart(row.partId);
+  } catch (err) {
+    // A server answering NIL for a section the message lacks reads as "gone"; the tree tells the
+    // two apart, and an absent section is the same mismatch as Dovecot's empty answer.
+    if (!isMessageGone(err) || row.contentSha256 === null || read.fetchStructure === undefined) throw err;
+    known = await read.fetchStructure();
+    if (known === null) throw err;
+    fetched = { contentType: "application/octet-stream", filename: null, body: new Uint8Array() };
+  }
+  if (row.contentSha256 === null || shaHex(fetched.body) === row.contentSha256) return verifiedPart(row, fetched, log);
+  return (await repairFrom(row, read, ctx, known, opts.budget, log)) ?? verifiedPart(row, fetched, log);
+}
+
+/** The repair itself: the allowance, the tree, the candidates, the write. `null` is unrepairable. */
+async function repairFrom(
+  row: RepairRow, read: PartReader, ctx: ServiceContext, known: MimeStructure | null,
+  budget: RepairBudget | undefined, log: Logger,
+): Promise<FetchedBytes | null> {
+  const refuse = (reason: string, tried: number): null => {
+    log.warn("attachment_part_unrepairable", { partRowId: row.id, partId: row.partId, tried, reason });
+    return null;
+  };
+  if (budget !== undefined && budget.rows <= 0) return refuse("request_cap", 0);
+  if (budget !== undefined) budget.rows -= 1;
+  const structure = known ?? (read.fetchStructure ? await read.fetchStructure() : null);
+  if (structure === null) return refuse("no_structure", 0);
+  const candidates = candidateSections(structure, row);
+  let tried = 0;
+  for (const section of candidates.slice(0, REPAIR_DOWNLOADS_PER_ROW)) {
+    tried += 1;
+    const got = await read.fetchPart(section);
+    if (shaHex(got.body) !== row.contentSha256) continue;
+    const healed = await writeSection(ctx, row, section);
+    log.info("attachment_part_repaired", { partRowId: row.id, partId: row.partId, section, tried, healed });
+    return got;
+  }
+  if (candidates.length === 0) return refuse("no_candidate", 0);
+  return refuse(candidates.length > REPAIR_DOWNLOADS_PER_ROW ? "capped" : "no_equal_sha", tried);
+}
+
+/**
+ * The write, a COMPARE-AND-SET: only while the row still holds the section this request read, and
+ * only in this account. Two concurrent repairs, or a repair racing a re-ingest, converge on one
+ * verified value or write nothing; `false` says this request's write was not the one that landed.
+ * Through `ctx.db`'s builder (the one dialect bridge), so the phone's SQLite twin runs it too.
+ */
+async function writeSection(ctx: ServiceContext, row: RepairRow, section: string): Promise<boolean> {
+  const tx = bridgeTx(ctx.db);
+  const written = await tx.update(attachments).set({ partId: section })
+    .where(and(
+      eq(attachments.id, row.id), eq(attachments.accountId, ctx.accountId),
+      row.partId === null ? isNull(attachments.partId) : eq(attachments.partId, row.partId),
+    ))
+    .returning({ id: attachments.id });
+  return written.length === 1;
 }
 
 export interface FilesFilter { type?: "all" | "big"; minSizeBytes?: number; q?: string }
@@ -323,8 +426,8 @@ export class AttachmentsService {
       // THE REAL GUARD. Safe to pass here and nowhere else: this adapter serves exactly one part
       // and the `finally` below closes it, so the poisoned-connection cost of a mid-stream abort is
       // a connection we were about to discard anyway.
-      const fetched = verifiedPart(
-        part, await adapter.fetchPart(part.locator, part.partId, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES }), deps.log,
+      const fetched = await repairedPart(
+        part, readerFor(adapter, part.locator, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES }), ctx, { ...(deps.log ? { log: deps.log } : {}) },
       );
       // Prefer the DB filename (stable), then what IMAP reported; a part nameless in BOTH
       // places downloads under the type-aware fallback (invite.ics for a calendar part) rather
@@ -394,6 +497,7 @@ export class AttachmentsService {
     const used = new Set<string>();
     const errors: string[] = [];
     let fetchedBytes = 0;
+    const budget: RepairBudget = { rows: REPAIRS_PER_REQUEST };
 
     // Stable grouping: preserve the resolved (id-ordered) sequence within each mailbox, and
     // visit mailboxes in first-appearance order, so the archive's contents are deterministic.
@@ -445,11 +549,12 @@ export class AttachmentsService {
              * the group rather than reconnecting is deliberate — a reconnect per breach is a loop
              * whose length the hostile server chooses.
              */
-            const fetched = await adapter.fetchPart(part.locator, part.partId, {
-              maxBytes: DOWNLOAD_ALL_MAX_BYTES - fetchedBytes,
-            });
+            const fetched = await repairedPart(
+              part, readerFor(adapter, part.locator, { maxBytes: DOWNLOAD_ALL_MAX_BYTES - fetchedBytes }), ctx,
+              { budget, ...(deps.log ? { log: deps.log } : {}) },
+            );
             fetchedBytes += fetched.body.byteLength;
-            zip.file(name, verifiedPart(part, fetched, deps.log).body);
+            zip.file(name, fetched.body);
           } catch (err) {
             // The whole archive refuses, naming the row: a zip holding a wrong file under a right name
             // is the defect the gate exists for, and `_errors.txt` is read after the files are.

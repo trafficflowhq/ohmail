@@ -1,5 +1,5 @@
 import type { MailboxMustBeLive, SpendOutcome, SpendPort } from "@trafficflow/db";
-import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress } from "./types.js";
+import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress, MimeStructure } from "./types.js";
 import type { AuthVerdict, Rule } from "./rules.js";
 import type { ClassifierPort } from "./classifier-port.js";
 import type { CorrespondentEvidence } from "./correspondent.js";
@@ -53,6 +53,13 @@ export interface Change {
    * and stores the body as the `too_large` husk, so the message is listed and says why it is empty.
    */
   oversizeBytes?: number;
+  /**
+   * The server's BODYSTRUCTURE for this message, asked in the same FETCH that brought `raw`.
+   * Ingest derives each attachment's section from it (`mime-sections.ts`), so the stored
+   * `part_id` is the server's numbering. Absent: the server answered none, a header-only
+   * create, or an adapter that carries none — every attachment keeps mailparser's id.
+   */
+  structure?: MimeStructure;
 }
 
 export interface AdapterPort {

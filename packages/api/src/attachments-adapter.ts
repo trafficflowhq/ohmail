@@ -10,7 +10,7 @@ import { IMAP_OPERATION_DEADLINE_MS, raced } from "./imap-budget.js";
 /**
  * Build the API's `openAdapter` for on-demand attachment fetch. Mirrors the sync worker's creds
  * boundary without importing the worker: reads `mailbox_credentials`, decrypts via
- * `deps.keyProvider`, returns a connected `ImapAdapter` exposing `fetchPart` + `close`; bytes are
+ * `deps.keyProvider`, returns a connected `ImapAdapter` exposing its reads + `close`; bytes are
  * never persisted server-side. Also the only place that can count connections: providers cap
  * concurrent logins per account, and imapflow marks every LOGIN failure `authenticationFailed`,
  * so an uncapped burst once read as a wrong password. The cap lives here, not in
@@ -231,6 +231,16 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
       fetchRaw: async (locator, o) => {
         try {
           return await raced(opened.adapter.fetchRaw(locator, o), operationMs);
+        } catch (err) {
+          dead = true;
+          await opened.forceClose().catch(() => { /* already down; the slots are released */ });
+          throw err;
+        }
+      },
+      // The repair's one tree read: the same clock, and a breach destroys the socket the same way.
+      fetchStructure: async (locator) => {
+        try {
+          return await raced(opened.adapter.fetchStructure(locator), operationMs);
         } catch (err) {
           dead = true;
           await opened.forceClose().catch(() => { /* already down; the slots are released */ });

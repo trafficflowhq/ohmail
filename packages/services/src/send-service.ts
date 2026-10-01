@@ -20,7 +20,9 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState" | "applyExternalFlag">;
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
-import { verifiedPart, type FetchedBytes, type OpenAdapter } from "./attachments-service.js";
+import {
+  readerFor, repairedPart, REPAIRS_PER_REQUEST, type FetchedBytes, type OpenAdapter, type RepairBudget,
+} from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
@@ -315,13 +317,13 @@ function forwardTooLarge(): ServiceError {
   return new ServiceError("payload_too_large", 413, `the forwarded attachments exceed ${FORWARD_MAX_TOTAL_BYTES} bytes`);
 }
 /**
- * A forwarded part is the row's file or the send stops before any SMTP write: the same gate the
- * download door runs ({@link verifiedPart}), worded for a send, because a wrong file forwarded goes
- * to a third party.
+ * A forwarded part is the row's file or the send stops before any SMTP write: the same gate and
+ * repair the download door runs ({@link repairedPart}), worded for a send, because a wrong file
+ * forwarded goes to a third party.
  */
-function verifiedForward(part: ForwardPart, fetched: FetchedBytes, log: Logger): FetchedBytes {
+async function forwardedPart(read: () => Promise<FetchedBytes>): Promise<FetchedBytes> {
   try {
-    return verifiedPart(part, fetched, log);
+    return await read();
   } catch (err) {
     if (!(err instanceof ServiceError) || err.code !== "attachment_part_mismatch") throw err;
     throw new ServiceError(
@@ -1980,8 +1982,9 @@ export class SendService {
 
       const fetched: NonNullable<OutboundMessage["attachments"]> = [];
       let total = 0;
+      const budget: RepairBudget = { rows: REPAIRS_PER_REQUEST };
       for (const part of forward.parts) {
-        const bytes = verifiedForward(part, await read((loc) => adapter.fetchPart(loc, part.partId)), log);
+        const bytes = await forwardedPart(() => read((loc) => repairedPart(part, readerFor(adapter, loc), ctx, { log, budget })));
         total += bytes.body.byteLength;
         if (total > FORWARD_MAX_TOTAL_BYTES) throw forwardTooLarge();
         fetched.push({

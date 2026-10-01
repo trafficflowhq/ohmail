@@ -49,6 +49,7 @@ import type { NormalizedMessage } from "./types.js";
 // that module's entry point carries `imapflow`, and this predicate is deliberately kept in a module
 // with no imports at all so every caller can reach it. See {@link isOrganizedFolder}.
 import { canonicalDestination, isOrganizedFolder } from "./types.js";
+import { attachmentSections } from "./mime-sections.js";
 
 /** Confidence a graduated pattern must meet before the AI branch auto-applies. */
 export const AUTO_APPLY_CONFIDENCE_BAR = 0.7;
@@ -516,7 +517,10 @@ export interface PlanDeps {
   repo: RepoPort;
   accountId: string;
   mailboxId: string;
-  /** The caller's log: each message's parse time goes to it as `mime_parse_ms`. */
+  /**
+   * The caller's log: each message's parse time as `mime_parse_ms`, and an unmatched file as
+   * `attachment_section_unmatched` (ids and a reason, never a name). Absent: unlogged.
+   */
   log?: Logger;
   /**
    * This install is a READER of this mailbox, not its organizer. REQUIRED: an omitted
@@ -796,6 +800,22 @@ function sentCopyRecipients(
     .filter((a) => /^[^\s@<>,"]+@[^\s@<>,"]+$/.test(a)))];
 }
 
+/**
+ * EACH FILE'S STORED SECTION IS THE SERVER'S: the section of `change.structure` whose decoded
+ * bytes hash to the file's sha (`mime-sections.ts`), so a `part_id` is written only for bytes in
+ * hand. A file nothing hashes equal to keeps mailparser's id and is logged with the reason — never
+ * null, which `fetchPart` reads as section 1. `content_sha256` and the fingerprint never read it.
+ */
+function assignServerSections(change: Change, normalized: NormalizedMessage, log: Logger | undefined): void {
+  if (normalized.attachments.length === 0 || change.raw === undefined) return;
+  const uid = Number(change.locator.ref.split(":").pop());
+  attachmentSections(change.raw, change.structure, normalized.attachments).forEach((m, i) => {
+    const a = normalized.attachments[i]!;
+    if (m.matched) a.partId = m.section;
+    else log?.info("attachment_section_unmatched", { reason: m.reason, uid, partId: a.partId });
+  });
+}
+
 /** A tiny, sensitivity-safe digest of routing-relevant headers (never the body). */
 function headersDigest(normalized: NormalizedMessage): string {
   const h = normalized.headers;
@@ -869,6 +889,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
   const outcome = classifyDedup({ change, dedupKey: key, existing, pendingMoveFolders, evidence });
 
   if (outcome.kind === "new") {
+    assignServerSections(change, normalized, deps.log);
     const sensitivity = classifySensitivity(normalized);
     const arrivalLocator = change.locator;
 

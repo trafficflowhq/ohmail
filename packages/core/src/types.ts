@@ -291,6 +291,23 @@ export interface AttachmentMeta {
   contentSha256: string | null;
 }
 
+/**
+ * One node of the message's MIME tree AS THE MAIL SERVER DECLARED IT (IMAP BODYSTRUCTURE). It
+ * carries no part number: a section is derived from the tree by RFC 3501's rule
+ * (`mime-sections.ts#enumerateSections`), never copied from a library's label. `children` is a
+ * multipart's parts in order, or a `message/rfc822` part's ONE encapsulated body; `[]` for a leaf.
+ * Keys of `params` and `disposition.params` are lowercased.
+ */
+export interface MimeStructure {
+  type: string;
+  encoding: string | null;
+  params: Readonly<Record<string, string>>;
+  id: string | null;
+  disposition: { type: string; params: Readonly<Record<string, string>> } | null;
+  size: number | null;
+  children: readonly MimeStructure[];
+}
+
 export interface NormalizedMessage {
   canonical: CanonicalId;
   subject: string;

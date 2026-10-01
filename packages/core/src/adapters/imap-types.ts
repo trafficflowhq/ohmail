@@ -1,7 +1,7 @@
 // `../mail.js`, not `../index.js`: this module needs the mail vocabulary, and the default barrel
 // re-exports the model half beside it — so naming it here would put the classifier and the drafter
 // into the import graph of every artifact that opens a mailbox.
-import type { Change, NativeLocator } from "../mail.js";
+import type { Change, MimeStructure, NativeLocator } from "../mail.js";
 // The runtime imports of this module both come from `types.js`, a module with no imports of its
 // own — see the note on the TLS floor below for why that restriction exists and what it is about
 // (`imapflow` / `nodemailer` / `node:net`, none of which `types.js` touches).
@@ -1118,6 +1118,13 @@ export interface MailboxAdapter {
    * {@link FetchPartOptions.maxBytes}. Optional third parameter so existing fakes keep compiling.
    */
   fetchPart(locator: NativeLocator, partId: string | null, opts?: FetchPartOptions): Promise<FetchedPart>;
+  /**
+   * The message's MIME tree as the server declares it (BODYSTRUCTURE), for the attachment door's
+   * repair of an older row's section. Read-only, under the same epoch guard as {@link fetchPart}.
+   * `null` when the server holds no such message or answered no structure. Optional; a door
+   * without it cannot repair and refuses as it always has.
+   */
+  fetchStructure?(locator: NativeLocator): Promise<MimeStructure | null>;
   /**
    * The whole RFC822 message, exactly as the server holds it. Read-only, never persisted. Its own
    * method because {@link fetchPart} is per-MIME-part; `download(uid, "")` reaches the right

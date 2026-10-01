@@ -582,8 +582,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // THE ATTACHMENT PART GATE (`attachment_part_mismatch`, `attachment_part_unverified`), added WITH
   // its call sites. `partRowId` is the `attachments.id` row UUID (named without the denylisted
   // fragment), `partId` a MIME section number, and the two shas the first eight hex of a sha256
-  // over the stored and the served bytes. No filename, no bytes, nothing a sender wrote.
-  "partRowId", "partId", "storedSha", "servedSha",
+  // over the stored and the served bytes. No filename, no bytes, nothing a sender wrote. The door's
+  // repair and the ingest matcher add `tried`, a count of downloads; `section`, `reason` and `uid`
+  // are admitted above.
+  "partRowId", "partId", "storedSha", "servedSha", "tried",
 ] as const;
 
 /**

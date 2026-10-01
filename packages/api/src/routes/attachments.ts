@@ -64,6 +64,16 @@ function namedOpener(open: OpenAdapter): OpenAdapter {
           throw mailServerRefusal(err) ?? err;
         }
       },
+      // Forwarded, or the zip routes' repair would run in service tests and never through here.
+      ...(adapter.fetchStructure ? {
+        fetchStructure: async (locator: Parameters<NonNullable<AttachmentAdapter["fetchStructure"]>>[0]) => {
+          try {
+            return await adapter.fetchStructure!(locator);
+          } catch (err) {
+            throw mailServerRefusal(err) ?? err;
+          }
+        },
+      } : {}),
       close: () => adapter.close(),
     };
   };

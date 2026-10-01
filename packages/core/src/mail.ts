@@ -13,6 +13,7 @@ export const CORE_VERSION = "0.0.0";
 export * from "./types.js";
 export * from "./identity.js";
 export * from "./mime.js";
+export * from "./mime-sections.js";
 export * from "./ics.js";
 export * from "./html-storage.js";
 export * from "./sensitive.js";
