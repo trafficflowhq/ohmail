@@ -13,6 +13,10 @@ repository is the free desktop app for macOS, Windows and Linux, and the server
 source behind ohmail.app beside it: the whole program, all of its source,
 AGPL-3.0, no account.
 
+Any IMAP mailbox, Gmail and Microsoft 365 / Exchange\*.
+
+\* Microsoft 365 and Exchange connect with your Microsoft sign-in; some organizations require an admin to approve ohmail first.
+
 [**Download the latest release**](https://github.com/trafficflowhq/ohmail/releases/latest) ·
 [try the demo in your browser](https://ohmail.app/demo) ·
 [ohmail.app](https://ohmail.app)
