@@ -25,12 +25,13 @@ export function bodyPages(text: string, asked: number, clamped = false): BodyPag
 
 /**
  * One page as stacked Text blocks of at most `size` characters, cut at a line break and dropping
- * it, so the stack reads as the page did. A 65,536-character Text took ~450 ms of the JS thread on
- * the rig emulator, and the layout cost grows faster than the length. A line longer than `size`
- * stays whole.
+ * it, so the stack reads as the page did; the page's own closing line break is the boundary to the
+ * next page, so it is dropped too. A 65,536-character Text took ~450 ms of the JS thread on the rig
+ * emulator, and the layout cost grows faster than the length. A longer line stays whole.
  */
 export const BODY_BLOCK_CHARS = 4_096;
-export function pageBlocks(page: string, size: number = BODY_BLOCK_CHARS): string[] {
+export function pageBlocks(whole: string, size: number = BODY_BLOCK_CHARS): string[] {
+  const page = whole.endsWith("\n") ? whole.slice(0, -1) : whole;
   const out: string[] = [];
   let at = 0;
   while (page.length - at > size) {

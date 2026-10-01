@@ -33,7 +33,10 @@ export function BodyPages({ text, ...rest }: BodyPagesProps) {
   const more = plan.more;
   return (
     <>
-      {plan.pages.map((page, i) => <Page key={i} {...rest} text={page} />)}
+      {/* The caller's top margin belongs above the first page, not between pages. */}
+      {plan.pages.map((page, i) => (
+        <Page key={i} {...rest} style={i === 0 ? rest.style : [rest.style, { marginTop: 0 }]} text={page} />
+      ))}
       {more !== null ? (
         <Txt
           variant="caption"
