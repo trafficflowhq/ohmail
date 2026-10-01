@@ -75,8 +75,9 @@ such a message.
 <!-- changes: hotfix-0.25.7.md -->
 
 A crafted address header can no longer stall mail sync. Attachments inside nested messages download
-correctly for mail received from now on; for older mail the app refuses a file it cannot verify
-instead of serving the wrong one.
+correctly for mail received from now on, except a file that is the whole body of a message attached
+inline; for that file and for older mail, the app refuses a file it cannot verify instead of serving
+the wrong one.
 
 ## [0.25.6] — 2026-09-30
 
