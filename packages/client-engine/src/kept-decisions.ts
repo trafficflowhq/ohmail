@@ -39,23 +39,22 @@ function copyAgrees(copy: EntityReader, e: MutationEffect): boolean {
 
 /**
  * The decision a settling `screener_decide` leaves standing, or `null` when the copy already holds
- * every rule it wrote. The promoted rule is the first rule effect `derivedScreenerEffects` writes;
- * the rest are the twins it retargeted.
+ * what it wrote — read by {@link stillKept}, so keeping and retiring are one reading. The promoted
+ * rule is the first rule effect `derivedScreenerEffects` writes; the rest are the retargeted twins.
  */
 export function keptDecisionOf(
   effects: readonly MutationEffect[], copy: EntityReader, ask: number,
+  record: (type: string, id: string) => boolean,
 ): KeptDecision | null {
   const rules = effects.filter((e) => ruleOf(e) !== null);
   const promoted = rules[0];
   if (promoted === undefined) return null;
   const r = ruleOf(promoted)!;
   if (r.kind !== "sender" && r.kind !== "domain") return null;
-  const open = rules.filter((e) => !copyAgrees(copy, e));
-  if (open.length === 0) return null;
-  return {
+  return stillKept({
     kind: r.kind, key: ruleMatchKey(r.match), ruleId: promoted.id, ruleWant: placementOf("rule", r),
-    twinIds: new Set(rules.filter((e) => e !== promoted).map((e) => e.id)), ask, effects: open,
-  };
+    twinIds: new Set(rules.filter((e) => e !== promoted).map((e) => e.id)), ask, effects: rules,
+  }, copy, record);
 }
 
 /**

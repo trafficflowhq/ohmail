@@ -3633,7 +3633,8 @@ export class OhmailEngine {
    * speaks about the subject; the caller bumps the overlay rev.
    */
   private keepDecision(id: string, effects: readonly MutationEffect[]): void {
-    const d = keptDecisionOf(effects, this.storeTruth, this.screenerWait.seq);
+    const record = (type: string, eid: string): boolean => this.store.record(type, eid) !== undefined;
+    const d = keptDecisionOf(effects, this.storeTruth, this.screenerWait.seq, record);
     if (d === null) return;
     for (const [other, live] of this.overlays) if (other !== id && supersededBy(d, live)) return;
     this.kept.set(id, d);
