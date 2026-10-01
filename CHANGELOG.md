@@ -4331,7 +4331,7 @@ sent to it. Only Screener decisions travelled. All of them travel now, each carr
 ### Search answers while you type
 
 Searching a large mailbox used to freeze the window. Senders, subjects and previews now match as
-you type; the full text of your mail is searched in the archive, which answers a moment later.
+you type; the text of your mail is searched in the archive, which answers a moment later.
 
 ### Attachments land in your Downloads folder
 
