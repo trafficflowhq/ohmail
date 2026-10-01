@@ -392,6 +392,9 @@ export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options 
     ...smtpTlsFloor(smtp.host, smtp.secure, smtp.allowInsecure === true).options,
     auth: smtp.auth,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
+    // A send passes bytes, so no field may name a file or URL (nodemailer-transport-access-census).
+    disableFileAccess: true,
+    disableUrlAccess: true,
   };
 }
 
@@ -4693,7 +4696,8 @@ export function outboundToMail(msg: OutboundMessage, messageId: string): Mail.Op
 
 function buildRaw(mail: Mail.Options): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    new MailComposer(mail).compile().build((err: Error | null, message: Buffer) => {
+    // Composed outside the transport, so it takes the transport's two switches itself.
+    new MailComposer({ ...mail, disableFileAccess: true, disableUrlAccess: true }).compile().build((err: Error | null, message: Buffer) => {
       if (err) reject(err); else resolve(message);
     });
   });
