@@ -3,7 +3,7 @@ import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type 
 import { dialect } from "@trafficflow/db/dialect";
 import {
   asAuthVerdict, conversationJoinVerdict, counterpartyEvidence, isSentFolderPath,
-  mergeCounterpartyEvidence,
+  MAX_THREAD_PARTICIPANTS, mergeCounterpartyEvidence,
   silentLogger,
   type ConversationJoinFacts, type CounterpartyEvidence, type EmailAddress, type Logger,
 } from "@trafficflow/core/mail";
@@ -340,9 +340,9 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           }
 
           // Fold the absorbed threads' participants into the survivor — from the LOCKED rows,
-          // the same union-by-lowercased-address `mergeThreadMessage` performs at ingest
-          // (ingest maintains a thread row's participants under this very row lock, so the
-          // locked rows are current even against the race the retry exists for).
+          // the same union-by-lowercased-address, to the same bound, `mergeThreadMessage`
+          // performs at ingest (ingest maintains a thread row's participants under this very row
+          // lock, so the locked rows are current even against the race the retry exists for).
           const byAddress = new Map(
             ((lockedTarget.participants as EmailAddress[] | null) ?? []).map((p) => [p.address.toLowerCase(), p]),
           );
@@ -351,7 +351,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
             if (!locked) continue; // vanished (a user merge won); its move predicate matches nothing
             for (const p of (locked.participants as EmailAddress[] | null) ?? []) {
               const key = p.address.toLowerCase();
-              if (key && !byAddress.has(key)) byAddress.set(key, p);
+              if (key && !byAddress.has(key) && byAddress.size < MAX_THREAD_PARTICIPANTS) byAddress.set(key, p);
             }
           }
 

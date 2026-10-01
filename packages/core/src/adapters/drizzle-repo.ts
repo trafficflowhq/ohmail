@@ -20,6 +20,7 @@ import {
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
 import { foldMessageIdDomain } from "../identity.js";
+import { MAX_THREAD_PARTICIPANTS } from "../threading.js";
 import { MAX_STORED_ADDRESS_CHARS, storedAddress, storedMessageId, storedSubject } from "../stored-values.js";
 // THE ONE DOOR for a UIDVALIDITY comparison — `epoch.ts`. A bare `===` between two generations
 // reads two unknowns as agreement, which is the fail-open this module must not re-invent; the
@@ -2085,7 +2086,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       accountId: input.accountId,
       rootMessageIdHeader: input.rootMessageIdHeader,
       subject: input.subject,
-      participants: input.participants,
+      participants: input.participants.slice(0, MAX_THREAD_PARTICIPANTS),
       lastMessageAt: input.lastMessageAt,
     }).onConflictDoUpdate({
       target: [threads.accountId, threads.rootMessageIdHeader],
@@ -2104,7 +2105,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         accountId: input.accountId,
         rootMessageIdHeader: input.rootMessageIdHeader,
         subject: input.subject,
-        participants: input.participants,
+        participants: input.participants.slice(0, MAX_THREAD_PARTICIPANTS),
         lastMessageAt: input.lastMessageAt,
       }).returning({ id: threads.id });
       if (!created) throw new Error("upsertThread: the insert returned no row");
@@ -2150,7 +2151,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     let grew = false;
     for (const p of input.participants) {
       const key = p.address.toLowerCase();
-      if (!key || byAddress.has(key)) continue;
+      if (!key || byAddress.has(key) || byAddress.size >= MAX_THREAD_PARTICIPANTS) continue;
       byAddress.set(key, p);
       grew = true;
     }

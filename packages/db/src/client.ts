@@ -20,10 +20,77 @@ let sql: ReturnType<typeof postgres> | null = null;
  */
 export const WORKER_POOL_MAX = 5;
 
+/** The largest bind-parameter count postgres.js 3.4.9 sends: it refuses 65,534 or more. */
+export const MAX_BIND_PARAMETERS = 65_533;
+
+/**
+ * A statement over {@link MAX_BIND_PARAMETERS}, refused by {@link withBindLimit} in the caller's own
+ * call. The code is what the worker's classifier reads; it names no SQLSTATE because no server saw it.
+ */
+export class BindLimitError extends Error {
+  readonly code = "OHMAIL_BIND_LIMIT";
+  constructor(readonly count: number) {
+    super(`a statement with ${count} bind parameters, over the ${MAX_BIND_PARAMETERS} this driver sends`);
+    this.name = "BindLimitError";
+  }
+}
+
+/** What a tagged call binds, counted high: a nested query its own, a helper every value it holds. */
+export function boundCount(values: readonly unknown[]): number {
+  let n = 0;
+  for (const v of values) {
+    const q = v as { strings?: unknown; args?: unknown; first?: unknown; rest?: unknown } | null;
+    if (q !== null && typeof q === "object" && Array.isArray(q.args) && "strings" in q) n += boundCount(q.args);
+    else if (q !== null && typeof q === "object" && "first" in q && "rest" in q) {
+      const width = (x: unknown) => Array.isArray(x) ? x.length : x !== null && typeof x === "object" ? Object.keys(x).length : 1;
+      const rows = Array.isArray(q.first) ? q.first : [q.first];
+      n += rows.reduce((sum: number, row) => sum + Math.max(width(row), Array.isArray(q.rest) ? q.rest.length : 0), 0);
+    } else n += 1;
+  }
+  return n;
+}
+
+/**
+ * THE BIND-COUNT GUARD, at every door into a postgres.js client: a statement over the driver's limit
+ * is refused HERE, synchronously, before the driver sees it. The driver's own refusal comes after it
+ * has queued the statement behind another caller's on a busy connection, rejects THAT caller's query,
+ * and leaves every later reply one query out of step (connection.js:166-187). The doors are the
+ * tagged call, `unsafe` and `file`, and the scoped handles `begin`, `savepoint` and `reserve` hand on.
+ */
+export function withBindLimit(client: ReturnType<typeof postgres>): ReturnType<typeof postgres> {
+  type Sql = ReturnType<typeof postgres>;
+  const refuse = (count: number): void => { if (count > MAX_BIND_PARAMETERS) throw new BindLimitError(count); };
+  const scoped = (args: unknown[]): unknown[] => {
+    const fn = args[args.length - 1];
+    return typeof fn === "function" ? [...args.slice(0, -1), (sql: Sql) => (fn as (s: Sql) => unknown)(door(sql))] : args;
+  };
+  const door = (sql: Sql): Sql => new Proxy(sql, {
+    apply(target, self, args: unknown[]) {
+      refuse(boundCount(args.slice(1)));
+      return Reflect.apply(target as unknown as (...a: unknown[]) => unknown, self, args);
+    },
+    get(target, prop) {
+      const value = Reflect.get(target, prop);
+      if (typeof value !== "function") return value;
+      const call = value as (...a: unknown[]) => unknown;
+      if (prop === "unsafe" || prop === "file") {
+        return (text: unknown, params: unknown[] = [], ...rest: unknown[]) => {
+          refuse(Array.isArray(params) ? params.length : 0);
+          return call.call(target, text, params, ...rest);
+        };
+      }
+      if (prop === "begin" || prop === "savepoint") return (...a: unknown[]) => call.apply(target, scoped(a));
+      if (prop === "reserve") return async (...a: unknown[]) => door(await (call.apply(target, a) as Promise<Sql>));
+      return call.bind(target);
+    },
+  });
+  return door(client);
+}
+
 /** The long-lived singleton connection — for the always-on worker (one process, one pool). */
 export function makeDb(url: string): PostgresJsDatabase<typeof schema> {
   sql = postgres(url, withPgSocket({ ...pgTlsOptions(url), max: WORKER_POOL_MAX, onnotice: onNotice }));
-  return brandDialect(drizzle(sql, { schema }), "pg");
+  return brandDialect(drizzle(withBindLimit(sql), { schema }), "pg");
 }
 
 export async function closeDb(): Promise<void> {
@@ -50,7 +117,7 @@ export function makeOwnedDb(url: string): OwnedDb {
     ...pgTlsOptions(url), max: WORKER_POOL_MAX, connection: WORKER_TIMEOUTS, onnotice: onNotice,
   }));
   return {
-    db: brandDialect(drizzle(own, { schema }), "pg"),
+    db: brandDialect(drizzle(withBindLimit(own), { schema }), "pg"),
     close: async () => { await own.end({ timeout: 5 }); },
   };
 }
@@ -459,7 +526,7 @@ export function makePooledDb(
     }));
     pools.set(url, pooled);
   }
-  const handle = brandDialect(drizzle(withAcquireCeiling(withOneFlush(pooled), ceiling), { schema }), "pg");
+  const handle = brandDialect(drizzle(withBindLimit(withAcquireCeiling(withOneFlush(pooled), ceiling)), { schema }), "pg");
   handles.set(key, handle);
   return handle;
 }

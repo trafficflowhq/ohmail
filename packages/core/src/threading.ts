@@ -65,6 +65,43 @@ export interface ThreadKey {
 }
 
 /**
+ * The most message ids one message's thread lookup or correspondent check names. A sender writes
+ * In-Reply-To and References, and each id is one bind parameter, so the count is ours to set: 100
+ * is past the ancestry any client keeps (RFC 5322 lets a long References keep only its first and
+ * newest ids), and every statement built from these lists stays small on every store.
+ */
+export const MAX_THREAD_CANDIDATES = 100;
+
+/**
+ * The most people one thread's `participants` lists. Every message folded in can add its sender and
+ * recipients, so without a bound the jsonb grows toward the store's ceiling one crafted message at a
+ * time; 100 is past any conversation a person reads, and an address already listed is never dropped.
+ */
+export const MAX_THREAD_PARTICIPANTS = 100;
+
+/**
+ * The ids a message names, nearest first — In-Reply-To, then References newest first — without
+ * `own` or a repeat, at most {@link MAX_THREAD_CANDIDATES}. Past the bound the root (the first
+ * References id) is kept in the last place, because it is the conversation's anchor.
+ */
+export function boundedReferenceIds(
+  own: string | null, inReplyTo: readonly string[], references: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  const all: string[] = [];
+  for (const id of [...inReplyTo, ...[...references].reverse()]) {
+    if (id === own || seen.has(id)) continue;
+    seen.add(id);
+    all.push(id);
+  }
+  if (all.length <= MAX_THREAD_CANDIDATES) return all;
+  const kept = all.slice(0, MAX_THREAD_CANDIDATES - 1);
+  const root = references[0];
+  kept.push(root !== undefined && root !== own && !kept.includes(root) ? root : all[MAX_THREAD_CANDIDATES - 1]!);
+  return kept;
+}
+
+/**
  * Derive {@link ThreadKey} from a message's own id and its raw headers.
  *
  * The message's OWN id is excluded from the candidate list. A sender that puts its own
@@ -79,15 +116,7 @@ export function threadKeyOf(
   const h = headers ?? {};
   const inReplyTo = parseMessageIds(h["in-reply-to"]);
   const references = parseMessageIds(h["references"]);
-
-  const ordered = [...inReplyTo, ...[...references].reverse()];
-  const seen = new Set<string>();
-  const candidates: string[] = [];
-  for (const id of ordered) {
-    if (id === messageIdHeader || seen.has(id)) continue;
-    seen.add(id);
-    candidates.push(id);
-  }
+  const candidates = boundedReferenceIds(messageIdHeader, inReplyTo, references);
 
   // `parseMessageIds` has already dropped over-long tokens, so falling through to the next
   // fallback is automatic. The message's OWN id is capped here for the same reason — an ingest
