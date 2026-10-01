@@ -2713,6 +2713,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    until it runs the queue is withheld, not empty. */
                 settled={mailState.settled && screener.queueSettled}
                 owed={mailState.owed}
+                storeImportOpen={mailState.storeImportOpen}
                 hydrateBody={hydrateBody}
                 hydrateBodies={hydrateBodies}
                 /* The reading pane's remote-image consent chrome, so a held preview blocks

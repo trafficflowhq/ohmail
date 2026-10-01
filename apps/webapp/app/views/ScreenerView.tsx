@@ -18,7 +18,7 @@ import type {
   UnsubscribeHeaderState,
   UnsubscribeResult,
 } from "@ohmail/client-engine";
-import { countWhen, listSurface, saysEmpty } from "@ohmail/client-engine";
+import { countWhen, listSurface, saysEmpty, waitingSurfaceInput } from "@ohmail/client-engine";
 import {
   AskWell,
   BulkProgress,
@@ -524,6 +524,10 @@ function Empty(
    * (`OhboxView`'s `SyncState`, mirrored deliberately).
    */
   if (!saysEmpty(surface)) {
+    // A list withheld for mail still on its way says so after the grace; "loading" is the skeleton's.
+    if (surface === "pending" && speak) {
+      return <div className="empty" role="status" aria-busy="true"><b>{t("emptyImporting")}</b></div>;
+    }
     return (
       <div className="empty" role="status" aria-busy="true">
         {/* `.mbx-wait` and not a bare span: `.mbx-spin` sizes itself with `width`/`height` and
@@ -560,6 +564,7 @@ export function ScreenerView({
   selection,
   settled,
   owed,
+  storeImportOpen,
   onSelect,
   hydrateBody,
   hydrateBodies,
@@ -642,6 +647,12 @@ export function ScreenerView({
    * mailbox that has been read, and this pane was caught making the Ohbox's own mistake.
    */
   owed: boolean;
+  /**
+   * Is the account's own first import still open ({@link MailState.storeImportOpen})? The Waiting
+   * list's set is the store's queue, so it is withheld by this rather than by {@link owed}.
+   * Absent reads as {@link owed}.
+   */
+  storeImportOpen?: boolean;
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
   /** Ask for one held message's body. `retry` marks a human asking again, `urgent` a body being read. */
   hydrateBody: (id: string, opts?: { retry?: boolean; urgent?: boolean }) => void;
@@ -767,6 +778,12 @@ export function ScreenerView({
           ? []
           : state.spam;
 
+  /** The Waiting list reads the store's facts when the store has answered (`waitingSurfaceInput`). */
+  const waitingInput = (count: number) => waitingSurfaceInput({
+    source: state.waitingSource, storeTotal: state.waitingCount, queueAnswered: state.queueAnswered === true,
+    settled, owed, storeImportOpen: storeImportOpen ?? owed, count,
+  });
+
   /**
    * WHAT THIS SEGMENT MAY SAY ABOUT ITSELF — the shared reading
    * (`@ohmail/client-engine`'s `listSurface`), the same one the Ohbox and the phone render
@@ -774,7 +791,7 @@ export function ScreenerView({
    * and "No one's waiting" over an account still importing is the Ohbox's defect in this pile.
    */
   const emptySurface = (count: number): ListSurface =>
-    listSurface({ settled, count, pending: owed });
+    listSurface(segment === "waiting" ? waitingInput(count) : { settled, count, pending: owed });
 
   const idOf = (x: ScreenerSenderDTO | SpamRow) =>
     "pinned" in x ? x.sender.id : x.id;
@@ -1421,7 +1438,7 @@ export function ScreenerView({
            waiting. Any non-zero count is a real observation whatever the drain is doing, so
            only the zero is withheld — and it returns the moment there is one to state. */
         meta={countWhen(
-          { settled, count: state.waitingCount, pending: owed },
+          waitingInput(state.waiting.length),
           // A count this device derived is never shown as the mailbox's own.
           state.waitingSource === "device"
             ? t("metaWaitingOnDevice", { count: state.waitingCount })
@@ -1444,7 +1461,9 @@ export function ScreenerView({
                 {
                   id: "screened",
                   label: t("segScreened"),
-                  count: state.screenedOut.length > 0 ? state.screenedOut.length : "",
+                  // Mirror lengths, so withheld mid-import like every count this list states.
+                  count: countWhen({ settled, count: state.screenedOut.length, pending: owed },
+                    state.screenedOut.length > 0 ? state.screenedOut.length : "") ?? "",
                 },
                 {
                   id: "spam",
@@ -1453,7 +1472,8 @@ export function ScreenerView({
                      bounded page of a folder whose total it has not read, and a number that
                      means "rows loaded so far" would read as "junk you have". */
                   label: junk !== undefined ? t("segJunk") : t("segSpam"),
-                  count: junk !== undefined ? "" : state.spam.length > 0 ? state.spam.length : "",
+                  count: junk !== undefined ? "" : countWhen({ settled, count: state.spam.length, pending: owed },
+                    state.spam.length > 0 ? state.spam.length : "") ?? "",
                 },
               ]}
             />

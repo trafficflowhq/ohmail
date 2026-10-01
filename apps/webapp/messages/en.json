@@ -706,6 +706,7 @@
     "segAria": "Screener sections",
     "bulkAria": "Act on all waiting senders",
     "loading": "Loading your mail.",
+    "emptyImporting": "Still bringing your mail to this device. Senders appear here as their mail arrives.",
     "empty": {
       "waiting": {
         "glyph": "🕊",

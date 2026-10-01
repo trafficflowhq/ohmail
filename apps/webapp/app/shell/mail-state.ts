@@ -1487,6 +1487,14 @@ export interface MailState {
    * (`test/signup-copy-and-empty-ohbox.test.ts` owns it, with its mutations).
    */
   owed: boolean;
+  /**
+   * IS THE ACCOUNT'S OWN FIRST IMPORT STILL OPEN — the import floor alone ({@link importFloorSpeaks}),
+   * never this mirror's growth or its first drain. A list whose set is the store's own (the
+   * Screener's queue) is withheld by this, not by {@link owed}: this device's import cannot change
+   * what the store says. Unknown mailbox facts read as {@link owed}, the reading such a list had,
+   * and so does an absent field (a resting value built by hand).
+   */
+  storeImportOpen?: boolean;
 }
 
 const QUIET: MailState = {
@@ -1511,6 +1519,7 @@ const QUIET: MailState = {
   // Same rule from the other side: a resting value owes nothing, so a pane reading it speaks.
   // Overwritten for every state by the wrapper — see {@link MailState.owed}.
   owed: false,
+  storeImportOpen: false,
 };
 
 /**
@@ -1897,6 +1906,8 @@ function mailboxInError(mailboxes: MailStateInputs["mailboxes"]): boolean {
 
 export function deriveMailState(input: MailStateInputs): MailState {
   const state = climb(input);
+  const owed = state.key === "importing"
+    || (input.sync.bootstrapping && !input.demo && !OWES_NOTHING_KEYS.includes(state.key));
   return {
     ...state,
     // A COMPLETED DRAIN IS SETTLED EVIDENCE, whatever this tab's own loop is doing — the mobile
@@ -1921,8 +1932,9 @@ export function deriveMailState(input: MailStateInputs): MailState {
     // "Nothing in your Ohbox" over mail that was minutes from the screen (INCIDENT-021). A key
     // in {@link OWES_NOTHING_KEYS} is a loop that will not run again, and a list withheld for
     // it is the spinner nobody can escape; a fixture world owes nothing by construction.
-    owed: state.key === "importing"
-      || (input.sync.bootstrapping && !input.demo && !OWES_NOTHING_KEYS.includes(state.key)),
+    owed,
+    storeImportOpen: input.mailboxes === null ? owed : !input.demo && input.mailboxes.some((m) =>
+      m.status === "connected" && importFloorSpeaks(m, input.growth, input.sync, input.now)),
   };
 }
 

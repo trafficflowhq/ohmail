@@ -59,3 +59,30 @@ export function countWhen<T>(input: ListSurfaceInput, meta: T): T | undefined {
 export function saysEmpty(surface: ListSurface): boolean {
   return surface === "empty";
 }
+
+/** What the Screener's Waiting list knows about its set — see {@link waitingSurfaceInput}. */
+export interface WaitingSurfaceFacts {
+  /** Whose set it is: the store's queue, this device's derivation, or a local world's. */
+  source: "store" | "device" | "local";
+  /** The count the Waiting tab states. */
+  storeTotal: number;
+  /** Is the store's queue page in the mirror at all? */
+  queueAnswered: boolean;
+  settled: boolean;
+  owed: boolean;
+  /** Is the account's own first import still open (the hosted import floor)? */
+  storeImportOpen: boolean;
+  /** The rows on screen. */
+  count: number;
+}
+
+/**
+ * THE WAITING LIST'S OWN READING. The store's queue is exact whatever this device has taken in,
+ * so this mirror's import does not withhold it: only the account's own open import does, and a
+ * store that counts senders the list cannot show yet is never stated empty. Anything else reads
+ * as every other list.
+ */
+export function waitingSurfaceInput(f: WaitingSurfaceFacts): ListSurfaceInput {
+  if (f.source !== "store" || !f.queueAnswered) return { settled: f.settled, count: f.count, pending: f.owed };
+  return { settled: true, count: f.count, pending: f.storeImportOpen || (f.count === 0 && f.storeTotal > 0) };
+}

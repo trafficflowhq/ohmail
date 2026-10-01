@@ -232,6 +232,11 @@ export interface ScreenerState {
    * answered yet. `local`: a client whose mirror is the whole mailbox (the demo), with no store.
    */
   waitingSource: "store" | "device" | "local";
+  /**
+   * Is the store's queue page in the mirror? With {@link waitingSource} `store` the Waiting list
+   * speaks from the store's facts (`waitingSurfaceInput`). Absent reads as no.
+   */
+  queueAnswered?: boolean;
   /** The store's queue past its first page, a page per press. */
   waitingMore: WaitingMore;
   /** Ask the store for the queue's first page again — the Screener calls it when it opens. */
@@ -2207,6 +2212,7 @@ export function useScreenerState(
     waiting: visibleWaiting,
     waitingCount,
     waitingSource: segments.source === "store" ? "store" : engine.screenerWaitingAvailable() ? "device" : "local",
+    queueAnswered: firstPage !== null,
     waitingMore: {
       available: segments.source === "store" && nextWaitingCursor !== null,
       loading: onwardLive.loading,
