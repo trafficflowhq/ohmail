@@ -1054,8 +1054,8 @@ you, as the web does, whenever automatic unsubscribe is on.
 <!-- changes: fix-025-acts-only-on-what-you-asked.md -->
 
 Applying a new rule to mail already filed no longer moves up to 50 messages from the app at once.
-The server moves the past mail and leaves alone messages you replied to, filed yourself or set
-aside.
+The server moves the past mail and leaves alone messages you replied to, filed in another mail
+app or set aside.
 
 ### An AI draft that cannot finish in time stops with a clear sentence
 <!-- changes: fix-025-acts-only-on-what-you-asked.md -->
