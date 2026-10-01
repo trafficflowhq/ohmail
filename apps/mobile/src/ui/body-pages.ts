@@ -23,6 +23,27 @@ export function bodyPages(text: string, asked: number, clamped = false): BodyPag
   return { pages, more: !clamped && shown < text.length ? Math.floor((shown / text.length) * 100) : null };
 }
 
+/**
+ * One page as stacked Text blocks of at most `size` characters, cut at a line break and dropping
+ * it, so the stack reads as the page did. A 65,536-character Text took ~450 ms of the JS thread on
+ * the rig emulator, and the layout cost grows faster than the length. A line longer than `size`
+ * stays whole.
+ */
+export const BODY_BLOCK_CHARS = 4_096;
+export function pageBlocks(page: string, size: number = BODY_BLOCK_CHARS): string[] {
+  const out: string[] = [];
+  let at = 0;
+  while (page.length - at > size) {
+    let nl = page.lastIndexOf("\n", at + size);
+    if (nl <= at) nl = page.indexOf("\n", at + size);
+    if (nl < 0) break;
+    out.push(page.slice(at, nl));
+    at = nl + 1;
+  }
+  out.push(page.slice(at));
+  return out;
+}
+
 /** How many pages are asked for `text`: a count kept for another message starts again at one. */
 export function pagesAskedFor(kept: { text: string; pages: number }, text: string): number {
   return kept.text === text ? kept.pages : 1;

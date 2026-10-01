@@ -5,16 +5,21 @@
  * message. A clamped caller (`numberOfLines`) draws the first page and offers no press.
  */
 import { memo, useState } from "react";
+import { View } from "react-native";
 import { Copy } from "../copy";
 import { Txt, type TxtProps } from "./base";
-import { bodyPages, pagesAskedFor } from "./body-pages";
+import { bodyPages, pageBlocks, pagesAskedFor } from "./body-pages";
 
 type BodyPagesProps = Omit<TxtProps, "children"> & { text: string };
 
-/** One page, kept across a further press: only the new page is laid out. */
+/** One page, kept across a further press: only the new page is laid out, in its blocks. */
 const Page = memo(
-  function Page({ text, ...rest }: BodyPagesProps) {
-    return <Txt {...rest}>{text}</Txt>;
+  function Page({ text, style, ...rest }: BodyPagesProps) {
+    return (
+      <View style={style}>
+        {pageBlocks(text).map((block, i) => <Txt key={i} {...rest}>{block}</Txt>)}
+      </View>
+    );
   },
   (a, b) => a.text === b.text && a.variant === b.variant && a.tone === b.tone
     && a.selectable === b.selectable && a.numberOfLines === b.numberOfLines,
