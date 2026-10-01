@@ -1377,7 +1377,7 @@ export const auth = {
    */
   logout: () => api<void>(SIGN_OUT_PATH, { method: "POST" }),
 
-  // ── 2FA enrollment (the enrollment-session surface: the seven `enrollmentOk` routes) ──
+  // ── 2FA enrollment (the enrollment-session surface: the server's `enrollmentOk` routes) ──
 
   webauthnRegisterOptions: () =>
     api<{ options: PublicKeyCredentialCreationOptionsJSON }>("/auth/2fa/webauthn/register/options", {

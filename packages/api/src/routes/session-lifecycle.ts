@@ -66,14 +66,16 @@ export const sessionLifecycleRoutes: Route[] = [
     // THE WEB'S SIGN-OUT. Under `/auth/refresh` because that is the only path `tf_refresh` reaches,
     // and after a renewal whose answer was lost it is the one credential in the jar that still
     // names the live family — `/auth/logout` sees only the replaced access token and 401s before
-    // its handler. Revokes that family and the resolved session's; `{ refreshToken }` in the body
-    // is the same arm for a bearer client. The jar is cleared on the 204 and on the door's own 401
-    // (nothing named), never on a fault: the retry needs the cookie the fault left in place.
+    // its handler. Revokes that family and the resolved session's (`enrollmentOk`, so a sign-out
+    // during enrollment ends that session too); `{ refreshToken }` in the body is the same arm for a
+    // bearer client. The jar is cleared on the 204 and on the door's own 401, never on a fault: the
+    // retry needs the cookie the fault left in place. A token tells its holder one thing here —
+    // whether it was ever minted (204 in any state, 401 never) — and presenting it ends its family.
     method: "POST",
     pattern: "/auth/refresh/logout",
     relay: false,  /* resolves a credential from the request */
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, enrollmentOk: true },
     handler: async (req, deps) => {
       let presented = presentedRefreshCookie(parseCookies(req.headers.get("cookie")), deps);
       if (presented === undefined) {

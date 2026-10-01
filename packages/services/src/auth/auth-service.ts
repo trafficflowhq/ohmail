@@ -3027,18 +3027,26 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * Signing out a device takes its wake registration with it — {@link revokeDevice}'s rule, on
-   * the door people actually use. The base `logout` revoked the session family only, so a phone
-   * that forgot a server kept a live row: the endpoint answers 2xx for ever and the prune-on-410
-   * never fires. HERE, not `SessionLifecycle`: the desktop-host door's database has no push
-   * table. AFTER `super.logout` (a step-up refusal deletes nothing), in ONE transaction: the
-   * revoked family is the only credential that could retry — a crash between autocommitted
-   * statements leaves the row live and unremovable. A session with NO device row prunes nothing:
-   * web-push rows carry `device_id = NULL`, and deleting them all would silence another browser.
+   * Signing out a device takes its wake registration with it — {@link revokeDevice}'s rule, on the
+   * door people actually use: a phone that forgot a server kept a live row, its endpoint answering 2xx
+   * for ever. HERE, not `SessionLifecycle`: the desktop-host door's database has no push table.
+   * `/auth/logout`'s arms prune AFTER `super.logout` (a step-up refusal deletes nothing), in ONE
+   * transaction: the revoked family is the only credential that could retry. The web's door COMMITS its
+   * revoke and audit first and prunes after, logged on failure and never rethrown: a fault that rolled
+   * the sign-out back would leave a session live; a row left is wakes to a signed-out device.
    */
   override async logout(
     ctx: ServiceContext, b: { allDevices?: boolean; refreshToken?: string } = {},
   ): Promise<{ familyIds: string[] }> {
+    if (!b.allDevices && b.refreshToken !== undefined) {
+      const out = await super.logout(ctx, b);
+      try {
+        await this.pruneWakeRegistrations(asTx(ctx), out.familyIds);
+      } catch (err) {
+        console.error("[auth] the sign-out stands; its wake-registration prune failed:", err);
+      }
+      return out;
+    }
     return this.inTransaction(ctx, async (txCtx) => {
       const out = await super.logout(txCtx, b);
       const db = asTx(txCtx);
@@ -3065,21 +3073,29 @@ export class AuthService extends SessionLifecycle {
         ));
         return out;
       }
-      // THE FAMILIES THE BASE REVOKED, each session's device in that session's OWN account: the
-      // refresh door may resolve no session at all, so the request's account can name nothing.
-      for (const familyId of out.familyIds) {
-        const owned = await db.select({ accountId: sessions.accountId, deviceId: sessions.deviceId })
-          .from(sessions).where(and(eq(sessions.familyId, familyId), isNotNull(sessions.deviceId)));
-        for (const { accountId, deviceId } of owned) {
-          if (deviceId === null) continue;
-          await db.delete(pushSubscriptions).where(and(
-            eq(pushSubscriptions.accountId, accountId),
-            eq(pushSubscriptions.deviceId, deviceId),
-          ));
-        }
-      }
+      await this.pruneWakeRegistrations(db, out.familyIds);
       return out;
     });
+  }
+
+  /**
+   * The wake rows of every device-bearing session in these families, each in that session's OWN
+   * account: the door may resolve no session at all, so the request's account can name nothing. A
+   * session with no device prunes nothing — web-push rows carry `device_id = NULL`, and deleting
+   * them would silence another browser.
+   */
+  protected async pruneWakeRegistrations(db: Tx, familyIds: readonly string[]): Promise<void> {
+    for (const familyId of familyIds) {
+      const owned = await db.select({ accountId: sessions.accountId, deviceId: sessions.deviceId })
+        .from(sessions).where(and(eq(sessions.familyId, familyId), isNotNull(sessions.deviceId)));
+      for (const { accountId, deviceId } of owned) {
+        if (deviceId === null) continue;
+        await db.delete(pushSubscriptions).where(and(
+          eq(pushSubscriptions.accountId, accountId),
+          eq(pushSubscriptions.deviceId, deviceId),
+        ));
+      }
+    }
   }
 
 }
