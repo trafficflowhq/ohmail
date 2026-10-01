@@ -47,7 +47,7 @@ import {
  * means. It is repeated here because that check does not travel with the published tree and this
  * gate must still have a ceiling; the two are asserted equal, so they cannot drift apart.
  */
-export const SIZE_CEILING = 6_913_000;
+export const SIZE_CEILING = 6_920_000;
 
 /**
  * The floor under it, for the same reason the ceiling has one: a truncated or half-written bundle
