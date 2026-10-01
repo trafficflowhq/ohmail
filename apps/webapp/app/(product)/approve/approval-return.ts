@@ -25,16 +25,16 @@ export function rememberApprovalRequest(id: string, now = Date.now()): void {
   durableSessionSet(KEY, JSON.stringify({ id, at: now }), "approve.return");
 }
 
-/** The page to return to, once, or null. Reading it removes it. */
-export function takeApprovalReturn(now = Date.now()): string | null {
-  let raw: string | null = null;
+function readKept(): string | null {
   try {
-    raw = sessionStorage.getItem(KEY);
+    return sessionStorage.getItem(KEY);
   } catch {
     return null;
   }
-  if (!raw) return null;
-  durableSessionRemove(KEY, "approve.return");
+}
+
+/** The one reading of what was kept: a request id inside its ten minutes, as the fixed path, or null. */
+function returnOf(raw: string, now: number): string | null {
   try {
     const kept = JSON.parse(raw) as { id?: unknown; at?: unknown };
     const id = typeof kept.id === "string" ? kept.id : "";
@@ -44,4 +44,18 @@ export function takeApprovalReturn(now = Date.now()): string | null {
   } catch {
     return null;
   }
+}
+
+/** The page to return to, once, or null. Reading it removes it. */
+export function takeApprovalReturn(now = Date.now()): string | null {
+  const raw = readKept();
+  if (!raw) return null;
+  durableSessionRemove(KEY, "approve.return");
+  return returnOf(raw, now);
+}
+
+/** Whether this tab still keeps a return worth waiting for — asked without taking it. */
+export function approvalReturnKept(now = Date.now()): boolean {
+  const raw = readKept();
+  return raw !== null && returnOf(raw, now) !== null;
 }

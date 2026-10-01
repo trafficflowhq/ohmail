@@ -49,8 +49,9 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
      read says nothing rather than guessing. */
   const [account, setAccount] = useState<{ accountId: string; email: string } | null>(null);
   const named = settled.kind === "owner" && account?.accountId === settled.accountId ? account.email : null;
-  /* Settling again drops the request it read: a read that then fails must not leave it, Confirm and all. */
-  const settleAgain = (): void => { setAsked(null); resettle(); };
+  /* Settling again drops the request it read — a read that then fails must not leave it, Confirm and
+     all — and a confirm parked behind the step-up prompt, which was pressed for the page before. */
+  const settleAgain = (): void => { setPhase("idle"); setAsked(null); resettle(); };
 
   const alive = useRef(true);
   const gone = useRef(new AbortController());
@@ -276,6 +277,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
           onVerified={() => { setPhase("idle"); confirm(); }}
           onCancel={() => setPhase("idle")}
           onDiscarded={() => { setPhase("idle"); setNote(t("stepUpDiscarded")); }}
+          onOwnerAbsent={settleAgain}
         />
       ) : (
         <div className="join-actions">

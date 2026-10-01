@@ -227,11 +227,13 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
   if (phase === "stepup") {
     return (
       <Shell title={t("reauthTitle")}>
-        {/* The mint is parked behind the prompt; the verified factor retries it, commitment and all. */}
+        {/* The mint is parked behind the prompt; the verified factor retries it, commitment and all.
+            A lost marker settles the page again and drops the parked mint. */}
         <StepUpPrompt
           onVerified={() => mint(true)}
           onCancel={() => setPhase("idle")}
           onDiscarded={() => setDiscarded(true)}
+          onOwnerAbsent={() => { setPhase("idle"); resettle(); }}
         />
       </Shell>
     );

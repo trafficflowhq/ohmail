@@ -18,7 +18,7 @@ import { Button, Icon } from "@ohmail/ui";
 import { pendApiOwner } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
 import {
-  ApiError, apiConfigured, auth, messageOf, type AuthorizeRequestDTO,
+  ApiError, apiConfigured, auth, type AuthorizeRequestDTO,
 } from "../../api-client";
 import { useRefusalSentence } from "../refusal-sentence";
 import { useSettledOwner } from "../approve/settle-owner";
@@ -69,13 +69,14 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
         if (!alive.current || ctl.signal.aborted) return;
         // 400 is the one answer every dead handle gets — unknown, expired, spent or another
         // session's. They are deliberately the same on the server, so they are one sentence here.
-        setError(err instanceof ApiError && err.status === 400 ? t("expired") : messageOf(err));
+        // Anything else through the one renderer, like the rest of this family.
+        setError(err instanceof ApiError && err.status === 400 ? t("expired") : refusalSentence(err));
       } finally {
         if (alive.current) setLoading(false);
       }
     })();
     return () => ctl.abort();
-  }, [request, settled, t]);
+  }, [request, settled, t, refusalSentence]);
 
   /* The countdown, and the withdrawal at zero. One interval, cleared on unmount — a leaked one
      here would keep writing state into a page somebody has left. */
@@ -107,7 +108,7 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
         window.location.href = redirect;
       } catch (err) {
         if (!alive.current) return;
-        setError(err instanceof ApiError && err.status === 400 ? t("expired") : messageOf(err));
+        setError(err instanceof ApiError && err.status === 400 ? t("expired") : refusalSentence(err));
         setAsked(null);
       } finally {
         if (alive.current) setBusy(false);

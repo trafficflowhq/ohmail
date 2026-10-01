@@ -18,8 +18,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
-import { ApiError, auth, assertPasskey, messageOf, webauthnAvailable } from "../../api-client";
+import { ApiError, auth, assertPasskey, webauthnAvailable } from "../../api-client";
+import { isOwnerAbsent } from "../approve/settle-owner";
 import { useCeremonyGeneration } from "../ceremony-generation";
+import { useRefusalSentence } from "../refusal-sentence";
 
 interface Props {
   /** The re-verification succeeded — retry the verb that was refused. */
@@ -30,16 +32,23 @@ interface Props {
    * so, not this prompt: Cancel hands the pane back, so by then there is nothing here to read.
    */
   onDiscarded: () => void;
+  /**
+   * This browser's marker went while the prompt was up (`owner_absent`): the host's settle step
+   * answers it (`approve/settle-owner.ts`) and the prompt says nothing. A host with no settle step
+   * leaves it out, and the refusal is said like any other.
+   */
+  onOwnerAbsent?: () => void;
 }
 
-export function StepUpPrompt({ onVerified, onCancel, onDiscarded }: Props) {
+export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent }: Props) {
   const t = useTranslations("devices");
+  const refusalSentence = useRefusalSentence();
 
   /**
    * The refusal, told honestly. A lockout (423 `account_locked`) carries `retryAfter` seconds
    * in its details, and "too many failed attempts" without the "for how long" reads as
-   * for ever — the sentence must say when trying again is worth it. Everything else is the
-   * server's own message, verbatim, `messageOf`'s standing contract.
+   * for ever — the sentence must say when trying again is worth it. Everything else goes through
+   * the one renderer: the server's own message, and the three owner refusals in the reader's language.
    */
   const refusalText = useCallback(
     (err: unknown): string => {
@@ -48,9 +57,9 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded }: Props) {
         const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : 15 * 60;
         return t("stepUpLocked", { minutes: Math.max(1, Math.ceil(seconds / 60)) });
       }
-      return messageOf(err);
+      return refusalSentence(err);
     },
-    [t],
+    [t, refusalSentence],
   );
   const [enrolled, setEnrolled] = useState<{ webauthn: boolean; totp: boolean } | null>(null);
   const [method, setMethod] = useState<"webauthn" | "totp">("totp");
@@ -76,9 +85,11 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded }: Props) {
         // browser can run the ceremony; the code otherwise.
         setMethod(e.webauthn && webauthnAvailable() ? "webauthn" : "totp");
       } catch (err) {
-        setError(messageOf(err));
+        if (isOwnerAbsent(err) && onOwnerAbsent) { onOwnerAbsent(); return; }
+        setError(refusalText(err));
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one read, at mount
   }, []);
 
   const finish = useCallback(
@@ -101,12 +112,13 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded }: Props) {
         } catch (err) {
           // A failed ceremony is over: end it, so a second response cannot act either.
           ceremony.end();
-          setError(refusalText(err));
           setBusy(false);
+          if (isOwnerAbsent(err) && onOwnerAbsent) { onOwnerAbsent(); return; }
+          setError(refusalText(err));
         }
       })();
     },
-    [ceremony, onDiscarded, onVerified, refusalText],
+    [ceremony, onDiscarded, onOwnerAbsent, onVerified, refusalText],
   );
 
   const withPasskey = () =>

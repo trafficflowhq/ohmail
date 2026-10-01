@@ -27,7 +27,8 @@ import { refreshSettled } from "../../session-refresh";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { REASON_BODY, takeSignedOutNote, type SignedOutReason } from "../resume/signed-out-note";
 // The approval page's way back after an ordinary sign-in: a request id, never a URL.
-import { takeApprovalReturn } from "../approve/approval-return";
+import { approvalReturnKept, takeApprovalReturn } from "../approve/approval-return";
+import { whenSignedInElsewhere } from "../approve/signed-in-elsewhere";
 import { leaveFor, type Continuation } from "./continuation";
 
 type Stage = "password" | "twofa";
@@ -65,8 +66,12 @@ export function LoginScreen(
   const posture = signupPosture(SELF_HOST_BUILD, publicSignup);
   const router = useRouter();
 
+  /** Set when a sign-in elsewhere moved this tab back to its request: a later answer moves nothing. */
+  const leftRef = useRef(false);
+
   /** Once a session exists: the approval page's return, else the named continuation, else the app. */
   const proceed = (fallback: string, how: "push" | "replace"): void => {
+    if (leftRef.current) return;
     const back = takeApprovalReturn();
     if (back !== null) router[how](back);
     else if (next !== null) leaveFor(next);
@@ -205,6 +210,25 @@ export function LoginScreen(
       const hello = await serverHello({ signal: abort.signal });
       if (!cancelled && hello?.needsSetup === true) router.replace("/setup");
     })();
+    return stop;
+  }, [configured, router]);
+
+  /*
+   * SIGNED IN IN ANOTHER TAB. A tab `/approve` sent here keeps its request id; while it does, a
+   * sign-in in any other tab of this browser makes this tab ask again (`signed-in-elsewhere.ts`),
+   * and a full session takes this tab's own kept return and nothing else. A submit stops it as it
+   * stops the ladder above, because this page is a ceremony from then on.
+   */
+  useEffect(() => {
+    if (!configured || !approvalReturnKept()) return;
+    const stop = whenSignedInElsewhere(() => {
+      const back = takeApprovalReturn();
+      if (back === null) return;
+      leftRef.current = true;
+      router.replace(back);
+    });
+    const previous = cancelBootstrapRef.current;
+    cancelBootstrapRef.current = () => { previous?.(); stop(); };
     return stop;
   }, [configured, router]);
 
