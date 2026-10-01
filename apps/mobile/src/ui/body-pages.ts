@@ -1,9 +1,9 @@
 /**
  * HOW MUCH OF A MESSAGE BODY ONE PHONE PAINT LAYS OUT — the desktop's bound, from the one helper
- * (`packages/ui/src/format/long-text.ts`). A body past one page is drawn a page per Text with a
+ * (`@ohmail/ui/long-text`, `packages/ui/src/format/long-text.ts`). A body past one page is drawn a page per Text with a
  * press for the next; one page or less is the single Text it always was, which `pages: null` says.
  */
-import { BODY_PAGE_CHARS, pageEnds } from "../../../../packages/ui/src/format/long-text";
+import { BODY_PAGE_CHARS, pageEnds } from "@ohmail/ui/long-text";
 
 export { BODY_PAGE_CHARS };
 
