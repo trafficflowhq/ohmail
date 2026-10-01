@@ -573,11 +573,14 @@ jobs:
           }
           echo "bundle dex identical to the scanned APK dex: $APK_N file(s)"
 
+      # KEPT 90 DAYS, like the desktop installers, and so is the mapping below: the release feeds
+      # read the APK on the desktop page against this artifact before they sign anything, so an
+      # artifact gone after a day would refuse a feeds re-run for the whole page.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ohmail-android-unsigned
           path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-          retention-days: 1
+          retention-days: 90
           if-no-files-found: error
 
       # Its own artifact rather than a second path on the one above, for the reason spelled out
@@ -620,7 +623,7 @@ jobs:
         with:
           name: ohmail-android-mapping
           path: ohmail-android-mapping.txt.gz
-          retention-days: 1
+          retention-days: 90
           if-no-files-found: error
 
   # ── the sign job: the ONLY job that sees the key, and it runs no project code ───────────
