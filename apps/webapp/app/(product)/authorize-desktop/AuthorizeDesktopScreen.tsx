@@ -6,11 +6,13 @@
  * Nothing is minted on load: the page READS what is being asked for and waits, and the press
  * carries the session's CSRF token, which a request composed somewhere else cannot produce. The
  * address arrives masked — this screen can be shared or photographed. The countdown is the
- * SERVER's number (`expiresIn`); a literal would be a second copy of `oauthAuthorizeRequestTtlMs`
- * that drifts. At zero the buttons go rather than grey out.
+ * SERVER's number (`expiresIn`), never a second copy of `oauthAuthorizeRequestTtlMs`; at zero the
+ * buttons go. It settles whose browser this is first (`approve/settle-owner.ts`); with no session the
+ * handle, bound to the session that opened it, is dead, so the remedy is the sign-in door.
  */
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { pendApiOwner } from "../../api-client";
@@ -18,6 +20,8 @@ import { readOwner } from "../../shell/owner-cookie";
 import {
   ApiError, apiConfigured, auth, messageOf, type AuthorizeRequestDTO,
 } from "../../api-client";
+import { useRefusalSentence } from "../refusal-sentence";
+import { useSettledOwner } from "../approve/settle-owner";
 
 /** The names this deployment has words for. Anything else is shown as the client said it. */
 const KNOWN_CLIENTS = new Set(["tf-macos"]);
@@ -31,6 +35,12 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
    */
   pendApiOwner(readOwner());
   const t = useTranslations("authorizeDesktop");
+  /** The sign-in door and its sentence are `/link-desktop`'s; the could-not-check one `/approve`'s. */
+  const tl = useTranslations("login");
+  const tk = useTranslations("linkDesktop");
+  const ta = useTranslations("approve");
+  const refusalSentence = useRefusalSentence();
+  const { settled } = useSettledOwner(Boolean(request) && apiConfigured());
 
   const [asked, setAsked] = useState<AuthorizeRequestDTO | null>(null);
   const [remaining, setRemaining] = useState(0);
@@ -47,6 +57,7 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
      restored tab does not destroy the ceremony the person came here for. */
   useEffect(() => {
     if (!request || !apiConfigured()) { setLoading(false); return; }
+    if (settled.kind !== "owner") return;
     const ctl = new AbortController();
     void (async () => {
       try {
@@ -64,7 +75,7 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
       }
     })();
     return () => ctl.abort();
-  }, [request, t]);
+  }, [request, settled, t]);
 
   /* The countdown, and the withdrawal at zero. One interval, cleared on unmount — a leaked one
      here would keep writing state into a page somebody has left. */
@@ -120,7 +131,20 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
     );
   }
 
-  if (loading) {
+  if (request && settled.kind === "none") {
+    return (
+      <Shell title={t("expiredTitle")}>
+        <p className="join-error" role="alert">{tk("signInFirst")}</p>
+        <div className="join-actions"><Link className="btn" href="/login">{tl("title")}</Link></div>
+      </Shell>
+    );
+  }
+  if (request && (settled.kind === "refused" || settled.kind === "unchecked")) {
+    const said = settled.kind === "refused" ? refusalSentence(settled.refusal) : ta("signInUnchecked");
+    return <Shell title={t("title")}><p className="join-error" role="alert">{said}</p></Shell>;
+  }
+
+  if (loading || (request && settled.kind !== "owner")) {
     return (
       <Shell title={t("title")}>
         <p className="sub">{t("working")}</p>

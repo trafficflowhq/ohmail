@@ -16,7 +16,9 @@
  * opens `StepUpPrompt`, which re-stamps the session this browser holds, and the verified factor
  * retries the mint once. Nothing here signs in — each sign-in was one more web session on the
  * account — so a browser with no session, an unfinished enrolment and a second refusal after a
- * verified factor are each told to sign in and open this page again.
+ * verified factor are each told to sign in and open this page again. The page settles whose
+ * browser this is before it offers a code (`approve/settle-owner.ts`), so a browser with no
+ * session is told that at once rather than after a press.
  */
 
 /**
@@ -39,10 +41,12 @@ import { readOwner } from "../../shell/owner-cookie";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
-import { apiConfigured, auth, messageOf } from "../../api-client";
+import { apiConfigured, auth } from "../../api-client";
 import { isBusy, retryBusy } from "../../retry-busy";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 import { gatedRefusal } from "../mailbox/gated-refusal";
+import { useRefusalSentence } from "../refusal-sentence";
+import { isOwnerAbsent, useSettledOwner } from "../approve/settle-owner";
 
 /** A live code and the moment it stops being one. */
 interface Minted {
@@ -77,6 +81,10 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
   const t = useTranslations("linkDesktop");
   /** The sign-in door's label is `/login`'s own title. */
   const tl = useTranslations("login");
+  /** The settle step's could-not-check sentence is the approval page's. */
+  const ta = useTranslations("approve");
+  const refusalSentence = useRefusalSentence();
+  const { settled, resettle } = useSettledOwner(apiConfigured());
 
   const [minted, setMinted] = useState<Minted | null>(null);
   const [remaining, setRemaining] = useState(0);
@@ -157,6 +165,7 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
         setPhase("idle");
       } catch (err) {
         if (!alive.current) return;
+        if (isOwnerAbsent(err)) { resettle(); return; }
         const why = gatedRefusal(err, afterFactor);
         if (why === "factor") {
           setPhase("stepup");
@@ -166,7 +175,7 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
           // The server, never the session: the sign-in is fine and the button is still there.
           setError(t("busyGaveUp"));
         } else {
-          setError(messageOf(err));
+          setError(refusalSentence(err));
         }
       } finally {
         if (alive.current) { setBusy(false); setRetryAt(null); }
@@ -195,6 +204,24 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
         <p className="sub">{t("unavailableBody")}</p>
       </Shell>
     );
+  }
+
+  /* Before any press: no full session is the sign-in door; a jar naming somebody else, or a check
+     that never answered, is said instead of a button. */
+  if (settled.kind === "none") {
+    return (
+      <Shell title={t("title")}>
+        <p className="join-error" role="alert">{t("signInFirst")}</p>
+        <div className="join-actions"><Link className="btn" href="/login">{tl("title")}</Link></div>
+      </Shell>
+    );
+  }
+  if (settled.kind === "refused" || settled.kind === "unchecked") {
+    const said = settled.kind === "refused" ? refusalSentence(settled.refusal) : ta("signInUnchecked");
+    return <Shell title={t("title")}><p className="join-error" role="alert">{said}</p></Shell>;
+  }
+  if (settled.kind === "checking") {
+    return <Shell title={t("title")}><p className="sub">{t("working")}</p></Shell>;
   }
 
   if (phase === "stepup") {

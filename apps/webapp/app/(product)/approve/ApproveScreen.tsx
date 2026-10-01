@@ -3,11 +3,12 @@
 /**
  * "Sign in ohmail on this computer?" — the one confirm in front of a desktop's sign-in.
  *
- * The page READS the request and waits; the press carries the session's CSRF token, and the
- * route is step-up gated, so a stale factor is asked for inline (a passkey or one code) and the
- * confirm retried the moment it verifies — never the password ceremony. A signed-out browser
- * goes through the ordinary sign-in and comes back by the request id. A busy server is a wait
- * with Confirm still live, never a dead end. The countdown is the server's `expiresIn`.
+ * The page settles whose browser this is first (`settle-owner.ts`), then READS the request and
+ * waits; the press carries the session's CSRF token, and the route is step-up gated, so a stale
+ * factor is asked for inline (a passkey or one code) and the confirm retried the moment it
+ * verifies — never the password ceremony. A browser with no full session goes through the
+ * ordinary sign-in and comes back by the request id. A busy server is a wait with Confirm still
+ * live, never a dead end. The countdown is the server's `expiresIn`.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -16,10 +17,12 @@ import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { pendApiOwner } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
-import { ApiError, SESSION_UNCHECKED, apiConfigured, auth, messageOf, type DesktopApprovalDTO } from "../../api-client";
+import { ApiError, SESSION_UNCHECKED, apiConfigured, auth, type DesktopApprovalDTO } from "../../api-client";
 import { isBusy, retryBusy } from "../../retry-busy";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
+import { useRefusalSentence } from "../refusal-sentence";
 import { rememberApprovalRequest } from "./approval-return";
+import { isOwnerAbsent, useSettledOwner } from "./settle-owner";
 import { sessionIsDead } from "../../shell/session-truth";
 
 type Phase = "idle" | "stepUp" | "done" | "denied";
@@ -30,6 +33,9 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
   pendApiOwner(readOwner());
   const t = useTranslations("approve");
   const router = useRouter();
+  const refusalSentence = useRefusalSentence();
+  /* Nothing is asked for until this says whose browser it is; see `settle-owner.ts`. */
+  const { settled, resettle } = useSettledOwner(Boolean(request) && apiConfigured());
 
   const [asked, setAsked] = useState<DesktopApprovalDTO | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,8 +45,12 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   /* THE ACCOUNT THE CONFIRM BINDS — this browser's own session, shown plainly as Settings shows
-     it. Null until read, and a failed read says nothing rather than guessing. */
-  const [account, setAccount] = useState<string | null>(null);
+     it, and only while the page is settled on that same account. Null until read, and a failed
+     read says nothing rather than guessing. */
+  const [account, setAccount] = useState<{ accountId: string; email: string } | null>(null);
+  const named = settled.kind === "owner" && account?.accountId === settled.accountId ? account.email : null;
+  /* Settling again drops the request it read: a read that then fails must not leave it, Confirm and all. */
+  const settleAgain = (): void => { setAsked(null); resettle(); };
 
   const alive = useRef(true);
   const gone = useRef(new AbortController());
@@ -84,7 +94,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
       if (err.code === SESSION_UNCHECKED) return t("signInUnchecked");
       if (isBusy(err)) return t("busyGaveUp");
     }
-    return messageOf(err);
+    return refusalSentence(err);
   };
 
   /* No session in this browser: sign in the ordinary way and come back to this request — only
@@ -99,9 +109,20 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
     setError(t("signInUnchecked"));
   };
 
+  /* No full session here, an enrolment-only one included: the ordinary sign-in, and back. */
+  useEffect(() => {
+    if (settled.kind === "none") {
+      rememberApprovalRequest(request);
+      router.replace("/login");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the verdict is the trigger
+  }, [settled]);
+
   useEffect(() => {
     if (!request || !apiConfigured()) { setLoading(false); return; }
+    if (settled.kind !== "owner") return;
     const ctl = new AbortController();
+    setLoading(true);
     void (async () => {
       try {
         const dto = await retryBusy(() => auth.desktopApproval(request, { signal: ctl.signal }), {
@@ -113,6 +134,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
         if (dto.approved) setPhase("done");
       } catch (err) {
         if (!alive.current || ctl.signal.aborted) return;
+        if (isOwnerAbsent(err)) { settleAgain(); return; }
         if (err instanceof ApiError && err.status === 401) { onUnauthorized(); return; }
         setError(sentenceFor(err));
       } finally {
@@ -120,16 +142,16 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
       }
     })();
     return () => ctl.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one read per request id
-  }, [request]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one read per request id and per settle
+  }, [request, settled]);
 
   useEffect(() => {
-    if (!request || !apiConfigured()) return;
+    if (settled.kind !== "owner") return;
     void auth.session().then(
-      ({ user }) => { if (alive.current && user.email) setAccount(user.email); },
+      ({ user }) => { if (alive.current && user.email) setAccount({ accountId: user.accountId, email: user.email }); },
       () => { /* no line: the confirm still binds this session, whatever it is called */ },
     );
-  }, [request]);
+  }, [settled]);
 
   /* The countdown, and the withdrawal at zero — the buttons go rather than grey out. */
   useEffect(() => {
@@ -163,6 +185,8 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
           setPhase("stepUp");
         } else if (err instanceof ApiError && err.status === 401) {
           onUnauthorized();
+        } else if (isOwnerAbsent(err)) {
+          settleAgain();
         } else {
           setError(sentenceFor(err));
           if (err instanceof ApiError && (err.status === 410 || err.status === 404)) setAsked(null);
@@ -185,6 +209,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
       } catch (err) {
         if (!alive.current) return;
         if (err instanceof ApiError && err.status === 401) onUnauthorized();
+        else if (isOwnerAbsent(err)) settleAgain();
         else setError(sentenceFor(err));
       } finally {
         if (alive.current) { setBusy(false); setRetryAt(null); }
@@ -204,7 +229,11 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
   if (phase === "denied") {
     return <Shell title={t("deniedTitle")}><p className="sub">{t("deniedBody")}</p></Shell>;
   }
-  if (loading) {
+  if (settled.kind === "refused" || settled.kind === "unchecked") {
+    const said = settled.kind === "refused" ? refusalSentence(settled.refusal) : t("signInUnchecked");
+    return <Shell title={t("title")}><p className="join-error" role="alert">{said}</p></Shell>;
+  }
+  if (loading || settled.kind !== "owner") {
     return (
       <Shell title={t("title")}>
         {retryAt !== null ? <p className="join-hint" role="status">{t("busyRetrying", { seconds: retryIn })}</p> : null}
@@ -240,7 +269,7 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
         {asked.platform ? <li>{asked.platform}</li> : null}
         <li>{when}</li>
       </ul>
-      {account ? <p className="join-hint" data-testid="approve-account">{t("signsInTo", { email: account })}</p> : null}
+      {named ? <p className="join-hint" data-testid="approve-account">{t("signsInTo", { email: named })}</p> : null}
 
       {phase === "stepUp" ? (
         <StepUpPrompt
