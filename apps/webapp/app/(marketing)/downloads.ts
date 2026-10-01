@@ -33,21 +33,14 @@ export type PlatformId = "apple" | "linux" | "windows";
 export type MobileId = "android" | "ios";
 
 /**
- * The Android APK — the desktop row's mechanism, now that the APK is a release asset. This used to
- * read the newest `android-v*` tag once per build and link that tag's page, on the premise that
- * `latest` could never reach the APK (Android tags are pre-releases); the premise died when the
- * release began attaching the signed APK to the stable release, and a tag baked at build time went
- * stale — the button sat on `android-v0.15.0` two releases later. So the phone uses the same
- * indirection and asset contract as the three desktop buttons: one published name under
- * {@link RELEASE_BASE}, asserted in `download-assets.test.ts` and allow-listed in
- * `no-third-party.test.ts`. GitHub resolves `latest` per request, so this link cannot fall behind.
+ * The Android APK, on the desktop buttons' indirection and asset contract: one published name under
+ * {@link RELEASE_BASE}. `latest` is the desktop release, never the `android-v*` prerelease, so every
+ * release attaches the signed APK to the desktop release beside the installers, and the release
+ * tooling refuses a desktop page without it. A tag written into this link went stale twice (it sat
+ * on `android-v0.15.0` two releases later); this one names no version. The full literal, because
+ * the off-origin scan reads string literals; `download-assets.test.ts` asserts the shape.
  */
 export const ANDROID_APK_ASSET = "ohmail-android.apk";
-
-/**
- * The full literal, like the desktop entries below: the off-origin scan reads string
- * literals, and `download-assets.test.ts` asserts this is `RELEASE_BASE` + the asset name.
- */
 export const ANDROID_RELEASE_URL = "https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk";
 
 export interface DownloadFormat {
