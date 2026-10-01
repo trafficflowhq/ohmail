@@ -102,8 +102,10 @@ export async function planInferredPressRepair(tx: Tx, accountId: string): Promis
   const ruleIds = candidates.filter((r) => {
     const k = keyOf(r);
     const named = screened.get(k);
-    if (named === undefined || named.size === 0 || named.has(OHBOX)) return false;
+    if (named === undefined || named.size === 0) return false;
     if (approvedIntoOhbox.has(k)) return false;
+    // A rule of the key at a place a Screener decision named — this rule included, so a Screener
+    // decision into the Ohbox is one too — means the Screener can account for where it stands.
     const places = placesOfKey.get(k) ?? new Set<string>();
     for (const p of named) if (places.has(p)) return false;
     return true;
