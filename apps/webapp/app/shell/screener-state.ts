@@ -237,6 +237,11 @@ export interface ScreenerState {
    * speaks from the store's facts (`waitingSurfaceInput`). Absent reads as no.
    */
   queueAnswered?: boolean;
+  /**
+   * Does the store's queue page say this door's copy is still taking in the account (`copyBehind`)?
+   * The Screened out and Spam counts are this copy's, so they wait for it. Absent reads as no.
+   */
+  copyBehind?: boolean;
   /** The store's queue past its first page, a page per press. */
   waitingMore: WaitingMore;
   /** Ask the store for the queue's first page again — the Screener calls it when it opens. */
@@ -2213,6 +2218,7 @@ export function useScreenerState(
     waitingCount,
     waitingSource: segments.source === "store" ? "store" : engine.screenerWaitingAvailable() ? "device" : "local",
     queueAnswered: firstPage !== null,
+    copyBehind: firstPage?.page.copyBehind === true,
     waitingMore: {
       available: segments.source === "store" && nextWaitingCursor !== null,
       loading: onwardLive.loading,

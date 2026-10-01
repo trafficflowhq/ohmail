@@ -98,3 +98,23 @@ export function waitingSurfaceInput(f: WaitingSurfaceFacts): ListSurfaceInput & 
     why: f.storeImportOpen ? "importing" : listing ? "listing" : null,
   };
 }
+
+/** What a count of this mirror's own rows knows about its set — see {@link mirrorCountInput}. */
+export interface MirrorCountFacts {
+  settled: boolean;
+  owed: boolean;
+  /** Does the door say its copy is still taking in the account (the queue page's `copyBehind`)? */
+  copyBehind: boolean;
+  /** The rows on screen. */
+  count: number;
+}
+
+/**
+ * A LIST THE MIRROR DERIVES (Screened out, Spam) states the account's number only once the door's
+ * copy holds the account. While mail is owed, or while the door says its copy is still taking the
+ * account in, the count is withheld with the importing sentence: the strip's import can end before
+ * the copy's, and older screened-out mail is not in it yet. A door that never says so reads as before.
+ */
+export function mirrorCountInput(f: MirrorCountFacts): ListSurfaceInput {
+  return { settled: f.settled, count: f.count, pending: f.owed || f.copyBehind };
+}

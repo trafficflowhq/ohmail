@@ -18,7 +18,7 @@ import type {
   UnsubscribeHeaderState,
   UnsubscribeResult,
 } from "@ohmail/client-engine";
-import { countWhen, listSurface, saysEmpty, waitingSurfaceInput, type WaitingWhy } from "@ohmail/client-engine";
+import { countWhen, listSurface, mirrorCountInput, saysEmpty, waitingSurfaceInput, type WaitingWhy } from "@ohmail/client-engine";
 import {
   AskWell,
   BulkProgress,
@@ -783,6 +783,9 @@ export function ScreenerView({
     source: state.waitingSource, storeTotal: state.waitingCount, queueAnswered: state.queueAnswered === true,
     settled, owed, storeImportOpen: storeImportOpen ?? owed, count,
   });
+  /** Screened out and Spam are this copy's rows, so they wait for the copy (`mirrorCountInput`). */
+  const mirrorInput = (count: number) =>
+    mirrorCountInput({ settled, owed, copyBehind: state.copyBehind === true, count });
 
   /**
    * WHAT THIS SEGMENT MAY SAY ABOUT ITSELF — the shared reading
@@ -791,7 +794,7 @@ export function ScreenerView({
    * and "No one's waiting" over an account still importing is the Ohbox's defect in this pile.
    */
   const emptySurface = (count: number): ListSurface =>
-    listSurface(segment === "waiting" ? waitingInput(count) : { settled, count, pending: owed });
+    listSurface(segment === "waiting" ? waitingInput(count) : mirrorInput(count));
 
   const idOf = (x: ScreenerSenderDTO | SpamRow) =>
     "pinned" in x ? x.sender.id : x.id;
@@ -1461,8 +1464,8 @@ export function ScreenerView({
                 {
                   id: "screened",
                   label: t("segScreened"),
-                  // Mirror lengths, so withheld mid-import like every count this list states.
-                  count: countWhen({ settled, count: state.screenedOut.length, pending: owed },
+                  // Mirror lengths, so withheld until this copy holds the account.
+                  count: countWhen(mirrorInput(state.screenedOut.length),
                     state.screenedOut.length > 0 ? state.screenedOut.length : "") ?? "",
                 },
                 {
@@ -1472,7 +1475,7 @@ export function ScreenerView({
                      bounded page of a folder whose total it has not read, and a number that
                      means "rows loaded so far" would read as "junk you have". */
                   label: junk !== undefined ? t("segJunk") : t("segSpam"),
-                  count: junk !== undefined ? "" : countWhen({ settled, count: state.spam.length, pending: owed },
+                  count: junk !== undefined ? "" : countWhen(mirrorInput(state.spam.length),
                     state.spam.length > 0 ? state.spam.length : "") ?? "",
                 },
               ]}

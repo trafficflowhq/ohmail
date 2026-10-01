@@ -70,8 +70,8 @@ export {
  * reason: both surfaces already compile this package, and a rule a surface cannot import is a
  * rule a surface writes again — differently.
  */
-export { countWhen, listSurface, metaWhen, saysEmpty, waitingSurfaceInput } from "./list-surface.js";
-export type { ListSurface, ListSurfaceInput, WaitingSurfaceFacts, WaitingWhy } from "./list-surface.js";
+export { countWhen, listSurface, metaWhen, mirrorCountInput, saysEmpty, waitingSurfaceInput } from "./list-surface.js";
+export type { ListSurface, ListSurfaceInput, MirrorCountFacts, WaitingSurfaceFacts, WaitingWhy } from "./list-surface.js";
 
 /**
  * The nameless-attachment naming pair, re-exported from core so every client names a
