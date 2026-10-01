@@ -18,7 +18,7 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.25.7] — 2026-09-30
+## [0.25.7] — 2026-10-01
 
 ### A crafted address header can no longer stall mail sync, and attachments are verified
 <!-- changes: hotfix-0.25.7.md -->

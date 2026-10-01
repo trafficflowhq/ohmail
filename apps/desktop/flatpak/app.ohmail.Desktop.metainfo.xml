@@ -74,7 +74,7 @@
   </screenshots>
 
   <releases>
-    <release version="0.25.7" date="2026-09-30">
+    <release version="0.25.7" date="2026-10-01">
       <description>
         <ul>
           <li>A crafted address header can no longer stall mail sync, and attachments are verified</li>
