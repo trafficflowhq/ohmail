@@ -397,6 +397,20 @@ function storeSaysNotWaiting(reader: EntityReader): (m: EngineMessage, key: stri
   };
 }
 
+/**
+ * THE SENDERS THIS COPY HOLDS AT THE GATE, while the queue page says it was read ahead of this copy
+ * (`copyBehind`: a mirror still taking in the account). Such a page stops listing a sender decided
+ * on another device long before the rule reaches this copy, so its silence about a sender held here
+ * is not an answer; empty when the page says nothing of the kind.
+ */
+function heldAheadOfTheCopy(reader: EntityReader, messages: readonly EngineMessage[]): ReadonlySet<string> {
+  if (screenerWaitingOf(reader)?.page.copyBehind !== true) return NO_SENDERS;
+  const out = new Set<string>();
+  for (const m of messages) if (m.folder === "ohmail/Screener") out.add(senderKey(m.from.address));
+  return out;
+}
+const NO_SENDERS: ReadonlySet<string> = new Set();
+
 function messageMs(m: EngineMessage): number | null {
   const header = m.date === null ? Number.NaN : new Date(m.date).getTime();
   if (Number.isFinite(header)) return header;
@@ -478,6 +492,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const index = consentIndex(rulesList(reader), mailboxProfiles(reader));
   const own = ownAddressKeys(reader, opts);
   const notWaiting = storeSaysNotWaiting(reader);
+  const heldAhead = heldAheadOfTheCopy(reader, messages);
   /* The user's own folders, when "Use folders" is on (FOLDERS-SPEC.md
    * §16.5). Two gates, both must say yes: the caller's
    * {@link ConsentOptions.foldersEnabled} (the account's consent answer —
@@ -638,9 +653,11 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     } else if (decided === null && (rulesOnly || active) && notWaiting(m, key)) {
       // THE STORE HAS ANSWERED FOR THIS SENDER: not waiting (a correspondent, a contact, decided
       // elsewhere), so their mail presents in the Ohbox, never at the gate. The count keeps asking
-      // the cutline's own question, which is the one the SQL twin answers.
+      // the cutline's own question, which is the one the SQL twin answers. EXCEPT a sender this copy
+      // holds at the gate while the page was read ahead of it ({@link heldAheadOfTheCopy}): kept at
+      // the gate until the rule lands or the copy catches up, never released early to the Ohbox.
       if (!rulesOnly) activeUndecided.add(key);
-      placeOf.set(m.id, "INBOX");
+      placeOf.set(m.id, heldAhead.has(key) ? "ohmail/Screener" : "INBOX");
     } else if (rulesOnly) {
       placeOf.set(m.id, m.folder);
     } else if (active) {

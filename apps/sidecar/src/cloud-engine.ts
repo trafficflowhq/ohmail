@@ -222,6 +222,28 @@ export function drainOnFollowUp(
  * ABSENT, NEVER ZERO — a mailbox the map has nothing for is left as the read produced it, since `0`
  * asserts an empty account. A non-JSON or non-list body passes through untouched (a decoration).
  */
+/**
+ * A QUEUE ANSWER READ WHILE THIS MIRROR BOOTSTRAPS. The queue relays live from the account, so it
+ * stops listing a sender decided on another device long before the replay brings the rule here.
+ * The answer says so (`copyBehind`), and the window then keeps that sender's held mail at the gate
+ * rather than in the Ohbox; the rules are asked for again, so the rule lands at the next page. A
+ * body that is not a queue page passes untouched.
+ */
+export async function queueAheadOfTheCopy(
+  res: Response,
+  mirror: Pick<CloudMirror, "askRulesRefresh">,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch {
+    return res;
+  }
+  if (body === null || typeof body !== "object" || !Array.isArray((body as { items?: unknown }).items)) return res;
+  mirror.askRulesRefresh();
+  return json({ ...(body as object), copyBehind: true }, res.status);
+}
+
 async function decorateHostedCounts(
   res: Response,
   counts: ReadonlyMap<string, number>,
@@ -1904,6 +1926,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           }
           throw err;
         }
+      }
+
+      // THE QUEUE IS THE ACCOUNT'S, READ AHEAD OF A COPY STILL TAKING IT IN — see `queueAheadOfTheCopy`.
+      if (req.method === "GET" && path === "/screener") {
+        const res = await proxy.forward(req);
+        return res.ok && liveMirror.bootstrapping() ? await queueAheadOfTheCopy(res, liveMirror) : res;
       }
 
       // EVERYTHING ELSE IS A WRITE (or an attachment/media byte read the mirror does not hold): the

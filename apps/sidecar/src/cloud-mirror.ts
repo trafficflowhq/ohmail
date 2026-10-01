@@ -471,6 +471,16 @@ export interface CloudMirror {
   /** Report connectivity observed elsewhere — the proxy's own forward reaching Cloud, or not. */
   markConnectivity(reachable: boolean): void;
   /**
+   * Is this copy still taking in the account (a bootstrap owed or in flight)? A queue the window
+   * reads live from the account is then ahead of the mail and rules beside it.
+   */
+  bootstrapping(): boolean;
+  /**
+   * Owe the pull a rules pass at its next page boundary, during a bootstrap only, and at most once
+   * per {@link RULES_REFRESH_MIN_GAP_MS}. Never waits for it. True when this ask owed one.
+   */
+  askRulesRefresh(): boolean;
+  /**
    * HAS THE HOSTED ACCOUNT BEEN DELETED. Latched by a `410 account_erased` from any hosted read
    * and never cleared in this process: nothing is pulled and nothing is written after it. Distinct
    * from `online()`, which is a network reading a later pull can reverse; this one cannot be.
@@ -534,6 +544,9 @@ export interface CloudMirror {
 }
 
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
+
+/** The shortest gap between two mid-bootstrap rules passes a queue answer can owe. */
+export const RULES_REFRESH_MIN_GAP_MS = 10_000;
 
 /**
  * THE FOLLOW-UP CHAIN. An echo the bound cut keeps asking off the request path: after 250 ms,
@@ -2674,9 +2687,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * gated on this pass — the bridge renders before the first pull, and gating local reads on a
    * network request would blank a device whose mail is local; a client corrects on its next poll.
    */
-  const drainRulesFirst = async (gen: BootstrapGen | null): Promise<{ applied: number; cut: boolean }> => {
+  const drainRules = async (gen: BootstrapGen | null, from: string): Promise<{ applied: number; cut: boolean }> => {
     let applied = 0;
-    let since = "0";
+    let since = from;
     for (;;) {
       if (aborted) return { applied, cut: true };
       const q = new URLSearchParams({ since, limit: String(pageLimit), types: "rule" });
@@ -2687,9 +2700,40 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       gen?.flush();
       reachable = true;
       since = body.cursor;
+      rulesCursor = since;
       if (!body.hasMore) break;
     }
     return { applied, cut: false };
+  };
+  const drainRulesFirst = async (gen: BootstrapGen | null): Promise<{ applied: number; cut: boolean }> => {
+    rulesRefreshOwed = false;
+    return drainRules(gen, "0");
+  };
+
+  /**
+   * THE RULES AGAIN, MID-BOOTSTRAP. The queue is read live from the account while this copy is
+   * still replaying it, so a sender decided on another device leaves the queue long before the
+   * replay reaches the rule. A queue answer asks for this ({@link CloudMirror.askRulesRefresh});
+   * the pull runs it at its next page boundary, from where the last rules pass ended, so it lands
+   * only what changed. Best-effort: a failure leaves the rule to the replay and the next ask.
+   */
+  let rulesCursor: string | null = null;
+  let rulesRefreshOwed = false;
+  let rulesRefreshAt = Number.NEGATIVE_INFINITY;
+  const runOwedRulesRefresh = async (gen: BootstrapGen | null): Promise<number> => {
+    if (!rulesRefreshOwed) return 0;
+    rulesRefreshOwed = false;
+    try {
+      const r = await drainRules(gen, rulesCursor ?? "0");
+      cfg.log?.("cloud_rules_refreshed", { count: r.applied });
+      return r.applied;
+    } catch (err) {
+      cfg.log?.("cloud_rules_refresh_deferred", {
+        err,
+        reason: "the mid-bootstrap rules pass did not complete; the replay still carries the rules and the next queue answer asks again",
+      });
+      return 0;
+    }
   };
 
   /**
@@ -2799,6 +2843,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     let restarted = false;
     for (;;) {
       if (aborted) return { applied, cut: true };
+      applied += await runOwedRulesRefresh(gen);
       const w = cursor.window;
       if (w.phase === "complete") return { applied, cut: false };
       const q = new URLSearchParams({ limit: String(pageLimit) });
@@ -3037,6 +3082,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         applied += rf.applied;
         if (rf.cut) return { applied, sweep: null, cut: true };
       }
+      if (sweep !== null) applied += await runOwedRulesRefresh(sweep);
       if (windowOwed) {
         windowOwed = false;
         const w = await drainWindowFirst(sweep);
@@ -4125,6 +4171,18 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     online: () => reachable,
     markConnectivity: (v: boolean) => {
       reachable = v;
+    },
+    bootstrapping: () => cursor.bootstrapping || isBootstrapCursor(cursor.sync),
+    askRulesRefresh: () => {
+      if (stopped || aborted || accountErased) return false;
+      if (!cursor.bootstrapping && !isBootstrapCursor(cursor.sync)) return false;
+      const t = now().getTime();
+      if (t - rulesRefreshAt < RULES_REFRESH_MIN_GAP_MS) return false;
+      rulesRefreshAt = t;
+      rulesRefreshOwed = true;
+      // A pull in flight takes it at its next page; with none, the next pull's own rules pass does.
+      if (!inflight) kick();
+      return true;
     },
     accountErased: () => accountErased,
     cloudSeq,

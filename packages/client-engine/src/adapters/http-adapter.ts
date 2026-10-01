@@ -1135,7 +1135,7 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.request("GET", `/screener?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as {
-      items?: unknown; nextCursor?: unknown; total?: unknown; pendingDecisions?: unknown;
+      items?: unknown; nextCursor?: unknown; total?: unknown; pendingDecisions?: unknown; copyBehind?: unknown;
     } | null;
     // A body that is not a queue page is no answer. Read as an empty page it would say nobody is
     // waiting, and the partition would present held mail in the Ohbox on the strength of it.
@@ -1157,6 +1157,7 @@ export class HttpAdapter implements EngineAdapter {
       total: typeof wire.total === "number" && Number.isFinite(wire.total) && wire.total >= 0
         ? Math.trunc(wire.total) : null,
       inFlight,
+      ...(wire.copyBehind === true ? { copyBehind: true as const } : {}),
     };
   }
 
@@ -1257,7 +1258,6 @@ export class HttpAdapter implements EngineAdapter {
 
   // ── mutations ────────────────────────────────────────────────────────────
 
-  /** A message-DTO echo becomes one authoritative change at the echoed seq (§3.4). */
   /**
    * The rules a decide's 200 says it wrote, as echo changes at the answer's seq: the created rule,
    * only when it is the one `createdRuleId` names, and each retargeted twin. Anything that is not
@@ -1276,6 +1276,7 @@ export class HttpAdapter implements EngineAdapter {
     return out;
   }
 
+  /** A message-DTO echo becomes one authoritative change at the echoed seq (§3.4). */
   private messageEcho(dto: EngineMessage, seq: number, op: "update" | "move", move?: { from: null; to: EngineMessage["folder"] }): SyncChange {
     return {
       type: "message",
@@ -2753,7 +2754,6 @@ async function sha256Hex(bytes: Uint8Array): Promise<string | null> {
   }
 }
 
-/** Decoded byte length of a base64 string, without decoding it. */
 /** A rule row as `/sync` carries it, read defensively: the fields a placement and a list read. */
 function isRuleRow(r: unknown): r is RuleDTO {
   const x = r as Partial<RuleDTO> | null;
@@ -2763,6 +2763,7 @@ function isRuleRow(r: unknown): r is RuleDTO {
     && typeof x.enabled === "boolean" && typeof x.priority === "number" && typeof x.updatedAt === "string";
 }
 
+/** Decoded byte length of a base64 string, without decoding it. */
 function base64ByteLength(b64: string): number {
   const len = b64.length;
   if (len === 0) return 0;

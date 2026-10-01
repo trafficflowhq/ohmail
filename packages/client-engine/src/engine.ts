@@ -5692,6 +5692,7 @@ export class OhmailEngine {
       const page: ScreenerWaitingPageDTO = {
         id: SCREENER_WAITING_PAGE_ID, kind: "page", total, nextCursor: wire.nextCursor,
         inFlight: wire.inFlight, ask: seq, rows: puts.length,
+        ...(wire.copyBehind === true ? { copyBehind: true as const } : {}),
       };
       puts.push({ type: SCREENER_WAITING_TYPE, id: SCREENER_WAITING_PAGE_ID, entity: page });
     }
