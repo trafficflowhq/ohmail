@@ -1015,6 +1015,9 @@ export function correlateMoves(creates: InternalCreate[], deletes: InternalDelet
       moves.push({
         type: "move", locator: { folder: c.folder, ref: makeRef(c.uidValidity, c.uid) }, raw: c.raw, seen: c.seen,
         ...(c.oversizeBytes !== undefined ? { oversizeBytes: c.oversizeBytes } : {}),
+        // The tree rides with the source here too: a move whose message the store does not hold is
+        // planned as new, and without it its files would keep mailparser's ids for no reason.
+        ...(c.structure !== undefined ? { structure: c.structure } : {}),
       });
     } else {
       pureCreates.push(c);
