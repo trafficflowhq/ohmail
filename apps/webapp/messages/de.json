@@ -1748,7 +1748,7 @@
     "door": "ohmail <k>öffnet für dich die Tür</k>: Erstabsender <k>warten am Screener</k>, bis du sie reinlässt — in deiner Ohbox liegt also nur Post, zu der du Ja gesagt hast, organisiert an ihrem Platz: in <k>echten Ordnern</k> auf den Postfächern, die du längst hast. <o>Geh, wann du willst</o>; dein Postfach bleibt organisiert.",
     "ctaGet": "ohmail holen.",
     "ctaDemo": "Demo ausprobieren",
-    "note": "Kostenlos für macOS, Windows und Linux — ein Mail-Client, der zuerst auf deinem Rechner arbeitet, auf den Postfächern, die du längst hast · Cloud ab 9 $/Monat, 14 Tage gratis · jedes IMAP-Postfach"
+    "note": "Kostenlos für macOS, Windows und Linux — ein Mail-Client, der zuerst auf deinem Rechner arbeitet, auf den Postfächern, die du längst hast · Cloud ab 9 $/Monat, 14 Tage gratis · jedes IMAP-Postfach, Gmail und Microsoft 365 / Exchange*. * Microsoft 365 und Exchange verbinden sich über deine Microsoft-Anmeldung; in manchen Organisationen muss ein Admin ohmail zuerst freigeben."
   },
   "demo": {
     "heading": "Das ist kein Screenshot.",
@@ -2042,7 +2042,7 @@
     "ios": "iOS",
     "mobileLead": "Und in der Tasche",
     "androidCta": "Android-Version holen",
-    "androidFormat": "APK · nicht bei Google Play",
+    "androidFormat": "APK · Google Play folgt in Kürze",
     "iosSoon": "kommt bald",
     "yours": "Sieht nach deinem System aus",
     "firstRun": "Die Builds für macOS und Windows sind noch nicht von Apple oder Microsoft signiert, beim ersten Start musst du das also einmal bestätigen. Nichts in der App telefoniert nach Hause außer einer signierten Update-Prüfung.",
