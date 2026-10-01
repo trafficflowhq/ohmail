@@ -9,7 +9,7 @@
  * bundle that baked an absolute build path, so the second half MOVES the journal aside and requires the boot
  * to fail in `migrate()` (`start_failed`/`ENOENT`, no `serving`), or the first half is worthless. A healthy boot is recognised by reading `serving` on stderr (a live pid is not a running engine), fed a dead IMAP port and no password so it never reaches the network. `node scripts/verify-engine-boot.mjs [engineRoot]` (holds `bin/ohmail-engine.mjs` and `drizzle/`, `build/engine` by default). */
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -102,6 +102,12 @@ if (healthy.pgdataEntries < 10) {
   fail(`served but PGlite wrote only ${healthy.pgdataEntries} pgdata entries — the mirror is not real`);
 }
 console.log(`  ✓ serves with the journal at ./drizzle (${healthy.pgdataEntries} pgdata entries, attempt ${attempts})`);
+/* THE HEALTHY BOOT'S OWN TIMING LINE, printed and, with OHMAIL_BOOT_LOG set, written there for
+ * `perf-smoke-check.mjs --boot`: the reading a platform's engine-ready distribution is built from.
+ * The line carries numbers and migration names, nothing about a mailbox. */
+const bootLine = healthy.err.split("\n").filter((l) => l.includes('"event":"boot_phases"')).pop() ?? null;
+console.log(`  boot_phases: ${bootLine === null ? "<the healthy boot wrote none>" : bootLine.slice(bootLine.indexOf("{"))}`);
+if (process.env.OHMAIL_BOOT_LOG) writeFileSync(process.env.OHMAIL_BOOT_LOG, bootLine === null ? "" : `${bootLine}\n`);
 
 // ── 2. Journal moved aside: the engine must fail in migrate(), not serve ──────────────────────
 const stash = `${journal}.verify-moved`;

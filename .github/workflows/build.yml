@@ -424,6 +424,12 @@ jobs:
             *) echo "the vendored node was signed without the hardened runtime" >&2; exit 1 ;;
           esac
 
+      # THE RUNNER'S SPEED, beside the engine's: the build step's own seconds are
+      # the reading every engine-ready ceiling's distribution was taken beside
+      # (TIMING_READINGS in scripts/perf-smoke-check.mjs), so a slow runner shows.
+      - name: Note when the build step starts
+        run: echo "OHMAIL_BUILD_STEP_T0=$(date +%s)" >> "$GITHUB_ENV"
+
       # ── 4 · the app ───────────────────────────────────────────────────────
       # `app:build:engine` stages the engine and its runtime, rebuilds the UI
       # with the bridge, SMOKES that bundle, and only then bundles the app. The
@@ -432,6 +438,9 @@ jobs:
       - name: Build the engine-bearing app (universal), smoking its bundle
         working-directory: apps/desktop
         run: npm run app:build:engine -- --bundles app,dmg -- --target universal-apple-darwin -- --locked
+
+      - name: Note how long the build step took
+        run: echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - ${OHMAIL_BUILD_STEP_T0:?the build step start was not noted} ))" >> "$GITHUB_ENV"
 
       - name: Name the artifacts what the download page links
         run: |
@@ -659,6 +668,20 @@ jobs:
             exit 1
           fi
           echo "the packaged engine served, using only the runtime inside the app"
+          # THE BOOT'S TIMING against macOS's own distribution of this reading
+          # (TIMING_READINGS in scripts/perf-smoke-check.mjs), the build step's
+          # seconds beside it: over the ceiling on a slower runner is rc 5, a
+          # question and a warning; over the runner band too is red.
+          set +e
+          node scripts/perf-smoke-check.mjs --boot --platform macos \
+            --engine-log "$D/err" --runner-s "${OHMAIL_BUILD_STEP_S:-}"
+          RC=$?
+          set -e
+          case "$RC" in
+            0) ;;
+            5) echo "::warning title=engine boot CLASSIFY-ASK RUNNER::over the macOS engine-ready ceiling on a slower runner; the verdict is in this step's log" ;;
+            *) echo "the engine boot check exited $RC (1 over its ceiling, 3 no boot line, 2 usage): failing the job" >&2; exit 1 ;;
+          esac
 
       # ── THE SHIPPED macOS BINARY IS READ THE WAY THE OTHER THREE ARE ─────
       #
@@ -865,6 +888,9 @@ jobs:
         run: node scripts/engine-bundle.mjs
 
       - name: The engine boots from the shipped layout, and only from it
+        env:
+          # The healthy boot's timing line, read after the build step below.
+          OHMAIL_BOOT_LOG: ${{ runner.temp }}/engine-boot.log
         run: node scripts/verify-engine-boot.mjs
 
       - uses: actions/cache@v4
@@ -875,11 +901,37 @@ jobs:
       - name: Vendor the Node runtime
         run: node scripts/vendor-node.mjs --platform windows
 
+      # THE RUNNER'S SPEED, beside the engine's: the build step's own seconds are
+      # the reading every engine-ready ceiling's distribution was taken beside
+      # (TIMING_READINGS in scripts/perf-smoke-check.mjs), so a slow runner shows.
+      - name: Note when the build step starts
+        run: echo "OHMAIL_BUILD_STEP_T0=$(date +%s)" >> "$GITHUB_ENV"
+
       # The bundle is smoked inside this script, on this platform, before the app
       # is packaged — see the header.
       - name: Build the engine-bearing app, smoking its bundle
         working-directory: apps/desktop
         run: npm run app:build:engine -- --bundles nsis -- -- --locked
+
+      - name: Note how long the build step took
+        run: echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - ${OHMAIL_BUILD_STEP_T0:?the build step start was not noted} ))" >> "$GITHUB_ENV"
+
+      # THE BOOT'S TIMING, beside the build step's seconds. Windows has no
+      # distribution of this reading yet, so it is RECORDED and reddens nothing
+      # until five runs have logged one; a missing boot line still fails.
+      - name: The engine's boot against its measured distribution
+        run: |
+          set -uo pipefail
+          set +e
+          node scripts/perf-smoke-check.mjs --boot --platform windows \
+            --engine-log "${{ runner.temp }}/engine-boot.log" --runner-s "${OHMAIL_BUILD_STEP_S:-}"
+          RC=$?
+          set -e
+          case "$RC" in
+            0) ;;
+            5) echo "::warning title=engine boot CLASSIFY-ASK RUNNER::over the Windows engine-ready ceiling on a slower runner; the verdict is in this step's log" ;;
+            *) echo "the engine boot check exited $RC (1 over its ceiling, 3 no boot line, 2 usage): failing the job" >&2; exit 1 ;;
+          esac
 
       - name: Name the artifact what the download page links
         run: |
@@ -1234,6 +1286,12 @@ jobs:
             "$TOOLS/linuxdeploy-plugin-gtk.sh"
           ls -la "$TOOLS/linuxdeploy-plugin-gtk.sh"
 
+      # THE RUNNER'S SPEED, beside the engine's: the build step's own seconds are
+      # the reading every engine-ready ceiling's distribution was taken beside
+      # (TIMING_READINGS in scripts/perf-smoke-check.mjs), so a slow runner shows.
+      - name: Note when the build step starts
+        run: echo "OHMAIL_BUILD_STEP_T0=$(date +%s)" >> "$GITHUB_ENV"
+
       # The bundle is smoked inside this script, on this platform, before the app
       # is packaged — see the header.
       - name: Build the engine-bearing app, smoking its bundle
@@ -1246,6 +1304,9 @@ jobs:
           NO_STRIP: "true"
         working-directory: apps/desktop
         run: npm run app:build:engine -- --bundles appimage,deb,rpm -- -- --locked
+
+      - name: Note how long the build step took
+        run: echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - ${OHMAIL_BUILD_STEP_T0:?the build step start was not noted} ))" >> "$GITHUB_ENV"
 
       - name: Name the artifacts what the download page links
         run: |
@@ -2073,6 +2134,7 @@ jobs:
             --bundle perf-smoke/squashfs-root/usr/bin/ohmail \
             --expect-messages "$PERF_FIXTURE_MESSAGES" \
             --window-s "$PERF_SMOKE_WINDOW_S" \
+            --runner-s "${OHMAIL_BUILD_STEP_S:-}" \
             --fixture-messages "$PERF_FIXTURE_MESSAGES" | tee perf-smoke/verdict.txt
           RC="${PIPESTATUS[0]}"
           set -e
@@ -2092,6 +2154,7 @@ jobs:
             0) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — MEASURED, inside every budget" ;;
             1) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — OVER A BUDGET" ;;
             3) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — REFUSED: NO MEASUREMENT WAS TAKEN" ;;
+            5) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — CLASSIFY-ASK RUNNER: over a timing ceiling on a slower runner" ;;
             *) PERF_HEAD="the app on a $PERF_FIXTURE_MESSAGES-message mailbox — the checker exited $RC, which is not a verdict" ;;
           esac
           {
@@ -2115,13 +2178,16 @@ jobs:
           case "$RC" in
             0) ;;                       # a verdict, inside every budget
             1) exit 1 ;;                # a verdict, over a budget: always red
+            5)                          # over a timing ceiling, inside the runner band
+              echo "::warning title=perf smoke CLASSIFY-ASK RUNNER::$(grep -a '^PERF_SMOKE: ' perf-smoke/verdict.txt | tail -1)"
+              ;;
             3)                          # a refusal: the rig produced no measurement
               if [ "$PERF_SMOKE_REQUIRED" = "1" ]; then exit 1; fi
               echo "::warning title=perf smoke REFUSED::no measurement was taken; this step is green only because PERF_SMOKE_REQUIRED=0"
               echo "perf smoke: refused, and this file does not yet require a verdict — see PERF_SMOKE_REQUIRED"
               ;;
             *)
-              echo "perf smoke: the checker exited $RC, which is not a code this step admits (0, 1, 3)."
+              echo "perf smoke: the checker exited $RC, which is not a code this step admits (0, 1, 3, 5)."
               echo "  That is the checker failing to run, not the app passing — failing the job."
               exit 1
               ;;

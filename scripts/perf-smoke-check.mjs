@@ -19,16 +19,160 @@
 /**
  * usage:
  *   perf-smoke-check.mjs --samples <tsv> --engine-log <log> [--bundle <file>]
- *                        [--expect-messages <n>] [--fixture-messages <n>]
+ *                        [--expect-messages <n>] [--fixture-messages <n>] [--runner-s <build step s>]
  *                        [--budget-table <file>]   (defaults to the perf budgets table beside it)
+ *   perf-smoke-check.mjs --boot --platform <linux_x64|macos|windows> --engine-log <log> [--runner-s <n>]
  *   perf-smoke-check.mjs --sample --pid <pid> --out <tsv> --seconds <n> [--interval <s>]
  *   perf-smoke-check.mjs --perf-smoke-only   the selftest: every arm watched failing and admitting
- *
- * verdict: PERF_SMOKE: GREEN rc 0 - RED rc 1 - REFUSED rc 3.
+ * verdict: PERF_SMOKE: GREEN rc 0 - RED rc 1 - REFUSED rc 3 - CLASSIFY-ASK RUNNER rc 5.
  */
 import { readFileSync, readdirSync, writeFileSync, appendFileSync, existsSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+
+/* ── THE TIMING CEILINGS, FROM A DISTRIBUTION ───────────────────────────────────────────────
+ *
+ * One reading set the old 4 000 ms engine line, under the release runs' own median, so runner
+ * speed alone turned two hotfixes red. Every reading below is one the published `build` workflow
+ * logged (trafficflowhq/ohmail runs 231-242, 0.25.0-0.25.8, every attempt; an attempt that reused
+ * its job is one reading), read 2026-10-02 through the Actions API. The rule and the readings are
+ * data and `ceilingFrom` makes the number; a platform under `minReadings` has no ceiling and decides
+ * nothing. `buildStepS` is that job's build step, the runner-speed reading taken beside each one.
+ */
+export const CEILING_RULE = {
+  percentile: 0.95, interpolation: "linear", margin: 0.10, roundUpToMs: 100, minReadings: 5,
+  // The runner band: a slower-than-median build step widens a timing ceiling by its factor, capped.
+  runnerFactorCap: 1.5,
+};
+
+export const TIMING_READINGS = {
+  linux_x64: {
+    instrument: "the perf smoke: the packaged AppImage's first start beside the 5k fixture",
+    runnerStep: "Build the engine-bearing app, smoking its bundle",
+    columns: ["run", "attempt", "totalReadyMs", "pgliteOpenMs", "migrateMs", "adoptBaselineMs", "searchSetupMs", "listUsableMs", "buildStepS"],
+    rows: [
+      [231, 1, 4126, 2357, 1507, 43, 116, 7978, 594],
+      [232, 1, 3651, 2309, 1102, 42, 113, 6815, 601],
+      [232, 2, 3869, 2456, 1167, 45, 115, 6819, 614],
+      [233, 1, 4881, 3066, 1506, 49, 149, 8257, 629],
+      [234, 1, 4533, 2922, 1318, 46, 135, 8457, 623],
+      [235, 1, 5008, 3258, 1455, 55, 125, 8141, 617],
+      [237, 1, 4349, 2851, 1251, 48, 118, 8637, 635],
+      [238, 1, 3908, 2566, 1117, 37, 102, 6665, 520],
+      [239, 1, 3905, 2187, 1353, 167, 113, 6458, 575],
+      [240, 1, 3029, 1712, 1054, 124, 78, 4629, 476],
+      [241, 1, 6127, 3603, 1996, 277, 146, 9687, 617],
+      [241, 2, 4492, 2557, 1534, 199, 108, 7688, 526],
+      [241, 3, 3613, 1922, 1218, 165, 177, 5764, 432],
+      [242, 1, 4168, 2212, 1339, 175, 134, 6669, 577],
+      [242, 2, 3734, 1973, 1346, 160, 85, 5689, 435],
+    ],
+  },
+  macos: {
+    instrument: "The packaged engine starts with no node on PATH: an empty data dir, a dead IMAP port",
+    runnerStep: "Build the engine-bearing app (universal), smoking its bundle",
+    columns: ["run", "attempt", "totalReadyMs", "pgliteOpenMs", "migrateMs", "adoptBaselineMs", "searchSetupMs", "buildStepS"],
+    rows: [
+      [231, 1, 2745, 1474, 1077, 32, 72, 485],
+      [232, 1, 2361, 1547, 652, 44, 52, 473],
+      [233, 1, 1710, 1050, 541, 24, 49, 376],
+      [234, 1, 2316, 1483, 678, 34, 66, 485],
+      [235, 1, 1789, 1126, 523, 33, 48, 500],
+      [237, 1, 2697, 1814, 719, 34, 57, 561],
+      [238, 1, 1694, 1046, 523, 24, 49, 325],
+      [239, 1, 3350, 1936, 1069, 148, 75, 524],
+      [240, 1, 2641, 1342, 1070, 94, 64, 488],
+      [241, 1, 3268, 1964, 1034, 110, 81, 492],
+      [242, 1, 3578, 2278, 977, 137, 87, 502],
+    ],
+  },
+  windows: {
+    // 33 job logs of runs 216-242 carry no boot line: the job printed none until this change.
+    instrument: "verify-engine-boot's healthy boot: an empty data dir, a dead IMAP port",
+    runnerStep: "Build the engine-bearing app, smoking its bundle",
+    columns: ["run", "attempt", "totalReadyMs", "pgliteOpenMs", "migrateMs", "adoptBaselineMs", "searchSetupMs", "buildStepS"],
+    rows: [],
+  },
+};
+
+/** The `p` quantile by linear interpolation between closest ranks. */
+export function quantile(values, p) {
+  const s = [...values].sort((a, b) => a - b);
+  if (s.length === 0) return null;
+  const i = (s.length - 1) * p;
+  const lo = Math.floor(i);
+  const hi = Math.ceil(i);
+  return s[lo] + (s[hi] - s[lo]) * (i - lo);
+}
+
+/** The ceiling a set of readings earns under the rule, or null with the reason. */
+export function ceilingFrom(values, rule = CEILING_RULE) {
+  if (values.length < rule.minReadings) {
+    return { n: values.length, p95: null, ceilingMs: null, why: `${values.length} of the ${rule.minReadings} readings a ceiling needs` };
+  }
+  const p95 = quantile(values, rule.percentile);
+  const ceilingMs = Math.ceil((p95 * (1 + rule.margin)) / rule.roundUpToMs) * rule.roundUpToMs;
+  return { n: values.length, p95: Math.round(p95), ceilingMs, why: null };
+}
+
+/** Per platform: each timing arm's ceiling, each boot phase's p95, and the runner's median. */
+export function deriveTiming(readings = TIMING_READINGS, rule = CEILING_RULE) {
+  const out = {};
+  for (const [platform, t] of Object.entries(readings)) {
+    const col = (name) => {
+      const at = t.columns.indexOf(name);
+      return at < 0 ? [] : t.rows.map((r) => r[at]).filter((v) => typeof v === "number");
+    };
+    const phaseP95 = {};
+    for (const name of PHASE_FIELDS) {
+      const values = col(name);
+      if (values.length >= rule.minReadings) phaseP95[name] = Math.round(quantile(values, rule.percentile));
+    }
+    const runner = col("buildStepS");
+    out[platform] = {
+      engine_ready: ceilingFrom(col("totalReadyMs"), rule),
+      start_to_list: ceilingFrom(col("listUsableMs"), rule),
+      phaseP95,
+      runnerStep: t.runnerStep,
+      runnerReferenceS: runner.length >= rule.minReadings ? Math.round(quantile(runner, 0.5)) : null,
+    };
+  }
+  return out;
+}
+
+/* The boot line's phases, in the order the engine runs them; whatever the total holds beyond
+ * their sum is printed as `unattributed`, so the phases always add up to the reading. */
+export const PHASE_FIELDS = ["pgliteOpenMs", "adoptBaselineMs", "migrateMs", "compactMs", "searchSetupMs", "worldMs"];
+
+export const PLATFORM_TIMING = deriveTiming();
+
+/**
+ * One timing reading against its ceiling and the runner band. PASS at or under the ceiling; over
+ * it, CLASSIFY when the build step ran slower than its median by a factor f and the reading is
+ * within ceiling x min(f, cap); FAIL otherwise, an unread runner included.
+ */
+export function timingVerdict({ readingMs, ceilingMs, runnerS, runnerReferenceS, rule = CEILING_RULE }) {
+  if (readingMs <= ceilingMs) return { status: "PASS", bandMs: null, factor: null };
+  if (!(runnerS > 0) || !(runnerReferenceS > 0)) {
+    return { status: "FAIL", bandMs: null, factor: null, why: "the runner's speed is unread, so nothing can widen the ceiling" };
+  }
+  const factor = runnerS / runnerReferenceS;
+  if (factor <= 1) {
+    return { status: "FAIL", bandMs: null, factor, why: "the runner was not slower than its median" };
+  }
+  const bandMs = Math.ceil(ceilingMs * Math.min(factor, rule.runnerFactorCap));
+  return readingMs <= bandMs
+    ? { status: "CLASSIFY", bandMs, factor }
+    : { status: "FAIL", bandMs, factor, why: "over the runner band as well" };
+}
+
+/** The runner's reading as the verdict line prints it. */
+export function runnerLine(runnerS, timing) {
+  const ref = timing?.runnerReferenceS;
+  if (!(runnerS > 0)) return "runner: build step unread";
+  if (!(ref > 0)) return `runner: build step ${runnerS} s, no median to compare it with`;
+  return `runner: build step ${runnerS} s against its median ${ref} s (x${(runnerS / ref).toFixed(2)})`;
+}
 
 /* ── THE BUDGETS, EACH WITH WHAT IT CAME FROM ─────────────────────────────────────────────────
  *
@@ -54,24 +198,18 @@ export const BUDGETS = {
    * retention come back. */
   engineRssKb: 450 * 1024,
   /* The engine's own boot, `boot_phases.totalReadyMs`, on this step's shape: an empty install that
-   * makes its store while the 5k fixture waits on the server. MEASURED 2026-09-28 on a Linux desktop,
-   * five starts of the build that makes a new store in memory: 1 814-3 456 ms. The ceiling is the
-   * worst plus 16 %, rounded up. The base read 8 436-13 814 ms there in the same minutes and 4 349 ms
-   * on a hosted runner, so the desktop over-states a runner, and a first start that writes its store
-   * to the disk page by page again stays over the line. The plan's 4 000 ms is the same line. */
-  engineReadyMs: 4000,
+   * makes its store while the 5k fixture waits on the server. Derived from the release runs'
+   * distribution below (TIMING_READINGS), never typed here. */
+  engineReadyMs: PLATFORM_TIMING.linux_x64.engine_ready.ceilingMs,
   /* The first import, from `first_sync_finished`. The released build's own line read 33.1 messages
    * a second because its clock began at the END of the drain that found the import open; measured
    * end to end the same mailbox arrived at 24.1, and the reference rig reads 26.0. So this is 2.3
    * times a released build, and it is read only when the import finished inside the run — against
    * a `totalMs` that now covers the drain that found the import open. */
   syncMsgPerS: 60,
-  /* The window's cold start to a usable list (`ui_vitals.listUsableMs`), on the same shape and the
-   * same five starts: 2 730-4 800 ms, the list mark at most 1 344 ms past the engine's. A runner's list
-   * came 4 288 ms past its engine (0.25.3 rc2), so the ceiling is the worst plus that 2 944 ms
-   * difference, rounded up, and the runner's 8 637 ms reading of the base stays over it. The plan's
-   * 2 000 ms is the goal, printed beside it. */
-  startToListMs: 7800,
+  /* The window's cold start to a usable list (`ui_vitals.listUsableMs`), derived from the same
+   * runs. The plan's 2 000 ms is the goal, printed beside it. */
+  startToListMs: PLATFORM_TIMING.linux_x64.start_to_list.ceilingMs,
   startToListGoalMs: 2000,
   /* Everything below is read from `ui_vitals` and has NO MEASUREMENT BEHIND IT YET; the table
    * rules every one of them `records`. */
@@ -342,12 +480,57 @@ export function readDeriveP95Budget(tablePath) {
 /* The table beside this script, resolved from this file's own location. */
 export const DEFAULT_BUDGET_TABLE = join(dirname(fileURLToPath(import.meta.url)), "..", "docs", "ohmail", "perf-budgets.json");
 
+/* ── THE BOOT'S PHASES, AND WHERE THE WINDOW SAW IT ─────────────────────────────────────────
+ * The last `boot_phases` line by field, so a timing red names its phase: each phase over its own
+ * p95 in the distribution is marked. Numbers only; nothing else on the line is echoed.
+ */
+export function bootPhases(log) {
+  let line = null;
+  for (const l of log.split("\n")) if (l.includes('"event":"boot_phases"')) line = l;
+  if (line === null) return null;
+  const num = (k) => {
+    const m = new RegExp(`"${k}":(-?\\d+)`).exec(line);
+    return m ? Number(m[1]) : null;
+  };
+  const total = num("totalReadyMs");
+  const phases = PHASE_FIELDS.map((k) => [k, num(k)]).filter(([, v]) => v !== null);
+  const sum = phases.reduce((a, [, v]) => a + v, 0);
+  return { total, phases, unattributed: total === null ? null : total - sum };
+}
+
+export function phaseNote(bp, timing, judged) {
+  const over = [];
+  const parts = bp.phases.map(([k, v]) => {
+    const short = k.replace(/Ms$/, "");
+    const p95 = timing?.phaseP95?.[k];
+    if (p95 !== undefined && v > p95) {
+      over.push(short);
+      return `${short} ${v} (p95 ${p95})`;
+    }
+    return `${short} ${v}`;
+  });
+  parts.push(`unattributed ${bp.unattributed}`);
+  let note = `phases ms: ${parts.join(" · ")}`;
+  if (judged) note += over.length ? ` — over their p95: ${over.join(", ")}` : " — no single phase over its p95";
+  return note;
+}
+
+/** One timing arm: the reading, its ceiling, and the band's numbers when the band was asked. */
+function timingArm(add, id, readingMs, ceilingMs, runnerS, timing, suffix, note) {
+  const v = timingVerdict({ readingMs, ceilingMs, runnerS, runnerReferenceS: timing?.runnerReferenceS });
+  let reading = `${readingMs} ms against ${ceilingMs} ms${suffix}`;
+  if (v.status === "CLASSIFY") reading += `, inside the runner band of ${v.bandMs} ms (build step x${v.factor.toFixed(2)})`;
+  if (v.status === "FAIL" && v.why) reading += ` — ${v.why}${v.bandMs ? ` (band ${v.bandMs} ms)` : ""}`;
+  add(id, "DECIDES", v.status, reading, typeof note === "function" ? note(v.status !== "PASS") : note);
+}
+
 /* ── THE ARMS ─────────────────────────────────────────────────────────────────────────────────
  * A DECIDES arm is one that has been watched failing on a real measurement, and only a DECIDES
  * arm can turn the run red. Everything else is printed, and says on its own line that it is.
  */
-export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fixtureMessages, deriveBudget }) {
+export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fixtureMessages, deriveBudget, runnerS = null }) {
   const arms = [];
+  const timing = PLATFORM_TIMING.linux_x64;
   const add = (id, kind, status, reading, note) => arms.push({ id, kind, status, reading, note });
 
   /* An engine that never started imported nothing. Every CI run of this check until 2026-09-24
@@ -394,12 +577,13 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
   /* A log line that is not there makes its arm UNREAD — printed, deciding nothing. UNREAD is a
    * third state and never a pass, so a run in which nothing decided is refused at the bottom of
    * this function rather than reported as a green with no arms behind it. */
-  const readyMs = lastField(log, "boot_phases", "totalReadyMs");
+  const boot = bootPhases(log);
+  const readyMs = boot?.total ?? null;
   if (readyMs === null) {
     add("engine_ready", "RECORDED", "UNREAD", "<the log carries no boot_phases line>", "");
   } else {
-    add("engine_ready", "DECIDES", readyMs <= BUDGETS.engineReadyMs ? "PASS" : "FAIL",
-      `${readyMs} ms against ${BUDGETS.engineReadyMs} ms`, "measured: an empty install's first start on this step's shape; the header says where the line came from");
+    timingArm(add, "engine_ready", readyMs, BUDGETS.engineReadyMs, runnerS, timing, "",
+      (judged) => phaseNote(boot, timing, judged));
   }
 
   const rssBytes = lastField(log, "engine_vitals", "rss");
@@ -427,7 +611,7 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
     if (importMs && importMs > 0) {
       const rate = Math.round((imported / importMs) * 1000);
       add("sync_rate", "RECORDED", rate >= BUDGETS.syncMsgPerS ? "PASS" : "FAIL",
-        `${rate} messages a second against ${BUDGETS.syncMsgPerS}`, "2.3 times a released build's measured 26.0; recorded while the runner's own speed is unmeasured");
+        `${rate} messages a second against ${BUDGETS.syncMsgPerS}`, "2.3 times a released build's measured 26.0; recorded, with the runner's build step on the verdict line");
     }
   }
 
@@ -446,8 +630,8 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
   const latency = [
     ["start_to_list", "DECIDES", "worst",
       (v) => `${v} ms against ${BUDGETS.startToListMs} ms (goal ${BUDGETS.startToListGoalMs} ms)`,
-      (v) => v <= BUDGETS.startToListMs,
-      "measured: the window's cold start to a usable list on this step's shape; the header says where the line came from"],
+      "timing",
+      "the window's cold start to a usable list; the ceiling's readings are in the header"],
     ["open_p95", "RECORDED", "worst",
       (v) => `p95 ${v} ms against ${BUDGETS.openP95Ms} ms`, (v) => v <= BUDGETS.openP95Ms,
       "the window computes this p95 over its last hundred opens; the worst report of the run"],
@@ -481,7 +665,20 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
       continue;
     }
     const value = fold === "sum" ? values.reduce((a, b) => a + b, 0) : Math.max(...values);
+    if (within === "timing") {
+      timingArm(add, id, value, BUDGETS.startToListMs, runnerS, timing, ` (goal ${BUDGETS.startToListGoalMs} ms)`, note);
+      continue;
+    }
     add(id, kind, within ? (within(value) ? "PASS" : "FAIL") : "READ", reading(value), note);
+  }
+
+  /* The window's own marks from its process start, printed beside the engine's phases. */
+  if (ui.armed) {
+    const marks = [["shellPaintedMs", "shell painted"], ["engineReadyMs", "engine ready"], ["listUsableMs", "list usable"]]
+      .map(([f, label]) => [label, readUiVitalsField(uiLines, f).values])
+      .filter(([, v]) => v.length > 0)
+      .map(([label, v]) => `${label} ${Math.max(...v)}`);
+    if (marks.length) add("window_marks", "RECORDED", "READ", `ms from the process start: ${marks.join(" · ")}`, "");
   }
 
   /* ── THE FOUR DERIVATION FIGURES ─────────────────────────────────────────────────────────────
@@ -540,13 +737,39 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
    * refusals above, `renderer_peak` always decides, because this check's own sampler is the
    * instrument for it. A guard for a state that cannot be reached is a line nobody can watch
    * fail — the shapes that CAN leave this check saying nothing are the three refusals above. */
-  return { arms };
+  return { arms, runnerLine: runnerLine(runnerS, timing) };
+}
+
+/**
+ * The boot alone, for the jobs that start the engine without the app: macOS's packaged engine and
+ * Windows' healthy verify boot. The platform's own distribution decides; a platform without
+ * enough readings has no ceiling, so its reading is RECORDED and reddens nothing.
+ */
+export function collectBoot({ log, platform, runnerS = null }) {
+  const timing = PLATFORM_TIMING[platform];
+  if (!timing) return { refused: `no platform "${platform}"; this check knows ${Object.keys(PLATFORM_TIMING).join(", ")}`, prefix: "PERF_SMOKE_BOOT" };
+  const boot = bootPhases(log);
+  if (boot === null || boot.total === null) {
+    return { refused: "the log carries no boot_phases line, so the boot was not read", prefix: "PERF_SMOKE_BOOT" };
+  }
+  const arms = [];
+  const add = (id, kind, status, reading, note) => arms.push({ id, kind, status, reading, note });
+  const c = timing.engine_ready;
+  if (c.ceilingMs === null) {
+    add("engine_ready", "RECORDED", "READ", `${boot.total} ms on ${platform}, no ceiling yet: ${c.why}`, phaseNote(boot, timing, false));
+  } else {
+    timingArm(add, "engine_ready", boot.total, c.ceilingMs, runnerS, timing, ` on ${platform}`,
+      (judged) => phaseNote(boot, timing, judged));
+  }
+  return { arms, runnerLine: runnerLine(runnerS, timing), prefix: "PERF_SMOKE_BOOT" };
 }
 
 export function render(result) {
   const lines = [];
+  const P = result.prefix ?? "PERF_SMOKE";
+  const runner = result.runnerLine ? ` · ${result.runnerLine}` : "";
   if (result.refused) {
-    lines.push(`PERF_SMOKE: REFUSED -- ${result.refused}`);
+    lines.push(`${P}: REFUSED -- ${result.refused}`);
     for (const extra of result.extra ?? []) lines.push(`   ${extra}`);
     return { text: lines.join("\n"), code: 3 };
   }
@@ -556,13 +779,22 @@ export function render(result) {
     if (arm.note) lines.push(`  ${" ".repeat(16)} ${arm.note}`);
   }
   const red = result.arms.filter((a) => a.kind === "DECIDES" && a.status === "FAIL").map((a) => a.id);
+  const ask = result.arms.filter((a) => a.kind === "DECIDES" && a.status === "CLASSIFY");
   lines.push("");
   if (red.length) {
-    lines.push(`PERF_SMOKE: RED -- ${red.join(" ")}`);
+    lines.push(`${P}: RED -- ${red.join(" ")}${runner}`);
     return { text: lines.join("\n"), code: 1 };
   }
+  /* Over a timing ceiling and inside the runner band: a question for a person, never a bare red,
+   * and its own code so the step can tell it from both. Memory arms never land here. */
+  if (ask.length) {
+    lines.push(`${P}: CLASSIFY-ASK RUNNER -- ${ask.map((a) => `${a.id} ${a.reading}`).join("; ")}${runner}`);
+    return { text: lines.join("\n"), code: 5 };
+  }
+  const decided = result.arms.some((a) => a.kind === "DECIDES");
   const peak = result.arms.find((a) => a.id === "renderer_peak");
-  lines.push(`PERF_SMOKE: GREEN -- ${peak ? peak.reading : "every arm within budget"}`);
+  const head = peak ? peak.reading : result.arms.map((a) => `${a.id} ${a.reading}`).join("; ");
+  lines.push(`${P}: ${decided ? "GREEN" : "RECORDED"} -- ${head}${runner}`);
   return { text: lines.join("\n"), code: 0 };
 }
 
@@ -687,7 +919,22 @@ export const SAMPLE_LOG_SLOW = [
   '{"service":"sidecar","event":"first_sync_finished","messages":10000,"totalMs":600000}',
 ].join("\n");
 
+/* The runner-band arms: a normal run, a slow runner, and a product regression on a normal runner,
+ * each built from the ok log with only the boot line's total moved. */
+export function bootLog(totalReadyMs) {
+  return SAMPLE_LOG_OK.replace('"totalReadyMs":1850', `"totalReadyMs":${totalReadyMs}`);
+}
+
 export function selftest(write) {
+  const ref = PLATFORM_TIMING.linux_x64.runnerReferenceS;
+  const ceiling = BUDGETS.engineReadyMs;
+  const bands = [
+    ["a normal run on a median runner", bootLog(ceiling - 500), ref, 0],
+    ["a slow runner over the ceiling", bootLog(ceiling + 300), Math.round(ref * 1.2), 5],
+    ["a product regression, median runner", bootLog(ceiling * 2), ref, 1],
+    ["a product regression, slow runner", bootLog(ceiling * 2), Math.round(ref * 1.2), 1],
+    ["over the ceiling, runner unread", bootLog(ceiling + 300), null, 1],
+  ];
   const cases = [
     ["a released build's own shape", releasedShapeSample(), SAMPLE_LOG_SLOW, 1],
     ["a build inside its budgets", withinBudgetSample(), SAMPLE_LOG_OK, 0],
@@ -697,16 +944,26 @@ export function selftest(write) {
     ["a sampler that saw no renderer", withinBudgetSample().replace(/\trenderer=\d+/g, "").replace(/\tnet=\d+/g, ""), SAMPLE_LOG_OK, 3],
   ];
   let bad = 0;
-  for (const [name, samples, log, want] of cases) {
-    const { text, code } = render(collect({ samples, log, uiInBundle: false, expectMessages: 10000, fixtureMessages: 10000 }));
-    const verdict = text.split("\n").filter((l) => l.startsWith("PERF_SMOKE:")).pop() ?? "<none>";
-    const ok = code === want;
+  const judge = (name, out, want, prefix) => {
+    const verdict = out.text.split("\n").filter((l) => l.startsWith(`${prefix}:`)).pop() ?? "<none>";
+    const ok = out.code === want;
     if (!ok) bad++;
-    write(`${ok ? "  ok  " : "  BAD "} ${name.padEnd(32)} rc ${code} (wanted ${want})  ${verdict}\n`);
+    write(`${ok ? "  ok  " : "  BAD "} ${name.padEnd(36)} rc ${out.code} (wanted ${want})  ${verdict}\n`);
+  };
+  for (const [name, samples, log, want] of cases) {
+    judge(name, render(collect({ samples, log, uiInBundle: false, expectMessages: 10000, fixtureMessages: 10000 })), want, "PERF_SMOKE");
   }
+  for (const [name, log, runnerS, want] of bands) {
+    judge(name, render(collect({ samples: withinBudgetSample(), log, uiInBundle: false, expectMessages: 10000, fixtureMessages: 10000, runnerS })), want, "PERF_SMOKE");
+  }
+  const mac = PLATFORM_TIMING.macos;
+  judge("macOS boot inside its ceiling", render(collectBoot({ log: bootLog(mac.engine_ready.ceilingMs - 100), platform: "macos", runnerS: mac.runnerReferenceS })), 0, "PERF_SMOKE_BOOT");
+  judge("macOS boot regression", render(collectBoot({ log: bootLog(mac.engine_ready.ceilingMs * 2), platform: "macos", runnerS: mac.runnerReferenceS })), 1, "PERF_SMOKE_BOOT");
+  judge("Windows boot, no distribution yet", render(collectBoot({ log: bootLog(9000), platform: "windows", runnerS: null })), 0, "PERF_SMOKE_BOOT");
+  const total = cases.length + bands.length + 3;
   write(bad === 0
     ? "\nPERF_SMOKE_SELFTEST: GREEN -- every arm refuses the shape it exists for and admits the other\n"
-    : `\nPERF_SMOKE_SELFTEST: RED -- ${bad} of ${cases.length} cases answered wrongly\n`);
+    : `\nPERF_SMOKE_SELFTEST: RED -- ${bad} of ${total} cases answered wrongly\n`);
   return bad === 0 ? 0 : 1;
 }
 
@@ -724,6 +981,26 @@ if (RUN_AS_SCRIPT) {
 
   if (args.includes("--perf-smoke-only")) {
     process.exit(selftest((s) => process.stdout.write(s)));
+  }
+
+  /* An empty or absent `--runner-s` is an unread runner, never a zero. */
+  const runnerArg = opt("runner-s", "");
+  const runnerS = /^\d+$/.test(runnerArg ?? "") && Number(runnerArg) > 0 ? Number(runnerArg) : null;
+
+  if (args.includes("--boot")) {
+    const logPath = opt("engine-log", null);
+    const platform = opt("platform", null);
+    if (!logPath || !platform) {
+      process.stderr.write("usage: perf-smoke-check.mjs --boot --platform <id> --engine-log <log> [--runner-s <n>]\n");
+      process.exit(2);
+    }
+    if (!existsSync(logPath)) {
+      process.stdout.write(`PERF_SMOKE_BOOT: REFUSED -- the engine wrote no log at ${logPath}\n`);
+      process.exit(3);
+    }
+    const { text, code } = render(collectBoot({ log: readFileSync(logPath, "utf8"), platform, runnerS }));
+    process.stdout.write(`${text}\n`);
+    process.exit(code);
   }
 
   if (args.includes("--sample")) {
@@ -777,6 +1054,7 @@ if (RUN_AS_SCRIPT) {
       expectMessages: expect,
       fixtureMessages: fixture,
       deriveBudget,
+      runnerS,
     }));
     process.stdout.write(`${text}\n`);
     process.exit(code);
