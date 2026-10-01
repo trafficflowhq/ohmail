@@ -1744,7 +1744,7 @@
     "headline": "consent-first email\non your own mailboxes.",
     "headlineAlt1": "consent-first email\non the mailboxes\nyou already own.",
     "headlineAlt2": "the last mail client\nyou will ever need.",
-    "strapline": "the last mail client you will ever need.",
+    "strapline": "fully open source and self-hostable.",
     "door": "ohmail <k>answers the door for you</k>: first-time senders <k>wait at the Screener</k> until you let them in, so your Ohbox holds only mail you said yes to — organized in place, <k>real folders</k> on the mailboxes you already own. <o>Leave anytime</o>; your mailbox stays organized.",
     "ctaGet": "Get ohmail.",
     "ctaDemo": "Try the demo",
@@ -2213,7 +2213,7 @@
   },
   "siteMeta": {
     "title": "ohmail — Consent-first email on your own mailboxes.",
-    "description": "The last mail client you will ever need. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. The desktop app is free on macOS, Windows and Linux and runs entirely on your own machine. Cloud from $9/mo adds the web app and push, with a 14-day trial and no card.",
+    "description": "Fully open source and self-hostable. The Screener holds first-time senders until you decide; everything you said yes to is organized in place — real folders on your real server. The desktop app is free on macOS, Windows and Linux and runs entirely on your own machine. Cloud from $9/mo adds the web app and push, with a 14-day trial and no card.",
     "ogAlt": "ohmail — consent-first email on your own mailboxes"
   },
   "siteScreener": {

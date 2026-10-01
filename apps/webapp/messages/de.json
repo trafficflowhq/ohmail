@@ -1744,7 +1744,7 @@
     "headline": "E-Mail auf deinen Postfächern.\nNichts ohne dein Ja.",
     "headlineAlt1": "E-Mail, die zuerst fragt —\nauf den Postfächern,\ndie du längst hast.",
     "headlineAlt2": "der letzte Mail-Client,\nden du brauchst.",
-    "strapline": "der letzte Mail-Client, den du brauchst.",
+    "strapline": "komplett Open Source und selbst hostbar.",
     "door": "ohmail <k>öffnet für dich die Tür</k>: Erstabsender <k>warten am Screener</k>, bis du sie reinlässt — in deiner Ohbox liegt also nur Post, zu der du Ja gesagt hast, organisiert an ihrem Platz: in <k>echten Ordnern</k> auf den Postfächern, die du längst hast. <o>Geh, wann du willst</o>; dein Postfach bleibt organisiert.",
     "ctaGet": "ohmail holen.",
     "ctaDemo": "Demo ausprobieren",
@@ -2213,7 +2213,7 @@
   },
   "siteMeta": {
     "title": "ohmail — E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja.",
-    "description": "Der letzte Mail-Client, den du brauchst. Der Screener hält Erstabsender zurück, bis du entscheidest; alles, wozu du Ja gesagt hast, wird an seinem Platz organisiert — echte Ordner auf deinem echten Server. Die Desktop-App ist kostenlos für macOS, Windows und Linux und läuft komplett auf deinem eigenen Rechner. Cloud ab 9 $/Monat bringt Web-App und Push dazu, mit 14 Testtagen und ohne Karte.",
+    "description": "Komplett Open Source und selbst hostbar. Der Screener hält Erstabsender zurück, bis du entscheidest; alles, wozu du Ja gesagt hast, wird an seinem Platz organisiert — echte Ordner auf deinem echten Server. Die Desktop-App ist kostenlos für macOS, Windows und Linux und läuft komplett auf deinem eigenen Rechner. Cloud ab 9 $/Monat bringt Web-App und Push dazu, mit 14 Testtagen und ohne Karte.",
     "ogAlt": "ohmail — E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja"
   },
   "siteScreener": {

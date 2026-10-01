@@ -25,8 +25,8 @@ import { markTags } from "./Mark";
 
 /**
  * The breaks live in the message so a translation re-rags without touching this file; the whitespace between spans
- * survives in textContent, so copy-paste and screen readers get one sentence. The former claim is the strapline under
- * the lockup; parked alternates stay translated (`headlineAlt1`/`headlineAlt2`).
+ * survives in textContent, so copy-paste and screen readers get one sentence. The strapline under the lockup is its own
+ * line; parked alternates stay translated (`headlineAlt1`/`headlineAlt2`).
  */
 export function Hero() {
   const t = useTranslations("hero");
