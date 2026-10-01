@@ -20,6 +20,7 @@ import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
 import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
+import { BodyPages } from "./BodyPages";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { MessageActions } from "./MessageActions";
 import { usePosture } from "./posture";
@@ -236,9 +237,7 @@ export function MessageReader({
                       (`AppShell.tsx`: below 900 it is hidden) — opening a message opens the READER
                       sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
                       at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
-                  <Txt variant="readerBody" style={{ maxWidth: t.layout.proseMax }}>
-                    {m.body}
-                  </Txt>
+                  <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
                 </>
               )}
             </>
@@ -262,9 +261,7 @@ export function MessageReader({
                       {h.time}
                     </Txt>
                   </View>
-                  <Txt variant="streamBody" tone="ink2" style={{ marginTop: 10 }}>
-                    {h.body}
-                  </Txt>
+                  <BodyPages variant="streamBody" tone="ink2" style={{ marginTop: 10 }} text={h.body} />
                   {/* Each member's own files: the reader's open asked for its list. */}
                   <AttachmentTiles m={h} />
                 </Panel>

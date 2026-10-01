@@ -1055,6 +1055,7 @@ export const DE: Deck = {
   mailShowImages: "Bilder anzeigen",
   mailShowAsText: "Als Text anzeigen",
   mailShowOriginal: "Original anzeigen",
+  bodyShowMore: (percent: number) => `Mehr anzeigen (${percent} % angezeigt)`,
   mailOversize:
     "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Die Textfassung wird gezeigt.",
   mailOpenLinkTitle: "Diesen Link öffnen?",

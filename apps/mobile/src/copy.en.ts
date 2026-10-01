@@ -1636,6 +1636,8 @@ const TABLE = {
   mailShowImages: "Show images",
   mailShowAsText: "Show as text",
   mailShowOriginal: "Show original",
+  /** The press under a body drawn a page at a time — the web's `bodyText.more`, word for word. */
+  bodyShowMore: (percent: number) => `Show more (${percent}% shown)`,
   mailOversize:
     "This message's HTML part is too large to render safely. Showing the plain-text version.",
   /** The link confirm — the destination said out loud before anything leaves the app. */

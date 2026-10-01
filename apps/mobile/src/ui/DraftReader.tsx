@@ -11,6 +11,7 @@ import { router } from "expo-router";
 import { Copy } from "../copy";
 import { useWorld } from "../state/world";
 import { Button, Panel, Rule, Screen, Scroller, Txt } from "./base";
+import { BodyPages } from "./BodyPages";
 import { DetailBar } from "./chrome";
 import {
   backKeeps, discardDecision, draftCardPlan, refusalSentence, sendAgainSentence,
@@ -165,16 +166,15 @@ export function DraftReader({
           </Txt>
           {/* THREE STATES, NEVER TWO: a body this mirror never received is not an empty message.
               The text is selectable, because on a held row it is the only copy. */}
-          <Txt
+          <BodyPages
             variant="body"
             tone={row.bodyKnown && row.body !== "" ? "ink" : "ink3"}
             selectable
             style={{ paddingHorizontal: 18 }}
-          >
-            {!row.bodyKnown
+            text={!row.bodyKnown
               ? Copy.draftsBodyUnavailable
               : row.body === "" ? Copy.draftsTextEmpty : row.body}
-          </Txt>
+          />
         </Panel>
 
         <Panel style={{ paddingVertical: 8, marginBottom: 12 }}>

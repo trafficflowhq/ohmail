@@ -22,6 +22,7 @@ import { sanitizeMailHtmlPhone } from "../mail/sanitize";
 import { blockedNotice } from "../mail/notice";
 import { Sheet, SheetRow } from "./Sheet";
 import { Txt } from "./base";
+import { BodyPages } from "./BodyPages";
 
 export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText: () => void }) {
   const t = useTheme();
@@ -83,9 +84,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
         <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }}>
           {Copy.mailOversize}
         </Txt>
-        <Txt variant="readerBody" style={{ maxWidth: t.layout.proseMax }}>
-          {m.body}
-        </Txt>
+        <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
       </View>
     );
   }

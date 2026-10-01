@@ -17,6 +17,7 @@ import { listSurface, metaWhen } from "../../src/state/surface";
 import { useTheme } from "../../src/theme";
 import { useMessageBody, useWorld, type WorldMail } from "../../src/state/world";
 import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
+import { BodyPages } from "../../src/ui/BodyPages";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList, type RowFrame } from "../../src/ui/MailList";
@@ -245,9 +246,7 @@ function StreamCard({
                 {bodyNote}
               </Txt>
             ) : null}
-            <Txt variant="streamBody" numberOfLines={clamped ? 6 : undefined}>
-              {m.body}
-            </Txt>
+            <BodyPages variant="streamBody" numberOfLines={clamped ? 6 : undefined} text={m.body} />
             {clamped ? <FadeOut color={t.c.panel} /> : null}
           </View>
 

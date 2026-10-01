@@ -25,6 +25,7 @@ import {
 import { relayMarkFor, senderSheetLine } from "../state/relay";
 import { useBodies, useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
+import { BodyPages } from "./BodyPages";
 import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
@@ -209,9 +210,7 @@ export function SenderDetail({
                 {Copy.liveBodyFailed}
               </Txt>
             ) : null}
-            <Txt variant="streamBody" tone="ink" style={{ marginTop: 12 }}>
-              {h.body}
-            </Txt>
+            <BodyPages variant="streamBody" tone="ink" style={{ marginTop: 12 }} text={h.body} />
             {/* The held message's files, through the reader's one strip. */}
             <AttachmentTiles m={{ id: h.id, attachments: w.filesOf(h.id) }} />
           </Panel>
