@@ -26,7 +26,9 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 A message whose text is a very long run of distinct words is now stored whole instead of being
 fetched again on every sync while the mail behind it waits. A message that exceeds another storage
 limit is set aside on its own: it stays on your mail server and the next version tries it again.
-Search reads the first 65,536 characters of a message's text.
+For mail stored from this version on, search reads the first 65,536 characters of a message's text.
+Update the desktop app as well: an older one shows a mailbox as offline once the server has stored
+such a message.
 
 ## [0.25.7] — 2026-10-01
 
