@@ -214,20 +214,12 @@ export function drainOnFollowUp(
 }
 
 /**
- * Add the hosted message count to a local `GET /mailboxes` answer, per mailbox that has one. The
- * window's status strip needs two numbers; in Cloud mode only one is local (`cloud-read.ts` serves
- * the list from the mirror), and the other is what the mirror drains toward, learned from the hosted
- * `?counts=1` on its own cadence. It writes `hostedMessageCount`, NOT `messageCount`: the latter is
- * the shared DTO field, so filling it here would make the strip compare the mirror against itself.
- * ABSENT, NEVER ZERO — a mailbox the map has nothing for is left as the read produced it, since `0`
- * asserts an empty account. A non-JSON or non-list body passes through untouched (a decoration).
- */
-/**
  * A QUEUE ANSWER READ WHILE THIS MIRROR BOOTSTRAPS. The queue relays live from the account, so it
  * stops listing a sender decided on another device long before the replay brings the rule here.
  * The answer says so (`copyBehind`), and the window then keeps that sender's held mail at the gate
  * rather than in the Ohbox; the rules are asked for again, so the rule lands at the next page. A
- * body that is not a queue page passes untouched.
+ * body that is not a queue page passes untouched. The answer is rebuilt as JSON, so the upstream
+ * headers do not travel with it; nothing reads one on this route.
  */
 export async function queueAheadOfTheCopy(
   res: Response,
@@ -244,6 +236,15 @@ export async function queueAheadOfTheCopy(
   return json({ ...(body as object), copyBehind: true }, res.status);
 }
 
+/**
+ * Add the hosted message count to a local `GET /mailboxes` answer, per mailbox that has one. The
+ * window's status strip needs two numbers; in Cloud mode only one is local (`cloud-read.ts` serves
+ * the list from the mirror), and the other is what the mirror drains toward, learned from the hosted
+ * `?counts=1` on its own cadence. It writes `hostedMessageCount`, NOT `messageCount`: the latter is
+ * the shared DTO field, so filling it here would make the strip compare the mirror against itself.
+ * ABSENT, NEVER ZERO — a mailbox the map has nothing for is left as the read produced it, since `0`
+ * asserts an empty account. A non-JSON or non-list body passes through untouched (a decoration).
+ */
 async function decorateHostedCounts(
   res: Response,
   counts: ReadonlyMap<string, number>,
