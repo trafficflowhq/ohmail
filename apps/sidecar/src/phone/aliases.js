@@ -47,6 +47,7 @@
  * separate check over the built artifact rather than a reading of this file.
  */
 /* ESM, because this package is `"type": "module"`. Its one reader is an ESM script. */
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -114,6 +115,13 @@ const PACKAGE_ALIASES = {
      generator reads specifiers with a scanner that does not skip comments, so spelling it out
      here made two packages nothing imports look like declared dependencies. */
   pino: path.join(SHIMS, "pino.js"),
+  /* mailparser `require`s nodemailer's address parser by a subpath whose exports map answers
+     `import` with an ES module holding only a default export. This bundle lists `import` among its
+     conditions, so the require got the module's namespace and every parse threw. The CommonJS
+     file, resolved the way Node resolves it from mailparser. */
+  "nodemailer/lib/addressparser": createRequire(
+    createRequire(path.join(REPO, "packages", "core", "package.json")).resolve("mailparser/package.json"),
+  ).resolve("nodemailer/lib/addressparser"),
 };
 
 /**

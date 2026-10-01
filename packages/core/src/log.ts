@@ -579,6 +579,11 @@ export const ALLOWED_FIELDS: readonly string[] = [
   "voided",
   "epoch", "fact", "imap", "organizerState", "subscription",
   "folderId", "ruleId", "uid", "uidValidity", "generation", "decidedAt",
+  // THE ATTACHMENT PART GATE (`attachment_part_mismatch`, `attachment_part_unverified`), added WITH
+  // its call sites. `partRowId` is the `attachments.id` row UUID (named without the denylisted
+  // fragment), `partId` a MIME section number, and the two shas the first eight hex of a sha256
+  // over the stored and the served bytes. No filename, no bytes, nothing a sender wrote.
+  "partRowId", "partId", "storedSha", "servedSha",
 ] as const;
 
 /**

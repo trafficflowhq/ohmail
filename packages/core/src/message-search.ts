@@ -18,6 +18,12 @@ import type { EmailAddress } from "./types.js";
 export const SEARCH_BODY_MAX_CHARS = 65_536;
 /** The substring corpus's ceiling, in characters: subject, people and file names fit easily. */
 export const SEARCH_TERMS_MAX_CHARS = 2_048;
+/**
+ * Each header part's ceiling in `head_tsv`, in characters. The display names and file names are
+ * sender-written and unbounded, and a tsvector refuses over 1 MiB (`54000`), which failed the
+ * ingest transaction this document is written in. Real names and file names fit many times over.
+ */
+export const SEARCH_HEAD_PART_MAX_CHARS = 16_384;
 /** Rows one backfill round builds, in one transaction. */
 export const SEARCH_INDEX_BATCH = 500;
 /** Rounds one backfill run takes before it yields the cycle back. */
@@ -80,9 +86,9 @@ export function searchDocumentOf(input: MessageSearchInput): { parts: SearchDocu
   const people = [input.from, ...input.to, ...input.cc].map(personWords).filter((w) => w !== "").join(" ");
   const attachmentsText = input.attachmentNames.filter((n) => n.trim() !== "").join(" ");
   const parts: SearchDocumentParts = {
-    subject: input.subject,
-    people,
-    attachments: attachmentsText,
+    subject: input.subject.slice(0, SEARCH_HEAD_PART_MAX_CHARS),
+    people: people.slice(0, SEARCH_HEAD_PART_MAX_CHARS),
+    attachments: attachmentsText.slice(0, SEARCH_HEAD_PART_MAX_CHARS),
     body: input.bodyText.slice(0, SEARCH_BODY_MAX_CHARS),
   };
   const addresses = [input.from, ...input.to, ...input.cc]

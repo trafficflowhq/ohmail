@@ -20,6 +20,7 @@ import {
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
 import { foldMessageIdDomain } from "../identity.js";
+import { MAX_STORED_ADDRESS_CHARS, storedAddress, storedMessageId, storedSubject } from "../stored-values.js";
 // THE ONE DOOR for a UIDVALIDITY comparison — `epoch.ts`. A bare `===` between two generations
 // reads two unknowns as agreement, which is the fail-open this module must not re-invent; the
 // census over three source roots refuses one.
@@ -875,10 +876,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       this.db as unknown as Tx, this.d, input.mailboxId, "share", input.mailboxMustBeLive);
     const inserted = await this.db.insert(messages).values({
       accountId: input.accountId, mailboxId: input.mailboxId,
-      messageIdHeader: input.canonical.messageIdHeader,
+      // Bounded HERE and only here (`stored-values.ts`): the dedup key above was made from the values
+      // as sent. A Message-ID over the btree ceiling is stored as none: the row stands alone in its
+      // thread and a reply to it carries no In-Reply-To.
+      messageIdHeader: storedMessageId(input.canonical.messageIdHeader),
       bodyHash: input.canonical.bodyHash,
       dedupKey: input.dedupKey,
-      subject: input.subject, fromAddress: input.fromAddress, date: input.date,
+      subject: storedSubject(input.subject), fromAddress: storedAddress(input.fromAddress), date: input.date,
       // `?? null` reproduces the column's own default: no INTERNALDATE means "arrival not
       // recorded" on disk, and the sort clamp stays off for this row (mail 0119).
       arrivedAt: input.arrivedAt ?? null,
@@ -2341,7 +2345,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /** Known correspondents, deduped and lowercased. Returns the count of genuinely NEW rows. */
   async upsertContacts(accountId: string, addresses: readonly string[]): Promise<number> {
-    const unique = [...new Set(addresses.map((a) => a.trim().toLowerCase()).filter((a) => a.includes("@")))];
+    // An address no transport delivers to is no correspondent, and it would not fit the index.
+    const unique = [...new Set(addresses.map((a) => a.trim().toLowerCase())
+      .filter((a) => a.includes("@") && a.length <= MAX_STORED_ADDRESS_CHARS))];
     if (unique.length === 0) return 0;
     const rows = await this.db.insert(contactsTbl)
       .values(unique.map((address) => ({ accountId, address })))
