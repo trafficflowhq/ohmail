@@ -71,9 +71,16 @@ export interface LocatedSection extends Section {
 /** Why the source could not be cut along the server's tree. Each is a shape, never a guess. */
 export type LocatorRefusal =
   | "too_many_sections" | "no_header_end" | "no_boundary" | "boundary_overlap" | "ambiguous_line"
-  | "part_count" | "no_close" | "header_only_part" | "encoded_rfc822" | "unlocated";
+  | "part_count" | "no_close" | "header_only_part" | "unlocated";
 
-export type Location = { ok: true; sections: LocatedSection[] } | { ok: false; why: LocatorRefusal };
+/**
+ * `opaque` names the sections inside a transfer-ENCODED rfc822 (base64, quoted-printable): its own
+ * section is located, but nothing inside it can be cut without decoding first, so those sections
+ * are left out rather than the message refused — mailparser does not descend there either.
+ */
+export type Location =
+  | { ok: true; sections: LocatedSection[]; opaque: string[] }
+  | { ok: false; why: LocatorRefusal };
 
 const LF = 0x0a;
 const CR = 0x0d;
@@ -170,6 +177,7 @@ export function locateSections(raw: Uint8Array, structure: MimeStructure): Locat
   if (sections === null) return { ok: false, why: "too_many_sections" };
   const b = raw;
   const ranges = new Map<MimeStructure, { start: number; end: number }>();
+  const sealed = new Set<MimeStructure>();
   const dash: number[] = [];
   for (let p = 0; p < b.length;) {
     if (b[p] === DASH && p + 1 < b.length && b[p + 1] === DASH) dash.push(p);
@@ -201,7 +209,7 @@ export function locateSections(raw: Uint8Array, structure: MimeStructure): Locat
         });
       } else if (isRfc822(node) && node.children[0] !== undefined) {
         const enc = (node.encoding ?? "").toLowerCase();
-        if (enc !== "" && enc !== "7bit" && enc !== "8bit" && enc !== "binary") throw new Refused("encoded_rfc822");
+        if (enc !== "" && enc !== "7bit" && enc !== "8bit" && enc !== "binary") { sealed.add(node); continue; }
         const innerBody = bodyStartAfterHeader(b, start, end);
         if (innerBody < 0) throw new Refused("no_header_end");
         work.push({ node: node.children[0], start: innerBody, end, active });
@@ -211,13 +219,16 @@ export function locateSections(raw: Uint8Array, structure: MimeStructure): Locat
     if (err instanceof Refused) return { ok: false, why: err.why };
     throw err;
   }
+  const sealedAt = sections.filter((s) => sealed.has(s.node)).map((s) => `${s.section}.`);
   const located: LocatedSection[] = [];
+  const opaque: string[] = [];
   for (const s of sections) {
     const r = ranges.get(s.node);
-    if (r === undefined) return { ok: false, why: "unlocated" };
-    located.push({ ...s, start: r.start, end: r.end });
+    if (r !== undefined) { located.push({ ...s, start: r.start, end: r.end }); continue; }
+    if (!sealedAt.some((p) => s.section.startsWith(p))) return { ok: false, why: "unlocated" };
+    opaque.push(s.section);
   }
-  return { ok: true, sections: located };
+  return { ok: true, sections: located, opaque };
 }
 
 /** The section's bytes exactly as the source holds them (the server's undecoded `BODY[n]`). */
