@@ -1258,6 +1258,24 @@ export class HttpAdapter implements EngineAdapter {
   // ── mutations ────────────────────────────────────────────────────────────
 
   /** A message-DTO echo becomes one authoritative change at the echoed seq (§3.4). */
+  /**
+   * The rules a decide's 200 says it wrote, as echo changes at the answer's seq: the created rule,
+   * only when it is the one `createdRuleId` names, and each retargeted twin. Anything that is not
+   * a readable rule is left to the drain.
+   */
+  private static decidedRules(body: unknown, seq: number): SyncChange[] {
+    const b = body as { createdRuleId?: unknown; createdRule?: unknown; retargetedRules?: unknown } | null;
+    const id = typeof b?.createdRuleId === "string" && b.createdRuleId !== "" ? b.createdRuleId : null;
+    const echo = (r: RuleDTO, op: "create" | "update"): SyncChange =>
+      ({ type: "rule", op, id: r.id, seq, updatedAt: r.updatedAt, entity: r });
+    const out: SyncChange[] = [];
+    if (id !== null && isRuleRow(b?.createdRule) && b.createdRule.id === id) out.push(echo(b.createdRule, "create"));
+    for (const r of Array.isArray(b?.retargetedRules) ? b.retargetedRules : []) {
+      if (isRuleRow(r) && r.id !== id) out.push(echo(r, "update"));
+    }
+    return out;
+  }
+
   private messageEcho(dto: EngineMessage, seq: number, op: "update" | "move", move?: { from: null; to: EngineMessage["folder"] }): SyncChange {
     return {
       type: "message",
@@ -1388,8 +1406,8 @@ export class HttpAdapter implements EngineAdapter {
           idempotencyKey: opts.idempotencyKey,
         });
         if (!res.ok) throw await this.rejectionOf(res);
-        // Response is { messageId, appliedFolder, createdRuleId } — the moved held mail + promoted rule arrive
-        // authoritatively via /sync. EXCEPT ON A MAILBOX THIS ACCOUNT DOES NOT ORGANIZE: There the server answers
+        // Response is { messageId, appliedFolder, createdRuleId, createdRule, retargetedRules } — the rules are
+        // echoed below; the moved held mail arrives via /sync. EXCEPT ON A MAILBOX THIS ACCOUNT DOES NOT ORGANIZE: There the server answers
         // `202 { pending: true, requestId, holder }`: the decision is recorded for the install that DOES organize the
         // mailbox, and nothing has been filed. That answer has to reach the caller, because nothing else will ever
         // mention it — a queued decision writes no `change_log` row, so the drain below carries nothing, the
@@ -1404,6 +1422,15 @@ export class HttpAdapter implements EngineAdapter {
         // they did, and reading it in one place is what stops the next case forgetting.
         const queued = this.queuedAnswer(res, decided);
         if (queued) return queued;
+        // THE RULES IT WROTE, as `rule_create` echoes its rule: a door whose drain lags the server
+        // (the desktop's Cloud mirror mid-pull) holds the decision from the confirm on. The held
+        // mail's moves are not here, so the engine still drains. No seq, no echo.
+        const echo = seq === null ? [] : HttpAdapter.decidedRules(decided, seq);
+        const createdRuleId = (decided as { createdRuleId?: unknown } | null)?.createdRuleId;
+        const wrote = {
+          ...(echo.length > 0 ? { partialEcho: true as const } : {}),
+          ...(typeof createdRuleId === "string" && createdRuleId !== "" ? { entityId: createdRuleId } : {}),
+        };
         // A 200 CAN NOW CARRY A QUEUED HALF (0.20, account-wide decisions): the server filed the
         // mailboxes it organizes and queued the rest for their holders — `mailboxes.requested`
         // names them. Surfaced as `pendingWith` on the CONFIRMED outcome, because after the echo
@@ -1415,16 +1442,16 @@ export class HttpAdapter implements EngineAdapter {
           const named = requested
             .map((r) => (r as { holder?: { name?: unknown } | null } | null)?.holder?.name)
             .find((n) => typeof n === "string" && n.trim() !== "");
-          return { changes: [], seq, pendingWith: { name: typeof named === "string" ? named : null } };
+          return { changes: echo, seq, pendingWith: { name: typeof named === "string" ? named : null }, ...wrote };
         }
         /* A TAKEOVER NOT LANDED YET: the rule is written and the held mail moves once this install
            organizes. To the queue that is the same fact as a queued half — decided, not carried
            out — so the sender stays out of it instead of coming back on the confirm. */
         const awaiting = (decided as { mailboxes?: { awaiting?: unknown } } | null)?.mailboxes?.awaiting;
         if (Array.isArray(awaiting) && awaiting.length > 0) {
-          return { changes: [], seq, pendingWith: { name: null } };
+          return { changes: echo, seq, pendingWith: { name: null }, ...wrote };
         }
-        return { changes: [], seq };
+        return { changes: echo, seq, ...wrote };
       }
 
       case "feed_mark_seen": {
@@ -2727,6 +2754,15 @@ async function sha256Hex(bytes: Uint8Array): Promise<string | null> {
 }
 
 /** Decoded byte length of a base64 string, without decoding it. */
+/** A rule row as `/sync` carries it, read defensively: the fields a placement and a list read. */
+function isRuleRow(r: unknown): r is RuleDTO {
+  const x = r as Partial<RuleDTO> | null;
+  return typeof x === "object" && x !== null && typeof x.id === "string" && x.id !== ""
+    && (x.kind === "sender" || x.kind === "domain" || x.kind === "header")
+    && typeof x.match === "string" && typeof x.destination === "string"
+    && typeof x.enabled === "boolean" && typeof x.priority === "number" && typeof x.updatedAt === "string";
+}
+
 function base64ByteLength(b64: string): number {
   const len = b64.length;
   if (len === 0) return 0;

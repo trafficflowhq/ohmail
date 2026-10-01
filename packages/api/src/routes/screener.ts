@@ -385,7 +385,7 @@ export const screenerRoutes: Route[] = [
     options: { idempotent: true },
     handler: async (req, deps, params) => {
       const body = await readBody<ScreenBody>(req);
-      const result = await screener(deps).decide(serviceContext(deps, req), params.id!, body, {
+      const { result, seq } = await screener(deps).decideAnswered(serviceContext(deps, req), params.id!, body, {
         idempotency: deps.idempotency ?? null,
       });
       // ── 200 IS A DECISION APPLIED; 202 IS A DECISION QUEUED, AND THEY ARE NOT THE SAME NEWS ──
@@ -398,7 +398,8 @@ export const screenerRoutes: Route[] = [
       // make the FIRST press and its REPLAY answer differently for one unchanged decision, which
       // is the one thing an idempotent route may not do. `messages.ts`'s own 202 is the precedent.
       const status = "pending" in result && result.pending === true ? 202 : 200;
-      return jsonResponse(result, { status });
+      // The seq rides the 200 for the same reason: the replay re-emits the one the claim stored.
+      return jsonResponse(result, { status, ...(status === 200 && seq !== null ? { seq } : {}) });
     },
   },
 ];

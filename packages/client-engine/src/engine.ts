@@ -17,6 +17,7 @@ import type {
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
+import { keptDecisionOf, relistedBy, stillKept, supersededBy, type KeptDecision } from "./kept-decisions.js";
 import {
   indexingAddressResult,
   indexingResult,
@@ -1977,14 +1978,25 @@ class OverlayReader implements EntityReader {
     private readonly store: MirrorStore,
     private readonly overlays: Map<string, MutationEffect[]>,
     private readonly rev: () => number,
+    /** Decisions kept past their overlay ({@link KeptDecision}): read first, so any live verb wins. */
+    private readonly kept: ReadonlyMap<string, { readonly effects: readonly MutationEffect[] }> = new Map(),
   ) {}
 
   private overlayFor(type: string, id: string): MutationEffect | undefined {
     let hit: MutationEffect | undefined;
+    for (const d of this.kept.values()) {
+      for (const e of d.effects) if (e.type === type && e.id === id) hit = e;
+    }
     for (const effects of this.overlays.values()) {
       for (const e of effects) if (e.type === type && e.id === id) hit = e; // last wins
     }
     return hit;
+  }
+
+  /** Only rule effects are ever kept, so every other type keeps the store's own fast path. */
+  private keptTouches(type: string): boolean {
+    for (const d of this.kept.values()) if (d.effects.some((e) => e.type === type)) return true;
+    return false;
   }
 
   get<T = unknown>(type: string, id: string): T | undefined {
@@ -2000,14 +2012,14 @@ class OverlayReader implements EntityReader {
   }
 
   entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
-    if (this.overlays.size === 0) return this.store.entries<T>(type);
+    if (this.overlays.size === 0 && !this.keptTouches(type)) return this.store.entries<T>(type);
     // An OVERLAID row keeps the STORE's seq, because the seq is a fact about the log and an
     // overlay is a fact about this tab. A row that exists only as an overlay has never been in the
     // log at all and reads 0 — which no windowed prune can mistake for "already here", and the
     // prune reads the store directly anyway.
     const byId = new Map<string, { entity: T; seq: number }>();
     for (const e of this.store.entries<T>(type)) byId.set(e.id, { entity: e.entity, seq: e.seq });
-    for (const effects of this.overlays.values()) {
+    for (const effects of [...[...this.kept.values()].map((d) => d.effects), ...this.overlays.values()]) {
       for (const e of effects) {
         if (e.type !== type) continue;
         if (e.entity === null) byId.delete(e.id);
@@ -2018,7 +2030,7 @@ class OverlayReader implements EntityReader {
   }
 
   list<T = unknown>(type: string): T[] {
-    if (this.overlays.size === 0) return this.store.list<T>(type);
+    if (this.overlays.size === 0 && !this.keptTouches(type)) return this.store.list<T>(type);
     return this.entries<T>(type).map((e) => e.entity);
   }
 
@@ -2276,6 +2288,8 @@ export class OhmailEngine {
    * until the mirror agrees, a newer verb on one of its rows replaces it, or the drain bound passes.
    */
   private readonly shadows = new Map<string, { keys: ShadowKey[]; epoch: number; drains: number }>();
+  /** Confirmed decisions whose rules this copy does not hold yet, by overlay id ({@link keepDecision}). */
+  private readonly kept = new Map<string, KeptDecision>();
   /** The mirror alone, park fact resolved — what a shadow is compared against. */
   private readonly storeTruth: EntityReader;
   /** {@link storeTruth}, and a page's row for a message the mirror has no record of. */
@@ -2755,7 +2769,7 @@ export class OhmailEngine {
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
     this.locks = opts.locks === undefined ? defaultEngineLocks() : opts.locks;
     this.holdOwnerLock();
-    this.readerView = new OverlayReader(this.store, this.overlays, () => this.overlayRev);
+    this.readerView = new OverlayReader(this.store, this.overlays, () => this.overlayRev, this.kept);
     this.resolvedView = oneSourceReader(this.readerView);
     this.storeTruth = oneSourceReader(this.store);
     this.verbView = new PageFallbackReader(this.resolvedView, this.readerView, this.store, this.storePages);
@@ -3548,6 +3562,7 @@ export class OhmailEngine {
       swept = had || swept;
     }
     swept = this.sweepShadows(epoch) || swept;
+    swept = this.sweepKept() || swept;
     // No notify of its own: the drain's settle publishes right after, in the same snapshot.
     if (swept) this.overlayRev++;
   }
@@ -3564,6 +3579,7 @@ export class OhmailEngine {
     const effects = this.overlays.get(id);
     const held = (type: string, eid: string): boolean => this.store.record(type, eid) !== undefined
       || (type === "message" && this.storePages.find(eid) !== undefined);
+    if (m.kind === "screener_decide" && effects) this.keepDecision(id, effects);
     const keys = effects && shadow ? shadowKeysOf(m, effects, held) : [];
     if (keys.length === 0 || shadowAgrees(keys, this.shadowTruth)) {
       this.shadows.delete(id);
@@ -3607,6 +3623,50 @@ export class OhmailEngine {
       this.overlays.delete(id);
       void this.dropOutbox(id);
     }
+    for (const [id, d] of this.kept) if (supersededBy(d, effects)) this.kept.delete(id);
+  }
+
+  /**
+   * A CONFIRMED DECISION'S RULES OUTLIVE ITS OVERLAY until this copy holds them — see
+   * {@link KeptDecision}. The shadow's drain bound cannot serve here: a lagging door passes three
+   * drains in seconds while its copy is minutes behind. Skipped when a newer verb in flight already
+   * speaks about the subject; the caller bumps the overlay rev.
+   */
+  private keepDecision(id: string, effects: readonly MutationEffect[]): void {
+    const d = keptDecisionOf(effects, this.storeTruth, this.screenerWait.seq);
+    if (d === null) return;
+    for (const [other, live] of this.overlays) if (other !== id && supersededBy(d, live)) return;
+    this.kept.set(id, d);
+  }
+
+  /** Re-read every kept decision against the copy. True when one moved. */
+  private sweepKept(): boolean {
+    if (this.kept.size === 0) return false;
+    const record = (type: string, eid: string): boolean => this.store.record(type, eid) !== undefined;
+    let moved = false;
+    for (const [id, d] of this.kept) {
+      const next = stillKept(d, this.storeTruth, record);
+      if (next === d) continue;
+      moved = true;
+      if (next === null) this.kept.delete(id);
+      else this.kept.set(id, next);
+    }
+    return moved;
+  }
+
+  /**
+   * THE PROMOTED RULE TAKES THE SERVER'S ID AT THE CONFIRM, so the rules list, a kept decision and
+   * the next verb on it all name the row the server holds. The created rule is the first rule
+   * effect `derivedScreenerEffects` writes.
+   */
+  private rekeyPromotedRule(overlayId: string, serverId: string): void {
+    const effects = this.overlays.get(overlayId);
+    const i = effects?.findIndex((e) => e.type === "rule" && e.entity !== null) ?? -1;
+    if (!effects || i < 0 || effects[i]!.id === serverId) return;
+    const e = effects[i]!;
+    const next = [...effects];
+    next[i] = { ...e, id: serverId, entity: { ...(e.entity as RuleDTO), id: serverId } };
+    this.overlays.set(overlayId, next);
   }
 
   /**
@@ -5610,6 +5670,14 @@ export class OhmailEngine {
       throw err;
     }
     if (seq !== w.seq) return;
+    // An answer asked after a decision's confirm that lists its subject reopens the question.
+    let forgot = false;
+    for (const [id, d] of this.kept) {
+      if (!relistedBy(d, seq, wire.items.map((i) => i.address))) continue;
+      this.kept.delete(id);
+      forgot = true;
+    }
+    if (forgot) this.overlayRev++;
     const total = wire.total ?? (wire.nextCursor === null ? wire.items.length : null);
     const puts: Array<{ type: string; id: string; entity: ScreenerWaitingDTO }> = [];
     if (total !== null) {
@@ -5635,7 +5703,10 @@ export class OhmailEngine {
     // An answer equal to the stored queue moves nothing. The page row's `ask` and `walked` are left
     // out of the comparison: the web's onward walk keys on the ask, and an unchanged page keeps
     // both it was written under.
-    if (gone.length === 0 && sameStoredEntities(stored, puts, PAGE_IS_NOT_CONTENT)) return;
+    if (gone.length === 0 && sameStoredEntities(stored, puts, PAGE_IS_NOT_CONTENT)) {
+      if (forgot) this.notify();
+      return;
+    }
     await this.store.commitLocal(puts, gone);
     this.notify();
   }
@@ -7202,6 +7273,7 @@ export class OhmailEngine {
       const epochAtConfirm = this.drainEpoch;
       /** A confirm that names another install as the one to act is not shadowed (settleConfirmed). */
       const shadow = !outcome.pendingWith;
+      if (p.mutation.kind === "screener_decide" && outcome.entityId) this.rekeyPromotedRule(p.id, outcome.entityId);
       /** Whether the overlay must OUTLIVE this dispatch — set by the two no-echo-yet arms below. */
       let echoPending = false;
       /**
@@ -7237,6 +7309,10 @@ export class OhmailEngine {
           this.awaitingEcho.set(p.id, { epoch: epochAtConfirm, m: p.mutation, shadow });
           echoPending = true;
         }
+      }
+      // A PARTIAL ECHO still drains: the decide's rules are in it, the held mail's moves are not.
+      if (outcome.changes.length > 0 && outcome.partialEcho !== true) {
+        // The echo is the whole answer.
       } else if (p.mutation.kind === "mail_send") {
         /**
          * A send reconciles in the background, and it is the one kind that may. Every other no-echo mutation needs

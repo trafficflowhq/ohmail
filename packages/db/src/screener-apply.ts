@@ -471,6 +471,8 @@ export interface HeldElsewhereMailbox {
 
 export interface ApplyScreenerDecisionResult {
   createdRuleId: string;
+  /** The twins this decision retargeted (`retargetTwins`), so a caller can answer with their rows. */
+  retargetedRuleIds: string[];
   /** The subset of the held bag this decision ACTUALLY re-routed — see `decide`'s own `desired=Screener` guard. */
   rerouted: AppliedScreenerRow[];
   /** The LAST `change_log` seq this call emitted — an HTTP caller re-emits it as `X-Sync-Seq` on an idempotent replay. */
@@ -560,6 +562,7 @@ export async function applyScreenerDecision(
   // rule of the same kind naming the subject and filing elsewhere now files where the person
   // decided, so no twin outranks the promoted rule. `RulesService.update`'s retarget: the
   // destination moves (the effect follows it) and the backlog is re-asked when the answer is yes.
+  let retargetedRuleIds: string[] = [];
   if (retargetTwins) {
     const retargeted = await tx.update(rulesTbl).set({
       destination: appliedFolder, updatedAt: now,
@@ -573,7 +576,8 @@ export async function applyScreenerDecision(
       isNull(rulesTbl.bodyContains),
       ne(rulesTbl.destination, appliedFolder),
     )).returning({ id: rulesTbl.id });
-    const seqs = await recordRuleDelta(ledger(tx), accountId, retargeted.map((r) => r.id), "update");
+    retargetedRuleIds = retargeted.map((r) => r.id);
+    const seqs = await recordRuleDelta(ledger(tx), accountId, retargetedRuleIds, "update");
     if (seqs.length > 0) lastSeq = seqs[seqs.length - 1]!;
   }
 
@@ -595,5 +599,5 @@ export async function applyScreenerDecision(
     label: "positive",
   });
 
-  return { createdRuleId: rule!.id, rerouted, lastSeq, heldElsewhere };
+  return { createdRuleId: rule!.id, retargetedRuleIds, rerouted, lastSeq, heldElsewhere };
 }

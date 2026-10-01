@@ -49,13 +49,14 @@ import { correspondentsAmong, makeDrizzleRepo } from "@trafficflow/core/adapters
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { requestRefusalReason } from "@trafficflow/core/reader-refusal";
 import { planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutTarget } from "./reader-request.js";
-import { bridgeTx, type ServiceContext } from "./context.js";
+import { bridgeDb, bridgeTx, type ServiceContext } from "./context.js";
+import { materializeRules } from "./dto/materialize.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { refuseAiSpend, type AiRefusalClass } from "./ai-refusal.js";
 import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
-import type { Folder, Page, ScreenerItem } from "./dto/types.js";
+import type { Folder, Page, RuleDTO, ScreenerItem } from "./dto/types.js";
 
 /**
  * ONE SENDER'S REFUSAL, KEPT WHOLE UNTIL THE STATUS IS DECIDED.
@@ -243,6 +244,13 @@ export interface ScreenDecisionResult {
   messageId: string;
   appliedFolder: Folder;
   createdRuleId: string | null;
+  /**
+   * The rules this decision wrote, as `/sync` carries them: the promoted rule, and every twin it
+   * retargeted. A client whose drain lags the server holds the decision from the confirm on, as
+   * `POST /rules` has always answered with its rule. Absent from an older server.
+   */
+  createdRule?: RuleDTO | null;
+  retargetedRules?: RuleDTO[];
   /** See {@link ScreenDecisionMailboxes}. Absent from an older server; never absent from this one. */
   mailboxes?: ScreenDecisionMailboxes;
   /**
@@ -1134,6 +1142,18 @@ export class ScreenerReadService {
     ctx: ServiceContext, id: string, b: ScreenBody,
     opts: { idempotency?: ScreenIdempotency | null } = {},
   ): Promise<ScreenDecisionResult | ScreenRequestResult> {
+    return (await this.decideAnswered(ctx, id, b, opts)).result;
+  }
+
+  /**
+   * {@link decide}, with the seq its writes ended at: the route answers it as `X-Sync-Seq`, so the
+   * live 200 and its idempotent replay (which re-emits the stored seq) carry the same header.
+   * `null` for a queued decision, which writes no `change_log` row.
+   */
+  async decideAnswered(
+    ctx: ServiceContext, id: string, b: ScreenBody,
+    opts: { idempotency?: ScreenIdempotency | null } = {},
+  ): Promise<{ result: ScreenDecisionResult | ScreenRequestResult; seq: number | null }> {
     const v = await this.validateScreenerDecision(ctx, id, b);
 
     /* THE CAPABILITY THIS DOOR NEEDS, NAMED (mail 0094). A Screener decision is `screener.decide`,
@@ -1169,7 +1189,7 @@ export class ScreenerReadService {
     if (fanOut.organized.length > 0 || fanOut.awaiting.length > 0) {
       return this.applyAsOrganizer(ctx, id, v, fanOut, opts);
     }
-    return this.requestAsReader(ctx, id, v, eligibility, fanOut, opts);
+    return { result: await this.requestAsReader(ctx, id, v, eligibility, fanOut, opts), seq: null };
   }
 
   /**
@@ -1189,10 +1209,11 @@ export class ScreenerReadService {
     },
     fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
-  ): Promise<ScreenDecisionResult> {
+  ): Promise<{ result: ScreenDecisionResult; seq: number }> {
     const { scope, decision, address, domain, appliedFolder, target, applyRetro } = v;
     let rerouted: AppliedScreenerRow[] = [];
     let filed: string[] = [];
+    let lastSeq = 0n;
 
     const result = await asTx(ctx).transaction(async (tx) => {
       // THE ERASURE FENCE FIRST — `applyScreenerDecision` takes `accounts FOR SHARE` first and
@@ -1227,6 +1248,7 @@ export class ScreenerReadService {
       }
       rerouted = applied.rerouted;
       filed = [...new Set(applied.rerouted.map((m) => m.mailboxId))];
+      lastSeq = applied.lastSeq;
 
       /**
        * THE REQUEST HALF, IN THE SAME TRANSACTION (0.20): the decision travels to every capable
@@ -1278,8 +1300,14 @@ export class ScreenerReadService {
         );
       }
 
+      // Read INSIDE the tx, so the stored replay and the live answer carry the rows as written.
+      const written = await materializeRules(
+        bridgeDb(tx), ctx.accountId, [applied.createdRuleId, ...applied.retargetedRuleIds],
+      );
       const dto: ScreenDecisionResult = {
         messageId: id, appliedFolder, createdRuleId: applied.createdRuleId,
+        createdRule: written.get(applied.createdRuleId) ?? null,
+        retargetedRules: applied.retargetedRuleIds.flatMap((r) => written.get(r) ?? []),
         mailboxes: { filed, requested, ...(awaiting.length > 0 ? { awaiting } : {}) },
       };
 
@@ -1386,7 +1414,7 @@ export class ScreenerReadService {
       }
     }
 
-    return result;
+    return { result, seq: Number(lastSeq) };
   }
 
   /**

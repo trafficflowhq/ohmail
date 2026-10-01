@@ -34,6 +34,11 @@ export interface MutationOutcome {
    * the engine reconciles via the next /sync drain instead.
    */
   changes: SyncChange[];
+  /**
+   * `changes` carry only part of what the verb wrote, so the engine still drains after applying
+   * them. Only `screener_decide` sets it: the rules are echoed, the held mail's moves are not.
+   */
+  partialEcho?: true;
   /** The X-Sync-Seq of the mutation (null when the endpoint does not echo one). */
   seq: number | null;
   /**
