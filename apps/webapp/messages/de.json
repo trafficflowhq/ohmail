@@ -706,7 +706,8 @@
     "segAria": "Screener-Bereiche",
     "bulkAria": "Alle wartenden Absender auf einmal",
     "loading": "Deine Post wird geladen.",
-    "emptyImporting": "Deine Post wird noch auf dieses Gerät übertragen. Absender erscheinen hier, sobald ihre Post ankommt.",
+    "emptyImporting": "Deine Post kommt noch an. Absender erscheinen hier, sobald ihre Post da ist.",
+    "emptyListing": "Die Zahl enthält Absender, die dieses Gerät schon einsortiert hat.",
     "empty": {
       "waiting": {
         "glyph": "🕊",

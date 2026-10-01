@@ -77,12 +77,24 @@ export interface WaitingSurfaceFacts {
 }
 
 /**
+ * Why a withheld list is withheld, so its sentence can be true: `importing` while mail is still on
+ * its way, `listing` when the store counts senders this device has already filed elsewhere.
+ */
+export type WaitingWhy = "importing" | "listing" | null;
+
+/**
  * THE WAITING LIST'S OWN READING. The store's queue is exact whatever this device has taken in,
  * so this mirror's import does not withhold it: only the account's own open import does, and a
  * store that counts senders the list cannot show yet is never stated empty. Anything else reads
  * as every other list.
  */
-export function waitingSurfaceInput(f: WaitingSurfaceFacts): ListSurfaceInput {
-  if (f.source !== "store" || !f.queueAnswered) return { settled: f.settled, count: f.count, pending: f.owed };
-  return { settled: true, count: f.count, pending: f.storeImportOpen || (f.count === 0 && f.storeTotal > 0) };
+export function waitingSurfaceInput(f: WaitingSurfaceFacts): ListSurfaceInput & { why: WaitingWhy } {
+  if (f.source !== "store" || !f.queueAnswered) {
+    return { settled: f.settled, count: f.count, pending: f.owed, why: f.owed ? "importing" : null };
+  }
+  const listing = f.count === 0 && f.storeTotal > 0;
+  return {
+    settled: true, count: f.count, pending: f.storeImportOpen || listing,
+    why: f.storeImportOpen ? "importing" : listing ? "listing" : null,
+  };
 }

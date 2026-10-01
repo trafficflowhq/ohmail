@@ -71,7 +71,7 @@ export {
  * rule a surface writes again — differently.
  */
 export { countWhen, listSurface, metaWhen, saysEmpty, waitingSurfaceInput } from "./list-surface.js";
-export type { ListSurface, ListSurfaceInput, WaitingSurfaceFacts } from "./list-surface.js";
+export type { ListSurface, ListSurfaceInput, WaitingSurfaceFacts, WaitingWhy } from "./list-surface.js";
 
 /**
  * The nameless-attachment naming pair, re-exported from core so every client names a

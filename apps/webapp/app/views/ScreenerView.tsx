@@ -18,7 +18,7 @@ import type {
   UnsubscribeHeaderState,
   UnsubscribeResult,
 } from "@ohmail/client-engine";
-import { countWhen, listSurface, saysEmpty, waitingSurfaceInput } from "@ohmail/client-engine";
+import { countWhen, listSurface, saysEmpty, waitingSurfaceInput, type WaitingWhy } from "@ohmail/client-engine";
 import {
   AskWell,
   BulkProgress,
@@ -509,7 +509,7 @@ function RowActions({
  * the app's copy. `test/demo-zero-network.test.ts` now forbids the import class outright.
  */
 function Empty(
-  { segment, surface }: { segment: ScreenerSegmentId; surface: ListSurface },
+  { segment, surface, why = "importing" }: { segment: ScreenerSegmentId; surface: ListSurface; why?: WaitingWhy },
 ) {
   const t = useTranslations("screener");
   const speak = useLoadingGrace(!saysEmpty(surface));
@@ -524,9 +524,9 @@ function Empty(
    * (`OhboxView`'s `SyncState`, mirrored deliberately).
    */
   if (!saysEmpty(surface)) {
-    // A list withheld for mail still on its way says so after the grace; "loading" is the skeleton's.
+    // A withheld list says why after the grace, and only what is so; "loading" is the skeleton's.
     if (surface === "pending" && speak) {
-      return <div className="empty" role="status" aria-busy="true"><b>{t("emptyImporting")}</b></div>;
+      return <div className="empty" role="status" aria-busy="true"><b>{t(why === "listing" ? "emptyListing" : "emptyImporting")}</b></div>;
     }
     return (
       <div className="empty" role="status" aria-busy="true">
@@ -1662,7 +1662,8 @@ export function ScreenerView({
             items.slice(itemsFrom, itemsTo).map((x, k) =>
               row(x, itemsFrom + k, { size: items.length + decidedRows.length, position: itemsFrom + k + 1 }))
           ) : state.decided.length === 0 ? (
-            <Empty segment={segment} surface={emptySurface(items.length)} />
+            <Empty segment={segment} surface={emptySurface(items.length)}
+              why={segment === "waiting" ? waitingInput(items.length).why : "importing"} />
           ) : null}
           {/*
               DECIDED, NOT DONE: A sender whose decision is waiting on another install is out of the queue and not
