@@ -52,6 +52,56 @@ sent to Trash when the app reconnects in that moment.
 Pressing Sign out in one tab moments after another tab renewed the session could leave you signed in
 after the page reloaded. Sign out now ends the session this browser holds, whichever tab renewed it.
 
+### The phone app is smaller
+<!-- changes: phone-engine-size-pass.md -->
+
+The mail engine inside the Android and iPhone apps is about 530 KB smaller. It no longer carries
+the zip archiver behind "download all attachments", which only the desktop and web apps offer, or a
+CSS parser that sanitizing outgoing mail never reaches.
+
+### The IMAP library is updated
+<!-- changes: deps-026-upgrade.md -->
+
+The IMAP library is updated to imapflow 1.7.8, which hardens how a server's replies are read. Each
+received message's parse time is now written to the log, and a slow one as a warning.
+
+### Attachments in nested messages open again
+<!-- changes: attachment-sections-026.md -->
+
+Attachments in nested messages that the previous version refused to open download, zip and forward
+again. The app now records where the mail server keeps each file, and corrects an older entry the
+first time it is used. A file it still cannot verify is refused, as before.
+
+### A sender you screen out stays out of the Ohbox while your mail is still syncing
+<!-- changes: fix-026-screener-first-sync.md -->
+
+Screening a sender out in the Screener, on the desktop or on another device, no longer puts their
+mail in the desktop app's Ohbox while the app is still bringing your mail in; it is filed under
+Screened out as soon as the app has the decision. The Waiting tab no longer stays on "Loading your
+mail." during a sync. It says that your mail is still on its way while it is, and whether anyone
+is waiting once it is in. The Screened out and Spam counts appear once the sync is done.
+
+### "Sign in with browser" works in a browser that is signed out
+<!-- changes: fix-026-browser-signin.md -->
+
+Opening the desktop's sign-in request in a browser that was not signed in to ohmail stopped on "This
+browser has lost the name of the account this window is for". The page now takes you through
+sign-in, your password and second factor, and back to the request. Confirming a new computer now
+signs it in to the account the page names.
+
+### A very long folder name no longer stops a mailbox's sync
+<!-- changes: fix-026-server-names-bytes.md -->
+
+A folder whose name is too long to store is skipped, and the rest of the mailbox keeps syncing.
+Before, one such folder on the mail server stopped the whole mailbox.
+
+### A message that cannot be parsed no longer stops syncing
+<!-- changes: fix-026-parse-settles.md -->
+
+A message whose parse fails inside the mail parser is now refused and skipped like any other
+unreadable message, instead of stopping the worker or the desktop engine and holding every message
+behind it. A parse that does not finish within 30 seconds is retried later rather than skipped.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
