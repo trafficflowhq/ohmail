@@ -46,6 +46,12 @@ closing the app at that moment no longer moves the message to Trash on the next 
 cannot be stored, the phone says the message is in Trash. An undo still being stored is no longer
 sent to Trash when the app reconnects in that moment.
 
+### Sign out always ends the session
+<!-- changes: fix-026-b-sign-out-sticks.md -->
+
+Pressing Sign out in one tab moments after another tab renewed the session could leave you signed in
+after the page reloaded. Sign out now ends the session this browser holds, whichever tab renewed it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
