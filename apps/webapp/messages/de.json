@@ -3486,7 +3486,8 @@
   "bodyText": {
     "show": "Verlauf anzeigen",
     "hide": "Verlauf ausblenden",
-    "linkTitle": "Führt zu {host}"
+    "linkTitle": "Führt zu {host}",
+    "more": "Mehr anzeigen ({percent} % angezeigt)"
   },
   "attachments": {
     "count": "{count, plural, one {# Anhang} other {# Anhänge}}",

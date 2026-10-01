@@ -4,6 +4,12 @@ import { Badge, Chip, type TagHueName } from "../primitives/Chip.js";
 import { messageRowDescription, type MessageRowSpoken } from "./row-spoken.js";
 import "./row.css";
 
+/**
+ * The most of a preview a row draws. Every caller passes the ingest snippet (200 characters), and a
+ * row is one line under CSS; the bound makes a whole body handed in by mistake a line, not a stall.
+ */
+export const ROW_PREVIEW_MAX_CHARS = 300;
+
 export interface MessageRowTag {
   name: string;
   hue: TagHueName;
@@ -484,7 +490,7 @@ export function MessageRow(props: MessageRowProps) {
         ) : null}
         {amount ? <span className="amt num">{amount}</span> : null}
       </span>
-      {preview ? <span className="prev" style={{ display: "block" }}>{preview}</span> : null}
+      {preview ? <span className="prev" style={{ display: "block" }}>{preview.slice(0, ROW_PREVIEW_MAX_CHARS)}</span> : null}
       {chips.length ? <span className="sr-chips">{chips}</span> : null}
     </>
   );

@@ -30,7 +30,8 @@
  * NOT IN THE DOM, not hidden by style — a folded tracking URL must not become an anchor until asked
  * for. Native path only: the framed HTML path shows the sender's own document, as sent.
  */
-import { useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
+import { BODY_PAGE_CHARS, pageEnds } from "@ohmail/ui";
 import { liveCopy } from "./locale";
 
 /**
@@ -295,8 +296,9 @@ const EN = {
   show: "Show history",
   hide: "Hide history",
   linkTitle: (host: string) => `Goes to ${host}`,
+  more: (percent: string) => `Show more (${percent}% shown)`,
 };
-export const COPY: typeof EN = liveCopy("bodyText", EN, { linkTitle: ["host"] });
+export const COPY: typeof EN = liveCopy("bodyText", EN, { linkTitle: ["host"], more: ["percent"] });
 
 /**
  * The fold's one decision: which top-level nodes are "the trailing quoted history"? The LAST top-level node must be a
@@ -601,6 +603,38 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
  * renders exactly as it always has. The fold below applies identically to both, because the
  * walker emits the same {@link QuoteNode} the text parser builds.
  */
+/** The plain-text parse of one stretch of a body: lines, blocks, the quote tree. */
+function parsePlain(text: string): BodyNode[] {
+  return toTree(toBlocks(text.replace(/\r\n?/g, "\n").split("\n").map(classifyLine)));
+}
+
+/** One page of a long body. Memoised on its own text, so a further page parses and lays out alone. */
+const BodyPage = memo(function BodyPage({ text, index }: { text: string; index: number }) {
+  return <div className="msg-page">{renderNodes(parsePlain(text), `p${index}-`)}</div>;
+});
+
+/**
+ * A plain body past {@link BODY_PAGE_CHARS}, drawn a page at a time with a press for the next. The
+ * history fold is not offered here: its trailing quote is pages away from what is on screen. The
+ * shown count keys on the text, like the fold, so it never carries over to the next message.
+ */
+function PagedBody({ text }: { text: string }) {
+  const [shown, setShown] = useState<{ text: string; pages: number }>({ text, pages: 1 });
+  const pages = shown.text === text ? shown.pages : 1;
+  const ends = pageEnds(text, pages);
+  const end = ends[ends.length - 1] ?? 0;
+  return (
+    <>
+      {ends.map((e, i) => <BodyPage key={i} index={i} text={text.slice(i === 0 ? 0 : ends[i - 1]!, e)} />)}
+      {end < text.length ? (
+        <button type="button" className="msg-more" onClick={() => setShown({ text, pages: pages + 1 })}>
+          {COPY.more(String(Math.floor((end / text.length) * 100)))}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 export function BodyText({ text, rich }: { text: string; rich?: BodyNode[] | null }) {
   /**
    * The fold's state keys on the MESSAGE TEXT, not on the component instance: `open` is only
@@ -612,11 +646,11 @@ export function BodyText({ text, rich }: { text: string; rich?: BodyNode[] | nul
    * `text` is the same message's text part, handed down beside the nodes.
    */
   const [openedFor, setOpenedFor] = useState<string | null>(null);
+  const useRich = rich != null && rich.length > 0;
+  if (!useRich && (text ?? "").length > BODY_PAGE_CHARS) return <PagedBody text={text} />;
   // CRLF is what an IMAP body actually carries; normalise before splitting on lines, or a
   // blank line is `\r\n\r\n` and every paragraph boundary is missed.
-  const nodes = rich && rich.length > 0
-    ? rich
-    : toTree(toBlocks((text ?? "").replace(/\r\n?/g, "\n").split("\n").map(classifyLine)));
+  const nodes = useRich ? rich : parsePlain(text ?? "");
   const split = splitTrailingHistory(nodes);
   if (split === null) return <>{renderNodes(nodes, "b")}</>;
   const open = openedFor === text;

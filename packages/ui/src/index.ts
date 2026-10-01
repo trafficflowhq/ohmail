@@ -107,7 +107,7 @@ export type {
   RailTagItem,
   RailMailbox,
 } from "./composites/RailNav.js";
-export { MessageRow } from "./composites/MessageRow.js";
+export { MessageRow, ROW_PREVIEW_MAX_CHARS } from "./composites/MessageRow.js";
 export type { MessageRowProps, MessageRowSpoken, MessageRowTag } from "./composites/MessageRow.js";
 export { ListPane, ListGroupLabel, ListRows } from "./composites/ListPane.js";
 export type { ListPaneProps } from "./composites/ListPane.js";
@@ -189,3 +189,4 @@ export type { CommandPaletteState } from "./hooks/useCommandPalette.js";
 
 /* format */
 export { formatFileSize } from "./format/file-size.js";
+export { BODY_PAGE_CHARS, pageEnd, pageEnds } from "./format/long-text.js";

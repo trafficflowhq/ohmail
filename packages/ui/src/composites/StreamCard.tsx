@@ -9,6 +9,7 @@ import {
 import { Icon } from "../icons.js";
 import { Badge } from "../primitives/Chip.js";
 import { estimateCardHeight } from "./stream-estimate.js";
+import { pageEnds } from "../format/long-text.js";
 import "./stream.css";
 
 const SC_CLAMP = 348;
@@ -67,6 +68,11 @@ export interface StreamCardProps {
   bodyState?: "full" | "snippet" | "loading" | "failed" | "withheld";
   /** Shown in place of the body while it is being fetched. App-owned copy. */
   loadingLabel?: string;
+  /**
+   * The press for the next page of a body longer than one page (`BODY_PAGE_CHARS`), given the
+   * percent shown. App-owned copy. Absent, an open card still draws one page and no press.
+   */
+  moreLabel?: (percentShown: number) => string;
   /** Shown when the fetch failed — distinct from "this is the whole message". */
   failedLabel?: string;
   /**
@@ -168,6 +174,7 @@ export function StreamCard({
   collapseLabel,
   bodyState = "full",
   loadingLabel,
+  moreLabel,
   failedLabel,
   withheldLabel,
   bodySlot,
@@ -182,6 +189,12 @@ export function StreamCard({
 }: StreamCardProps) {
   const [open, setOpen] = useState(false);
   const [short, setShort] = useState(false);
+  /* A page at a time, keyed on the body like the reader's: a 2 MiB text drawn whole held the window. */
+  const [paged, setPaged] = useState<{ body: string; pages: number }>({ body, pages: 1 });
+  const pages = paged.body === body ? paged.pages : 1;
+  const ends = pageEnds(body, pages);
+  const shownEnd = ends[ends.length - 1] ?? 0;
+  const shown = body.slice(0, shownEnd);
   const clipRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
 
@@ -234,7 +247,7 @@ export function StreamCard({
      * took the viewer branch above and unclamps in CSS instead.)
      */
     if (open) clip.style.maxHeight = `${clip.scrollHeight}px`;
-  }, [clampHeight, body, open, showViewer]);
+  }, [clampHeight, shown, open, showViewer]);
 
   /**
    * THE BODY IS NOT (YET) THE WHOLE MESSAGE.
@@ -277,7 +290,7 @@ export function StreamCard({
   const est = estimateCardHeight({
     width: estWidthPx ?? 0,
     subject,
-    preview: body,
+    preview: shown,
     recipients: recipients != null,
     pill: !(isShort && !pending),
     /* The pill's 44px touch size is a `max-width: 640px` media query, which is a fact about
@@ -334,7 +347,7 @@ export function StreamCard({
     onToggle?.(true);
   };
 
-  const chunks = body.split("[[img]]");
+  const chunks = shown.split("[[img]]");
   const cls = [
     "scast",
     isShort ? "short" : null,
@@ -400,6 +413,18 @@ export function StreamCard({
             </Fragment>
           ))
         )}
+        {!showViewer && open && moreLabel && shownEnd < body.length ? (
+          <button
+            type="button"
+            className="msg-more"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPaged({ body, pages: pages + 1 });
+            }}
+          >
+            {moreLabel(Math.floor((shownEnd / body.length) * 100))}
+          </button>
+        ) : null}
         {/* The one line of chrome hydration adds, for the three states that need it:
             "we are fetching this", "we could not", and "the server holds no content for this
             one" (the storage cap — terminal, no retry implied). A card whose body has not been

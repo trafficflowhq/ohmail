@@ -3486,7 +3486,8 @@
   "bodyText": {
     "show": "Show history",
     "hide": "Hide history",
-    "linkTitle": "Goes to {host}"
+    "linkTitle": "Goes to {host}",
+    "more": "Show more ({percent}% shown)"
   },
   "attachments": {
     "count": "{count, plural, one {# attachment} other {# attachments}}",

@@ -26,6 +26,10 @@ import { useWithheldSentence } from "./message-chrome";
 import type { WithheldCopyKey } from "./format";
 import { MessageFiles } from "./MessageFiles";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
+import { COPY as BODY_COPY } from "./BodyText";
+
+/** The long-body press, in the reader's words — module scope, so the memo never sees a new one. */
+const moreLabel = (percent: number): string => BODY_COPY.more(String(percent));
 
 /**
  * HOW MANY RECIPIENTS A CARD NAMES BEFORE THE REST BECOMES A COUNT.
@@ -191,6 +195,7 @@ function StreamCardMemoInner({
       expandLabel={tm("expandCard")}
       collapseLabel={tm("collapseCard")}
       loadingLabel={loadingLabel}
+      moreLabel={moreLabel}
       failedLabel={failedLabel}
       withheldLabel={withheldLabel}
       bodySlot={bodySlot}
