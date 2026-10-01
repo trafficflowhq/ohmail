@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { simpleParser, type AddressObject, type Attachment } from "mailparser";
+import type { AddressObject, Attachment, ParsedMail } from "mailparser";
 import { canonicalId } from "./identity.js";
+import { ParseDeadlineExceeded, parseBounded, startParseBudget } from "./mime-parse.js";
 import type { NormalizedMessage, EmailAddress, AttachmentMeta } from "./types.js";
 import type { Logger } from "./log.js";
 import { CALENDAR_MESSAGE_CONTENT_CLASS, icsMethodOfContentType, isCalendarMime } from "./ics.js";
@@ -214,14 +215,16 @@ export class MimeTooLargeError extends Error {
  * an unclassifiable throw is not a lost message, it is a permanently stopped mailbox. Both errors
  * are DETERMINISTIC in the raw bytes — the same source fails the same way every time — which is
  * what makes them safe for a quarantine record to treat as permanent, and the property to
- * preserve if this wrapping is ever widened.
+ * preserve if this wrapping is ever widened — except `reason: "parse_timeout"`, which is transient.
  */
 export class MimeParseError extends Error {
   readonly name = "MimeParseError";
+  readonly reason: "refused" | "parse_timeout";
   constructor(cause: unknown) {
     super(`mailparser refused the message: ${cause instanceof Error ? cause.message : String(cause)}`, {
       cause,
     });
+    this.reason = cause instanceof ParseDeadlineExceeded ? "parse_timeout" : "refused";
   }
 }
 
@@ -264,10 +267,10 @@ function rawByteLength(raw: Buffer | string): number {
  * absent, `simpleParser` rewrites every `cid:` reference into a `data:` URI holding the whole
  * attachment base64-expanded, pasted into `message_bodies.html` — a half-gigabyte database from
  * one mailbox. A store-no-bytes violation before a sizing problem: inlining stored the very bytes
- * the on-demand design refuses to store. The option makes `simpleParser` return BEFORE the
- * rewrite: the html keeps its `cid:` references, `contentId`/`inline` populated as before. A
+ * the on-demand design refuses to store. `parseBounded` takes the option as a literal `true` and
+ * carries no rewrite: the html keeps its `cid:` references, `contentId`/`inline` populated. A
  * sender's own `data:` URI is {@link prepareHtmlForStorage}'s job. `raw` is attacker-controlled;
- * this resolves with a usable message or rejects with one of the two typed errors — nothing else.
+ * this settles, within one 30 s budget, on a usable message or one of the two typed errors.
  */
 export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger } = {}): Promise<NormalizedMessage> {
   const bytes = rawByteLength(raw);
@@ -276,25 +279,28 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
   // ── ONE RETRY, ONLY FOR THE HTML-TO-TEXT REFUSAL ──────────────────────────────────────────
   //
   // `maxHtmlLengthToParse` and a `htmlToText` crash are both reported by mailparser as an
-  // emitted error, which `simpleParser` turns into a rejection that DISCARDS the whole parse —
+  // emitted error, which the parse turns into a rejection that DISCARDS the whole parse —
   // including the html it had already decoded. Left alone, bounding the CPU would therefore
   // convert a slow message into an unreadable one, so the refusal is caught and the message is
   // re-parsed with the conversion switched off (measured 4 ms; the expensive work is what the
   // limit just refused to do). The user gets the html; only the derived text is given up.
-  let parsed: Awaited<ReturnType<typeof simpleParser>>;
+  let parsed: ParsedMail;
   let htmlToTextRefused = false;
   const startedAt = Date.now();
+  const budget = startParseBudget();
   try {
     try {
-      parsed = await simpleParser(raw, PARSE_OPTIONS);
+      parsed = await parseBounded(raw, PARSE_OPTIONS, budget);
     } catch (err) {
       if (!isHtmlToTextRefusal(err)) throw new MimeParseError(err);
       htmlToTextRefused = true;
       try {
-        parsed = await simpleParser(raw, { ...PARSE_OPTIONS, skipHtmlToText: true });
+        parsed = await parseBounded(raw, { ...PARSE_OPTIONS, skipHtmlToText: true }, budget);
       } catch (err2) {
         throw new MimeParseError(err2);
       }
+    } finally {
+      budget.clear();
     }
   } finally {
     // Every parse's wall time, refusals included, so a slow shape is measured where it runs.
@@ -395,7 +401,7 @@ export interface ParsedAddressHeaders {
  * Re-reading who a stored message is from and to, from its stored headers — the address columns
  * were added after the rows that need them, and every row still holds the raw header line. The
  * INGEST parse, not a second one: a backfill disagreeing with ingest leaves two populations whose
- * names came from different rules — so this shares every deciding piece (`simpleParser` under the
+ * names came from different rules — so this shares every deciding piece (`parseBounded` under the
  * same options, the same `toAddr`/`addrList`), pinned by a round-trip test. `from` is `null`
  * where ingest yields the anonymous sentinel. Values are re-folded before going back in: a stored
  * value can carry a raw newline, and written back verbatim it would start a NEW header —
@@ -418,13 +424,16 @@ export async function parseStoredAddressHeaders(
   // absent, which is the honest result for a row whose body row holds no address header.
   if (lines.length === 0) return { from: null, to: [], cc: [] };
 
-  let parsed: Awaited<ReturnType<typeof simpleParser>>;
+  let parsed: ParsedMail;
+  const budget = startParseBudget();
   try {
     // A header-only message: the blank line closes the block and there is no body to decode, so
     // none of the html/attachment machinery `normalizeMime` guards against can run at all.
-    parsed = await simpleParser(`${lines.join("\r\n")}\r\n\r\n`, PARSE_OPTIONS);
+    parsed = await parseBounded(`${lines.join("\r\n")}\r\n\r\n`, PARSE_OPTIONS, budget);
   } catch (err) {
     throw new MimeParseError(err);
+  } finally {
+    budget.clear();
   }
   const fromObj = parsed.from?.value?.[0];
   return {

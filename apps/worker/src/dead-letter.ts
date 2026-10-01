@@ -187,7 +187,12 @@ export function classifyIngestFault(err: unknown): IngestFault {
     return { domain: "message", code: "mime_too_large", deterministic: true };
   }
   if (err instanceof MimeParseError) {
-    return { domain: "message", code: "mime_unparseable", deterministic: true };
+    // A parse that did not settle inside its deadline says nothing about the bytes, so it takes
+    // the non-deterministic arm: retried, then the clock, escalated at three — never written off
+    // on its first occurrence. A refusal stays deterministic.
+    return err.reason === "parse_timeout"
+      ? { domain: "message", code: "unclassified", deterministic: false }
+      : { domain: "message", code: "mime_unparseable", deterministic: true };
   }
 
   const code = codeOf(err);
