@@ -49,26 +49,71 @@ export function startParseBudget(ms: number = MIME_PARSE_DEADLINE_MS): ParseBudg
 
 interface ParserInternals {
   readData(): unknown;
+  processChunk(data: unknown, done: (err?: unknown) => void): unknown;
   hasFailed: boolean;
 }
 const baseReadData = (MailParser.prototype as unknown as ParserInternals).readData;
+const GUARDED = Symbol("parse-guarded");
+type Emitting = {
+  emit: (...args: unknown[]) => unknown;
+  pipe?: (dest: unknown, ...rest: unknown[]) => unknown;
+  [GUARDED]?: true;
+};
 
 /**
- * mailparser runs its header and body processing in `readData`, called from the splitter's
- * `readable` event and from `setImmediate` — so a throw there (measured: a TypeError in header
- * processing for any head longer than one chunk) has no caller to land in. It escaped as an
- * uncaught exception, which exits the worker and the desktop engine, and the parse never settled.
- * Here the throw becomes the parser's own `error`, which the parse below turns into a rejection.
+ * mailparser runs its work in callbacks with no caller to land in: `readData` from the splitter's
+ * `readable` event and from `setImmediate`, a text part's content-stream listeners, the charset and
+ * flowed decoders piped from it, an attachment's stream. A throw in any of them escaped as an
+ * uncaught exception, which exits the worker and the desktop engine. Each of those emitters is
+ * guarded at its `emit` (decoders when created, pipe targets when piped), and every throw leaves by
+ * {@link refuse}: the parser's own `error`, which the parse turns into a rejection.
  */
 class SettlingMailParser extends MailParser {
+  // The one door: the first throw fails the parse, a later one finds it already failed.
+  refuse(err: unknown): void {
+    const self = this as unknown as ParserInternals;
+    if (!self.hasFailed) {
+      self.hasFailed = true;
+      this.emit("error", err);
+    }
+  }
+
+  guard(s: Emitting | null): void {
+    if (!s || s[GUARDED]) return;
+    s[GUARDED] = true;
+    const { emit, pipe } = s;
+    const parser = this;
+    s.emit = function (...args: unknown[]): unknown {
+      try {
+        return emit.apply(this, args);
+      } catch (err) {
+        parser.refuse(err);
+        return false;
+      }
+    };
+    if (pipe) {
+      s.pipe = function (dest: unknown, ...rest: unknown[]): unknown {
+        parser.guard(dest as Emitting);
+        return pipe.call(this, dest, ...rest);
+      };
+    }
+  }
+
   readData(): unknown {
     try {
       return baseReadData.call(this);
     } catch (err) {
-      (this as unknown as ParserInternals).hasFailed = true;
-      this.emit("error", err);
+      this.refuse(err);
       return false;
     }
+  }
+
+  // Each part's decoder is guarded as it is made; the prototype is read per call so a seam on it holds.
+  processChunk(data: unknown, done: (err?: unknown) => void): unknown {
+    const node = data as { getDecoder?: () => Emitting } | null;
+    const make = node?.getDecoder;
+    if (make) node!.getDecoder = () => { const d = make.call(node); this.guard(d); return d; };
+    return (MailParser.prototype as unknown as ParserInternals).processChunk.call(this, data, done);
   }
 }
 
@@ -128,6 +173,7 @@ export function parseBounded(
       if (data.type === "attachment") {
         mail.attachments.push(data);
         const content = data.content as NodeJS.ReadableStream;
+        parser.guard(content as unknown as Emitting);
         const chunks: Buffer[] = [];
         let length = 0;
         content.on("readable", () => {
