@@ -36,6 +36,20 @@ export function bodyHash(body: string): string {
   return createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
+/**
+ * The longest message-id this code will look up or store, in bytes. A wedge guard: the btree indexes
+ * over message-ids cap a tuple near 2704 bytes and Postgres raises `54000` on the INSERT, so one
+ * sender-chosen 3 KB id aborted the persist transaction and the folder's cursor never advanced. 998
+ * is RFC 5322's line-length limit, so no legitimately authored `msg-id` exceeds it; an over-long id
+ * is DROPPED, not truncated — a truncated id is a DIFFERENT id that could collide.
+ */
+export const MAX_MESSAGE_ID_BYTES = 998;
+
+/** Under the btree ceiling, so it can be looked up and stored without wedging ingest. */
+export function isStorableMessageId(id: string): boolean {
+  return Buffer.byteLength(id, "utf8") <= MAX_MESSAGE_ID_BYTES;
+}
+
 export function canonicalId(messageIdHeader: string | null | undefined, body: string): CanonicalId {
   return { messageIdHeader: normalizeMessageId(messageIdHeader), bodyHash: bodyHash(body) };
 }

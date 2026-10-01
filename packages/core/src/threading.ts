@@ -1,4 +1,4 @@
-import { normalizeMessageId } from "./identity.js";
+import { isStorableMessageId, MAX_MESSAGE_ID_BYTES, normalizeMessageId } from "./identity.js";
 import { baseSubject, SUBJECT_PREFIX_PATTERN } from "./reply-subject.js";
 import { isCorroboratedCounterparty, type CounterpartyEvidence } from "./sender-headers.js";
 import type { RepoPort } from "./ports.js";
@@ -15,21 +15,9 @@ import type { EmailAddress } from "./types.js";
  * the `(account_id, root_message_id_header)` unique index.
  */
 
-/**
- * The longest message-id this code will look up or store, in bytes. A wedge guard: the two btree
- * indexes cap a tuple at roughly 2704 bytes and Postgres raises `54000` on the INSERT —
- * `References` tokens are sender-chosen, so without a cap ONE hostile 3 KB reference aborts the
- * persist transaction, the sync cursor never advances, and the worker re-plans the same message
- * for ever: the mailbox stops syncing because of a header. 998 is RFC 5322's line-length limit,
- * so no legitimately authored `msg-id` exceeds it; an over-long token is DROPPED, not truncated —
- * a truncated id is a DIFFERENT id that could collide.
- */
-export const MAX_MESSAGE_ID_BYTES = 998;
-
-/** Under the btree ceiling, so it can be looked up and stored without wedging ingest. */
-export function isStorableMessageId(id: string): boolean {
-  return Buffer.byteLength(id, "utf8") <= MAX_MESSAGE_ID_BYTES;
-}
+/* The message-id bound lives in `identity.ts`, where the stored id is made; re-exported here for
+   the readers that took it from threading. */
+export { isStorableMessageId, MAX_MESSAGE_ID_BYTES };
 
 /**
  * Every message-id (RFC 5322) in a header's raw values, normalized the way

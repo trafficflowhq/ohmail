@@ -461,6 +461,13 @@ function authorDomain(fromAddress: string): string {
 const escapeKeyPart = (s: string): string => s.replace(/%/g, "%25").replace(/\|/g, "%7c");
 
 /**
+ * RFC 2919 §2 caps a `list-id` at 255 octets. A longer one is sender-written junk, and the key it made
+ * met `unsubscribe_records_mailbox_list_uq`'s btree ceiling (`54000`), so it is treated as absent and
+ * the list falls back to the author's address, which ingest bounds.
+ */
+export const MAX_LIST_ID_BYTES = 255;
+
+/**
  * THE IDEMPOTENCY KEY. Uniqueness is `(mailbox_id, list_key)`: at most one request per list per
  * mailbox — and NO SENDER MAY PRODUCE ANOTHER SENDER'S KEY. Not the URL (per-message tokens); not
  * `from_address` alone; not bare `List-ID` — sender-written, so an attacker's mail carrying a
@@ -481,7 +488,9 @@ export function unsubscribeListKey(
     // change at will. Keying on the phrase would make a renamed list a new list.
     const bracketed = /<([^>]+)>/.exec(listId);
     const identity = (bracketed?.[1] ?? listId).trim().toLowerCase().replace(/\.$/, "");
-    if (identity !== "") return `list:${escapeKeyPart(author)}|${escapeKeyPart(identity)}`;
+    if (identity !== "" && Buffer.byteLength(identity, "utf8") <= MAX_LIST_ID_BYTES) {
+      return `list:${escapeKeyPart(author)}|${escapeKeyPart(identity)}`;
+    }
   }
   // No `@` in the claimed author means no namespace to put a `list:` claim in, so the sender-
   // chosen `List-ID` is dropped rather than trusted on its own — the branch it used to take.
