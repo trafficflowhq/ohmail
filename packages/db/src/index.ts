@@ -103,6 +103,10 @@ export {
 export {
   SCREENER_ACT_TRIGGER_PREFIX, rulesTheActWrote, type ActRuleFacts,
 } from "./rule-decided-by.js";
+// The 0.25.9 repair of a person's press that left a Screener rule inferred (run once per store).
+export {
+  planInferredPressRepair, applyInferredPressRepair, type InferredPressPlan, type InferredPressRepairResult,
+} from "./inferred-press-repair.js";
 
 /* NO REQUEST-KEY EXPORTS HERE, and the absence replaces a module that used to exist.
  *
