@@ -377,13 +377,21 @@ export function materializePage(db: Db, accountId: string, source: MaterializeSo
   return materializeRows(db, accountId, { source }, {});
 }
 
+/** Each key becomes a quoted identifier drizzle 0.36 does not escape: only a plain one is admitted. */
+export function assertIdentifierKeys(keys: readonly string[]): void {
+  for (const k of keys) {
+    if (!/^[a-z_][a-z0-9_]*$/.test(k)) throw new Error(`materialize: key ${JSON.stringify(k).slice(0, 40)} is not an identifier`);
+  }
+}
+
 async function materializeRows(
   db: Db, accountId: string,
   scope: { ids: readonly string[] } | { source: MaterializeSource },
   opts: MaterializeMessagesOpts,
 ): Promise<MaterializedRow[]> {
-  const d = dialect(db);
   const source = "source" in scope ? scope.source : null;
+  assertIdentifierKeys(source?.keys ?? []);
+  const d = dialect(db);
   const keyFields = Object.fromEntries((source?.keys ?? []).map((k, i) => [`k${i}`, sql`p.${sql.identifier(k)}`.as(`p_${k}`)]));
   /**
    * THE THREE FLAGS as columns of the same row — the auto-reply flag and the two calendar facts,

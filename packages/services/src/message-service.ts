@@ -511,7 +511,7 @@ async function sizedThenFetch<R extends { messageId: string }>(
  * mailbox count wrote its own WHERE and counted the deleted rows History leaves out. `from` is the
  * table or alias the statement names; the condition is also the History index's partial predicate.
  */
-export function ownedMessages(accountId: string, from = "messages"): SQL {
+export function ownedMessages(accountId: string, from: "messages" | "n" | "m" = "messages"): SQL {
   const t = sql.identifier(from);
   return sql`${t}.account_id = ${accountId} and ${t}.deleted_at is null`;
 }
