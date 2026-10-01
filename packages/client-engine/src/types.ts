@@ -1838,7 +1838,10 @@ export interface ScreenerWaitingPageDTO {
   nextCursor: string | null;
   /** The subjects of decisions the server is still carrying out, which it leaves off every page. */
   inFlight: Array<{ scope: "sender" | "domain"; match: string }>;
-  /** The copy this page was read beside was still taking in the account (`ScreenerWaitingWire`). */
+  /**
+   * The copy this page was read beside was still taking in the account (`ScreenerWaitingWire`), or
+   * this window has not yet settled a drain begun after the door said it had caught up.
+   */
   copyBehind?: true;
   /** Which ask wrote this answer — rises with every refresh, so a reader can tell a newer one. */
   ask: number;

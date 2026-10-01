@@ -2466,8 +2466,11 @@ export class OhmailEngine {
    * The store's waiting queue, beside its one door ({@link refreshScreenerWaiting}). `armed`: a
    * surface asked. `dirty`: a page since the last ask touched the gate, a rule, the settings or a
    * mailbox, so the settle asks again. `seq`: the newest ask, so an older answer never lands last.
+   * `asking`: asks in the air. `caughtUpAt`: the {@link drainEpoch} at which an answer first stopped
+   * saying the door's copy is behind, while the page still holds for it ({@link queueStaysBehind}).
    */
-  private screenerWait: { armed: boolean; dirty: boolean; seq: number } = { armed: false, dirty: false, seq: 0 };
+  private screenerWait: { armed: boolean; dirty: boolean; seq: number; asking: number; caughtUpAt: number | null } =
+    { armed: false, dirty: false, seq: 0, asking: 0, caughtUpAt: null };
   /**
    * The undecided-sender offer's freshness ({@link refreshUnscreened}). `armed`: a surface asked.
    * `owed`: a page changed what it counts (a rule's walk ended, a mailbox went), so the settle
@@ -2639,6 +2642,8 @@ export class OhmailEngine {
   private storeChangesRev = 0;
   /** Drains that reached the settle — {@link drainsCompleted}. */
   private drainsDone = 0;
+  /** The {@link drainEpoch} of the last drain that reached the settle. */
+  private settledEpoch = 0;
   /** The store's last timeline answer and whether this mirror held all of it then — {@link storeCoverage}. */
   private coverageRead: { timeline: StoreTimeline; wasWhole: boolean } | null = null;
   /** The last ask found no timeline (`unavailable`, or a refusal): the store cannot say. */
@@ -3527,6 +3532,7 @@ export class OhmailEngine {
       // rendered from "the overlay's claim" to "the server's identical statement".
       this.sweepAwaitingEcho(epoch);
       this.drainsDone += 1;
+      this.settledEpoch = epoch;
       // THE SETTLE'S ONE PUBLISH, after the stamp {@link OhmailEngine.freshness} reads: the last
       // page, the prune, the retired copies and overlays and the stamp are one snapshot, never
       // the new rows under the old "as of". `one-notify-per-poll.test.ts` and
@@ -3535,8 +3541,11 @@ export class OhmailEngine {
       // The held-release offer re-asks when this drain moved the settings stamp or brought held mail.
       this.ringHeldReleaseBell();
       this.ringUnscreenedBell();
-      // The queue's page re-asks when this drain touched the gate, a rule, the settings or a mailbox.
-      if (this.screenerWait.armed && this.screenerWait.dirty) this.reaskScreenerWaiting();
+      // The queue's page re-asks when this drain touched the gate, a rule, the settings or a mailbox,
+      // and at every settle while the page says the door's copy is behind: that is how this window
+      // learns the copy has caught up ({@link queueStaysBehind}). That ask never supersedes one in the air.
+      const queue = this.screenerWait;
+      if (queue.armed && (queue.dirty || (queue.asking === 0 && this.queueBehind()))) this.reaskScreenerWaiting();
       return;
     }
   }
@@ -5664,11 +5673,14 @@ export class OhmailEngine {
     w.dirty = false;
     const seq = ++w.seq;
     let wire;
+    w.asking += 1;
     try {
       wire = await ask.call(this.adapter, { limit: SCREENER_WAITING_PAGE });
     } catch (err) {
       if (seq === w.seq) w.dirty = true;
       throw err;
+    } finally {
+      w.asking -= 1;
     }
     if (seq !== w.seq) return;
     // An answer asked after a decision's confirm that lists its subject reopens the question.
@@ -5692,7 +5704,7 @@ export class OhmailEngine {
       const page: ScreenerWaitingPageDTO = {
         id: SCREENER_WAITING_PAGE_ID, kind: "page", total, nextCursor: wire.nextCursor,
         inFlight: wire.inFlight, ask: seq, rows: puts.length,
-        ...(wire.copyBehind === true ? { copyBehind: true as const } : {}),
+        ...(this.queueStaysBehind(wire) ? { copyBehind: true as const } : {}),
       };
       puts.push({ type: SCREENER_WAITING_TYPE, id: SCREENER_WAITING_PAGE_ID, entity: page });
     }
@@ -5756,6 +5768,30 @@ export class OhmailEngine {
     const walked = { edge: last?.receivedAt ?? row.walked?.edge ?? "", listed: [...listed], nextCursor: wire.nextCursor };
     await this.store.commitLocal([{ type: SCREENER_WAITING_TYPE, id: SCREENER_WAITING_PAGE_ID, entity: { ...row, walked } }], []);
     this.notify();
+  }
+
+  /** Does the stored queue page say the door's copy is behind ({@link ScreenerWaitingPageDTO.copyBehind})? */
+  private queueBehind(): boolean {
+    const row = this.store.record(SCREENER_WAITING_TYPE, SCREENER_WAITING_PAGE_ID)?.entity as ScreenerWaitingDTO | null | undefined;
+    return row?.kind === "page" && row.copyBehind === true;
+  }
+
+  /**
+   * DOES THIS ANSWER'S PAGE KEEP THE HOLD ({@link heldAheadOfTheCopy})? While the door says its copy
+   * is behind, yes. The first answer that stops saying so keeps it too, until a drain that BEGAN after
+   * that answer has settled: only then does this window's copy hold everything the door's copy held
+   * when it caught up, so a sender decided elsewhere is not released ahead of the rule that files them.
+   */
+  private queueStaysBehind(wire: ScreenerWaitingWire): boolean {
+    const w = this.screenerWait;
+    if (wire.copyBehind === true || !this.queueBehind()) {
+      w.caughtUpAt = null;
+      return wire.copyBehind === true;
+    }
+    w.caughtUpAt ??= this.drainEpoch;
+    if (this.settledEpoch <= w.caughtUpAt) return true;
+    w.caughtUpAt = null;
+    return false;
   }
 
   /** A new ask, superseding any in the air; never awaited, and a failure waits for the next settle. */
