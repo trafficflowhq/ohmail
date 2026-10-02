@@ -742,6 +742,12 @@ export interface ParsedProfileMessage {
   /** `X-Ohmail-Install-Id` — which organizer wrote this copy, or null if absent. */
   installId: string | null;
   ref?: unknown;
+  /**
+   * The body's document is exactly what {@link serializeProfileDoc} writes for it (CRLF read as
+   * LF). `false` for a message written before the escapes: its names are still plain text, and
+   * the holder rewrites it once. Absent on a `newer` document.
+   */
+  encoded?: boolean;
 }
 
 export type ProfileRecord = ParsedProfileMessage | MalformedProfile;
@@ -901,9 +907,10 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
   const end = body.lastIndexOf("}");
   if (start === -1 || end === -1 || end < start) return malformed("no document in body");
 
+  const slice = body.slice(start, end + 1);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(body.slice(start, end + 1));
+    parsed = JSON.parse(slice);
   } catch {
     return malformed("document is not JSON");
   }
@@ -936,7 +943,16 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
     },
     ...payload,
   };
-  return { status: "ok", doc, v, installId, ...(ref === undefined ? {} : { ref }) };
+  return { status: "ok", doc, v, installId, encoded: isEncodedAsWritten(slice, rawDoc), ...(ref === undefined ? {} : { ref }) };
+}
+
+/** Is this document slice exactly what this build writes for it — escapes, layout, key order? */
+function isEncodedAsWritten(slice: string, rawDoc: Record<string, unknown>): boolean {
+  try {
+    return slice.replace(/\r\n/g, "\n") === serializeProfileDoc(rawDoc as unknown as OrganizerProfileDoc);
+  } catch {
+    return false;
+  }
 }
 
 // ── IO ──────────────────────────────────────────────────────────────────────────────────────
@@ -1520,6 +1536,8 @@ export function makeProfileIo(
 export type ProfileReadResult =
   | {
     state: "found"; doc: OrganizerProfileDoc; installId: string | null; ref: unknown;
+    /** The chosen message's body is in the escaped form this build writes ({@link ParsedProfileMessage.encoded}). */
+    encoded: boolean;
     /**
      * The generation `ref` was read under (mail 0094's mirror writer needs it). `ref` alone is a
      * uid, and storing one without its generation is the defect this pair prevents. This value
@@ -1952,6 +1970,7 @@ export async function readOrganizerProfile(
   const plan = planTidy(view, opts?.installId ?? newest.installId, opts?.now ?? new Date(), listing.claims, opts?.retain);
   return {
     state: "found", doc: newest.doc!, installId: newest.installId, ref: newest.ref,
+    encoded: newest.encoded === true,
     /* THE ONE THE UID WAS READ UNDER — taken from the messages this read parsed, never from the
        connection at this moment. */
     generation,

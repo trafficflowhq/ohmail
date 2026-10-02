@@ -29,6 +29,9 @@ import {
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf,
 } from "@trafficflow/core/adapters/organizer-profile";
 
+/** (install, mailbox, folder generation) the holder has re-encoded a plain settings message under. */
+const REENCODED = new Set<string>();
+
 /**
  * DOES THE LOCAL STORE SAY WHAT THIS DOCUMENT SAYS — asked at ONE canonical version, the
  * document's.
@@ -1448,7 +1451,10 @@ export class OrganizerProfileSync {
         if (read.residue > 0) this.tidyOwed = true;
         // The held record is the question this organizer asks, never mid-flight residue.
         if (this.holdFingerprint !== null && docFingerprint === this.holdFingerprint) return;
-        if (localSaysWhatTheDocumentSays(local, read.doc)) return;
+        if (localSaysWhatTheDocumentSays(local, read.doc)) {
+          if (!read.encoded) await this.reencodeOnce(io, local, read, log);
+          return;
+        }
         if (ours) {
           // Our own write that our memory does not match (another process sharing our install
           // id, or memory lost to a code path we did not foresee): trust the store, rewrite.
@@ -1464,6 +1470,48 @@ export class OrganizerProfileSync {
         return;
       }
     }
+  }
+
+  /**
+   * A SETTINGS MESSAGE IN THE PLAIN FORM IS REWRITTEN ONCE, by the holder, in the escaped form this
+   * build writes: same configuration, so no fingerprint moves. At most once per (mailbox, folder
+   * generation) per process, whatever the write answered: a server that rewrites stored bytes would
+   * otherwise read `encoded: false` after every write. Never from a reader (`onOrganize` runs only
+   * on the organizing arm), and the memo is never persisted.
+   */
+  private async reencodeOnce(
+    io: ProfileIo,
+    local: OrganizerProfilePayload,
+    read: Extract<ProfileReadResult, { state: "found" }>,
+    log: (event: string, detail: Record<string, unknown>) => void,
+  ): Promise<void> {
+    const { deps } = this;
+    const key = JSON.stringify([deps.self.installId, deps.mailboxId, String(read.generation)]);
+    if (REENCODED.has(key)) return;
+    REENCODED.add(key);
+    const now = (deps.now ?? ((): Date => new Date()))();
+    const doc = makeProfileDoc(local, { updatedAt: now, producer: { kind: deps.self.kind, version: deps.producerVersion } });
+    const keep = this.retained();
+    const result = await writeOrganizerProfile({
+      io, doc, installId: deps.self.installId, tidyMode: deps.tidyMode ?? "remove", now,
+      ...(keep === undefined ? {} : { retain: keep }),
+      replaceable: [
+        profileFingerprint(read.doc),
+        ...(this.lastWrittenFingerprint === null ? [] : [this.lastWrittenFingerprint]),
+        ...this.seenForeignFingerprints,
+      ],
+      log: (event, detail) => { log(event, { ...detail, mailboxId: deps.mailboxId, accountId: deps.accountId }); },
+    });
+    if (result.written) {
+      this.lastWrittenFingerprint = profileFingerprint(doc);
+      if (result.owed === true) this.tidyOwed = true;
+    } else if (result.reason === "cleanup_owed") {
+      this.tidyOwed = true;
+    }
+    log("profile_reencoded", {
+      mailboxId: deps.mailboxId, accountId: deps.accountId, written: result.written,
+      ...(result.written ? {} : { reason: result.reason }),
+    });
   }
 
   private async writeMarker(
