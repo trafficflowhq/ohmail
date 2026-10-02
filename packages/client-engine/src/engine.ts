@@ -527,6 +527,9 @@ export function targetOf(m: EngineMutation): string | null {
   }
 }
 
+/** Replay order is user order: the stamp minted at `mutate()`, then its sequence. */
+const byAtN = (a: PendingMutation, b: PendingMutation): number => (a.at - b.at) || (a.n - b.n);
+
 /** One pending verb as the row that is persisted for it. */
 function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
   return {
@@ -3024,12 +3027,9 @@ export class OhmailEngine {
     const batch = this.queue
       .filter((p) => (p.nextAt ?? 0) <= ready)
       .filter((p) => p.restored === true || !OhmailEngine.ownerSettled(p.mutation))
-      .sort((a, b) => (a.at - b.at) || (a.n - b.n));
+      .sort(byAtN);
     if (batch.length === 0) return;
-    const held = new Set(batch);
-    for (let i = this.queue.length - 1; i >= 0; i--) {
-      if (held.has(this.queue[i]!)) this.queue.splice(i, 1);
-    }
+    // The batch stays on the queue until each entry's own turn — see {@link takeTurn}.
     // Serial and awaited: order is user order, and the drain below must not begin until every
     // replayed POST has returned (that happens-before is what lets it carry their echoes). A
     // retryable failure re-queues onto the queue for the NEXT drive — `dispatch` never throws,
@@ -3039,8 +3039,9 @@ export class OhmailEngine {
     // session. The in-flight dispatch still OWNS its timed-out entry (it settles it, re-queues
     // it, or leaves it persisted for the next boot), so the verb is never double-run and never
     // dropped.
-    for (let i = 0; i < batch.length; i++) {
-      const p = batch[i]!;
+    for (const p of batch) {
+      if (this.outboxHold) return;
+      if (this.takeTurn(p) === "gone") continue;
       // ONE ROAD. This loop used to hand-roll the deadline, the barrier and the hold, which is
       // how `retryAbandoned` came to be the road WITHOUT a deadline: the code that had one was
       // not reusable, so the third caller re-derived a subset of it. It is the same method now.
@@ -3069,21 +3070,18 @@ export class OhmailEngine {
         this.notify();
       }
       if (held) {
-        // A hold armed while this batch ran. The rest stay queued in user order for the drive
-        // after; this one proceeds to its drain, because reads are never hostage to a write.
-        this.queue.unshift(...batch.slice(i));
+        // A hold armed while this batch ran. This entry goes back and the rest never left, in
+        // user order for the drive after; reads are never hostage to a write.
+        this.queue.push(p);
+        this.queue.sort(byAtN);
         return;
       }
       if (timedOut) {
         // ORDER IS THE CONTRACT, so a timeout stops the BATCH, not just the wait: the hung
         // request may yet commit, and dispatching the entries behind it would let a newer write
-        // land before an older one — mark-read then mark-unread arriving reversed is the exact
-        // class the serial replay exists to prevent. The rest go back on the queue with their
-        // stamps intact (the next replay re-sorts), and the in-flight dispatch is already the
-        // order barrier: `dispatchWithDeadline` armed {@link outboxHold} before returning, so
-        // no road may start another dispatch until it settles. This drive still proceeds to its
-        // drain — reads are never hostage to a hung write.
-        this.queue.unshift(...batch.slice(i + 1));
+        // land before an older one. The rest are still on the queue with their stamps, and
+        // `dispatchWithDeadline` armed {@link outboxHold}, so no road dispatches until it
+        // settles. This drive still proceeds to its drain.
         return;
       }
     }
@@ -6844,10 +6842,8 @@ export class OhmailEngine {
         [{
           type: OUTBOX_TYPE,
           id: p.id,
-          entity: {
-            v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
-            attempts: 0,
-          } satisfies PersistedOutboxEntry,
+          // The whole intent: the created row, the unread create and Send + Done ride a kill.
+          entity: { ...outboxEntryOf(p), attempts: 0 } satisfies PersistedOutboxEntry,
         }],
         [{ type: OUTBOX_ABANDONED_TYPE, id: p.id }],
       );
@@ -7136,26 +7132,37 @@ export class OhmailEngine {
      * newer verb cannot un-send it. What the mark does is keep the older verb from rejoining the queue when its
      * request comes back retryable — replaying it would put the older value over the newer one that has since landed.
      * The wire is scanned BEFORE the empty-queue return, and that order is the rule: a verb whose request outran its
-     * deadline belongs to NO collection but {@link inFlight}, so the queue is EMPTY exactly while a verb is on the
+     * deadline belongs to NO collection but {@link inFlight}, so the queue can be EMPTY while a verb is on the
      * wire — the scan below that return was unreachable in the one case it was written for, and the first
      * move-then-move-back read `queue.length === 0`, marked nothing, and the older destination replayed over the
      * newer intent with both requests reporting success.
      */
     const markedInFlight: PendingMutation[] = [];
+    let createAttempted = false;
+    let createdRow: CreatedDraftRow | undefined;
     for (const q of this.inFlight.values()) {
-      if (q.mutation.kind === m.kind && key !== null && supersedeKey(q.mutation) === key
-        && q.supersededBy === undefined) {
+      if (q.supersededBy !== undefined) continue;
+      /* ONE KEY, ONE SEND, ON THE WIRE: a send re-pressed under the key of the send in the air is
+         that send. Marked, never retired — the wire entry owns its row until it settles; a
+         retryable answer then drops it and the newer words go under the same key, and a confirmed
+         one is answered for the newer press from the server's reservation. */
+      const sameSend = m.kind === "mail_send" && q.mutation.kind === "mail_send" && q.key === sendKey;
+      if (sameSend || (q.mutation.kind === m.kind && key !== null && supersedeKey(q.mutation) === key)) {
         q.supersededBy = by;
         // Only what THIS call marked. An entry an EARLIER supersession marked is superseded by a
         // verb that is still standing (it is in the queue, and a refused replacement puts it
         // back), so clearing it on this refusal would resurrect a verb the queue already replaces.
         markedInFlight.push(q);
+        if (sameSend && q.createAttempted === true) createAttempted = true;
+        if (sameSend && q.createdRow !== undefined) createdRow = q.createdRow;
       }
     }
-    if (this.queue.length === 0) return { retired, narrowed, undo, markedInFlight };
+    const carried = {
+      ...(createAttempted ? { createAttempted: true as const } : {}),
+      ...(createdRow !== undefined ? { createdRow } : {}),
+    };
+    if (this.queue.length === 0) return { retired, narrowed, undo, markedInFlight, ...carried };
     let changed = false;
-    let createAttempted = false;
-    let createdRow: CreatedDraftRow | undefined;
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
       const qm = q.mutation;
@@ -7858,8 +7865,19 @@ export class OhmailEngine {
     }
   }
 
+  /** The verbs on the queue, a running flush's batch included until each one's own turn. */
   pendingMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan }> {
     return [...this.queue];
+  }
+
+  /**
+   * THE VERBS ON THE WIRE — a request running, a timed-out one included, which is in no collection
+   * {@link pendingMutations} reads. Its own read rather than an option on that one, so no reader of
+   * the queue changes meaning: a re-press asks both, queue first, to resume the key of a send still
+   * in the air instead of minting a second one.
+   */
+  inFlightMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan }> {
+    return [...this.inFlight.values()];
   }
 
   /**
@@ -8080,45 +8098,62 @@ export class OhmailEngine {
     // A wait the SERVER named is honoured even here — see `waitIsServerNamed`. Our own backoff is
     // not: this is the explicit try-now road, and on mobile it is the only road.
     const ready = this.now().getTime();
-    const held = this.queue.filter((p) => p.waitIsServerNamed === true && (p.nextAt ?? 0) > ready);
-    const batch = this.queue.filter((p) => !(p.waitIsServerNamed === true && (p.nextAt ?? 0) > ready))
-      .sort((a, b) => (a.at - b.at) || (a.n - b.n));
-    this.queue.length = 0;
-    this.queue.push(...held);
+    const serverWait = (p: PendingMutation): boolean => p.waitIsServerNamed === true && (p.nextAt ?? 0) > ready;
+    // The snapshot is taken HERE, inside the gate body, and the entries stay on the queue until
+    // their own turn — see {@link takeTurn}.
+    const batch = this.queue.filter((p) => !serverWait(p)).sort(byAtN);
     // A verb waiting out the server's own interval is reported as queued rather than omitted, so a
     // caller gets one result per verb it is holding.
-    const results: MutationResult[] = held.map((p) => ({
+    const results: MutationResult[] = this.queue.filter(serverWait).map((p) => ({
       id: p.id, key: p.key, status: "queued" as const, seq: null,
     }));
     /**
-     * DEADLINE-BOUNDED, like every other dispatch road. This loop awaited `dispatch` directly, so one half-open
-     * request held the flush — and every caller awaiting it, including a surface's spinner — open indefinitely. The
-     * boot replay and the per-record retry both bound their attempts; this was the road that did not, which made
-     * "every send has a time limit" false in the one place a host calls most often. A timed-out attempt still OWNS
-     * its entry and becomes the order barrier, so the remaining batch is left queued rather than dispatched behind it
-     * — the same rule the replay follows, for the same reason: a newer verb must not land before an older one that
-     * may yet commit.
+     * DEADLINE-BOUNDED, like every other dispatch road. A timed-out attempt still OWNS its entry and
+     * becomes the order barrier, so the rest of the batch stays queued rather than dispatched behind
+     * it: a newer verb must not land before an older one that may yet commit. Reconciles owed by the
+     * batch are issued AFTER the lane is released — see `dispatchOnLane`.
      */
-    // Reconciles owed by this batch, issued AFTER the lane is released — see `dispatchOnLane`.
-    // Held inside, a slow drain would time the dispatch that already succeeded and arm a barrier
-    // that has nothing to do with the wire.
     const owedHere: Array<"await" | "background"> = [];
-    for (let i = 0; i < batch.length; i++) {
-      const p = batch[i]!;
+    const answered = new Set<PendingMutation>();
+    for (const p of batch) {
+      if (this.outboxHold) break;
+      // Retired by a same-key press or withdrawn by Cancel while an earlier entry was on the wire:
+      // its replacement answers for the key, so this flush says nothing about it.
+      if (this.takeTurn(p) === "gone") continue;
       const out = await this.dispatchOnLane(p);
-      if (out.held || out.timedOut || out.result === null) {
+      if (out.held) {
+        this.queue.push(p);
+        this.queue.sort(byAtN);
+        break;
+      }
+      answered.add(p);
+      if (out.timedOut || out.result === null) {
         results.push({ id: p.id, key: p.key, status: "queued", seq: null });
-        for (const rest of batch.slice(i + 1)) {
-          this.queue.push(rest);
-          results.push({ id: rest.id, key: rest.key, status: "queued", seq: null });
-        }
         break;
       }
       if (out.owed !== null) owedHere.push(out.owed);
       results.push(out.result);
     }
+    for (const p of batch) {
+      if (!answered.has(p) && this.queue.includes(p)) results.push({ id: p.id, key: p.key, status: "queued", seq: null });
+    }
     this.owedReconciles.push(...owedHere);
     return results;
+  }
+
+  /**
+   * ONE ENTRY OFF THE QUEUE, AT ITS OWN TURN — the dequeue rule of the flush and the boot replay.
+   * Both lifted their whole batch off the queue before the first dispatch, so while entry 1 was on
+   * the wire entries 2..n were in no collection a re-press, a supersession or Cancel could read: a
+   * re-press minted a second key and the reply was delivered twice. Called inside a gate body with
+   * no await between the read and the splice; `supersedeQueued` and `withdrawQueued` splice
+   * synchronously, so an entry they took is "gone" here and is skipped.
+   */
+  private takeTurn(p: PendingMutation): "taken" | "gone" {
+    const at = this.queue.indexOf(p);
+    if (at < 0) return "gone";
+    this.queue.splice(at, 1);
+    return "taken";
   }
 
   // ── local search ─────────────────────────────────────────────────────────

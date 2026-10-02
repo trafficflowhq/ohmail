@@ -4294,13 +4294,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * carries the key it was expressed under, so a second press RESUMES it instead of minting a
    * fresh one: same key, same request, and the server's own same-key branch decides whether that
    * mail has gone. A fresh key there is a second copy in somebody's inbox, which is the whole
-   * defect. Nothing standing ⇒ `mutate` mints, and persists it with the outbox row.
+   * defect. Standing means queued OR on the wire: a send in the air resumes its key too, the queue
+   * read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
    */
   const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null): Promise<MutationResult> => {
     const intent = sendIntentOf(m);
     const standing = intent === null
       ? undefined
-      : engine.pendingMutations().find((p) => sendIntentOf(p.mutation) === intent);
+      : [...engine.pendingMutations(), ...engine.inFlightMutations()].find((p) => sendIntentOf(p.mutation) === intent);
     // WHAT THE RESUME MAY COST, WRITTEN DOWN WHILE BOTH VERSIONS EXIST. The key that stops a
     // second copy also lets the server answer from the first reservation, and only this moment
     // can see that the words changed — see `resumedOverOtherText`. Whether it cost anything is
