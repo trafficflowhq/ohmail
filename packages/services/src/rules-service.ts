@@ -485,7 +485,7 @@ export class RulesService {
        mail to News: a sheet press "all their mail -> Ohbox" over such a twin left the next newsletter
        in News under the rule just pressed. `manual` is what every explicit rule already is. */
     const keepProvenance = this.validKeepProvenance(patch.keepProvenance);
-    const restoreProvenance = this.validRestoreProvenance(patch.restoreProvenance, keepProvenance);
+    const restoreProvenance = this.validRestoreProvenance(patch.restoreProvenance, keepProvenance, patch.destination !== undefined);
     if (patch.destination !== undefined && !keepProvenance) set.provenance = "manual";
     else if (restoreProvenance !== undefined) set.provenance = restoredProvenanceSql(restoreProvenance as never);
     const applyRetro = this.validApplyRetro(patch.applyRetro);
@@ -773,12 +773,15 @@ export class RulesService {
    * and silently reading a client's attempt to DECLINE as consent to move thousands of messages
    * is the failure mode this check exists for.
    */
-  /** An undo's restore: only beside `keepProvenance`, only an inferred value, else a 400. */
-  private validRestoreProvenance(v: unknown, keep: boolean): string | undefined {
+  /**
+   * An undo's restore: only beside `keepProvenance` AND a destination (the undo puts the rule back
+   * where it was; the relayed door refuses the same shape), only an inferred value, else a 400.
+   */
+  private validRestoreProvenance(v: unknown, keep: boolean, withDestination: boolean): string | undefined {
     if (v === undefined) return undefined;
-    if (!keep || typeof v !== "string" || !RESTORABLE_PROVENANCE.has(v)) {
+    if (!keep || !withDestination || typeof v !== "string" || !RESTORABLE_PROVENANCE.has(v)) {
       throw new ServiceError("validation_failed", 400,
-        "restoreProvenance must be promoted, seeded-from-sent or migrated, and needs keepProvenance");
+        "restoreProvenance must be promoted, seeded-from-sent or migrated, and needs keepProvenance and a destination");
     }
     return v;
   }

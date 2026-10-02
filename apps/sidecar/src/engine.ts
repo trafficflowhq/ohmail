@@ -52,6 +52,7 @@ import {
   // The 0.25.9 repair of a person's press that left a Screener rule inferred, once per launch.
   applyInferredPressRepair,
 } from "@trafficflow/db";
+import { oncePerLaunch } from "./once-per-launch.js";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
   kbService, runAwayResponderPass, runScheduledSendPass, runSendReconcilePass,
@@ -2507,8 +2508,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     let namesCursor: string | undefined;
     let namesDone = false;
-    /** Whether this launch ran the 0.25.9 press repair (`repairInferredPresses`). */
-    let pressRepairDone = false;
     /** When the thread-join heal last ran in THIS launch — it repairs presentation, not a
      * promise, so once per {@link LOCAL_JOIN_HEAL_EVERY_MS} is plenty and a busy drain never
      * pays its GROUP BY. Zero so a launch's first drain takes one look (splits accumulated
@@ -2575,20 +2574,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * the same module the Cloud's operator run uses). It limits itself — a written rule is no
      * longer a candidate — so a launch with nothing to repair costs one read. Counts only.
      */
-    const repairInferredPresses = async (): Promise<void> => {
-      if (pressRepairDone || stopping) return;
-      try {
-        const r = await applyInferredPressRepair(db as unknown as Tx, world.accountId);
-        pressRepairDone = true;
-        if (r.written > 0) log("inferred_presses_repaired", { fillable: r.planned, written: r.written });
-      } catch (err) {
-        log("inferred_presses_repair_failed", {
-          err,
-          reason: "a rule the person moved to the Ohbox before this release keeps filing their newsletters " +
-            "to News; nothing was written, so the next drain of this launch asks again",
-        });
-      }
-    };
+    const repairOnce = oncePerLaunch(async () => {
+      const r = await applyInferredPressRepair(db as unknown as Tx, world.accountId);
+      if (r.written > 0) log("inferred_presses_repaired", { fillable: r.planned, written: r.written });
+    }, (err) => {
+      log("inferred_presses_repair_failed", {
+        err,
+        reason: "a rule the person moved to the Ohbox before this release keeps filing their newsletters " +
+          "to News; nothing was written, so the next launch asks again",
+      });
+    });
+    const repairInferredPresses = async (): Promise<void> => { if (!stopping) await repairOnce(); };
 
 
     /**

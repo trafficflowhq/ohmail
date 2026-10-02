@@ -786,9 +786,10 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
     // An update naming nothing is not a change — the same rule `profile.update` follows.
     if (Object.keys(set).length === 0) return null;
     if (o.keepProvenance !== undefined && typeof o.keepProvenance !== "boolean") return null;
-    // A restore travels only with the keep, and only as an inferred value: refused whole otherwise.
+    // A restore travels only with the keep and a destination, and only as an inferred value:
+    // refused whole otherwise (the local door's `validRestoreProvenance` refuses the same shape).
     const restore = o.restoreProvenance;
-    if (restore !== undefined && (o.keepProvenance !== true || typeof restore !== "string"
+    if (restore !== undefined && (o.keepProvenance !== true || set.destination === undefined || typeof restore !== "string"
       || !RESTORABLE_PROVENANCE.has(restore))) return null;
     return {
       op: "update", key, set, applyRetro, retroAsked: o.applyRetro === true,
