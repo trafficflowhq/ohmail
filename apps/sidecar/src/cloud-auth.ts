@@ -325,6 +325,39 @@ export function retryAfterMs(res: Response, nowMs: number): number | null {
   return Math.min(Math.max(ms, 0), RETRY_AFTER_MAX_MS);
 }
 
+/**
+ * The same answer, whose body calls `ended` once it has been read to the end, cancelled or failed:
+ * the moment a request stops being OUT. A body-less answer has ended already.
+ */
+function bodyEnds(res: Response, ended: () => void): Response {
+  if (res.body === null) {
+    ended();
+    return res;
+  }
+  const reader = res.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          ended();
+          controller.close();
+        } else {
+          controller.enqueue(chunk.value);
+        }
+      } catch (err) {
+        ended();
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      ended();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+}
+
 /** A transport failure's word: the deadline, or the network. Never the message. */
 function transportCode(err: unknown): string {
   const name = (err as { name?: unknown } | null)?.name;
@@ -352,9 +385,10 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   let timerIsRetry = false;
   let stopped = false;
   /**
-   * Every request {@link withDeadline} bounds, held until its deadline fires so `stop()` can end the
-   * ones still out. A registry rather than `AbortSignal.any`, which jsdom lacks, and this engine also
-   * runs under jsdom (the window's tests). A request asked after the stop goes out already aborted.
+   * Every request {@link send} bounds, held while it is OUT — until its body is read, cancelled or
+   * failed, or its deadline fires — so `stop()` can end the ones still out. A registry rather than
+   * `AbortSignal.any`, which jsdom lacks (the window's tests run this engine). A request asked after
+   * the stop goes out already aborted.
    */
   const bounded = new Set<AbortController>();
   const stoppedReason = (): DOMException => new DOMException("the session was stopped", "AbortError");
@@ -362,25 +396,37 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   let launchRenewal: Promise<Renewal> | null = null;
 
   /**
-   * Bound a request that nobody else is bounding. A caller-supplied `signal` wins untouched —
-   * the wake stream's held request is the deliberate case — and everything else gets the
-   * deadline AND the stop, both covering the body read: aborting rejects a parked `json()`, so a
-   * half-open socket is a retryable error, and a sign-out ends a pull at once instead of waiting.
+   * Send a request, bounded unless its caller brought a signal of its own — the wake's held stream,
+   * and the writes the proxy relays for the window, which finish on their own deadline whatever a
+   * sign-out does. Everything else, renewals and pulls, gets the deadline AND the stop, both reaching
+   * the body read: a half-open socket is a retryable error, and a sign-out ends a pull at once.
    */
-  const withDeadline = (init: RequestInit | undefined): RequestInit | undefined => {
-    if (init?.signal) return init;
+  const send = async (url: string, init: RequestInit | undefined): Promise<Response> => {
+    if (init?.signal) return fetchImpl(url, init);
     const request = new AbortController();
     if (stopped) {
       request.abort(stoppedReason());
-      return { ...init, signal: request.signal };
+      return fetchImpl(url, { ...init, signal: request.signal });
     }
     const deadline = AbortSignal.timeout(deadlineMs);
-    bounded.add(request);
-    deadline.addEventListener("abort", () => {
+    const onDeadline = (): void => {
       bounded.delete(request);
       request.abort(deadline.reason);
-    }, { once: true });
-    return { ...init, signal: request.signal };
+    };
+    const ended = (): void => {
+      bounded.delete(request);
+      deadline.removeEventListener("abort", onDeadline);
+    };
+    deadline.addEventListener("abort", onDeadline, { once: true });
+    bounded.add(request);
+    let res: Response;
+    try {
+      res = await fetchImpl(url, { ...init, signal: request.signal });
+    } catch (err) {
+      ended();
+      throw err;
+    }
+    return bodyEnds(res, ended);
   };
 
   const tellSessionRefused = (code: string): void => {
@@ -426,11 +472,11 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     tokens = staged;
     let res: Response;
     try {
-      res = await fetchImpl(`${base}/auth/refresh`, withDeadline({
+      res = await send(`${base}/auth/refresh`, {
         method: "POST",
         headers: { "content-type": "application/json", [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED },
         body: JSON.stringify({ refreshToken: staged.refreshToken, attemptId }),
-      }));
+      });
     } catch (err) {
       return { kind: "fault", state: "unreachable", code: transportCode(err), retryAfterMs: null };
     }
@@ -566,7 +612,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     // A deleted account is asked nothing more: every caller hears the same answer at once.
     if (erased()) return erasedResponse();
     const sentWith = tokens.accessToken;
-    const res = await noticeErased(await fetchImpl(`${base}${path}`, withBearer(withDeadline(init), sentWith)));
+    const res = await noticeErased(await send(`${base}${path}`, withBearer(init, sentWith)));
     if (res.status !== 401) return res;
     /* A 401 HERE SAYS THE ACCESS TOKEN IS STALE, never that the session is over — only the
        refresh door says that. So: a session already refused answers as it is; a token renewed
@@ -578,7 +624,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     }
     if (reading.state === "refused") return res;
     const again = async (): Promise<Response> =>
-      noticeErased(await fetchImpl(`${base}${path}`, withBearer(withDeadline(init), tokens.accessToken)));
+      noticeErased(await send(`${base}${path}`, withBearer(init, tokens.accessToken)));
     if (tokens.accessToken !== sentWith) {
       discard(res);
       return again();

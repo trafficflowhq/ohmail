@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
-import { offlineResponse, type CloudAuth } from "./cloud-auth.js";
+import { offlineResponse, REQUEST_DEADLINE_MS, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
 import { routeKeyOf, writeRowsOf } from "./cloud-write-rows.js";
@@ -166,6 +166,10 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
         method,
         headers,
         ...(body && body.byteLength > 0 ? { body } : {}),
+        /* A WRITE THE WINDOW MADE IS THE WINDOW'S. Its own signal keeps it out of what the session's
+           stop ends: a sign-out pressed while it is out lets it finish on this deadline, and the
+           account receives it once. A read stays the session's, and a sign-out ends it. */
+        ...(mutation ? { signal: AbortSignal.timeout(REQUEST_DEADLINE_MS) } : {}),
       });
     } catch (err) {
       // The forward could not reach Cloud: mark the mirror offline so the next request short-
@@ -174,8 +178,8 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       cfg.mirror.markConnectivity(false);
       cfg.log?.("cloud_forward_failed", {
         err,
-        reason: "a write could not be delivered to the hosted account; the install is offline and " +
-          "the mutation is refused rather than dropped",
+        reason: "a request could not reach the hosted account; the install is marked offline and the " +
+          "window is answered 503, never that it was done",
       });
       return offlineResponse();
     }
