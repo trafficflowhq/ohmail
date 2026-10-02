@@ -35,19 +35,37 @@ export class BindLimitError extends Error {
   }
 }
 
-/** What a tagged call binds, counted high: a nested query its own, a helper every value it holds. */
+/** A postgres.js query (a Promise carrying its template), as opposed to a value that merely looks like one. */
+const isQuery = (v: unknown): v is { args: unknown[] } =>
+  v instanceof Promise && "strings" in v && Array.isArray((v as { args?: unknown }).args);
+const keysOf = (x: unknown): string[] => x !== null && typeof x === "object" ? Object.keys(x) : [];
+
+/**
+ * What a tagged call binds, never under the driver's count: a fragment its own values, an array of
+ * fragments each one's, and a helper (`sql(rows, ...columns)`) every cell under the widest of the
+ * driver's builders (values reads one row's keys, insert the first row's), a cell counted the same way.
+ */
 export function boundCount(values: readonly unknown[]): number {
   let n = 0;
-  for (const v of values) {
-    const q = v as { strings?: unknown; args?: unknown; first?: unknown; rest?: unknown } | null;
-    if (q !== null && typeof q === "object" && Array.isArray(q.args) && "strings" in q) n += boundCount(q.args);
-    else if (q !== null && typeof q === "object" && "first" in q && "rest" in q) {
-      const width = (x: unknown) => Array.isArray(x) ? x.length : x !== null && typeof x === "object" ? Object.keys(x).length : 1;
-      const rows = Array.isArray(q.first) ? q.first : [q.first];
-      n += rows.reduce((sum: number, row) => sum + Math.max(width(row), Array.isArray(q.rest) ? q.rest.length : 0), 0);
-    } else n += 1;
-  }
+  for (const v of values) n += valueCount(v);
   return n;
+}
+
+function valueCount(v: unknown): number {
+  if (isQuery(v)) return boundCount(v.args);
+  if (Array.isArray(v) && isQuery(v[0])) return boundCount(v);
+  const b = v as { first?: unknown; rest?: unknown; build?: unknown } | null;
+  if (b === null || typeof b !== "object" || typeof b.build !== "function" || !("first" in b)) return 1;
+  const first = b.first;
+  const named = Array.isArray(b.rest) ? (b.rest as unknown[]).flat().map(String) : [];
+  const cells = (row: unknown, columns: string[]) =>
+    columns.reduce((sum, c) => sum + valueCount((row as Record<string, unknown> | null)?.[c]), 0);
+  const multi = Array.isArray(first) && Array.isArray(first[0]);
+  const values = (multi ? (first as unknown[]) : [first])
+    .reduce((sum: number, row) => sum + cells(row, named.length ? named : keysOf(multi ? (first as unknown[])[0] : first)), 0);
+  const insert = (Array.isArray(first) ? first : [first])
+    .reduce((sum: number, row) => sum + cells(row, named.length ? named : keysOf(Array.isArray(first) ? first[0] : first)), 0);
+  return Math.max(values, insert);
 }
 
 /**
@@ -55,33 +73,43 @@ export function boundCount(values: readonly unknown[]): number {
  * is refused HERE, synchronously, before the driver sees it. The driver's own refusal comes after it
  * has queued the statement behind another caller's on a busy connection, rejects THAT caller's query,
  * and leaves every later reply one query out of step (connection.js:166-187). The doors are the
- * tagged call, `unsafe` and `file`, and the scoped handles `begin`, `savepoint` and `reserve` hand on.
+ * tagged call (also through `call`, `apply`, `bind`), `unsafe`, `file`, the tagged `savepoint`, and
+ * the scoped handles `begin`, `savepoint` and `reserve` hand on; `bind-limit-doors.pg.test.ts` lists them.
  */
 export function withBindLimit(client: ReturnType<typeof postgres>): ReturnType<typeof postgres> {
   type Sql = ReturnType<typeof postgres>;
   const refuse = (count: number): void => { if (count > MAX_BIND_PARAMETERS) throw new BindLimitError(count); };
+  const tagged = (args: unknown[]): boolean => Array.isArray((args[0] as { raw?: unknown } | null)?.raw);
   const scoped = (args: unknown[]): unknown[] => {
     const fn = args[args.length - 1];
     return typeof fn === "function" ? [...args.slice(0, -1), (sql: Sql) => (fn as (s: Sql) => unknown)(door(sql))] : args;
   };
+  const { apply, call, bind } = Function.prototype;
   const door = (sql: Sql): Sql => new Proxy(sql, {
     apply(target, self, args: unknown[]) {
       refuse(boundCount(args.slice(1)));
       return Reflect.apply(target as unknown as (...a: unknown[]) => unknown, self, args);
     },
-    get(target, prop) {
+    get(target, prop, receiver) {
       const value = Reflect.get(target, prop);
       if (typeof value !== "function") return value;
-      const call = value as (...a: unknown[]) => unknown;
+      // `call`, `apply` and `bind` invoke the guarded handle, never the raw one beneath it.
+      if (value === apply || value === call || value === bind) return (value as (...a: unknown[]) => unknown).bind(receiver);
+      const fn = value as (...a: unknown[]) => unknown;
       if (prop === "unsafe" || prop === "file") {
         return (text: unknown, params: unknown[] = [], ...rest: unknown[]) => {
           refuse(Array.isArray(params) ? params.length : 0);
-          return call.call(target, text, params, ...rest);
+          return fn.call(target, text, params, ...rest);
         };
       }
-      if (prop === "begin" || prop === "savepoint") return (...a: unknown[]) => call.apply(target, scoped(a));
-      if (prop === "reserve") return async (...a: unknown[]) => door(await (call.apply(target, a) as Promise<Sql>));
-      return call.bind(target);
+      if (prop === "begin" || prop === "savepoint") {
+        return (...a: unknown[]) => {
+          if (tagged(a)) refuse(boundCount(a.slice(1)));
+          return fn.apply(target, scoped(a));
+        };
+      }
+      if (prop === "reserve") return async (...a: unknown[]) => door(await (fn.apply(target, a) as Promise<Sql>));
+      return fn.bind(target);
     },
   });
   return door(client);
