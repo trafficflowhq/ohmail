@@ -25,6 +25,20 @@ import {
  * already what the local store says" must be answered from the same serialization both use.
  */
 export async function serializeOrganizerProfile(
+  db: Tx, accountId: string, mailboxId: string,
+): Promise<OrganizerProfilePayload> {
+  return (await serializeOrganizerProfileCounted(db, accountId, mailboxId)).payload;
+}
+
+/** How many entries of each bounded list stayed out of the document — 0 under the bound. */
+export type ProfileLeftOut = Record<keyof typeof PROFILE_LIST_MAX, number>;
+
+/**
+ * {@link serializeOrganizerProfile}, with what the list bound left out BESIDE the payload, never
+ * in it (the key census pins the document). Each list is read one past its bound, so a list at
+ * exactly the bound reads 0 and one past it reads 1.
+ */
+export async function serializeOrganizerProfileCounted(
   db: Tx, accountId: string,
   /**
    * The mailbox, and it is why this function stopped being account-scoped (mail 0094). Everything
@@ -36,7 +50,7 @@ export async function serializeOrganizerProfile(
    * republish then reads as the person having cleared their signature.
    */
   mailboxId: string,
-): Promise<OrganizerProfilePayload> {
+): Promise<{ payload: OrganizerProfilePayload; leftOut: ProfileLeftOut }> {
   // ONE SNAPSHOT, not five. Under READ COMMITTED each statement sees its own snapshot, so a
   // screener decide committing between the contacts read and the rules read would serialize a
   // TORN configuration — the contact without its promoted rule — and the document would say
@@ -49,17 +63,17 @@ export async function serializeOrganizerProfile(
       // takes what this one publishes; automatic (promoted) rules are the first to stay behind.
       await tx.select({ address: contacts.address, name: contacts.name })
         .from(contacts).where(eq(contacts.accountId, accountId))
-        .orderBy(desc(contacts.createdAt), desc(contacts.id)).limit(PROFILE_LIST_MAX.screener),
+        .orderBy(desc(contacts.createdAt), desc(contacts.id)).limit(PROFILE_LIST_MAX.screener + 1),
       await tx.select({
         kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination,
         priority: rulesTbl.priority, enabled: rulesTbl.enabled, provenance: rulesTbl.provenance,
         subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
       }).from(rulesTbl).where(eq(rulesTbl.accountId, accountId))
         .orderBy(sql`${rulesTbl.provenance} = 'promoted'`, desc(rulesTbl.createdAt), desc(rulesTbl.id))
-        .limit(PROFILE_LIST_MAX.rules),
+        .limit(PROFILE_LIST_MAX.rules + 1),
       await tx.select({ kind: notifyRulesTbl.kind, target: notifyRulesTbl.target })
         .from(notifyRulesTbl).where(eq(notifyRulesTbl.accountId, accountId))
-        .orderBy(desc(notifyRulesTbl.createdAt), desc(notifyRulesTbl.id)).limit(PROFILE_LIST_MAX.notifyRules),
+        .orderBy(desc(notifyRulesTbl.createdAt), desc(notifyRulesTbl.id)).limit(PROFILE_LIST_MAX.notifyRules + 1),
       // `subject` is not selected: the responder is reply-only since 0087 and the column is inert
       // until the 0.15 contract migration drops it. Reading it here would put a dead field back
       // into every published document.
@@ -70,7 +84,7 @@ export async function serializeOrganizerProfile(
         piles: awayResponders.piles,
       }).from(awayResponders).where(eq(awayResponders.accountId, accountId)),
       await tx.select({ name: tagsTbl.name }).from(tagsTbl).where(eq(tagsTbl.accountId, accountId))
-        .orderBy(desc(tagsTbl.createdAt), desc(tagsTbl.id)).limit(PROFILE_LIST_MAX.tagNames),
+        .orderBy(desc(tagsTbl.createdAt), desc(tagsTbl.id)).limit(PROFILE_LIST_MAX.tagNames + 1),
       // THE SIXTH READ, inside the same snapshot as the other five for the reason the comment
       // above gives: a signature edit committing between two statements would serialize a
       // configuration no store ever held. Scoped by ACCOUNT as well as by mailbox — a predicate
@@ -89,7 +103,17 @@ export async function serializeOrganizerProfile(
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 
   const away = awayRows[0];
-  return {
+  const leftOut: ProfileLeftOut = {
+    screener: Math.max(0, contactRows.length - PROFILE_LIST_MAX.screener),
+    rules: Math.max(0, ruleRows.length - PROFILE_LIST_MAX.rules),
+    notifyRules: Math.max(0, notifyRows.length - PROFILE_LIST_MAX.notifyRules),
+    tagNames: Math.max(0, tagRows.length - PROFILE_LIST_MAX.tagNames),
+  };
+  contactRows.splice(PROFILE_LIST_MAX.screener);
+  ruleRows.splice(PROFILE_LIST_MAX.rules);
+  notifyRows.splice(PROFILE_LIST_MAX.notifyRules);
+  tagRows.splice(PROFILE_LIST_MAX.tagNames);
+  const payload: OrganizerProfilePayload = {
     screener: contactRows.map((c) => (c.name === null ? { address: c.address } : { address: c.address, name: c.name })),
     rules: ruleRows.map((r) => ({
       kind: r.kind, match: r.match, destination: r.destination,
@@ -121,6 +145,7 @@ export async function serializeOrganizerProfile(
        about what the store actually holds. */
     ...(mailboxRows[0]?.signatureHtml ? { signatureHtml: mailboxRows[0].signatureHtml } : {}),
   };
+  return { payload, leftOut };
 }
 
 /**

@@ -1,7 +1,7 @@
 import { and, asc, eq, ne } from "drizzle-orm";
 import type { Tx } from "@trafficflow/db";
 import { accountSettings, mailboxes } from "@trafficflow/db";
-import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
+import { serializeOrganizerProfileCounted } from "@trafficflow/core/adapters/organizer-profile-store";
 import { serviceContext } from "../context.js";
 import { json } from "./shared.js";
 import type { Route } from "../router.js";
@@ -35,10 +35,9 @@ export const exportRoutes: Route[] = [
 
       const perMailbox = [];
       for (const mb of rows) {
-        perMailbox.push({
-          address: mb.address,
-          profile: await serializeOrganizerProfile(db, ctx.accountId, mb.id),
-        });
+        // `leftOut` BESIDE the document: past a list's bound the document carries the newest only.
+        const { payload, leftOut } = await serializeOrganizerProfileCounted(db, ctx.accountId, mb.id);
+        perMailbox.push({ address: mb.address, profile: payload, leftOut });
       }
 
       // The person's own knobs, as CHOICES rather than raw columns: the `*At` opt-ins are

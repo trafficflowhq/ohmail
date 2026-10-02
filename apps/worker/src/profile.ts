@@ -19,7 +19,7 @@ import { epochOf, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapt
 /* The one post-pass fact — see `flushBeforeLeaving`. `lease.ts` imports nothing from here. */
 import { leaseStoodDown, type OrganizerWriteAuthority } from "./lease.js";
 import {
-  applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile,
+  applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile, serializeOrganizerProfileCounted,
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
@@ -216,6 +216,8 @@ export class OrganizerProfileSync {
   /** A detection marker that could not be written durably yet — owed, and retried next tick. */
   private markerPending: MarkerFact | null = null;
   private lastAttemptAt = 0;
+  /** The list bound's figure last logged (`profile_list_bounded`), so it is said once per change. */
+  private boundedSaid: Record<string, number> = {};
   /** When the preflight last completed a read — the seeded never-owned re-probe's clock. */
   private lastPreflightAt = 0;
   private inFlight = false;
@@ -318,6 +320,17 @@ export class OrganizerProfileSync {
    * logger derives a thrown primitive's text itself (`errorText`), and it can only do that if it
    * is handed the primitive.
    */
+  /** {@link listBoundLines}, logged; the figure is kept so the next tick says only a change. */
+  private sayBounded(
+    leftOut: Record<string, number>, payload: object, mailboxId: string,
+    log: (event: string, detail: Record<string, unknown>) => void,
+  ): void {
+    for (const line of listBoundLines(this.boundedSaid, leftOut, payload)) {
+      log("profile_list_bounded", { mailboxId, ...line });
+    }
+    this.boundedSaid = { ...leftOut };
+  }
+
   private noteFailure(
     err: unknown,
     log: (event: string, detail: Record<string, unknown>) => void,
@@ -921,7 +934,8 @@ export class OrganizerProfileSync {
       /* THE PINNED CONNECTION, not the live getter — see the parameter. Correct wherever this
          line moves to, and no longer dependent on nothing awaiting above it. */
       const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
-      const payload = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
+      const { payload, leftOut } = await serializeOrganizerProfileCounted(deps.db, deps.accountId, deps.mailboxId);
+      this.sayBounded(leftOut, payload, deps.mailboxId, log);
       const fp = profileFingerprint(payload);
 
       // A detection marker that failed durably is owed, not forgotten: the hold or the newer
@@ -1842,3 +1856,20 @@ export async function applyProfileRead(
 
 export { PROFILE_VERSION };
 export type { OrganizerProfileDoc, OrganizerProfilePayload };
+
+/**
+ * PAST A LIST'S BOUND THE DOCUMENT CARRIES THE NEWEST ONLY, and that is said: one line per list
+ * whose left-out figure CHANGED since the last tick (0 to start), never per tick, so the other
+ * computer receiving fewer rules than this one holds is in the log the day it starts.
+ */
+export function listBoundLines(
+  before: Readonly<Record<string, number>>, leftOut: Readonly<Record<string, number>>, payload: object,
+): Array<{ list: string; kept: number; leftOut: number }> {
+  const out: Array<{ list: string; kept: number; leftOut: number }> = [];
+  for (const [list, n] of Object.entries(leftOut)) {
+    if (n === (before[list] ?? 0)) continue;
+    const value = (payload as Record<string, unknown>)[list];
+    out.push({ list, kept: Array.isArray(value) ? value.length : 0, leftOut: n });
+  }
+  return out;
+}
