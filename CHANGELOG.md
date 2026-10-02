@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.9] — 2026-10-02
+
 ### A message a rule screens leaves the phone's inbox when its body arrives
 <!-- changes: fix-026-bundle-and-placement-key.md -->
 
@@ -102,10 +109,149 @@ A message whose parse fails inside the mail parser is now refused and skipped li
 unreadable message, instead of stopping the worker or the desktop engine and holding every message
 behind it. A parse that does not finish within 30 seconds is retried later rather than skipped.
 
-### Still to come
+### A very long message no longer stalls the window
+<!-- changes: fix-026-huge-message-window.md -->
 
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
+A plain-text message longer than 65,536 characters is shown one part at a time, with a "Show more"
+button for the next, in the reading pane, the Screener and the News and Receipts cards. Before, the
+whole text was laid out at once, and a 2 MB message held the window for up to a second each time it
+was shown. A list row shows at most 300 characters of its preview.
+
+### A very long message no longer freezes the phone app
+<!-- changes: fix-026-phone-huge-body.md -->
+
+On Android and iOS, a plain-text message longer than 65,536 characters is shown one part at a time,
+with a "Show more" button for the next, in the reader, the conversation's earlier messages, the
+Screener, the News cards and Drafts. Before, a 2 MB message froze the app for over a minute when it
+was opened.
+
+### The Android download on the website gives the newest APK again
+<!-- changes: fix-026-android-download.md -->
+
+Every release now carries the Android APK beside the desktop installers, so the website's Android
+button always downloads the newest one.
+
+### A message the mail parser fails on mid-part no longer stops syncing
+<!-- changes: fix-026-parse-follow-ups.md -->
+
+A message whose text or attachment the mail parser fails on while reading it is now refused and
+skipped like any other unreadable message, instead of stopping the worker or the desktop engine.
+
+### A sender you send to the Ohbox keeps their newsletters there
+
+Choosing where all of a sender's mail goes now holds for the mail they send next as well. With "Keep
+my Ohbox for what's relevant" on, a sender whose rule came from a Screener decision, or from mail
+you had sent them, kept getting their newsletters filed to News after you chose the Ohbox for them,
+while the sheet showed the rule pointing at the Ohbox. If a sender's newsletters still go to News
+after you chose the Ohbox, open the sender and choose the Ohbox once more.
+
+### Choosing where a sender's mail goes holds whichever switches are set
+
+Choosing the Ohbox for a sender whose rule already sent their mail there now makes that rule yours
+even with "Also move the mail already in your mailbox" off, so their newsletters follow it under
+"Keep my Ohbox for what's relevant". A rule from a Screener decision that you moved to the Ohbox
+before this release is made yours once, with nothing to press. Undoing a
+Move on the phone after it was sent puts the sender's rule back exactly as it was. If a sender's
+newsletters still go to News after you chose the Ohbox for them, open the sender and choose the
+Ohbox once more.
+
+### The sender sheet says why some of their mail stayed
+
+When a rule has finished moving a sender's mail already in your mailbox, the sender sheet names
+why each message it left stayed where it is: you replied to it, set it aside, filed it in another
+mail app, or it failed the sender's sign-in checks. "Move it too" moves those you may move. The
+notes under the rule switches now say that only a filing made in another mail app stays; a
+message you moved inside ohmail moves with the rest.
+
+### The phone's sender sheet says why some of their mail stayed
+<!-- changes: fix-026-phone-sheet-why-stayed.md -->
+
+Once a rule has finished moving a sender's mail already in your mailbox, the sender sheet on the
+phone names why each message it left stayed where it is, as the web and the desktop do, with "Move
+it too" for those you may move. On every surface the line counts all of the sender's mail left in a
+place; a sender with more than 100 such messages used to read, and move, only 100.
+
+### "Sign in with browser" comes back after you sign in in another tab
+<!-- changes: fix-026-signin-follow-ups.md -->
+
+When the approval page sent you to sign in and you signed in in a different tab or window, the tab
+you started in now returns to the computer's request by itself. If the browser's sign-in changes
+while the confirmation asks for your second factor, the page checks the sign-in again instead of
+telling you to reload.
+
+### The Screened out and Spam counts are no longer a partial number during a sync
+<!-- changes: fix-026-screener-counts.md -->
+
+While the desktop app is still bringing your mail in, the Screener's Screened out and Spam tabs
+no longer show a count of the mail it has so far, and an empty tab says your mail is still coming
+in. The counts appear once the sync is done.
+
+### The Sent, Trash and Junk folders ohmail uses stay the same
+<!-- changes: fix-026-imapflow-special-use.md -->
+
+On a mail server that does not mark its special folders, ohmail finds Sent, Trash and Junk by their
+names. A folder ohmail already uses for one of them stays in use when another folder's name also
+matches, and a server's own marking still comes first. A folder inside one of your own folders is
+never newly taken for Sent or Trash; one ohmail already uses stays.
+
+### Second-factor refusals in Settings are in your language
+<!-- changes: fix-026-refusal-sentences.md -->
+
+When the check for your second factor in Settings refuses, it now says why in your language: a wrong
+code, a passkey that was not accepted, too many attempts, or a check that did not go through. The
+Account pane's sign-in check says its refusals in your language too.
+
+### A wrong verification code counts once
+<!-- changes: fix-026-step-up-once.md -->
+
+When the web app asks for your second factor again before a sensitive change, a wrong code or a
+refused passkey now counts as one attempt toward the sign-in limit, not two.
+
+### A very long html message is shown a page at a time
+<!-- changes: fix-026-html-body-512k.md -->
+
+A message whose html part holds more than one page of text is shown as plain text a page at a time,
+with "Show more". A designed message with more than 2,048 elements or 131,072 characters of text
+shows its plain-text version with a note, as a message over 512 KiB already did.
+
+### An html message is shown as text when drawing it would stall the window
+<!-- changes: fix-026-html-parse-bound.md -->
+
+Some html messages build hundreds of thousands of elements out of a few thousand tags — an 18 KB
+message could freeze the reading window for several seconds. The size of a message is now judged by
+the tree a browser would build from it, not by counting its tags, so such a message is shown as
+plain text with a note before it can stall the window.
+
+### Send + Done files the conversation as it is when the reply goes out
+<!-- changes: fix-026-send-and-done.md -->
+
+A reply sent with Send + Done that goes out later, for example when the connection comes back,
+files its conversation only if it is still in the Ohbox. A conversation you moved or filed in the
+meantime is left as it is, and so is one you read, unless it was set for Later. Mail that
+arrived after you pressed stays unread. Try again on a reply that did not go through now also
+files its conversation and offers Undo. On the phone, pressing Send + Done again while offline is
+no longer lost.
+
+### A dropped mail server connection no longer closes the phone app
+<!-- changes: fix-026-phone-socket-error-never-crashes.md -->
+
+On a phone organizing its own mailbox over STARTTLS, a connection the mail server reset could
+close the app. It now reconnects. When the phone does not accept the mail server's certificate
+during STARTTLS, Connect now says so, where it said the server offers no encrypted connection.
+
+### A mail server reached over TLS that the machine cannot reach no longer stops the organizer
+<!-- changes: fix-026-pin-answers-later.md -->
+
+When every address of a mailbox's server, reached over TLS, was one the machine could not reach,
+such as an IPv6-only server on a host without IPv6, the background organizer exited and stopped
+syncing every mailbox it served. That mailbox is now retried as unreachable and the others keep
+syncing. A push notification endpoint it cannot reach no longer stops it either.
+
+### The Microsoft sign-in note says where it applies
+<!-- changes: land-batch-k88.md -->
+
+The landing page and the README now say that Microsoft 365 and Exchange connect with your Microsoft
+sign-in on ohmail Cloud and on self-hosted servers set up for it.
 
 ## [0.25.8] — 2026-10-01
 
@@ -10779,7 +10925,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.8...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.9...HEAD
+[0.25.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.9
 [0.25.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.8
 [0.25.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.7
 [0.25.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.6
