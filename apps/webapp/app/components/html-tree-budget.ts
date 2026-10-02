@@ -158,10 +158,12 @@ export function treeWithin(html: string, budget: { elements: number; textChars?:
 
 /**
  * The same reading, a step at a time, for a caller that must not hold its thread for the whole parse.
- * Each call reads at most `charsPerStep` more characters and does at most about `workPerStep` more of
- * the parse's work (parse5's tokenizer pauses there and resumes on the next call, as it stops at a
- * slice's end), and answers null until the reading is known, then that reading again. One meter keeps
- * the counts, so the reading equals {@link treeWithin}'s at every step size.
+ * Each call reads at most `charsPerStep` more characters; past `workPerStep` of the parse's work the
+ * tokenizer pauses at its next character and resumes on the next call. The token in hand finishes
+ * first, and text that sits directly inside a `<table>` is held by parse5 and processed whole inside the
+ * tag that ends it, so such a run can carry one step far past `workPerStep`. It answers null until the
+ * reading is known, then that reading again; one meter keeps the counts, so the reading equals
+ * {@link treeWithin}'s at every step size.
  */
 export function treeStepper(
   html: string,

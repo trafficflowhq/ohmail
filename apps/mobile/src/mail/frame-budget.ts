@@ -10,9 +10,10 @@ export const FRAME_BUDGET = { elements: 2_048, textChars: 131_072 } as const;
 export const FRAME_STEP_CHARS = 16_384;
 
 /**
- * How much of the parse's counted work one step does at most. A step ends at whichever bound it reaches
- * first, and the two costs add: characters are the tokenizer's, work is the tree builder's comparisons of
- * formatting elements. One 32,768-character step with no work share had held a crafted 33 KB part for
- * about 0.8 s on a test phone.
+ * How much of the parse's counted work one step does before it pauses. A step ends at whichever bound it
+ * reaches first, and the two costs add: characters are the tokenizer's, work is the tree builder's
+ * comparisons of formatting elements. Not for text that sits directly inside a `<table>`: parse5 holds
+ * that text and processes all of it inside the tag that ends it, so one such run is one step whatever its
+ * work. One 32,768-character step with no work share had held a crafted 33 KB part for about 0.8 s.
  */
 export const FRAME_STEP_WORK = 10_000;
