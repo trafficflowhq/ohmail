@@ -220,7 +220,10 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
 
     // The account answered, so it is reachable whatever it said.
     if (!cfg.mirror.online()) cfg.mirror.markConnectivity(true);
-    const key = mutation && res.ok ? req.headers.get("idempotency-key") : null;
+    /* A send's draft create carries the send's own key (http-adapter.ts mailSend) and is not the
+       send's verdict, so its 2xx records nothing; every other relayed write is one request. */
+    const firstHalf = method === "POST" && url.pathname === "/drafts";
+    const key = mutation && res.ok && !firstHalf ? req.headers.get("idempotency-key") : null;
     if (key !== null && key !== "") {
       applied.delete(key);
       applied.add(key);
@@ -237,6 +240,15 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       if (res.status >= 400) {
         cfg.log?.("cloud_write_refused", { method, routeClass, status: res.status, code: await refusalCodeOf(res), keyHash });
       }
+    }
+
+    /* A WRITE ANSWERED 401 WAS NOT JUDGED: its session ended at the server (removed elsewhere, the
+       refresh refused). The window is answered the signed-out wait and keeps it for that session. */
+    if (mutation && res.status === 401) {
+      void res.body?.cancel().catch(() => undefined);
+      return new Response(JSON.stringify({
+        error: { code: "not_signed_in", message: "this install is not signed in to a hosted account yet", retryable: true },
+      }), { status: 409, headers: { "content-type": "application/json", "retry-after": "30" } });
     }
 
     // THE ECHO-AWAIT, by what the write changes here (`cloud-write-rows.ts`): nothing (its reads

@@ -2563,7 +2563,7 @@ export class HttpAdapter implements EngineAdapter {
     // rather than flattening it to "HTTP 403" is what puts the server's own sentence in front
     // of the user, which is the entire content of the `failed` state on screen.
     const env = wire as WireError;
-    const retryable = env.error?.retryable ?? (res.status >= 500 || res.status === 429);
+    const retryable = classifyRefusal(res.status, env.error, "write").retryable;
     throw new MutationRejectedError(env.error?.message ?? `HTTP ${res.status}`, {
       status: res.status,
       code: env.error?.code ?? null,

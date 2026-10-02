@@ -1056,7 +1056,7 @@ export function DesktopGate() {
     return (
       <>
         <div className="gate">
-          <UnpairedCard host={hostLabel} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
+          <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
         </div>
         {doorOverlay}
       </>
@@ -1143,7 +1143,7 @@ export function DesktopGate() {
      that door is open and returns if it is cancelled. */
   const refusedCard = readers === null || readers.card === "closed" || overlay !== null ? null : paired ? (
     <div className="session-end" role="dialog" aria-label={DOOR_COPY.credHostOutValue}>
-      <UnpairedCard host={hostLabel} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
+      <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
     </div>
   ) : (
     <div className="session-end session-signin" role="dialog" aria-label={DOOR_COPY.cloudTitle}>
@@ -1581,12 +1581,15 @@ export function DesktopGate() {
 }
 
 /** "Not paired", the other computer named, and the two remedies: pair again, or stand alone. */
-function UnpairedCard({ host, onPairAgain, onOwn }: { host: string | null; onPairAgain: () => void; onOwn: () => void }) {
+function UnpairedCard({ host, notice = null, onPairAgain, onOwn }: {
+  host: string | null; notice?: string | null; onPairAgain: () => void; onOwn: () => void;
+}) {
   return (
     <div className="gate-card">
       <span className="wordmark"><b>ohmail</b><em>.</em></span>
       <h1>{DOOR_COPY.credHostOutValue}</h1>
       <p>{DOOR_COPY.gateUnpaired(machineWord(), host ?? DOOR_COPY.doorHostName)}</p>
+      {notice ? <div className="join-note" role="status">{notice}</div> : null}
       <div className="gate-actions">
         <Button onClick={onPairAgain}>{DOOR_COPY.gatePairAgain}</Button>
         <Button variant="ghost" onClick={onOwn}>{DOOR_COPY.gateOwn}</Button>
