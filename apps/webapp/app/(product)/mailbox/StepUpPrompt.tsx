@@ -85,7 +85,8 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
         // browser can run the ceremony; the code otherwise.
         setMethod(e.webauthn && webauthnAvailable() ? "webauthn" : "totp");
       } catch (err) {
-        if (isOwnerAbsent(err) && onOwnerAbsent) { onOwnerAbsent(); return; }
+        // The ceremony ends first, so a factor already on its way runs nothing the page parked.
+        if (isOwnerAbsent(err) && onOwnerAbsent) { ceremony.end(); onOwnerAbsent(); return; }
         setError(refusalText(err));
       }
     })();
