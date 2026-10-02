@@ -45,7 +45,7 @@ import { readerMoveRefusal } from "./mail-state";
 import type { BulkAction, MessageAction } from "./MessagePane";
 import { shellConsentOptions, type ShellConsentFacts } from "./consent-options";
 import {
-  moveInBatches, retroOf, screeningReadBack, screeningShown, verdictAction, verdictKeyOf, writtenRuleIds,
+  moveInBatches, retroOf, screeningReadBack, screeningShown, verdictAction, verdictArgs, verdictKeyOf, writtenRuleIds,
 } from "./press-verdict";
 import type { PressWatch } from "./press-watch";
 import { rulePastMail, ruleRetarget } from "./rule-past-mail";
@@ -286,17 +286,9 @@ export function useShellVerbs({
     /* THE SENTENCE A VERDICT EARNS, with the one press it may offer (`press-verdict.ts`). */
     const sayVerdict = (v: Exclude<StayVerdict, { key: "none" }>) => {
       const wanted = FOLDER_OF_VIEW[dest];
-      const text = t(`screening.${verdictKeyOf(v)}`, {
-        sender: who, place, count: v.count,
-        ...(v.key === "kept" ? {
-          kept: v.kept, keptPlace: placeLabel(v.keptPlace), term: v.term, domain: displayDomain(v.rule.match),
-        } : {}),
-        ...(v.key === "keptMany" ? { kept: v.kept } : {}),
-        ...(v.key === "still" ? { still: v.still, stillPlace: v.stillPlace === null ? t("screening.placeHistory") : placeLabel(v.stillPlace) } : {}),
-        ...(v.key === "stillSpread" ? { still: v.still } : {}),
-        ...(v.key === "undecided" ? { still: v.still, stillPlace: placeLabel(v.stillPlace), term: v.term } : {}),
-        ...(v.key === "stillLegacy" ? { still: v.still, folder: v.folder, stillPlace: placeLabel(v.folder) } : {}),
-      });
+      const text = t(`screening.${verdictKeyOf(v)}`, verdictArgs(v, {
+        sender: who, place, history: t("screening.placeHistory"), label: placeLabel, domain: displayDomain,
+      }));
       const act = verdictAction(v, { scope, address: sender.address });
       if (act?.kind === "remove") {
         // Their own subject rule for this address keeps some of this mail elsewhere. Removing it

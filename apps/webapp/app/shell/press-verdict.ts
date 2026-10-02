@@ -118,6 +118,26 @@ export function verdictKeyOf(v: Exclude<StayVerdict, { key: "none" }>): string {
   return VERDICT_KEY[v.key];
 }
 
+/**
+ * THE ARGUMENTS A VERDICT'S SENTENCE TAKES, beside {@link verdictKeyOf}. One place is named as the
+ * sheet names it: `null` is History (`history`), a folder by `label`. Several places take no name.
+ */
+export function verdictArgs(
+  v: Exclude<StayVerdict, { key: "none" }>,
+  o: { sender: string; place: string; history: string; label: (folder: string) => string; domain: (match: string) => string },
+): Record<string, string | number> {
+  const base = { sender: o.sender, place: o.place, count: v.count };
+  switch (v.key) {
+    case "kept": return { ...base, kept: v.kept, keptPlace: o.label(v.keptPlace), term: v.term, domain: o.domain(v.rule.match) };
+    case "keptMany": return { ...base, kept: v.kept };
+    case "still": return { ...base, still: v.still, stillPlace: v.stillPlace === null ? o.history : o.label(v.stillPlace) };
+    case "stillSpread": return { ...base, still: v.still };
+    case "undecided": return { ...base, still: v.still, stillPlace: o.label(v.stillPlace), term: v.term };
+    case "stillLegacy": return { ...base, still: v.still, folder: v.folder, stillPlace: o.label(v.folder) };
+    case "applying": return base;
+  }
+}
+
 const VERDICT_KEY = {
   keptMany: "verdictKeptMany", still: "verdictStill", stillSpread: "verdictStillSpread", stillLegacy: "verdictStillLegacy", applying: "verdictApplying",
   undecided: "verdictUndecided",
