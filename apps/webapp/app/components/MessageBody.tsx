@@ -3043,19 +3043,20 @@ const MAX_FRAME_PX = 20_000;
  * What one frame may draw. A document is laid out and given its accessibility tree whole, so past
  * either bound a designed mail renders as text with the oversize sentence, as past
  * {@link MAX_HTML_CHARS}: a 511 KiB newsletter built a 13,705-node tree, and a 256 KiB table of
- * one-word rows 43,917 nodes and 411 ms of main thread; 4,000 elements of newsletter rows read
- * 10,446. Text, not bytes: an embedded picture is an attribute and costs no layout. Ordinary
+ * one-word rows 43,917 nodes and 411 ms of main thread; WebKit showed 2,000 elements of newsletter
+ * rows in 163 ms and 2,500 in 191-199. Text, not bytes: an embedded picture is an attribute and costs no layout. Ordinary
  * newsletters sit far under both.
  */
-export const MAX_FRAME_ELEMENTS = 3_072;
+export const MAX_FRAME_ELEMENTS = 2_048;
 export const MAX_FRAME_TEXT_CHARS = 2 * BODY_PAGE_CHARS;
 
 /**
- * Past this many elements in the html part the sanitize alone held the window (a 511 KiB table of
- * one-word rows, 43,000 elements: a 238-299 ms task), and neither the frame nor the walk could draw
- * the result: the text part renders with the oversize sentence, as past {@link MAX_HTML_CHARS}.
+ * Past this many elements in the html part the sanitize alone is the cost (a 511 KiB letter of
+ * 7,400 short paragraphs: a 200 ms task before its text part was drawn), and neither the frame nor
+ * the walk could draw the result: the text part renders with the oversize sentence, as past
+ * {@link MAX_HTML_CHARS}, and nothing is parsed.
  */
-export const MAX_PARSE_ELEMENTS = 16_384;
+export const MAX_PARSE_ELEMENTS = MAX_RICH_NODES;
 
 /** Does markup hold more than `limit` elements? A `<` followed by a letter opens one. */
 export function elementsPast(markup: string, limit: number): boolean {
