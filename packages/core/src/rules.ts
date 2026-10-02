@@ -485,6 +485,17 @@ function isBulkSend(headers: Readonly<Record<string, unknown>>): boolean {
 }
 
 /**
+ * THE FLOOR'S VERSION — the key the Screener auto-apply pass writes into
+ * `folder_state.screener_floor_version` when it reads {@link migrationBulkPlacement} null for a
+ * message. Bump it when anything that verdict reads changes: the five header names or the
+ * conjunction in {@link hasStrongBulkFloor}, how {@link headerValues} reads a header map, or the
+ * five-key header projection `selectCandidates` hands it (`apps/worker/src/screener-auto.ts`).
+ * Marks under any other number are withdrawn and re-judged by the pass's next full walk, with no
+ * migration.
+ */
+export const STRONG_BULK_FLOOR_VERSION = 1;
+
+/**
  * The strong-bulk floor — a STRICTER conjunction than {@link isBulkSend}, for the migration
  * backfill and nothing else. `isBulkSend` fires on any one marker, correct where it refines a
  * sender already past the gate; {@link migrationBulkPlacement} reaches mail the legacy migration
@@ -494,14 +505,6 @@ function isBulkSend(headers: Readonly<Record<string, unknown>>): boolean {
  * corroborating list/ESP marker. `Feedback-ID` alone is deliberately not enough — the count
  * landing below the raw population IS the safety margin. Do NOT loosen this to an OR.
  */
-/**
- * THE FLOOR'S VERSION — the key the Screener auto-apply pass writes into
- * `folder_state.screener_floor_version` when it reads {@link migrationBulkPlacement} null for a
- * message. Bump it when the five header names below or the conjunction change: marks under any other
- * number are withdrawn and re-judged by the pass's next full walk, with no migration.
- */
-export const STRONG_BULK_FLOOR_VERSION = 1;
-
 function hasStrongBulkFloor(headers: Readonly<Record<string, unknown>>): boolean {
   if (headerValues(headers, LIST_UNSUBSCRIBE_HEADER) === null) return false;
   if (headerValues(headers, "list-id") !== null) return true;
