@@ -21,7 +21,7 @@ export const DIAGNOSTIC_EXTRA_VALUE_FIELDS: readonly string[] = [
 export const DIAGNOSTIC_LABEL_FIELDS: readonly string[] = [
   "phase", "state", "verdict", "kind", "outcome", "op", "severity", "circuit", "decidedBy",
   "detectedBy", "refusal", "syncBlockedReason", "disabledReason", "memoryReading", "method",
-  "signal", "surface", "platform", "frame",
+  "signal", "surface", "platform", "frame", "storeFault",
 ];
 
 /** Keys that hold ids. Written as keyed hashes under a fixed name, never as the id. */
