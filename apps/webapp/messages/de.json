@@ -3195,7 +3195,7 @@
     "stayedSetAside": "{count, plural, one {1 bleibt in {place}} other {# bleiben in {place}}}: Du hast sie zurückgelegt.",
     "stayedFiledElsewhere": "{count, plural, one {1 bleibt in {place}} other {# bleiben in {place}}}: in einem anderen Mailprogramm einsortiert.",
     "stayedFailedChecks": "{count, plural, one {1 bleibt in {place}} other {# bleiben in {place}}}: Die Anmeldeprüfung des Absenders ist fehlgeschlagen.",
-    "stayedMoveToo": "Auch verschieben",
+    "stayedMoveToo": "{count, plural, one {Auch verschieben} other {Auch verschieben}}",
     "toastRuleQueued": "{place} — {count, plural, =0 {Post, die schon hier ist, bleibt, wo sie ist} one {1 Nachricht von {sender} liegt jetzt dort} other {# Nachrichten von {sender} liegen jetzt dort}}. Die Regel für seine künftige Post wird angelegt, sobald du wieder online bist.",
     "toastRuleFailed": "{place} — {count, plural, =0 {Post, die schon hier ist, bleibt, wo sie ist} one {1 Nachricht von {sender} verschoben} other {# Nachrichten von {sender} verschoben}}, aber die Regel ließ sich nicht anlegen. Künftige Post bleibt unverändert.",
     "toastRuleOrganizer": "Für den Organizer vorgemerkt — beim nächsten Durchgang: Post von {sender} → {place}, und die Regel wird angelegt.",

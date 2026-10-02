@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { and, eq } from "drizzle-orm";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { applyInferredPressRepair, planInferredPressRepair, rules, type Tx } from "@trafficflow/db";
+import { bridgeDb, bridgeTx } from "./context.js";
 
 const USAGE = `
 ohmail inferred-press repair (no migration)
@@ -66,7 +67,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
   const owned = makeOwnedDb(url);
   try {
-    const db = owned.db as unknown as Tx;
+    const db = bridgeTx(bridgeDb(owned.db));
     if (command === "plan") await planAll(db, (l) => console.log(l));
     else await applyAll(db, (l) => console.log(l));
     return 0;
