@@ -17,3 +17,12 @@ export const FRAME_STEP_CHARS = 16_384;
  * work. One 32,768-character step with no work share had held a crafted 33 KB part for about 0.8 s.
  */
 export const FRAME_STEP_WORK = 10_000;
+
+/**
+ * The longest document the frame hands the WebView, in characters. Measured on a test phone (a 192 MB
+ * Java heap) with one picture named N times: 8.4 million characters drew with a 49 MB heap, 12.5 million
+ * with 141 MB, 16.8 million drew an empty page with no error anywhere, and 30.5 million ran the app out
+ * of memory. This is under half the first failure. A longer document is refused like a tree past
+ * {@link FRAME_BUDGET}, and one its pictures would make longer is refused before they are written.
+ */
+export const PHONE_FRAME_MAX_CHARS = 8_000_000;

@@ -1053,6 +1053,8 @@ export const DE: Deck = {
   mailImagesFromComputer:
     "Bilder werden über deinen Computer geladen; jeder Absender sieht darum dessen Netzwerkadresse.",
   mailImagesRefused: "Die Bilder konnten nicht geladen werden. Versuch es noch einmal.",
+  mailImagesTooLarge:
+    "Mit den Bildern ist diese Nachricht zu groß, um sie sicher darzustellen; die Bilder werden darum nicht angezeigt.",
   mailShowImages: "Bilder anzeigen",
   mailShowAsText: "Als Text anzeigen",
   mailShowOriginal: "Original anzeigen",

@@ -20,7 +20,17 @@ import { buildPhoneMailDocument, frameHeightEstimate } from "../mail/mail-docume
 import { fetchRemoteImages, imagesSeenBy } from "../mail/remote-images";
 import { frameNavDecision, openConfirmedLink } from "../mail/frame-nav";
 import { sanitizeMailHtmlPhone } from "../mail/sanitize";
-import { frameReadingOf, noteFrameTree, planFrameCount, startFrameCount, type FrameReading } from "../mail/frame-tree";
+import {
+  frameReadingOf,
+  frameShows,
+  noteFrameTree,
+  planFrameCount,
+  planFrameLength,
+  startFrameCount,
+  type FrameReading,
+} from "../mail/frame-tree";
+import { drawnLength } from "../mail/frame-length";
+import { PHONE_FRAME_MAX_CHARS } from "../mail/frame-budget";
 import { blockedNotice } from "../mail/notice";
 import { Sheet, SheetRow } from "./Sheet";
 import { Txt } from "./base";
@@ -39,21 +49,35 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   const html = m.html ?? "";
   const imagesWanted = m.loadedRemoteContent === true || asked === m.id;
   const resolvedRemote = remote?.id === m.id ? remote.map : undefined;
-  const sanitized = useMemo(
-    () => sanitizeMailHtmlPhone(html, { inlineImages: m.inlineImages, resolvedRemote }),
-    [html, m.inlineImages, resolvedRemote],
-  );
   const theme = useMemo(
     () => ({ bg: t.c.canvas, ink: t.c.ink, ink2: t.c.ink3, accent: t.c.accent, fontScale: 1 }),
     [t.c.canvas, t.c.ink, t.c.ink3, t.c.accent],
+  );
+  // THE PICTURES' LENGTH IS READ BEFORE THEY ARE WRITTEN (`src/mail/frame-length.ts`): a picture is
+  // written once per reference, so a state whose document would pass PHONE_FRAME_MAX_CHARS is refused
+  // without being built, and the sanitize below never writes it.
+  const bare = useMemo(() => sanitizeMailHtmlPhone(html, {}), [html]);
+  const pictures = useMemo(() => ({ inlineImages: m.inlineImages, resolvedRemote }), [m.inlineImages, resolvedRemote]);
+  const pictured = (m.inlineImages?.size ?? 0) > 0 || (resolvedRemote?.size ?? 0) > 0;
+  const drawnChars = useMemo(
+    () => (pictured ? drawnLength(html, pictures, bare, theme) : null),
+    [pictured, html, pictures, bare, theme],
+  );
+  const tooLong = drawnChars !== null && drawnChars > PHONE_FRAME_MAX_CHARS;
+  const sanitized = useMemo(
+    () => (pictured && !tooLong ? sanitizeMailHtmlPhone(html, pictures) : bare),
+    [pictured, tooLong, html, pictures, bare],
   );
 
   // THE DOCUMENT THE WEBVIEW IS HANDED IS THE ONE COUNTED (`src/mail/frame-tree.ts`): `current`, in
   // this consent state, counted a step per macrotask before it is drawn. While a new state is counted
   // (a picture arrived, Show images), the frame keeps drawing the last document of this same html whose
-  // own count fitted.
-  const current = useMemo(() => buildPhoneMailDocument(sanitized.html, theme), [sanitized.html, theme]);
-  const plan = useMemo(() => planFrameCount(current, sanitized.oversize === true), [current, sanitized.oversize]);
+  // own count fitted, and keeps it, saying why, when the new state is refused.
+  const current = useMemo(() => (tooLong ? null : buildPhoneMailDocument(sanitized.html, theme)), [tooLong, sanitized.html, theme]);
+  const plan = useMemo(
+    () => (current === null ? planFrameLength(drawnChars ?? 0) : planFrameCount(current, sanitized.oversize === true)),
+    [current, drawnChars, sanitized.oversize],
+  );
   const [counted, setCounted] = useState<{ key: string; reading: FrameReading } | null>(null);
   const [drawn, setDrawn] = useState<{ id: string; html: string; doc: string } | null>(null);
   useEffect(() => {
@@ -108,7 +132,9 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imagesWanted, resolvedRemote === undefined, pictureUrls.length === 0, m.id]);
 
-  if (sanitized.oversize || (reading !== null && !reading.fits)) {
+  const kept = drawn !== null && drawn.id === m.id && drawn.html === html ? drawn.doc : null;
+  const shows = frameShows(reading, current, kept, sanitized.oversize === true);
+  if (shows.show === "text") {
     // The size fallback states its reason — a bare plain-text render reads as a bug.
     return (
       <View>
@@ -121,14 +147,14 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   }
 
   const said = blockedNotice(sanitized.blocked, sanitized.sheets, imagesWanted, imagesSeenBy(route));
-  const notice = refusedFor === m.id && !imagesWanted
-    ? [Copy.mailImagesRefused, said].filter((x) => x !== null).join(" ")
-    : said;
+  // A refused state with an earlier document still drawn: the pictures are what did not fit, and it says so.
+  const lead = shows.show === "frame" && shows.withheld
+    ? Copy.mailImagesTooLarge
+    : refusedFor === m.id && !imagesWanted ? Copy.mailImagesRefused : null;
+  const notice = [lead, said].filter((x) => x !== null).join(" ") || null;
   const canLoad = !imagesWanted && pictureUrls.length > 0;
-  // The document drawn: this state's once its own count fits; until then the last that fitted for this html.
-  const doc = reading !== null && reading.fits
-    ? current
-    : drawn !== null && drawn.id === m.id && drawn.html === html ? drawn.doc : null;
+  // The document drawn: this state's once its own count fits; otherwise the last that fitted for this html.
+  const doc = shows.show === "frame" ? shows.doc : null;
   const height = frameHeightEstimate(sanitized.html, windowHeight);
 
   return (

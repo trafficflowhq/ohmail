@@ -4,14 +4,20 @@
  * after the spec's tree builder has read that very string under {@link FRAME_BUDGET}, a step per
  * macrotask. The string is the one the WebView is handed in the consent state it is drawn in: a picture
  * that arrives, or a press of Show images, makes a new string, and that one is counted before it is
- * drawn. Readings are cached on the counted string itself, never on a message id.
+ * drawn. Readings are cached on the counted string itself, never on a message id. A document longer than
+ * {@link PHONE_FRAME_MAX_CHARS} is refused without a count, and one the pictures would make that long is
+ * refused before it is built (`frame-length.ts`).
  */
 import { treeStepper, type TreeReading } from "./html-tree-budget";
-import { FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK } from "./frame-budget";
+import { FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK, PHONE_FRAME_MAX_CHARS } from "./frame-budget";
 import { engineLogSink, type EngineLogSink } from "../engine/engine-log";
 
-/** A count's reading, or why the frame was refused without one: past the html cap, or a step that threw. */
-export type FrameReading = TreeReading | { fits: false; past: "oversize" | "error" };
+/**
+ * A count's reading, or why the frame was refused without one: past the html cap, a document past
+ * {@link PHONE_FRAME_MAX_CHARS} (built, or read as that long before its pictures were written), or a
+ * step that threw.
+ */
+export type FrameReading = TreeReading | { fits: false; past: "oversize" | "length" | "error" };
 
 export interface FramePlan {
   /** The counted document: what the WebView would be handed, the cache's key, and what a reading must match. */
@@ -20,6 +26,8 @@ export interface FramePlan {
   readonly known: FrameReading | null;
   /** Whether `known` came from the cache. */
   readonly cached: boolean;
+  /** The counted document's length, or the length a refused one would have had. */
+  readonly chars: number;
 }
 
 /** The last readings, keyed on the counted document itself, so a reopen needs no step. */
@@ -50,9 +58,15 @@ function remember(key: string, reading: FrameReading): void {
 
 /** The plan for `doc`, the exact string the frame would mount; `oversize` is the sanitizer's own refusal. */
 export function planFrameCount(doc: string, oversize: boolean): FramePlan {
-  if (oversize) return { key: doc, known: { fits: false, past: "oversize" }, cached: false };
+  if (oversize) return { key: doc, known: { fits: false, past: "oversize" }, cached: false, chars: doc.length };
+  if (doc.length > PHONE_FRAME_MAX_CHARS) return { key: doc, known: { fits: false, past: "length" }, cached: false, chars: doc.length };
   const hit = recall(doc);
-  return { key: doc, known: hit ?? null, cached: hit !== undefined };
+  return { key: doc, known: hit ?? null, cached: hit !== undefined, chars: doc.length };
+}
+
+/** The plan for a document that was not built: its pictures would have made it `chars` long. */
+export function planFrameLength(chars: number): FramePlan {
+  return { key: "", known: { fits: false, past: "length" }, cached: false, chars };
 }
 
 /** What a count reports: its reading, the counted document's length, and what it cost on this thread. */
@@ -86,7 +100,7 @@ const tenths = (ms: number): number => Math.round(ms * 10) / 10;
  */
 export function startFrameCount(plan: FramePlan, onDone: (count: FrameCount) => void, schedule: FrameSchedule = nextMacrotask): () => void {
   if (plan.known !== null) {
-    onDone({ reading: plan.known, chars: plan.key.length, steps: 0, maxStepMs: 0, totalMs: 0, wallMs: 0, cached: plan.cached });
+    onDone({ reading: plan.known, chars: plan.chars, steps: 0, maxStepMs: 0, totalMs: 0, wallMs: 0, cached: plan.cached });
     return () => {};
   }
   const step = treeStepper(plan.key, FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK);
@@ -115,7 +129,7 @@ export function startFrameCount(plan: FramePlan, onDone: (count: FrameCount) => 
     }
     remember(plan.key, reading);
     onDone({
-      reading, chars: plan.key.length, steps, maxStepMs: tenths(maxStepMs), totalMs: tenths(totalMs),
+      reading, chars: plan.chars, steps, maxStepMs: tenths(maxStepMs), totalMs: tenths(totalMs),
       wallMs: tenths(now() - started), cached: false,
     });
   };
@@ -130,6 +144,25 @@ export function startFrameCount(plan: FramePlan, onDone: (count: FrameCount) => 
 export function frameReadingOf(plan: FramePlan, counted: { key: string; reading: FrameReading } | null): FrameReading | null {
   if (plan.known !== null) return plan.known;
   return counted !== null && counted.key === plan.key ? counted.reading : null;
+}
+
+/** What the frame shows: the text part, a same-height space, or a counted document. */
+export type FrameShows =
+  | { show: "text" }
+  | { show: "space" }
+  | { show: "frame"; doc: string; withheld: boolean };
+
+/**
+ * The frame's one decision. `current` is this state's document (null when it was not built), `kept`
+ * the last document of the same message and html whose own count fitted. A refused state with a kept
+ * document keeps it drawn and says the pictures were `withheld`: the pictures are what changes the
+ * string for the same html. A refusal with nothing kept is the text part.
+ */
+export function frameShows(reading: FrameReading | null, current: string | null, kept: string | null, oversize: boolean): FrameShows {
+  if (oversize) return { show: "text" };
+  if (reading !== null && reading.fits && current !== null) return { show: "frame", doc: current, withheld: false };
+  if (kept === null) return reading === null ? { show: "space" } : { show: "text" };
+  return { show: "frame", doc: kept, withheld: reading !== null };
 }
 
 export const FRAME_TREE_EVENT = "mail_frame_tree";

@@ -1635,6 +1635,9 @@ const TABLE = {
     "Images load through your computer, so each sender sees its network address.",
   /** The server did not record the press; nothing was fetched. */
   mailImagesRefused: "Couldn't load the images. Try again.",
+  /** The images arrived but the document with them was refused; the one drawn before them stays. */
+  mailImagesTooLarge:
+    "With its images this message is too large to render safely, so they are not shown.",
   mailShowImages: "Show images",
   mailShowAsText: "Show as text",
   mailShowOriginal: "Show original",
