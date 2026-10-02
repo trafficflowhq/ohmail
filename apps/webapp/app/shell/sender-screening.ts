@@ -14,6 +14,7 @@ import {
   FOLDER_OF_VIEW,
   consentIndex,
   decidedDestination,
+  isPersonsOwnFolder,
   mailboxProfiles,
   pressOverTwins,
   retroPassWouldMove,
@@ -153,8 +154,23 @@ export interface SenderScreening {
   rules: RuleDTO[];
 }
 
-/** A place the lists show mail in: a pile, the gate, or History (`placeOf` answers `null`). */
-export type ScreeningPlace = ScreeningDest | "screener" | "history";
+/**
+ * A place the lists show mail in: a pile, the gate, History (`placeOf` answers `null`), or a folder
+ * the person made ({@link ownFolderPlace}) — where another mail app filed it and the rule's pass
+ * leaves it. Trash, Junk and Sent are no place: the sheet counts none of them.
+ */
+export type ScreeningPlace = ScreeningDest | "screener" | "history" | `folder:${string}`;
+
+/** A folder the person made, as a place; {@link ownFolderOf} reads the path back. */
+export const ownFolderPlace = (folder: string): ScreeningPlace => `folder:${folder}`;
+export const ownFolderOf = (p: ScreeningPlace): string | null => (p.startsWith("folder:") ? p.slice(7) : null);
+
+/** Only a pile is a rule's place: the gate, History and a folder the person made are not. */
+const isPile = (p: ScreeningPlace | null): p is ScreeningDest =>
+  p !== null && p !== "screener" && p !== "history" && ownFolderOf(p) === null;
+
+/** How many of the subject's messages the sheet counts: the sum of its places, never the mirror's row count. */
+export const countedOf = (s: Pick<ScreeningSubject, "places">): number => s.places.reduce((n, p) => n + p.count, 0);
 
 const DEST_OF_FOLDER = new Map<Folder, ScreeningDest | "screener">([
   [FOLDER_OF_VIEW.ohbox, "ohbox"],
@@ -263,7 +279,8 @@ function subjectOf(
 ): ScreeningSubject {
   const shown = (m: EngineMessage): ScreeningPlace | undefined => {
     const place = placeOf?.has(m.id) ? placeOf.get(m.id)! : m.folder;
-    return place === null ? "history" : DEST_OF_FOLDER.get(canonicalDestination(place) as Folder);
+    if (place === null) return "history";
+    return DEST_OF_FOLDER.get(canonicalDestination(place) as Folder) ?? (isPersonsOwnFolder(place) ? ownFolderPlace(place) : undefined);
   };
   const counts = new Map<ScreeningPlace, number>();
   for (const m of messages) {
@@ -272,7 +289,7 @@ function subjectOf(
   }
   const held = messages.filter((m) => m.folder === FOLDER_OF_VIEW.screener);
   const current = counts.size === 1 ? [...counts.keys()][0]! : null;
-  const ruled = decided === null ? (current === "screener" || current === "history" ? null : current) : pileOf(decided);
+  const ruled = decided === null ? (isPile(current) ? current : null) : pileOf(decided);
   const elsewhere: Array<{ id: string; place: ScreeningPlace }> = [];
   if (ruled !== null) {
     for (const m of messages) {

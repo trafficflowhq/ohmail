@@ -843,6 +843,7 @@ export {
   type PressStayCause,
   type StayVerdict,
 } from "./press-outcome.js";
+export { isPersonsOwnFolder } from "./press-outcome.js";
 // The press before it is made: where the list would show each row, and what the step asks.
 export {
   landingOfMoves,

@@ -57,6 +57,8 @@ import {
   DECISION_OF_DEST,
   RETRO_DEFAULT_ON,
   SCREENING_DESTS,
+  countedOf,
+  ownFolderOf,
   planScreeningChange,
   ruleMatchOf,
   type ScreeningDest,
@@ -272,8 +274,11 @@ export function SenderMenu({
   }, [askKey, stayedFor]);
   const stayed = why && why.key === askKey ? stayedLines(subject.elsewhere ?? [], why.map) : [];
   /** A place the lists show mail in, by the names the rail uses. */
-  const placeName = (p: ScreeningPlace): string =>
-    p === "screener" ? t("placeScreener") : p === "history" ? t("placeHistory") : piles[p];
+  const placeName = (p: ScreeningPlace): string => {
+    const folder = ownFolderOf(p);
+    if (folder !== null) return placeLabel(folder);
+    return p === "screener" ? t("placeScreener") : p === "history" ? t("placeHistory") : piles[p as ScreeningDest];
+  };
   /** A rule's destination by the same names; a folder of the user's own by its leaf. */
   const pileOf = (folder: Folder | null): string => {
     if (folder === null) return t("placeHistory");
@@ -377,10 +382,10 @@ export function SenderMenu({
               <small>
                 {s === "domain"
                   ? t("scopeCount", {
-                      count: sender.scopes.domain.messages.length,
+                      count: countedOf(sender.scopes.domain),
                       senders: sender.scopes.domain.senders,
                     })
-                  : t("scopeCountOne", { count: sender.scopes.sender.messages.length })}
+                  : t("scopeCountOne", { count: countedOf(sender.scopes.sender) })}
               </small>
             </button>
           ))}
@@ -389,15 +394,16 @@ export function SenderMenu({
       ) : null}
 
       <div className="sm-now">
+        {/* The counts are the places' own: a row in no place (Trash, Junk, Sent) is in no number. */}
         {subject.current
-          ? t("nowIn", { place: placeName(subject.current), count: subject.messages.length })
+          ? t("nowIn", { place: placeName(subject.current), count: countedOf(subject) })
           : subject.places.length >= 2 && subject.places.length <= 3
             // Two or three places are named, each with its count; four or more stay "spread".
             ? t("nowSplit", {
-                count: subject.messages.length,
+                count: countedOf(subject),
                 places: subject.places.map((p) => t("nowSplitPart", { place: placeName(p.place), count: p.count })).join(" · "),
               })
-            : t("nowSpread", { count: subject.messages.length })}
+            : t("nowSpread", { count: countedOf(subject) })}
       </div>
 
       {stayed.length > 0 && subject.ruled !== null ? (

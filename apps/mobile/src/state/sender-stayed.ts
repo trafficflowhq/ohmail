@@ -10,6 +10,7 @@ import {
   canonicalDestination,
   consentIndex,
   decidedDestination,
+  isPersonsOwnFolder,
   mailboxProfiles,
   ruleTwins,
   rulesList,
@@ -25,8 +26,15 @@ import type { Destination, Scope } from "./model";
 
 export type { StayedWhy };
 
-/** A place the lists show mail in: a pile, the gate, or History (`placeOf` answers `null`). */
-export type StayedPlace = Destination | "screener" | "history";
+/**
+ * A place the lists show mail in: a pile, the gate, History (`placeOf` answers `null`), or a folder
+ * the person made — where another mail app filed it. Trash, Junk and Sent are no place.
+ */
+export type StayedPlace = Destination | "screener" | "history" | `folder:${string}`;
+
+/** A folder the person made, as a place, and back: the web sheet's spelling. */
+export const ownFolderPlace = (folder: string): StayedPlace => `folder:${folder}`;
+export const ownFolderOf = (p: StayedPlace): string | null => (p.startsWith("folder:") ? p.slice(7) : null);
 
 /** The web's batch for a visible move (`RETRO_VISIBLE_MOVES`): each batch answered before the next. */
 export const STAYED_MOVE_BATCH = 50;
@@ -67,7 +75,8 @@ export function stayedAsk(o: {
     : winner.destination;
   const shown = (m: EngineMessage): StayedPlace | undefined => {
     const place = o.placeOf.has(m.id) ? o.placeOf.get(m.id)! : m.folder;
-    return place === null ? "history" : PLACE_OF_FOLDER.get(canonicalDestination(place) as Folder);
+    if (place === null) return "history";
+    return PLACE_OF_FOLDER.get(canonicalDestination(place) as Folder) ?? (isPersonsOwnFolder(place) ? ownFolderPlace(place) : undefined);
   };
   const counts = new Map<StayedPlace, number>();
   for (const m of o.subject) {
@@ -76,7 +85,7 @@ export function stayedAsk(o: {
   }
   const current = counts.size === 1 ? [...counts.keys()][0]! : null;
   const pile = (p: StayedPlace | null | undefined): Destination | null =>
-    p === undefined || p === null || p === "screener" || p === "history" ? null : p;
+    p === undefined || p === null || p === "screener" || p === "history" || ownFolderOf(p) !== null ? null : p as Destination;
   const ruled = decided === null ? pile(current) : pile(PLACE_OF_FOLDER.get(canonicalDestination(decided) as Folder));
   if (ruled === null) return null;
   const elsewhere: StayedAsk["elsewhere"] = [];

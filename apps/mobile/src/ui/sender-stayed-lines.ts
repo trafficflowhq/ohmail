@@ -5,7 +5,8 @@
  */
 import { Copy } from "../copy";
 import { destDone, type Destination } from "../state/model";
-import { stayedLines, type StayedAsk, type StayedPlace, type StayedWhy } from "../state/sender-stayed";
+import { folderLeafOf } from "../state/folders";
+import { ownFolderOf, stayedLines, type StayedAsk, type StayedPlace, type StayedWhy } from "../state/sender-stayed";
 
 export interface StayedRow {
   key: string;
@@ -14,9 +15,11 @@ export interface StayedRow {
   move: { label: string; ids: string[]; dest: Destination } | null;
 }
 
-/** A place by the names the lists use: a pile, the gate, or History. */
+/** A place by the names the lists use: a pile, the gate, History, or a folder by its leaf. */
 export function stayedPlaceName(p: StayedPlace): string {
-  return p === "screener" ? Copy.placeScreener : p === "history" ? Copy.history : destDone(p);
+  const folder = ownFolderOf(p);
+  if (folder !== null) return folderLeafOf(folder);
+  return p === "screener" ? Copy.placeScreener : p === "history" ? Copy.history : destDone(p as Destination);
 }
 
 const SENTENCE: Record<StayedWhy, (count: number, place: string) => string> = {

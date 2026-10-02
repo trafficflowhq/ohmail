@@ -1,9 +1,21 @@
 import {
   LEGACY_NEWS_FOLDER, canonicalDestination, isOrganizedFolder, retroPassWouldMove,
 } from "@trafficflow/core/destinations";
+import { RESERVED_FOLDER_LEAF, isSentFolderPath } from "@trafficflow/core/folder-name";
 import { consentIndex, messagePlacement, ruleTerms } from "./consent-cutline.js";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage, Folder, MailboxProfileEntity, RuleDTO } from "./types.js";
+import { folderLeaf, type EngineMessage, type Folder, type MailboxProfileEntity, type RuleDTO } from "./types.js";
+
+/**
+ * A FOLDER THE PERSON MADE: outside the folders ohmail organizes, not Sent, and not a server
+ * folder by its name (Trash, Junk, Drafts, All Mail — the leaf belt the folder scan uses). Mail
+ * another app filed there is a place the screening sheet and the press sentence count, because
+ * the rule's pass leaves it there; Trash and Junk are where the person put mail away, never counted.
+ */
+export function isPersonsOwnFolder(folder: string | null | undefined): boolean {
+  if (!folder || isOrganizedFolder(folder) || isSentFolderPath(folder)) return false;
+  return !RESERVED_FOLDER_LEAF.test(folderLeaf(folder));
+}
 
 /** Why a pressed row is not shown at the pressed place after the press. */
 export type PressStayCause =
@@ -20,7 +32,9 @@ export type PressStayCause =
   /** Filed elsewhere and in the server pass's reach: it moves when that pass runs. */
   | "moving"
   /** Filed elsewhere and outside the pass's reach (set aside, or no past mail asked for). */
-  | "kept";
+  | "kept"
+  /** In a folder the person made ({@link isPersonsOwnFolder}), which no pass reaches. */
+  | "filed";
 
 export interface PressStay {
   cause: PressStayCause;
@@ -45,8 +59,8 @@ export interface PressOutcome {
  * projection over the mirror after the press, never the filed folder. A row away from the pressed
  * place is named by the rule the partition places it by (`messagePlacement`, the bodies read from
  * `presented`), or by the body rule whose text is not held (`undecided`), else by the server pass
- * still to move it, else kept. Rows the lists do not show (a user's own folder, Sent) are not the
- * press's. The wait for another organizer is the caller's to say: nothing is read under it.
+ * still to move it, else kept. A row in a folder the person made stays there (`filed`); Sent,
+ * Trash and Junk are not the press's. The wait for another organizer is the caller's to say.
  */
 export function pressOutcome(input: {
   presented: EntityReader;
@@ -61,20 +75,26 @@ export function pressOutcome(input: {
   const index = consentIndex(input.rules, input.profiles);
   const groups = new Map<string, PressStay>();
   const atPlace: string[] = [];
+  const add = (cause: PressStayCause, where: Folder | null, id: string, ruled: RuleDTO | null) => {
+    const key = JSON.stringify([cause, where, ruled?.id ?? null]);
+    const held = groups.get(key);
+    if (held) held.messageIds.push(id);
+    else groups.set(key, { cause, place: where, messageIds: [id], rule: ruled });
+  };
   for (const m of input.subject) {
-    if (!isOrganizedFolder(m.physicalFolder ?? m.folder)) continue;
+    const filed = m.physicalFolder ?? m.folder;
+    const own = isPersonsOwnFolder(filed);
+    if (!own && !isOrganizedFolder(filed)) continue;
     const shown = input.presented.get<EngineMessage>("message", m.id);
     const where = shown === undefined ? null : canonicalDestination(shown.folder) as Folder;
+    if (own) { add("filed", where, m.id, null); continue; }
     if (where !== null && canonicalDestination(where) === place) { atPlace.push(m.id); continue; }
     const placed = messagePlacement(index, m, input.presented);
     const by = placed.undecided === null ? placed.rule : null;
     const ruled = placed.undecided ?? (by !== null && canonicalDestination(by.destination) !== place ? by : null);
     const cause: PressStayCause = placed.undecided !== null ? "undecided" : ruled !== null ? causeOf(ruled)
       : input.retro && retroPassWouldMove(m, input.wanted) ? "moving" : "kept";
-    const key = JSON.stringify([cause, where, ruled?.id ?? null]);
-    const held = groups.get(key);
-    if (held) held.messageIds.push(m.id);
-    else groups.set(key, { cause, place: where, messageIds: [m.id], rule: ruled });
+    add(cause, where, m.id, ruled);
   }
   return { at: atPlace.length, shown: atPlace, away: [...groups.values()] };
 }
@@ -99,9 +119,9 @@ function causeOf(r: RuleDTO): PressStayCause {
 /**
  * THE ONE SENTENCE AN OUTCOME EARNS, for every surface's copy. `none` when every pressed row is
  * at the place; otherwise the first class that holds: one subject rule of theirs keeping rows
- * elsewhere (`kept`, named), several rules (`keptMany`), rows the pass cannot reach (`still`, or
- * `stillLegacy` when all of them sit in the pre-0.22 News folder), rows it is still moving
- * (`applying`).
+ * elsewhere (`kept`, named), several rules (`keptMany`), rows the pass cannot reach or a folder
+ * the person made holds (`still`, or `stillLegacy` when all sit in the pre-0.22 News folder), rows
+ * it is still moving (`applying`).
  */
 export type StayVerdict =
   | { key: "none" }
@@ -141,7 +161,9 @@ export function stayVerdict(out: PressOutcome, reader: EntityReader): StayVerdic
       term: (widest.rule!.bodyContains ?? "").trim(),
     };
   }
-  const left = of("kept");
+  // A folder the person made is left as `still`, after the pass: while rows are still moving the
+  // sentence is `applying`, and the read at the pass's end names what stayed.
+  const left = [...of("kept"), ...(of("moving").length > 0 ? [] : of("filed"))];
   if (left.length > 0) {
     const ids = left.flatMap((g) => g.messageIds);
     const filed = (id: string) => {
