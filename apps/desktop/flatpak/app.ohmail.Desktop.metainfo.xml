@@ -74,6 +74,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.10" date="2026-10-02">
+      <description>
+        <ul>
+          <li>A long message no longer stops the phone from syncing</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.9" date="2026-10-02">
       <description>
         <ul>
@@ -154,50 +161,6 @@
           <li>A first mailbox without encryption, set up on the first launch</li>
           <li>The phone no longer signs itself out after a display, font or language change</li>
           <li>The phone keeps up with a large mailbox</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.5" date="2026-09-29">
-      <description>
-        <ul>
-          <li>Large sync changes arrive in pages, and a desktop on Cloud logs the writes it sends</li>
-          <li>The dark sync link, the tag chips and the Screener's key hints meet the contrast minimum</li>
-          <li>The phone offers to screen senders already in the Inbox, as the web does</li>
-          <li>A Move pressed just before the app closes now keeps its rule</li>
-          <li>Screener presses show what they did, and a release can be undone</li>
-          <li>The desktop app says what it could not do instead of waiting</li>
-          <li>A new install opens faster</li>
-          <li>A mailbox connected without encryption is only ever dialled at an address on your own network</li>
-          <li>A reply you start is in your drafts, and News draws a letter's pictures</li>
-          <li>A Move made just before the app closes keeps its place</li>
-          <li>Sending from the phone</li>
-          <li>Server alerts mail less, in one format</li>
-          <li>Security update: the web app on Next 15.5, the web and desktop apps on React 19</li>
-          <li>Pictures in a message are fetched once</li>
-          <li>The Android build carries its TLS and mail-sender fixes</li>
-          <li>One settings message per mailbox</li>
-          <li>A full ohmail/_meta folder no longer stops organizing</li>
-          <li>A conversation is one row in the Ohbox</li>
-          <li>Links in designed mail open your browser on Linux</li>
-          <li>Settings lists Subscription as soon as you sign in</li>
-          <li>The Screener says when suggestions need credits</li>
-          <li>/health checks the sign-in address index</li>
-          <li>A waiting draft discard is listed on the phone, and Send + Done files the conversation when the reply goes out later</li>
-          <li>Closing ohmail during a pairing no longer turns start at login off</li>
-          <li>A pairing undone while the other computer answers keeps nothing</li>
-          <li>A rule saved with spaces around its address counts everywhere</li>
-          <li>After you pay, the trial and payment notes go away on their own</li>
-          <li>Operators can grant roles to staff, and every staff read and write on the API is recorded</li>
-          <li>Webhook and Telegram alerts say when a critical alert has resolved</li>
-          <li>Away replies held back are still sent</li>
-          <li>A file that could not be fetched says why</li>
-          <li>Search finds older mail in accounts that are not syncing</li>
-          <li>A computer whose clock jumps stops organizing on time</li>
-          <li>A draft keeps what it answers</li>
-          <li>Every list says when the message you were reading has gone</li>
-          <li>A delete pressed just before the phone app closes is kept</li>
-          <li>Turning off the phone's organizing notification stops background organizing</li>
-          <li>A long mail store update on the phone says how far along it is</li>
         </ul>
       </description>
     </release>

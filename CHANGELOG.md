@@ -18,6 +18,17 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.25.10] — 2026-10-02
+
+### A long message no longer stops the phone from syncing
+<!-- changes: hotfix-0.25.10.md -->
+<!-- changes: fix-026-phone-one-message.md -->
+
+On the phone, a message whose formatted part was larger than 256 KB could not be saved, and the
+mailbox then stopped syncing and said it could not reconnect. Such a message is now saved with its
+formatted part cut at the limit, like on every other app, and the rest of the mailbox syncs. A phone
+that lost track of its messages after the mail server reset a folder now finds them again.
+
 ## [0.25.9] — 2026-10-02
 
 ### A message a rule screens leaves the phone's inbox when its body arrives
@@ -10925,7 +10936,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.9...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.10...HEAD
+[0.25.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.10
 [0.25.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.9
 [0.25.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.8
 [0.25.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.7
