@@ -48,23 +48,28 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     [t.c.canvas, t.c.ink, t.c.ink3, t.c.accent],
   );
 
-  // THE TREE IS COUNTED BEFORE THE FRAME EXISTS (`src/mail/frame-tree.ts`): the WebView mounts only
-  // once the document it would parse reads under the budget, a step per macrotask, and a reading is
-  // used only for the very document it was made for.
-  const plan = useMemo(() => planFrameCount(html, theme), [html, theme]);
+  // THE DOCUMENT THE WEBVIEW IS HANDED IS THE ONE COUNTED (`src/mail/frame-tree.ts`): `current`, in
+  // this consent state, counted a step per macrotask before it is drawn. While a new state is counted
+  // (a picture arrived, Show images), the frame keeps drawing the last document of this same html whose
+  // own count fitted.
+  const current = useMemo(() => buildPhoneMailDocument(sanitized.html, theme), [sanitized.html, theme]);
+  const plan = useMemo(() => planFrameCount(current, sanitized.oversize === true), [current, sanitized.oversize]);
   const [counted, setCounted] = useState<{ key: string; reading: FrameReading } | null>(null);
+  const [drawn, setDrawn] = useState<{ id: string; html: string; doc: string } | null>(null);
   useEffect(() => {
     let alive = true;
+    const id = m.id;
     const cancel = startFrameCount(plan, (count) => {
       if (!alive) return;
       noteFrameTree(count);
       if (plan.known === null) setCounted({ key: plan.key, reading: count.reading });
+      if (count.reading.fits) setDrawn({ id, html, doc: plan.key });
     });
     return () => {
       alive = false;
       cancel();
     };
-  }, [plan]);
+  }, [plan, m.id, html]);
   const reading = frameReadingOf(plan, counted);
 
   // The document's own unresolved `cid:` references — the engine fetches THIS message's parts,
@@ -120,7 +125,10 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     ? [Copy.mailImagesRefused, said].filter((x) => x !== null).join(" ")
     : said;
   const canLoad = !imagesWanted && pictureUrls.length > 0;
-  const doc = buildPhoneMailDocument(sanitized.html, theme);
+  // The document drawn: this state's once its own count fits; until then the last that fitted for this html.
+  const doc = reading !== null && reading.fits
+    ? current
+    : drawn !== null && drawn.id === m.id && drawn.html === html ? drawn.doc : null;
   const height = frameHeightEstimate(sanitized.html, windowHeight);
 
   return (
@@ -157,7 +165,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
           </Txt>
         </View>
       )}
-      {reading !== null && reading.fits ? (
+      {doc !== null ? (
         <WebView
           // ONE document, rebuilt when the maps move; never a URL. `key` on the id keeps a
           // recycled frame from showing the previous message during the swap.

@@ -172,7 +172,13 @@ export function treeStepper(
   const meter = new StepMeter(budget);
   const parser = new BudgetParser({ scriptingEnabled: false, treeAdapter: countingAdapter(meter) }, meter);
   const tokenizer = parser.tokenizer;
-  meter.onLimit = () => tokenizer.pause();
+  // The meter is the only thing that pauses this tokenizer, so whether it is paused is known here.
+  let paused = false;
+  meter.onLimit = () => {
+    if (paused) return;
+    paused = true;
+    tokenizer.pause();
+  };
   const size = Math.max(1, Math.floor(charsPerStep));
   const share = Math.max(1, workPerStep);
   let at = 0;
@@ -182,17 +188,19 @@ export function treeStepper(
     if (reading !== null) return reading;
     meter.allow(share);
     try {
-      if (tokenizer.paused) tokenizer.resume();
-      else if (at < html.length) {
+      if (paused) {
+        paused = false;
+        tokenizer.resume();
+      } else if (at < html.length) {
         const end = Math.min(html.length, at + size);
         tokenizer.write(html.slice(at, end), false);
         at = end;
       }
-      if (!tokenizer.paused && at >= html.length && !ended) {
+      if (!paused && at >= html.length && !ended) {
         ended = true;
         tokenizer.write("", true);
       }
-      if (tokenizer.paused || !ended) return null;
+      if (paused || !ended) return null;
     } catch (e) {
       if (!(e instanceof Past)) throw e;
       reading = { fits: false, past: e.past };
