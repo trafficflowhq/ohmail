@@ -3763,13 +3763,13 @@ the app picks the Omarchy look for itself. The stamp now runs before anything is
 landing page's demo follows the page's light or dark too, instead of writing a theme's colours
 with no scheme.
 
-### A rule you make no longer moves mail you filed yourself or set aside
+### A rule you make no longer moves mail you filed in another mail app or set aside
 
 Choosing where a sender's mail goes moves up to fifty of their messages at once, and the rest
-follow in the background. The background pass has always left your own folders alone, along with
-mail you had set aside, replied to or muted — the fifty did not, so a message you had filed in
-Archive, or a receipt you had put aside, could be pulled into the sender's new place by the same
-press. Both halves choose the same mail now, on the web, the computer and the phone. On the phone
+follow in the background. The background pass has always left mail filed in another mail app alone,
+along with mail you had set aside, replied to or muted — the fifty did not, so a message filed in
+Archive from another mail app, or a receipt you had put aside, could be pulled into the sender's new
+place by the same press. Both halves choose the same mail now, on the web, the computer and the phone. On the phone
 those fifty are the newest messages — the ones on screen — instead of whichever fifty the mailbox
 listed first, and a move the rule makes is recorded, so it can be undone.
 
