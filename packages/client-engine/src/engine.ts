@@ -116,12 +116,9 @@ const withheldMarkerOf = (w: unknown): WithheldMarker | null => (isWithheldMarke
  * `queued` is THIS client's retry queue (the wire failed, the intent stands under its
  * Idempotency-Key, a drive will send it again), `awaiting_organizer` is the SERVER's — the
  * request is recorded and the install that organizes the mailbox will carry it out, so nothing
- * here retries and nothing here may report it done.
- *
- * `superseded` is a SEND whose request was on the wire when the same send was pressed again under
- * its key, and which failed retryably: its row is gone and the newer press carries the key, so
- * that press's answer is the key's one sentence and this one says nothing — not "queued" (nothing
- * of it waits) and not "refused" (the reply is still going).
+ * here retries and nothing here may report it done. `superseded` is a send re-pressed under its
+ * key while on the wire that then failed retryably: the newer press carries the key and says its
+ * one sentence; this one says nothing (nothing of it waits, and the reply is still going).
  */
 /** Ids per `GET /screener/stayed` — the route's own ceiling (`WHY_STAYED_IDS_MAX`). */
 export const WHY_STAYED_PAGE = 100;
