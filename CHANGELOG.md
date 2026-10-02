@@ -13,6 +13,89 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Automatic filing out of the Screener reads less
+<!-- changes: db-026-folder-state-account.md -->
+
+The hourly check that files obvious bulk mail out of the Screener no longer re-reads held mail it
+has already judged, which lowers database load on large mailboxes. Upgrade with
+`pnpm db:setup:prod` so its index is built.
+
+### Changes made on a second install reach the organizer past 500 records
+<!-- changes: fix-026-meta-folder-window.md -->
+
+A screening decision, move, rule or setting made on an install that does not organize the mailbox
+is handed over and its answer read back however many records the ohmail/_meta folder holds, up to
+20 000. The settings message there spells names and addresses as JSON escapes; ohmail rewrites an
+existing one once.
+
+### A reply pressed again while it is still sending goes once
+<!-- changes: fix-026-repress-once.md -->
+
+Pressing Send again on a reply the app was already sending, waiting in the queue or on its way to
+the server, could deliver it twice. The second press now joins the send under way.
+
+### The phone answers every press
+<!-- changes: fix-026-phone-says-every-press.md -->
+
+On a phone organizing its own mailbox, a Move starts a sync at once instead of waiting for the next
+one. A link nothing on the phone can open says so, and a mailto link opens ohmail's composer. A
+conversation row's swipe verbs act on the conversation, and where it holds other people's mail,
+Junk, Later and Done leave the reply you sent where it is. A row you sent reads "Me → …", Allow and
+Not spam offer Undo, and a sheet longer than the screen scrolls with Cancel in view.
+
+### Signing out of the desktop app ends its session at the server
+<!-- changes: fix-026-desktop-sign-out.md -->
+
+Signing out of the desktop app forgot the session on the computer but left it open at the server, so
+Settings → Devices on the web went on listing the computer as signed in. Signing out now also ends
+the session at the server when it can be reached. When it cannot, the computer is signed out all the
+same, and the screen that follows says where it may still be listed.
+
+### Changes waiting for a sign-in are kept, and the screen says how many
+<!-- changes: fix-026-desktop-sign-out.md -->
+
+A change made in the desktop app that had not reached the server when its session ended could be
+lost without a word: one still on its way when you signed out, or one waiting while the session was
+ended elsewhere, for example under Settings → Devices on the web. Sign out now gives a change on its
+way a moment to arrive first. A change that still waits is kept on the computer for its account and
+server, also while another account signs in there, and is sent when that account signs in again. The
+screen after Sign out, and the sign-in or pairing card, say how many changes wait, and for whom.
+
+### The organizer checks a mail server's port, and Settings says why it will not connect
+<!-- changes: fix-026-every-dial-guarded.md -->
+
+Syncing now refuses an incoming mail server set to a port that does not carry mail (other than 143
+or 993), as sending already refused one, and the check that learns how large a message your outgoing
+server accepts goes through the same checks (25, 465 or 587). Settings → Mailboxes says whether the
+address or the port was refused instead of saying the server is not available, and receiving no
+longer depends on the outgoing server's settings. A self-hosted server with
+`TF_PROBE_ALLOW_PRIVATE=1` dials any address and port on its own network, as before.
+
+### The desktop app no longer closes its local store under a write when it quits
+<!-- changes: fix-026-cloud-mirror-drain-stop.md -->
+
+Quitting the desktop app could shut its local store down while a write was still running, and
+quitting could then leave the engine stuck until it was stopped. The store now finishes the writes
+it has started before it closes, and turns away anything that arrives after the quit began. A write
+still running after three seconds leaves the store for the next launch to recover instead.
+
+### An html message on the phone is shown as text when drawing it would stall the app
+<!-- changes: fix-026-phone-html-tree-bound.md -->
+
+Some html messages build hundreds of thousands of elements out of a few thousand tags: an 18 KB
+message could make the phone's reader build 600,000 elements and stall for several seconds. The size
+of a message is now judged by the tree the reader would build from it, so such a message is shown as
+plain text with a note instead. A message nested thousands of elements deep no longer breaks the
+reader.
+
+### Showing the images of a message no longer closes the phone app
+<!-- changes: fix-026-phone-html-tree-bound.md -->
+
+A message that names one picture many times could close the phone app when its images were shown,
+because the picture is copied into the message at every place it appears. The phone now works out
+how long the message would become before adding the pictures. When that is more than it can draw,
+the message stays as it was and says why the images are not shown.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
