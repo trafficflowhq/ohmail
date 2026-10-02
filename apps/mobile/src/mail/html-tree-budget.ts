@@ -157,30 +157,42 @@ export function treeWithin(html: string, budget: { elements: number; textChars?:
 }
 
 /**
- * The same reading, `charsPerStep` characters at a time, for a caller that must not hold its thread
- * for the whole parse. Each call writes the next slice (parse5's tokenizer stops at a slice's end and
- * resumes on the next write, as its own stream parser does) and answers null until the reading is
- * known, then answers that reading again. One meter keeps the counts, so the reading equals
- * {@link treeWithin}'s at every slice size.
+ * The same reading, a step at a time, for a caller that must not hold its thread for the whole parse.
+ * Each call reads at most `charsPerStep` more characters and does at most about `workPerStep` more of
+ * the parse's work (parse5's tokenizer pauses there and resumes on the next call, as it stops at a
+ * slice's end), and answers null until the reading is known, then that reading again. One meter keeps
+ * the counts, so the reading equals {@link treeWithin}'s at every step size.
  */
 export function treeStepper(
   html: string,
   budget: { elements: number; textChars?: number },
   charsPerStep: number,
+  workPerStep = Infinity,
 ): () => TreeReading | null {
-  const meter = new Meter(budget);
+  const meter = new StepMeter(budget);
   const parser = new BudgetParser({ scriptingEnabled: false, treeAdapter: countingAdapter(meter) }, meter);
+  const tokenizer = parser.tokenizer;
+  meter.onLimit = () => tokenizer.pause();
   const size = Math.max(1, Math.floor(charsPerStep));
+  const share = Math.max(1, workPerStep);
   let at = 0;
+  let ended = false;
   let reading: TreeReading | null = null;
   return () => {
     if (reading !== null) return reading;
+    meter.allow(share);
     try {
-      const end = Math.min(html.length, at + size);
-      parser.tokenizer.write(html.slice(at, end), false);
-      at = end;
-      if (at < html.length) return null;
-      parser.tokenizer.write("", true);
+      if (tokenizer.paused) tokenizer.resume();
+      else if (at < html.length) {
+        const end = Math.min(html.length, at + size);
+        tokenizer.write(html.slice(at, end), false);
+        at = end;
+      }
+      if (!tokenizer.paused && at >= html.length && !ended) {
+        ended = true;
+        tokenizer.write("", true);
+      }
+      if (tokenizer.paused || !ended) return null;
     } catch (e) {
       if (!(e instanceof Past)) throw e;
       reading = { fits: false, past: e.past };
@@ -189,4 +201,19 @@ export function treeStepper(
     reading = { fits: true, elements: meter.elements, textChars: meter.textChars, work: meter.work };
     return reading;
   };
+}
+
+/** The stepper's meter: past a step's share of work it asks the tokenizer to pause at the next character. */
+class StepMeter extends Meter {
+  onLimit: () => void = () => {};
+  private limit = Infinity;
+
+  allow(units: number): void {
+    this.limit = this.work + units;
+  }
+
+  override charge(units: number): void {
+    super.charge(units);
+    if (this.work >= this.limit) this.onLimit();
+  }
 }
