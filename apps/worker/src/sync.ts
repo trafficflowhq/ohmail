@@ -21,7 +21,7 @@ import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } fr
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, nextAttemptAfter,
-  DETERMINISTIC_MESSAGE_FAILURE_CODES, MAX_MESSAGE_RETRIES_PER_CYCLE,
+  DETERMINISTIC_MESSAGE_FAILURE_CODES, MAX_DEAD_LETTERS_PER_CYCLE, MAX_MESSAGE_RETRIES_PER_CYCLE,
 } from "./dead-letter.js";
 import { KnownSetCache, watchKnownSet } from "./known-set.js";
 // `./build-version.js` and NOT `./config.js`, which re-exports the same symbol: `config.ts` imports
@@ -940,6 +940,12 @@ async function syncCycleWithin(
   // this table exists to stop. An unreadable table is an infrastructure fault and is handled like
   // one: no cursor written, the mailbox's ordinary failure counting takes over.
   deadLetters.hydrate(await repo.listMessageFailures(mailboxId));
+  // THE LOCAL BACKSTOP'S RUN, as the store has it (see `DeadLetterLedger.holdsAtCap`), so a hold
+  // outlives a relaunch under this build's label and a new label starts the count again.
+  const heldBefore = deadLetters.writeOffsHeldSince !== null;
+  if (deadLetters.holdsAtCap && typeof repo.writeOffRun === "function") {
+    deadLetters.hydrateRun(await repo.writeOffRun(mailboxId, version, MAX_DEAD_LETTERS_PER_CYCLE));
+  }
 
   // ── USER-COMMANDED FOLDER OPERATIONS, FIRST (FOLDERS-SPEC.md stage 2) ──────────────────────
   //
@@ -1335,6 +1341,8 @@ async function syncCycleWithin(
           repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
         }, deps.fence !== undefined);
       });
+      // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
+      if (plan.outcome === "new") deadLetters.noteStored();
       // AFTER the commit settles, outside the transaction — a hold that committed owes the
       // account a suggest visit ({@link SyncDeps.onScreenerHold}); a refused commit threw above.
       if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);
@@ -1537,6 +1545,14 @@ async function syncCycleWithin(
       });
     }
     throw err;
+  }
+  if (!heldBefore && deadLetters.writeOffsHeldSince !== null) {
+    log?.error("sync_write_offs_held", {
+      mailboxId, accountId, skipped: deadLetters.skipped,
+      reason: "five messages in a row were written off with none stored between them, so nothing " +
+        "more is written off until a message is stored or a new build arrives: the folder's cursor " +
+        "is held, and every message stays on the server",
+    });
   }
   if (firstDeferredError !== null) throw firstDeferredError;
   return {

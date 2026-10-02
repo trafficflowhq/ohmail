@@ -138,6 +138,7 @@ import { runSyncCycle, type CycleCensus, type SyncDeps } from "@trafficflow/work
    `runSyncCycle` alone, because a second value out of the loop's module would be a second piece of
    the pipeline running here. This is per-attachment state, not a piece of the pipeline. */
 import { KnownSetCache } from "@trafficflow/worker/known-set";
+import { DeadLetterLedger } from "@trafficflow/worker/dead-letter";
 import { startTailProgress } from "./drain-tail-progress.js";
 
 // The ORGANIZER LEASE, from the same package and for the same reason: two readings of one decision
@@ -1496,6 +1497,40 @@ export function isConnectionFailure(err: unknown): boolean {
   return false;
 }
 
+/**
+ * A FAILED DRAIN THAT LEAVES THE CONNECTION STANDING — anything that is not the connection's: a
+ * store refusal, a pipeline fault, a model outage. Excluded besides the connection class: our own
+ * refusal of a replaced connection, and a mailbox that is gone (the cycle's two removal classes
+ * and a lost shard, named as the loop names them), whose login has nothing left to serve.
+ */
+export function drainFailureKeepsTheLogin(err: unknown): boolean {
+  if (isConnectionFailure(err) || err instanceof ConnectionReplacedError) return false;
+  if (err instanceof MailboxErasedError) return false;
+  const name = (err as { name?: unknown } | null)?.name;
+  return name !== "MailboxRemovedError" && name !== "LeaderFencedError";
+}
+
+declare const __OHMAIL_ENGINE_VERSION__: string | undefined;
+/** The app version both engine bundlers bake in (`define`); undefined where the engine runs unbundled. */
+const BAKED_ENGINE_VERSION: string | undefined =
+  typeof __OHMAIL_ENGINE_VERSION__ === "string" ? __OHMAIL_ENGINE_VERSION__ : undefined;
+
+/**
+ * THE ENGINE'S BUILD AS THE LOOP'S VERSION LABEL: the commit where the shell or the app has one,
+ * else the app version the bundle carries, else null (an unbundled dev run). A label that differs
+ * between two builds is what makes the next build re-read a deterministic write-off and lifts a
+ * held backstop; `dev`, the environment's answer, is the same on every build. `unknown` (a shell
+ * built without git) and `dev` (the phone's no-commit spelling) are not identities.
+ */
+export function engineBuildLabel(
+  buildCommit: string | undefined, version: string | undefined = BAKED_ENGINE_VERSION,
+): string | null {
+  const commit = buildCommit?.trim() ?? "";
+  if (commit !== "" && commit !== "unknown" && commit !== "dev") return commit;
+  const v = version?.trim() ?? "";
+  return v === "" ? null : v;
+}
+
 /** The closed set {@link isConnectionFailure} matches. Literals only — never a message. */
 const CONNECTION_ERROR_CODES = new Set([
   "NoConnection", "EIMAPCLOSED", "ECONNRESET", "ECONNREFUSED", "EPIPE",
@@ -1523,6 +1558,8 @@ export async function discloseLocalSyncFailures(
       /** No password on this install, and since when — both, or the arm overlays nothing. */
       needsCredential?: boolean;
       needsCredentialSince?: Date | null;
+      /** Write-offs held by the local backstop: the mail is not arriving, and this is ours. */
+      writeOffsHeldSince?: Date | null;
     };
     /** Absent on a caller that cannot say, which overlays nothing. */
     holderLooked?: boolean;
@@ -1571,6 +1608,10 @@ export async function discloseLocalSyncFailures(
       if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
         failures.set(r.mailboxId, "connect");
       }
+    } else if (r.connection.writeOffsHeldSince instanceof Date) {
+      /* BELOW THE CONNECTION'S FACTS: the server answers and this install's own store or pipeline
+         refuses the mail, so the sentence is ours ("could not store this mail"), never the network. */
+      failures.set(r.mailboxId, "storage");
     } else if (r.organizer?.unreadableSince) {
       unreadable.set(r.mailboxId, r.organizer.unreadableSince);
     }
@@ -1816,6 +1857,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      the install, and a per-mailbox read would invite a caller to hand one mailbox a phone's
      numbers and its neighbour a desktop's. */
   const reconnect = reconnectProfile(organizerKind);
+  /* WHICH BUILD THIS ENGINE IS, as the sync loop's version label — see {@link engineBuildLabel}. */
+  const engineBuild = engineBuildLabel(config.buildCommit);
   /* THE POLL CADENCE, resolved ONCE for the same reason — `?? DEFAULT` written twice is two
      answers to one question. Two readers: the poll timer, and the bound on how long a stop waits
      for the cycle that timer started (`detach`). */
@@ -4070,6 +4113,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const closeDialAfterSignOut = async (): Promise<void> => {
         await adapter.close().catch(() => { /* already going away */ });
       };
+      const deadLetters = new DeadLetterLedger({ holdAtCap: true });
       const syncDeps = {
         repo,
         /**
@@ -4098,6 +4142,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // (The assertion keeps the unique-symbol type from widening to `symbol` in this untyped
         // literal; it changes no value.)
         storageCap: UNMETERED_STORAGE_CAP as typeof UNMETERED_STORAGE_CAP,
+        /* ONE LEDGER FOR THE RUNTIME'S LIFE, as the hosted worker holds one per attachment. Absent,
+           the loop built a fresh one every cycle, so a failing message was always on its first
+           attempt: never written off, its folder's cursor held for good and the mailbox stopped
+           behind it. The durable half (`message_failures`) is hydrated into it each cycle. With the
+           local backstop: no quarantine here bounds a defect that refuses every message. */
+        deadLetters,
+        /* THE ENGINE'S OWN BUILD, so a deterministic write-off (`mime_too_large`, `data_too_large`)
+           is read again by the next build, the version arm of `claimMessageFailures`. Absent or
+           the shell's `unknown`: the environment's answer, `dev` on every local door. */
+        ...(engineBuild === null ? {} : { buildVersion: engineBuild }),
       };
 
       let stopped = false;
@@ -6627,7 +6681,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * arm the poll timer: `start()` calls `schedule()` after it, and a re-dial's chain already
        * ends in one — two would give the mailbox two overlapping drains.
        */
-      const dialAndGate = async (): Promise<{ leaseRead: boolean }> => {
+      const dialAndGate = async (): Promise<{ leaseRead: boolean; drainError?: unknown }> => {
         /* THE SIGN-OUT FENCE, BEFORE `connect()` and before anything else. A launch and a re-dial
            both come through here, and both hold the plaintext in memory — so a sign-out that
            landed after this mailbox resolved its password must stop the login being opened, not
@@ -6813,13 +6867,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * content FETCHes with a tagged `NO`: the mailbox read `reachable: false` and the app
            * said "Connection lost. Reconnecting…". So the login is KEPT, the caller arms the poll,
            * and the next drain asks again over the same connection. Narrow BY CLASS. */
+          /* AND A DRAIN THAT FAILED FOR ITS OWN REASONS IS NOT A DEAD CONNECTION EITHER: a store
+             refusal, a pipeline fault. The login is kept and the failure handed back, so the caller
+             arms the poll over this connection and records no outage; only a connection-class
+             failure, or our own refusal of a replaced connection, closes it. */
+          let drainError: unknown;
           try {
             // `permitted`, the answer THIS launch's gate gave — the launch is a pass like any
             // other and its drain runs under the role that pass read.
             await serialize(() => drain(100, gen, conn, permitted));
           } catch (err) {
-            if (!fetchRefused(err)) throw err;
-            noteFetchRefused(err);
+            if (fetchRefused(err)) noteFetchRefused(err);
+            else if (drainFailureKeepsTheLogin(err)) drainError = err;
+            else throw err;
           }
           /* THE DOORBELL, AFTER THE LAUNCH DRAIN AND BEFORE THE CALLER ARMS THE TIMER. After the
              drain so a first import is not interrupted by its own arrivals, and here rather than
@@ -6828,7 +6888,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              that died with the old one. */
           await armWake(conn);
           // (the poll timer is armed by the caller — see the header)
-          return { leaseRead: true };
+          return drainError === undefined ? { leaseRead: true } : { leaseRead: true, drainError };
         } catch (err) {
           // The ORIGINAL error, rethrown — `main.ts` decides what a failed launch means, and it
           // must not be told the connection failed to close when what failed was the drain.
@@ -6990,6 +7050,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 "again BEFORE anything was moved, so a claim that arrived during the outage is " +
                 "honoured on the first cycle back rather than a cycle later",
             });
+            // The connection is back; its first drain failed for a reason of its own.
+            if (outcome.drainError !== undefined) {
+              log("sync_cycle_failed", { err: outcome.drainError, ceiling: null, ceilingLimit: null });
+            }
             return;
           }
           /* THE STREAK IS DELIBERATELY NOT CLEARED. The lease is still unreadable, so the cycles
@@ -7192,6 +7256,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             /* AND WHAT THE FIRST SYNC PRODUCED, read in the same pass for the reason the record's
                own header gives: two reads would be two clocks. */
             firstSync: firstSync.state(),
+            writeOffsHeldSince: deadLetters.writeOffsHeldSince,
           };
         },
         serialize,
@@ -7332,8 +7397,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * should be waited for identically. */
           let settleStart: () => void = () => {};
           redialInFlight = new Promise<void>((resolve) => { settleStart = resolve; });
+          let launched: { leaseRead: boolean; drainError?: unknown };
           try {
-            await dialAndGate();
+            launched = await dialAndGate();
           } catch (err) {
             /* A launch that could not dial is an OUTAGE, not a dead mailbox. `connect()` can reject
              * with the adapter emitting nothing (refused TCP, TLS failure, no greeting), so no
@@ -7365,6 +7431,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* AND THE HEARTBEAT'S OWN TIMER, on the same rule and for the reason its field states:
              the probe may not depend on a cycle finishing. */
           armHeartbeat();
+          /* THE FIRST DRAIN FAILED AND THE CONNECTION STANDS: the launch still reports the failure
+             (`mailbox_start_failed`), with the poll and the heartbeat armed over the kept login and
+             no outage recorded. */
+          if (launched.drainError !== undefined) throw launched.drainError;
         },
         /**
          * STOP TAKING WORK AND WAIT OUT THE PASS ALREADY RUNNING — the half of a stop that must

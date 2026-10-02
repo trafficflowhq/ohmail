@@ -243,6 +243,8 @@ export const processKnownSetBudget = new KnownSetBudget(KNOWN_SET_BUDGET_BYTES);
 export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // reads
   "findByDedupKey", "findByMessageIdHeader", "listMessageFailures", "primaryInstanceVanished",
+  // The local backstop's run: `message_failures` and the newest `messages.created_at` — reads.
+  "writeOffRun",
   // `message_instances` for one message, at most two rows — a read; it moves no instance.
   "onlyInstanceAt",
   "getFolderState", "listRules", "knownSenders", "findThreadParent", "listThreadBacklog",

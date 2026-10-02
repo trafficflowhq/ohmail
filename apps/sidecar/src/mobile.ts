@@ -121,6 +121,12 @@ export interface PhoneEngineDeps {
    */
   installId: string;
   /**
+   * THIS BUILD'S COMMIT, as the engine's build identity — the desktop's `OHMAIL_BUILD_COMMIT` as a
+   * value. The sync loop labels a write-off with it, so the next build reads a message this one
+   * could not store. Absent: `dev`, the same on every build.
+   */
+  buildCommit?: string;
+  /**
    * THE PER-INSTALL KEY RING, `version → 64 hex characters`. The desktop's `OHMAIL_KEK` contract as
    * a value rather than an environment variable; `apps/mobile/src/engine/kek.ts` produces it.
    *
@@ -779,6 +785,7 @@ async function composePhoneEngine(
     machineName: deps.machineName,
     installId: deps.installId,
     organizerKind: deps.organizerKind ?? "mobile",
+    ...(deps.buildCommit !== undefined ? { buildCommit: deps.buildCommit } : {}),
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.profileFlushIntervalMs !== undefined ? { profileFlushIntervalMs: deps.profileFlushIntervalMs } : {}),
     ...(wired ? { log } : {}),

@@ -98,8 +98,16 @@ export function buildOptionsFor(root = ROOT) {
         "const require = __ohmailCreateRequire(import.meta.url);",
       ].join("\n"),
     },
+    /* The app version, the engine's build label where the shell has no commit (a source build with no
+       `.git`, the Flatpak's): a deterministic write-off is read again by the next release. */
+    define: { __OHMAIL_ENGINE_VERSION__: JSON.stringify(desktopVersion(root)) },
     logLevel: "info",
   };
+}
+
+/** `apps/desktop/package.json`'s version, which the release bump writes. */
+function desktopVersion(root) {
+  return String(JSON.parse(readFileSync(join(root, "apps", "desktop", "package.json"), "utf8")).version ?? "");
 }
 
 /** The installed root of the storage package, resolved through whatever layout is in use. */

@@ -45,6 +45,7 @@ import {
 } from "../src/ui/standalone-form";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
+import { buildCommit } from "../src/build-info";
 
 export default function StandaloneScreen() {
   return (
@@ -163,6 +164,7 @@ function Credentials() {
           return native.nativeEnginePlatform();
         },
         machineName: () => PHONE_CLAIM_NAME,
+        buildCommit: buildCommit(process.env.EXPO_PUBLIC_COMMIT),
         /* THE SAME ID THE GATE STAMPED, never a fresh one: a claim written against a second id is
            how an install reads its own claim as somebody else's. `null` — the marker has not been
            settled — is handed on as the empty string, and the engine refuses a nameless claimant

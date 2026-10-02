@@ -188,6 +188,12 @@ export interface StandaloneEngine {
       /** THE SERVER'S CERTIFICATE WAS REFUSED — optional for `needsCredential`'s reason. */
       certificateRefused?: boolean;
       /**
+       * SINCE WHEN THE ENGINE HOLDS ITS WRITE-OFFS: mail kept failing to save on this phone, so it
+       * stopped setting messages aside and the folder waits. Optional for `needsCredential`'s
+       * reason; absent or null reads as not held.
+       */
+      writeOffsHeldSince?: Date | null;
+      /**
        * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`, or
        * `produced_nothing_readable`. The third is the one no surface could report: a drain came
        * back, not one message reached the mirror, and every other field here says the install is
@@ -229,6 +235,8 @@ export type StartPhoneEngine = (deps: {
   machineName: string;
   installId: string;
   keks?: Record<number, string>;
+  /** This build's commit, the engine's version label — see {@link StandaloneDeps.buildCommit}. */
+  buildCommit?: string;
 } & StartPhoneEngineLogging) => Promise<StandaloneEngine>;
 
 /**
@@ -252,6 +260,7 @@ export type StartPhoneEngineFromSealed = (deps: {
   installId: string;
   keks?: Record<number, string>;
   onMigrating?: (progress: StoreMigrating) => void;
+  buildCommit?: string;
 } & StartPhoneEngineLogging) => Promise<
   { kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }
 >;
@@ -287,6 +296,13 @@ export interface StandaloneDeps {
    * instead of asserting that a channel was passed.
    */
   logSink?: EngineLogSink;
+  /**
+   * THIS BUILD'S COMMIT (`EXPO_PUBLIC_COMMIT`, the same one the engine artifact carries), handed
+   * to the engine as its build identity. The sync loop labels a written-off message with it, and
+   * a message the device could not store is read again by the next build only where the label
+   * changes. Absent: the engine's own `dev`, the same on every build.
+   */
+  buildCommit?: string;
 }
 
 /**
@@ -443,6 +459,7 @@ export async function openStandaloneMailbox(
       /* ABSENT rather than `undefined` when this app has no sink: the engine spreads on presence
          (`exactOptionalPropertyTypes`), and an `undefined` member would read as a channel. */
       ...(deps.logSink !== undefined ? { logSink: deps.logSink } : {}),
+      ...(deps.buildCommit !== undefined ? { buildCommit: deps.buildCommit } : {}),
     });
     return { ok: true, door: engine };
   } catch (err) {
@@ -489,6 +506,8 @@ export interface ReopenDeps {
   logSink?: EngineLogSink;
   /** The store's upgrade, handed through to the screen that waits on it. See {@link StoreMigrating}. */
   onMigrating?: (progress: StoreMigrating) => void;
+  /** See {@link StandaloneDeps.buildCommit}: the relaunch hands the same identity. */
+  buildCommit?: string;
 }
 
 /** The relaunch's answer. A refusal is a keyed sentence, never a fall-through to the chooser. */
@@ -517,6 +536,7 @@ export async function reopenStandaloneMailbox(deps: ReopenDeps): Promise<ReopenO
       keks: platform.keks,
       ...(deps.logSink !== undefined ? { logSink: deps.logSink } : {}),
       ...(deps.onMigrating !== undefined ? { onMigrating: deps.onMigrating } : {}),
+      ...(deps.buildCommit !== undefined ? { buildCommit: deps.buildCommit } : {}),
     });
     if (started.kind === "no-credential") {
       return { ok: false, reason: refuse("standaloneNoSealedCredential") };

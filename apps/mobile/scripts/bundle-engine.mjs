@@ -413,6 +413,11 @@ function declarationFor() {
   ].join("\n");
 }
 
+/** `app.json`'s `expo.version`, which the release bump writes. */
+function appVersion() {
+  return String(JSON.parse(readFileSync(join(aliases.MOBILE, "app.json"), "utf8")).expo?.version ?? "");
+}
+
 export async function buildPhoneEngine({ write = true, workspaceSources = false } = {}) {
   const esbuild = await loadEsbuild();
   const { plugin, applied } = substitutions(workspaceSources ? workspaceSourceAliases(REPO) : {});
@@ -436,6 +441,8 @@ export async function buildPhoneEngine({ write = true, workspaceSources = false 
     conditions: ["react-native", "browser", "import", "default"],
     absWorkingDir: REPO,
     inject: aliases.INJECT,
+    /* The app version (`app.json`), the engine's build label where the app was built with no commit. */
+    define: { __OHMAIL_ENGINE_VERSION__: JSON.stringify(appVersion()) },
     metafile: true,
     write: false,
     logLevel: "silent",

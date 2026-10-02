@@ -323,6 +323,7 @@ export const DE: Deck = {
   connectionLost: "Verbindung verloren. Verbinde neu …",
   connectionNeedsPassword: "Dieses Postfach braucht sein Passwort erneut. Gib es ein, damit wieder synchronisiert wird.",
   connectionGoneSince: (time: string) => `Seit ${time} keine Verbindung`,
+  connectionMailHeld: "Neue Post konnte auf diesem Telefon nicht gespeichert werden, deshalb ist die Synchronisierung angehalten. Deine Post liegt weiter auf deinem Server.",
 
   networkOffline: "Dieses Telefon hat kein Netz. ohmail holt nach, sobald es wieder da ist.",
   networkOfflineHeld: "Dieses Telefon hat kein Netz — angezeigt wird die neuere Post, die es hat.",

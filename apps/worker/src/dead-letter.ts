@@ -1,4 +1,4 @@
-import { MimeParseError, MimeTooLargeError, type NativeLocator } from "@trafficflow/core/mail";
+import { MimeParseError, MimeTooLargeError, storeFaultOf, type NativeLocator, type StoreFaultName } from "@trafficflow/core/mail";
 import { epochOf, parseRef, sameEpoch } from "@trafficflow/core/adapters/imap";
 
 /**
@@ -133,6 +133,33 @@ const TRANSPORT_ERRNOS: ReadonlySet<string> = new Set([
   "EHOSTUNREACH", "ENETUNREACH", "EADDRNOTAVAIL", "CONNECT_TIMEOUT",
 ]);
 
+/**
+ * THE DEVICE STORE'S RESULT CLASSES THAT ARE OURS, NOT THE MESSAGE'S. SQLite answers a full disk, a
+ * locked or busy file, a read-only or corrupt database with these, and a phone meets every one; read
+ * as the message's, a full disk would write off five messages a cycle. `error`, `internal` and
+ * `misuse` are our statement or our driver (a missing column, a transaction inside a transaction),
+ * Postgres's classes 25 and XX. Never written off: the cycle fails, the cursor holds.
+ */
+const STORE_INFRASTRUCTURE: ReadonlySet<StoreFaultName> = new Set<StoreFaultName>([
+  "error", "internal", "misuse",
+  "perm", "abort", "busy", "locked", "nomem", "readonly", "interrupt", "ioerr", "corrupt", "full",
+  "cantopen", "protocol", "schema", "nolfs", "auth", "notadb",
+]);
+
+/** A device store's refusal, by its SQLite class; null when the throw is not SQLite's. */
+function classifyStoreFault(err: unknown): IngestFault | null {
+  const store = storeFaultOf(err);
+  if (store === null) return null;
+  if (STORE_INFRASTRUCTURE.has(store)) return { domain: "infrastructure" };
+  // Our own statement over the store's limit, as `isMessageLimit` reads the server's.
+  if (store === "toobig") return { domain: "message", code: "data_too_large", deterministic: true };
+  // A value this message carried that the column cannot hold: the class-22 reading.
+  if (store === "range" || store === "mismatch") return { domain: "message", code: "data_exception", deterministic: true };
+  // A CHECK, UNIQUE or NOT NULL: class 23's reading, retried before it is written off.
+  if (store === "constraint") return { domain: "message", code: "constraint_violation", deterministic: false };
+  return { domain: "message", code: "unclassified", deterministic: false };
+}
+
 const sqlStateClass = (code: string): string | null =>
   /^[0-9A-Z]{5}$/.test(code) ? code.slice(0, 2) : null;
 
@@ -194,6 +221,10 @@ export function classifyIngestFault(err: unknown): IngestFault {
       ? { domain: "message", code: "unclassified", deterministic: false }
       : { domain: "message", code: "mime_unparseable", deterministic: true };
   }
+
+  // The device store's one driver code says nothing; its SQLite class does.
+  const store = classifyStoreFault(err);
+  if (store !== null) return store;
 
   const code = codeOf(err);
   if (code) {
@@ -396,10 +427,46 @@ export class DeadLetterLedger {
   private readonly perCycleCap: number;
   /** Terminal decisions taken in the CURRENT cycle; reset by {@link beginCycle}. */
   private thisCycle = 0;
+  /** See {@link holdsAtCap}; the instant the hold engaged, or null. */
+  private heldSince: Date | null = null;
+  /** Write-offs since the last stored message: as the store said at cycle start, and this cycle's. */
+  private runBefore = 0;
+  private runThisCycle = 0;
+  /**
+   * THE LOCAL BACKSTOP. The per-cycle cap assumes a failing cycle quarantines the mailbox; a local
+   * engine has none, so a defect refusing every message would write the mail off as it arrives, at
+   * any rate. With this set, the cap's number of write-offs in a row with NO message stored between
+   * them holds every further write-off. Only a stored message resets the run and lifts the hold; a
+   * clean cycle with nothing new does not. The run is the store's (`hydrateRun`), so it survives a
+   * relaunch under the same build label and a new label starts it again.
+   */
+  readonly holdsAtCap: boolean;
 
-  constructor(opts: { maxAttempts?: number; perCycleCap?: number } = {}) {
+  constructor(opts: { maxAttempts?: number; perCycleCap?: number; holdAtCap?: boolean } = {}) {
     this.maxAttempts = Math.max(1, opts.maxAttempts ?? DEFAULT_MAX_MESSAGE_ATTEMPTS);
     this.perCycleCap = Math.max(1, opts.perCycleCap ?? MAX_DEAD_LETTERS_PER_CYCLE);
+    this.holdsAtCap = opts.holdAtCap === true;
+  }
+
+  /** Since when write-offs are held ({@link holdsAtCap}), or null when they are not. */
+  get writeOffsHeldSince(): Date | null { return this.heldSince; }
+
+  /**
+   * The run as the store answers it at the top of a cycle: write-offs under this build's label since
+   * the last stored message, and when the run reached the cap. Authoritative over memory, so a
+   * relaunch keeps a hold and a new build label (whose rows do not count) lifts it.
+   */
+  hydrateRun(run: { count: number; heldSince: Date | null }): void {
+    this.runBefore = run.count;
+    this.runThisCycle = 0;
+    this.heldSince = run.count >= this.perCycleCap ? (this.heldSince ?? run.heldSince ?? new Date()) : null;
+  }
+
+  /** A message was stored: the run starts again and a hold is lifted. */
+  noteStored(): void {
+    this.runBefore = 0;
+    this.runThisCycle = 0;
+    this.heldSince = null;
   }
 
   /** Called once at the top of every sync cycle, so the per-cycle cap is per cycle. */
@@ -450,6 +517,7 @@ export class DeadLetterLedger {
     if (!item?.terminal) return;
     item.terminal = false;
     if (this.thisCycle > 0) this.thisCycle--;
+    if (this.runThisCycle > 0) this.runThisCycle--;
   }
 
   /** Close an item out: it was ingested, or the server no longer has it, or its epoch is void. */
@@ -478,9 +546,14 @@ export class DeadLetterLedger {
     if (item.terminal) return "skip";                       // already written off; do not re-count
     const exhausted = fault.deterministic || item.attempts >= this.maxAttempts;
     if (!exhausted) return "retry";
+    if (this.heldSince !== null) return "retry";            // the local backstop holds
     if (this.thisCycle >= this.perCycleCap) return "retry";  // the safety valve, above
     this.thisCycle++;
     item.terminal = true;
+    if (this.holdsAtCap) {
+      this.runThisCycle++;
+      if (this.runBefore + this.runThisCycle >= this.perCycleCap) this.heldSince ??= now;
+    }
     return "skip";
   }
 

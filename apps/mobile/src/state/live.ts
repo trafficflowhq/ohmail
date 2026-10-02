@@ -5667,6 +5667,8 @@ export type ConnectionSay =
   | { readonly kind: "certificate" }
   /** No password on this phone for this mailbox — nothing was dialled and nothing is retrying. */
   | { readonly kind: "needsCredential" }
+  /** The server answers and this phone's store refuses the mail, so the engine holds it back. */
+  | { readonly kind: "writeOffsHeld" }
   | { readonly kind: "lost" }
   | { readonly kind: "gone"; readonly since: string };
 
@@ -5695,6 +5697,7 @@ export function connectionSaid(verdict: ConnectionSay | null): string | null {
   if (verdict.kind === "refused") return Copy.connectionSignInRefused;
   if (verdict.kind === "certificate") return Copy.connectionCertificateRefused;
   if (verdict.kind === "needsCredential") return Copy.connectionNeedsPassword;
+  if (verdict.kind === "writeOffsHeld") return Copy.connectionMailHeld;
   return verdict.kind === "lost" ? Copy.connectionLost : Copy.connectionGoneSince(verdict.since);
 }
 
@@ -5731,6 +5734,7 @@ export function connectionSay(
     certificateRefused?: boolean;
     needsCredential?: boolean;
     dialled?: boolean;
+    writeOffsHeld?: boolean;
   } | null,
   now: Date,
   zone: string,
@@ -5751,7 +5755,10 @@ export function connectionSay(
      one. Nothing was tried and nothing failed, so no verdict: "Reconnecting…" would promise a
      re-dial nothing is making, and the freshness stamp speaks meanwhile. */
   if (here.dialled === false) return null;
-  if (here.reachable) return { kind: "reachable" };
+  /* BELOW THE OUTAGE ARMS' PREMISE: only over a link that is up. The server answers and the mail
+     still does not arrive, so "reachable" — which says nothing — would be the healthy-looking strip
+     over a mailbox that has stopped. */
+  if (here.reachable) return here.writeOffsHeld === true ? { kind: "writeOffsHeld" } : { kind: "reachable" };
   const stamp = here.unreachableSince;
   if (stamp === null) return { kind: "lost" };
   const since = Date.parse(stamp);

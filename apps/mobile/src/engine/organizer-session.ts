@@ -272,6 +272,9 @@ export interface StandaloneHere {
    * launch was skipped and nothing has dialled since; `true` while unsaid (an older engine).
    */
   readonly dialled: boolean;
+  /** Mail kept failing to save on this phone and the engine stopped setting it aside: the
+   *  connection stands, the mail is not arriving. `false` while unsaid (an older engine). */
+  readonly writeOffsHeld: boolean;
   /**
    * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`,
    * `produced_nothing_readable`, or `null` while the engine has not said, exactly as the two
@@ -306,6 +309,7 @@ export function standaloneHere(): StandaloneHere | null {
   let certificateRefused = false;
   let needsCredential = false;
   let dialled = true;
+  let writeOffsHeld = false;
   /** `null` until the engine has said — see the field. */
   let firstSync: string | null = null;
   /**
@@ -381,6 +385,8 @@ export function standaloneHere(): StandaloneHere | null {
       needsCredential = conn.some((c) => c.needsCredential === true);
       /* `every`, like `reachable`: one undialled mailbox is a connection nobody has tried yet. */
       dialled = conn.every((c) => c.dialled !== false);
+      /* `some`, like the refusals: one mailbox whose mail has stopped is the news. */
+      writeOffsHeld = conn.some((c) => c.writeOffsHeldSince instanceof Date);
       const since = conn
         .map((c) => c.unreachableSince)
         .filter((d): d is Date => d instanceof Date)
@@ -407,6 +413,7 @@ export function standaloneHere(): StandaloneHere | null {
   return {
     id, address: held.address, organizing, releaseRequestedAt, releaseRefusal, heldBy, reachable,
     unreachableSince, signInRefused, certificateRefused, needsCredential, dialled, firstSync,
+    writeOffsHeld,
   };
 }
 

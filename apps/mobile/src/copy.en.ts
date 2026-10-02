@@ -538,6 +538,9 @@ const TABLE = {
   connectionLost: "Connection lost. Reconnecting…",
   connectionNeedsPassword: "This mailbox needs its password again. Enter it to start syncing.",
   connectionGoneSince: (time: string) => `Couldn't reconnect since ${time}`,
+  /* THE LINK IS UP AND THE MAIL HAS STOPPED: messages kept failing to save on this phone, so the
+     engine stopped setting them aside and waits. The mail is on the server, untouched. */
+  connectionMailHeld: "New mail could not be saved on this phone, so syncing has paused. Your mail is still on your server.",
 
   /* THE PHONE HAS NO NETWORK — read from the platform (`net/network-door.ts`), never inferred from
      a failed request. It outranks both lines above: no network is WHY the link is gone and the

@@ -178,6 +178,13 @@ export interface MailboxConnectionState {
    * cannot be read, and a mailbox that later reads becomes `finished`.
    */
   firstSync: FirstSyncState;
+  /**
+   * SINCE WHEN THIS ENGINE HOLDS ITS WRITE-OFFS — a cycle spent its per-cycle cap and mail was
+   * still failing, so nothing more is written off and the folder waits until a cycle is served
+   * clean (`DeadLetterLedger`'s local backstop). `null` while not held. Optional so a state built
+   * elsewhere reads as "not held". The connection stands; the mail is not arriving.
+   */
+  writeOffsHeldSince?: Date | null;
 }
 
 /** Why this install is not organizing a mailbox, when it is not. One answer per mailbox. */

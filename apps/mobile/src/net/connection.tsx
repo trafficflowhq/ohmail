@@ -59,6 +59,7 @@ import {
 } from "./pairing";
 import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
+import { buildCommit } from "../build-info";
 
 export type ConnectionState =
   /** The launch instant, before the keystore has answered whether a pairing exists. */
@@ -242,6 +243,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
               return native.nativeEnginePlatform();
             },
             machineName: () => PHONE_CLAIM_NAME,
+            buildCommit: buildCommit(process.env.EXPO_PUBLIC_COMMIT),
             /* THE SAME ID THE GATE STAMPED. A claim written against a second id is how an install
                reads its own claim as somebody else's; the engine refuses a nameless claimant rather
                than this layer inventing one. */
