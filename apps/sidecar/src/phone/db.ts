@@ -23,3 +23,11 @@ export async function openLocalDb(
       "a composition did not pass a store.",
   );
 }
+
+/**
+ * The failed start's close (`../db.ts`'s `closeAfterFailedStart`). The phone's own store has no close
+ * door and no close timeout, so closing it is the whole of it, and a close that fails is thrown.
+ */
+export async function closeAfterFailedStart(opened: { close(): Promise<void> }): Promise<void> {
+  await opened.close();
+}
