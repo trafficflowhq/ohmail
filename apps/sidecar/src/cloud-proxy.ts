@@ -3,6 +3,7 @@ import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist"
 import { offlineResponse, REQUEST_DEADLINE_MS, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
+import { leftOf } from "./pair-undo.js";
 import { routeKeyOf, writeRowsOf } from "./cloud-write-rows.js";
 
 /**
@@ -33,7 +34,15 @@ export interface WriteThroughProxyConfig {
    * server the person runs themselves. Chooses the wording of a refusal, never whether to refuse.
    */
   handoffForeign?: boolean;
+  /**
+   * The Idempotency-Keys of the window's writes the account answered 2xx, kept by the engine across
+   * sessions: a kept outbox row whose key is here is applied and waits only for its echo. Bounded.
+   */
+  applied?: Set<string>;
 }
+
+/** How many applied keys are kept, the oldest dropped first: a dropped key's row counts as waiting again. */
+export const APPLIED_KEYS_KEPT = 4_096;
 
 /**
  * WHAT MAY BE FORWARDED — an allowlist, and a non-member is a 404. The relayable routes are the
@@ -46,6 +55,8 @@ export interface WriteThroughProxyConfig {
 export interface WriteThroughProxy {
   /** Relay one request to Cloud (or 503 while offline), echo-awaiting a 2xx mutation. */
   forward(req: Request): Promise<Response>;
+  /** Wait until every write already accepted has its server's answer, or until `by`, whichever is first. */
+  settled(by: number): Promise<void>;
 }
 
 /** Hop-by-hop / re-authored headers that must not be relayed to Cloud. */
@@ -111,6 +122,13 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
    * account: an answer clears the flag, a failure leaves offline mode as the pull found it.
    */
   let probeOwed = false;
+  /**
+   * THE WRITES THIS DOOR HAS ACCEPTED and not yet had answered: from before the body is read (a
+   * slow upload is accepted work) to the server's answer, never the echo-await after it. A sign-out
+   * waits on these, bounded, so a write already on its way lands under the session it was made in.
+   */
+  const accepted = new Set<Promise<void>>();
+  const applied = cfg.applied ?? new Set<string>();
 
   const forward = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -156,8 +174,22 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     const headers = new Headers(req.headers);
     for (const h of STRIP_HEADERS) headers.delete(h);
 
+    let answered: () => void = () => {};
+    if (mutation) {
+      const entry: Promise<void> = new Promise<void>((r) => { answered = r; });
+      accepted.add(entry);
+      const done = answered;
+      answered = () => { accepted.delete(entry); done(); };
+    }
+
     const hasBody = method !== "GET" && method !== "HEAD";
-    const body = hasBody ? await req.arrayBuffer() : undefined;
+    let body: ArrayBuffer | undefined;
+    try {
+      body = hasBody ? await req.arrayBuffer() : undefined;
+    } catch (err) {
+      answered();
+      throw err;
+    }
 
     let res: Response;
     const started = Date.now();
@@ -179,13 +211,21 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       cfg.log?.("cloud_forward_failed", {
         err,
         reason: "a request could not reach the hosted account; the install is marked offline and the " +
-          "window is answered 503, never that it was done",
+          "window is answered 503, which keeps a change for its next try",
       });
       return offlineResponse();
+    } finally {
+      answered();
     }
 
     // The account answered, so it is reachable whatever it said.
     if (!cfg.mirror.online()) cfg.mirror.markConnectivity(true);
+    const key = mutation && res.ok ? req.headers.get("idempotency-key") : null;
+    if (key !== null && key !== "") {
+      applied.delete(key);
+      applied.add(key);
+      if (applied.size > APPLIED_KEYS_KEPT) applied.delete(applied.values().next().value!);
+    }
 
     /* ONE LINE PER FORWARDED WRITE, the only record of it on this machine: the route's pattern,
        the account's status, the round trip and the key's hash — never the body, the path's ids or
@@ -225,5 +265,16 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     return target === null ? res : restamped(res, covered ? null : await cfg.mirror.localSeq());
   };
 
-  return { forward };
+  return {
+    forward,
+    settled: async (by) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<void>((r) => { timer = setTimeout(r, leftOf(by)); });
+      try {
+        await Promise.race([Promise.allSettled([...accepted]), bound]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
 }

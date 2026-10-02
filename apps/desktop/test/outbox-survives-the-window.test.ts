@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 
 import { createLocalEngine } from "../src/bridge-fetch.js";
-import { createWindowOutbox, WINDOW_OUTBOX_FILE } from "../../sidecar/src/window-outbox.js";
+import { createWindowOutbox, windowOutboxFilesOf, windowOutboxOwnerKey } from "../../sidecar/src/window-outbox.js";
 
 /**
  * A CHANGE MADE WHILE THE SERVER IS OUT OF REACH OUTLIVES THE WINDOW.
@@ -31,6 +31,9 @@ function encode(status: number, body = "", headers: [string, string][] = []): Ui
 }
 
 const JSON_TYPE: [string, string][] = [["content-type", "application/json"]];
+/** Whose changes the stand-in sidecar keeps: one hosted account on one server. */
+const OWNER = { address: "me@ohmail.test", base: "https://cloud.test" };
+const WINDOW_OUTBOX_FILE = windowOutboxFilesOf(windowOutboxOwnerKey(OWNER))[0]!;
 /** The mailbox this window serves — the mount key the gate hands `createLocalEngine`. */
 const MAILBOX = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const OFFLINE = JSON.stringify({ error: { code: "offline_read_only", message: "ohmail Cloud is out of reach", retryable: true } });
@@ -50,7 +53,7 @@ interface World {
 
 /** Install the stand-in; the answer relaunches the sidecar — a fresh door over the same directory. */
 function standInShell(w: World): () => void {
-  let door = createWindowOutbox({ dataDir: w.dir, authorized: async () => true, log: () => undefined, scope: () => MAILBOX });
+  let door = createWindowOutbox({ dataDir: w.dir, owner: OWNER, authorized: async () => true, log: () => undefined, scope: () => MAILBOX });
   let drafts = 0;
   host.__TAURI_INTERNALS__ = {
     invoke: async (command, payload) => {
@@ -99,7 +102,7 @@ function standInShell(w: World): () => void {
     },
   };
   return () => {
-    door = createWindowOutbox({ dataDir: w.dir, authorized: async () => true, log: () => undefined, scope: () => MAILBOX });
+    door = createWindowOutbox({ dataDir: w.dir, owner: OWNER, authorized: async () => true, log: () => undefined, scope: () => MAILBOX });
   };
 }
 

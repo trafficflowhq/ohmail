@@ -194,7 +194,7 @@ vi.mock("../src/bridge-fetch.js", async () => {
          door configuration could not be cleared — the same arm `logoutReply` can throw for. */
       if (logoutFails !== null) throw new Error(logoutFails);
       /* The real return shape: the shell's status, and no press, so nothing for the chooser to say. */
-      return { status: await logoutReply(), stillListedFrom: null };
+      return { status: await logoutReply(), stillListedFrom: null, waiting: null };
     },
   };
 });

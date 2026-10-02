@@ -1,22 +1,68 @@
 /**
  * `GET|POST /local/window/outbox` — the window engine's queued changes, kept on THIS machine.
  *
- * The window's engine holds no mirror on disk, so before this door a change made while the server
- * was out of reach lived in the window's memory only. The rows are the engine's own outbox records
- * and nothing else: two types, taken whole, never read here. One file in the data directory,
- * replaced by stage-flush-rename on every write, so a reader finds the previous or the next
- * complete set and never a torn one; an empty set removes the file, and the removal is flushed as a
- * write is. Every request names the mailbox its window serves, and only this engine's is admitted.
+ * The rows are the engine's own outbox records, taken whole; only the count reads a row's key. ONE
+ * FILE PER OWNER, the account and the server the changes were made for (`windowOutboxOwnerKey`): a
+ * launch opens its own owner's file and never another's, so a change waits for its account across
+ * sign-outs and other accounts' launches. Each write is stage-flush-rename; an empty set removes the
+ * file. Every request names the mailbox its window serves, and only this engine's is admitted.
  */
+import { createHash } from "node:crypto";
+import { existsSync, renameSync } from "node:fs";
 import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { removeFileSynced, writeAtomicFileSynced } from "./fs-atomic.js";
 import type { Diagnostic } from "./log.js";
 
 export const WINDOW_OUTBOX_ROUTE = "/local/window/outbox";
-export const WINDOW_OUTBOX_FILE = "window-outbox.json";
-/** The file and the unreadable copy a failed read sets aside — both the world's own, both discarded with it. */
-export const WINDOW_OUTBOX_FILES: readonly string[] = [WINDOW_OUTBOX_FILE, `${WINDOW_OUTBOX_FILE}.unreadable`];
+/** The one file builds wrote before the files were keyed by account and server; adopted once, never served as it is. */
+export const LEGACY_WINDOW_OUTBOX_FILE = "window-outbox.json";
+/** Where a legacy file goes when no owner can be established for it: kept, logged, never served. */
+export const UNOWNED_WINDOW_OUTBOX_FILE = "window-outbox.unowned.json";
+
+/** Whose changes a file holds: the account's address (null on a paired door) and the server's base. */
+export interface WindowOutboxOwner {
+  address: string | null;
+  base: string;
+}
+
+/** The file key of one account on one server. Never the mailbox id, which every re-bootstrap mints anew. */
+export function windowOutboxOwnerKey(owner: WindowOutboxOwner): string {
+  const address = (owner.address ?? "").trim().toLowerCase();
+  return createHash("sha256").update(JSON.stringify([address, owner.base.trim()])).digest("hex").slice(0, 24);
+}
+
+/** That account's file and the unreadable copy a failed read sets aside — both discarded with it. */
+export function windowOutboxFilesOf(ownerKey: string): readonly string[] {
+  const file = `window-outbox.${ownerKey}.json`;
+  return [file, `${file}.unreadable`];
+}
+
+/**
+ * ADOPT THE OWNERLESS FILE an earlier build wrote, once, under the lock and before anything reads:
+ * renamed for the account and server it was made for (`ownerKey`), or set aside as unowned when that
+ * cannot be said. Never over that account's own file, and never deleted.
+ */
+export function adoptLegacyWindowOutbox(dataDir: string, ownerKey: string | null, log?: Diagnostic): void {
+  const legacy = join(dataDir, LEGACY_WINDOW_OUTBOX_FILE);
+  if (!existsSync(legacy)) return;
+  if (ownerKey === null) {
+    let aside = join(dataDir, UNOWNED_WINDOW_OUTBOX_FILE);
+    for (let n = 2; existsSync(aside); n += 1) aside = join(dataDir, `window-outbox.unowned.${n}.json`);
+    renameSync(legacy, aside);
+    if (existsSync(`${legacy}.unreadable`)) renameSync(`${legacy}.unreadable`, `${aside}.unreadable`);
+    log?.("window_outbox_unowned", {
+      reason: "the saved outbox names no server that can be established, so it was set aside unread",
+    });
+    return;
+  }
+  const [file, unreadable] = windowOutboxFilesOf(ownerKey) as [string, string];
+  if (existsSync(join(dataDir, file))) return;
+  renameSync(legacy, join(dataDir, file));
+  if (existsSync(`${legacy}.unreadable`) && !existsSync(join(dataDir, unreadable))) {
+    renameSync(`${legacy}.unreadable`, join(dataDir, unreadable));
+  }
+}
 
 /** The client engine's `OUTBOX_TYPE` and `OUTBOX_ABANDONED_TYPE`, spelled here: this process does not link it. */
 export const WINDOW_OUTBOX_TYPES: readonly string[] = ["outbox_entry", "outbox_abandoned"];
@@ -53,6 +99,8 @@ function isRow(v: unknown): v is Row {
 
 export interface WindowOutboxDeps {
   dataDir: string;
+  /** Whose changes this door keeps — REQUIRED: a default owner would name one file for every account. */
+  owner: WindowOutboxOwner;
   /** Does this request carry the install's live launch bearer — the answer every local door gives. */
   authorized: (req: Request) => Promise<boolean>;
   /**
@@ -69,14 +117,18 @@ export interface WindowOutboxDeps {
 
 interface WindowOutbox {
   handle(req: Request): Promise<Response>;
-  /** Drop every queued change, in memory and on disk — the erased-account discard. */
+  /** Drop this owner's queued changes, in memory and on disk — the erased-account discard. */
   discard(): Promise<void>;
+  /** How many changes this owner's file holds that the server has not applied (`applied`: by key). */
+  count(applied?: (key: string) => boolean): Promise<number>;
 }
 
 export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
   // AT FIRST USE, never at construction: a door that is built and never read reaches no `path`.
+  let files_: readonly string[] | null = null;
+  const files = (): readonly string[] => (files_ ??= windowOutboxFilesOf(windowOutboxOwnerKey(deps.owner)));
   let path_: string | null = null;
-  const file = (): string => (path_ ??= join(deps.dataDir, WINDOW_OUTBOX_FILE));
+  const file = (): string => (path_ ??= join(deps.dataDir, files()[0]!));
   const write = deps.write ?? ((p: string, c: string) => writeAtomicFileSynced(p, c, 0o600));
   const pageBytes = deps.pageBytes ?? WINDOW_OUTBOX_PAGE_BYTES;
   let held: Map<string, Held> | null = null;
@@ -187,7 +239,17 @@ export function createWindowOutbox(deps: WindowOutboxDeps): WindowOutbox {
   return {
     discard: () => serial(async () => {
       held = new Map();
-      for (const f of WINDOW_OUTBOX_FILES) await removeFileSynced(join(deps.dataDir, f)).catch(() => undefined);
+      for (const f of files()) await removeFileSynced(join(deps.dataDir, f)).catch(() => undefined);
+    }),
+    count: (applied) => serial(async () => {
+      let n = 0;
+      for (const h of (await load()).values()) {
+        if (h.row.type !== "outbox_entry") continue;
+        const key = (h.row.entity as { key?: unknown }).key;
+        if (applied !== undefined && typeof key === "string" && applied(key)) continue;
+        n += 1;
+      }
+      return n;
     }),
     async handle(req) {
       if (!(await deps.authorized(req))) {

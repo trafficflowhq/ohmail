@@ -37,7 +37,9 @@ import {
   handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
   WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
 } from "./window-report.js";
-import { WINDOW_OUTBOX_FILES, WINDOW_OUTBOX_ROUTE, createWindowOutbox } from "./window-outbox.js";
+import {
+  WINDOW_OUTBOX_ROUTE, adoptLegacyWindowOutbox, createWindowOutbox, windowOutboxFilesOf, windowOutboxOwnerKey,
+} from "./window-outbox.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import {
   accountAnswer,
@@ -58,7 +60,9 @@ export { describeProbeFailure, probeCloudDoor, probeCloudServer, PROBE_DEADLINE_
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 import { createSessionWatch, heldReadingOf, sameReading } from "./session-watch.js";
-import { boundForUnwaited, pairFlights, revokeHeldSession, settledBy, SIGN_OUT_AT_HOST_MS } from "./pair-undo.js";
+import {
+  boundForUnwaited, pairFlights, REVOKE_RESERVE_MS, revokeHeldSession, settledBy, SIGN_OUT_AT_HOST_MS,
+} from "./pair-undo.js";
 import { approvalAt, approvalPending, type ApprovalVerdict } from "./approval-verdict.js";
 
 /**
@@ -436,6 +440,18 @@ export function enforceMirrorOwner(
      It is a POSITIVE flag written by one route on one explicit instruction — never inferred, and
      never a default. */
   const askedToStartOver = priorRecord?.discardPending === true;
+  /* WHOSE THE WINDOW'S QUEUED CHANGES ALREADY HERE ARE: the prior record's account and server (a
+     legacy record's server is the managed one, as `mirrorIsForeign` reads it); with no record, this
+     launch's; nobody's when the record cannot establish one. The ownerless file an earlier build
+     wrote goes to that owner before anything below reads or removes a file, or is set aside unread. */
+  const priorBase = priorRecord === null
+    ? servedBase ?? cloudUrl.trim()
+    : priorRecord.legacy ? normalizeBase(MANAGED_CLOUD_BASE) : priorRecord.base === null ? null : normalizeBase(priorRecord.base);
+  const priorAddress = priorRecord === null ? address : priorRecord.address;
+  const priorOwnerKey = priorBase === null || (priorRecord?.legacy === true && priorAddress === "")
+    ? null
+    : windowOutboxOwnerKey({ address: priorAddress, base: priorBase });
+  adoptLegacyWindowOutbox(dataDir, priorOwnerKey, log);
   const foreign = addressChanged || serverChanged || askedToStartOver;
   if (foreign) {
     /* THE SEAL SURVIVES A STAGED DISCARD, and this is the one asymmetry in this function. A
@@ -447,10 +463,15 @@ export function enforceMirrorOwner(
 
        On the other two paths nothing has been sealed for the world being arrived at, so the seal
        there belongs to the world being left and must go — which is what it has always done. */
-    // The window's queued changes belong to the world being left on every path.
     const stale = askedToStartOver && !addressChanged && !serverChanged
-      ? ["pgdata", "cloud-cursor.json", ...WINDOW_OUTBOX_FILES]
-      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal", ...WINDOW_OUTBOX_FILES];
+      ? ["pgdata", "cloud-cursor.json"]
+      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"];
+    /* THE WINDOW'S QUEUED CHANGES ARE THEIR OWNER'S, not the directory's: a launch for another account
+       or server opens and removes none, and they wait for their own sign-in. Only the person's own
+       start-over, on the same account and server, takes the changes of the record that asked for it. */
+    if (askedToStartOver && !addressChanged && !serverChanged && priorOwnerKey !== null) {
+      stale.push(...windowOutboxFilesOf(priorOwnerKey));
+    }
     // The database, its cursor and (usually) the previous account's sealed session are all stale.
     // Remove them so the new account bootstraps from empty rather than inheriting a stranger's mail.
     for (const name of stale) {
@@ -625,7 +646,14 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        read by the request pipeline before this door is reached. */
     const windowOutbox = createWindowOutbox({
       dataDir: config.dataDir, authorized: async () => true, log: log ?? (() => undefined), scope: () => served,
+      owner: { address: config.address ?? null, base: cloudBase },
     });
+    /* The window's writes the account answered 2xx, for this engine's life: their rows wait only for
+       their echo, so the count leaves them out. The count is null when the file cannot be read, and
+       neither `/health` nor a sign-out fails over it. */
+    const appliedWrites = new Set<string>();
+    const queuedCount = (): Promise<number | null> =>
+      windowOutbox.count((key) => appliedWrites.has(key)).catch(() => null);
     const servedWaiters = new Set<() => void>();
     const nameServedMailbox = async (): Promise<void> => {
       if (served !== "") return;
@@ -869,6 +897,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            runs — see `HANDOFF_CLAIM_PATHS`. Computed from the same comparison the two route guards
            use, so all three agree by sharing a predicate rather than by three readings of it. */
         handoffForeign: baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE),
+        applied: appliedWrites,
       });
 
       /**
@@ -1115,6 +1144,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           /* THE BROWSER APPROVAL'S WAIT, states and codes only — what a reopened window resumes and a
              support read sees. Never the request id or the verifier: the verdict does not hold them. */
           approval: readApproval(),
+          /* HOW MANY OF THE WINDOW'S CHANGES WAIT for this launch's account and server — a count only,
+             read before any session so the sign-in card can say it across a restart. */
+          queued: { count: await queuedCount() },
         });
       }
 
@@ -1785,11 +1817,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         setHostedSession(null);
         const teardown = signOut();
         retainTeardown(teardown);
+        /* THE WINDOW'S ACCEPTED WRITES LAND FIRST, under the still-live session, for a share of the
+           deadline that keeps the revoke its own reserve. One still out at the share is deferred:
+           the server answers it 401 after the revoke, and the window keeps it. */
+        if (live !== null) await live.proxy.settled(deadline - REVOKE_RESERVE_MS);
         const held = live === null ? null : live.auth.currentTokens();
         const [atHost] = await Promise.all([
           held === null ? null : revokeHeldSession(config.fetchImpl ?? fetch, cloudBase, held, deadline),
           settledBy(teardown, deadline),
         ]);
+        const queued = await queuedCount();
+        if (queued !== null && queued > 0) log?.("cloud_sign_out_deferred_writes", { count: queued });
         const said = [inFlight, atHost].filter((v): v is boolean => v !== null);
         const revokedAtHost = said.length === 0 ? null : said.every((v) => v);
         if (revokedAtHost !== null) {
@@ -1800,7 +1838,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               : "the server did not confirm it ended the session; this install is signed out either way",
           });
         }
-        return json({ status: "signed_out", ...(revokedAtHost === null ? {} : { revokedAtHost }) });
+        return json({
+          status: "signed_out", ...(revokedAtHost === null ? {} : { revokedAtHost }), ...(queued === null ? {} : { queued }),
+        });
       }
 
       // ── EVERYTHING ELSE NEEDS A HOSTED SESSION ─────────────────────────────────────────────
@@ -1809,15 +1849,20 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // and answering a read out of it would hand that mail to a window that holds no hosted
       // credential — access granted by the ABSENCE of one, which is the shape this refuses.
       if (!authed) {
-        return json(
-          {
-            error: {
-              code: "not_signed_in",
-              message: "this install is not signed in to a hosted account yet",
-            },
+        /* A WRITE HERE IS NOT REFUSED, IT WAITS: nobody judged it, so it is answered retryable and
+           asked again in 30 s, and the window keeps it for this account's next session. The code is
+           the read's, unchanged. */
+        const write = req.method !== "GET" && req.method !== "HEAD";
+        return new Response(JSON.stringify({
+          error: {
+            code: "not_signed_in",
+            message: "this install is not signed in to a hosted account yet",
+            ...(write ? { retryable: true } : {}),
           },
-          409,
-        );
+        }), {
+          status: 409,
+          headers: { "content-type": "application/json", ...(write ? { "retry-after": "30" } : {}) },
+        });
       }
       // Captured, not re-read: `authed` is written by `activate`, so TypeScript cannot keep a
       // narrowing across the awaits below and neither should a reader.

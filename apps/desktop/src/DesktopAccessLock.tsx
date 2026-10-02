@@ -15,7 +15,7 @@ import { Button, Spinner } from "@ohmail/ui";
 
 import {
   ACCOUNT_ACCESS_PATH, bridgeFetch, engineLogout,
-  type AccessRefusedFacts, type AccountLifecycle, type EngineStatus, type SignOutPress,
+  type AccessRefusedFacts, type AccountLifecycle, type EngineStatus, type SignedOut, type SignOutPress,
 } from "./bridge-fetch.js";
 import { useWallLift } from "../../webapp/app/shell/wall-lift.js";
 import { linksOutToBilling } from "./distribution.js";
@@ -58,7 +58,7 @@ export function DesktopAccessLock(
     facts: AccessRefusedFacts;
     /** The door and session the gate reads, so the sign-out can end that session at its server. */
     press?: SignOutPress | null;
-    onSignedOut: (status: EngineStatus, stillListedFrom?: EngineStatus | null) => void;
+    onSignedOut: (status: EngineStatus, stillListedFrom?: EngineStatus | null, waiting?: SignedOut["waiting"]) => void;
     onLifted?: () => void;
   },
 ) {
@@ -103,7 +103,7 @@ export function DesktopAccessLock(
     try {
       /* The gate hears the new engine state and leaves this screen; nothing here navigates. */
       const out = await engineLogout(press);
-      onSignedOut(out.status, out.stillListedFrom);
+      onSignedOut(out.status, out.stillListedFrom, out.waiting);
     } catch (err) {
       /* A refusal leaves the session live and the button available again, and says so. */
       setSignOutRefused(err instanceof Error ? err.message : String(err));

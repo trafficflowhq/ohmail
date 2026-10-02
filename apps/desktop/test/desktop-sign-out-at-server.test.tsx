@@ -98,7 +98,7 @@ describe("engineLogout(press)", () => {
     const shell = fakeShell(MANAGED, { status: "signed_out", revokedAtHost: true });
     const out = await engineLogout({ status: MANAGED, session: "live" });
     expect(shell.asked).toEqual(["DELETE /cloud/session", "engine_logout"]);
-    expect(out).toEqual({ status: SIGNED_OUT, stillListedFrom: null });
+    expect(out).toEqual({ status: SIGNED_OUT, stillListedFrom: null, waiting: null });
   });
 
   it("a server that did not confirm keeps the press's door for the sentence", async () => {

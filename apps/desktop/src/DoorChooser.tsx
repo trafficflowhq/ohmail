@@ -122,7 +122,7 @@ export function DoorChooser({
    * the shell nothing of its own. Null names the data folder instead of a guessed path.
    */
   operatorCaFile = null,
-  /** One line above the doors, from the gate: what a sign-out just left behind, or nothing. */
+  /** One line from the gate, on the doors and the Cloud sign-in: what a sign-out left behind, or nothing. */
   notice = null,
 }: {
   onEntered: (result: DoorResult) => void;
@@ -662,6 +662,7 @@ export function DoorChooser({
           <CloudDoor
             busy={busy}
             problem={problem}
+            notice={notice}
             onBack={() => { stopApproval(); setProblem(null); setStep("doors"); }}
             onCancel={onCancel ? () => { stopApproval(); onCancel(); } : undefined}
             signInOnly={cloudAction === "signIn"}
@@ -1421,6 +1422,7 @@ export { shortPin };
 function CloudDoor({
   busy,
   problem,
+  notice = null,
   signInOnly,
   signInCause = null,
   needsAddress = true,
@@ -1438,6 +1440,8 @@ function CloudDoor({
 }: {
   busy: boolean;
   problem: string | null;
+  /** The gate's line about what a sign-out left behind (`DoorChooser`'s `notice`), or nothing. */
+  notice?: string | null;
   /** The door is already chosen; this is only the session coming back. */
   signInOnly?: boolean;
   signInCause?: SignInCause;
@@ -1524,6 +1528,7 @@ function CloudDoor({
     >
       <h1>{DOOR_COPY.cloudTitle}</h1>
       <p>{signInOnly ? signInLead(signInCause) : DOOR_COPY.cloudLead}</p>
+      {notice ? <div className="join-note" role="status">{notice}</div> : null}
 
       {problem ? <p className="join-error">{problem}</p> : null}
 

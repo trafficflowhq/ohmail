@@ -41,6 +41,7 @@ import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync
 import type { WindowSearchPhases } from "./search-phases.js";
 import { asSendAndDoneIntent, type SendAndDonePlan } from "./send-and-done.js";
 import { countNotify } from "./client-vitals.js";
+import { UNJUDGED_WRITE_CODES, type UnjudgedWriteCode } from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
@@ -1839,13 +1840,11 @@ const MODELLED_WAIT_CODES = new Set([
   // first attempt that then failed left a reclaimable claim nobody ever retried, and the message
   // was simply lost. A wait shorter than the wait it is waiting on is not a wait.
   "duplicate_send",
-  // The desktop sidecar's DELIBERATE refusal while the hosted mailbox is unreachable
-  // (`apps/sidecar/src/cloud-auth.ts#offlineResponse`): `503`, `retryable: true`, and NO
-  // `Retry-After`, because it does not know when the network returns. It is the offline case
-  // wearing a server's clothes — an ordinary Cloud outage would otherwise abandon eight verbs'
-  // worth of a person's work on reconnect, which is the exact loss the `network` carve-out
-  // exists to prevent and was missed only because this one arrives with a status.
-  "offline_read_only",
+  // The desktop sidecar's two answers nobody judged a write with, from ONE list: offline
+  // (`cloud-auth.ts#offlineResponse`, 503, no `Retry-After`) and no session to send it in
+  // (`409 not_signed_in`). Counting either would abandon a person's work for an outage or a
+  // sign-out, which is the loss the `network` carve-out exists to prevent.
+  ...UNJUDGED_WRITE_CODES,
   // The response to an unreadable answer on a 2xx (`readJsonOrAmbiguous`): the server acted and
   // we cannot read what it said. Ambiguity is not evidence that the verb is bad.
   "unreadable_response",
@@ -7495,7 +7494,8 @@ export class OhmailEngine {
       const rejection = err instanceof MutationRejectedError
         ? err
         : new MutationRejectedError(String(err), { retryable: false });
-      if (rejection.retryable) {
+      // THE BELT: a hand-built rejection carrying an unjudged code is still kept, never dropped.
+      if (rejection.retryable || UNJUDGED_WRITE_CODES.has((rejection.code ?? "") as UnjudgedWriteCode)) {
         /**
          * ── COUNT IT, DELAY IT, OR GIVE UP ON IT ────────────────────────────────────────────
          *

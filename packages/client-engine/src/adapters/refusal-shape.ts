@@ -8,6 +8,20 @@ export interface RefusalEnvelope {
 
 export type RefusalKind = "read" | "write";
 
+/** The answers to a write that are not a server's verdict on it: offline, or no session to send it in. */
+export type UnjudgedWriteCode = "offline_read_only" | "not_signed_in";
+
+/**
+ * THE CLOSED SET of codes nobody judged a write with. A write answered with one is kept and asked
+ * again, whatever the envelope or the status says; only a server's own verdict retires a write.
+ * One list: the refusal reader, the engine's belt and its wait codes all read it, and a root census
+ * holds the desktop engine's two answers to it.
+ */
+export const UNJUDGED_WRITE_CODES: ReadonlySet<UnjudgedWriteCode> = new Set<UnjudgedWriteCode>([
+  "offline_read_only",
+  "not_signed_in",
+]);
+
 /**
  * Classify a non-2xx answer. With our envelope the server's own words rule. Without one — a
  * platform page in front of the API, an HTML 401, a text 413 — the STATUS decides: a 401 is an
@@ -24,6 +38,10 @@ export function classifyRefusal(
 ): { code: string | null; retryable: boolean } {
   const serverDefault = status >= 500 || status === 429;
   if (envelope !== undefined && typeof envelope.code === "string") {
+    // An unjudged write is retryable whatever the envelope says: the envelope cannot override this.
+    if (kind === "write" && UNJUDGED_WRITE_CODES.has(envelope.code as UnjudgedWriteCode)) {
+      return { code: envelope.code, retryable: true };
+    }
     return { code: envelope.code, retryable: envelope.retryable ?? serverDefault };
   }
   return {

@@ -28,6 +28,7 @@ import { readStoredVerdict, storeVerdict } from "../../webapp/app/shell/wall-lif
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "../../webapp/app/shell/access-window.js";
 import { storageOwner } from "../../webapp/app/shell/storage-owner.js";
 import { SHELL_DEADLINE_MS, withDeadline } from "./shell-deadline.js";
+import { hostLabelOf } from "./host-label.js";
 
 /**
  * The shape `HttpAdapterOptions.fetch` is satisfied by.
@@ -747,6 +748,13 @@ export interface SignedOut {
   status: EngineStatus;
   /** Null when the server ended the session or nothing was held. Held by the window, never written. */
   stillListedFrom: EngineStatus | null;
+  /** The window's changes still waiting on this computer for that account, and whose; null for none. */
+  waiting: { count: number; who: string } | null;
+}
+
+/** Whose changes wait: the paired computer on a paired door, else the account's own address. */
+export function waitingFor(door: EngineStatus): string | null {
+  return door.flavor === "desktop-host" ? hostLabelOf(door.cloudUrl) : door.address ?? hostLabelOf(door.cloudUrl);
 }
 
 /**
@@ -754,11 +762,13 @@ export interface SignedOut {
  * and forget the door. A press on a Cloud door holding a session asks the engine first, because the
  * shell's own request drops its answer about the server; that answer, or none, never refuses the
  * press. A pending switch is left to the shell's refusal. What stays: the mirror (frozen, see
- * {@link engineConfigure}) and this install's key, per install, for the next account's credential.
+ * {@link engineConfigure}), this install's key for the next account's credential, and the window's
+ * changes still waiting for this account, which the answer counts (`waiting`).
  */
 export async function engineLogout(press: SignOutPress | null = null): Promise<SignedOut> {
   return alone("signing out", async () => {
     let stillListedFrom: EngineStatus | null = null;
+    let waiting: SignedOut["waiting"] = null;
     if (press !== null && endsAtServer(press)) {
       stillListedFrom = press.status;
       try {
@@ -766,14 +776,18 @@ export async function engineLogout(press: SignOutPress | null = null): Promise<S
           method: "DELETE",
           signal: AbortSignal.timeout(AT_HOST_WAIT_MS),
         });
-        const said = (await res.json().catch(() => null)) as { revokedAtHost?: unknown } | null;
+        const said = (await res.json().catch(() => null)) as { revokedAtHost?: unknown; queued?: unknown } | null;
         if (res.ok && said !== null && said.revokedAtHost !== false) stillListedFrom = null;
+        const who = waitingFor(press.status);
+        if (res.ok && typeof said?.queued === "number" && said.queued > 0 && who !== null) {
+          waiting = { count: said.queued, who };
+        }
       } catch {
         /* Not asked in time: said as not confirmed. The shell's sign-out below runs either way. */
       }
     }
     const status = (await shell().invoke(LOGOUT_COMMAND)) as EngineStatus;
-    return { status, stillListedFrom };
+    return { status, stillListedFrom, waiting };
   });
 }
 

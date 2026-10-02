@@ -88,7 +88,7 @@ import { readChannels } from "../../webapp/app/shell/notification-settings";
 import { parseMailto, type MailtoDraft } from "./mailto.js";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
 import {
-  createLocalEngine, onAccessRefused, type AccessRefusedFacts, type EngineStatus,
+  createLocalEngine, onAccessRefused, waitingFor, type AccessRefusedFacts, type EngineStatus, type SignedOut,
 } from "./bridge-fetch.js";
 
 /** How much of a refused address the one-line toast shows. The host is at the front. */
@@ -146,6 +146,8 @@ interface HostedAuth {
   session: CloudSessionWire | null;
   /** Has the fault in `session` lasted long enough to say so (`cloud-session.ts`)? */
   noticeDue: boolean;
+  /** `/health.queued.count` — the window's changes this launch's owner still keeps; 0 from an older engine. */
+  queued: number;
 }
 
 /**
@@ -156,9 +158,10 @@ interface HostedAuth {
  */
 function hostedAuthOf(key: string, health: {
   signedIn?: boolean; sessionExpired?: boolean; restartRequired?: boolean; sealed?: boolean; session?: unknown;
-  accountErased?: boolean;
+  accountErased?: boolean; queued?: { count?: unknown } | null;
 }): HostedAuth {
   const session = sessionOf(health.session);
+  const queued = health.queued?.count;
   return {
     key,
     restartRequired: health.restartRequired === true,
@@ -168,6 +171,7 @@ function hostedAuthOf(key: string, health: {
     preAuth: health.sessionExpired !== true && health.signedIn === false,
     session,
     noticeDue: cloudNoticeDue(session, Date.now()),
+    queued: typeof queued === "number" && Number.isInteger(queued) && queued > 0 ? queued : 0,
   };
 }
 
@@ -186,7 +190,7 @@ async function readHostedAuth(key: string): Promise<HostedAuth | null> {
 function sameHostedAuth(a: HostedAuth | null, b: HostedAuth): boolean {
   return a !== null && a.key === b.key && a.gone === b.gone && a.preAuth === b.preAuth
     && a.restartRequired === b.restartRequired && a.sealFailed === b.sealFailed && a.erased === b.erased
-    && a.noticeDue === b.noticeDue && a.session?.state === b.session?.state
+    && a.noticeDue === b.noticeDue && a.queued === b.queued && a.session?.state === b.session?.state
     && a.session?.code === b.session?.code && a.session?.since === b.session?.since;
 }
 
@@ -245,6 +249,9 @@ export function DesktopGate() {
      chooser the press lands on. Held here because the lifecycle poll replaces `shell`; cleared by
      the next door action; never written anywhere. */
   const [signedOutFrom, setSignedOutFrom] = useState<EngineStatus | null>(null);
+  /* …and the window's changes that press left waiting on this computer, and whose. Held and
+     cleared beside `signedOutFrom`, never written; said whether or not the server confirmed. */
+  const [signedOutWaiting, setSignedOutWaiting] = useState<SignedOut["waiting"]>(null);
 
   /**
    * WHAT THE WINDOW HAS BEEN TOLD THE ENGINE IS — the settled lifecycle, owned by the one
@@ -355,7 +362,9 @@ export function DesktopGate() {
     };
   }, [toast]);
 
-  const onStatus = useCallback((next: EngineStatus, stillListedFrom: EngineStatus | null = null) => {
+  const onStatus = useCallback((
+    next: EngineStatus, stillListedFrom: EngineStatus | null = null, waiting: SignedOut["waiting"] = null,
+  ) => {
     /* RECORDED, THEN PAINTED, as `refresh` does: a delivery painted without its record read as a
        lifecycle move at the next poll, which re-keyed the gate and remounted the mail a pairing had
        just opened. */
@@ -363,6 +372,7 @@ export function DesktopGate() {
     setShell({ kind: "status", status: next });
     setOverlay(null);
     setSignedOutFrom(stillListedFrom);
+    setSignedOutWaiting(waiting);
     /* Every status delivered here follows an engine-lifecycle act — a door entered, a sign-in,
        a reconfigure — any of which may have REPLACED the engine behind the bridge. The auth
        answer below is keyed on this counter, so bumping it makes whatever /health said about
@@ -851,15 +861,21 @@ export function DesktopGate() {
 
   if (gate.kind === "choose" || adoptionHeld || pairingHeld) {
     const listedOn = signedOutFrom === null ? null : listedOnLabel(signedOutFrom);
+    /* The waiting changes first, the still-listed session after: both are said when both apply. */
+    const left = [
+      signedOutWaiting === null ? null : DOOR_COPY.changesWaiting(signedOutWaiting.count, signedOutWaiting.who, machineWord()),
+      listedOn === null ? null : DOOR_COPY.signedOutStillListed(machineWord(), listedOn),
+    ].filter((line): line is string => line !== null);
+    const forgetSignOut = (): void => { setSignedOutFrom(null); setSignedOutWaiting(null); };
     return (
       <DoorChooser
         addressless
         operatorCaFile={caFile}
-        notice={listedOn === null ? null : DOOR_COPY.signedOutStillListed(machineWord(), listedOn)}
-        onAdoption={(holding) => { setSignedOutFrom(null); setAdoption(holding); }}
-        onPairing={() => { setSignedOutFrom(null); setPairing("held"); }}
+        notice={left.length === 0 ? null : left.join(" ")}
+        onAdoption={(holding) => { forgetSignOut(); setAdoption(holding); }}
+        onPairing={() => { forgetSignOut(); setPairing("held"); }}
         onEntered={(r) => {
-          setSignedOutFrom(null);
+          forgetSignOut();
           /* A pairing's answer re-keys the auth answer whatever it carries: the hold ends on the
              reading of the engine that answered, never on one earned before the press. Updaters,
              not this render's `pairing`: the chooser calls the `onEntered` of the render it pressed in. */
@@ -876,6 +892,12 @@ export function DesktopGate() {
   }
 
   const status = shell.kind === "status" ? shell.status : null;
+  /* THE CHANGES THIS ACCOUNT LEFT WAITING HERE, for the two sign-in surfaces below: the engine's
+     count of its own owner's kept writes, read in the same `/health` answer that opens the card. */
+  const waitingWho = status === null ? null : waitingFor(status);
+  const waitingNotice = hostedAuthKnown && hostedAuth.queued > 0 && waitingWho !== null
+    ? DOOR_COPY.changesWaiting(hostedAuth.queued, waitingWho, machineWord())
+    : null;
 
   /**
    * THE DOOR OVERLAY, BUILT ABOVE THE EARLY RETURNS — because one of them needs it.
@@ -1046,6 +1068,7 @@ export function DesktopGate() {
         start="cloud"
         cloudAction="signIn"
         signInCause={signInCauseOf(hostedAuth?.session ?? null)}
+        notice={waitingNotice}
         onEntered={(r) => {
           /* Back to PENDING, never to "signed in": the fresh probe against the engine the
              sign-in just touched is the only thing allowed to say what its session is. The
@@ -1128,6 +1151,7 @@ export function DesktopGate() {
         start="cloud"
         cloudAction="signIn"
         signInCause={readers.card}
+        notice={waitingNotice}
         onEntered={(r) => {
           /* Back to PENDING: only the fresh probe against the engine the sign-in touched says
              what its session is now (the pre-auth branch's reason). */

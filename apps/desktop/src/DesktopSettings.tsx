@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { Button, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
-import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
+import { engineLogout, type EngineStatus, type SignedOut } from "./bridge-fetch.js";
 import { renewCloudSession } from "./cloud-session.js";
 import type { HostedSession } from "./doors.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
@@ -239,7 +239,7 @@ export function DesktopSettings({
   session: HostedSession;
   sealFailed?: boolean;
   connection?: { state: "unknown" | "stale" | "current"; asOf: string | null } | null;
-  onStatus: (next: EngineStatus, stillListedFrom?: EngineStatus | null) => void;
+  onStatus: (next: EngineStatus, stillListedFrom?: EngineStatus | null, waiting?: SignedOut["waiting"]) => void;
   onSwitchDoor: () => void;
   onSignIn: () => void;
   onPairAgain?: () => void;
@@ -296,7 +296,7 @@ export function DesktopSettings({
     setProblem(null);
     try {
       const out = await engineLogout({ status, session });
-      onStatus(out.status, out.stillListedFrom);
+      onStatus(out.status, out.stillListedFrom, out.waiting);
       setMode("rest");
     } catch (err) {
       setProblem(err instanceof Error ? err.message : String(err));

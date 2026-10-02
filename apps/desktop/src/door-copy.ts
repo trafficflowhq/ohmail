@@ -657,6 +657,11 @@ const EN = {
   signedOutStillListed: (machine: string, where: string) =>
     `Signed out on this ${machine}. It may still be listed under Settings → Devices on ${where} until `
     + "it is removed there.",
+  /* THE WINDOW'S CHANGES KEPT ON THIS COMPUTER for an account that is not signed in here: they are
+     sent under their own keys when that account signs in again on this computer, and only then. */
+  changesWaiting: (count: number, who: string, machine: string) =>
+    `${count === 1 ? "One change" : `${count} changes`} for ${who} waiting on this ${machine}. `
+    + `Sent when ${who} signs in again here.`,
   installSignOutWhyHost: (host: string, machine: string) =>
     `Ends the pairing with ${host} and forgets which mailbox this is. Your mail stays on this `
     + `${machine} and on your server.`,
@@ -877,6 +882,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   installSwitchWhyHost: ["host", "machine"],
   pairingLeftAt: ["host", "machine"],
   signedOutStillListed: ["machine", "where"],
+  changesWaiting: ["count", "who", "machine"],
   installSignOutWhyHost: ["host", "machine"],
   installSignOutConfirmWhyHost: ["machine", "host"],
   gateRestart: ["host"],

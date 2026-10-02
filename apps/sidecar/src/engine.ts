@@ -246,7 +246,7 @@ import {
   handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
   WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
 } from "./window-report.js";
-import { WINDOW_OUTBOX_ROUTE, createWindowOutbox } from "./window-outbox.js";
+import { WINDOW_OUTBOX_ROUTE, adoptLegacyWindowOutbox, createWindowOutbox, windowOutboxOwnerKey } from "./window-outbox.js";
 import { createAttentionClock } from "./attention.js";
 import type { PowerVerdict } from "./host-power.js";
 import { startSearchIndexBackfill } from "./search-backfill.js";
@@ -8007,10 +8007,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
       return token !== "" && (await resolveSession(db, token, now())) !== null;
     };
-    /** The window's queued changes, on this machine — see `window-outbox.ts`. Not on a phone. */
-    const windowOutbox = COMPOSITION_WINDOW_OUTBOX[organizerKind]
+    /** The window's queued changes, on this machine — see `window-outbox.ts`. Not on a phone. Owned as
+        this door's world is (`ensureLocalWorld`, by its address); an earlier build's file is adopted. */
+    const outboxOwner = COMPOSITION_WINDOW_OUTBOX[organizerKind] ? { address, base: "local" } : null;
+    if (outboxOwner !== null) adoptLegacyWindowOutbox(config.dataDir, windowOutboxOwnerKey(outboxOwner), log);
+    const windowOutbox = outboxOwner !== null
       ? createWindowOutbox({
           dataDir: config.dataDir, authorized: launchBearerAuthorized, log, scope: () => world.mailboxId,
+          owner: outboxOwner,
         })
       : null;
     /* THE SEARCH INDEX FILLS ITSELF IN — the store-only pass, one round per idle tick on power;

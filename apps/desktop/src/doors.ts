@@ -21,6 +21,7 @@
 import { originNeedsPin, parsePairLink, type PairLink } from "@ohmail/client-engine";
 
 import { BUILD_PLATFORM } from "./platform.js";
+import { hostLabelOf } from "./host-label.js";
 import {
   AT_HOST_WAIT_MS,
   bridgeAvailable,
@@ -251,23 +252,9 @@ export function isDesktopHost(status: EngineStatus | null): boolean {
   return flavorOf(status) === "desktop-host";
 }
 
-/**
- * WHAT TO CALL THE OTHER COMPUTER ON SCREEN — the URL's hostname, and for a tailnet name its
- * first label. `/hello` is not widened with a machine name (a name volunteered by whatever
- * answered is worth less than the address the person typed), so the label derives from the
- * configured origin: `machine.tailnet.ts.net`'s first label is the machine's tailnet name; an
- * IP literal stays an IP — a truncated address is a wrong address. Two machines with one name
- * on two tailnets read alike, which is why Settings → Desktop carries the full origin beside
- * this and the rail does not. Unparseable or absent is `null`, never a guess or the empty
- * string — every sentence built on this interpolates it, and "Can't reach ." is worse.
- */
-export function hostLabelOf(baseUrl: string | null | undefined): string | null {
-  if (!baseUrl) return null;
-  const m = /^https?:\/\/([^/?#\s:]+)/i.exec(baseUrl.trim());
-  const host = m?.[1]?.toLowerCase();
-  if (!host) return null;
-  return host.endsWith(".ts.net") ? (host.split(".")[0] ?? host) : host;
-}
+/* `hostLabelOf` lives in a leaf module so `bridge-fetch.ts` can name a paired host without importing
+   this file; re-exported here for every reader that already imports it from the doors. */
+export { hostLabelOf };
 
 /**
  * WHERE A SIGNED-OUT INSTALL MAY STILL BE LISTED, as a sentence names it: for the hosted door its

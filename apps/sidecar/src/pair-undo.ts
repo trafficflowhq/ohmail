@@ -8,6 +8,12 @@
 
 /** The ONE deadline a sign-out spends at the server, entered once and threaded through. */
 export const SIGN_OUT_AT_HOST_MS = 5_000;
+/**
+ * What the deadline keeps for the revoke itself: the bearer door is one round trip, the refresh
+ * door a second. Before it, the press waits for the window's accepted writes to land under the
+ * still-live session; a write still out at that share is deferred, never ended.
+ */
+export const REVOKE_RESERVE_MS = 2_000;
 
 /** A redeem between spending its token and keeping (or not keeping) what came back. */
 export interface PairFlight {
