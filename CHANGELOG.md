@@ -158,8 +158,8 @@ Ohbox once more.
 ### The sender sheet says why some of their mail stayed
 
 When a rule has finished moving a sender's mail already in your mailbox, the sender sheet names
-why each message it left stayed where it is: you replied to it, set it aside, filed it in another
-mail app, or it failed the sender's sign-in checks. "Move it too" moves those you may move. The
+why each message it left stayed where it is: you replied to it, set it aside, or it failed the
+sender's sign-in checks. "Move it too" moves those you may move. The
 notes under the rule switches now say that only a filing made in another mail app stays; a
 message you moved inside ohmail moves with the rest.
 
