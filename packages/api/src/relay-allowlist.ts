@@ -85,6 +85,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "GET", pattern: "/screener" },
   { method: "GET", pattern: "/screener/auto-filed" },
   { method: "GET", pattern: "/screener/held-releases" },
+  { method: "GET", pattern: "/screener/stayed" },
   { method: "GET", pattern: "/screener/unscreened" },
   { method: "GET", pattern: "/screener/junk" },
   { method: "GET", pattern: "/screener/junk/body" },
