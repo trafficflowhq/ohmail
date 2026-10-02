@@ -4056,6 +4056,7 @@
     "takeoverRosterUnknown": "Could not read which mailboxes {host} held; enter the server by hand.",
     "installSwitchWhyHost": "Open a different door: your own mail server, another computer, or a hosted account. The copy from {host} on this {machine} is discarded; your mailbox itself is untouched.",
     "pairingLeftAt": "A pairing with {host} did not finish. This {machine} may still be listed on {host} under Settings → Devices.",
+    "signedOutStillListed": "Signed out on this {machine}. It may still be listed under Settings → Devices on {where} until it is removed there.",
     "installSignOutWhyHost": "Ends the pairing with {host} and forgets which mailbox this is. Your mail stays on this {machine} and on your server.",
     "installSignOutConfirmWhyHost": "The copy of your mail already on this {machine} stays where it is. What is cleared is the pairing with {host} and which door this install came in by. Nothing is removed from your mail server.",
     "aboutDoorHostValue": "Another computer of yours",

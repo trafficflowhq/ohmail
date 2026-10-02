@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { PAIR_UNDO_REVOKE_MS } from "../../sidecar/src/pair-undo.js";
-import { UNDO_AT_HOST_MS } from "../src/doors.js";
+import { SIGN_OUT_AT_HOST_MS } from "../../sidecar/src/pair-undo.js";
+import { AT_HOST_WAIT_MS } from "../src/bridge-fetch.js";
 
 /**
- * ONE DEADLINE, AND THE WINDOW WAITS PAST IT. The engine's undo (`DELETE /cloud/session?revoke=host`)
- * spends at most `PAIR_UNDO_REVOKE_MS` on the other computer, both its segments together; the
- * window gives the whole request `UNDO_AT_HOST_MS`. A window bound at or under the engine's would
- * cut the answer off and restore the door mid-sign-out, so the sentence could not be chosen.
+ * ONE DEADLINE, AND THE WINDOW WAITS PAST IT. The engine's `DELETE /cloud/session` — a sign-out, or
+ * an undone pairing — spends at most `SIGN_OUT_AT_HOST_MS` at the server, every segment together;
+ * the window gives the whole request `AT_HOST_WAIT_MS`. A window bound at or under the engine's would
+ * cut the answer off mid-sign-out, so the sentence could not be chosen.
  */
-describe("the undo's two bounds", () => {
+describe("the sign-out's two bounds", () => {
   it("the window's is longer than the engine's", () => {
-    expect(PAIR_UNDO_REVOKE_MS).toBeGreaterThan(0);
-    expect(UNDO_AT_HOST_MS).toBeGreaterThan(PAIR_UNDO_REVOKE_MS);
+    expect(SIGN_OUT_AT_HOST_MS).toBeGreaterThan(0);
+    expect(AT_HOST_WAIT_MS).toBeGreaterThan(SIGN_OUT_AT_HOST_MS);
   });
 });

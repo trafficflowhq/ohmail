@@ -1269,7 +1269,7 @@ export function DesktopMailboxes(
          */
         if (last) {
           try {
-            onShellStatus?.(await engineLogout());
+            onShellStatus?.((await engineLogout()).status);
           } catch (logoutErr) {
             /* THE MAILBOX IS GONE EITHER WAY. The removal committed; what failed is the tidying
                that keeps it gone across a relaunch. Reported rather than swallowed, because the

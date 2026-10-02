@@ -1,14 +1,13 @@
 /**
- * THE UNDO OF A PAIRING WHOSE REDEEM IS STILL IN FLIGHT. The window has two roads out of such a
- * pairing — the redeem answering, and the person leaving the card — and this engine is the one
- * process that holds the bearer the redeem brings back. So the undo marks the flight first; a
- * redeem that lands marked keeps nothing (no seal, no session) and signs its own bearer out at the
- * other computer. One outcome per redeem, decided here. No engine imports; the window's bound
- * (`UNDO_AT_HOST_MS` in `apps/desktop/src/doors.ts`) is pinned above {@link PAIR_UNDO_REVOKE_MS}.
+ * ENDING A SESSION AT THE SERVER THAT ISSUED IT. Every sign-out forgets its session here first,
+ * then asks that server to end it with the pair it held, inside ONE deadline; a pairing redeem an
+ * undo marked keeps nothing and signs its own pair out the same way. No engine imports; the
+ * window's wait (`AT_HOST_WAIT_MS` in `apps/desktop/src/bridge-fetch.ts`) is pinned above
+ * {@link SIGN_OUT_AT_HOST_MS}.
  */
 
-/** The ONE deadline an undo spends on the other computer, entered once and threaded through. */
-export const PAIR_UNDO_REVOKE_MS = 5_000;
+/** The ONE deadline a sign-out spends at the server, entered once and threaded through. */
+export const SIGN_OUT_AT_HOST_MS = 5_000;
 
 /** A redeem between spending its token and keeping (or not keeping) what came back. */
 export interface PairFlight {
@@ -62,28 +61,59 @@ export function leftOf(deadline: number): number {
   return Math.max(deadline - Date.now(), 0);
 }
 
+/** A held session's pair, as the engine holds it in memory. Nothing here reads or writes disk. */
+export interface HeldPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
 /**
- * Sign a bearer the redeem just received out at the host that issued it: `POST /auth/logout`
- * with that bearer, bounded. Answers whether the host said so. A deadline already spent gets its
- * own bound: nobody waits on this call, and the session it revokes would otherwise stay listed.
+ * End a held session at its server, bounded by `deadline`: `POST /auth/logout` with the bearer,
+ * and on a 401 ONLY (the access token lapsed) `POST /auth/refresh/logout`, whose refresh token
+ * names the family in any state. Answers whether the server said so; past the deadline nothing
+ * is asked. Never a renewal: that would mint the very pair this is ending.
  */
-export async function revokeBearerAtHost(
-  fetchImpl: typeof fetch,
-  base: string,
-  accessToken: string,
-  deadline: number,
+export async function revokeHeldSession(
+  fetchImpl: typeof fetch, base: string, held: HeldPair, deadline: number,
 ): Promise<boolean> {
-  const left = leftOf(deadline);
+  const ask = async (path: string, init: RequestInit): Promise<number | null> => {
+    const left = leftOf(deadline);
+    if (left <= 0) return null;
+    try {
+      const res = await fetchImpl(`${base}${path}`, { ...init, signal: AbortSignal.timeout(left) });
+      void res.body?.cancel().catch(() => undefined);
+      return res.status;
+    } catch {
+      return null;
+    }
+  };
+  const ended = (status: number | null): boolean => status !== null && status >= 200 && status < 300;
+  const bearer = await ask("/auth/logout", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${held.accessToken}` },
+    body: "{}",
+  });
+  if (ended(bearer)) return true;
+  if (bearer !== 401) return false;
+  return ended(await ask("/auth/refresh/logout", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ refreshToken: held.refreshToken }),
+  }));
+}
+
+/** A deadline an undo already spent gets a bound of its own: nobody waits on that sign-out. */
+export function boundForUnwaited(deadline: number): number {
+  return leftOf(deadline) > 0 ? deadline : Date.now() + SIGN_OUT_AT_HOST_MS;
+}
+
+/** Settle when `work` settles or at `deadline`, whichever is first; `work` goes on regardless. */
+export async function settledBy(work: Promise<unknown>, deadline: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<void>((r) => { timer = setTimeout(r, leftOf(deadline)); });
   try {
-    const res = await fetchImpl(`${base}/auth/logout`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-      body: "{}",
-      signal: AbortSignal.timeout(left > 0 ? left : PAIR_UNDO_REVOKE_MS),
-    });
-    void res.body?.cancel().catch(() => undefined);
-    return res.ok;
-  } catch {
-    return false;
+    await Promise.race([work.then(() => undefined, () => undefined), bound]);
+  } finally {
+    clearTimeout(timer);
   }
 }

@@ -231,7 +231,10 @@ export interface CloudAuth {
   session(): CloudSessionReading;
   /** Renew now — the window's Try again — and answer the reading that leaves. */
   renewNow(): Promise<CloudSessionReading>;
-  /** Cancel every scheduled renewal and stop reporting. Nothing is sent and nothing is removed. */
+  /**
+   * Cancel every scheduled renewal and stop reporting; end every request this module bounded, and
+   * write nothing to the seal from now on. Nothing is removed: the caller owns the seal file.
+   */
   stop(): void;
 }
 
@@ -248,8 +251,12 @@ interface SealedTokenFile {
  */
 export async function sealTokens(
   path: string, keyProvider: KeyProvider, tokens: CloudTokens, now: Date = new Date(),
-): Promise<void> {
+  stillWanted: () => boolean = () => true,
+): Promise<boolean> {
   const sealed = await keyProvider.encrypt(JSON.stringify(withExpiry(tokens, now.getTime())));
+  // Asked BESIDE the synchronous write, after the encrypt: a stop that lands while the key works
+  // writes nothing, because no sign-out can run between this check and the write below.
+  if (!stillWanted()) return false;
   /* STAGED AND RENAMED (`fs-atomic.ts`), never written in place. This file is the only credential
      a relaunch has: a process killed mid-write left a prefix of one envelope, which `loadSealed-
      Tokens` reads as "this key does not open that file" — a session lost for a write that was
@@ -259,6 +266,7 @@ export async function sealTokens(
     JSON.stringify({ ciphertext: sealed.ciphertext, keyVersion: sealed.keyVersion } satisfies SealedTokenFile),
     0o600,
   );
+  return true;
 }
 
 /**
@@ -343,18 +351,36 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let timerIsRetry = false;
   let stopped = false;
+  /**
+   * Every request {@link withDeadline} bounds, held until its deadline fires so `stop()` can end the
+   * ones still out. A registry rather than `AbortSignal.any`, which jsdom lacks, and this engine also
+   * runs under jsdom (the window's tests). A request asked after the stop goes out already aborted.
+   */
+  const bounded = new Set<AbortController>();
+  const stoppedReason = (): DOMException => new DOMException("the session was stopped", "AbortError");
   /** A launch whose sealed window had passed renews before its first request; that renewal. */
   let launchRenewal: Promise<Renewal> | null = null;
 
   /**
    * Bound a request that nobody else is bounding. A caller-supplied `signal` wins untouched —
    * the wake stream's held request is the deliberate case — and everything else gets the
-   * deadline, which also covers the body read: aborting the signal rejects a parked `json()`,
-   * so a half-open socket becomes a retryable error instead of a pull that never returns.
+   * deadline AND the stop, both covering the body read: aborting rejects a parked `json()`, so a
+   * half-open socket is a retryable error, and a sign-out ends a pull at once instead of waiting.
    */
   const withDeadline = (init: RequestInit | undefined): RequestInit | undefined => {
     if (init?.signal) return init;
-    return { ...init, signal: AbortSignal.timeout(deadlineMs) };
+    const request = new AbortController();
+    if (stopped) {
+      request.abort(stoppedReason());
+      return { ...init, signal: request.signal };
+    }
+    const deadline = AbortSignal.timeout(deadlineMs);
+    bounded.add(request);
+    deadline.addEventListener("abort", () => {
+      bounded.delete(request);
+      request.abort(deadline.reason);
+    }, { once: true });
+    return { ...init, signal: request.signal };
   };
 
   const tellSessionRefused = (code: string): void => {
@@ -367,11 +393,13 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     }
   };
 
-  /** Write `next` to the seal. False when the disk refused it; the class is kept for `/health`. */
+  /** Write `next` to the seal. False when the disk refused it (the class kept for `/health`) or the session stopped. */
   const persist = async (next: CloudTokens, reason: string): Promise<boolean> => {
     if (!cfg.keyProvider || !cfg.sealPath) return true;
     try {
-      await sealTokens(cfg.sealPath, cfg.keyProvider, next);
+      // A STOPPED SESSION WRITES NOTHING, asked beside the write itself: the stop is the sign-out,
+      // and a pair sealed after it would sign this install back in on the next launch.
+      if (!(await sealTokens(cfg.sealPath, cfg.keyProvider, next, new Date(), () => !stopped))) return false;
       sealFailure = null;
       return true;
     } catch (err) {
@@ -597,6 +625,8 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     stop: () => {
       stopped = true;
       clearTimer();
+      for (const request of bounded) request.abort(stoppedReason());
+      bounded.clear();
     },
   };
 }

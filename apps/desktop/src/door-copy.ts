@@ -652,6 +652,11 @@ const EN = {
   pairingLeftAt: (host: string, machine: string) =>
     `A pairing with ${host} did not finish. This ${machine} may still be listed on ${host} under `
     + "Settings → Devices.",
+  /* A SIGN-OUT ITS SERVER DID NOT CONFIRM. This install is signed out either way; the account's own
+     list may still show it, and only that list can say, so the sentence names where it is. */
+  signedOutStillListed: (machine: string, where: string) =>
+    `Signed out on this ${machine}. It may still be listed under Settings → Devices on ${where} until `
+    + "it is removed there.",
   installSignOutWhyHost: (host: string, machine: string) =>
     `Ends the pairing with ${host} and forgets which mailbox this is. Your mail stays on this `
     + `${machine} and on your server.`,
@@ -871,6 +876,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   takeoverRosterUnknown: ["host"],
   installSwitchWhyHost: ["host", "machine"],
   pairingLeftAt: ["host", "machine"],
+  signedOutStillListed: ["machine", "where"],
   installSignOutWhyHost: ["host", "machine"],
   installSignOutConfirmWhyHost: ["machine", "host"],
   gateRestart: ["host"],

@@ -239,7 +239,7 @@ export function DesktopSettings({
   session: HostedSession;
   sealFailed?: boolean;
   connection?: { state: "unknown" | "stale" | "current"; asOf: string | null } | null;
-  onStatus: (next: EngineStatus) => void;
+  onStatus: (next: EngineStatus, stillListedFrom?: EngineStatus | null) => void;
   onSwitchDoor: () => void;
   onSignIn: () => void;
   onPairAgain?: () => void;
@@ -295,7 +295,8 @@ export function DesktopSettings({
     setBusy(true);
     setProblem(null);
     try {
-      onStatus(await engineLogout());
+      const out = await engineLogout({ status, session });
+      onStatus(out.status, out.stillListedFrom);
       setMode("rest");
     } catch (err) {
       setProblem(err instanceof Error ? err.message : String(err));

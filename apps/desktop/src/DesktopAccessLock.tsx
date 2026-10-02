@@ -15,7 +15,7 @@ import { Button, Spinner } from "@ohmail/ui";
 
 import {
   ACCOUNT_ACCESS_PATH, bridgeFetch, engineLogout,
-  type AccessRefusedFacts, type AccountLifecycle, type EngineStatus,
+  type AccessRefusedFacts, type AccountLifecycle, type EngineStatus, type SignOutPress,
 } from "./bridge-fetch.js";
 import { useWallLift } from "../../webapp/app/shell/wall-lift.js";
 import { linksOutToBilling } from "./distribution.js";
@@ -54,8 +54,12 @@ async function accountOpens(): Promise<boolean> {
 }
 
 export function DesktopAccessLock(
-  { facts, onSignedOut, onLifted }: {
-    facts: AccessRefusedFacts; onSignedOut: (status: EngineStatus) => void; onLifted?: () => void;
+  { facts, press = null, onSignedOut, onLifted }: {
+    facts: AccessRefusedFacts;
+    /** The door and session the gate reads, so the sign-out can end that session at its server. */
+    press?: SignOutPress | null;
+    onSignedOut: (status: EngineStatus, stillListedFrom?: EngineStatus | null) => void;
+    onLifted?: () => void;
   },
 ) {
   const t = useTranslations("accessLock");
@@ -98,13 +102,14 @@ export function DesktopAccessLock(
     setSignOutRefused(null);
     try {
       /* The gate hears the new engine state and leaves this screen; nothing here navigates. */
-      onSignedOut(await engineLogout());
+      const out = await engineLogout(press);
+      onSignedOut(out.status, out.stillListedFrom);
     } catch (err) {
       /* A refusal leaves the session live and the button available again, and says so. */
       setSignOutRefused(err instanceof Error ? err.message : String(err));
       setSigningOut(false);
     }
-  }, [onSignedOut, signingOut]);
+  }, [onSignedOut, press, signingOut]);
 
   const lifecycle = facts.lifecycle;
   const headline = headlineOf(lifecycle, facts.reason === "suspended");

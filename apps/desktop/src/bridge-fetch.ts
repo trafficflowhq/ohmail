@@ -726,17 +726,62 @@ export async function engineRetry(): Promise<EngineStatus> {
 }
 
 /**
- * Sign out of this install: clear the engine's sealed credential, stop it, and forget the door.
- *
- * What stays: the mirror (frozen, see {@link engineConfigure}) and this install's key in the
- * operating system's keystore, which is per-install rather than per-account and is what the next
- * account's credential will be sealed under.
+ * How long the window waits for the engine's `DELETE /cloud/session` — a sign-out, or an undone
+ * pairing — which spends at most the engine's one deadline (`SIGN_OUT_AT_HOST_MS`, pinned below
+ * this by `pairing-undo-deadline.test.ts`) before it answers.
  */
-export async function engineLogout(): Promise<EngineStatus> {
-  return alone(
-    "signing out",
-    () => shell().invoke(LOGOUT_COMMAND) as Promise<EngineStatus>,
-  );
+export const AT_HOST_WAIT_MS = 8_000;
+
+/** The door a sign-out was pressed on, as the window read it at the press. */
+export interface SignOutPress {
+  status: EngineStatus;
+  /**
+   * The window's reading of the hosted session (`doors.ts` `HostedSession`, spelled here because this
+   * module may import nothing that reaches the build-time platform flag): only `live` is ended.
+   */
+  session: "live" | "out" | "unknown";
+}
+
+/** What a sign-out left: the shell's status, and the press's door when its server did not confirm. */
+export interface SignedOut {
+  status: EngineStatus;
+  /** Null when the server ended the session or nothing was held. Held by the window, never written. */
+  stillListedFrom: EngineStatus | null;
+}
+
+/**
+ * Sign out of this install: end the hosted session, clear the sealed credential, stop the engine
+ * and forget the door. A press on a Cloud door holding a session asks the engine first, because the
+ * shell's own request drops its answer about the server; that answer, or none, never refuses the
+ * press. A pending switch is left to the shell's refusal. What stays: the mirror (frozen, see
+ * {@link engineConfigure}) and this install's key, per install, for the next account's credential.
+ */
+export async function engineLogout(press: SignOutPress | null = null): Promise<SignedOut> {
+  return alone("signing out", async () => {
+    let stillListedFrom: EngineStatus | null = null;
+    if (press !== null && endsAtServer(press)) {
+      stillListedFrom = press.status;
+      try {
+        const res = await bridgeFetch("/cloud/session", {
+          method: "DELETE",
+          signal: AbortSignal.timeout(AT_HOST_WAIT_MS),
+        });
+        const said = (await res.json().catch(() => null)) as { revokedAtHost?: unknown } | null;
+        if (res.ok && said !== null && said.revokedAtHost !== false) stillListedFrom = null;
+      } catch {
+        /* Not asked in time: said as not confirmed. The shell's sign-out below runs either way. */
+      }
+    }
+    const status = (await shell().invoke(LOGOUT_COMMAND)) as EngineStatus;
+    return { status, stillListedFrom };
+  });
+}
+
+/** A Cloud door holding a session, with no switch or pending door the shell would refuse over. */
+function endsAtServer(press: SignOutPress): boolean {
+  const door = press.status;
+  return door.mode === "cloud" && press.session === "live"
+    && door.switchPending !== true && door.identityPending !== true;
 }
 
 /**

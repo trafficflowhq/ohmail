@@ -49,7 +49,7 @@ vi.mock("../src/bridge-fetch.js", async () => {
     ...real,
     bridgeFetch: quiet,
     retryingBridgeFetch: quiet,
-    engineLogout: async () => ({ state: "not_configured", mode: null }),
+    engineLogout: async () => ({ status: { state: "not_configured", mode: null }, stillListedFrom: null }),
   };
 });
 

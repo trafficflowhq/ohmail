@@ -742,6 +742,16 @@ function deleteCursor(path: string): void {
 /** A drain begins as a bootstrap iff it starts at `since=0` — a `""`/`"0"` cursor. */
 const isBootstrapCursor = (s: string): boolean => !s || s === "0";
 
+/** A pull the session's stop ended: the abort `CloudAuth.stop()` raises, however it was wrapped. */
+function abortedByStop(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let depth = 0; depth < 4 && cur !== null && typeof cur === "object"; depth++) {
+    if ((cur as { name?: unknown }).name === "AbortError") return true;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /**
  * A bootstrap generation: the ids a `since=0` re-pull touched, tagged per entity type. A `since=0`
  * replay carries the account's CURRENT entities, so a message deleted on Cloud while the mirror
@@ -4156,7 +4166,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           // the released 0.20.0 logged bare `errorCode:"23503"` and the field could not say
           // which foreign key was wedging every fresh paired desktop.
           const fk = integrityLogFields(err);
-          cfg.log?.("cloud_pull_failed", { err, constraint: fk.constraint, table: fk.table, reason: "the pull did not complete; the mirror keeps serving what it holds and retries with backoff" });
+          if (!(stopped && abortedByStop(err))) {
+            cfg.log?.("cloud_pull_failed", { err, constraint: fk.constraint, table: fk.table, reason: "the pull did not complete; the mirror keeps serving what it holds and retries with backoff" });
+          }
           scheduleAfter(true);
         });
     }, delay);
@@ -4215,7 +4227,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         scheduleAfter(false);
       } catch (err) {
         const fk = integrityLogFields(err);
-        cfg.log?.("cloud_pull_failed", { err, constraint: fk.constraint, table: fk.table, reason: "the first pull did not complete; the mirror serves what it holds and the poll retries with backoff" });
+        if (!(stopped && abortedByStop(err))) {
+          cfg.log?.("cloud_pull_failed", { err, constraint: fk.constraint, table: fk.table, reason: "the first pull did not complete; the mirror serves what it holds and the poll retries with backoff" });
+        }
         scheduleAfter(true);
       }
     },

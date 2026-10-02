@@ -61,7 +61,7 @@ import { reviveStandingDown } from "../../webapp/app/shell/sync-scheduler";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor, imagesFromComputer,
-  hostDoorFor, isDesktopHost, isManagedDoor, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
+  hostDoorFor, isDesktopHost, isManagedDoor, listedOnLabel, mailMount, pairedHostOf, pairedViaOf, profileImportDoorFor, readShell,
   restorePairingSwitch, selfHostedServerOf, suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
@@ -241,6 +241,10 @@ export function DesktopGate() {
   /* The door chooser, opened from Settings over a working install. Distinct from the chooser a
      fresh install lands on: this one is cancellable, because there is something to go back to. */
   const [overlay, setOverlay] = useState<null | "doors" | "cloud" | "host" | "takeover" | "local">(null);
+  /* A SIGN-OUT ITS SERVER DID NOT CONFIRM: the door it was pressed on, for the one line on the
+     chooser the press lands on. Held here because the lifecycle poll replaces `shell`; cleared by
+     the next door action; never written anywhere. */
+  const [signedOutFrom, setSignedOutFrom] = useState<EngineStatus | null>(null);
 
   /**
    * WHAT THE WINDOW HAS BEEN TOLD THE ENGINE IS — the settled lifecycle, owned by the one
@@ -351,13 +355,14 @@ export function DesktopGate() {
     };
   }, [toast]);
 
-  const onStatus = useCallback((next: EngineStatus) => {
+  const onStatus = useCallback((next: EngineStatus, stillListedFrom: EngineStatus | null = null) => {
     /* RECORDED, THEN PAINTED, as `refresh` does: a delivery painted without its record read as a
        lifecycle move at the next poll, which re-keyed the gate and remounted the mail a pairing had
        just opened. */
     delivered.current = lifecycleMark({ kind: "status", status: next });
     setShell({ kind: "status", status: next });
     setOverlay(null);
+    setSignedOutFrom(stillListedFrom);
     /* Every status delivered here follows an engine-lifecycle act — a door entered, a sign-in,
        a reconfigure — any of which may have REPLACED the engine behind the bridge. The auth
        answer below is keyed on this counter, so bumping it makes whatever /health said about
@@ -773,6 +778,7 @@ export function DesktopGate() {
     return (
       <DesktopAccessLock
         facts={accessRefused}
+        press={shell?.kind === "status" ? { status: shell.status, session: hostedSession } : null}
         onSignedOut={onStatus}
         onLifted={() => { setAccessRefused(null); reviveStandingDown(); }}
       />
@@ -844,13 +850,16 @@ export function DesktopGate() {
   const caFile = shell?.kind === "status" ? shell.status.operatorCaFile ?? null : null;
 
   if (gate.kind === "choose" || adoptionHeld || pairingHeld) {
+    const listedOn = signedOutFrom === null ? null : listedOnLabel(signedOutFrom);
     return (
       <DoorChooser
         addressless
         operatorCaFile={caFile}
-        onAdoption={setAdoption}
-        onPairing={() => setPairing("held")}
+        notice={listedOn === null ? null : DOOR_COPY.signedOutStillListed(machineWord(), listedOn)}
+        onAdoption={(holding) => { setSignedOutFrom(null); setAdoption(holding); }}
+        onPairing={() => { setSignedOutFrom(null); setPairing("held"); }}
         onEntered={(r) => {
+          setSignedOutFrom(null);
           /* A pairing's answer re-keys the auth answer whatever it carries: the hold ends on the
              reading of the engine that answered, never on one earned before the press. Updaters,
              not this render's `pairing`: the chooser calls the `onEntered` of the render it pressed in. */

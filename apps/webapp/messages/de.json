@@ -4056,6 +4056,7 @@
     "takeoverRosterUnknown": "Es ließ sich nicht lesen, welche Postfächer {host} hatte; gib den Server von Hand ein.",
     "installSwitchWhyHost": "Öffne einen anderen Weg: deinen eigenen Mailserver, einen anderen Computer oder ein gehostetes Konto. Die Kopie von {host} auf diesem {machine} wird verworfen; dein Postfach selbst bleibt unberührt.",
     "pairingLeftAt": "Eine Kopplung mit {host} wurde nicht abgeschlossen. Dieser {machine} ist auf {host} eventuell noch unter Einstellungen → Geräte aufgeführt.",
+    "signedOutStillListed": "Auf diesem {machine} abgemeldet. Unter Einstellungen → Geräte auf {where} kann er noch aufgeführt sein, bis er dort entfernt wird.",
     "installSignOutWhyHost": "Beendet die Kopplung mit {host} und vergisst, welches Postfach das ist. Deine Post bleibt auf diesem {machine} und auf deinem Server.",
     "installSignOutConfirmWhyHost": "Die Kopie deiner Post, die schon auf diesem {machine} liegt, bleibt liegen. Gelöscht wird die Kopplung mit {host} und über welchen Weg diese Installation gekommen ist. Von deinem Mailserver wird nichts entfernt.",
     "aboutDoorHostValue": "Ein anderer Computer von dir",

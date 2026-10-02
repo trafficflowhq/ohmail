@@ -22,6 +22,7 @@ import { originNeedsPin, parsePairLink, type PairLink } from "@ohmail/client-eng
 
 import { BUILD_PLATFORM } from "./platform.js";
 import {
+  AT_HOST_WAIT_MS,
   bridgeAvailable,
   bridgeFetch,
   engineConfigure,
@@ -266,6 +267,15 @@ export function hostLabelOf(baseUrl: string | null | undefined): string | null {
   const host = m?.[1]?.toLowerCase();
   if (!host) return null;
   return host.endsWith(".ts.net") ? (host.split(".")[0] ?? host) : host;
+}
+
+/**
+ * WHERE A SIGNED-OUT INSTALL MAY STILL BE LISTED, as a sentence names it: for the hosted door its
+ * web app, whose Settings → Devices a person can open (the API host has no such page); else the
+ * door's own host — the server's name, or the other computer's. Null when the door names none.
+ */
+export function listedOnLabel(door: EngineStatus): string | null {
+  return isManagedDoor(door) ? "ohmail.app" : hostLabelOf(door.cloudUrl);
 }
 
 /**
@@ -1005,7 +1015,7 @@ export async function pairThroughDoor(
   /* The one refusal with a way out keeps its door: Start over is a redeem on this engine. */
   if (paired || result.refusal?.kind === "pair_account_mismatch") return result;
   try {
-    return { ...result, status: await engineLogout() };
+    return { ...result, status: (await engineLogout()).status };
   } catch {
     return result; // the refusal is still the answer, and the gate holds the card either way
   }
@@ -1025,13 +1035,6 @@ async function settleSwitch(result: HostDoorResult, paired: boolean): Promise<Ho
     return { ...result, problem: result.problem ?? sentence(err) };
   }
 }
-
-/**
- * How long an undone pairing waits for the other computer to take its session back — the whole
- * `DELETE`, which spends at most the engine's one deadline (`PAIR_UNDO_REVOKE_MS`, pinned below
- * this by `pairing-undo-deadline.test.ts`) before its local sign-out.
- */
-export const UNDO_AT_HOST_MS = 8_000;
 
 /**
  * PUT BACK THE DOOR A PAIRING REPLACED — the one restore every way out of a pairing takes. While a
@@ -1056,7 +1059,7 @@ export async function restorePairingSwitch(): Promise<EngineStatus> {
     try {
       const res = await bridgeFetch("/cloud/session?revoke=host", {
         method: "DELETE",
-        signal: AbortSignal.timeout(UNDO_AT_HOST_MS),
+        signal: AbortSignal.timeout(AT_HOST_WAIT_MS),
       });
       const said = (await res.json().catch(() => null)) as { revokedAtHost?: unknown } | null;
       if (said?.revokedAtHost === false) leftAt = base;

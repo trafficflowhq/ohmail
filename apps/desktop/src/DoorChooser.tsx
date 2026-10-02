@@ -122,6 +122,8 @@ export function DoorChooser({
    * the shell nothing of its own. Null names the data folder instead of a guessed path.
    */
   operatorCaFile = null,
+  /** One line above the doors, from the gate: what a sign-out just left behind, or nothing. */
+  notice = null,
 }: {
   onEntered: (result: DoorResult) => void;
   start?: Step;
@@ -134,6 +136,7 @@ export function DoorChooser({
   onAdoption?: (holding: boolean) => void;
   onPairing?: () => void;
   operatorCaFile?: string | null;
+  notice?: string | null;
 }) {
   const [step, setStep] = useState<Step>(start);
   const [busy, setBusy] = useState(false);
@@ -444,7 +447,7 @@ export function DoorChooser({
           <em>.</em>
         </span>
         {step === "doors" ? (
-          <Doors onPick={setStep} onCancel={onCancel} />
+          <Doors onPick={setStep} onCancel={onCancel} notice={notice} />
         ) : step === "server" ? (
           <ServerDoor
             busy={busy}
@@ -723,10 +726,13 @@ function approvalRefusal(code: string | null, fallback: string | null): string |
  * `desktop-door-chooser.test.tsx`; the travel sentence under all three states the invariant —
  * rules and settings live on the MAILBOX (`ohmail/_meta`; `local-profile-import.ts` reads them).
  */
-function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: () => void }) {
+function Doors(
+  { onPick, onCancel, notice = null }: { onPick: (step: Step) => void; onCancel?: () => void; notice?: string | null },
+) {
   return (
     <>
       <h1>{DOOR_COPY.chooserTitle}</h1>
+      {notice ? <div className="join-note" role="status">{notice}</div> : null}
       <div className="door-grid" role="group" aria-label={DOOR_COPY.chooserGroupAria}>
         {/* Focused on mount so a keyboard reaches the choice without tabbing through the chrome
             above it. Native buttons: Tab moves between the three, Enter and Space open one, and
