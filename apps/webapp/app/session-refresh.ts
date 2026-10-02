@@ -12,7 +12,7 @@
 import { isSessionRefusal } from "@ohmail/client-engine";
 import { csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
-import { durableSet } from "./shell/durable";
+import { durableRemove, durableSet } from "./shell/durable";
 import { readOwner } from "./shell/owner-cookie";
 import {
   ERASED_DECLARATION, clearAccountErased, erasedAnswerOf, erasedCapture, hearAccountErased,
@@ -306,6 +306,71 @@ export interface ResumeOptions {
   mayProceed?: () => boolean;
 }
 
+/**
+ * THE NAME OF A RENEWAL WHOSE ANSWER HAS NOT LANDED: the attempt id the native clients send, kept in the
+ * jar so a reload or another tab retries as the same attempt. The server re-admits a spent token named
+ * by the attempt that spent it, where the same token under a new name past the grace window is swept.
+ * It is resumed only while the jar has not moved on (its `tf_csrf` is the one it went out with, or has
+ * merely lapsed) and for one access window: a landed answer's `tf_csrf` outlives that window, and past
+ * it the server's own recovery takes a quiet tail.
+ */
+export const SESSION_ATTEMPT_KEY = "ohmail.session.refreshAttempt";
+
+interface PendingAttempt {
+  id: string;
+  csrf: string;
+  at: number;
+}
+
+/** This page's copy, for a jar that refuses storage. */
+let attemptHere: PendingAttempt | null = null;
+
+/** Enough of `tf_csrf` to tell that the jar moved on, and never the value itself. */
+function csrfMark(csrf: string | null): string {
+  if (csrf === null) return "";
+  let h = 0x811c9dc5;
+  for (let i = 0; i < csrf.length; i += 1) h = Math.imul(h ^ csrf.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+function owedAttempt(): PendingAttempt | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_ATTEMPT_KEY);
+    const v = raw === null ? null : (JSON.parse(raw) as Partial<PendingAttempt> | null);
+    if (v && typeof v.id === "string" && typeof v.csrf === "string" && typeof v.at === "number") return v as PendingAttempt;
+  } catch {
+    /* unreadable: this page's own copy */
+  }
+  return attemptHere;
+}
+
+function mintAttemptId(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c && typeof c.randomUUID === "function") return `w${c.randomUUID()}`;
+  if (c && typeof c.getRandomValues === "function") {
+    return `w${Array.from(c.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+  }
+  return `w${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+/** The attempt this renewal goes out as: the one still owed, or a new one, written down BEFORE it goes. */
+function attemptFor(csrf: string | null): string {
+  const owed = owedAttempt();
+  if (owed !== null && Date.now() - owed.at < ACCESS_WINDOW_MS && (csrf === null || owed.csrf === csrfMark(csrf))) {
+    return owed.id;
+  }
+  const next: PendingAttempt = { id: mintAttemptId(), csrf: csrfMark(csrf), at: Date.now() };
+  attemptHere = next;
+  durableSet(SESSION_ATTEMPT_KEY, JSON.stringify(next), "session-attempt");
+  return next.id;
+}
+
+/** A definitive answer settles the attempt; the next renewal is a new one. */
+function settleAttempt(): void {
+  attemptHere = null;
+  durableRemove(SESSION_ATTEMPT_KEY, "session-attempt");
+}
+
 export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAnswer> {
   if (inFlight) return inFlight;
   inFlight = withCrossTabLock(async () => {
@@ -342,13 +407,16 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       const csrf = csrfToken();
       // Who this refresh leaves under — BEFORE it goes: an erased account's answer clears the jar.
       const erasedBefore = erasedCapture();
+      const attemptId = attemptFor(csrf);
       const res = await fetch(REFRESH_ENDPOINT, {
         method: "POST",
         headers: {
           accept: "application/json",
+          "content-type": "application/json",
           ...ERASED_DECLARATION,
           ...(csrf ? { "X-CSRF-Token": csrf } : {}),
         },
+        body: JSON.stringify({ attemptId }),
         cache: "no-store",
         credentials: "same-origin",
         /* The server spends the presented token the moment it claims it, so an answer that dies with its
@@ -370,6 +438,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // latch additionally requires the door's own refusal code: a 401 without one is a platform
       // interposing itself.
       if (res.status === 204) {
+        settleAttempt();
         recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
         noteSessionMinted();
         markSessionAlive();
@@ -380,6 +449,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       const erased = await erasedAnswerOf(res);
       if (erased !== null) {
         const heard = hearAccountErased(erased.named, erasedBefore) === "erased";
+        if (heard) settleAttempt();
         recordRefresh({
           outcome: heard ? "revoked" : "unavailable", status: 410, code: "account_erased", errorClass: null,
           retryAfterMs: null,
@@ -390,6 +460,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // refresh door's own refusal is a verdict (`isSessionRefusal`, the phone's reading too).
       const code = res.status === 401 ? await refusalCode(res) : null;
       if (isSessionRefusal(res.status, code)) {
+        settleAttempt();
         recordRefresh({ outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null });
         markSessionDead();
         return "refused";
@@ -430,6 +501,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
 
 /** A sign-in minted past this refresh: nothing it learned is about the jar that holds now. */
 function superseded(err: unknown): "refused" {
+  settleAttempt();
   recordRefresh({
     outcome: "superseded", status: 0, code: null, errorClass: err === null ? null : classOf(err), retryAfterMs: null,
   });

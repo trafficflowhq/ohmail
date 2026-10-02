@@ -116,6 +116,9 @@ export const sessionLifecycleRoutes: Route[] = [
       const jar = parseCookies(req.headers.get("cookie"));
       const cookieRefresh = presentedRefreshCookie(jar, deps);
       if (cookieRefresh) {
+        // The body's ONE field on this branch: the browser's name for this rotation, the native
+        // branch's `attemptId`, so a retry whose answer never landed is re-admitted, not swept.
+        const { attemptId } = await readBody<{ attemptId?: string }>(req);
         // A REFUSED cookie refresh must clear the jar, not just refuse. The browser is told to
         // resume by `tf_resume`, which outlives a refresh token that has been revoked, rotated
         // past, or reused — without this, such a browser loops through the resume splash on every
@@ -135,7 +138,7 @@ export const sessionLifecycleRoutes: Route[] = [
           // browser's, the shorter one — stated rather than left to the default so the pair below
           // reads as a decision.
           const { tokens } = await sessionLifecycle(deps).refresh(
-            serviceContext(deps, req), { refreshToken: cookieRefresh },
+            serviceContext(deps, req), { refreshToken: cookieRefresh, attemptId },
             { concurrentGrace: true, surface: "cookie" },
           );
           // The `tf_owner` marker is re-stamped here, not minted: `refresh` rotates a token family and

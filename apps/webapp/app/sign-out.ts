@@ -17,7 +17,7 @@ import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { READING_ALONG_PREFIX } from "./shell/reading-along";
 import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
-import { SESSION_MINTED_KEY } from "./session-refresh";
+import { SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
 import { postSignedOut } from "./signed-out-signal";
 
@@ -202,6 +202,8 @@ export async function forgetThisBrowser(
     READING_ALONG_PREFIX,
     // When this jar last received a session: it goes with the session it describes.
     SESSION_MINTED_KEY,
+    // The name of a renewal whose answer never landed, which belongs to the same session.
+    SESSION_ATTEMPT_KEY,
     // `ohmail.access.<owner>` — where the service last found this account. Left behind it would
     // decide the next account's first paint on this browser from somebody else's standing.
     ACCESS_VERDICT_PREFIX,
