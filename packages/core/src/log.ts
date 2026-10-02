@@ -740,6 +740,9 @@ export const RESERVED_KEYS: readonly string[] = [
   // `err.cause`, so a payload supplying one could only ever be overwriting a fact with a claim.
   // Reserved ⇒ removed before the census runs ⇒ unspoofable, and unforgettable at the call site.
   "causeClass", "causeCode",
+  // `storeFault` on the same reading: a closed SQLite result-class name derived from the thrown value
+  // ({@link storeFaultOf}), so a payload could only overwrite a fact with a claim.
+  "storeFault",
   // `errorText` is here on `causeClass`'s reading: it exists only as a derivation from a thrown
   // primitive ({@link describeThrownText}), so a payload supplying one could only dress a message
   // up as the throw. Redundant with the census while it stays off ALLOWED_FIELDS, which is the
@@ -923,6 +926,58 @@ function describeCause(err: unknown): { causeClass: string; causeCode: string | 
   return out;
 }
 
+/**
+ * WHICH SQLITE RESULT CLASS A DEVICE STORE FAULT CARRIES — a closed name, never the driver's text.
+ * expo-sqlite throws every refusal as `ERR_INTERNAL_SQLITE_ERROR`; the primary result code is in its
+ * text — ONE RAW BYTE on Android (`Error code \u0013: …`), decimals on iOS — and `node:sqlite`, the
+ * suite's device store, carries it as `errcode`. Here because `err` is the logger's to describe and
+ * this file imports nothing (the client bundle's diagnostics leaf carries it). The primary result
+ * codes, by name, as sqlite3.h numbers them.
+ */
+const PRIMARY = {
+  1: "error", 2: "internal", 3: "perm", 4: "abort", 5: "busy", 6: "locked", 7: "nomem",
+  8: "readonly", 9: "interrupt", 10: "ioerr", 11: "corrupt", 12: "notfound", 13: "full",
+  14: "cantopen", 15: "protocol", 16: "empty", 17: "schema", 18: "toobig", 19: "constraint",
+  20: "mismatch", 21: "misuse", 22: "nolfs", 23: "auth", 24: "format", 25: "range", 26: "notadb",
+} as const;
+
+export type StoreFaultName = (typeof PRIMARY)[keyof typeof PRIMARY] | "other";
+
+/** The two driver codes that mean "SQLite refused this", and only those. */
+const SQLITE_DRIVER_CODES: ReadonlySet<string> = new Set(["ERR_INTERNAL_SQLITE_ERROR", "ERR_SQLITE_ERROR"]);
+
+/** expo's prefix: decimals (iOS) or one raw code unit (Android), then a colon. */
+const EXPO_PREFIX = /Error code (?:(\d{1,3})|([\s\S])): /;
+
+const nameOf = (code: number): StoreFaultName =>
+  (PRIMARY as Readonly<Record<number, StoreFaultName | undefined>>)[code & 0xff] ?? "other";
+
+/** One layer: the class, or null when this throw is not SQLite's. */
+function oneLayer(err: unknown): StoreFaultName | null {
+  const e = err as { code?: unknown; errcode?: unknown; message?: unknown } | null;
+  if (typeof e?.code !== "string" || !SQLITE_DRIVER_CODES.has(e.code)) return null;
+  if (typeof e.errcode === "number" && Number.isInteger(e.errcode)) return nameOf(e.errcode);
+  const m = typeof e.message === "string" ? EXPO_PREFIX.exec(e.message) : null;
+  if (m === null) return "other";
+  return nameOf(m[1] !== undefined ? Number(m[1]) : m[2]!.charCodeAt(0));
+}
+
+/**
+ * The store fault of a throw or of its cause chain (the throw and four causes, cycle-safe: a repo wrapper puts
+ * the driver's error under `cause`), or null when nothing in it is SQLite's.
+ */
+export function storeFaultOf(err: unknown): StoreFaultName | null {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; depth < 5 && cur !== null && cur !== undefined && !seen.has(cur); depth++) {
+    seen.add(cur);
+    const name = oneLayer(cur);
+    if (name !== null) return name;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
 /** Where a rendered line goes. Injected so a test can read what was written. */
 export type LogSink = (line: string) => void;
 
@@ -1021,6 +1076,8 @@ export function createLogger(opts: LoggerOptions): Logger {
       // A thrown STRING's own text, derived here for the reason the cause is: a fact a call site
       // has to remember to extract is the fact missing from the one line that mattered.
       const thrownText = thrown === undefined ? null : describeThrownText(thrown);
+      // A device store's refusal by its SQLite class: the one code expo throws says nothing else.
+      const storeFault = thrown === undefined ? null : storeFaultOf(thrown);
       // The payload's own error taxonomy WINS over the thrown value's — see RESERVED_KEYS.
       const payloadClass = takeIdentifier(merged, "errorClass", ERROR_CLASS_RE);
       const payloadCode = takeIdentifier(merged, "errorCode", ERROR_CODE_RE);
@@ -1043,6 +1100,7 @@ export function createLogger(opts: LoggerOptions): Logger {
         ...(thrownText === null ? {} : { errorText: thrownText }),
         ...(fromCause === null ? {} : { causeClass: fromCause.causeClass }),
         ...(fromCause?.causeCode == null ? {} : { causeCode: fromCause.causeCode }),
+        ...(storeFault === null ? {} : { storeFault }),
         ...payload,
         ...(dropped.length === 0 ? {} : { droppedFields: dropped }),
       };

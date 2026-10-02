@@ -83,6 +83,18 @@ Buffer.prototype.write = function write(string, offset, length, encoding) {
   return originalWrite.call(this, string, offset, length, encoding);
 };
 
+/* SUBARRAY ANSWERS A BUFFER. The polyfill inherits `Uint8Array#subarray`, which builds its result
+   through the species constructor, and Hermes does not honour species: the view comes back a plain
+   `Uint8Array`, whose `toString` joins the bytes as decimals. A stored body cut that way was 3.5 times
+   the cap and refused, so the message held its folder. The polyfill's own `slice` re-sets the
+   prototype for the same reason; this does it for every caller of `subarray`. */
+const nativeSubarray = Uint8Array.prototype.subarray;
+Buffer.prototype.subarray = function subarray(start, end) {
+  const view = nativeSubarray.call(this, start, end);
+  if (Object.getPrototypeOf(view) !== Buffer.prototype) Object.setPrototypeOf(view, Buffer.prototype);
+  return view;
+};
+
 /* The polyfill itself, patched. Everything else it exports — `Blob`, `constants`, `kMaxLength`,
    `SlowBuffer`, `atob`, `btoa` — passes through untouched. */
 module.exports = polyfill;

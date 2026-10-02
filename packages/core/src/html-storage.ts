@@ -85,21 +85,25 @@ function truncateToBytes(s: string, maxBytes: number): string {
   if (buf.length <= maxBytes) return s;
   let end = Math.max(0, maxBytes);
   while (end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
-  return buf.subarray(0, end).toString("utf8");
+  // A range decode, never `subarray(...).toString()`: on a runtime without TypedArray species (Hermes)
+  // the view is a plain Uint8Array, and its `toString` joins the bytes as decimals.
+  return buf.toString("utf8", 0, end);
 }
 
 /**
  * The only thing that should ever be written to `message_bodies.html`. Strips oversized inline
  * base64 payloads, then — if what remains is still over the cap — truncates on a character
  * boundary and appends {@link HTML_TRUNCATION_MARKER}. `null` in, `null` out: a body with no
- * html, and a sensitive message whose html is deliberately never stored, both pass unchanged. The
- * result is guaranteed to satisfy `octet_length(html) <= STORED_HTML_CAP_BYTES`, exactly what the
- * `message_bodies_html_cap` CHECK asserts.
+ * html, and a sensitive message whose html is deliberately never stored, both pass unchanged.
+ * The result satisfies `octet_length(html) <= STORED_HTML_CAP_BYTES`, the `message_bodies_html_cap`
+ * CHECK, and that is checked here rather than assumed: a cut a runtime got wrong stores NO html,
+ * so the text part shows, where a refused insert would hold the message's whole folder.
  */
 export function prepareHtmlForStorage(html: string | null): string | null {
   if (html === null) return null;
   const stripped = stripInlineDataUris(html);
   if (Buffer.byteLength(stripped, "utf8") <= STORED_HTML_CAP_BYTES) return stripped;
   const budget = STORED_HTML_CAP_BYTES - Buffer.byteLength(HTML_TRUNCATION_MARKER, "utf8");
-  return truncateToBytes(stripped, budget) + HTML_TRUNCATION_MARKER;
+  const cut = truncateToBytes(stripped, budget) + HTML_TRUNCATION_MARKER;
+  return Buffer.byteLength(cut, "utf8") <= STORED_HTML_CAP_BYTES ? cut : null;
 }
