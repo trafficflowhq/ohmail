@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.9] — 2026-10-02
+
 ### A message a rule screens leaves the phone's inbox when its body arrives
 <!-- changes: fix-026-bundle-and-placement-key.md -->
 
@@ -245,11 +252,6 @@ syncing. A push notification endpoint it cannot reach no longer stops it either.
 
 The landing page and the README now say that Microsoft 365 and Exchange connect with your Microsoft
 sign-in on ohmail Cloud and on self-hosted servers set up for it.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.8] — 2026-10-01
 
@@ -10923,7 +10925,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.8...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.9...HEAD
+[0.25.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.9
 [0.25.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.8
 [0.25.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.7
 [0.25.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.6

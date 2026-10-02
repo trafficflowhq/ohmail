@@ -74,6 +74,44 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.9" date="2026-10-02">
+      <description>
+        <ul>
+          <li>A message a rule screens leaves the phone's inbox when its body arrives</li>
+          <li>Closing a tab while your session renews no longer signs you out</li>
+          <li>A self-hosted desktop manages its mailboxes on its own server</li>
+          <li>A Mark read that did not go through says why</li>
+          <li>Undo on the phone says "Not deleted" once it is saved</li>
+          <li>Sign out always ends the session</li>
+          <li>The phone app is smaller</li>
+          <li>The IMAP library is updated</li>
+          <li>Attachments in nested messages open again</li>
+          <li>A sender you screen out stays out of the Ohbox while your mail is still syncing</li>
+          <li>"Sign in with browser" works in a browser that is signed out</li>
+          <li>A very long folder name no longer stops a mailbox's sync</li>
+          <li>A message that cannot be parsed no longer stops syncing</li>
+          <li>A very long message no longer stalls the window</li>
+          <li>A very long message no longer freezes the phone app</li>
+          <li>The Android download on the website gives the newest APK again</li>
+          <li>A message the mail parser fails on mid-part no longer stops syncing</li>
+          <li>A sender you send to the Ohbox keeps their newsletters there</li>
+          <li>Choosing where a sender's mail goes holds whichever switches are set</li>
+          <li>The sender sheet says why some of their mail stayed</li>
+          <li>The phone's sender sheet says why some of their mail stayed</li>
+          <li>"Sign in with browser" comes back after you sign in in another tab</li>
+          <li>The Screened out and Spam counts are no longer a partial number during a sync</li>
+          <li>The Sent, Trash and Junk folders ohmail uses stay the same</li>
+          <li>Second-factor refusals in Settings are in your language</li>
+          <li>A wrong verification code counts once</li>
+          <li>A very long html message is shown a page at a time</li>
+          <li>An html message is shown as text when drawing it would stall the window</li>
+          <li>Send + Done files the conversation as it is when the reply goes out</li>
+          <li>A dropped mail server connection no longer closes the phone app</li>
+          <li>A mail server reached over TLS that the machine cannot reach no longer stops the organizer</li>
+          <li>The Microsoft sign-in note says where it applies</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.8" date="2026-10-01">
       <description>
         <ul>
@@ -160,41 +198,6 @@
           <li>A delete pressed just before the phone app closes is kept</li>
           <li>Turning off the phone's organizing notification stops background organizing</li>
           <li>A long mail store update on the phone says how far along it is</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.4" date="2026-09-28">
-      <description>
-        <ul>
-          <li>Settings → About writes a diagnostic file you can send us</li>
-          <li>After an update on Linux, the previous version no longer stays mounted</li>
-          <li>A message at any number the server gives is stored</li>
-          <li>A folder deleted in another mail app leaves with its letters</li>
-          <li>A large mailbox shows mail within its first sync instead of after several minutes</li>
-          <li>A Screening change made on another device reaches the one that organizes</li>
-          <li>The phone's Screener decisions offer Undo</li>
-          <li>Settings → Mailboxes can check a mailbox against your mail server and say which folders differ</li>
-          <li>Mail you wrote from a Sent folder with its own name counts</li>
-          <li>ohmail can act on confident suggestions, behind its own switch</li>
-          <li>A Screening change made on another device says where it went</li>
-          <li>A signature saved with formatting in the browser is kept</li>
-          <li>Deleting an account or a mailbox leaves nothing owed and nothing stale</li>
-          <li>Confirming an action no longer signs you in again</li>
-          <li>A phone's incoming server can be changed while it organizes</li>
-          <li>Every screen says who organizes a mailbox from what it has read</li>
-          <li>Replacing an authenticator works</li>
-          <li>Waiting changes and refused sends say where they stand</li>
-          <li>The web works by keyboard, at zoom and in the dark theme</li>
-          <li>Download all saves what it lists, and a found message's files show at once</li>
-          <li>A computer switched off mid-import loses about the last second of it</li>
-          <li>A message too large to download is listed, and says so</li>
-          <li>A mail server on your own network connects without TLS, with your consent for each half</li>
-          <li>A reply draft opens where you can finish it</li>
-          <li>German screens say it in German</li>
-          <li>Answering the message you have open moves it to Earlier</li>
-          <li>Nothing tells you that you stopped organizing a mailbox the closure paused</li>
-          <li>After you subscribe again, your mailboxes are organized again straight away</li>
-          <li>Known issue — Android</li>
         </ul>
       </description>
     </release>
