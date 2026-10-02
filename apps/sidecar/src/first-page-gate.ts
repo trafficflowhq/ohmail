@@ -64,9 +64,10 @@ export function awaitFirstPage(
 ): Promise<FirstPageOutcome> {
   if (released) return Promise.resolve<FirstPageOutcome>("already");
   // WHAT IS LEFT OF THE GRACE, not the whole of it. An unarmed gate (no door, so no `serving`
-  // line) gets the full bound rather than none: the failure to arm must not become a drain that
-  // waits for ever, and it must not become one that never waits either.
-  const left = armedAtMs === null ? graceMs : Math.max(0, graceMs - (nowMs - armedAtMs));
+  // line) ARMS ITSELF at its first wait: the full bound once per process, as an armed gate pays
+  // it, and never again — the phone's door never arms it, and every one of its drains paid 1.5 s.
+  if (armedAtMs === null) armedAtMs = nowMs;
+  const left = Math.max(0, graceMs - (nowMs - armedAtMs));
   if (left === 0) return Promise.resolve<FirstPageOutcome>("timed-out");
   return new Promise<FirstPageOutcome>((resolve) => {
     const timer = setTimeout(() => {

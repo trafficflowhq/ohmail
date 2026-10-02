@@ -239,6 +239,18 @@ export function undoRouting(subject: string): boolean {
   return live ? live.undo(subject) : false;
 }
 
+/**
+ * TAKE BACK ONE PRESS, BY ITS ID. The window keeps one press per sender, so a second Move about
+ * the same sender REPLACES the first; the first toast's Undo then names a press that is no longer
+ * held, and taking the subject back would cancel the second press instead. `superseded` says so.
+ */
+export function undoRoutingPress(subject: string, pressId: string): "undone" | "superseded" | "gone" {
+  const held = live?.pending().find((p) => routingSubject(p) === subject);
+  if (!held) return "gone";
+  if (held.id !== pressId) return "superseded";
+  return undoRouting(subject) ? "undone" : "gone";
+}
+
 /** The press's Undo is on screen: its window counts from here (`RoutingWindow.restart`). */
 export function restartRouting(subject: string): boolean {
   return live ? live.restart(subject) : false;

@@ -132,7 +132,7 @@ import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 /* Move/Junk: the mail now, the sender's routing after the window. See the module. */
 import {
-  heldOn, holdRouting, holdScreenRouting, restartRouting, takeRoutingReversal, undoRouting,
+  heldOn, holdRouting, holdScreenRouting, restartRouting, takeRoutingReversal, undoRouting, undoRoutingPress,
   type RoutingReplay, type ScreenCommitAnswer,
 } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
@@ -596,6 +596,22 @@ export function toListRow(reader: EntityReader, m: EngineMessage, v: WorldView):
   return row;
 }
 
+/**
+ * AN OWN-SENT ROW SAYS WHO IT WENT TO — "Me → Nora", the web's words (`format.ts#sentRowRecipient`).
+ * Its sender is the reader's own address, the one fact on the row that says nothing. With no To
+ * recipient the sender face stays: never "Me →" with nothing after the arrow.
+ */
+function sentFaceOf(m: EngineMessage, own: readonly string[] | undefined): string | null {
+  if (!own || own.length === 0) return null;
+  const from = m.from.address.toLowerCase();
+  if (!own.some((a) => a.toLowerCase() === from)) return null;
+  const to = m.to ?? [];
+  const first = to[0];
+  const name = first ? first.name || first.address : "";
+  if (!name) return null;
+  return to.length > 1 ? Copy.rowSentToMore(name, to.length - 1) : Copy.rowSentTo(name);
+}
+
 function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: MessageBody): WorldMail {
   const env = replyAllRecipients(m, v.ownAddresses ?? NO_OWN_ADDRESSES);
   const physical = physicalFolderOf(m);
@@ -627,6 +643,7 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     // The wire's `name` is nullable; the row shape's is not — a nameless sender reads as
     // their address, exactly as every list row already renders one.
     from: { name: m.from.name || m.from.address, address: m.from.address },
+    ...((): { sentTo?: string } => { const f = sentFaceOf(m, v.ownAddresses); return f === null ? {} : { sentTo: f }; })(),
     subject: m.subject,
     time: messageDisplayTime(m, v.now, v.zone, v.locale ?? "en"),
     body: body.text,
@@ -1245,9 +1262,13 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
     const hit = ohboxRowMemo.get(r.openTarget);
     if (hit !== undefined && hit.mail === mail && hit.face === face && hit.subject === subject
       && hit.unread === unread && hit.newSince === newSince && hit.members === members && hit.key === r.key) return hit.row;
+    const { sentTo: _openTargetFace, ...open } = mail;
     const row: WorldMail = {
-      ...mail,
-      from: face.from, snippet: face.snippet, time: face.time, subject,
+      ...open,
+      /* The FACE's sender, and its own-sent face with it: a conversation answered last is faced
+         by the reply, which is "Me → them". */
+      from: face.from, ...(face.sentTo !== undefined ? { sentTo: face.sentTo } : {}),
+      snippet: face.snippet, time: face.time, subject,
       unread,
       rowKey: r.key,
       memberIds: r.members.map((m) => m.id),
@@ -2083,7 +2104,8 @@ export function planPhoneRouting(
 ): EngineMutation[] {
   const folder = FOLDER_OF_VIEW[intent.dest];
   if (!folder || intent.from === undefined) return [];
-  const rules = withoutBacklog(releaseRules(reader, intent.address, intent.from as Folder, folder).mutations);
+  const ruled = releaseRules(reader, intent.address, intent.from as Folder, folder).mutations;
+  const rules = (intent as PhoneMoveIntent).retro === true ? [...ruled] : withoutBacklog(ruled);
   /* THE LETTER'S HALF, for a kill between the press's record and the letter's dispatch: a letter the
      press named, still in the folder the press found it in, moves with the rule. A dispatched move
      is in the outbox and the reader already shows the letter at the place, so nothing moves twice.
@@ -2102,7 +2124,7 @@ export function planPhoneRouting(
  * Reads can sit in the Inbox, so only `found` says whether it is still where the press left it.
  * `holdsRule: false` marks a press that decides no rule: it shows no held place (`held-routing.ts`).
  */
-export type PhoneMoveIntent = RoutingIntent & { found?: string; holdsRule?: false };
+export type PhoneMoveIntent = RoutingIntent & { found?: string; holdsRule?: false; retro?: true };
 
 function foundOf(intent: RoutingIntent): string | undefined {
   const f = (intent as PhoneMoveIntent).found;
@@ -2925,7 +2947,7 @@ export interface LiveWorldActions {
    * LATER / PARK AS TOGGLES: the verb that put a message in a pile takes it out again
    * (`triage_set: none`), exactly as the webapp's `later`/`aside` arms do.
    */
-  pileToggle(messageId: string, kind: "replyLater" | "setAside"): Promise<boolean>;
+  pileToggle(messageId: string, kind: "replyLater" | "setAside", members?: readonly string[]): Promise<boolean>;
   /** The horizon-less Resurface — tomorrow 09:00, or CLEARS a booking that already stands. */
   resurfaceToggle(messageId: string): Promise<boolean>;
   /** Resurface AT a chosen instant (the chooser's Tomorrow / Next week / a picked day). */
@@ -2933,9 +2955,9 @@ export interface LiveWorldActions {
   /** Resurface NOW — the `resurfaced` state, not a date; pinned by the time the request returns. */
   resurfaceNow(messageId: string): Promise<boolean>;
   /** DONE with a resurface: clear a standing booking, then the deliberate read that spends the pin. */
-  resurfaceDone(messageId: string): Promise<boolean>;
+  resurfaceDone(messageId: string, members?: readonly string[]): Promise<boolean>;
   /** Mark read / Mark unread — the DELIBERATE `mark_seen` (no `via`), so a read spends a pin. */
-  markSeen(messageId: string, unread: boolean): Promise<boolean>;
+  markSeen(messageId: string, unread: boolean, members?: readonly string[]): Promise<boolean>;
   /**
    * MARK ALL READ — the webapp's `read-all.ts` on this surface: chunked deliberate
    * `mark_seen` at the `PATCH /messages` cap, one sentence naming the count, ONE undo for
@@ -2951,7 +2973,7 @@ export interface LiveWorldActions {
    * caller press without it. The webapp's `moveToPlace(m, view)` takes the message for the same
    * reason.
    */
-  move(row: WorldMail, dest: MoveTarget): Promise<boolean>;
+  move(row: WorldMail, dest: MoveTarget, members?: readonly string[]): Promise<boolean>;
   /**
    * DELETE — `message_delete` (`DELETE /messages/:id`, mail 0065): the message rides to the
    * provider's native `\Trash` on the server, NEVER an expunge, and the optimistic tombstone
@@ -3737,16 +3759,38 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("liveReleaseFailed", row.address));
       return false;
     }
-    const parts = [
-      ...retargets.map((m) => dispatch(m)),
-      ...moveIds.map((id) => dispatch({ kind: "move", messageId: id, folder: wanted })),
-    ];
     // One sentence per write, one true at a time: no rule, their own rule, or an address rule.
-    toast(
-      rules.kind === "address" ? refuse("liveReleasedAddress", row.held.length, destDone(dest), rules.domain)
-        : rules.kind === "retarget" ? refuse("liveReleasedRuled", row.held.length, destDone(dest))
-          : refuse("liveReleased", row.held.length, destDone(dest)),
-    );
+    const sentence = rules.kind === "address" ? refuse("liveReleasedAddress", row.held.length, destDone(dest), rules.domain)
+      : rules.kind === "retarget" ? refuse("liveReleasedRuled", row.held.length, destDone(dest))
+        : refuse("liveReleased", row.held.length, destDone(dest));
+    /* THE LETTERS MOVE NOW and THE RULES ARE HELD for the undo window, as a Move's are: a rule
+       mutation has no wire inverse, so the way back is to not send it yet (`held-routing.ts`).
+       `retro`: a release's rule keeps the backlog pass the release has always made. */
+    const letters: EngineMutation[] = moveIds.map((id) => ({ kind: "move", messageId: id, folder: wanted }));
+    const inv = letters.flatMap((w) => inverseMutations(engine.verbRead(), w));
+    const pressId = deps.uuid ? deps.uuid() : `${row.id}:${now().getTime()}`;
+    const intent: PhoneMoveIntent = {
+      v: 1, id: pressId, seedId: row.id, address: row.address, scope: "sender", dest: dest as ScreenDest,
+      messageIds: moveIds, from: segFolder, found: segFolder, retro: true, at: now().getTime(),
+    };
+    const opened = retargets.length > 0 ? await holdRouting(intent) : { held: false, superseded: false, sent: false };
+    const parts = letters.map((m) => dispatch(m));
+    if (!opened.held) {
+      if (!opened.sent) parts.push(...retargets.map((m) => dispatch(m)));
+      toast(sentence, retargets.length === 0 ? undoable(inv) : undefined);
+      return saidAll(await Promise.all(parts), null, refuse("liveReleaseFailed", row.address));
+    }
+    const subject = routingSubject(intent);
+    toast(sentence, {
+      holdMs: UNDO_MS,
+      shown: () => { restartRouting(subject); },
+      undo: () => {
+        /* Past the close (or replaced by a later press) the rule has gone: said, nothing moved back. */
+        if (undoRoutingPress(subject, pressId) !== "undone") { toast(refuse("liveDecideUndoLate")); return; }
+        toast(refuse("toastRoutingUndone"));
+        void Promise.all(inv.map((mu) => watched(engine.mutate(mu))));
+      },
+    });
     return saidAll(await Promise.all(parts), null, refuse("liveReleaseFailed", row.address));
   };
 
@@ -3812,13 +3856,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * it with the one failure sentence. The pill carries the way back: the inverse is read off
    * the PRE-PRESS mirror, the state this press is about to leave.
    */
+  /** The open target first, then the rest of a folded row's members, each once. */
+  const membersOf = (id: string, members?: readonly string[]): string[] => [...new Set([id, ...(members ?? [])])];
+
   const triage = async (
     messageId: string,
     state: "none" | "reply_later" | "set_aside" | "bubbled_up" | "resurfaced",
     say: RefusalArg,
     bubbleUpAt?: string,
+    members?: readonly string[],
   ): Promise<boolean> => {
-    const m: EngineMutation = { kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) };
+    const ms: EngineMutation[] = membersOf(messageId, members)
+      .map((id) => ({ kind: "triage_set", messageId: id, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) }));
     /* THE SENTENCE IS PAINTED BEFORE THE MIRROR MOVES. `mutate()` publishes before its first
        await, so spoken in the same turn the pill's state and the mirror's change land in ONE
        React pass — and every mirror reader re-renders in that pass. Measured on the 18 Pro
@@ -3827,24 +3876,27 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        the pill alone first; the act is read off the pre-press mirror above and lands unchanged.
        The wait now happens INSIDE the message's chain slot, taken at the press: that is the
        window an Undo cancels, and the window nothing else for this message may overtake. */
-    const inv = inverseMutations(engine.verbRead(), m);
+    const pre = engine.verbRead();
+    const inv = ms.flatMap((m) => inverseMutations(pre, m));
     const leaving = oneShot();
     toast(say, undoable(inv, leaving));
-    return gatedSaid(messageId, [m], painted(), leaving);
+    return gatedSaid(messageId, ms, painted(), leaving);
   };
 
-  const pileToggle = async (messageId: string, kind: "replyLater" | "setAside"): Promise<boolean> => {
+  const pileToggle = async (
+    messageId: string, kind: "replyLater" | "setAside", members?: readonly string[],
+  ): Promise<boolean> => {
     const m = messageOf(messageId);
     if (!m) return false;
     const held = triageStateOf(engine.read(), m);
     if (kind === "replyLater") {
       return held === "reply_later"
-        ? triage(messageId, "none", refuse("toastUnqueued"))
-        : triage(messageId, "reply_later", refuse("toastQueued"));
+        ? triage(messageId, "none", refuse("toastUnqueued"), undefined, members)
+        : triage(messageId, "reply_later", refuse("toastQueued"), undefined, members);
     }
     return held === "set_aside"
-      ? triage(messageId, "none", refuse("toastUnparked"))
-      : triage(messageId, "set_aside", refuse("toastAside"));
+      ? triage(messageId, "none", refuse("toastUnparked"), undefined, members)
+      : triage(messageId, "set_aside", refuse("toastAside"), undefined, members);
   };
 
   const resurfaceAt = (messageId: string, iso: string): Promise<boolean> =>
@@ -3862,12 +3914,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const resurfaceNow = (messageId: string): Promise<boolean> =>
     triage(messageId, "resurfaced", refuse("toastResurfaceNow"));
 
-  const markSeen = async (messageId: string, unread: boolean): Promise<boolean> => {
+  const markSeen = async (messageId: string, unread: boolean, members?: readonly string[]): Promise<boolean> => {
     // No `via`: this is the deliberate read, the one that spends a resurface pin on both sides
     // of the wire — the opposite of the open's glance and the streams' sweep. The sentence is
     // new with the undo (the 0.20 review): the flip is visible, but the pill is where the way back
     // lives, and a verb whose undo has no surface is a verb with no undo.
-    const m: EngineMutation = { kind: "mark_seen", messageIds: [messageId], unread };
+    const m: EngineMutation = { kind: "mark_seen", messageIds: membersOf(messageId, members), unread };
     const inv = inverseMutations(engine.verbRead(), m);
     return said(
       await dispatch(m),
@@ -3901,28 +3953,29 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
   };
 
-  const resurfaceDone = async (messageId: string): Promise<boolean> => {
+  const resurfaceDone = async (messageId: string, members?: readonly string[]): Promise<boolean> => {
     const m = messageOf(messageId);
     if (!m) return false;
+    const ids = membersOf(messageId, members);
     // A SCHEDULED message's release has an extra half: the booking is cleared first (the same
     // un-triage the toggles use), then the same deliberate read files it under Earlier.
     /* Both halves' inverses, off the pre-press mirror — the webapp release's own composition:
        the deliberate read's (re-pin a spent pin, unread back) and the booking clear's (re-book
        at its own date). A row is pinned OR booked, never both, so the reads cannot overlap. */
     const pre = engine.verbRead();
-    const booked = triageStateOf(pre, m) === "bubbled_up";
+    const bookedIds = ids.filter((id) => { const x = messageOf(id); return x !== undefined && triageStateOf(pre, x) === "bubbled_up"; });
     const inv = [
-      ...inverseMutations(pre, { kind: "mark_seen", messageIds: [messageId], unread: false }),
-      ...(booked ? inverseMutations(pre, { kind: "triage_set", messageId, state: "none" }) : []),
+      ...inverseMutations(pre, { kind: "mark_seen", messageIds: ids, unread: false }),
+      ...bookedIds.flatMap((id) => inverseMutations(pre, { kind: "triage_set", messageId: id, state: "none" })),
     ];
     // Spoken FIRST and mounted alone (`paintFirst`), like every optimistic verb; the inverses
     // above were read off the pre-press mirror, so the order of the two changes nothing they say.
     const leaving = oneShot();
     toast(refuse("toastResurfaceDone"), undoable(inv, leaving));
     // Both halves in the ONE slot and in order: the booking clears before the read lands.
-    const read: EngineMutation = { kind: "mark_seen", messageIds: [messageId], unread: false };
-    const clear: EngineMutation = { kind: "triage_set", messageId, state: "none" };
-    return gatedSaid(messageId, booked ? [clear, read] : [read], painted(), leaving);
+    const read: EngineMutation = { kind: "mark_seen", messageIds: ids, unread: false };
+    const clears: EngineMutation[] = bookedIds.map((id) => ({ kind: "triage_set", messageId: id, state: "none" }));
+    return gatedSaid(messageId, [...clears, read], painted(), leaving);
   };
 
   /** The reader the Ohbox is drawn from — see {@link LiveDeps.presented}. */
@@ -3991,7 +4044,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * moved, so "Moved" would be false; `watched` loses that fact, so the answers are awaited raw,
    * as `liveDecidedElsewhere` already does.
    */
-  const move = async (row: WorldMail, dest: MoveTarget): Promise<boolean> => {
+  const move = async (row: WorldMail, dest: MoveTarget, members?: readonly string[]): Promise<boolean> => {
     const messageId = row.id;
     // The RAW mirror for the LOCATION, exactly as `release` reads it: a move is about where the
     // mail actually is. The PRESENTED place is the caller's, because only the projection knows
@@ -4015,6 +4068,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
     const writes: EngineMutation[] = routing ? withoutBacklog(routing.mutations) : [];
     if (m.folder !== folder) writes.push({ kind: "move", messageId, folder });
+    /* A FOLDED ROW MOVES ITS WHOLE CONVERSATION; the rule is the open letter's sender's. */
+    for (const id of membersOf(messageId, members)) {
+      if (id === messageId) continue;
+      const other = raw.get<EngineMessage>("message", id);
+      if (other !== undefined && other.folder !== folder) writes.push({ kind: "move", messageId: id, folder });
+    }
     // Nothing to dispatch means the mail is already in the place it was asked for, rules and all.
     // Said rather than swallowed: a press that returns in silence is the defect this arm had.
     if (writes.length === 0) {
@@ -4044,7 +4103,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       address: m.from.address,
       scope: "sender",
       dest: dest as ScreenDest,
-      messageIds: [messageId],
+      messageIds: membersOf(messageId, mail.map((w) => (w as { messageId: string }).messageId)),
       from: row.presentedFolder,
       found: m.folder,
       ...(rules.length === 0 ? { holdsRule: false as const } : {}),
@@ -4071,6 +4130,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("liveSaveFailed"));
       return false;
     }
+    /* THE PRESS ASKS FOR THE WIRE: the organizer in this process drains now rather than at its
+       next poll (`withPullKick`). Once per press, never awaited by the sentence; never throws. */
+    if (unsent.length > 0) void engine.requestPull();
     const queued = [...answers].reverse().find((r) => r?.status === "awaiting_organizer");
     if (queued) {
       dropHeld();
@@ -4089,7 +4151,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("toastMoved", moveTargetLabel(dest)), back && opened?.held ? {
         ...back,
         shown: () => { restartRouting(subject); },
-        undo: () => { undoRouting(subject); back.undo?.(); },
+        undo: () => {
+          /* A later press about this sender replaced this one: its rule stands, said. */
+          if (undoRoutingPress(subject, pressId) === "superseded") { toast(refuse("liveDecideUndoLate")); return; }
+          back.undo?.();
+        },
       } : back);
       return true;
     }
@@ -4115,7 +4181,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
            the rule before it is sent; a press already committed (a flush on leaving) is taken
            back by its rules' inverse, sent once the commit has answered. `cancelled` also picks
            the sentence, so a late press cannot say no rule was made over a rule that was. */
-        const cancelled = undoRouting(subject);
+        const outcome = undoRoutingPress(subject, pressId);
+        /* A later press about this sender replaced this one: the latest rule wins, and says so. */
+        if (outcome === "superseded") { toast(refuse("liveDecideUndoLate")); return; }
+        const cancelled = outcome === "undone";
         const ruleBack = cancelled ? null : takeRoutingReversal(pressId);
         // At the press, as `undoable` says it; a refusal overrides it when the inverse answers.
         toast(refuse(cancelled ? "toastRoutingUndone" : "toastUndone"));
@@ -5045,16 +5114,17 @@ export interface WorldActions {
   notSpam(row: ScreenerRow, dest: Place): void;
   addToPile(kind: PileKind, item: PileItem): void;
   /* The open message's verbs — see {@link LiveWorldActions} for each arm's contract. */
-  pileToggle(messageId: string, kind: "replyLater" | "setAside"): void;
+  /** `members`: a folded Ohbox row's whole conversation (`WorldMail.memberIds`); one sentence. */
+  pileToggle(messageId: string, kind: "replyLater" | "setAside", members?: readonly string[]): void;
   resurfaceToggle(messageId: string): void;
   resurfaceAt(messageId: string, iso: string): void;
   resurfaceNow(messageId: string): void;
-  resurfaceDone(messageId: string): void;
-  markSeen(messageId: string, unread: boolean): void;
+  resurfaceDone(messageId: string, members?: readonly string[]): void;
+  markSeen(messageId: string, unread: boolean, members?: readonly string[]): void;
   /** Mark all read — see {@link LiveWorldActions.markAllSeen}. */
   markAllSeen(ids: string[], feed?: { place: "reads" | "receipts"; upToId: string }): void;
   /** The row, not an id — see {@link LiveWorldActions.move}. */
-  move(row: WorldMail, dest: MoveTarget): void;
+  move(row: WorldMail, dest: MoveTarget, members?: readonly string[]): void;
   /**
    * Delete — the delayed-commit window, not the wire. `onCommitted` leaves the reader when the
    * delete COMMITS (the window's close), never at the press: navigating away in the same tick
@@ -5159,14 +5229,14 @@ export function stableActions(current: () => WorldActions): WorldActions {
     allow: (row, dest) => current().allow(row, dest),
     notSpam: (row, dest) => current().notSpam(row, dest),
     addToPile: (kind, item) => current().addToPile(kind, item),
-    pileToggle: (id, kind) => void current().pileToggle(id, kind),
+    pileToggle: (id, kind, members) => void current().pileToggle(id, kind, members),
     resurfaceToggle: (id) => void current().resurfaceToggle(id),
     resurfaceAt: (id, iso) => void current().resurfaceAt(id, iso),
     resurfaceNow: (id) => void current().resurfaceNow(id),
-    resurfaceDone: (id) => void current().resurfaceDone(id),
-    markSeen: (id, unread) => void current().markSeen(id, unread),
+    resurfaceDone: (id, members) => void current().resurfaceDone(id, members),
+    markSeen: (id, unread, members) => void current().markSeen(id, unread, members),
     markAllSeen: (ids, feed) => void current().markAllSeen(ids, feed),
-    move: (row, dest) => void current().move(row, dest),
+    move: (row, dest, members) => void current().move(row, dest, members),
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),
     trashRestore: (id) => current().trashRestore(id),

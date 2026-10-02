@@ -378,6 +378,8 @@ export interface LocalMailboxRuntime {
    * window reaches the mail server no later than it used to.
    */
   noteWorldMoved(): void;
+  /** The doorbell: the ladder to base and one coalesced drain now, as an INBOX `exists` rings it. */
+  ring(): void;
   /** Stop this mailbox's timer, wait for the in-flight cycle and close its login. Leaves the
    *  store alone — the store is the install's, not this row's. */
   detach(): Promise<void>;

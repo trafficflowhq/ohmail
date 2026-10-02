@@ -9,13 +9,14 @@
  */
 import type { ReactNode } from "react";
 import {
-  KeyboardAvoidingView, Modal, Platform, Pressable, useWindowDimensions, View, type ViewStyle,
+  KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, useWindowDimensions, View, type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useKeyboardLift } from "./keyboard-lift";
 import { usePosture } from "./posture";
+import { sheetPanelBounds } from "./sheet-bounds";
 import { Tap, Txt } from "./base";
 import { Icon, type IconName } from "./Icon";
 
@@ -30,14 +31,8 @@ import { Icon, type IconName } from "./Icon";
 export function useSheetPanelBounds(): ViewStyle {
   const { width: w, height: h } = useWindowDimensions();
   const posture = usePosture();
-  const hinge = posture.panes === 2 ? posture.hinge : null;
-  if (hinge !== null && hinge.h >= hinge.w) {
-    return { alignSelf: "flex-end", width: Math.max(320, w - (hinge.x + hinge.w)) };
-  }
-  if (hinge !== null) {
-    return { alignSelf: "center", width: "100%", maxWidth: 560, maxHeight: Math.max(280, h - (hinge.y + hinge.h)) };
-  }
-  return { alignSelf: "center", width: "100%", maxWidth: 560 };
+  const top = useSafeAreaInsets().top;
+  return sheetPanelBounds(w, h, top, posture.panes === 2 ? posture.hinge : null);
 }
 
 /**
@@ -89,7 +84,9 @@ export function Sheet({
           t.liftUp("l3"),
         ]}
       >
-        {children}
+        <ScrollView style={{ flexGrow: 0, flexShrink: 1 }} bounces={false} keyboardShouldPersistTaps="handled">
+          {children}
+        </ScrollView>
         {/* THE WAY OUT IS THE PRIMITIVE'S, not each caller's. The reader's More sheet shipped
             with six verbs and no dismiss control: a pointer drags the panel down, and a screen
             reader, a switch or a keyboard has nothing to press. The row is rendered here so a

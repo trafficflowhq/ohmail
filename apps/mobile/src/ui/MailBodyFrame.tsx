@@ -11,13 +11,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Linking, useWindowDimensions, View } from "react-native";
+import { router } from "expo-router";
 import { WebView } from "react-native-webview";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
-import { useWorld, type WorldMail } from "../state/world";
+import { useWorld, useWorldToast, type WorldMail } from "../state/world";
 import { buildPhoneMailDocument, frameHeightEstimate } from "../mail/mail-document";
 import { fetchRemoteImages, imagesSeenBy } from "../mail/remote-images";
-import { frameNavDecision } from "../mail/frame-nav";
+import { frameNavDecision, openConfirmedLink } from "../mail/frame-nav";
 import { sanitizeMailHtmlPhone } from "../mail/sanitize";
 import { blockedNotice } from "../mail/notice";
 import { Sheet, SheetRow } from "./Sheet";
@@ -27,6 +28,7 @@ import { BodyPages } from "./BodyPages";
 export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText: () => void }) {
   const t = useTheme();
   const w = useWorld();
+  const toast = useWorldToast();
   const { height: windowHeight } = useWindowDimensions();
   const [asked, setAsked] = useState<string | null>(null);
   const [remote, setRemote] = useState<{ id: string; map: ReadonlyMap<string, string> } | null>(null);
@@ -151,6 +153,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
         onShouldStartLoadWithRequest={(req) => {
           const d = frameNavDecision(req.url, sanitized.links);
           if (d.kind === "confirm") setLinkAsk(d.url);
+          if (d.kind === "compose") router.push({ pathname: "/compose", params: { mailto: d.url } });
           return d.kind === "load";
         }}
         nestedScrollEnabled
@@ -172,7 +175,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
           onPress={() => {
             const url = linkAsk;
             setLinkAsk(null);
-            if (url !== null) void Linking.openURL(url).catch(() => undefined);
+            if (url !== null) void openConfirmedLink(url, { openURL: (u) => Linking.openURL(u), say: toast.say });
           }}
         />
       </Sheet>

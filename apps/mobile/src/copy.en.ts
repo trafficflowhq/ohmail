@@ -1644,6 +1644,7 @@ const TABLE = {
   mailOpenLinkTitle: "Open this link?",
   mailOpenLinkOpen: "Open",
   mailOpenLinkCancel: "Cancel",
+  linkOpenRefused: "Nothing on this phone can open that link.",
   /** The attachment strip: the body's own pictures wear this quiet tag. */
   attachmentEmbedded: "embedded",
   /** The tile's accessible name when the part is the body's own picture. */
@@ -1750,6 +1751,9 @@ const TABLE = {
   /* A LAUNCH DROPPING A DELETE a killed session left past a day: the Move's rule, one verb over. */
   deleteReplayExpired: (n: number) =>
     `${n === 1 ? "1 message was" : `${n} messages were`} not moved to Trash — too much time passed since you asked. Delete it again if you still want it there.`,
+  /* A LAUNCH THAT COULD NOT FIND a message a killed session's delete named (a History or Search row). */
+  deleteReplayGone: (n: number) =>
+    `${n === 1 ? "1 message was" : `${n} messages were`} not moved to Trash — this phone could not find ${n === 1 ? "it" : "them"} when the app started again. Delete ${n === 1 ? "it" : "them"} again if you still want ${n === 1 ? "it" : "them"} there.`,
   /** THE OHBOX'S UNDECIDED-SENDER OFFER — the web's `screener.unscreened*` sentences, word for word. */
   unscreenedLead: (n: number) =>
     n === 1
@@ -1933,6 +1937,8 @@ const TABLE = {
   /* A MAIL THAT ANSWERS NOTHING — the same composer with no parent, so it asks the two
      things a reply already knows: who it goes to, and what it is about. */
   composeNew: "New mail",
+  rowSentTo: (name: string) => `Me → ${name}`,
+  rowSentToMore: (name: string, more: number) => `Me → ${name} +${more}`,
   composeNewHead: "New mail",
   composeSubject: "Subject",
   composeSubjectPlaceholder: "What it's about (optional)",

@@ -8,12 +8,15 @@
  */
 
 import { SAFE_HREF } from "@ohmail/client-engine";
+import { refuse, type RefusalArg } from "../refusal";
 import { PHONE_LINK_SCHEME } from "./sanitize";
 
 export type FrameNavDecision =
   | { kind: "load" }
   | { kind: "refuse" }
-  | { kind: "confirm"; url: string };
+  | { kind: "confirm"; url: string }
+  /** A `mailto:` opens ohmail's own composer and never reaches the platform's mail app. */
+  | { kind: "compose"; url: string };
 
 /** The url shapes the initial `source={{ html }}` load presents, per platform. */
 const DOCUMENT_LOAD = /^(?:about:blank$|data:text\/html)/i;
@@ -30,7 +33,18 @@ export function frameNavDecision(url: string, links: readonly string[]): FrameNa
     if (target === undefined || !SAFE_HREF.test(target) || /^cid:/i.test(target)) {
       return { kind: "refuse" };
     }
+    if (/^mailto:/i.test(target)) return { kind: "compose", url: target };
     return { kind: "confirm", url: target };
   }
   return { kind: "refuse" };
+}
+
+/**
+ * A CONFIRMED LINK THAT NOTHING CAN OPEN SAYS SO. The platform's `openURL` rejects when no app
+ * on the phone takes the link, and that rejection was swallowed: the press answered nothing.
+ */
+export function openConfirmedLink(
+  url: string, deps: { openURL: (url: string) => Promise<unknown>; say: (arg: RefusalArg) => void },
+): Promise<void> {
+  return deps.openURL(url).then(() => undefined, () => { deps.say(refuse("linkOpenRefused")); });
 }

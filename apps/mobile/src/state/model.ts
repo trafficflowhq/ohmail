@@ -55,6 +55,8 @@ export interface Mail {
   id: string;
   place: Place;
   from: Address;
+  /** An own-sent row's face, "Me → recipient" (the web's words); absent on every other row. */
+  sentTo?: string;
   subject: string;
   time: string;
   body: string;

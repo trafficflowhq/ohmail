@@ -1063,6 +1063,7 @@ export function ComposeSheet({
   mode,
   forwardConfirmed = false,
   draft,
+  prefill,
   onClose,
 }: {
   /** The message being answered — `null` for a mail with no parent (the `new` mode). */
@@ -1072,6 +1073,8 @@ export function ComposeSheet({
   forwardConfirmed?: boolean;
   /** A draft opened from Drafts: the composer is bound to its row from the first keystroke. */
   draft?: { id: string; body: string } & WorldDraftEdit;
+  /** A new mail's starting text — a `mailto:` pressed in a message (`app/compose.tsx`). */
+  prefill?: { to: string; subject: string; body: string };
   onClose: () => void;
 }) {
   const t = useTheme();
@@ -1082,10 +1085,10 @@ export function ComposeSheet({
   const panelBounds = useSheetPanelBounds();
   /** The send-later day rows, named by `Intl` in the app's language. */
   const locale = useLocale();
-  const [body, setBody] = useState(draft?.body ?? "");
-  const [to, setTo] = useState(draft?.to ?? "");
+  const [body, setBody] = useState(draft?.body ?? prefill?.body ?? "");
+  const [to, setTo] = useState(draft?.to ?? prefill?.to ?? "");
   /** A parent-less mail's own subject. Reply and forward derive theirs; this one is typed. */
-  const [subject, setSubject] = useState(draft?.subject ?? "");
+  const [subject, setSubject] = useState(draft?.subject ?? prefill?.subject ?? "");
   /**
    * The composer's send phase. `queued` is TERMINAL for this composer: the text stands on
    * the engine's retry queue under its Idempotency-Key (the reconnect flush retries it, the

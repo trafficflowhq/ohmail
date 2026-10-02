@@ -178,6 +178,8 @@ export interface DeleteReplay {
   moved: number;
   expired: number;
   refused: number;
+  /** Named by a press and not found in the mirror at the launch — a History or Search row. */
+  gone?: number;
 }
 
 /**
@@ -188,6 +190,7 @@ export function deleteReplaySay(r: DeleteReplay): Refusal[] {
   const out: Refusal[] = [];
   if (r.moved > 0) out.push(refuse("routingReplayedTo", r.moved, refuse("trashTitle")));
   if (r.expired > 0) out.push(refuse("deleteReplayExpired", r.expired));
+  if ((r.gone ?? 0) > 0) out.push(refuse("deleteReplayGone", r.gone!));
   return out;
 }
 
@@ -238,7 +241,11 @@ export function openDeleteSession(deps: DeleteSessionDeps): void {
     const flat = all.flat();
     const moved = flat.filter((ok) => ok !== false && ok !== "nothing").length;
     const refused = flat.filter((ok) => ok === false).length;
-    if (moved > 0 || expired > 0 || refused > 0) deps.onReplayed?.({ moved, expired, refused });
+    /* NOT FOUND IS SAID, never dropped: the press is lost, and the person is told it was. */
+    const gone = flat.filter((ok) => ok === "nothing").length;
+    if (moved > 0 || expired > 0 || refused > 0 || gone > 0) {
+      deps.onReplayed?.({ moved, expired, refused, ...(gone > 0 ? { gone } : {}) });
+    }
   });
 }
 

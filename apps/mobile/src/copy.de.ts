@@ -1061,6 +1061,7 @@ export const DE: Deck = {
   mailOpenLinkTitle: "Diesen Link öffnen?",
   mailOpenLinkOpen: "Öffnen",
   mailOpenLinkCancel: "Abbrechen",
+  linkOpenRefused: "Nichts auf diesem Telefon kann diesen Link öffnen.",
   attachmentEmbedded: "eingebettet",
   attachmentEmbeddedLabel: (name: string) => `${name}, eingebettet`,
   attachmentOpening: "Wird geöffnet…",
@@ -1194,6 +1195,8 @@ export const DE: Deck = {
     `${n === 1 ? "1 Regel wurde" : `${n} Regeln wurden`} nie angelegt — seit der Anfrage ist zu viel Zeit vergangen. Verschiebe die Post noch einmal, wenn du die Regel weiterhin willst.`,
   deleteReplayExpired: (n: number) =>
     `${n === 1 ? "1 Nachricht wurde" : `${n} Nachrichten wurden`} nicht in den Papierkorb verschoben — seit der Anfrage ist zu viel Zeit vergangen. Lösche sie noch einmal, wenn du das weiterhin willst.`,
+  deleteReplayGone: (n: number) =>
+    `${n === 1 ? "1 Nachricht wurde" : `${n} Nachrichten wurden`} nicht in den Papierkorb verschoben — dieses Telefon hat sie beim nächsten Start nicht gefunden. Lösche sie noch einmal, wenn du das weiterhin willst.`,
   /* Das Angebot der Ohbox — die `screener.unscreened*`-Sätze des Web-Katalogs, Wort für Wort. */
   unscreenedLead: (n: number) =>
     n === 1
@@ -1296,6 +1299,8 @@ export const DE: Deck = {
   forwardEarlierWent: "Diese Weiterleitung wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
   /* NEUE NACHRICHT — derselbe Editor ohne Vorlage. */
   composeNew: "Neue Nachricht",
+  rowSentTo: (name: string) => `Ich → ${name}`,
+  rowSentToMore: (name: string, more: number) => `Ich → ${name} +${more}`,
   composeNewHead: "Neue Nachricht",
   composeSubject: "Betreff",
   composeSubjectPlaceholder: "Worum es geht (optional)",

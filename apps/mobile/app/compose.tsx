@@ -16,6 +16,7 @@ import { Gated } from "../src/ui/Gated";
 import { ComposeSheet, forwardAskSentence } from "../src/ui/MessageActions";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
+import { emptyDraft, parseMailto } from "../src/ui/mailto";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function ComposeScreen() {
@@ -36,7 +37,7 @@ function ComposeBody() {
   /** A kept forward of a `no_forward` original: the ask the reader asks, answered once here. */
   const [confirmed, setConfirmed] = useState(false);
   /* `?draft=<id>`: the Drafts card's Edit — the sheet opens bound to that row, or not at all. */
-  const { draft: draftParam } = useLocalSearchParams<{ draft?: string }>();
+  const { draft: draftParam, mailto } = useLocalSearchParams<{ draft?: string; mailto?: string }>();
   const leave = () => {
     if (router.canGoBack()) router.back();
     else router.replace("/");
@@ -95,7 +96,17 @@ function ComposeBody() {
   return (
     <Screen>
       <DetailBar title={Copy.composeNew} />
-      <ComposeSheet m={null} mode="new" onClose={leave} />
+      <ComposeSheet m={null} mode="new" onClose={leave} prefill={prefillOf(mailto)} />
     </Screen>
   );
+}
+
+/**
+ * `?mailto=<link>`: a `mailto:` pressed in a message, read by the one parser. The phone's composer
+ * has To, Subject and the body; a link's Cc and Bcc are not carried (filed, PHONE-MAILTO-CC-BCC).
+ */
+function prefillOf(raw: string | undefined): { to: string; subject: string; body: string } | undefined {
+  const d = typeof raw === "string" ? parseMailto(raw) : null;
+  if (d === null || emptyDraft(d)) return undefined;
+  return { to: d.to.join(", "), subject: d.subject, body: d.body };
 }

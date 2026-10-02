@@ -1478,14 +1478,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           addToPile: (kind, item) => {
             if (item.messageId) void acts.setPile(item.messageId, kind);
           },
-          pileToggle: (id, kind) => void acts.pileToggle(id, kind),
+          pileToggle: (id, kind, members) => void acts.pileToggle(id, kind, members),
           resurfaceToggle: (id) => void acts.resurfaceToggle(id),
           resurfaceAt: (id, iso) => void acts.resurfaceAt(id, iso),
           resurfaceNow: (id) => void acts.resurfaceNow(id),
-          resurfaceDone: (id) => void acts.resurfaceDone(id),
-          markSeen: (id, unread) => void acts.markSeen(id, unread),
+          resurfaceDone: (id, members) => void acts.resurfaceDone(id, members),
+          markSeen: (id, unread, members) => void acts.markSeen(id, unread, members),
           markAllSeen: (ids, feed) => void acts.markAllSeen(ids, feed),
-          move: (row, dest) => void acts.move(row, dest),
+          move: (row, dest, members) => void acts.move(row, dest, members),
           deleteMessage: (id, opts) => {
             /* THE WINDOW, NOT THE WIRE (the 0.20 review; the webapp `delete-undo.ts`'s shape): the
                row leaves every list at the press — the projection subtracts the held set — the

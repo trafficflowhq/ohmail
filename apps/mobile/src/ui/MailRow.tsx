@@ -69,14 +69,17 @@ export function MailRow({
        wire has one). Nothing about undo is re-implemented here — a second undo mechanism is a
        second contract. Junk takes the world's projected row, because the move's retarget is
        measured against where the message is PRESENTED, which only the projection knows. */
-    if (verb === "later") { void w.actions.pileToggle(m.id, "replyLater"); return; }
+    /* A FOLDED ROW IS ITS WHOLE CONVERSATION, as the web's pick of a row is: every verb takes
+       `memberIds` (absent on an unfolded row), and the press says one sentence. */
+    const members = m.memberIds;
+    if (verb === "later") { void w.actions.pileToggle(m.id, "replyLater", members); return; }
     if (verb === "junk") {
       const row = w.message(m.id);
-      if (row) w.actions.move(row, "spam");
+      if (row) w.actions.move(row, "spam", members);
       return;
     }
-    if (face === "done") { void w.actions.resurfaceDone(m.id); return; }
-    w.actions.markSeen(m.id, face === "markUnread");
+    if (face === "done") { void w.actions.resurfaceDone(m.id, members); return; }
+    w.actions.markSeen(m.id, face === "markUnread", members);
   };
 
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -106,7 +109,7 @@ export function MailRow({
         onPanResponderTerminationRequest: () => true,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [swipe, m.id, face],
+    [swipe, m.id, m.memberIds, face],
   );
 
   const row = (
@@ -147,7 +150,7 @@ export function MailRow({
           numberOfLines={1}
           style={{ flexShrink: 1 }}
         >
-          {m.from.name}
+          {m.sentTo ?? m.from.name}
         </Txt>
         <View style={{ flex: 1 }} />
         <Txt variant="caption" tone="ink3" tabular>

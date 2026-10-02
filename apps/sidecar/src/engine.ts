@@ -1760,6 +1760,31 @@ export function withImportHandover(
   });
 }
 
+/**
+ * A PRESS THAT ASKS FOR THE WIRE RINGS THE ORGANIZER HERE. `POST /sync/pull` stamps
+ * `sync_requested_at`, which only the hosted worker reads; on this composition the organizer is
+ * this process, so a 202 rings every runtime's doorbell (`ring`, the INBOX `exists` path: the
+ * ladder to base and one coalesced drain under `serialize`). Unconditional on the 202 — the
+ * stamp's own gap would make a second press wait for the poll. No runtime rings nothing.
+ */
+export function withPullKick(
+  routes: readonly Route[],
+  runtimesFor: () => Iterable<{ ring(): void }>,
+): Route[] {
+  return routes.map((r) => {
+    if (r.method !== "POST" || r.pattern !== "/sync/pull") return r;
+    return {
+      ...r,
+      handler: async (req, deps, params) => {
+        const res = await r.handler(req, deps, params);
+        if (res.status !== 202) return res;
+        for (const rt of runtimesFor()) rt.ring();
+        return res;
+      },
+    };
+  });
+}
+
 export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const log = config.log ?? ((): void => undefined);
   const now = config.now ?? ((): Date => new Date());
@@ -1950,7 +1975,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          the closure is only ever CALLED from a request handler, long after it exists. Local
          composition only — the hosted door proxies its resync to a worker and has no runtime
          here to force. */
-      ...withImportHandover(withForcedRedial(localRoutes, (id) => runtimes.get(id), log), (id) => runtimes.get(id)),
+      ...withPullKick(withImportHandover(withForcedRedial(localRoutes, (id) => runtimes.get(id), log), (id) => runtimes.get(id)), () => runtimes.all()),
       ...localAiRoutes(ai),
       ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
       // Which addresses this machine could serve same-network access on — the LAN ceremony's
@@ -1969,7 +1994,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * pairing mint) are structurally absent from it.
      */
     const hostApp: App | null = hostMode
-      ? createApp(withImportHandover(desktopHostRoutes, (id) => runtimes.get(id))) : null;
+      ? createApp(withPullKick(withImportHandover(desktopHostRoutes, (id) => runtimes.get(id)), () => runtimes.all())) : null;
     /**
      * The static half of the same door — the browser client the QR sends a phone to. Probed NOW,
      * awaited, so `host_assets_missing` lands in the boot log where somebody debugging an
@@ -7364,6 +7389,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * through a failure of the very act that is supposed to leave nothing behind.
          */
         noteWorldMoved,
+        ring: onMailboxSignal,
         unquiesce() {
           if (!heldForRemoval) return;
           heldForRemoval = false;
