@@ -11,6 +11,7 @@ export function oncePerLaunch(work: () => Promise<void>, failed: (err: unknown) 
     try {
       await work();
     } catch (err) {
+      // Said through the caller's logger, once; the latch above keeps the next drain from asking.
       failed(err);
     }
   };
