@@ -208,7 +208,11 @@ export interface AuthAuditEvent {
     // because this is the third place a spent token buys a credential — and the one whose
     // residual is a captured wire, so every admission has to be visible. `device` carries
     // `family=<id> session=<id>`, never the attempt id, which is the client's own string.
-    | "refresh_replayed";
+    | "refresh_replayed"
+    // A presentation REFUSED AS EXPIRED: the rolling window closed (`cause=lapsed`), or a newer line
+    // had killed the row (`cause=superseded`), the late answer a jar kept. Counted so a sign-out
+    // nobody revoked is visible; `device` carries `family=<id> session=<id> cause=<cause>`.
+    | "refresh_expired";
   method?: "webauthn" | "totp" | "recovery_code" | "password";
   ip: string;
   device?: string;

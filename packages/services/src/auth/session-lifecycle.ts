@@ -852,7 +852,7 @@ export class SessionLifecycle {
         // revoke the healthy line the recovery just re-established. Within the grace window
         // the arm above has already converged it, exactly like any fresh consumption.
         if (existing.expiresAt.getTime() <= existing.consumedAt.getTime()) {
-          throw new ServiceError("refresh_expired", 401, "refresh token expired");
+          throw await this.expiredRefusal(ctx, existing, "superseded");
         }
         // The sweep leaves a ROW, and sweep + row are ONE TRANSACTION — with the sweep REDONE
         // ALONE if it cannot commit. It used to leave nothing: the client got 401s and the only
@@ -879,7 +879,7 @@ export class SessionLifecycle {
         }
         throw new ServiceError("refresh_revoked", 401, "refresh token reuse detected");
       }
-      throw new ServiceError("refresh_expired", 401, "refresh token expired");
+      throw await this.expiredRefusal(ctx, existing, "lapsed");
     }
 
     // The absolute cap, when a surface has one. Rotation rolls the refresh window forward every
@@ -909,6 +909,26 @@ export class SessionLifecycle {
     }
 
     return this.mintRotation(ctx, db, row, now, ttls);
+  }
+
+  /**
+   * The `refresh_expired` refusal, recorded: `cause=lapsed` for a rolling window that closed, and
+   * `cause=superseded` for a row a newer line killed, which a jar holds when a late answer landed over
+   * the live one. Best effort: the refusal is the verdict, and a bookkeeping fault never turns it into
+   * a 500. The row names the family and session, never a token.
+   */
+  private async expiredRefusal(
+    ctx: ServiceContext, row: typeof refreshTokens.$inferSelect, cause: "lapsed" | "superseded",
+  ): Promise<ServiceError> {
+    try {
+      const db = asTx(ctx);
+      const [user] = await db.select().from(users).where(eq(users.id, row.userId)).limit(1);
+      await this.audit(db, user ?? null, "refresh_expired", undefined, ctx,
+        `family=${row.familyId} session=${row.sessionId} cause=${cause}`);
+    } catch {
+      /* the refusal stands without its row */
+    }
+    return new ServiceError("refresh_expired", 401, "refresh token expired");
   }
 
   /**
