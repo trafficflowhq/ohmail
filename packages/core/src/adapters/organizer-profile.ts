@@ -1536,8 +1536,11 @@ export function makeProfileIo(
 export type ProfileReadResult =
   | {
     state: "found"; doc: OrganizerProfileDoc; installId: string | null; ref: unknown;
-    /** The chosen message's body is in the escaped form this build writes ({@link ParsedProfileMessage.encoded}). */
-    encoded: boolean;
+    /**
+     * `false` when the chosen message's body is still in the plain form ({@link
+     * ParsedProfileMessage.encoded}); only `false` asks the holder to rewrite it, so absent writes nothing.
+     */
+    encoded?: boolean;
     /**
      * The generation `ref` was read under (mail 0094's mirror writer needs it). `ref` alone is a
      * uid, and storing one without its generation is the defect this pair prevents. This value

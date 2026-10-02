@@ -1456,7 +1456,7 @@ export class OrganizerProfileSync {
         // The held record is the question this organizer asks, never mid-flight residue.
         if (this.holdFingerprint !== null && docFingerprint === this.holdFingerprint) return;
         if (localSaysWhatTheDocumentSays(local, read.doc)) {
-          if (!read.encoded) await this.reencodeOnce(io, local, read, log);
+          if (read.encoded === false) await this.reencodeOnce(io, local, read, log);
           return;
         }
         if (ours) {
