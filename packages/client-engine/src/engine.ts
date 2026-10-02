@@ -2434,8 +2434,8 @@ export class OhmailEngine {
 
   /**
    * Idempotency-Keys WITHDRAWN in this session — read at the moment of sending. A durable mark
-   * alone cannot stop a row a flush has already lifted out of the queue, because that row is in
-   * no collection this call can reach; the key is. Cleared in {@link OhmailEngine.mutate}: a
+   * alone cannot stop a fresh verb waiting its turn at the gate, because that verb is in no
+   * collection this call can reach; the key is. Cleared in {@link OhmailEngine.mutate}: a
    * fresh expression of intent under a reused key is not withdrawn.
    */
   private readonly withdrawnKeys = new Set<string>();
@@ -7295,10 +7295,9 @@ export class OhmailEngine {
   ): Promise<MutationResult> {
     /**
      * THE WITHDRAWAL IS READ HERE, the line before the wire, because this is the only place every
-     * road passes and the only moment at which "is this still wanted?" is a true question. A row
-     * a flush lifted out of the queue a millisecond before Cancel is in no collection the
-     * withdrawal can reach — it is in that batch — and reaches the wire unless it is stopped
-     * here. Terminal: the overlay and the durable row go, and the refusal names itself so the
+     * road passes and the only moment at which "is this still wanted?" is a true question. A
+     * fresh verb waiting its turn at the gate is in no collection the withdrawal can reach, and
+     * reaches the wire unless it is stopped here. Terminal: the overlay and the durable row go, and the refusal names itself so the
      * ledger above says nothing about mail nobody sent.
      */
     if (this.withdrawnKeys.has(p.key)) {
@@ -7978,8 +7977,8 @@ export class OhmailEngine {
    * one consumer can have them. That makes it unusable as a question. A surface that wants to know whether there is
    * anything to collect had only two bad options — pull on every notification (a poll wearing a subscription's
    * clothes, and it takes the outbox gate each time) or infer it from the QUEUE, which cannot work for the case that
-   * matters: a replayed entry is removed from the queue BEFORE it is dispatched, so "something is pending" is never
-   * observable on a mount that did not issue it, and a rule armed on that transition never fires. Measured, not
+   * matters: a replayed entry leaves the queue the moment its turn is taken, so for a lone one "something is
+   * pending" is never observable on a mount that did not issue it, and a rule armed on that transition never fires. Measured, not
    * reasoned: three pulls, all empty, and the answer still sitting in the map. So the question is asked directly.
    */
 

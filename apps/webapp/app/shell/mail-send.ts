@@ -333,8 +333,8 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
 
 /**
  * IS A SEND OF THIS LANE STILL IN THE **DURABLE** OUTBOX — the question the QUEUE cannot answer. {@link
- * sendPendingInOutbox} reads `engine.pendingMutations()`, which is the in-memory queue, and for a RESTORED send that
- * list is empty at every moment a surface could look at it. Measured, at five points on a restored engine — before
+ * sendPendingInOutbox} reads `engine.pendingMutations()`, which is the in-memory queue, and for a lone RESTORED send
+ * that list is empty at every moment a surface could look at it (the replay takes its turn at once). Measured, at five points on a restored engine — before
  * `start()`, immediately after, +1 ms, +11 ms, and after the drive resolved: zero, zero, zero, zero, zero. The entry
  * is loaded and dispatched without ever being observable, so a rule built on that read is a rule that never fires.
  * Two arms of the hold below were written on it and both were silently dead until this was measured. The STORE holds
