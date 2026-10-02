@@ -76,15 +76,16 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
       where "deleted_at" is null`,
   },
   {
-    // THE SCREENER AUTO-APPLY HELD PAGE (`screener-auto.ts` `heldPageSql`), which walks the held
-    // queue by `message_id` from its cursor. Without it the page reads `folder_state`'s unique index
-    // from the first entry and filters, page after page. PARTIAL on the page's own literals, so it
-    // holds only the held rows; `folder_state` is a growth table, hence here and not in a journal.
-    // Unconditional: the held queue grows with the mailbox, like `messages` above.
-    name: "folder_state_screener_held_idx",
+    // THE SCREENER AUTO-APPLY HELD PAGE (`screener-auto.ts` `heldPageSql`): the held rows whose
+    // floor is unjudged (`screener_floor_version is null`), by `message_id` from the cursor, and the
+    // full walk's stale-version read (`< N or > N`). The version is a KEY, so both are one range.
+    // PARTIAL on the page's literals; `folder_state` is a growth table, hence here and not in a
+    // journal. Replaces `folder_state_screener_held_idx` (dropped by the next release's migration).
+    name: "folder_state_screener_held_floor_idx",
     table: "folder_state",
-    ddl: sql`create index concurrently if not exists "folder_state_screener_held_idx"
-      on public.folder_state using btree ("message_id")
+    requiresColumn: "screener_floor_version",
+    ddl: sql`create index concurrently if not exists "folder_state_screener_held_floor_idx"
+      on public.folder_state using btree ("screener_floor_version","message_id")
       where "desired_folder" = 'ohmail/Screener' and "last_set_by" = 'us'`,
   },
   {

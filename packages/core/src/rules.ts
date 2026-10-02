@@ -494,6 +494,14 @@ function isBulkSend(headers: Readonly<Record<string, unknown>>): boolean {
  * corroborating list/ESP marker. `Feedback-ID` alone is deliberately not enough — the count
  * landing below the raw population IS the safety margin. Do NOT loosen this to an OR.
  */
+/**
+ * THE FLOOR'S VERSION — the key the Screener auto-apply pass writes into
+ * `folder_state.screener_floor_version` when it reads {@link migrationBulkPlacement} null for a
+ * message. Bump it when the five header names below or the conjunction change: marks under any other
+ * number are withdrawn and re-judged by the pass's next full walk, with no migration.
+ */
+export const STRONG_BULK_FLOOR_VERSION = 1;
+
 function hasStrongBulkFloor(headers: Readonly<Record<string, unknown>>): boolean {
   if (headerValues(headers, LIST_UNSUBSCRIBE_HEADER) === null) return false;
   if (headerValues(headers, "list-id") !== null) return true;

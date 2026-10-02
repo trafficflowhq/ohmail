@@ -4,7 +4,7 @@ import {
   messageBodies, messageStates, messages, rules as rulesTbl, recordChange,
   ruleNamesSenderSql, weAnsweredThisSenderWhere, type Tx, auditAction,} from "@trafficflow/db";
 import {
-  migrationBulkPlacement, silentLogger,
+  STRONG_BULK_FLOOR_VERSION, migrationBulkPlacement, silentLogger,
   type Destination, type Logger, type NormalizedMessage,
 } from "@trafficflow/core";
 import { dialect } from "@trafficflow/db/dialect";
@@ -27,7 +27,7 @@ const SCREENER: Destination = "ohmail/Screener";
 /**
  * The held set the walk pages over, as the held page spells it: LITERALS, so a partial index on
  * exactly this predicate is provable at plan time whatever the driver does with parameters. The
- * hot-path spec `folder_state_screener_held_idx` carries the same two values, pinned by a test.
+ * hot-path spec `folder_state_screener_held_floor_idx` carries the same two values, pinned by a test.
  */
 export const HELD_PAGE_PREDICATE = { folder: SCREENER, setBy: "us" } as const;
 /** The first held page's cursor: below every uuid, so every page is the same statement. */
@@ -48,14 +48,18 @@ export const SCREENER_AUTO_BATCH = 100;
 export const SCREENER_AUTO_WRITES_PER_CYCLE = 100;
 
 /**
- * Pages one account's queue may walk in one cycle. A bound, not a `while (true)`: kept rows (a plain
- * stranger, a sensitive message) STAY, so a "loop until an empty page" pass would re-read them for
- * ever — termination is the cursor, monotone in the held `folder_state.message_id`, or a short page.
+ * Pages one account's queue may walk in one cycle. A bound, not a `while (true)`: a kept row whose
+ * floor could not be marked (a sensitive message, a row with no body yet, one an exclusion keeps)
+ * STAYS on the page, so termination is the cursor, monotone in the held `folder_state.message_id`,
+ * or a short page — never an empty one.
  */
 export const SCREENER_AUTO_MAX_PAGES = 500;
 
 /** How long an account may go on incremental walks before a full one — the missed-wake backstop. */
 export const SCREENER_AUTO_FULL_EVERY_MS = 60 * 60_000;
+
+/** Marks at another floor version withdrawn per full walk; a bump is re-judged over hours. */
+export const SCREENER_FLOOR_WITHDRAW_LIMIT = 1000;
 
 /**
  * Where an account's last COMPLETED walk left it, in worker memory (a restart walks in full). The
@@ -90,6 +94,8 @@ export interface ScreenerAutoDeps {
   walk?: ScreenerAutoWalk;
   /** Test seam. Default {@link SCREENER_AUTO_FULL_EVERY_MS}. */
   fullEveryMs?: number;
+  /** Test seam. Default {@link STRONG_BULK_FLOOR_VERSION}. */
+  floorVersion?: number;
   /**
    * The cycle tail's clock, asked before every page after the first. A walk it stops RESUMES at its
    * cursor on the next call (`walk.resumes`), so a walk longer than the clock still finishes and the
@@ -107,6 +113,8 @@ export interface ScreenerAutoResult {
   moved: number;
   /** Rows the pass left in the Screener — not strong-bulk, sensitivity-flagged, or user-touched. */
   kept: number;
+  /** Kept rows newly marked as read with no strong-bulk floor; the next walks skip them. */
+  marked: number;
   /** Destination → how many movers went there. Always a subset of {Reads, Receipts}. */
   destinations: Record<string, number>;
   /**
@@ -141,11 +149,13 @@ interface AutoRow {
   desiredFolder: string;
   sensitivityCategory: string | null;
   noAi: boolean;
+  /** A `message_bodies` row exists — an absent one reads `{}` and its floor is not yet known. */
+  bodyPresent: boolean;
 }
 
 const EMPTY = (): ScreenerAutoResult => ({
-  ran: false, examined: 0, moved: 0, kept: 0, destinations: {}, sensitivityExcluded: 0, capped: false,
-  revoked: false, mode: "full",
+  ran: false, examined: 0, moved: 0, kept: 0, marked: 0, destinations: {}, sensitivityExcluded: 0,
+  capped: false, revoked: false, mode: "full",
 });
 
 /** Change kinds that can make a KEPT row a candidate again without touching its `folder_state`. */
@@ -190,6 +200,7 @@ export async function screenerAutoApplyPass(
   const batch = deps.batch ?? SCREENER_AUTO_BATCH;
   const budget = deps.writesPerCycle ?? SCREENER_AUTO_WRITES_PER_CYCLE;
   const maxPages = deps.maxPages ?? SCREENER_AUTO_MAX_PAGES;
+  const floorVersion = deps.floorVersion ?? STRONG_BULK_FLOOR_VERSION;
   const accountId = deps.accountId;
 
   // ── THE OPT-IN PROBE ───────────────────────────────────────────────────────────────────────
@@ -225,6 +236,12 @@ export async function screenerAutoApplyPass(
   let clockStop = false;
   let endedShort = false;
 
+  // STEP 0, full walks only: withdraw marks written under another floor version, so this walk's
+  // pages judge those rows again. Its own statement, no lock but the rows'; bounded per walk.
+  if (plan.changed === null && !resume) {
+    await dialect(db).exec(db, staleFloorWithdrawSql({ accountId, version: floorVersion }));
+  }
+
   for (let page = plan.changed === null ? 0 : resume?.page ?? 0, ran = 0; page < pages; page++, ran++) {
     if (result.moved >= budget) { result.capped = true; break; }
     if (ran > 0 && deps.until?.()) {
@@ -249,7 +266,7 @@ export async function screenerAutoApplyPass(
         .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1).for("update");
       if (!live?.autoApplyAt) {
         return {
-          revoked: true, held: 0, lastHeld: null, rows: 0, moved: 0, kept: 0, sensitivityExcluded: 0,
+          revoked: true, held: 0, lastHeld: null, rows: 0, moved: 0, kept: 0, marked: 0, sensitivityExcluded: 0,
           capped: false, destinations: {} as Record<string, number>,
         };
       }
@@ -264,6 +281,9 @@ export async function screenerAutoApplyPass(
       let moved = 0;
       let kept = 0;
       let sensitivityExcluded = 0;
+      // Rows read with NO strong-bulk floor and a body row present: the floor is a pure function of
+      // headers written once, so the row is kept on every later walk too — mark it, skip it after.
+      const toMark: string[] = [];
       let capped = false;
       const destinations: Record<string, number> = {};
 
@@ -275,7 +295,7 @@ export async function screenerAutoApplyPass(
         // THE ONLY DETERMINISTIC JUDGMENT A STRANGER GETS: the strong-bulk floor. Null ⇒ keep (a
         // plain stranger, a relevant alert). No model call, no spend, computed from headers on disk.
         const to = migrationBulkPlacement(asRuleInput(c));
-        if (to === null) { kept++; continue; }
+        if (to === null) { kept++; if (c.bodyPresent) toMark.push(c.messageId); continue; }
 
         // ── SENSITIVITY KEEP — this is `pipeline.ts:563-567`. Drop it and a flagged strong-bulk row
         // moves; keeping it means a stranger's login code stays at the gate for a human. ──────────
@@ -300,9 +320,14 @@ export async function screenerAutoApplyPass(
         destinations[to] = (destinations[to] ?? 0) + 1;
       }
 
+      // ONE statement, this transaction, rows already locked FOR UPDATE by the candidate statement.
+      // scoped-by: the ids are the candidate statement's own rows, read under this account.
+      const marked = toMark.length === 0 ? 0
+        : (await dialect(tx).exec(tx, floorMarkSql({ ids: toMark, version: floorVersion }))).length;
+
       return {
         revoked: false, held: held.length, lastHeld: held[held.length - 1] ?? null,
-        rows: candidates.length, moved, kept, sensitivityExcluded, capped, destinations,
+        rows: candidates.length, moved, kept, marked, sensitivityExcluded, capped, destinations,
       };
     });
 
@@ -321,6 +346,7 @@ export async function screenerAutoApplyPass(
     result.examined += outcome.rows;
     result.moved += outcome.moved;
     result.kept += outcome.kept;
+    result.marked += outcome.marked;
     result.sensitivityExcluded += outcome.sensitivityExcluded;
     for (const [to, n] of Object.entries(outcome.destinations)) {
       result.destinations[to] = (result.destinations[to] ?? 0) + n;
@@ -401,11 +427,11 @@ function idsOf(v: unknown): string[] {
 }
 
 /**
- * ONE PAGE OF THE HELD QUEUE, as ids — no lock, ordered by `folder_state.message_id` from the cursor.
- * The keyset sits on the driving side, so the page reads its index from the cursor rather than from
- * the first held row of the deployment. `folder_state` has no tenant key: the join to `messages`
- * scopes the page to the account. Literals for the folder predicate and the limit, so the statement
- * has two parameters and one text; the candidate statement re-asks every predicate under its lock.
+ * ONE PAGE OF THE HELD QUEUE, as ids — no lock, ordered by `folder_state.message_id` from the cursor,
+ * and only rows whose floor is unjudged (`screener_floor_version is null`): a marked row was read
+ * with no strong-bulk floor and is kept by every walk, so no walk reads it again. ORDER BY names the
+ * index key (version, then id): `is null` is no equality to the planner, so ordering by the id alone
+ * walks the unique index and filters. The join to `messages` scopes the page to the account.
  */
 export function heldPageSql(opts: { accountId: string; afterId: string | null; limit: number }): SQL {
   if (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > 10_000) {
@@ -416,8 +442,46 @@ export function heldPageSql(opts: { accountId: string; afterId: string | null; l
     join ${messages} m on m.id = fs.message_id
    where m.account_id = ${opts.accountId}
      and fs.desired_folder = ${lit(HELD_PAGE_PREDICATE.folder)} and fs.last_set_by = ${lit(HELD_PAGE_PREDICATE.setBy)}
+     and fs.screener_floor_version is null
      and fs.message_id > ${opts.afterId ?? BEFORE_EVERY_ID}::uuid
-   order by fs.message_id limit ${sql.raw(String(opts.limit))}`;
+   order by fs.screener_floor_version, fs.message_id limit ${sql.raw(String(opts.limit))}`;
+}
+
+/** A floor version as a SQL literal; anything but a positive integer is refused. */
+function versionLiteral(v: number): SQL {
+  if (!Number.isInteger(v) || v < 1) throw new Error(`floor version ${String(v)} is not a version`);
+  return sql.raw(String(v));
+}
+
+/**
+ * THE MARK: this page's kept rows read with no strong-bulk floor, at `version`. One column and
+ * nothing else — no `updated_at` (the mirror's window and the drain index must never see it), no
+ * change row, no audit row: it records what the walk read, not where the message belongs.
+ */
+export function floorMarkSql(opts: { ids: readonly string[]; version: number }): SQL {
+  const v = versionLiteral(opts.version);
+  return sql`update ${folderState} set screener_floor_version = ${v}
+   where message_id = any(${sql.param([...opts.ids])}::uuid[])
+     and screener_floor_version is distinct from ${v}
+   returning message_id`;
+}
+
+/**
+ * STEP 0 of a full walk: withdraw up to {@link SCREENER_FLOOR_WITHDRAW_LIMIT} of this account's held
+ * marks written under another floor version, so the walk judges them again. Two index ranges on the
+ * held floor index (`< N`, `> N`); empty in the steady state.
+ */
+export function staleFloorWithdrawSql(opts: { accountId: string; version: number }): SQL {
+  const v = versionLiteral(opts.version);
+  const lit = (x: string): SQL => sql.raw(`'${x.replace(/'/g, "''")}'`);
+  return sql`update ${folderState} set screener_floor_version = null
+   where message_id in (select fs.message_id from ${folderState} fs
+       join ${messages} m on m.id = fs.message_id
+      where m.account_id = ${opts.accountId}
+        and fs.desired_folder = ${lit(HELD_PAGE_PREDICATE.folder)} and fs.last_set_by = ${lit(HELD_PAGE_PREDICATE.setBy)}
+        and (fs.screener_floor_version < ${v} or fs.screener_floor_version > ${v})
+      limit ${sql.raw(String(SCREENER_FLOOR_WITHDRAW_LIMIT))})
+   returning message_id`;
 }
 
 async function heldPage(t: Tx, opts: { accountId: string; afterId: string | null; limit: number }): Promise<string[]> {
@@ -525,6 +589,8 @@ async function selectCandidates(
     ))`,
     sensitivityCategory: messages.sensitivityCategory,
     noAi: messages.noAi,
+    // Whether the LEFT JOIN found a body row: `{}` headers from an absent one are not a verdict.
+    bodyPresent: sql<boolean>`${messageBodies.messageId} is not null`,
   }).from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
@@ -543,6 +609,8 @@ async function selectCandidates(
     desiredFolder: r.desiredFolder,
     sensitivityCategory: r.sensitivityCategory,
     noAi: r.noAi,
+    // Only a TRUE reading marks; a projection the driver hands back as anything else reads absent.
+    bodyPresent: r.bodyPresent === true,
   }));
 }
 
