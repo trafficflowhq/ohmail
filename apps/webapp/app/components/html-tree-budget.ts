@@ -74,7 +74,11 @@ class Meter {
   }
 }
 
-/** The tokenizer, charged for each comparison of a new attribute name with the tag's earlier ones. */
+/**
+ * The tokenizer, charged for each comparison of a new attribute name with the tag's earlier ones.
+ * `_createAttr` is protected, so parse5 is pinned exactly in both manifests: a release that renames
+ * it leaves the override uncalled, and the 40,000-attribute case in the unit suite goes red.
+ */
 class BudgetTokenizer extends Tokenizer {
   constructor(options: TokenizerOptions, handler: TokenHandler, private readonly meter: Meter) {
     super(options, handler);
