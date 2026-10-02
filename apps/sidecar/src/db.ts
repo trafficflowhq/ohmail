@@ -18,8 +18,8 @@ import {
   type LogBounds, type LogMark,
 } from "@trafficflow/db/dialect";
 import {
-  STORE_FLUSH, createStoreScheduler, currentStoreLane, inStoreLane, outsideStoreLanes,
-  scheduleStoreLanes, type StoreLaneCensus,
+  SCHEDULED_STORE_METHODS, STORE_FLUSH, createStoreScheduler, currentStoreLane, inStoreLane,
+  outsideStoreLanes, scheduleStoreLanes, type StoreLaneCensus,
 } from "./store-lanes.js";
 import { LocalStoreFs } from "./pglite-transport.js";
 import { makeStoreInMemory } from "./fresh-store.js";
@@ -204,6 +204,105 @@ function createLogFlush(
   };
 }
 
+/**
+ * How long a close waits for the calls it admitted, under the shell's five-second grace
+ * (`apps/desktop/src-tauri/src/engine.rs`'s `STOP_GRACE`) with room for the mirror's last page.
+ */
+export const STORE_CLOSE_WAIT_MS = 3_000;
+
+/** A call that reached the store after its close began. Never run, so it never reached Postgres. */
+export class StoreClosingError extends Error {
+  constructor(readonly method: string) {
+    super(`the local store is closing: a new ${method} was refused rather than run under the shutdown`);
+    this.name = "StoreClosingError";
+  }
+}
+
+/** The calls a close admitted were still running at {@link STORE_CLOSE_WAIT_MS}. Nothing was shut down. */
+export class StoreCloseTimeoutError extends Error {
+  constructor(readonly pending: number, readonly waitedMs: number) {
+    super(`the local store was left open: ${pending} admitted call(s) still ran after ${waitedMs} ms, `
+      + "and shutting Postgres down under them hangs the process; the next launch recovers the log");
+    this.name = "StoreCloseTimeoutError";
+  }
+}
+
+/** What {@link installCloseDoor} put in front of the client. */
+interface CloseDoor {
+  client: PGlite;
+  /** From now on every new call is refused with {@link StoreClosingError}. */
+  shut(): void;
+  /** Calls admitted and not yet settled. */
+  pending(): number;
+  /** Resolves `true` once nothing admitted is running and `also` has settled, `false` at `ms`. */
+  quiet(also: Promise<unknown>, ms: number): Promise<boolean>;
+}
+
+/**
+ * THE ONE CLOSE DOOR. PGlite 0.2's `close()` takes neither of its own locks, and a statement inside
+ * a transaction skips its ready check, so a close issued under a running call sent Terminate and
+ * the call's next statement ran against a shut-down backend, which loops in WASM for ever. In front
+ * of the scheduler, so a call still queued for its lane counts as admitted and completes; a call
+ * that arrives after `shut()` never reaches the connection, and the first one is logged by name.
+ */
+function installCloseDoor(client: PGlite, log: Diagnostic | undefined): CloseDoor {
+  let shut = false;
+  let refusedLogged = false;
+  let running = 0;
+  const idle = new Set<() => void>();
+  for (const name of SCHEDULED_STORE_METHODS) {
+    const original = (client as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[name]!;
+    Object.defineProperty(client, name, {
+      configurable: true,
+      writable: true,
+      value: function door(this: PGlite, ...args: unknown[]): Promise<unknown> {
+        if (shut) {
+          if (!refusedLogged) {
+            refusedLogged = true;
+            log?.("local_db_refused_closing", {
+              method: name,
+              reason: "a call reached the local store after its close began; it and every later one "
+                + "is refused unrun, and this is said once",
+            });
+          }
+          return Promise.reject(new StoreClosingError(name));
+        }
+        running++;
+        const settle = (): void => {
+          running--;
+          if (running === 0) for (const w of [...idle]) w();
+        };
+        let out: Promise<unknown>;
+        try {
+          out = Promise.resolve(original.apply(this, args));
+        } catch (err) {
+          settle();
+          return Promise.reject(err);
+        }
+        return out.finally(settle);
+      },
+    });
+  }
+  return {
+    client,
+    shut: () => { shut = true; },
+    pending: () => running,
+    quiet: (also, ms) => new Promise<boolean>((resolve) => {
+      const deadline = setTimeout(() => { idle.delete(check); resolve(false); }, Math.max(0, ms));
+      deadline.unref?.();
+      let alsoDone = false;
+      const check = (): void => {
+        if (running !== 0 || !alsoDone) return;
+        idle.delete(check);
+        clearTimeout(deadline);
+        resolve(true);
+      };
+      idle.add(check);
+      void also.catch(() => undefined).then(() => { alsoDone = true; check(); });
+    }),
+  };
+}
+
 /** Raised when the relaxed commits, the scheduler and the log flush were put on different clients. */
 export class StoreClientSplitError extends Error {
   constructor(readonly installers: readonly string[]) {
@@ -329,7 +428,11 @@ export interface OpenLocalDb {
    * {@link analyzeSearchIfStale}. `true` when an ANALYZE ran. The phone's store answers `false`.
    */
   analyzeSearchIfStale(): Promise<boolean>;
-  /** Flush and release. Idempotent — shutdown paths call it from more than one place. */
+  /**
+   * Flush and release. Idempotent — shutdown paths call it from more than one place, and they share
+   * one close. On the desktop store it refuses new calls, waits for the admitted ones, and rejects
+   * with {@link StoreCloseTimeoutError} rather than shut down under one still running.
+   */
   close(): Promise<void>;
 }
 
@@ -419,6 +522,8 @@ export interface OpenLocalDbOptions {
   logFlushIntervalMs?: number;
   /** The {@link CHECKPOINT_SLOW_MS} floor, injectable so a test can drive both sides of it. */
   slowCheckpointFloorMs?: number;
+  /** The close's {@link STORE_CLOSE_WAIT_MS} bound. Production takes the default; 0 is refused. */
+  closeWaitMs?: number;
   /**
    * The {@link INGEST_FOLD_WAL_BYTES} window, injectable so a test can cross it in seconds rather
    * than by writing sixty-four megabytes of log.
@@ -1519,6 +1624,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   const every = positiveInterval("checkpointIntervalMs", opts.checkpointIntervalMs, CHECKPOINT_INTERVAL_MS);
   const flushEvery = positiveInterval("logFlushIntervalMs", opts.logFlushIntervalMs, INGEST_LOG_FLUSH_MS);
   const slowCheckpointMs = opts.slowCheckpointFloorMs ?? CHECKPOINT_SLOW_MS;
+  const closeWaitMs = positiveInterval("closeWaitMs", opts.closeWaitMs, STORE_CLOSE_WAIT_MS);
   mkdirSync(dataDir, { recursive: true });
   const unlock = lockDataDir(dataDir, log);
   try {
@@ -1591,8 +1697,10 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const flush = createLogFlush(client, flushEvery, log, () => !closed);
     const relaxed = relaxIngestCommits(client, flush.noteRelaxed);
     const scheduled = scheduleStoreLanes(client, lanes);
+    /* OUTERMOST, so a call waiting for its lane is already admitted. See {@link installCloseDoor}. */
+    const door = installCloseDoor(client, log);
     assertOneStoreClient(client, {
-      "relaxed commits": relaxed, scheduler: scheduled, "log flush": flush.client,
+      "relaxed commits": relaxed, scheduler: scheduled, "log flush": flush.client, "close door": door.client,
     });
     const pgliteOpenMs = Date.now() - tOpen;
     const db = brandDialect(drizzle(client, { schema: mailSchema }), "pg");
@@ -1689,6 +1797,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
        a process stays alive, and a fresh timer per tick rather than `setInterval` so a slow
        checkpoint cannot have a second one queued behind it. */
     let tick: ReturnType<typeof setTimeout> | null = null;
+    let closing: Promise<void> | null = null;
     const schedule = (): void => {
       if (closed) return;
       tick = setTimeout(() => {
@@ -1697,6 +1806,20 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       tick.unref?.();
     };
     schedule();
+
+    const terminate = async (): Promise<void> => {
+      try {
+        // Postgres takes its own shutdown checkpoint here, which is why there is not one of ours.
+        await client.close();
+        /* AND ONLY THEN is the run recorded as closed — after the shutdown checkpoint, so the
+           record cannot say "nothing was lost" about a store that was still flushing. A throw
+           above leaves it `open: true` and the next launch mints a new generation, which is the
+           safe side of a question about somebody's mail. */
+        writeStoreGeneration(dataDir, storeGeneration, false);
+      } finally {
+        unlock();
+      }
+    };
 
     return {
       db,
@@ -1710,23 +1833,28 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       storeBytes: () => storeHeapBytes(client),
       laneCensus: () => lanes.census(),
       analyzeSearchIfStale: () => (closed ? Promise.resolve(false) : analyzeSearchIfStale(client)),
-      close: async () => {
-        if (closed) return;
-        closed = true;
-        if (tick) clearTimeout(tick);
-        tick = null;
-        flush.stop();
-        try {
-          // Postgres takes its own shutdown checkpoint here, which is why there is not one of ours.
-          await client.close();
-          /* AND ONLY THEN is the run recorded as closed — after the shutdown checkpoint, so the
-             record cannot say "nothing was lost" about a store that was still flushing. A throw
-             above leaves it `open: true` and the next launch mints a new generation, which is the
-             safe side of a question about somebody's mail. */
-          writeStoreGeneration(dataDir, storeGeneration, false);
-        } finally {
-          unlock();
-        }
+      /* ONE CLOSE, SHARED BY EVERY CALLER: refuse new calls, wait for the admitted ones and the
+         checkpoint chain, and only then Terminate. At the bound it throws and terminates nothing
+         (the store stays recorded open, so the next launch replays its log); a later call waits again. */
+      close: () => {
+        closing ??= (async () => {
+          closed = true;
+          if (tick) clearTimeout(tick);
+          tick = null;
+          flush.stop();
+          door.shut();
+          const began = Date.now();
+          if (!(await door.quiet(checkpointing, closeWaitMs))) {
+            const err = new StoreCloseTimeoutError(door.pending(), Date.now() - began);
+            log?.("local_db_close_failed", { err, reason: err.message });
+            throw err;
+          }
+          await terminate();
+        })().catch((err: unknown) => {
+          if (err instanceof StoreCloseTimeoutError) closing = null;
+          throw err;
+        });
+        return closing;
       },
     };
   } catch (err) {

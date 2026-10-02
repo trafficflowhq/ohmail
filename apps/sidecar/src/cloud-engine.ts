@@ -2045,11 +2045,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         sessionWatch.release();
         authed?.auth.stop();
         authed?.wake.stop();
-        // THE AWAIT IS THE FIX. `opened.close()` hands PGlite a close that queues behind whatever
-        // the mirror has already asked it to do, so closing while a drain was still enqueuing pages
-        // meant the close waited on a walk that had no idea it should stop — past the shell's grace
-        // period, and the process was killed instead of leaving. Now the drain is asked to stop and
-        // this waits for it to be out of the database before the close is issued.
+        // THE DRAIN LEAVES FIRST. `opened.close()` (db.ts's close door) waits for the calls it has
+        // admitted and refuses new ones, but only for a bounded few seconds: a drain still walking
+        // pages would keep it waiting past the shell's grace. So the drain is asked to stop and this
+        // waits for it to be out of the store before the close is issued.
         await authed?.mirror.stop();
         // A session-death teardown that raced this shutdown already set `authed` null, so the
         // stop above matched nothing — but ITS mirror may still be draining its last page.
