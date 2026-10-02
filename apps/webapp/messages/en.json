@@ -1753,7 +1753,7 @@
     "door": "ohmail <k>answers the door for you</k>: first-time senders <k>wait at the Screener</k> until you let them in, so your Ohbox holds only mail you said yes to — organized in place, <k>real folders</k> on the mailboxes you already own. <o>Leave anytime</o>; your mailbox stays organized.",
     "ctaGet": "Get ohmail.",
     "ctaDemo": "Try the demo",
-    "note": "Free on macOS, Windows and Linux — a local-first mail client on the mailboxes you already own · Cloud from $9/mo, 14 days free · any IMAP mailbox, Gmail and Microsoft 365 / Exchange*. * Microsoft 365 and Exchange connect with your Microsoft sign-in; some organizations require an admin to approve ohmail first."
+    "note": "Free on macOS, Windows and Linux — a local-first mail client on the mailboxes you already own · Cloud from $9/mo, 14 days free · any IMAP mailbox, Gmail and Microsoft 365 / Exchange*. * Microsoft 365 and Exchange connect with your Microsoft sign-in on ohmail Cloud and on self-hosted servers set up for it; some organizations require an admin to approve ohmail first."
   },
   "demo": {
     "heading": "This is not a screenshot.",
