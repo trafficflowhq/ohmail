@@ -18,7 +18,7 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.25.10] — 2026-10-02
+## [0.25.10] — 2026-10-03
 
 ### A long message no longer stops the phone from syncing
 <!-- changes: hotfix-0.25.10.md -->

@@ -74,7 +74,7 @@
   </screenshots>
 
   <releases>
-    <release version="0.25.10" date="2026-10-02">
+    <release version="0.25.10" date="2026-10-03">
       <description>
         <ul>
           <li>A long message no longer stops the phone from syncing</li>
