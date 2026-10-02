@@ -627,6 +627,16 @@ const NEVER_REFRESH = [
   "/auth/verify-email",
   "/auth/2fa/",
   /*
+   * A factor's 401 is an answer. A wrong step-up code is refused 401 `unauthorized`, which is also
+   * what a lapsed session gets, so a refresh here sent the same code twice: two attempts against
+   * the sign-in throttle and a rotated session per wrong code. `/pair/redeem` spends a single-use
+   * token. The set is not remembered: `factor-routes-never-refresh.test.ts` derives every route
+   * that checks a factor or a single-use credential from the server and refuses one this list does
+   * not cover.
+   */
+  "/auth/step-up/",
+  "/pair/redeem",
+  /*
    * `/auth/logout`, and the web's sign-out door below `/auth/refresh`, which that entry already
    * covers: a 401 at either is an answer, never an accident. Refreshing first re-mints a session
    * in order to revoke it, which is absurd on its own terms; it also took the sign-out through a
