@@ -7555,7 +7555,10 @@ export class OhmailEngine {
           this.overlays.delete(p.id);
           this.overlayRev++;
           this.notify();
-          return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
+          // A send is marked only by the same send re-pressed under its key (`supersedeQueued`),
+          // which still owes the key: `queued`, never a refusal over a reply that is still going.
+          const owed = p.mutation.kind === "mail_send" ? "queued" as const : "rolled_back" as const;
+          return { id: p.id, key: p.key, status: owed, seq: null, error: rejection };
         }
         this.queue.push(p);
         // NAMED, not adopted — see {@link MutationResult.entityId}. The adapter created a row for

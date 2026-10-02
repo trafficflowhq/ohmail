@@ -4306,9 +4306,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // second copy also lets the server answer from the first reservation, and only this moment
     // can see that the words changed — see `resumedOverOtherText`. Whether it cost anything is
     // the server's half of the question, asked when the answer comes back.
-    if (standing !== undefined && sendTextDiffers(standing.mutation, m)) {
-      noteResumedOverOtherText(engine, standing.key);
-    }
+    const differs = standing !== undefined && sendTextDiffers(standing.mutation, m);
+    if (differs) noteResumedOverOtherText(engine, standing.key);
+    // Over a send on the wire, that send's own settlement spends the mark before this press's
+    // answer arrives; this answer is about the same key, so the mark is written again for it.
+    const overTheWire = differs && !engine.pendingMutations().includes(standing);
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
        the key would be replayed on the return after the first had gone, and each replay writes a
        draft of its own (`send-waits.ts`). Different words, or Send + Done pressed over a plain
@@ -4321,7 +4323,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ...(standing === undefined ? {} : { key: standing.key }),
       // Send + Done's intent rides the send's own outbox row, so whichever road confirms it releases.
       ...(andDone !== null ? { andDone } : {}),
-    }).then((r) => { noteQueuedSend(engine, r, m); return r; });
+    }).then((r) => {
+      if (overTheWire) noteResumedOverOtherText(engine, r.key);
+      noteQueuedSend(engine, r, m);
+      return r;
+    });
   };
 
   /**
