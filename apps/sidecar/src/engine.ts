@@ -9,7 +9,7 @@ import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
   isImapBoundExceeded, type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
-import { makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The release refusal's OWN class, from the one module that throws it: `releaseOwnClaim` tells a
 // live-sibling refusal (`nonce_unknown` — the pane owes the sibling-lapse sentence) from "could not look".
 import { ClaimReleaseError } from "@trafficflow/core/adapters/organizer-lease";
@@ -3140,6 +3140,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            deadlines keeps them, and an explicitly-undefined key cannot clobber ours the way a
            plain spread order would. See {@link SIDECAR_NET_TIMEOUTS}. */
         timeouts: { ...SIDECAR_NET_TIMEOUTS, ...(mbImap.timeouts ?? {}) },
+        /* What the last attach decided for Sent, Junk and Trash: a role never moves by a name guess. */
+        storedFolders: await storedFoldersOf(repo, mb.id),
       };
       /* THIS MAILBOX'S REQUEST KEY, from the credential on the line above — the one the socket is
        * opened with. Deriving it anywhere else is how it comes to disagree with the other installs

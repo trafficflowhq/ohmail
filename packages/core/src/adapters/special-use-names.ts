@@ -1,0 +1,63 @@
+/**
+ * The localized folder names a server without SPECIAL-USE is guessed by, PINNED: the \Sent, \Trash,
+ * \Junk and \Drafts lists of imapflow 1.5.0 (lib/special-use.js, MIT, (c) 2020-2024 Postal
+ * Systems OÜ), copied so a dependency bump cannot change which folder ohmail files into or reads.
+ * imapflow 1.7.8 added names (Gesendet, Papierkorb, Cestino, …) and, guessing alphabetically,
+ * moved Sent and Trash for mailboxes holding both spellings. Lower-case, compared after the same
+ * fold imapflow applies, minus Trash's bare `bin` and `deleted`: the write-side belt refuses those on
+ * purpose (`TRASH_BY_NAME`). Adding a name is a product change with its own control, never a bump.
+ */
+export const PINNED_ROLE_NAMES = {
+  sent: [
+    "aika", "bidaliak", "bidalita", "dihantar", "e rometsweng", "e tindami",
+    "elküldött", "elküldöttek", "elementos enviados", "éléments envoyés", "enviadas", "enviados",
+    "enviats", "envoyés", "ethunyelweyo", "expediate", "ezipuru", "gesendete",
+    "gesendete elemente", "gestuur", "gönderilmiş öğeler", "göndərilənlər", "iberilen", "inviati",
+    "išsiųstieji", "kuthunyelwe", "lasa", "lähetetyt", "messages envoyés", "naipadala",
+    "nalefa", "napadala", "nosūtītās ziņas", "odeslané", "odeslaná pošta", "padala",
+    "poslane", "poslano", "poslané", "poslato", "saadetud", "saadetud kirjad",
+    "saadetud üksused", "sendt", "sent", "sent items", "sent messages", "sända poster",
+    "sänt", "terkirim", "ti fi ranṣẹ", "të dërguara", "verzonden", "vilivyotumwa",
+    "wysłane", "đã gửi", "σταλθέντα", "жиберилген", "жіберілгендер", "изпратени",
+    "илгээсэн", "ирсол шуд", "испратено", "надіслані", "отправленные", "пасланыя",
+    "юборилган", "ուղարկված", "נשלחו", "פריטים שנשלחו", "المرسلة", "بھیجے گئے",
+    "سوزمژہ", "لېګل شوی", "موارد ارسال شده", "पाठविले", "पाठविलेले", "प्रेषित",
+    "भेजा गया", "প্রেরিত", "প্ৰেৰিত", "ਭੇਜੇ", "મોકલેલા", "ପଠାଗଲା",
+    "அனுப்பியவை", "పంపించబడింది", "ಕಳುಹಿಸಲಾದ", "അയച്ചു", "යැවු පණිවුඩ", "ส่งแล้ว",
+    "გაგზავნილი", "የተላኩ", "បាន\u200bផ្ញើ", "寄件備份", "已发信息", "送信済みﾒｰﾙ",
+    "발신 메시지", "보낸 편지함",
+  ],
+  trash: [
+    "articole șterse", "borttagna objekt", "deleted items", "deleted messages",
+    "elementi eliminati", "elementos borrados", "elementos eliminados", "gelöschte objekte", "gelöschte elemente", "item dipadam",
+    "itens apagados", "itens excluídos", "kustutatud üksused", "mục đã xóa", "odstraněné položky", "odstraněná pošta",
+    "pesan terhapus", "poistetut", "praht", "prügikast", "silinmiş öğeler", "slettede beskeder",
+    "slettede elementer", "trash", "törölt elemek", "törölt", "usunięte wiadomości", "verwijderde items",
+    "vymazané správy", "éléments supprimés", "видалені", "жойылғандар", "удаленные", "פריטים שנמחקו",
+    "العناصر المحذوفة", "موارد حذف شده", "รายการที่ลบ", "已删除邮件", "已刪除項目",
+  ],
+  junk: [
+    "bulk mail", "correo no deseado", "courrier indésirable", "istenmeyen", "istenmeyen e-posta", "junk",
+    "junk e-mail", "junk email", "junk-e-mail", "levélszemét", "nevyžiadaná pošta", "nevyžádaná pošta",
+    "no deseado", "posta indesiderata", "pourriel", "roskaposti", "rämpspost", "skräppost",
+    "spam", "spamowanie", "søppelpost", "thư rác", "wiadomości-śmieci", "спам",
+    "דואר זבל", "الرسائل العشوائية", "هرزنامه", "สแปม", "垃圾郵件", "垃圾邮件",
+    "垃圾電郵",
+  ],
+  drafts: [
+    "ba brouillon", "borrador", "borradores", "bozze", "brouillons", "bản thảo",
+    "ciorne", "concepten", "draf", "draft", "drafts", "drög",
+    "entwürfe", "esborranys", "garalamalar", "ihe edeturu", "iidrafti", "izinhlaka",
+    "juodraščiai", "kladd", "kladder", "koncepty", "konsep", "konsepte",
+    "kopie robocze", "layihələr", "luonnokset", "melnraksti", "meralo", "mesazhe të padërguara",
+    "mga draft", "mustandid", "nacrti", "osnutki", "piszkozatok", "rascunhos",
+    "rasimu", "skice", "taslaklar", "tsararrun saƙonni", "utkast", "vakiraoka",
+    "vázlatok", "zirriborroak", "àwọn àkọpamọ́", "πρόχειρα", "жобалар", "нацрти",
+    "нооргууд", "сиёҳнавис", "хомаки хатлар", "чарнавікі", "чернетки", "чернови",
+    "черновики", "черновиктер", "սևագրեր", "טיוטות", "مسودات", "موسودې",
+    "پیش نویسها", "ڈرافٹ/", "ड्राफ़्ट", "प्रारूप", "খসড়া", "ড্ৰাফ্ট",
+    "ਡ੍ਰਾਫਟ", "ડ્રાફ્ટસ", "ଡ୍ରାଫ୍ଟ", "வரைவுகள்", "చిత్తు ప్రతులు", "ಕರಡುಗಳು",
+    "കരടുകള്\u200d", "කෙටුම් පත්", "ฉบับร่าง", "მონახაზები", "ረቂቆች", "សារព្រាង",
+    "下書き", "草稿", "임시 보관함",
+  ],
+} as const satisfies Record<"sent" | "trash" | "junk" | "drafts", readonly string[]>;

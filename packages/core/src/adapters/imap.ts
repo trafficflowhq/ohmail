@@ -81,7 +81,7 @@ import {
   FILING_BATCH_MAX, type MoveManyResult,
   WriteDeclinedError, type WriteDoor, type MailboxWriteKind,
   type FolderSweepFence, type FolderSweepResult, type FolderDeleteOutcome,
-  JUNK_BY_NAME, TRASH_BY_NAME, type SpecialFolders,
+  PASSIVE_EXCLUDED_SPECIAL_USE, type SpecialFolders,
 } from "./imap-types.js";
 // The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
 // tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
@@ -100,6 +100,7 @@ import {
   type RequestReaderIo, type RequestOrganizerIo,
 } from "./organizer-lease.js";
 import { makeProfileIo, type ProfileImapClient, type ProfileIo } from "./organizer-profile.js";
+import { decideFolderRole, type FolderRole, type RoleFolder } from "./folder-roles.js";
 // The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
 // `fetchCapped` can enforce the same number BEFORE the download, from RFC822.SIZE alone.
 import { MAX_RAW_MESSAGE_BYTES } from "../mime.js";
@@ -202,8 +203,12 @@ export type FolderStatusAnswer =
  */
 type FolderStatus = Pick<StatusObject, "messages" | "uidNext" | "highestModseq" | "uidValidity">;
 
-/** Sent-folder names, for servers that do not advertise SPECIAL-USE. Canonical paths only. */
-const SENT_BY_NAME = /^(inbox\/)?sent( items| messages| mail)?$/i;
+/** The SERVER's role flag on a LIST entry, for the passive rule — never imapflow's name guess. */
+function serverRoleFlag(flags: ReadonlySet<string> | undefined): string | null {
+  for (const f of flags ?? []) if (PASSIVE_EXCLUDED_SPECIAL_USE.has(String(f).toLowerCase())) return String(f);
+  return null;
+}
+
 
 /**
  * THE ANNOUNCEMENTS OF A SERVER THAT FILES EVERY SMTP SUBMISSION INTO SENT ITSELF. Gmail's IMAP
@@ -1083,13 +1088,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private newsRename: { acted: "renamed" | "merged" | "none"; refused: string | null } =
     { acted: "none", refused: null };
   /**
-   * The Sent path resolved by NAME for reads, memoised — see {@link findSentForScan}.
-   *
-   * Separate from {@link sentFolder} because that field is where the SEND path appends, and a
-   * read must never redirect it. Memoised because `changesSince` now asks every cycle
-   * and the answer costs a LIST; a NEGATIVE answer is deliberately not memoised, so
-   * a mailbox that grows a Sent folder later starts being watched on the next cycle instead of
-   * on the next process restart.
+   * A read-only Sent memo, consulted before a re-LIST ({@link findSentForScan}). Production no
+   * longer sets it: read and write share one decision (`findSent`) and a found Sent lands on
+   * {@link sentFolder}. A NEGATIVE answer is never memoised, so a mailbox that grows a Sent
+   * folder is watched from the next cycle.
    */
   private scanSentFolder: string | null = null;
   /**
@@ -2219,23 +2221,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   // ---- helpers ----
   /**
-   * The folder imapflow resolved as `\Sent`, canonicalized. **NOT NECESSARILY THE SERVER'S
-   * SPECIAL-USE FLAG** — imapflow reads the flag when the connection advertises SPECIAL-USE
-   * (RFC 6154) or XLIST, and otherwise guesses from a localized name table of its own. Both
-   * callers therefore treat a hit as a strong hint and neither may treat a miss as "this
-   * mailbox has no Sent folder"; see {@link resolveSentFolder} for the measurement.
+   * The mailbox's Sent folder, canonical, by OUR precedence (`folder-roles.ts`): the server's
+   * `\Sent` flag, then the folder stored at the last attach, then exactly one name match. Never
+   * imapflow's `specialUse`: off SPECIAL-USE that is a guess from a table that changes with the
+   * dependency, and 1.7.8 moved Sent between `Sent` and `Gesendet` by alphabet. A miss is not
+   * "this mailbox has no Sent folder"; see {@link resolveSentFolder}.
    */
   private findSent(list: ListResponse[]): string | null {
-    const sent = list.find((f) => (f.specialUse ?? "").toLowerCase() === "\\sent");
-    return sent ? this.toCanonical(sent.path) : null;
+    return this.roleOf("sent", list).path;
+  }
+
+  /** {@link decideFolderRole} over a LIST, with the stored folder this config carries. */
+  private roleOf(role: FolderRole, list: ListResponse[]) {
+    const folders: RoleFolder[] = list.map((f) => ({ path: this.toCanonical(f.path), flags: f.flags }));
+    const stored = role === "drafts" ? null : this.config.storedFolders?.[role];
+    return decideFolderRole(role, folders, stored);
   }
 
   /**
    * Learn the customer's own folders from a LIST response — see {@link
    * ImapAdapter.passiveFolders}. Called from `connect()`, `ensureFolders()` and `foldersToScan`;
    * writes three fields, issues no command. The Sent path it excludes against is `this.sentFolder
-   * ?? this.scanSentFolder` — the one the scan will use, since a no-SPECIAL-USE server resolves
-   * Sent by name; getting it wrong reads Sent twice per cycle and hands every message the
+   * ?? this.scanSentFolder` — the one the scan will use; getting it wrong reads Sent twice per cycle and hands every message the
    * customer wrote to the Screener. On `connect()` a negative Sent answer is not yet known, so
    * this can admit Sent for one pass — `foldersToScan` re-filters every call and is the
    * authority.
@@ -2256,10 +2263,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       : PASSIVE_FOLDERS_MAX_NO_STATUS;
     const admitted: string[] = [];
     const excluded = new Map<string, string>();
+    // A role a NAME decided, or every name candidate of a role two names contest: neither is read.
+    const named = new Map<string, string>();
+    for (const role of ["sent", "junk", "trash", "drafts"] as const) {
+      const d = this.roleOf(role, list);
+      const paths = d.by === "name" || d.by === "stored" ? [d.path!] : d.by === "ambiguous" ? d.candidates : [];
+      for (const p of paths) if (!named.has(p)) named.set(p, `\\${role}`);
+    }
     for (const entry of list) {
       const path = this.toCanonical(entry.path);
       const reason = passiveFolderExclusion(
-        { path, specialUse: entry.specialUse ?? null, flags: entry.flags }, sent,
+        { path, specialUse: serverRoleFlag(entry.flags), nameRole: named.get(path) ?? null, flags: entry.flags },
+        sent,
       );
       if (reason === null) admitted.push(path);
       else excluded.set(path, reason);
@@ -2308,35 +2323,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private static readonly PASSIVE_RELIST_CYCLES = 20;
 
   /**
-   * The Sent folder for a READ, resolved without creating anything.
-   *
-   * `connect()` already sets `sentFolder` from {@link findSent}, which is what a modern provider
-   * advertises. Plenty do not — GreenMail among them — so a name match is the fallback, and it
-   * is deliberately NOT cached onto `this.sentFolder`: that field is what the SEND path appends
-   * to, and a scan has no business redirecting where sent mail is filed. The send path runs the
-   * same two lookups for itself, in {@link resolveSentFolder}.
+   * The Sent folder for a READ, resolved without creating anything: {@link findSent}'s decision,
+   * re-asked over a fresh LIST while it is null. The send path ({@link resolveSentFolder}) asks the
+   * same decision, so the folder read as Sent is the folder sent mail is filed into.
    */
   private async findSentForScan(): Promise<string | null> {
     if (this.sentFolder) return this.sentFolder;
     if (this.scanSentFolder) return this.scanSentFolder;
     const list = await this.listBounded();
-    const special = this.findSent(list);
-    if (special) { this.sentFolder = special; return special; }
-    const byName = list.find(
-      (f) => !(f.flags?.has("\\Noselect") ?? false) && SENT_BY_NAME.test(this.toCanonical(f.path)),
-    );
-    // Positive answers only (see {@link scanSentFolder}): a null is re-asked next cycle.
-    this.scanSentFolder = byName ? this.toCanonical(byName.path) : null;
-    return this.scanSentFolder;
+    // One decision for read and write (`findSent`), so the scan can no longer find a folder the
+    // send would not file into. A null is re-asked next cycle.
+    const found = this.findSent(list);
+    if (found) { this.sentFolder = found; return found; }
+    this.scanSentFolder = null;
+    return null;
   }
 
   /**
    * The provider's native `\Junk` and `\Trash`, resolved without creating anything — the
    * discovery behind the three user-commanded writes ({@link MailboxAdapter.findSpecialFolders}).
-   * SPECIAL-USE first, then {@link JUNK_BY_NAME}/{@link TRASH_BY_NAME} on the canonical leaf —
-   * the same two-step `findSentForScan` runs, because plenty of live servers advertise no
-   * SPECIAL-USE and imapflow's `specialUse` is a localized-name guess on those. `\Noselect` and
-   * the `ohmail` namespace are excluded. Positive answers are memoised for the connection; a null
+   * By the precedence `findSent` uses (`folder-roles.ts`): the server's flag, the stored folder,
+   * then one name match from the pinned table or the `JUNK_BY_NAME`/`TRASH_BY_NAME` belts; two
+   * names take neither. `\Noselect` and the `ohmail` namespace are excluded. Positive answers are memoised for the connection; a null
    * is re-asked, so a mailbox that gains a Junk folder is picked up on the next connect.
    * Read-only: one LIST.
    */
@@ -2345,23 +2353,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       return { junk: this.specialJunk, trash: this.specialTrash };
     }
     const list = await this.listBounded();
-    const resolve = (use: string, belt: RegExp): string | null => {
-      const selectable = (f: ListResponse): boolean => !(f.flags?.has("\\Noselect") ?? false);
-      const outsideOhmail = (path: string): boolean => !/(?:^|\/)ohmail(?:\/|$)/i.test(path);
-      const special = list.find((f) =>
-        selectable(f) && (f.specialUse ?? "").toLowerCase() === use
-        && outsideOhmail(this.toCanonical(f.path)));
-      if (special) return this.toCanonical(special.path);
-      const byName = list.find((f) => {
-        if (!selectable(f)) return false;
-        const path = this.toCanonical(f.path);
-        if (!outsideOhmail(path)) return false;
-        return belt.test(path.split("/").pop() ?? path);
-      });
-      return byName ? this.toCanonical(byName.path) : null;
-    };
-    this.specialJunk = this.specialJunk ?? resolve("\\junk", JUNK_BY_NAME);
-    this.specialTrash = this.specialTrash ?? resolve("\\trash", TRASH_BY_NAME);
+    this.specialJunk = this.specialJunk ?? this.roleOf("junk", list).path;
+    this.specialTrash = this.specialTrash ?? this.roleOf("trash", list).path;
     return { junk: this.specialJunk, trash: this.specialTrash };
   }
 
@@ -4372,24 +4365,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   /**
    * The Sent folder for a WRITE — creating one is the LAST resort, after both lookups fail. It
    * used to be SPECIAL-USE then `mailboxCreate("Sent")`: creating a folder is the most
-   * destructive thing on this path, and it was the FIRST fallback — while {@link findSentForScan}
-   * matched {@link SENT_BY_NAME}, so one adapter could find `Sent Mail` to read and create `Sent`
-   * to write. `ListResponse.specialUse` is not the server's flag: measured against GreenMail (no
-   * SPECIAL-USE), imapflow guesses from a 103-name localized table — a caret-range guarantee, and
-   * `Sent Mail` (Gmail's own name) is absent from it and present in `SENT_BY_NAME`. The name
-   * match is cached onto `this.sentFolder`: this IS the send path.
+   * destructive thing on this path, and it was the FIRST fallback — while the read path matched
+   * names, so one adapter could find `Sent Mail` to read and create `Sent` to write. Both now ask
+   * {@link findSent}; two names contesting Sent take neither there, and the create below then
+   * files into an existing `Sent` rather than a guess.
    */
   private async resolveSentFolder(): Promise<string> {
     if (this.sentFolder) return this.sentFolder;
     const list = await this.listBounded();
-    const special = this.findSent(list);
-    if (special) { this.sentFolder = special; return special; }
-    // Same filter as the read path: a `\Noselect` node cannot be APPENDed to, and treating one
-    // as the Sent folder turns "this server files sent mail oddly" into a failed send.
-    const byName = list.find(
-      (f) => !(f.flags?.has("\\Noselect") ?? false) && SENT_BY_NAME.test(this.toCanonical(f.path)),
-    );
-    if (byName) { this.sentFolder = this.toCanonical(byName.path); return this.sentFolder; }
+    // The read path's decision (`findSent`), `\Noselect` excluded: a node that cannot be APPENDed
+    // to would turn "this server files sent mail oddly" into a failed send.
+    const found = this.findSent(list);
+    if (found) { this.sentFolder = found; return found; }
     // Nothing to reuse. Compare CANONICALLY and case-insensitively before creating — the old
     // check was `f.path === "Sent"` against the raw server path, so a server that answers
     // `sent` would have been given a second one.

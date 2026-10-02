@@ -40,7 +40,7 @@ import { effectForDestination } from "../rules.js";
 import { SENT_SHAPED_CANONICAL } from "./imap-types.js";
 /* The stop's two shapes, imported rather than respelt: `BudgetStop` is what a pass REPORTS (it
    names the folder), `FolderBudgetStop` what one folder's row HOLDS (the row names it). */
-import type { BudgetStop, FolderBudgetStop, MailboxAdapter } from "./imap-types.js";
+import type { BudgetStop, FolderBudgetStop, ImapConfig, MailboxAdapter } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 import { correspondentsAmong, type CorrespondentEvidence } from "../correspondent.js";
 // The one correspondent predicate, on the leaf the worker passes and the services already import.
@@ -506,7 +506,9 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * rule: a repo that does not answer reads as "neither exists", which is the documented
    * fallback (Quarantine / refusal) and never a destructive write.
    */
-  getMailboxSpecialFolders?(mailboxId: string): Promise<{ junkFolder: string | null; trashFolder: string | null }>;
+  getMailboxSpecialFolders?(mailboxId: string): Promise<{
+    junkFolder: string | null; trashFolder: string | null; sentFolder?: string | null;
+  }>;
   /**
    * Persist the connect-time discovery ({@link MailboxAdapter.findSpecialFolders} → Junk and
    * Trash, the adapter's resolved Sent → `sent_folder`, mail 0132), re-written on every attach so
@@ -1251,11 +1253,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       && sameEpoch(epochOf(only.uidvalidity), epochOfRef(locator.ref));
   }
 
-  /** Mail 0065 — the two discovery columns, read as one pair. See the interface doc. */
-  async getMailboxSpecialFolders(mailboxId: string): Promise<{ junkFolder: string | null; trashFolder: string | null }> {
-    const [row] = await this.db.select({ junkFolder: mailboxes.junkFolder, trashFolder: mailboxes.trashFolder })
-      .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
-    return { junkFolder: row?.junkFolder ?? null, trashFolder: row?.trashFolder ?? null };
+  /** Mail 0065/0132 — the discovery columns. See the interface doc. */
+  async getMailboxSpecialFolders(mailboxId: string): Promise<{
+    junkFolder: string | null; trashFolder: string | null; sentFolder: string | null;
+  }> {
+    const [row] = await this.db.select({
+      junkFolder: mailboxes.junkFolder, trashFolder: mailboxes.trashFolder, sentFolder: mailboxes.sentFolder,
+    }).from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+    return {
+      junkFolder: row?.junkFolder ?? null, trashFolder: row?.trashFolder ?? null, sentFolder: row?.sentFolder ?? null,
+    };
   }
 
   /** Mail 0065/0132 — persist the connect-time discovery, all three columns every time (re-written on attach). */
@@ -3153,6 +3160,20 @@ export async function recordSpecialFolders(
     sentFolder: caps?.watchedSentFolder ?? caps?.sentFolder ?? null,
   });
   return true;
+}
+
+/**
+ * WHAT THE LAST ATTACH WROTE DOWN, for the next dial's `ImapConfig.storedFolders` — the second
+ * step of the role precedence (`folder-roles.ts`), so a role never moves because a name table did.
+ * `undefined` when the repo cannot say. A read that fails THROWS: dialling on without it could
+ * move a role and `recordSpecialFolders` would then write the move down.
+ */
+export async function storedFoldersOf(
+  repo: Pick<WorkerRepo, "getMailboxSpecialFolders">, mailboxId: string,
+): Promise<ImapConfig["storedFolders"]> {
+  if (typeof repo.getMailboxSpecialFolders !== "function") return undefined;
+  const f = await repo.getMailboxSpecialFolders(mailboxId);
+  return { sent: f.sentFolder ?? null, junk: f.junkFolder, trash: f.trashFolder };
 }
 
 /**

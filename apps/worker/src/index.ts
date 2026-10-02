@@ -41,7 +41,7 @@ import {
   MicrosoftTokenProvider, type OAuthTokenProvider, type UpdateSecretPort, type FetchLike,
   type ClassifierPort,
 } from "@trafficflow/core";
-import { makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, learnSmtpMaxSize,
   isImapBoundExceeded,
@@ -2339,6 +2339,8 @@ export async function startWorkerWithLock(
             ...("pass" in creds.smtp.auth ? { auth: creds.smtp.auth } : {}),
           } : undefined,
           sentDomain: config.sentDomain,
+          // What the last attach decided for Sent, Junk and Trash: a role never moves by a name guess.
+          storedFolders: await storedFoldersOf(repo, mb.mailboxId),
           // NOT the serverless defaults. This process holds its connections for the life of the
           // deployment and does bounded database work between IMAP commands; a 25 s socket
           // deadline chosen against Vercel's `maxDuration` is a deadline the worker's own cycle

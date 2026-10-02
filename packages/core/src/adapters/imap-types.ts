@@ -144,10 +144,12 @@ const OHMAIL_SEGMENT = /(?:^|\/)ohmail(?:\/|$)/i;
 export interface ListedFolder {
   /** CANONICAL path — `/`-delimited, `ImapAdapter.toCanonical` applied. */
   path: string;
-  /** imapflow's resolved special-use (`"\\Sent"`, …), or null/undefined when it named none. */
+  /** The server's own SPECIAL-USE flag (`"\\Sent"`, …), or null/undefined when it gave none. */
   specialUse?: string | null;
   /** The LIST flags, lowercased or not — membership is tested case-insensitively. */
   flags?: ReadonlySet<string>;
+  /** The role its NAME took on a server that flagged none (`folder-roles.ts`), as `\\sent`… */
+  nameRole?: string | null;
 }
 
 /**
@@ -177,6 +179,10 @@ export function passiveFolderExclusion(
   const special = (folder.specialUse ?? "").toLowerCase();
   if (special && PASSIVE_EXCLUDED_SPECIAL_USE.has(special)) {
     return `the server reports it as ${special}`;
+  }
+  const named = (folder.nameRole ?? "").toLowerCase();
+  if (named && PASSIVE_EXCLUDED_SPECIAL_USE.has(named)) {
+    return `its name reads as ${named} on a server that named none`;
   }
   const leaf = path.split("/").pop() ?? path;
   if (PASSIVE_EXCLUDED_LEAF.test(leaf)) {
@@ -450,6 +456,13 @@ export interface ImapConfig {
     pin?: readonly string[];
   };
   sentDomain?: string;
+  /**
+   * The Sent, Junk and Trash folders ohmail stored for this mailbox at its last attach
+   * (`mailboxes.sent_folder`/`junk_folder`/`trash_folder`), canonical. Second in the role
+   * precedence (`folder-roles.ts`): after the server's flag, before any name guess, so a role
+   * never moves because a name table changed. Absent on a first attach.
+   */
+  storedFolders?: { sent?: string | null; junk?: string | null; trash?: string | null };
   /**
    * Network deadlines, in ms, for both transports (see {@link DEFAULT_NET_TIMEOUTS}). Neither
    * `imapflow` nor `nodemailer` fails fast by default — a provider that accepts the TCP

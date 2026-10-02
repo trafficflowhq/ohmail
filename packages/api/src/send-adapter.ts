@@ -1,3 +1,5 @@
+import { eq } from "drizzle-orm";
+import { mailboxes } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
 import { SendConnections, type SendAdapter, type WarmSendAdapter } from "@trafficflow/core/mail";
@@ -26,6 +28,13 @@ interface CredMeta extends CredMetaAuth {
  * one instance everywhere. The hosts close it at shutdown; tests hand the factory their own.
  */
 export const sendConnections = new SendConnections();
+
+/** `mailboxes.sent_folder` (mail 0132), or null when no attach has decided one yet. */
+async function storedSentFolder(deps: ApiDeps, mailboxId: string): Promise<string | null> {
+  const [row] = await deps.db.select({ sentFolder: mailboxes.sentFolder })
+    .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+  return row?.sentFolder ?? null;
+}
 
 /**
  * Build the API's send adapter. Unlike `makeOpenAdapter` (attachments), this reads both
@@ -147,6 +156,8 @@ export async function makeSendAdapter(
       auth: imapAuth,
       smtp: { ...smtpConfig, ...smtpDial },
       sentDomain: domainOf(imapMeta.user),
+      // The Sent folder the sync's last attach decided, so this copy is filed where the scan reads.
+      storedFolders: { sent: await storedSentFolder(deps, mailboxId) },
     });
     // Same reason as `makeOpenAdapter`: `connect()` logs in and LISTs, so a failure after login
     // leaves an authenticated socket open that the caller has no handle to close. Close it here

@@ -22,8 +22,8 @@ import type { Db } from "./context.js";
  */
 
 /**
- * Sent-shaped canonical paths, at top level or under the INBOX prefix — `SENT_BY_NAME`
- * (imap.ts) plus the German localized family the SPECIAL-USE resolver can surface. Deliberately
+ * Sent-shaped canonical paths, at top level or under the INBOX prefix — the adapter's Sent belt
+ * (`folder-roles.ts`) plus the German localized family the SPECIAL-USE resolver can surface. Deliberately
  * NOT matching nested forms (`Alternativen/Sent Messages` is a folder the user keeps, and the
  * resolver would never pick it): the anchor covers exactly the places a resolved Sent can live.
  */
