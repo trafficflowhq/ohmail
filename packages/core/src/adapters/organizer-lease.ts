@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/db";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
-  boundListResponse, boundedFetch, ImapDeadline, isImapBoundExceeded,
+  boundListResponse, boundedFetch, ImapBoundConfigError, ImapDeadline, isImapBoundExceeded,
   IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS, META_ENUM_BYTES_MAX,
 } from "./imap-bounds.js";
 import { epochOf, epochVerdict, uidRefsAtEpoch } from "../epoch.js";
@@ -1924,9 +1924,14 @@ export interface ReadLeasePeekInput {
  */
 /** `meta_folder_full` for a read the folder's SIZE refused; `null` for every other fault. */
 function metaFullOp(err: unknown): "meta_folder_full" | null {
-  if (err instanceof MetaFolderTruncatedError) return "meta_folder_full";
   if (err instanceof MetaEnumRefusedError && (err.code === "over_ceiling" || err.code === "bytes")) return "meta_folder_full";
   return null;
+}
+
+/** A size refusal's message is the person's sentence; any other enumeration refusal keeps its own. */
+function enumRefusalMessage(err: MetaEnumRefusedError): string {
+  return metaFullOp(err) === null ? err.message
+    : metaFolderFullSentence(err.total, err.ceiling, err.code === "bytes" ? "bytes" : "records");
 }
 
 export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePeek> {
@@ -1934,18 +1939,7 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
   try {
     messages = await input.io.listClaims();
   } catch (err) {
-    /**
-     * A full folder gets its own line here too, not only its own sentence. The counts survive
-     * into the message because a folder too full to read is the only fault here that does not
-     * clear on its own. But a thrown message reaches somebody only if the caller renders it, and
-     * this refusal usually renders as "we could not check" — a blip. The gate emits
-     * `lease_meta_truncated` on the same condition; the peek was silent, so one mailbox reported
-     * the fault from one door and not the other. Same event name, same fields — it is the same
-     * fact.
-     */
-    if (err instanceof MetaFolderTruncatedError) {
-      input.log?.("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
-    }
+    /* A full folder gets its own line here as at the gate: same event, same fields, same fact. */
     if (err instanceof MetaEnumRefusedError) {
       input.log?.("lease_enum_refused", { code: err.code, records: err.rows, total: err.total, ceiling: err.ceiling });
     }
@@ -1958,8 +1952,8 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
      * two doors report one fact under one name. */
     if (err instanceof LeaseUnavailableError) throw err;
     throw new LeaseUnavailableError(
-      err instanceof MetaFolderTruncatedError || err instanceof MetaEnumRefusedError
-        ? err.message
+      err instanceof MetaEnumRefusedError
+        ? enumRefusalMessage(err)
         : `the organizer lease in ${META_FOLDER} could not be read`,
       { op: metaFullOp(err) ?? "list_claims", cause: err },
     );
@@ -2110,7 +2104,7 @@ export type LeaseOp =
    */
   | "clock_skew"
   /* The folder holds more than one enumeration may read (`META_ENUM_RECORDS_MAX` records or
-   * `META_ENUM_BYTES_MAX` bytes), or an io handed the gate a truncated read.
+   * `META_ENUM_BYTES_MAX` bytes); the message is {@link metaFolderFullSentence}.
    * Same CLASS as every other lease IO fault on purpose: the hosts' exemptions and the LOCAL/Cloud
    * exclusions are all by class, so a new class would fall into `maxSyncFailures` and quarantine a
    * customer's mailbox over a folder that is not its fault. */
@@ -2456,9 +2450,8 @@ export async function lastSequence(
  * One bounded read of `ohmail/_meta`, NEWEST FIRST. Newest first because `1:*` returns oldest
  * first and a ceiling breaking out of that loop keeps the OLDEST records: everything live is
  * appended at the END. Over the ceiling the FETCH asks `exists - ceiling + 1 : *`. `truncated` is
- * the point of returning a record: the drains refuse on it, and the lease reads the whole folder
- * instead ({@link readLeaseRecords}) — nothing decides from a truncated window. One message
- * beyond the ceiling is read and discarded, so exactly-the-ceiling is complete.
+ * the point of returning a record: {@link readMetaRecords} reads the whole folder instead, so
+ * nothing decides from a truncated window. Exactly-the-ceiling is complete.
  */
 export interface MetaFolderRead {
   /** The records the window covered, in the server's own order (oldest first WITHIN the window). */
@@ -2479,100 +2472,14 @@ export interface MetaFolderRead {
 export type MetaTruncation = "records" | "bytes";
 
 /**
- * THE FOLDER HOLDS MORE THAN ONE READ MAY TAKE.
- *
- * Its own class so that each caller can convert it into the refusal its own layer already has —
- * {@link LeaseUnavailableError} for the lease, {@link RequestUnavailableError} for the records —
- * rather than every caller re-deriving "a full folder is a look that failed" from a boolean it
- * might forget to check. Carrying the counts is what lets the refusal say how full the folder is,
- * which is the one thing that tells somebody reading a log what to do about it.
+ * The window read itself. The folder must already be SELECTED by the caller's lock. Its ONE caller
+ * is {@link readMetaRecords}, which enumerates instead of working with a truncated window (a census
+ * pins the one call site). Exported so the window stays testable as the mechanism it is: "the
+ * window runs from the END of the folder" would otherwise be asserted nowhere.
  */
-export class MetaFolderTruncatedError extends Error {
-  /** Which ceiling ended the read — the sentence and {@link limit} both follow it. */
-  readonly by: MetaTruncation;
-  /** How many records the window covered. */
-  readonly read: number;
-  /** The ceiling that bounded it. */
-  readonly limit: number;
-  /** The folder's message count, where the server reported one. */
-  readonly total: number | null;
-  /**
-   * THE NEWEST RECORDS THE WINDOW DID COVER. No caller acts on them: the lease refuses a truncated
-   * read by class (`meta_folder_full`) and the drains refuse it too. Kept REQUIRED so a
-   * construction site cannot hand anybody an empty election by omission.
-   */
-  readonly records: readonly RawMetaMessage[];
-  /**
-   * REQUIRED, with no default. A default of `[]` is the shape where a construction site that forgot
-   * the window silently hands the gate an EMPTY election — which is `decideLease`'s "nobody has
-   * ever organized this mailbox" arm, over a folder that is demonstrably full. The one field whose
-   * absence would be worst is the one an optional parameter makes easiest to omit.
-   */
-  constructor(
-    read: number,
-    total: number | null,
-    records: readonly RawMetaMessage[],
-    /*
-     * The RECORD ceiling by default, because that is what every construction site written before
-     * the byte ceiling existed means — and it is the reading a caller with no window in hand can
-     * honestly give.
-     */
-    by: MetaTruncation = "records",
-  ) {
-    const ceiling = by === "bytes" ? IMAP_META_BYTES_MAX : META_RECORDS_MAX_PER_FETCH;
-    const what = by === "bytes" ? "bytes" : "records";
-    super(
-      `${META_FOLDER} holds more than the ${ceiling} ${what} one read may take` +
-      `${total === null ? "" : ` (${total} messages present)`}, so what is in it is not fully ` +
-      `known and nothing was decided from it`,
-    );
-    this.name = "MetaFolderTruncatedError";
-    this.by = by;
-    this.read = read;
-    this.limit = ceiling;
-    this.total = total;
-    this.records = records;
-  }
-}
-
-/**
- * The shared read itself. The folder must already be SELECTED — every caller takes the lock, and
- * taking it here would mean this function had to know the path, which is the one thing the three
- * callers legitimately resolve for themselves.
- *
- * Exported so the window is testable as the mechanism it is. Its callers all convert `truncated`
- * into a refusal, so a test driving them can only ever observe the refusal — which would leave
- * "the window runs from the END of the folder" asserted nowhere, and a ceiling that quietly went
- * back to keeping the oldest records would pass every guard above it.
- */
-/**
- * Where the page below a bound starts and ends, and whether it reaches the bottom of the folder.
- * An empty window and an empty folder are not the same answer: the drain once treated a window
- * that fell in a UID GAP as "the folder read whole", cleared its resume point, and restarted from
- * the top — append-and-expunge churn leaves gaps wider than one window routinely, so the walk
- * could oscillate between the top and the gap for ever while the requests below were never
- * reached. This is arithmetic, not a reply, so it answers for an empty page exactly as well as a
- * full one; the read uses it too, so the walk and the reader take the same steps.
- */
-export function metaPageBounds(beforeUid: number): { lo: number; hi: number; bottom: boolean } {
-  const hi = Math.max(1, beforeUid - 1);
-  const lo = Math.max(1, hi - META_RECORDS_MAX_PER_FETCH + 1);
-  return { lo, hi, bottom: lo <= 1 };
-}
-
 export async function readMetaFolderWindow(
   client: LeaseImapClient,
   path?: string,
-  /**
-   * PAGE OLDER THAN THIS UID. Absent, the read covers the newest records, which is what every
-   * decision wants. Given, it covers the newest records BELOW the bound — the next page down —
-   * so a caller that has already handled a page can ask for the one before it and keep going.
-   *
-   * By UID rather than by position, for the reason the profile read learned the hard way: a
-   * sequence number is a position in the folder as it stood a round trip ago, and an expunge
-   * renumbers everything above it without saying so.
-   */
-  beforeUid?: number,
   /**
    * The clock the read's deadline reads. Injectable so a case can drive the SHIPPING ceiling
    * instead of a lowered one — a test that has to shorten the bound is not testing the bound.
@@ -2642,18 +2549,7 @@ export async function readMetaFolderWindow(
   const readFrom = async (
     start: number,
   ): Promise<{ records: RawMetaMessage[]; evicted: boolean; by: MetaTruncation | null }> => {
-  /**
-   * A page asks for its own window, not for everything below the cursor. This asked
-   * `1:<cursor-1>` and let the eviction keep the newest ceiling's worth — bounded in what it
-   * RETAINED, unbounded in what it TRANSFERRED: every page re-read the entire older prefix, so
-   * walking eight pages pulled the folder down eight times. The window is a uid RANGE now — one
-   * ceiling's worth below the cursor — so each page costs the same as the first. A record whose
-   * uid falls in a gap simply is not there; the walk's budget bounds the steps, not the density.
-   */
-  const { lo: pageLo, hi: pageHi } = metaPageBounds(beforeUid ?? 1);
-  const range = beforeUid !== undefined ? `${pageLo}:${pageHi}` : `${start}:*`;
-  const byUid = beforeUid !== undefined;
-  if (beforeUid !== undefined && beforeUid <= 1) return { records: [], evicted: false, by: null };
+  const range = `${start}:*`;
   /**
    * Three ceilings, all on the READ. COUNT evicts from the FRONT rather than stopping — a
    * sequence range arrives oldest first, so stopping keeps the superseded half. BYTES, because
@@ -2665,7 +2561,7 @@ export async function readMetaFolderWindow(
    * `client.fetch(range,` call stays one line for the census.
    */
   const read = await boundedFetch(
-    client.fetch(range, { uid: true, headers: true, internalDate: true }, { uid: byUid }),
+    client.fetch(range, { uid: true, headers: true, internalDate: true }, { uid: false }),
     {
       max: META_RECORDS_MAX_PER_FETCH,
       bytes: { max: IMAP_META_BYTES_MAX, of: (m) => m.headers?.byteLength ?? 0 },
@@ -2797,7 +2693,7 @@ export async function enumerateMetaFolder(
     bytesMax?: number;
   },
 ): Promise<{
-  records: MetaEnumRow[]; total: number; count: number; generation: Generation;
+  records: MetaEnumRow[]; total: number; count: number; bytes: number; generation: Generation;
   probe: "kept" | "seen_not_kept" | "absent" | "unasked";
 }> {
   const recordsMax = opts.recordsMax ?? META_ENUM_RECORDS_MAX;
@@ -2809,10 +2705,10 @@ export async function enumerateMetaFolder(
   const count = await lastSequence(client, path, budget);
   if (count === undefined) throw refuse("no_count", 0, null);
   const before = generationOf(client);
-  if (count === 0) return { records: [], total: 0, count: 0, generation: before, probe: probe === null ? "unasked" : "absent" };
+  if (count === 0) return { records: [], total: 0, count: 0, bytes: 0, generation: before, probe: probe === null ? "unasked" : "absent" };
   if (count > recordsMax) throw refuse("over_ceiling", 0, count);
 
-  type Seen = { uid: number; raw: string; headerless: boolean; kept: boolean; internalDate: Date | null; flags: readonly string[] };
+  type Seen = { uid: number; raw: string; bytes: number; headerless: boolean; kept: boolean; internalDate: Date | null; flags: readonly string[] };
   let seen: Seen[];
   try {
     const read = await boundedFetch(
@@ -2824,7 +2720,7 @@ export async function enumerateMetaFolder(
           const raw = m.headers?.toString("utf8") ?? "";
           const headerless = raw.length === 0;
           return {
-            uid: m.uid, raw, headerless, kept: !headerless && opts.keep(raw),
+            uid: m.uid, raw, bytes: m.headers?.byteLength ?? 0, headerless, kept: !headerless && opts.keep(raw),
             internalDate: m.internalDate instanceof Date ? m.internalDate : null,
             flags: m.flags === undefined ? [] : [...m.flags],
           };
@@ -2863,49 +2759,88 @@ export async function enumerateMetaFolder(
   return {
     records: seen.filter((s) => s.kept)
       .map((s) => ({ ref: s.uid, raw: s.raw, internalDate: s.internalDate, flags: s.flags })),
-    total: seen.length, count, generation: before, probe: probed,
+    total: seen.length, count, bytes: seen.reduce((n, s) => n + s.bytes, 0), generation: before, probe: probed,
   };
 }
 
-/** What one lease read found. `enumerated` carries the counts when it read past the window. */
-interface LeaseRead {
+/** What one read of the folder found: the KEPT records, and the size of the whole folder. */
+export interface MetaRecordsRead {
   records: RawClaimMessage[];
+  /** The folder's message count from this read: the server's own, or every row a whole read saw. */
+  count: number;
+  /** The header bytes this read was sent, over every row, kept or not. */
+  bytes: number;
   generation: Generation;
+  /** The counts, when the read went past the window. */
   enumerated: { records: number; claims: number; total: number } | null;
   probe: "kept" | "seen_not_kept" | "absent" | "unasked";
 }
 
 /**
- * THE CLAIMS IN `ohmail/_meta`, COMPLETE OR REFUSED — the one read behind every lease decision:
- * the election, the read-back, the custody check, the baseline, the release and the peek. At or
- * under the window, or with no count, it is the window read (one STATUS, one FETCH). Past it, or
- * when the window came back short of the folder, it is {@link enumerateMetaFolder} keeping what
- * {@link parseClaim} recognises. A truncated window is never returned and no SEARCH is asked; a
- * read that cannot prove itself complete throws {@link MetaEnumRefusedError}. Caller holds the lock.
+ * THE ONE DOOR EVERY READER OF `ohmail/_meta` GOES THROUGH: the lease, the request drains and
+ * compaction. One STATUS; at or under {@link META_RECORDS_MAX_PER_FETCH} one window FETCH; past it,
+ * or when the window came back short of the folder, {@link enumerateMetaFolder}. Both branches hand
+ * back only what `keep` accepts, plus the folder's count and bytes. It is complete or it throws
+ * {@link MetaEnumRefusedError}; no caller sees part of the folder. The bound (ruled): past
+ * {@link META_ENUM_RECORDS_MAX} records, {@link META_ENUM_BYTES_MAX} bytes or the read's clock every
+ * reader refuses by name, and {@link metaFolderFullSentence} says so. Caller holds the lock.
  */
-async function readLeaseRecords(
+export async function readMetaRecords(
   client: LeaseImapClient, path: string, budget: ImapDeadline,
-  own: { uid: number; installId: string } | null,
-): Promise<LeaseRead> {
+  opts: {
+    keep: (headerBlock: string) => boolean;
+    probe: { uid: number; recognised: (headerBlock: string) => boolean } | null;
+  },
+): Promise<MetaRecordsRead> {
   const count = await lastSequence(client, path, budget);
   if (count === undefined || count <= META_RECORDS_MAX_PER_FETCH) {
-    const read = await readMetaFolderWindow(client, path, undefined, undefined, budget, { count });
-    if (!read.truncated) return { records: read.records, generation: generationOf(client), enumerated: null, probe: "unasked" };
+    const read = await readMetaFolderWindow(client, path, undefined, budget, { count });
+    if (!read.truncated) {
+      return {
+        records: read.records.filter((r) => opts.keep(r.raw)),
+        count: count ?? read.records.length,
+        bytes: read.records.reduce((n, r) => n + Buffer.byteLength(r.raw, "utf8"), 0),
+        generation: generationOf(client), enumerated: null, probe: "unasked",
+      };
+    }
   }
-  const isOwn = (h: string): boolean => {
-    const c = parseClaim(h);
-    return c !== null && !isMalformed(c) && own !== null && c.installId === own.installId;
-  };
-  const listed = await enumerateMetaFolder(client, path, budget, {
-    keep: (h) => parseClaim(h) !== null,
-    probe: own === null ? null : { uid: own.uid, recognised: isOwn },
-  });
+  const listed = await enumerateMetaFolder(client, path, budget, { keep: opts.keep, probe: opts.probe });
   return {
     records: listed.records.map((r) => ({ ref: r.ref, raw: r.raw, internalDate: r.internalDate })),
+    count: listed.count,
+    bytes: listed.bytes,
     generation: listed.generation,
     enumerated: { records: listed.total, claims: listed.records.length, total: listed.count },
     probe: listed.probe,
   };
+}
+
+/** The lease's read: the door, keeping claims, with this install's own claim as the probe. */
+async function readLeaseRecords(
+  client: LeaseImapClient, path: string, budget: ImapDeadline,
+  own: { uid: number; installId: string } | null,
+): Promise<MetaRecordsRead> {
+  const isOwn = (h: string): boolean => {
+    const c = parseClaim(h);
+    return c !== null && !isMalformed(c) && own !== null && c.installId === own.installId;
+  };
+  return readMetaRecords(client, path, budget, {
+    keep: (h) => parseClaim(h) !== null,
+    probe: own === null ? null : { uid: own.uid, recognised: isOwn },
+  });
+}
+
+/**
+ * THE SENTENCE FOR A FOLDER PAST THE ENUMERATION'S CEILING — the message every reader's refusal
+ * carries for `meta_folder_full`. It names the count and the ceiling and nothing else.
+ */
+export function metaFolderFullSentence(
+  count: number | null, ceiling: number, unit: "records" | "bytes" = "records",
+): string {
+  const held = count === null ? "more messages than ohmail reads" : `${count} messages`;
+  const most = unit === "bytes" ? `${Math.floor(ceiling / (1024 * 1024))} MiB of it` : `${ceiling}`;
+  return `${META_FOLDER} holds ${held}. ohmail reads at most ${most}, so organizing is paused on this `
+    + "mailbox until the folder is smaller.";
 }
 
 /**
@@ -3527,9 +3462,9 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   /**
    * EVERY READ OF THE GATE IS COMPLETE, OR IT REFUSES AND WRITES NOTHING. The io reads the whole
    * folder past the window ({@link readLeaseRecords}), so the election, the read-back, the custody
-   * check and the baseline each decide over every claim the folder holds. A truncated read from any
-   * io is `meta_folder_full`, never worked with; a refused enumeration keeps its code in `op`
-   * (`meta_folder_full` for the folder's size, `list_claims` for anything else) and is logged once.
+   * check and the baseline each decide over every claim the folder holds. A refused enumeration
+   * keeps its code in `op` (`meta_folder_full` for the folder's size, carrying
+   * {@link metaFolderFullSentence}; `list_claims` for anything else) and is logged once.
    */
   let enumRefusalSaid = false;
   const readClaims = async (): Promise<GateRead> => {
@@ -3537,10 +3472,6 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       const records = await io.listClaims();
       return { records, uidValidity: io.uidValidity?.() ?? null };
     } catch (err) {
-      if (err instanceof MetaFolderTruncatedError) {
-        log("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
-        throw new LeaseUnavailableError(err.message, { op: "meta_folder_full", cause: err });
-      }
       if (err instanceof MetaEnumRefusedError) {
         if (!enumRefusalSaid) {
           enumRefusalSaid = true;
@@ -3548,7 +3479,8 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
           if (err.code === "blind") log("lease_enum_blind", { records: err.rows, total: err.total });
         }
         throw new LeaseUnavailableError(
-          `${err.message}, so no organizer can be proved or ruled out and nothing was written`,
+          metaFullOp(err) !== null ? enumRefusalMessage(err)
+            : `${err.message}, so no organizer can be proved or ruled out and nothing was written`,
           { op: metaFullOp(err) ?? "list_claims", cause: err },
         );
       }
@@ -4953,11 +4885,10 @@ export class RequestUnavailableError extends Error {
 }
 
 /**
- * The folder, read once — and the two ROLES that read it. One FETCH, three parsers: {@link
+ * The folder, read once — and the two ROLES that read it. One read, two parsers: {@link
  * listMetaRecords} sorts one read into its kinds, so a fourth record type costs no round trip.
- * The loop underneath is shared too — three separate `FETCH 1:*` loops once stood here, each with
- * its own ceiling and empty-folder defence, two keeping the OLDEST records when the ceiling bit;
- * they are one function now ({@link readMetaFolderWindow}), census-pinned. And two objects,
+ * The read underneath is the one door every reader takes ({@link readMetaRecords}): complete past
+ * the 500-record window, or refused by name. And two objects,
  * because a reader must not be able to expunge: a READER appends and never removes; an ORGANIZER
  * removes and appends acks. One object made the expunge reachable from the reader's accessor; two
  * types, and the compiler says so.
@@ -4970,21 +4901,18 @@ export interface RawMetaMessage {
 }
 
 /**
- * The ceiling on one folder read. Every legitimate population of `ohmail/_meta` is tiny — one
- * claim per install, one ack per decision in flight, the decisions themselves — and this is far
- * above all of it: its job is to stop anyone with APPEND rights choosing how much work a cycle
- * does, not to be tight. It bounds ONE READ and is not a filter: passing it makes the read
- * REFUSE, never drop records — {@link readMetaFolderWindow} explains why a ceiling that silently
- * keeps a subset makes a partial view indistinguishable from a complete one, and every decision
- * taken from this folder is wrong on a partial view.
+ * THE WINDOW: how many records one window FETCH of `ohmail/_meta` takes. A WIRE FACT, not a
+ * tunable: builds up to 0.25.4 read claims by this window and refuse past it as `meta_folder_full`.
+ * Past it this build enumerates the whole folder ({@link readMetaRecords}); nothing is decided from
+ * a window that came back short.
  */
 export const META_RECORDS_MAX_PER_FETCH = 500;
 
 /**
  * HOW MANY RECORDS ONE PRESS MAY BECOME. A press that moves N messages on a mailbox this install
  * only reads writes N records under one key, and the reader's cycle appends them inside its own
- * headroom against {@link META_RECORDS_MAX_PER_FETCH} — so the folder cannot be driven over the
- * read ceiling by a long queue whatever this says. What this bounds is the QUEUE: a press asking
+ * headroom ({@link requestAppendHeadroom}) — so the folder cannot be driven over a ceiling by a
+ * long queue whatever this says. What this bounds is the QUEUE: a press asking
  * for more records than one readable folder could ever hold is a press whose tail would sit
  * pending across cycles with nothing to show for it, and the door refuses it at the press where
  * the count is known rather than emitting the flood and hoping. Derived from the ceiling so the
@@ -4993,13 +4921,54 @@ export const META_RECORDS_MAX_PER_FETCH = 500;
 export const REQUEST_SET_MAX = META_RECORDS_MAX_PER_FETCH;
 
 
-/** The shared read: the folder's headers, unfiltered and bounded — the parsers sort it out. */
+/**
+ * THE HEADER BYTES ONE FORMATTED REQUEST MAY TAKE, at {@link REQUEST_PAYLOAD_MAX_BYTES} of payload.
+ * A test over {@link formatRequest} holds the bound; the reader's byte headroom is counted in it.
+ */
+export const REQUEST_RECORD_MAX_BYTES = 6 * 1024;
+
+/** The reserve each byte ceiling keeps for one window of appended requests. */
+const REQUEST_APPEND_BYTE_RESERVE = META_RECORDS_MAX_PER_FETCH * REQUEST_RECORD_MAX_BYTES;
+for (const [key, ceiling] of [["TF_IMAP_META_MAX_BYTES", IMAP_META_BYTES_MAX], ["TF_IMAP_META_ENUM_MAX_BYTES", META_ENUM_BYTES_MAX]] as const) {
+  if (REQUEST_APPEND_BYTE_RESERVE >= ceiling) {
+    throw new ImapBoundConfigError(key, `${key} must exceed the ${REQUEST_APPEND_BYTE_RESERVE}-byte reserve one window of requests needs`);
+  }
+}
+
+/**
+ * HOW MANY REQUESTS A READER MAY APPEND THIS CYCLE, and which ceiling bound it. THE MIXED-FLEET
+ * RULE is the invariant: at or under the window, this install's appends never take the folder past
+ * {@link META_RECORDS_MAX_PER_FETCH} records or the window's byte ceiling, which is what builds up to
+ * 0.25.4 read claims by; past the window those builds are blind already and the bound is the
+ * enumeration's, less one window kept for the holder's own acks and renewals.
+ */
+export function requestAppendHeadroom(read: { count: number; bytes: number }): {
+  headroom: number; boundBy: "records" | "bytes" | null; recordCeiling: number; byteCeiling: number;
+} {
+  const window = META_RECORDS_MAX_PER_FETCH;
+  const inWindow = read.count <= window;
+  const recordCeiling = inWindow ? window : META_ENUM_RECORDS_MAX - window;
+  const byteCeiling = (inWindow ? IMAP_META_BYTES_MAX : META_ENUM_BYTES_MAX) - REQUEST_APPEND_BYTE_RESERVE;
+  const byRecords = Math.max(0, recordCeiling - read.count);
+  const byBytes = Math.max(0, Math.floor((byteCeiling - read.bytes) / REQUEST_RECORD_MAX_BYTES));
+  const headroom = Math.min(window, byRecords, byBytes);
+  const boundBy = headroom >= window ? null : byBytes < byRecords ? "bytes" : "records";
+  return { headroom, boundBy, recordCeiling, byteCeiling };
+}
+
+/** One complete read of the folder: the request and ack records, and the folder's size. */
+export interface MetaRecordsList {
+  records: RawMetaMessage[];
+  /** The folder's message count — every record, not only the ones listed. */
+  count: number;
+  /** The header bytes of every record in the folder. */
+  bytes: number;
+}
+
+/** The shared read: the folder's request and ack records, complete or refused. */
 export interface MetaRecordsIo {
-  /**
-   * The newest records in `ohmail/_meta` — or, given `beforeUid`, the newest BELOW that uid, which
-   * is the next page down. See {@link readMetaFolderWindow}.
-   */
-  listMetaRecords(beforeUid?: number): Promise<RawMetaMessage[]>;
+  /** Every request and ack in `ohmail/_meta`, through {@link readMetaRecords}. */
+  listMetaRecords(): Promise<MetaRecordsList>;
 }
 
 /** WHAT A READER MAY DO to `ohmail/_meta`: look, and append its own decisions. Nothing else. */
@@ -5115,14 +5084,12 @@ export function acksIn(records: readonly RawMetaMessage[], key: string): AckReco
 }
 
 /**
- * The shared read — one `FETCH 1:*` of `ohmail/_meta`'s headers, unfiltered on purpose: the three
- * record kinds are told apart by a header the caller's own parser reads, and filtering here would
- * mean a second round trip the moment a caller wants two of them; {@link requestEnvelopesIn} and
- * {@link acksIn} sort one read into its kinds. An absent folder THROWS, and that is a correctness
- * fix: answering `[]` was harmless for the organizer's drain and wrong for the READER, whose
- * state machine reads "my record is not in the folder" as "the organizer took it" — an absent
- * folder told a person every decision was applied at the exact moment the evidence said nobody
- * was organizing at all. {@link RequestUnavailableError}, and the reader transitions nothing.
+ * The shared read — `ohmail/_meta` through {@link readMetaRecords}, keeping requests and acks: the
+ * drains sort one read into its kinds with {@link requestEnvelopesIn} and {@link acksIn}. No probe:
+ * a blind read yields no request, applies nothing and removes nothing, and a reader's re-append is
+ * idempotent by key. An absent folder THROWS: answering `[]` read to a reader as "the organizer took
+ * every decision" at the moment nobody was organizing. A refusal is {@link RequestUnavailableError}
+ * carrying the enumeration's code; the reader transitions nothing.
  */
 function makeMetaRecordsList(
   client: LeaseImapClient,
@@ -5130,20 +5097,14 @@ function makeMetaRecordsList(
   op: RequestOp,
   /**
    * REPORTS THE GENERATION OF THE FOLDER THIS READ ACTUALLY OPENED, sampled while it is still
-   * selected.
-   *
-   * A caller that samples `client.mailbox` on its own gets whatever folder the surrounding cycle
-   * last selected — the INBOX, in the worker's case — and pairs its position with a number
-   * belonging to a different mailbox entirely. That is not a stale generation, it is somebody
-   * else's, and it made every comparison meaningless in both directions.
+   * selected — never `client.mailbox` afterwards, which names whatever folder the cycle selected
+   * last (the INBOX, for the worker).
    */
   onGeneration?: (generation: Generation) => void,
   /** The clock the read's budget reads — see {@link makeLeasePeekIo}. */
   now: () => number = Date.now,
-): (beforeUid?: number) => Promise<RawMetaMessage[]> {
-  return async (beforeUid?: number): Promise<RawMetaMessage[]> => {
-    // One budget for the whole read — the LIST below included, which is where this one used to
-    // wait without a clock. See {@link metaReadBudget}.
+): () => Promise<MetaRecordsList> {
+  return async (): Promise<MetaRecordsList> => {
     const budget = metaReadBudget(now);
     let at: MetaFolderLocation;
     try {
@@ -5161,30 +5122,23 @@ function makeMetaRecordsList(
     try {
       const lock = await lockWithin(client, at.path, budget);
       try {
-        // The shared bounded read — see {@link readMetaFolderWindow}. An empty folder is a real
-        // answer and comes back as one; a folder too full for a single window is not, and falls
-        // into the refusal below for the same reason an ABSENT folder does.
-        const read = await readMetaFolderWindow(client, at.path, beforeUid, undefined, budget);
-        // Inside the lock, with `_meta` open: this is the only place the right folder is
-        // guaranteed to be the selected one.
-        onGeneration?.(generationOf(client));
-        if (read.truncated) {
-          throw new MetaFolderTruncatedError(
-            read.records.length, read.total, read.records, read.truncatedBy,
-          );
-        }
-        return read.records;
+        const read = await readMetaRecords(client, at.path, budget, {
+          keep: (h) => {
+            const kind = classifyMetaRecord(h);
+            return kind === "request" || kind === "ack";
+          },
+          probe: null,
+        });
+        onGeneration?.(read.generation);
+        return { records: read.records, count: read.count, bytes: read.bytes };
       } finally {
         lock.release();
       }
     } catch (err) {
       if (err instanceof RequestUnavailableError) throw err;
-      // NAMED, not folded into the generic sentence: the count is the only thing that tells whoever
-      // reads the line what is wrong, and the two drains log this message verbatim. A caller that
-      // saw only "could not be read" would go looking at the mail server for a fault that is a full
-      // folder.
-      if (err instanceof MetaFolderTruncatedError) {
-        throw new RequestUnavailableError(err.message, { op, cause: err });
+      // NAMED: the two drains log the message, and a full folder is not a mail-server fault.
+      if (err instanceof MetaEnumRefusedError) {
+        throw new RequestUnavailableError(enumRefusalMessage(err), { op, code: err.code, cause: err });
       }
       throw new RequestUnavailableError(
         `the records in ${META_FOLDER} could not be read`, { op, cause: err },
@@ -5424,10 +5378,11 @@ export function makeRequestOrganizerIo(
          * This io is the organizer's half and the drain only builds it on the organizing arm, and
          * neither of those is a fact about the folder. A live claim of ours, read in the same lock
          * as the copy, is: an install that lost the mailbox between its gate and here holds none,
-         * and it may not move another organizer's records around underneath it. The newest window
-         * is the right read even when the folder is over the ceiling — our claim is the newest
-         * thing in it, because we renewed seconds ago. */
-        const window = await readMetaFolderWindow(client, metaPath);
+         * and it may not move another organizer's records around underneath it. Read through the
+         * one door, so a folder past the window is enumerated and one past the ceiling refuses. */
+        const window = await readMetaRecords(client, metaPath, metaReadBudget(), {
+          keep: (h) => parseClaim(h) !== null, probe: null,
+        });
         /* Our OWN heartbeat against our OWN clock, which is the one comparison in this module a
            reader's clock may make: the stamp was written by this install, so both sides come from
            the same clock and the answer is this install's tenure, not a ranking of anybody. A
@@ -5550,12 +5505,11 @@ export function makeRequestOrganizerIo(
         }
         if (moved > 0) {
           /* EVERY POSITION THIS PROCESS REMEMBERS IN THIS FOLDER IS NOW WRONG. The records kept
-           * their identity and lost their numbers, so an anchor, a sweep cursor or a drain cursor
-           * left standing would bound a later read at a uid that means nothing. Dropped rather
-           * than rewritten: each is a hint whose only job is to save a walk. */
+           * their identity and lost their numbers, so an anchor or a sweep cursor left standing
+           * would bound a later read at a uid that means nothing. Dropped rather than rewritten:
+           * each is a hint whose only job is to save a walk. */
           forgetMemo(identity, "claimUid");
           forgetMemo(identity, "sweepCursor");
-          forgetMemo(identity, "drainCursor");
         }
         return moved;
       } finally {

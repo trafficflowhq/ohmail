@@ -55,8 +55,6 @@ export interface MetaMemo {
   readonly profileUid?: number;
   /** Where the acknowledgement sweep stopped looking. */
   readonly sweepCursor?: number;
-  /** Where the request drain's walk stopped. */
-  readonly drainCursor?: number;
 }
 
 interface Entry {

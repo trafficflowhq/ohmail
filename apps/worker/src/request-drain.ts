@@ -13,13 +13,12 @@ import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest, isRequestKind,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
-  REQUEST_PROTOCOL, MetaFolderTruncatedError, META_RECORDS_MAX_PER_FETCH, metaPageBounds,
-  readMemo, writeMemo, forgetMemo, peekMemo, type Generation,
+  REQUEST_PROTOCOL, requestAppendHeadroom,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
   type RequestRefusalReason, isRequestRefusalReason,
 } from "@trafficflow/core/adapters/organizer-lease";
-import { epochOf, epochVerdict, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
 /**
  * The dispatch table — one entry per kind this build carries out: `screener.decide`, `message.move`,
@@ -260,73 +259,6 @@ export const REQUEST_STALE_MUST_NOT_EXCEED_MS = IDEMPOTENCY_TTL_MS;
 export const REQUEST_DRAIN_MAX_PER_CYCLE = 200;
 
 /**
- * How many pages of a too-full folder one pass may walk looking for work. Bounds the round trips
- * the way the ceiling bounds a page: a folder of nothing but acknowledgements would otherwise be
- * walked to its bottom on every cycle to discover the same emptiness.
- */
-const REQUEST_DRAIN_MAX_PAGES = 8;
-
-/**
- * Where each mailbox's walk got to, so the next cycle resumes instead of starting over. The page
- * budget bounds the round trips one cycle may spend, and on its own that made the walk a treadmill: a
- * folder with more than a budget's worth of no-work pages above the requests was walked from the newest
- * page every cycle, got the same eight pages down, and stopped in the same place for ever, paying the
- * full cost each time. IN MEMORY AND PER PROCESS: losing it costs one cycle of re-walking (today's
- * behaviour, never wrong — it says where to LOOK next, never what was settled), and anything durable
- * would be a second source of truth about a folder whose only truth is the folder. Cleared when the
- * folder reads whole again and when the walk reaches the bottom.
- */
-/**
- * WHERE THIS INSTALL'S WALK STOPPED, kept beside everything else it remembers about this mailbox.
- *
- * This was a module-level map keyed by the MAILBOX ID alone, which is wrong in both directions: it
- * could not tell two installs apart, and it survived a folder being deleted and recreated exactly
- * as it survived a reconnect — so a resume point from a numbering that no longer exists read as
- * current, and the walk began below every record in the new folder. The store keys by
- * (install, mailbox) and holds the generation in the value, so a replaced folder empties it.
- */
-const drainMemo = {
-  read(rt: RequestRuntime, generation: Generation): number | undefined {
-    const held = readMemo({ installId: rt.installId, mailboxId: rt.mailboxId }, generation);
-    return held.kind === "memo" ? held.memo.drainCursor : undefined;
-  },
-  set(rt: RequestRuntime, generation: Generation, at: number): void {
-    writeMemo({ installId: rt.installId, mailboxId: rt.mailboxId }, generation, { drainCursor: at });
-  },
-  clear(rt: RequestRuntime): void {
-    forgetMemo({ installId: rt.installId, mailboxId: rt.mailboxId }, "drainCursor");
-  },
-};
-
-/** The lowest uid in a page, which is the bound for the page below it. `null` when unaddressable. */
-function lowestRef(records: readonly RawMetaMessage[]): number | null {
-  let low: number | null = null;
-  for (const r of records) {
-    if (typeof r.ref !== "number") continue;
-    if (low === null || r.ref < low) low = r.ref;
-  }
-  return low;
-}
-
-/**
- * Is there anything on this page that THIS pass can settle? Acknowledgements are the sweep's. Matched
- * at a HEADER POSITION, not anywhere in the record: a raw substring test says yes to a message that
- * merely CONTAINS the header name (in its body, a quoted reply, a forwarded original), and this
- * predicate is what stops the cursor — one such message parked in the newest page halts the walk there
- * every cycle and never reaches the requests below it, a starvation anyone able to append could
- * arrange while the pass looks busy. A header name begins at the start of a line, so that is what is
- * matched, case-insensitively. The record still has to PARSE as a request for anything to be settled.
- */
-function hasRequestRecord(records: readonly RawMetaMessage[]): boolean {
-  const anchored = /(^|\r?\n)X-Ohmail-Request\s*:/i;
-  return records.some((r) => {
-    // Header block only: the body of a record is not a place headers live.
-    const sep = /\r?\n\r?\n/.exec(r.raw);
-    return anchored.test(sep ? r.raw.slice(0, sep.index) : r.raw);
-  });
-}
-
-/**
  * AND A WALL-CLOCK CEILING BESIDE THE COUNT, because the two bound different things. The count
  * bounds how many records are read; this bounds how long applying them may take when each one is
  * a real transaction against a database that is having a bad day. Checked between records, so a
@@ -425,25 +357,10 @@ function recordedAnswerOf(json: unknown): RecordedAnswer {
   return j.applied === false && isRequestRefusalReason(j.reason) ? { applied: false, reason: j.reason } : { applied: true };
 }
 
-/**
- * The truncation behind a failed read, or `null` when the read failed for any other reason. Every
- * decision that turns on truncation goes through here. The bounded read raises the truncation and the
- * adapter re-throws it WRAPPED in a `RequestUnavailableError`, so what reaches this file always carries
- * the page in `cause` and is never the bare class — a fact known here and applied to the log field
- * alone, while the branch deciding whether to page still asked `err instanceof MetaFolderTruncatedError`,
- * false against the real adapter every time. So a full folder took the "unreadable" path, logged a
- * fault, and returned all-zero with no exception — and the next cycle did the same, so the one state
- * paging exists to unstick stayed stuck. There is now ONE place to know the shape; nothing else may test the bare class.
- */
-function truncationIn(err: unknown): MetaFolderTruncatedError | null {
-  if (err instanceof MetaFolderTruncatedError) return err;
-  const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
-  return cause instanceof MetaFolderTruncatedError ? cause : null;
-}
-
-/** HOW FULL THE FOLDER WAS, when that is why a read failed — and `null` when it is not. */
-function recordsPresentIn(err: unknown): number | null {
-  return truncationIn(err)?.total ?? null;
+/** The enumeration's refusal code behind a failed read (`over_ceiling`, `bytes`, …), else `null`. */
+function enumCodeOf(err: unknown): string | null {
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "string" ? code : null;
 }
 
 /**
@@ -488,19 +405,6 @@ export async function applyMetaRequests(
     return EMPTY_RESULT;
   }
 
-  /* The generation is learned from the read, not asked for beforehand. This asked the io for a
-   * generation before anything had been read, and the io answered with whatever folder the surrounding
-   * cycle had selected — the mailbox being synced, not `ohmail/_meta`. A position in one folder checked
-   * against another folder's numbering is not a stale check; it answers wrongly both ways and took the
-   * claim and settings anchors down through the shared entry. The io now reports the generation of the
-   * folder it actually opened, known only AFTER the first read — so the resume point is taken unchecked,
-   * used, then validated: a stale one costs one window that settles nothing, and the entry is dropped so
-   * the next cycle starts from the top. Being wrong costs a wasted read, never a wrong decision. */
-  const remembered = peekMemo({ installId: rt.installId, mailboxId: rt.mailboxId });
-  /** Set when the read proves the resume point belonged to another numbering. */
-  let staleStart = false;
-  const generationNow = (): Generation => io.uidValidity?.() ?? null;
-
   // ── NO KEY, NO CHANNEL ──────────────────────────────────────────────────────────────────────
   //
   // Read BEFORE the folder is listed, so an organizer with no request channel costs no IMAP round
@@ -517,44 +421,20 @@ export async function applyMetaRequests(
    * nothing self-healing. Asked of the server by header and date where the server takes that form,
    * and by a uid-range fetch of the same window where it does not — iCloud refuses the compound term
    * outright. Failure is logged and swallowed: a sweep that could not run is where this was before,
-   * and must not stop a drain that might still succeed — but it is REMEMBERED, because a folder that
-   * then turns out to be over the ceiling has one thing left to try. */
-  /** This drain's sweep refusal, kept for the ceiling arm below; `null` while none has happened. */
-  let sweepRefusal: unknown = null;
-  let sweepRetries = 0;
+   * and must not stop a drain that might still succeed. */
   const sweep = async (): Promise<void> => {
     if (typeof io.sweepStaleAcks !== "function") return;
     try {
       const swept = await io.sweepStaleAcks(new Date(now.getTime() - REQUEST_STALE_AFTER_MS));
-      sweepRefusal = null;
       if (swept > 0) {
         log("meta_ack_sweep", { mailboxId: rt.mailboxId, accountId: rt.accountId, swept });
       }
     } catch (err) {
-      sweepRefusal = err;
       log("meta_ack_sweep_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId,
         ...refusalFields(err),
       });
     }
-  };
-  /* ── THE ONE THING LEFT TO TRY, ONCE PER DRAIN ────────────────────────────────────────────
-   *
-   * The ceiling and a refused sweep are the pair that has no way out: the folder only grows, so
-   * every later drain refuses too, and a second install's presses stop being answered for good.
-   * One more attempt is worth it here and nowhere else, because the first refusal may have taught
-   * the connection something (the compound search's capability latch) that the second can use.
-   * ONE — counted, not per page: the walk below reaches this from several places, and a sweep per
-   * page is a cycle whose cost the folder's own mess decides. */
-  const healAtCeiling = async (): Promise<void> => {
-    if (sweepRefusal === null || sweepRetries > 0) return;
-    sweepRetries += 1;
-    log("meta_ack_sweep_retried", {
-      mailboxId: rt.mailboxId, accountId: rt.accountId, attempt: sweepRetries,
-      reason: "ohmail/_meta is over the read ceiling and this cycle's sweep was refused, so the "
-        + "sweep is asked once more before the drain gives the cycle up",
-    });
-    await sweep();
   };
   await sweep();
 
@@ -580,192 +460,19 @@ export async function applyMetaRequests(
     }
   }
 
-  /* Where the walk would resume if this pass finishes the page it settles on. Applied after the
-   * per-cycle slice below, which is the first point at which "finished" means anything.
-   *
-   * IT IS APPLIED ON EVERY EXIT, and the first version was not: the cycles that end early — the
-   * folder could not be read, or held nothing this pass settles — are exactly the cycles a WALK
-   * consists of, so leaving them out meant the resume point was written only by the rare cycle
-   * that finished work, and every ordinary step of the walk forgot where it had got to. A guard
-   * written for that very property caught it. */
-  let pageAdvance: { bottom: true } | { bottom: false; lo: number } | null = null;
-  /* One writer for the resume point. The walk used to write it directly as it stepped while ALSO
-   * leaving `pageAdvance` holding the bound from an earlier page — whichever ran last won, and the
-   * exits below run last: eight steps across empty windows advanced the cursor eight times and then
-   * `keepPlace` put back the bound from before the first, so every cycle re-walked the same gaps and
-   * the requests beneath them were never reached (the defect the gap step was added to fix,
-   * reintroduced by the fix for it). Nothing in the walk touches the resume point now; it records where
-   * it got to in `pageAdvance` and this is the only thing that writes. */
-  const keepPlace = (capBit: boolean): void => {
-    if (staleStart || pageAdvance === null || capBit) return;
-    if (pageAdvance.bottom) drainMemo.clear(rt);
-    else drainMemo.set(rt, generationNow(), pageAdvance.lo);
-  };
+  /* THE WHOLE FOLDER, through the one door: complete past the 500-record window, or refused by name
+   * (past the enumeration's ceiling, `over_ceiling` or `bytes`). A refusal is a look that failed:
+   * nothing is settled, acked or removed, and the next cycle tries again. In production the lease
+   * stands this organizer down before a folder past the ceiling reaches here; the arm is driven. */
   let records: RawMetaMessage[];
   try {
-    /* RESUME WHERE THIS MAILBOX'S WALK STOPPED. Absent, this is the newest page, which is where a
-     * folder with no backlog should always be read from. */
-    const resumeAt = remembered?.memo.drainCursor;
-    records = await io.listMetaRecords(resumeAt);
-    /* NOW the folder's own generation is known. If the position we just used belonged to a
-     * different numbering, this window was arbitrary — it settles whatever real records happen to
-     * be in it, which is harmless — and the entry goes, so the next cycle starts from the top. */
-    if (remembered !== null) {
-      const seen = generationNow();
-      /* Through `epoch.ts`, not a second `BigInt` compare beside the door — `meta-memo.ts` already
-       * holds this comparison as `sameEpoch(epochOf(a), epochOf(b))`, and two spellings of one
-       * question is the shape the three cleanup paths drifted apart in. It also answers a case the
-       * hand-written pair could not: a `0` or an out-of-range value is a generation NOBODY NAMED,
-       * and an unnamed generation may not be read as agreement with another one. */
-      const same = epochVerdict(epochOf(seen), epochOf(remembered.generation)) === "usable";
-      if (!same) {
-        /* ── AND THIS CYCLE RECORDS NOTHING ────────────────────────────────────────────────
-         *
-         * Clearing the entry is not enough on its own, and the guard below caught it: the walk
-         * that started from the stale position goes on to record where IT got to, under the
-         * folder's new generation — laundering a position derived from a window in the old
-         * numbering into one that now looks checkable. Every later cycle then resumes there,
-         * finds the same nothing, and agrees with itself for ever.
-         *
-         * A cycle that discovers its own starting point was stale has learned one thing only:
-         * where NOT to start. It settles whatever this window really held and leaves no mark. */
-        drainMemo.clear(rt);
-        staleStart = true;
-      }
-    }
-    /* ── WHAT AN EMPTY ANSWER MEANS DEPENDS ON WHETHER A WINDOW WAS ASKED FOR ──────────────
-     *
-     * With no resume point this read covers the folder from its newest end, so an empty answer
-     * is an empty folder and there is no backlog to come back to. With one it covers a WINDOW,
-     * and an empty answer means only that this window held nothing — which append-and-expunge
-     * churn produces routinely, since a gap wider than one window is ordinary.
-     *
-     * Both used to clear the cursor. The walk therefore gave up at the first gap, restarted from
-     * the newest page next cycle, walked down to the same gap, and gave up again, while the
-     * requests underneath it were never reached and every counter reported an idle drain. */
-    if (resumeAt === undefined) {
-      drainMemo.clear(rt);
-    } else {
-      const here = metaPageBounds(resumeAt);
-      /* A page holding work keeps its bound: settling is capped per cycle, so moving below a
-       * page this pass could not finish would strand the remainder until the walk came round
-       * again. Re-reading a settled record is a claimed key and a no-op. */
-      /* Whether this page is finished is not known yet. The first rule here asked whether the page held
-       * any request record at all and pinned the bound if it did — the wrong question, and it turned
-       * one stuck record into a stuck mailbox: a request this build cannot settle (one written by a
-       * newer ohmail, left standing on purpose) is a request record for ever, so the page containing it
-       * pinned the walk for ever and every older request underneath went unsettled while the drain
-       * reported healthy cycles. The real question is whether the per-cycle cap stopped this pass
-       * part-way through work it WOULD have settled, which is not answerable until the slice below has
-       * been taken. So the bound is only a candidate here; the decision is made after it. */
-      pageAdvance = here.bottom ? { bottom: true } : { bottom: false, lo: here.lo };
-    }
+    records = (await io.listMetaRecords()).records;
   } catch (err) {
-      /* A folder too full to read is drained a page at a time, not refused wholesale. This returned
-       * empty for every fault, and for a folder over the ceiling that was the one outcome with no way
-       * back: records leave only after a drain settles them, the drain ran only after a whole read
-       * succeeded, and the read refuses past the ceiling — so a crossed folder stayed crossed for ever
-       * (the ack sweep removes only ACKS). The bounded read already hands back the newest window, which
-       * IS a page; processing it unsticks the mailbox. It does NOT make the folder smaller the same
-       * cycle — settling a request appends an ack in its place, so a folder of requests becomes a folder
-       * of acks at the same count (which age out a day later). Safe because this applies signed decisions
-       * under `meta-request:<id>`, so a re-read on a later page is a no-op, not a double application. */
-    const truncated = truncationIn(err);
-    /* The folder is over the ceiling. If this cycle's sweep was refused, that is the pair with no
-     * way out, and the one retry happens here — once per drain, wherever the ceiling is met. */
-    if (truncated !== null) await healAtCeiling();
-    /* ── A TRUNCATION MAY CARRY NO PAGE, AND THAT IS A FAILED LOOK LIKE ANY OTHER ────────────
-     *
-     * `records` is optional on the truncation: the bounded read attaches the window it did cover,
-     * but a refusal raised before any of it was read has nothing to attach. Reaching for `.length`
-     * on that is a crash inside the error handler, which turns a bad cycle into a thrown
-     * `TypeError` from a path whose entire job is to fail softly. Nothing to page from means the
-     * else-branch below, which is what a look that failed has always meant here. */
-    if (truncated !== null && (truncated.records?.length ?? 0) > 0) {
-      log("meta_requests_paged", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId,
-        page: truncated.records.length, records: recordsPresentIn(err),
-        /* The same two speeds the block comment above sets out, and this line said only the
-         * fast one — it claimed the folder is smaller for the next cycle, which is what settling
-         * a request does NOT do: the acknowledgement written in its place holds the count. The
-         * correction belongs here as much as in the comment, because this is the sentence an
-         * operator actually reads. */
-        reason: "ohmail/_meta holds more than one read may take, so this cycle settles the newest "
-          + "page: those decisions stop waiting now, and the record count comes back under the "
-          + "ceiling once the acknowledgements written in their place age past the sweep's cutoff",
-      });
-      records = [...truncated.records];
-      /* And the cursor advances even when a page holds no work. The newest page is the same page every
-       * cycle, so a folder over the ceiling whose newest records are all acknowledgements (not yet
-       * stale) gives this pass nothing to settle, and the next reads the same window — the requests that
-       * would unstick it sit below, and no waiting moves them up. So the read walks DOWN: each page's
-       * lowest uid becomes the next bound, making the cursor strictly decreasing (a page is re-read only
-       * if the folder changed under it, never in the same pass). The walk stops at the first page with
-       * work, the bottom of the folder, or the page budget. WORK means a request record; acknowledgements
-       * are the sweep's business, which already ran ahead of this read. */
-      let cursor = lowestRef(records);
-      /* ── A RESUME POINT BELOW A PAGE CLAIMS THE PAGE IS FINISHED ─────────────────────────
-       *
-       * This persisted below the page unconditionally, and settling is capped per cycle: a page
-       * of five hundred requests had two hundred settled and the resume point moved below all
-       * five hundred, so the other three hundred waited for the walk to bottom out and start
-       * over. A page with work keeps the bound that produced it, and the next cycle reads it
-       * again — shorter, because what was settled has left the folder. */
-      if (cursor !== null) pageAdvance = { bottom: false, lo: cursor };
-      for (let page = 1; page < REQUEST_DRAIN_MAX_PAGES; page++) {
-        if (hasRequestRecord(records)) break;
-        if (cursor === null || cursor <= 1) {
-          // The bottom: nothing older to resume into, so the next cycle starts fresh.
-          pageAdvance = { bottom: true };
-          break;
-        }
-        let older: RawMetaMessage[];
-        try {
-          older = await io.listMetaRecords(cursor);
-        } catch (pageErr) {
-          /* A PAGE BELOW THE CURSOR IS ALSO A BOUNDED READ, so it refuses in exactly the same way
-           * when what is left below is still more than one window — which for a genuinely full
-           * folder is every page but the last. Treating that as unreadable stopped the walk on its
-           * first step and made the whole thing a no-op; the refusal carries the page, and the
-           * page is what the walk wanted. Anything else really is a look that failed. */
-          const pageTruncation = truncationIn(pageErr);
-          if (pageTruncation !== null) await healAtCeiling();
-          if (pageTruncation === null || (pageTruncation.records?.length ?? 0) === 0) break;
-          older = [...pageTruncation.records];
-        }
-        if (older.length === 0) {
-          /* AN EMPTY WINDOW IS A GAP, NOT THE BOTTOM. Step past it rather than stopping: the
-           * arithmetic says where this window began, so the walk can continue beneath it
-           * without a record to take a bound from. */
-          const gap = metaPageBounds(cursor);
-          if (gap.bottom) { pageAdvance = { bottom: true }; break; }
-          cursor = gap.lo;
-          pageAdvance = { bottom: false, lo: gap.lo };
-          continue;
-        }
-        const next = lowestRef(older);
-        // The cursor must STRICTLY advance, or the walk is a loop with extra steps.
-        if (next === null || cursor !== null && next >= cursor) break;
-        records = older;
-        cursor = next;
-        pageAdvance = { bottom: false, lo: next };
-        log("meta_requests_page_advanced", {
-          mailboxId: rt.mailboxId, accountId: rt.accountId, page, cursor,
-          reason: "the page above held nothing this pass can settle, so the walk moved older "
-            + "rather than reading the same window again next cycle",
-        });
-      }
-    } else {
-      // Mirrors the lease peek's own rule: an unreadable folder is a look that failed, not
-      // evidence of anything. The next cycle tries again.
-      log("meta_requests_list_failed", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId,
-        ...refusalFields(err),
-        records: recordsPresentIn(err),
-      });
-      keepPlace(false);
-      return EMPTY_RESULT;
-    }
+    log("meta_requests_list_failed", {
+      mailboxId: rt.mailboxId, accountId: rt.accountId,
+      ...refusalFields(err), code: enumCodeOf(err),
+    });
+    return EMPTY_RESULT;
   }
 
   const envelopes = requestEnvelopesIn(records);
@@ -800,7 +507,6 @@ export async function applyMetaRequests(
         });
       }
     }
-    keepPlace(false);
     return EMPTY_RESULT;
   }
 
@@ -1293,22 +999,6 @@ export async function applyMetaRequests(
     });
   }
 
-  /* ── UNFINISHED IS UNFINISHED, WHETHER THE COUNT OR THE CLOCK STOPPED IT ────────────────
-   *
-   * This asked only whether the per-cycle COUNT had truncated the slice. The slice is also cut
-   * short by the time budget — a pass that takes two hundred records and gets through eighty
-   * before its clock runs out defers the rest, and with a count-only test the resume point moved
-   * below all two hundred. The hundred and twenty deferred ones then waited for the walk to reach
-   * the bottom and come round again, which on a deep folder is a long time and, with the gap step
-   * broken as it was, never.
-   *
-   * Deferred means taken and not settled, which is exactly the state that must hold the bound. */
-  keepPlace(
-    malformed.length > takeMalformed.length
-    || wellFormed.length > takeWellFormed.length
-    || deferred > 0,
-  );
-
   return { applied, refused, deferred, standing };
 }
 
@@ -1453,18 +1143,18 @@ export async function driveOutstandingRequests(
    * growing pile of genuine records the organizer would dutifully apply. A read that FAILS stops the
    * cycle before it writes: appending without being able to check for a duplicate is exactly that loop. */
   let records: RawMetaMessage[];
+  let folder: { count: number; bytes: number };
   try {
-    records = await io.listMetaRecords();
+    const listed = await io.listMetaRecords();
+    records = listed.records;
+    folder = { count: listed.count, bytes: listed.bytes };
   } catch (err) {
     // An ABSENT FOLDER lands here too, by design: `listMetaRecords` raises rather than answering
     // `[]`, because a missing folder used to read as "every record is gone" and therefore as
-    // "everything was applied".
+    // "everything was applied". A folder past the enumeration's ceiling is named by its code.
     log("outstanding_requests_list_failed", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
-      ...refusalFields(err),
-      // As above: a full folder is the failure worth naming with a number, and appending without
-      // being able to check for a duplicate is the loop this read exists to prevent.
-      records: recordsPresentIn(err),
+      ...refusalFields(err), code: enumCodeOf(err),
     });
     return EMPTY_DRIVE_RESULT;
   }
@@ -1520,27 +1210,25 @@ export async function driveOutstandingRequests(
     (r) => r.decidedAt.getTime() >= now.getTime() - REQUEST_STALE_AFTER_MS,
   );
 
-  /* This install may not itself fill the folder it later refuses to read. Every queued decision was
-   * appended in one pass with nothing between the queue's length and the folder's ceiling, so a reader
-   * that decided while the organizer was offline comes back with hundreds of rows and one cycle appends
-   * all of them — crossing the ceiling by THIS INSTALL'S OWN RECORDS. That is permanent, not untidy:
-   * requests leave only after a bounded read SUCCEEDS, the read refuses past the ceiling, and the
-   * compactor removes only ACKS. So the appends are bounded by the headroom measured this cycle,
-   * rows beyond it stay `pending`, and the shortfall is LOUD. The honest invariant is two-part: (a) no
-   * single writer's cycle pushes the folder past the ceiling (enforceable), and (b) two writers CAN
-   * jointly cross it and the folder must recover within one cycle (why the ack sweep runs AHEAD of the read). */
-  const headroom = Math.max(0, META_RECORDS_MAX_PER_FETCH - records.length);
-  const appendable = stillQueued.slice(0, headroom);
+  /* This install may not itself fill the folder past what its readers read. The appends are bounded
+   * by the headroom measured this cycle over the folder's COUNT and BYTES (`requestAppendHeadroom`,
+   * whose mixed-fleet rule is the invariant: at or under the 500-record window this install never
+   * takes the folder past it, which builds up to 0.25.4 read claims by). Rows beyond it stay
+   * `pending` and the shortfall is LOUD, naming the ceiling that bound it. Two writers CAN jointly
+   * cross a ceiling; the ack sweep runs AHEAD of the read so the folder comes back down. */
+  const room = requestAppendHeadroom(folder);
+  const appendable = stillQueued.slice(0, room.headroom);
   if (appendable.length < stillQueued.length) {
     log("meta_request_append_deferred", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
       queued: stillQueued.length, appending: appendable.length,
-      records: records.length, ceiling: META_RECORDS_MAX_PER_FETCH,
+      records: folder.count, bytes: folder.bytes, boundBy: room.boundBy ?? "window",
+      ceiling: room.boundBy === "bytes" ? room.byteCeiling : room.recordCeiling,
       reason: appendable.length === 0
-        ? "ohmail/_meta is at the ceiling, so appending would make it unreadable and nothing here "
-          + "could then clear it; these decisions stay queued until the ack sweep makes room"
-        : "ohmail/_meta is close to the ceiling; the rest of this queue is appended on later "
-          + "cycles so the folder never crosses it by this install's own records",
+        ? "ohmail/_meta has no room for another request under its ceiling; these decisions stay "
+          + "queued until the ack sweep makes room"
+        : "the rest of this queue is appended on later cycles so the folder never crosses a "
+          + "ceiling by this install's own records",
     });
   }
 
