@@ -793,6 +793,8 @@ export const folderState = sqliteTable("folder_state", {
   trashedFrom: text("trashed_from"),
   // Mail 0138: the person put back the Screener's automatic filing; the pass files it never again.
   autoFilingUndoneAt: integer("auto_filing_undone_at", { mode: "timestamp_ms" }),
+  // Mail 0141: the auto-apply pass's floor verdict; no device runs that pass.
+  screenerFloorVersion: integer("screener_floor_version"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and

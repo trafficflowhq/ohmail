@@ -811,6 +811,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // candidate statement and the undo both name the column, so a host ahead of the migration 42703s
   // both. Deploy order migration → API → worker.
   ["folder_state", "auto_filing_undone_at"],
+  // mail 0141_screener_floor_version — the auto-apply pass's floor verdict. The held page and the
+  // mark write name the column, so a worker ahead of the migration 42703s. Deploy order migration →
+  // API → worker.
+  ["folder_state", "screener_floor_version"],
 ] as const;
 
 /**
@@ -1198,7 +1202,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0140_body_tsv_bounded";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0141_screener_floor_version";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

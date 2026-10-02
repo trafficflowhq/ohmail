@@ -402,5 +402,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "CREATE INDEX IF NOT EXISTS \"messages_account_arrival_order_idx\" ON \"messages\" (\"account_id\", (case when \"arrived_at\" is null then coalesce(\"date\", 0) when \"date\" is null then \"arrived_at\" when abs(\"date\" - \"arrived_at\") <= 172800000 then \"date\" else \"arrived_at\" end) DESC, \"id\" DESC) WHERE \"deleted_at\" IS NULL;"
     ]
+  },
+  {
+    "name": "0141_screener_floor_version.sql",
+    "statements": [
+      "ALTER TABLE \"folder_state\" ADD COLUMN \"screener_floor_version\" integer;"
+    ]
   }
 ] as const;

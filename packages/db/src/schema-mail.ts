@@ -876,6 +876,14 @@ export const folderState = pgTable("folder_state", {
    * never files the message again. Written by the undo alone, never cleared.
    */
   autoFilingUndoneAt: timestamp("auto_filing_undone_at", { withTimezone: true }),
+  /**
+   * The Screener auto-apply pass's verdict on this message's strong-bulk floor (mail 0141). NULL =
+   * unjudged, or withdrawn; N = the pass read the floor empty under `STRONG_BULK_FLOOR_VERSION` N
+   * with a body row present, and its hourly walk skips the row. Written by that pass alone, one
+   * column and nothing else: no `updated_at`, no change row. A mark under another version is
+   * withdrawn by the pass's next full walk.
+   */
+  screenerFloorVersion: integer("screener_floor_version"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and
