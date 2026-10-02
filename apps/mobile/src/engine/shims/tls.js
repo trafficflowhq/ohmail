@@ -105,6 +105,7 @@ function connect(options, listener) {
  */
 function detachPlainSide(existing, underlying) {
   if (underlying && typeof underlying.removeAllListeners === "function") underlying.removeAllListeners("data");
+  if (existing instanceof NativeSocketBridge) existing._handedToTls = true;
   if (existing instanceof NativeSocketBridge && existing._paused) {
     existing._paused = false;
     try { underlying.resume(); } catch { /* gone; its close follows */ }

@@ -92,6 +92,7 @@ class NativeSocketBridge extends Duplex {
      * to a socket that was not there. See `_write`.
      */
     this._connectionGone = false;
+    this._handedToTls = false;
 
     native.on("data", (chunk) => {
       // `push` returning false means the consumer is behind. Pausing the NATIVE side is the only
@@ -107,6 +108,10 @@ class NativeSocketBridge extends Duplex {
       this.emit("connect");
     });
     native.on("error", (raw) => {
+      /* HANDED TO TLS, the plain side carries nothing: the platform's TLS socket forwards every
+         error here AND to its own listeners, so the TLS bridge already has this one. By flag,
+         never by unlistening the native socket (its emitter is not ours to edit). */
+      if (this._handedToTls) return;
       const err = nativeError(raw);
       this.emit("error", typeof mapError === "function" ? mapError(err) : err);
     });
@@ -125,6 +130,25 @@ class NativeSocketBridge extends Duplex {
          readable side — bytes already pushed still reach a consumer that reads after this. */
       if (!this.destroyed) this.destroy();
     });
+  }
+
+  /**
+   * AN ERROR NOBODY LISTENS FOR IS SAID, NEVER THROWN. This Duplex is node `events`, which
+   * throws an unlistened `error`, and the mail client drops its listeners at an upgrade and at a
+   * close: a write failing after a reset closed the app on 0.25.8 (TCP reset, 3 of 3). The one
+   * door every bridge `error` goes through; a bridge WITH a listener gets the error unchanged.
+   */
+  emit(event, ...args) {
+    if (event === "error" && this.listenerCount("error") === 0) {
+      socketLog("socket_error_unlistened", {
+        err: args[0],
+        reason: "the mail server connection failed after nothing was listening for it; the " +
+          "connection was closed rather than the error reaching the top of the app",
+      });
+      if (!this.destroyed) this.destroy();
+      return false;
+    }
+    return super.emit(event, ...args);
   }
 
   _read() {
