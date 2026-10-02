@@ -39,7 +39,7 @@ import {
 } from "./store-pages.js";
 import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync-failure.js";
 import type { WindowSearchPhases } from "./search-phases.js";
-import type { SendAndDonePlan } from "./send-and-done.js";
+import { asSendAndDoneIntent, type SendAndDonePlan } from "./send-and-done.js";
 import { countNotify } from "./client-vitals.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
@@ -184,9 +184,9 @@ export interface MutationResult {
   /** The server's `organizer_requests.id` for a queued mutation, where the door named one. */
   requestId?: string;
   /**
-   * THE SEND + DONE RELEASE this send was pressed with — on its CONFIRMED result only, from the
-   * send's own outbox row. A later boot's replay hands it back too, so the source is filed by
-   * whichever surface collects the confirmation, not only the one that pressed.
+   * THE SEND + DONE INTENT this send was pressed with — on its CONFIRMED result only, from the
+   * send's own outbox row. A later boot's replay hands it back too, so whichever surface collects
+   * the confirmation reads the release then (`releasePlanAt`); the intent itself is never applied.
    */
   andDone?: SendAndDonePlan;
 }
@@ -311,7 +311,7 @@ interface PendingMutation {
   createdRow?: CreatedDraftRow;
   /** The Web Lock of the engine that holds this verb — see {@link OhmailEngine.adoptOrphanedOutbox}. */
   owner?: string;
-  /** The Send + Done release — see {@link MutationResult.andDone}. Persisted with the row. */
+  /** The Send + Done intent — see {@link MutationResult.andDone}. Persisted with the row. */
   andDone?: SendAndDonePlan;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
@@ -452,8 +452,9 @@ interface PersistedOutboxEntry {
    */
   withdrawn?: boolean;
   /**
-   * THE SEND + DONE RELEASE, kept with the send it was pressed with — see
-   * {@link MutationResult.andDone}. Added in place: absent reads as a plain Send.
+   * THE SEND + DONE INTENT, kept with the send it was pressed with — see
+   * {@link MutationResult.andDone}. Added in place: absent reads as a plain Send. Written by pick
+   * (`section`, `source`, `messageIds`); an older row's carried mutations are read and ignored.
    */
   andDone?: SendAndDonePlan;
 }
@@ -537,7 +538,7 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...(p.createAttempted === true ? { createAttempted: true } : {}),
     ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
     ...(p.owner !== undefined ? { owner: p.owner } : {}),
-    ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
+    ...andDoneOf(p),
   };
 }
 
@@ -548,12 +549,10 @@ function isCreatedRow(v: unknown): v is CreatedDraftRow {
   return typeof r.id === "string" && r.id.length > 0 && (r.revision === null || typeof r.revision === "string");
 }
 
-/** A persisted release read back defensively: a malformed one is a plain Send, never a guess. */
-function isAndDonePlan(v: unknown): v is SendAndDonePlan {
-  if (typeof v !== "object" || v === null) return false;
-  const r = v as Record<string, unknown>;
-  return typeof r.section === "string" && Array.isArray(r.messageIds)
-    && Array.isArray(r.mutations) && Array.isArray(r.undo);
+/** The persisted Send + Done intent of a send row, by PICK — see {@link asSendAndDoneIntent}. */
+function andDoneOf(e: { mutation: EngineMutation; andDone?: unknown }): { andDone?: SendAndDonePlan } {
+  const intent = e.mutation.kind === "mail_send" ? asSendAndDoneIntent(e.andDone) : undefined;
+  return intent !== undefined ? { andDone: intent } : {};
 }
 
 /**
@@ -3238,7 +3237,7 @@ export class OhmailEngine {
       // memory of the unreadable create is gone. Without this the replay re-POSTs the create.
       ...(e.createAttempted === true ? { createAttempted: true } : {}),
       ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
-      ...(e.mutation.kind === "mail_send" && isAndDonePlan(e.andDone) ? { andDone: e.andDone } : {}),
+      ...andDoneOf(e),
       /**
        * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
        * 2` shape in place, so records written before it can carry a `nextAt` that came from a `Retry-After` and no
@@ -6149,7 +6148,7 @@ export class OhmailEngine {
       ...(superseded.createdRow !== undefined ? { createdRow: superseded.createdRow } : {}),
       ...(this.ownerName !== null ? { owner: this.ownerName } : {}),
       // With the send's durable row, never in a surface's memory: the arm outlives the surface.
-      ...(opts.andDone !== undefined && enriched.kind === "mail_send" ? { andDone: opts.andDone } : {}),
+      ...andDoneOf({ mutation: enriched, andDone: opts.andDone }),
     };
     // ONE TRANSACTION: the newer row in, the rows it supersedes out, and every abandoned record it
     // marks stale. See `supersedeQueued` for why the removal may not be a separate best-effort
@@ -6602,7 +6601,7 @@ export class OhmailEngine {
       ...(p.createAttempted === true ? { createAttempted: true } : {}),
       ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
       // Its Send + Done release, for the Try again that confirms it (`retryAbandonedOnce`).
-      ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
+      ...andDoneOf(p),
     };
     /**
      * TWO WRITES, TWO FAILURE MODES, AND NEITHER MAY BE SWALLOWED: This used to be one `try` around both calls with
@@ -6797,7 +6796,7 @@ export class OhmailEngine {
       ...(e.createAttempted === true ? { createAttempted: true } : {}),
       ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
       // A Send + Done given up on and tried again still files its source once it is confirmed.
-      ...(e.mutation.kind === "mail_send" && isAndDonePlan(e.andDone) ? { andDone: e.andDone } : {}),
+      ...andDoneOf(e),
     };
 
     /**
@@ -7598,7 +7597,7 @@ export class OhmailEngine {
           lastError: { message: rejection.message, code, status: rejection.status },
           ...(p.createAttempted === true ? { createAttempted: true } : {}),
           ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
-          ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
+          ...andDoneOf(p),
           ...(code === "send_unverified" ? {} : { retryRefused: code ?? "refused" }),
         };
         try {
@@ -7859,7 +7858,7 @@ export class OhmailEngine {
     }
   }
 
-  pendingMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation }> {
+  pendingMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan }> {
     return [...this.queue];
   }
 

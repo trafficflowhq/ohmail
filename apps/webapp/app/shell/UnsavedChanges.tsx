@@ -8,6 +8,7 @@ import type { AbandonedMutation, MutationResult, OhmailEngine, QueuedChange } fr
 /** What a retry answers — the engine's own result, carried to the row that asked for it. */
 type RetryOutcome = MutationResult;
 import { useEngine, useAbandoned } from "./engine";
+import { useSendRelease } from "./send-release";
 
 const NO_QUEUED: readonly QueuedChange[] = [];
 
@@ -56,7 +57,8 @@ export function UnsavedChanges({ variant }: { variant: "shell" | "rail" }) {
 }
 
 /**
- * THE PURE HALF — props in, markup out, no engine and no hooks but its own.
+ * THE PURE HALF — props in, markup out, no engine. Its one context is the shell's Send + Done door,
+ * which is absent outside the shell and then releases nothing.
  *
  * Split for the reason `MarkAllRead` is shaped the same way: a component that reaches into a
  * context can only be tested by standing up that context, and the thing under test here is what a
@@ -93,11 +95,14 @@ export function UnsavedChangesList({
   const [busy, setBusy] = useState<string | null>(null);
   /** The last retry's own sentence, when it had one — see {@link retry}. */
   const [said, setSaid] = useState<{ id: string; code: string; message: string } | null>(null);
+  /* A Send + Done this retry confirms is released by the shell's door, as every other road's. */
+  const release = useSendRelease();
 
   const retry = useCallback(async (id: string) => {
     setBusy(id);
     try {
       const outcome = await onRetry(id);
+      if (outcome.status === "confirmed" && outcome.andDone !== undefined) release?.(outcome);
       // For a verb `ownerSettled` covers, this row is the only thing waiting on the result, so a
       // terminal answer has to be said here or it is said nowhere. A confirmed or queued retry
       // simply removes the row (the list re-reads); anything else leaves a sentence.
@@ -106,7 +111,7 @@ export function UnsavedChangesList({
     } finally {
       setBusy(null);
     }
-  }, [onRetry]);
+  }, [onRetry, release]);
 
   const discard = useCallback(async (id: string) => {
     setBusy(id);

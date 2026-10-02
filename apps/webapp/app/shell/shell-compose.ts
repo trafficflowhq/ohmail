@@ -19,7 +19,7 @@ import {
   forwardSubject,
   pressVerdict,
   replySubject,
-  sendAndDone,
+  intentOf,
   sendAndDonePlanFor,
   sendingMailboxId,
   type ComposeAttachment,
@@ -29,6 +29,7 @@ import {
   type EngineMutation,
   type ForwardAsk,
   type EntityReader,
+  type MutationResult,
   type OhmailEngine,
   type SendAndDonePlan,
   type TriagePileEntry,
@@ -101,6 +102,7 @@ import { readColumnHidden } from "./narrow";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
 import { go, type Route } from "./routing";
 import { attachSendLockDraft, discardDecision, holdOf, releaseSendLockForRow } from "./send-lock";
+import { releaseSendAndDone } from "./send-release";
 import type { DiscardRefusal } from "../views/DraftsView";
 import {
   effectiveSignature,
@@ -873,10 +875,9 @@ export function useShellCompose({
     setFr({ ...fr, step: fr.step + 1 });
   });
   /*
-   * SEND + DONE: the release a press earned rides the SEND ITSELF, on its outbox row, and comes
-   * back on its confirmation (`OutcomeDetail.andDone`) — a later boot's replay included. It was a
-   * map in this surface's memory, so a send confirmed after a reload filed nothing. The plan is
-   * read at the press: it names the section the source is in NOW, before the send moves a pin.
+   * SEND + DONE: the INTENT a press earned rides the SEND ITSELF, on its outbox row, and comes back
+   * on its confirmation (`OutcomeDetail.andDone`) — a later boot's replay included. The release
+   * and its Undo are read when it comes back (`releaseSendAndDone`), from the Ohbox as it is then.
    */
 
   /**
@@ -947,10 +948,10 @@ export function useShellCompose({
   });
 
   /**
-   * THE SEND MACHINE'S ANSWER, and for Send + Done the release it carries. `accepted` is the
-   * engine's confirmation and nothing weaker; the intent is what refuses to dispatch anything
-   * without it, here as on the phone. Answering `true` tells the lane the shell has spoken for
-   * this send, so the ordinary "Reply sent." is not raised and replaced — one press, one sentence.
+   * THE SEND MACHINE'S ANSWER, and for Send + Done the release of the intent it carries. `accepted`
+   * is the engine's confirmation and nothing weaker: without it nothing is dispatched. `true` is a
+   * release made — the shell has spoken for this send, and `settle` neither discharges the reply's
+   * debt nor raises "Reply sent." over it. One press, one sentence.
    */
   const onSendOutcome = useStableCallback((
     key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,
@@ -963,22 +964,24 @@ export function useShellCompose({
     }
     // …and so does a reply or forward lane: its next press sends that row instead of making one.
     if (!accepted && left !== undefined && key !== COMPOSE_SEND_KEY) takeLaneRow(key, left.rowId);
-    const plan = detail?.andDone;
-    if (plan === undefined) return false;
-    void sendAndDone({
-      plan,
-      // The acceptance, read where the send machine knows it. A refused send reaches this
-      // door too, and the intent is what makes it dispatch nothing.
-      send: () => Promise.resolve(accepted),
-      // THE ROW'S OWN DONE DOOR — `mutateAndReport` with no sentence of its own, exactly as
-      // the `resurface_done` arm dispatches it, so a refusal is said in the same words.
+    const intent = detail?.andDone;
+    if (intent === undefined || !accepted) return false;
+    /* The release read NOW, from the Ohbox as presented — and the row's own Done door
+       dispatches it, so a refused step is said in the same words. Nothing to release
+       answers `false`, and the send's ordinary sentence is said instead. */
+    return releaseSendAndDone({
+      presented,
+      intent,
       dispatch: (mu) => mutateAndReport(mu, null),
-    }).then((out) => {
-      /* The one sentence this press earns, with the way back: Undo puts the row into the
-         section it left. A refused release has already said so in its own words. */
-      if (out.kind === "sent_and_done") toastWithUndo(t("reply.toastSentAndDone"), plan.undo);
+      say: (undo) => toastWithUndo(t("reply.toastSentAndDone"), undo),
     });
-    return accepted;
+  });
+
+  /** The strip's Try again hands its confirmed result here — see `send-release.tsx`. */
+  const releaseConfirmed = useStableCallback((res: MutationResult) => {
+    if (res.status !== "confirmed" || res.andDone === undefined) return;
+    // The key is the send's own: a confirmed release reads no lane, only the intent.
+    onSendOutcome(res.key, { kind: "mail_send" } as unknown as MailSendMutation, true, undefined, { andDone: res.andDone });
   });
 
   const mailSend = useMailSend(engine, toast, onSendSettled, onSendOutcome);
@@ -1223,13 +1226,14 @@ export function useShellCompose({
   });
 
   /**
-   * SEND + DONE, PRESSED — the SAME send through the same door, carrying its release. There is one
+   * SEND + DONE, PRESSED — the SAME send through the same door, carrying its intent. There is one
    * path to SMTP, and the lock, the empty-body guard and the whole failure surface belong to it.
-   * The plan is read BEFORE the press (the pre-press mirror is what Undo restores). A source the
-   * engine's rule declines is an ordinary Send — the button is not offered there.
+   * The press names the source and the members it saw; the release is read at the confirmation. A
+   * source the engine's rule declines is an ordinary Send — the button is not offered there.
    */
   const pressSendAndDone = useStableCallback((messageId: string) => {
-    sendReply(messageId, sendAndDonePlanFor(presented, messageId));
+    const offered = sendAndDonePlanFor(presented, messageId);
+    sendReply(messageId, offered === null ? null : intentOf(offered, messageId));
   });
 
   /**
@@ -2103,6 +2107,7 @@ export function useShellCompose({
     openReply,
     plan,
     pressSendAndDone,
+    releaseConfirmed,
     replyAll,
     replyAttachments,
     replyBody,

@@ -7,33 +7,46 @@ import type { EngineMessage, EngineMutation } from "./types.js";
  * SEND + DONE — one rule, read by every surface.
  *
  * The composer's second send action answers a message and files it in one press. It is NOT a
- * second Done: the plan below is the Ohbox row's own release (clear the bookings, then ONE
- * deliberate `mark_seen` over the row), and the intent dispatches it only once the engine has
- * accepted the send. Offered only where it would change something — see {@link
- * sendAndDonePlanFor}, whose `null` IS the plain Send.
+ * second Done: the release is the Ohbox row's own (clear the bookings, then ONE deliberate
+ * `mark_seen` over the row), dispatched only once the engine has accepted the send. The press
+ * carries the INTENT; the release and its Undo are read from the mirror at the release
+ * ({@link releasePlanAt}), because a send can confirm minutes or a restart later.
  */
 
 /** Which group of the Ohbox the source stands in. Nothing else is a source. */
 export type OhboxSection = "new" | "earlier" | "resurfaced";
 
+/**
+ * THE INTENT a Send + Done press carries on its outbox row: the source, the section it stood in,
+ * and the members the press saw. No mutations and no Undo — those are read at the release.
+ */
 export interface SendAndDonePlan {
+  section: OhboxSection;
+  source: string;
+  messageIds: string[];
+}
+
+/** The release over one row, read from one mirror. Only this is dispatched or undone. */
+export interface SendAndDoneRelease {
   /** Where the source is now — what Undo puts it back into. */
   section: OhboxSection;
-  /** The row the source stands in, as the Ohbox counts it: a conversation, or a lone message. */
+  /** The row the release files, as the Ohbox counts it. */
   messageIds: string[];
   /** In dispatch order: each booking cleared, then the one deliberate read over the row. */
   mutations: EngineMutation[];
-  /** What Undo dispatches, read off the PRE-PRESS mirror. Never empty — see the rule below. */
+  /** What Undo dispatches, read off the same mirror. Never empty. */
   undo: EngineMutation[];
+  /** The mirror version the release was read at. */
+  readonly readAt: number;
 }
 
 export type SendAndDoneOutcome =
   /** The engine did not accept the send. NOTHING was dispatched and nothing is done. */
   | { kind: "send_refused" }
-  /** Sent, with no plan: an ordinary Send, said in the ordinary words. */
+  /** Sent, and nothing to release: an ordinary Send, said in the ordinary words. */
   | { kind: "sent" }
-  /** Sent, and the row released. */
-  | { kind: "sent_and_done" }
+  /** Sent, and the row released — the release carries the Undo to offer. */
+  | { kind: "sent_and_done"; release: SendAndDoneRelease }
   /** Sent, and the release refused — the refusal is the caller's to say. */
   | { kind: "send_done_refused" };
 
@@ -55,7 +68,7 @@ function bookedIn(rows: readonly EngineMessage[]): string[] {
 export function sendAndDonePlanFor(
   reader: EntityReader,
   sourceId: string | null,
-): SendAndDonePlan | null {
+): SendAndDoneRelease | null {
   if (sourceId === null) return null;
   const view = ohboxView(reader);
   /* RESURFACED FIRST, and by the ENGINE's row: the pin is per message and the row is per
@@ -96,7 +109,7 @@ function planOver(
   reader: EntityReader,
   section: OhboxSection,
   rows: readonly EngineMessage[],
-): SendAndDonePlan | null {
+): SendAndDoneRelease | null {
   const messageIds = rows.map((m) => m.id);
   if (messageIds.length === 0) return null;
   const booked = bookedIn(rows);
@@ -117,7 +130,47 @@ function planOver(
       read,
     ],
     undo,
+    readAt: reader.version(),
   };
+}
+
+/** What a press carries: the source and the members its read saw, never the read itself. */
+export function intentOf(release: SendAndDoneRelease, source: string): SendAndDonePlan {
+  return { section: release.section, source, messageIds: [...release.messageIds] };
+}
+
+/**
+ * A PERSISTED INTENT read back defensively, by PICK: a malformed one is a plain Send. An older
+ * row carries the press-time `mutations`/`undo` and no `source`; it is read as its first member,
+ * and what it carried is never applied.
+ */
+export function asSendAndDoneIntent(v: unknown): SendAndDonePlan | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const r = v as Record<string, unknown>;
+  const section = r.section;
+  if (section !== "new" && section !== "earlier" && section !== "resurfaced") return undefined;
+  if (!Array.isArray(r.messageIds) || !r.messageIds.every((x) => typeof x === "string")) return undefined;
+  const messageIds = r.messageIds as string[];
+  const source = typeof r.source === "string" ? r.source : messageIds[0];
+  if (source === undefined) return undefined;
+  return { section, source, messageIds: [...messageIds] };
+}
+
+/**
+ * THE RELEASE, READ AT THE RELEASE. The source's row as the mirror holds it now, narrowed to the
+ * members the press saw: a member that arrived later is not filed by it. `null` — the source left
+ * the Ohbox, is done already, or shares no member with the press — is no release and no Undo.
+ */
+export function releasePlanAt(reader: EntityReader, intent: SendAndDonePlan): SendAndDoneRelease | null {
+  const now = sendAndDonePlanFor(reader, intent.source);
+  if (now === null) return null;
+  const seen = new Set(intent.messageIds);
+  const rows = now.messageIds
+    .filter((id) => seen.has(id))
+    .map((id) => reader.get<EngineMessage>("message", id))
+    .filter((m): m is EngineMessage => m !== undefined);
+  if (rows.length === 0) return null;
+  return planOver(reader, now.section, rows);
 }
 
 /**
@@ -125,32 +178,33 @@ function planOver(
  * message read out of a pile it is still in, and a reader install cannot triage at all.
  */
 export async function applySendAndDone(
-  plan: SendAndDonePlan,
+  release: SendAndDoneRelease,
   dispatch: (m: EngineMutation) => Promise<boolean>,
 ): Promise<boolean> {
-  for (const m of plan.mutations) {
+  for (const m of release.mutations) {
     if (!await dispatch(m)) return false;
   }
   return true;
 }
 
 /**
- * SEND + DONE, THE INTENT — the send, and then the release, in that order and only in that order.
+ * SEND + DONE, THE INTENT — the send, then the release read at that moment, in that order.
  *
- * `send` is the surface's own Send, unchanged and unwrapped: it answers `true` only when the
- * engine ACCEPTED the message (the webapp's confirmation, the phone's `sent` outcome). A `false`
- * dispatches nothing at all, which is the whole guarantee — a refused send marks nothing done and
- * says only the send's own sentence. `plan` of `null` is an ordinary Send with an ordinary answer.
+ * `send` answers `true` only when the engine ACCEPTED the message. A `false` dispatches nothing,
+ * which is the whole guarantee. `intent` of `null`, or a release that reads `null`, is an
+ * ordinary Send with an ordinary answer.
  */
 export async function sendAndDone(opts: {
-  plan: SendAndDonePlan | null;
+  intent: SendAndDonePlan | null;
+  reader: () => EntityReader;
   send: () => Promise<boolean>;
   dispatch: (m: EngineMutation) => Promise<boolean>;
 }): Promise<SendAndDoneOutcome> {
   const accepted = await opts.send();
   if (!accepted) return { kind: "send_refused" };
-  if (opts.plan === null) return { kind: "sent" };
-  return await applySendAndDone(opts.plan, opts.dispatch)
-    ? { kind: "sent_and_done" }
+  const release = opts.intent === null ? null : releasePlanAt(opts.reader(), opts.intent);
+  if (release === null) return { kind: "sent" };
+  return await applySendAndDone(release, opts.dispatch)
+    ? { kind: "sent_and_done", release }
     : { kind: "send_done_refused" };
 }

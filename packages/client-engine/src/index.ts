@@ -510,11 +510,15 @@ export { presentAt } from "./present-at.js";
 // is offered at all, what the release is, and that it runs only after an accepted send.
 export {
   applySendAndDone,
+  asSendAndDoneIntent,
+  intentOf,
+  releasePlanAt,
   sendAndDone,
   sendAndDonePlanFor,
   type OhboxSection,
   type SendAndDoneOutcome,
   type SendAndDonePlan,
+  type SendAndDoneRelease,
 } from "./send-and-done.js";
 
 // Adapters.

@@ -88,6 +88,8 @@ import {
   type DecideIntent,
   type RoutingIntent,
   applySendAndDone,
+  intentOf,
+  releasePlanAt,
   sendAndDonePlanFor,
   type SendAndDonePlan,
   type TagDTO,
@@ -2562,12 +2564,18 @@ function queuedSendsOf(engine: OhmailEngine): Map<string, QueuedMeta> {
 
 /**
  * ANSWERS A PRESS'S OWN FLUSH TOOK FOR OTHER KEYS. `flushPending` hands each answer to exactly one
- * caller, and the press keeps only its own; the rest wait here for the ledger's next flush.
+ * caller, and the press keeps only its own; the rest wait here for the ledger's next flush, each
+ * with the Send + Done sentence its release earned there, which the press does not say.
  */
-const strayAnswers = new WeakMap<OhmailEngine, MutationResult[]>();
+interface StrayAnswer { r: MutationResult; done: DoneSaid | null }
+const strayAnswers = new WeakMap<OhmailEngine, StrayAnswer[]>();
 
-function keepStrays(engine: OhmailEngine, results: readonly MutationResult[], own: string): void {
-  const others = results.filter((r) => r.key !== own && (r.status !== "queued" || sendAccepted(r)));
+function keepStrays(
+  engine: OhmailEngine, results: readonly MutationResult[], own: string, done: ReadonlyMap<string, DoneSaid>,
+): void {
+  const others = results
+    .filter((r) => r.key !== own && (r.status !== "queued" || sendAccepted(r)))
+    .map((r) => ({ r, done: done.get(r.key) ?? null }));
   if (others.length > 0) strayAnswers.set(engine, [...(strayAnswers.get(engine) ?? []), ...others]);
 }
 
@@ -2615,8 +2623,11 @@ export async function flushQueued(
   const outcomes = new Map<string, FlushedOutcome>();
   const strays = strayAnswers.get(engine) ?? [];
   strayAnswers.delete(engine);
-  const results = [...strays, ...await engine.flushPending().catch(() => [])];
-  const done = await release(results);
+  const results = [...strays.map((x) => x.r), ...await engine.flushPending().catch(() => [])];
+  const released = await release(results);
+  /* A stray was released by the press's flush, which kept its sentence for this road to say. */
+  const done = new Map(released);
+  for (const x of strays) if (x.done !== null && !done.has(x.r.key)) done.set(x.r.key, x.done);
   for (const r of results) {
     if (r.status === "queued") {
       if (sendAccepted(r)) onAccepted?.(r.key);
@@ -3918,21 +3929,22 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sendAndDonePlanFor(presentedReader(), messageId) !== null;
 
   /**
-   * SEND + DONE — the plan, read at the press and carried by the send's own outbox row.
-   *
-   * Read HERE, before anything is dispatched: it names the section the source is in now, and the
-   * send itself releases a pin as it settles, so a read afterwards would put the row back where
-   * the SEND left it. An appointment finishes nothing (`sendAt` is mail still on the account).
+   * SEND + DONE — the INTENT, read at the press and carried by the send's own outbox row: the
+   * source and the members the press saw. The release and its Undo are read when the send is
+   * confirmed (`releaseConfirmed`). An appointment finishes nothing (`sendAt` is mail still on
+   * the account).
    */
-  const donePlan = (messageId: string, andDone: boolean): SendAndDonePlan | null =>
-    andDone ? sendAndDonePlanFor(presentedReader(), messageId) : null;
+  const donePlan = (messageId: string, andDone: boolean): SendAndDonePlan | null => {
+    const offered = andDone ? sendAndDonePlanFor(presentedReader(), messageId) : null;
+    return offered === null ? null : intentOf(offered, messageId);
+  };
 
   /**
    * THE RELEASE, ON EVERY ROAD THAT CONFIRMS A SEND — the press, its own flush, the reconnect
-   * flush and Try again on the strip each pass the results the engine HANDED them, and a
-   * confirmed `mail_send` carrying `andDone` files its source (`applySendAndDone`, the one caller
-   * here). The engine hands a result over once; `released` holds the one case where two callers
-   * share a result — Try again pressed twice joins the first retry.
+   * flush and Try again on the strip each pass the results the engine HANDED them. A confirmed
+   * `mail_send` carrying an intent is released as the Ohbox on screen reads NOW (`releasePlanAt`);
+   * nothing to release is no sentence and no Undo. `released` holds the one case where two
+   * callers share a result — Try again pressed twice joins the first retry.
    */
   const released = new WeakSet<MutationResult>();
   const releaseConfirmed: ReleaseConfirmed = async (results) => {
@@ -3940,11 +3952,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     for (const r of results) {
       if (r.status !== "confirmed" || r.andDone === undefined || released.has(r)) continue;
       released.add(r);
-      const plan = r.andDone;
+      const release = releasePlanAt(presentedReader(), r.andDone);
+      if (release === null) continue;
       /* The row's own Done door — `engine.mutate` through the watched seam, exactly as
          `resurfaceDone` dispatches it. A refused step files nothing more and earns no sentence. */
-      const filed = await applySendAndDone(plan, async (m) => (await watched(engine.mutate(m))).kind === "applied");
-      if (filed) said.set(r.key, { say: refuse("toastSentAndDone"), opts: undoable(plan.undo) });
+      const filed = await applySendAndDone(release, async (m) => (await watched(engine.mutate(m))).kind === "applied");
+      if (filed) said.set(r.key, { say: refuse("toastSentAndDone"), opts: undoable(release.undo) });
     }
     return said;
   };
@@ -4230,8 +4243,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // Idempotency-Key the first dispatch minted — may settle this send. An unrelated
       // mutation confirming is not this message delivering.
       const flushed = await engine.flushPending().catch(() => []);
-      keepStrays(engine, flushed, first.key);
       done = await releaseConfirmed(flushed);
+      keepStrays(engine, flushed, first.key, done);
       settled = flushed.find((r) => r.key === first.key) ?? first;
     } else if (first && first.status === "confirmed") {
       done = await releaseConfirmed([first]);
@@ -4268,6 +4281,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     };
   };
 
+  /** Two Send + Done intents are one when they name the same source and members; two plain Sends are one. */
+  const sameIntent = (a: SendAndDonePlan | null, b: SendAndDonePlan | null): boolean => {
+    if (a === null || b === null) return a === b;
+    const ids = (x: SendAndDonePlan): string => [...x.messageIds].sort().join("\n");
+    return a.source === b.source && ids(a) === ids(b);
+  };
+
   /**
    * ONE INTENT, ONE KEY, FOR AS LONG AS IT IS RETRYABLE. A send still standing on the queue for
    * this intent — a tunnel, or a killed app whose durable row this session restored — already
@@ -4290,13 +4310,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
        the key would be replayed on the return after the first had gone, and each replay writes a
-       draft of its own (`send-waits.ts`). Different words keep the resume below. */
-    if (standing !== undefined && networkNow() === "offline" && !sendTextDiffers(standing.mutation, m)) {
+       draft of its own (`send-waits.ts`). Different words, or Send + Done pressed over a plain
+       Send (or back), take the resume below: the latest press decides, under the same key. */
+    if (standing !== undefined && networkNow() === "offline" && !sendTextDiffers(standing.mutation, m)
+      && sameIntent(standing.andDone ?? null, andDone)) {
       return Promise.resolve({ id: standing.id, key: standing.key, status: "queued", seq: null });
     }
     return engine.mutate(m, {
       ...(standing === undefined ? {} : { key: standing.key }),
-      // Send + Done's plan rides the send's own outbox row, so whichever road confirms it releases.
+      // Send + Done's intent rides the send's own outbox row, so whichever road confirms it releases.
       ...(andDone !== null ? { andDone } : {}),
     }).then((r) => { noteQueuedSend(engine, r, m); return r; });
   };

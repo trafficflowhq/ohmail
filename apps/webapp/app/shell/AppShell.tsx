@@ -272,6 +272,7 @@ import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
 import { durableSessionSet } from "./durable";
 import { ManagedServiceContext } from "./managed-service";
+import { SendReleaseProvider } from "./send-release";
 
 /* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
    static TYPES: the type imports above cost no bytes, and these factories are the only place
@@ -1861,7 +1862,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig,
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
-    pressSendAndDone, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply,
+    pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply,
     setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
   } = useShellCompose({
     engine, reader, t, toast, route, consent, facts, mailboxes, drafts, ownAddresses,
@@ -2192,6 +2193,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     // the note there. Every surface that reports mailbox state is still inside it.
     <MessageChromeProvider value={chrome}>
     <ListGoneProvider value={listGone}>
+    <SendReleaseProvider value={releaseConfirmed}>
     <div className="app-root">
       <div className="shell">
         {demo && !ribbonGone ? (
@@ -3758,6 +3760,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           them and where they can be linked to; the two controls that act on what is on
           screen rather than describe it are at the foot of the rail (`railDock`). */}
     </div>
+    </SendReleaseProvider>
     </ListGoneProvider>
     </MessageChromeProvider>
   );

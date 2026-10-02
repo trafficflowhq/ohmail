@@ -1242,7 +1242,12 @@ export function useMailSend(
          answer, which no door can rename, so the question is the compose surface's alone. */
       const aboutThisCompose = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
       clearLaneScratch(key, m, owner.current, aboutThisCompose);
-      if (m.inReplyTo !== null) {
+      /* SEND + DONE IS ASKED FIRST, before the debt below moves anything: its release is read from
+         the mirror NOW, and a resurfaced source the discharge had already read would release
+         nothing. `true` is a release made — it clears the bookings and reads the row, so the
+         discharge stands down, and its sentence replaces "Reply sent.". */
+      const released = outcomeRef.current?.(key, m, true, undefined, andDone ? { andDone } : undefined) === true;
+      if (m.inReplyTo !== null && !released) {
         // ── the reply IS the evidence the message was answered ─────────────────────────
         //
         // Read at CONFIRM time, not at press time: the state may have moved while the request
@@ -1297,10 +1302,9 @@ export function useMailSend(
       // rather than convenient: nothing was sent, an appointment was made, and "Sent." over a
       // message that is still on the account would be exactly the false claim the four-phase
       // machine exists to prevent. The sentence carries the time, read where the reader is.
-      /* SEND + DONE TAKES THE SENTENCE. The confirmation is the moment the second action was
-         waiting for, and the caller answers whether it has spoken for this send — one press,
-         one toast, rather than "Reply sent." replaced a beat later by "Sent · marked done". */
-      if (outcomeRef.current?.(key, m, true, undefined, andDone ? { andDone } : undefined) === true) return;
+      /* SEND + DONE TAKES THE SENTENCE: one press, one toast, rather than "Reply sent." replaced a
+         beat later by "Sent · marked done". */
+      if (released) return;
       toast(
         key === COMPOSE_SEND_KEY
           ? (m.sendAt
@@ -1623,8 +1627,8 @@ export function useMailSend(
           && record.session !== composeSessionId(owner.current)
         );
         if (res.status === "confirmed") {
-          /* THE RELEASE IT WAS PRESSED WITH, from the send's own row: the source is filed whichever
-             surface is on screen, because the release is about the source, not the composer. */
+          /* THE INTENT IT WAS PRESSED WITH, from the send's own row: the door reads the release now,
+             whichever surface is on screen, because the release is about the source, not the composer. */
           if (res.andDone) {
             outcomeRef.current?.(
               record.lane, { kind: "mail_send" } as unknown as MailSend, true, undefined, { andDone: res.andDone },
