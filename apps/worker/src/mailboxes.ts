@@ -461,9 +461,14 @@ async function toTransport(
     host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;
   };
   const secret = await keyProvider.decrypt(row.secretEnc, row.keyVersion);
+  // A row written before the create path validated its body can hold the port as DIGITS, which the
+  // organizer dialled as that number; read as text, the port rule would stop the mailbox receiving.
+  // Digits only: anything else stays as stored and the rule refuses it by name.
+  const stored: unknown = meta.port;
+  const port = typeof stored === "string" && /^[0-9]{1,5}$/.test(stored) ? Number(stored) : meta.port;
   return {
     host: meta.host ?? "",
-    port: meta.port ?? PORT_DEFAULT[transport],
+    port: port ?? PORT_DEFAULT[transport],
     secure: meta.secure ?? SECURE_DEFAULT[transport],
     // `=== true` so a row whose marker was rewritten to `false` (a re-probe that found TLS)
     // reads exactly like a row that never had one. Each transport's row carries its OWN consent.
