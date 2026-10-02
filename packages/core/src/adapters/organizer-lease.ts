@@ -2798,7 +2798,9 @@ export async function readMetaRecords(
     if (!read.truncated) {
       return {
         records: read.records.filter((r) => opts.keep(r.raw)),
-        count: count ?? read.records.length,
+        /* The larger of the two: a writer between STATUS and the FETCH (the holder's acks) leaves
+           STATUS short, and the readers' append headroom is counted from this. */
+        count: Math.max(count ?? 0, read.records.length),
         bytes: read.records.reduce((n, r) => n + Buffer.byteLength(r.raw, "utf8"), 0),
         generation: generationOf(client), enumerated: null, probe: "unasked",
       };
