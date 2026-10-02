@@ -2906,14 +2906,14 @@ export class OhmailEngine {
     void sink(record).catch(() => { /* the log is a courtesy */ });
   }
 
-  async requestPull(): Promise<{
+  async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<{
     requested: number; requestedAt: string;
     mailboxes: Array<{ id: string; requestedAt: string }>;
   } | null> {
     const ring = this.adapter.requestPull?.bind(this.adapter);
     if (!ring) return null;
     try {
-      return await ring();
+      return await ring(opts);
     } catch {
       return null;
     }

@@ -441,7 +441,7 @@ function accountGuarded(
     // read "no doorbell", returned null without touching the wire, and every refresh gesture
     // quietly degraded to the mirror drain it had before the doorbell existed. Same defect,
     // same day, same shape as the webapp's sync gate; found live on the webapp's rail control.
-    requestPull: () => adapter.requestPull(),
+    requestPull: (opts) => adapter.requestPull(opts),
     unsubscribe: (id) => adapter.unsubscribe(id),
     listMessages: adapter.listMessages.bind(adapter),
     // History's month rail, forwarded on `listMessages`' rule: the pages it places ride the line above.

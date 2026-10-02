@@ -45,6 +45,7 @@ import {
   senderKey,
   threadOf,
   isForwardedByUs,
+  isOwnSent,
   triagePiles,
   winningStates,
   withSignature,
@@ -3785,8 +3786,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       holdMs: UNDO_MS,
       shown: () => { restartRouting(subject); },
       undo: () => {
-        /* Past the close (or replaced by a later press) the rule has gone: said, nothing moved back. */
-        if (undoRoutingPress(subject, pressId) !== "undone") { toast(refuse("liveDecideUndoLate")); return; }
+        /* Replaced by a later press: nothing was sent, said so. Past the close: the rule has gone. */
+        const outcome = undoRoutingPress(subject, pressId);
+        if (outcome === "superseded") { toast(refuse("undoReplaced")); return; }
+        if (outcome !== "undone") { toast(refuse("liveDecideUndoLate")); return; }
         toast(refuse("toastRoutingUndone"));
         void Promise.all(inv.map((mu) => watched(engine.mutate(mu))));
       },
@@ -3856,8 +3859,27 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * it with the one failure sentence. The pill carries the way back: the inverse is read off
    * the PRE-PRESS mirror, the state this press is about to leave.
    */
-  /** The open target first, then the rest of a folded row's members, each once. */
-  const membersOf = (id: string, members?: readonly string[]): string[] => [...new Set([id, ...(members ?? [])])];
+  /** The person's OWN mail — the Sent role, or a sender among the account's own addresses. */
+  const isOwn = (id: string): boolean => {
+    const m = messageOf(id);
+    if (!m) return false;
+    if (isOwnSent(m)) return true;
+    const from = m.from.address.trim().toLowerCase();
+    return (deps.ownAddresses?.() ?? []).some((a) => a.trim().toLowerCase() === from);
+  };
+  /**
+   * The messages a folded row's verb acts on: the open target first, then the rest, each once.
+   * Junk, Later and Done never touch mail the person sent (a conversation answered from here
+   * holds the reply), so `own: false` drops it; the read slot marks every member, as the web's
+   * pick of a row does (`apps/webapp/app/views/OhboxView.tsx:725`, read over the whole pick at
+   * `apps/webapp/app/shell/shell-verbs.ts:1291`). A row that is all own mail acts on its target.
+   */
+  const membersOf = (id: string, members?: readonly string[], opts: { own?: boolean } = {}): string[] => {
+    const all = [...new Set([id, ...(members ?? [])])];
+    if (members === undefined || opts.own === true) return all;
+    const theirs = all.filter((x) => !isOwn(x));
+    return theirs.length > 0 ? theirs : [id];
+  };
 
   const triage = async (
     messageId: string,
@@ -3919,7 +3941,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // of the wire — the opposite of the open's glance and the streams' sweep. The sentence is
     // new with the undo (the 0.20 review): the flip is visible, but the pill is where the way back
     // lives, and a verb whose undo has no surface is a verb with no undo.
-    const m: EngineMutation = { kind: "mark_seen", messageIds: membersOf(messageId, members), unread };
+    const m: EngineMutation = { kind: "mark_seen", messageIds: membersOf(messageId, members, { own: true }), unread };
     const inv = inverseMutations(engine.verbRead(), m);
     return said(
       await dispatch(m),
@@ -4044,7 +4066,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * moved, so "Moved" would be false; `watched` loses that fact, so the answers are awaited raw,
    * as `liveDecidedElsewhere` already does.
    */
-  const move = async (row: WorldMail, dest: MoveTarget, members?: readonly string[]): Promise<boolean> => {
+  const move = async (pressed: WorldMail, dest: MoveTarget, members?: readonly string[]): Promise<boolean> => {
+    /* A FOLDED ROW FACED BY THE PERSON'S OWN REPLY moves the conversation's other mail and decides
+       that sender's rule, never a rule for the person's own address (`membersOf`). */
+    const seat = membersOf(pressed.id, members)[0]!;
+    const row: WorldMail = seat === pressed.id ? pressed : {
+      ...pressed, id: seat,
+      presentedFolder: presentedReader().get<EngineMessage>("message", seat)?.folder ?? pressed.presentedFolder,
+    };
     const messageId = row.id;
     // The RAW mirror for the LOCATION, exactly as `release` reads it: a move is about where the
     // mail actually is. The PRESENTED place is the caller's, because only the projection knows
@@ -4132,7 +4161,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
     /* THE PRESS ASKS FOR THE WIRE: the organizer in this process drains now rather than at its
        next poll (`withPullKick`). Once per press, never awaited by the sentence; never throws. */
-    if (unsent.length > 0) void engine.requestPull();
+    if (unsent.length > 0) void engine.requestPull({ mailboxIds: [m.mailboxId] });
     const queued = [...answers].reverse().find((r) => r?.status === "awaiting_organizer");
     if (queued) {
       dropHeld();
@@ -4152,8 +4181,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...back,
         shown: () => { restartRouting(subject); },
         undo: () => {
-          /* A later press about this sender replaced this one: its rule stands, said. */
-          if (undoRoutingPress(subject, pressId) === "superseded") { toast(refuse("liveDecideUndoLate")); return; }
+          /* A later press about this sender holds the window now; this press decided no rule, so
+             its Undo is the letter's own way back and leaves the later press alone. */
+          undoRoutingPress(subject, pressId);
           back.undo?.();
         },
       } : back);
@@ -4183,7 +4213,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
            the sentence, so a late press cannot say no rule was made over a rule that was. */
         const outcome = undoRoutingPress(subject, pressId);
         /* A later press about this sender replaced this one: the latest rule wins, and says so. */
-        if (outcome === "superseded") { toast(refuse("liveDecideUndoLate")); return; }
+        if (outcome === "superseded") { toast(refuse("undoReplaced")); return; }
         const cancelled = outcome === "undone";
         const ruleBack = cancelled ? null : takeRoutingReversal(pressId);
         // At the press, as `undoable` says it; a refusal overrides it when the inverse answers.

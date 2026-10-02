@@ -660,7 +660,7 @@ export function MessageActions({
           // the 90-day list's shape one axis over. The current value is checked; a stored value
           // outside this range still SHOWS and still applies (the rows are bounded, the account's
           // hour is not), so a time set on a computer is never silently rounded here.
-          <ScrollView style={{ maxHeight: 320 }}>
+          <ScrollView style={{ maxHeight: 320 }} nestedScrollEnabled>
             {RESURFACE_HOURS.map((hhmm) => (
               <SheetRow
                 key={hhmm}
@@ -674,7 +674,7 @@ export function MessageActions({
           // The picked day, as rows — the native idiom for the webapp's date input, floored at
           // tomorrow so the chooser cannot name a horizon in the past. Built only while this list
           // is open: it stood in the closed branch, so every reader render built ninety rows.
-          <ScrollView style={{ maxHeight: 320 }}>
+          <ScrollView style={{ maxHeight: 320 }} nestedScrollEnabled>
             {/* Ninety days of rows — the webapp's date input takes any future day; a list is
                 the phone's idiom, and a quarter ahead covers the horizons people actually
                 book. A fortnight did not, and was an exclusion nothing on screen admitted. */}
@@ -758,7 +758,7 @@ function TagSheet({ m, tags, onClose }: { m: WorldMail; tags: WorldTag[]; onClos
           },
         ]}
       />
-      <ScrollView style={{ maxHeight: 300 }}>
+      <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
         {list.map((tag) => {
           const on = m.labels.includes(tag.id);
           return (
@@ -1749,7 +1749,7 @@ export function ComposeSheet({
                    reason (a fortnight was an exclusion nothing on screen admitted). TODAY is
                    offered only while some hour on it is still far enough ahead to be worth
                    naming, which is the same lead rule the evening preset lives under. */
-                <ScrollView style={{ maxHeight: 208 }}>
+                <ScrollView style={{ maxHeight: 208 }} nestedScrollEnabled>
                   {DAY_OFFSETS.filter(
                     (offset) => offset > 0 || usableHours(openedAt, 0).length > 0,
                   ).map((offset) => (
@@ -1766,7 +1766,7 @@ export function ComposeSheet({
                    name a moment already gone. The set is the product's own clock vocabulary
                    widened for sending: the 09:00 the horizons fix, the 18:00 the evening
                    preset fixes, and the four ordinary hours between and around them. */
-                <ScrollView style={{ maxHeight: 208 }}>
+                <ScrollView style={{ maxHeight: 208 }} nestedScrollEnabled>
                   {usableHours(openedAt, later.offset).map((hour) => {
                     const at = dayAtHour(openedAt, later.offset, hour).instant;
                     return (

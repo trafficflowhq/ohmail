@@ -1770,19 +1770,35 @@ export function withImportHandover(
 export function withPullKick(
   routes: readonly Route[],
   runtimesFor: () => Iterable<{ ring(): void }>,
+  runtimeFor: (mailboxId: string) => { ring(): void } | undefined = () => undefined,
 ): Route[] {
   return routes.map((r) => {
     if (r.method !== "POST" || r.pattern !== "/sync/pull") return r;
     return {
       ...r,
       handler: async (req, deps, params) => {
+        /* A PRESS NAMES ITS MAILBOX (`mailboxIds`), and only that runtime rings; a pull that names
+           none (pull-to-refresh) rings them all. Read off a clone, before the shared handler. */
+        const named = await pullMailboxIds(req);
         const res = await r.handler(req, deps, params);
         if (res.status !== 202) return res;
-        for (const rt of runtimesFor()) rt.ring();
+        if (named === null) for (const rt of runtimesFor()) rt.ring();
+        else for (const id of named) runtimeFor(id)?.ring();
         return res;
       },
     };
   });
+}
+
+/** The mailboxes a pull names, or `null` when it names none. Bounded; anything else is none. */
+async function pullMailboxIds(req: Request): Promise<string[] | null> {
+  try {
+    const b = (await req.clone().json()) as { mailboxIds?: unknown };
+    const ids = Array.isArray(b?.mailboxIds) ? b.mailboxIds.filter((x): x is string => typeof x === "string") : [];
+    return ids.length > 0 ? [...new Set(ids)].slice(0, 64) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
@@ -1975,7 +1991,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          the closure is only ever CALLED from a request handler, long after it exists. Local
          composition only — the hosted door proxies its resync to a worker and has no runtime
          here to force. */
-      ...withPullKick(withImportHandover(withForcedRedial(localRoutes, (id) => runtimes.get(id), log), (id) => runtimes.get(id)), () => runtimes.all()),
+      ...withPullKick(withImportHandover(withForcedRedial(localRoutes, (id) => runtimes.get(id), log), (id) => runtimes.get(id)), () => runtimes.all(), (id) => runtimes.get(id)),
       ...localAiRoutes(ai),
       ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
       // Which addresses this machine could serve same-network access on — the LAN ceremony's
@@ -1994,7 +2010,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * pairing mint) are structurally absent from it.
      */
     const hostApp: App | null = hostMode
-      ? createApp(withPullKick(withImportHandover(desktopHostRoutes, (id) => runtimes.get(id)), () => runtimes.all())) : null;
+      ? createApp(withPullKick(withImportHandover(desktopHostRoutes, (id) => runtimes.get(id)), () => runtimes.all(), (id) => runtimes.get(id))) : null;
     /**
      * The static half of the same door — the browser client the QR sends a phone to. Probed NOW,
      * awaited, so `host_assets_missing` lands in the boot log where somebody debugging an
@@ -4103,6 +4119,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /** A kick is armed and has not fired: collapses a burst of arrivals into ONE drain, and
        *  keeps an in-flight drain's own re-arm from cancelling the kick (see {@link schedule}). */
       let wakePending = false;
+      /** A kick FIRED and its drain is waiting to start: every ring until then is that drain. A
+       *  drain that starts sees everything pressed before it, so the flag clears at its start. */
+      let ringQueued = false;
       /** WHEN THE ARMED TIMER IS DUE, so a reset can tell "sooner" from "later" rather than
        *  re-arming blind: re-arming a timer that has already waited 100 s of its 120 pushes the
        *  drain FURTHER away, which is the opposite of what every caller of it wants. */
@@ -6134,6 +6153,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // `stopped` FIRST: a stand-down closed the login, so reading the lease over a dead
           // connection would throw `LeaseUnavailableError` out of a method whose honest answer is
           // "this install organizes nothing" (`stop()` reaches the same state).
+          ringQueued = false;
           if (stopped) return 0;
           /* ── WHICH CONNECTION THIS PASS IS ABOUT, CAPTURED BEFORE THE GATE READS IT ─────────
            *
@@ -6478,12 +6498,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            `dialAndGate` says the same about itself ("two would give the mailbox two overlapping
            drains"); the enforcement belongs here, where the timer is. `stopped` returns first. */
         if (timer) clearTimeout(timer);
+        const kick = delayMs === 0;
         timer = setTimeout(() => {
           /* SPENT THE MOMENT IT FIRES, before anything can await. Left standing, the guard above
              refuses every later re-arm and the mailbox stops polling altogether after its first
              arrival — which is how this line came to exist (the reset case went red on a poll loop
              that had silently ended). */
           wakePending = false;
+          if (kick) ringQueued = true;
           void syncUntilQuiet()
             .catch((err: unknown) => {
               // A failed cycle is a bad network or a sleeping laptop, not a reason to stop being a
@@ -6507,7 +6529,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 err, ceiling: ceiling?.bound ?? null, ceilingLimit: ceiling?.limit ?? null,
               });
             })
-            .finally(schedule);
+            /* A kick whose drain never reached `drainPass` (a skipped launch, a blocked
+               credential) must not leave every later ring answering "already queued". */
+            .finally(() => { if (kick) ringQueued = false; schedule(); });
         }, delayMs ?? idlePollMs);
         timerDueAt = Date.now() + (delayMs ?? idlePollMs);
         timer.unref?.();
@@ -6522,7 +6546,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const onMailboxSignal = (): void => {
         if (stopped || handedBack) return;
         idlePollMs = pollIntervalMs;
-        if (wakePending) return;
+        if (wakePending || ringQueued) return;
         wakePending = true;
         schedule(0);
       };
@@ -7517,7 +7541,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         leave() {
           if (stopped) return;
           handedBack = true;
+          /* A ring's timer cancelled here never fires, so its flag goes with it: left set, every
+             later `schedule()` and ring returns at it and the resumed mailbox never polls again. */
           if (timer) { clearTimeout(timer); timer = null; }
+          wakePending = false;
+          ringQueued = false;
         },
         async handBack() {
           if (stopped) return 0;
@@ -7527,6 +7555,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              never fires on a phone whose timers are paused, which is where this is called. */
           handedBack = true;
           if (timer) { clearTimeout(timer); timer = null; }
+          wakePending = false;
+          ringQueued = false;
           return serialize(async () => {
             if (stopped) return 0;
             /* The release arm's rule: the settings first, while the claim is still ours — on the
@@ -7626,6 +7656,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * state unreachable is the PAIR — this timer, and `organizing` derived as a mask.
            */
           handedBack = false;
+          /* No ring survives a hand-back (`leave`, `handBack`); cleared here too, for any path
+             that cancelled a ring's timer without saying so. */
+          wakePending = false;
+          ringQueued = false;
           try {
             const served = await syncUntilQuiet(undefined, { force: true });
             /* `syncUntilQuiet` deliberately does not arm it — its own tail says so — and `handBack`

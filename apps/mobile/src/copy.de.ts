@@ -1001,6 +1001,7 @@ export const DE: Deck = {
   liveDecideFailed: (sender: string) =>
     `Diese Entscheidung ließ sich nicht speichern — ${sender} wartet weiter.`,
   liveDecideUndoLate: "Zu spät — diese Entscheidung ist schon raus.",
+  undoReplaced: "Eine spätere Wahl für diesen Absender hat diese ersetzt, hier gibt es nichts rückgängig zu machen.",
   /*
    * ── THE DESTINATION LEADS, BECAUSE GERMAN CANNOT TAKE IT AFTER A PREPOSITION ────────────────
    *

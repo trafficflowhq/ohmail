@@ -1575,6 +1575,8 @@ const TABLE = {
   liveDecideFailed: (sender: string) =>
     `That decision could not be saved — ${sender} is still waiting.`,
   liveDecideUndoLate: "Too late to undo — that decision has already been sent.",
+  /* A later press about the same sender replaced this one before anything was sent. */
+  undoReplaced: "A later choice for this sender replaced this one, so there is nothing to undo here.",
   liveReleased: (n: number, dest: string) =>
     `Released ${n} held message${n === 1 ? "" : "s"} to ${dest}. No rule was changed.`,
   liveReleasedRuled: (n: number, dest: string) =>

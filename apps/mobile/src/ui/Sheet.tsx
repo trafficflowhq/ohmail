@@ -84,7 +84,7 @@ export function Sheet({
           t.liftUp("l3"),
         ]}
       >
-        <ScrollView style={{ flexGrow: 0, flexShrink: 1 }} bounces={false} keyboardShouldPersistTaps="handled">
+        <ScrollView style={{ flexGrow: 0, flexShrink: 1 }} bounces={false} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
           {children}
         </ScrollView>
         {/* THE WAY OUT IS THE PRIMITIVE'S, not each caller's. The reader's More sheet shipped

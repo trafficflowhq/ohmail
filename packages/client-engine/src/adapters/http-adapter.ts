@@ -586,12 +586,13 @@ export class HttpAdapter implements EngineAdapter {
    * instant at the database's clock, which is the client's honest-settle baseline. `requestedAt` is the newest of
    * them, kept for logging; a missing field degrades to "nothing to wait for".
    */
-  async requestPull(): Promise<{
+  async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<{
     requested: number; requestedAt: string;
     mailboxes: Array<{ id: string; requestedAt: string }>;
   }> {
+    const body = opts?.mailboxIds && opts.mailboxIds.length > 0 ? { mailboxIds: [...opts.mailboxIds] } : {};
     return this.withDeadline(PULL_RING_TIMEOUT_MS, async (signal) => {
-      const res = await this.request("POST", "/sync/pull", { body: {}, ...(signal ? { signal } : {}) });
+      const res = await this.request("POST", "/sync/pull", { body, ...(signal ? { signal } : {}) });
       if (!res.ok) throw await this.rejectionOf(res);
       const wire = (await res.json()) as Partial<{
         requested: number; requestedAt: string;

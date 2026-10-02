@@ -269,7 +269,8 @@ export interface EngineAdapter {
   reportSyncFailure?(record: WindowSyncFailure): Promise<void>;
   /** One Search's timings ({@link WindowSearchPhases}), to the same door; absent on the hosted client. */
   reportSearchPhases?(record: WindowSearchPhases): Promise<void>;
-  requestPull?(): Promise<{
+  /** `mailboxIds`: the mailboxes a press is about; a local organizer rings only those. Absent, all. */
+  requestPull?(opts?: { mailboxIds?: readonly string[] }): Promise<{
     requested: number;
     requestedAt: string;
     /**
