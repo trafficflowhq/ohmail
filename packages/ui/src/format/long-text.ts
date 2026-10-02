@@ -7,11 +7,24 @@
 export const BODY_PAGE_CHARS = 65_536;
 
 /**
- * Where the page that starts at `start` ends: at most `size` characters on, at the last paragraph
+ * And at most this many lines: a page of one-word lines is 9,000 lines in 65,536 characters and
+ * read a 19,180-node accessibility tree. A letter's 70-character lines meet the character bound first.
+ */
+export const BODY_PAGE_LINES = 2_048;
+
+/**
+ * Where the page that starts at `start` ends: after its `lines`-th line break when that comes first,
+ * else at most `size` characters on, at the last paragraph
  * break, else the last line break, else the last space, inside the page's final eighth, and hard at
  * the bound when the text offers none. Always past `start`, so a caller's loop always advances.
  */
-export function pageEnd(text: string, start: number, size: number = BODY_PAGE_CHARS): number {
+export function pageEnd(text: string, start: number, size: number = BODY_PAGE_CHARS, lines: number = BODY_PAGE_LINES): number {
+  let at = start;
+  for (let k = 0; k < lines && at !== -1; k++) {
+    const nl = text.indexOf("\n", at);
+    at = nl === -1 || nl >= start + size ? -1 : nl + 1;
+  }
+  if (at !== -1 && at < text.length) return at;
   const hard = start + size;
   if (hard >= text.length) return text.length;
   const floor = hard - Math.max(1, size >> 3);

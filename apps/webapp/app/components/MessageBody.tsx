@@ -13,7 +13,7 @@
 
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useOptionalTheme } from "@ohmail/ui";
+import { BODY_PAGE_CHARS, useOptionalTheme } from "@ohmail/ui";
 import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
 import {
   anchorFor,
@@ -1774,9 +1774,23 @@ const MAX_WALK_DEPTH = 256;
 /** Elements whose CONTENT must not reach the prose — see the header above. */
 const RICH_SKIP = new Set(["style"]);
 
-/** The walk's budget. Decremented per EMITTED node; below zero the whole build is refused. */
-interface RichBudget { left: number }
+/**
+ * The ceiling on the TEXT the walk emits: one body page, the most the plain path draws in a pass.
+ * The node cap bounds elements, not characters — a 511 KiB letter of 2,000 paragraphs drew an
+ * 11,631-node accessibility tree, and one of a single paragraph a 523,163-character name. Past it
+ * the walk refuses and the text part renders, a page at a time.
+ */
+export const MAX_RICH_CHARS = BODY_PAGE_CHARS;
+
+/** The walk's budget, per EMITTED node and per character of text; below zero the build is refused. */
+interface RichBudget { left: number; chars: number }
 function spend(b: RichBudget): boolean { return --b.left >= 0; }
+/** Spend a node that carries `n` characters of the sender's text. */
+function spendText(b: RichBudget, n: number): boolean {
+  b.chars -= n;
+  if (b.chars < 0) { poison(b); return false; }
+  return spend(b);
+}
 /** Refuse the whole build — see {@link MAX_WALK_DEPTH} and {@link buildRichNodes}. */
 function poison(b: RichBudget): void { b.left = -1; }
 
@@ -1810,7 +1824,7 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
   if (nest > MAX_WALK_DEPTH) { poison(b); return; }
   if (node.nodeType === 3 /* TEXT_NODE */) {
     const text = node.nodeValue ?? "";
-    if (text.length > 0 && spend(b)) out.push({ kind: "text", text });
+    if (text.length > 0 && spendText(b, text.length)) out.push({ kind: "text", text });
     return;
   }
   if (node.nodeType !== 1 /* ELEMENT_NODE */) return;
@@ -2001,7 +2015,7 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
       // same non-content a blank paragraph is, and is dropped for the same reason.
       let text = "";
       for (const child of el.childNodes) text += preTextOf(child, b, nest + 1);
-      if (text.trim().length > 0 && spend(b)) out.push({ kind: "pre", text });
+      if (text.trim().length > 0 && spendText(b, text.length)) out.push({ kind: "pre", text });
     } else if (tag === "table") {
       tableOf(el, depth, b, out, nest + 1);
     } else if (tag === "hr") {
@@ -2073,7 +2087,7 @@ function tableOf(el: Element, depth: number, b: RichBudget, out: BodyNode[], nes
  * walker existed — the fallback is the previous behaviour, not a degraded one.
  */
 export function buildRichNodes(root: Element): BodyNode[] | null {
-  const b: RichBudget = { left: MAX_RICH_NODES };
+  const b: RichBudget = { left: MAX_RICH_NODES, chars: MAX_RICH_CHARS };
   const nodes = blocksOf(root, 0, b, 0);
   if (b.left < 0) return null;
   return nodes.length > 0 ? nodes : null;
@@ -3026,6 +3040,50 @@ const PROBE_PX = 600;
 const MAX_FRAME_PX = 20_000;
 
 /**
+ * What one frame may draw. A document is laid out and given its accessibility tree whole, so past
+ * either bound a designed mail renders as text with the oversize sentence, as past
+ * {@link MAX_HTML_CHARS}: a 511 KiB newsletter built a 13,705-node tree, and a 256 KiB table of
+ * one-word rows 43,917 nodes and 411 ms of main thread; 4,000 elements of newsletter rows read
+ * 10,446. Text, not bytes: an embedded picture is an attribute and costs no layout. Ordinary
+ * newsletters sit far under both.
+ */
+export const MAX_FRAME_ELEMENTS = 3_072;
+export const MAX_FRAME_TEXT_CHARS = 2 * BODY_PAGE_CHARS;
+
+/**
+ * Past this many elements in the html part the sanitize alone held the window (a 511 KiB table of
+ * one-word rows, 43,000 elements: a 238-299 ms task), and neither the frame nor the walk could draw
+ * the result: the text part renders with the oversize sentence, as past {@link MAX_HTML_CHARS}.
+ */
+export const MAX_PARSE_ELEMENTS = 16_384;
+
+/** Does markup hold more than `limit` elements? A `<` followed by a letter opens one. */
+export function elementsPast(markup: string, limit: number): boolean {
+  let n = 0;
+  for (let i = markup.indexOf("<"); i !== -1; i = markup.indexOf("<", i + 1)) {
+    const c = markup.charCodeAt(i + 1) | 32;
+    if (c >= 97 && c <= 122 && ++n > limit) return true;
+  }
+  return false;
+}
+
+/** Does sanitized markup fit one frame? A `<` opening a tag is an element; text `<` is `&lt;`. */
+export function frameFits(markup: string): boolean {
+  let elements = 0, text = 0, at = 0;
+  for (;;) {
+    const lt = markup.indexOf("<", at);
+    text += (lt === -1 ? markup.length : lt) - at;
+    if (text > MAX_FRAME_TEXT_CHARS) return false;
+    if (lt === -1) return true;
+    const c = markup.charCodeAt(lt + 1) | 32;
+    if (c >= 97 && c <= 122 && ++elements > MAX_FRAME_ELEMENTS) return false;
+    const gt = markup.indexOf(">", lt + 1);
+    if (gt === -1) return true;
+    at = gt + 1;
+  }
+}
+
+/**
  * HOW SMALL THE MAIL MAY BE SHRUNK BEFORE FITTING STOPS BEING WORTH IT. Scale-to-fit trades size for the absence of a
  * horizontal scrollbar, and past a point that trade is a bad one: a 1 200 px poster in a 390 px column is a scale of
  * 0.32, which renders 15 px body text at under 5 px — present, technically un-scrolled, and unreadable. So the scale
@@ -3434,9 +3492,12 @@ export function MessageBody({
   );
   const proxy = remoteLoaded && imgSource !== null ? imageProxy : null;
 
+  // `text` is null on a body the mirror has not loaded, whatever its type says; read it as empty.
+  const hasText = (text ?? "").trim().length > 0;
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
+    if (elementsPast(html, MAX_PARSE_ELEMENTS)) return { state: "oversize" as const };
     const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids } =
       sanitizeMailHtml(html, {
         imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels,
@@ -3445,6 +3506,10 @@ export function MessageBody({
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const };
     if (clean.trim().length === 0) return null;
+    // Past one frame: a letter keeps its own path (the walk, else the text part) and loses only
+    // the flip to its layout; a designed mail, or a letter with no text part, renders as text.
+    const fits = frameFits(clean);
+    if (!fits && (!prose || !hasText)) return { state: "oversize" as const };
     const doc = buildMailDocument(clean, {
       // `proxy` is non-null exactly when the reader has consented AND a source could be
       // stated, so this is the one value both the rewrite and the policy were decided from.
@@ -3490,6 +3555,8 @@ export function MessageBody({
       doc,
       /** This document's own name — see {@link frameIdentity}. It is the frame element's key. */
       frameKey: frameIdentity(doc),
+      /** Whether the frame may be offered at all — see {@link frameFits}. */
+      frameFits: fits,
       blocked,
       sheets,
       /** The unresolved `cid:` references — what the request effect below reports upward. */
@@ -3502,7 +3569,7 @@ export function MessageBody({
     // for the same reason `proxy` is — it is half of the document the frame gets — and it is
     // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels]);
+  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText]);
 
   /**
    * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
@@ -3702,7 +3769,7 @@ export function MessageBody({
    * terms.
    */
   const framelessView =
-    mail?.state !== "ok" ? true : mail.prose && text.trim().length > 0 && !showOriginal;
+    mail?.state !== "ok" ? true : mail.prose && hasText && (!showOriginal || !mail.frameFits);
   /**
    * REPORT IT — see {@link MessageBodyProps.onRenderMode}. In an effect, so nothing is announced for a render React
    * may discard, and so a listener that sets state is never doing it during this component's render. The reported
@@ -3859,7 +3926,7 @@ export function MessageBody({
    * TO. It is deliberately NOT a term of {@link showBar}: a prose letter with nothing blocked has
    * no sentence to show, and a bar put up to carry only the flip is the empty strip this removes.
    */
-  const proseable = mail.prose && text.trim().length > 0;
+  const proseable = mail.prose && hasText && mail.frameFits;
   /* The same three terms as {@link framelessView} above, and deliberately that value rather than a
      second spelling of it: two copies of this expression would be two things to keep in step, and
      the one the strip reads is the one computed above. */

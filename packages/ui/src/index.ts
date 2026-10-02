@@ -189,4 +189,4 @@ export type { CommandPaletteState } from "./hooks/useCommandPalette.js";
 
 /* format */
 export { formatFileSize } from "./format/file-size.js";
-export { BODY_PAGE_CHARS, pageEnd, pageEnds } from "./format/long-text.js";
+export { BODY_PAGE_CHARS, BODY_PAGE_LINES, pageEnd, pageEnds } from "./format/long-text.js";

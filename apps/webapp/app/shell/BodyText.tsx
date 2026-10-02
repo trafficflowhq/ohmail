@@ -31,7 +31,7 @@
  * for. Native path only: the framed HTML path shows the sender's own document, as sent.
  */
 import { memo, useState, type ReactNode } from "react";
-import { BODY_PAGE_CHARS, pageEnds } from "@ohmail/ui";
+import { BODY_PAGE_CHARS, pageEnd, pageEnds } from "@ohmail/ui";
 import { liveCopy } from "./locale";
 
 /**
@@ -614,7 +614,7 @@ const BodyPage = memo(function BodyPage({ text, index }: { text: string; index: 
 });
 
 /**
- * A plain body past {@link BODY_PAGE_CHARS}, drawn a page at a time with a press for the next. The
+ * A plain body past one page ({@link BODY_PAGE_CHARS}, or its lines), drawn a page at a time with a press for the next. The
  * history fold is not offered here: its trailing quote is pages away from what is on screen. The
  * shown count keys on the text, like the fold, so it never carries over to the next message.
  */
@@ -647,7 +647,7 @@ export function BodyText({ text, rich }: { text: string; rich?: BodyNode[] | nul
    */
   const [openedFor, setOpenedFor] = useState<string | null>(null);
   const useRich = rich != null && rich.length > 0;
-  if (!useRich && (text ?? "").length > BODY_PAGE_CHARS) return <PagedBody text={text} />;
+  if (!useRich && pageEnd(text ?? "", 0) < (text ?? "").length) return <PagedBody text={text} />;
   // CRLF is what an IMAP body actually carries; normalise before splitting on lines, or a
   // blank line is `\r\n\r\n` and every paragraph boundary is missed.
   const nodes = useRich ? rich : parsePlain(text ?? "");
