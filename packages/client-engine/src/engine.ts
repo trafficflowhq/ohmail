@@ -117,11 +117,16 @@ const withheldMarkerOf = (w: unknown): WithheldMarker | null => (isWithheldMarke
  * Idempotency-Key, a drive will send it again), `awaiting_organizer` is the SERVER's — the
  * request is recorded and the install that organizes the mailbox will carry it out, so nothing
  * here retries and nothing here may report it done.
+ *
+ * `superseded` is a SEND whose request was on the wire when the same send was pressed again under
+ * its key, and which failed retryably: its row is gone and the newer press carries the key, so
+ * that press's answer is the key's one sentence and this one says nothing — not "queued" (nothing
+ * of it waits) and not "refused" (the reply is still going).
  */
 /** Ids per `GET /screener/stayed` — the route's own ceiling (`WHY_STAYED_IDS_MAX`). */
 export const WHY_STAYED_PAGE = 100;
 
-export type MutationStatus = "confirmed" | "queued" | "awaiting_organizer" | "rolled_back";
+export type MutationStatus = "confirmed" | "queued" | "awaiting_organizer" | "rolled_back" | "superseded";
 
 /**
  * WHAT A WITHDRAWAL FOUND — {@link OhmailEngine.withdrawQueued}'s answer. `withdrawn` is the
@@ -3065,7 +3070,7 @@ export class OhmailEngine {
        * verdict; one level out, the compose adoption would settle a message on a send that has not settled — the
        * false "Sent." this seam prevents).
        */
-      if (result !== null && result.status !== "queued") {
+      if (result !== null && result.status !== "queued" && result.status !== "superseded") {
         this.lateResults.set(p.id, result);
         this.notify();
       }
@@ -6170,7 +6175,9 @@ export class OhmailEngine {
      * is still retryable and can overwrite the state this verb is about to establish.
      */
     if (!persisted
-      && (superseded.retired.length > 0 || superseded.narrowed.length > 0 || commit.marks > 0)) {
+      && (superseded.retired.length > 0 || superseded.narrowed.length > 0 || commit.marks > 0
+        // A send on the wire this verb only MARKED: unmarked, or its retryable answer drops it.
+        || superseded.markedInFlight.length > 0)) {
       /**
        * NO WRITE, NO WIRE — the supersession half of the rule stated in this module's header. This verb replaces
        * queued verbs. Its durable write was refused, so the store still holds the ones it would have retired, and
@@ -6424,7 +6431,8 @@ export class OhmailEngine {
        * after the deadline said it might not.
        */
       const hold: Promise<void> = attempt.then(
-        (late) => { this.lateResults.set(p.id, late); this.notify(); },
+        // A superseded send has no reader: the newer press under its key answers for it.
+        (late) => { if (late.status !== "superseded") { this.lateResults.set(p.id, late); this.notify(); } },
         () => undefined,
       ).finally(() => {
         if (this.outboxHold === hold) this.outboxHold = null;
@@ -7554,10 +7562,10 @@ export class OhmailEngine {
           this.overlays.delete(p.id);
           this.overlayRev++;
           this.notify();
-          // A send is marked only by the same send re-pressed under its key (`supersedeQueued`),
-          // which still owes the key: `queued`, never a refusal over a reply that is still going.
-          const owed = p.mutation.kind === "mail_send" ? "queued" as const : "rolled_back" as const;
-          return { id: p.id, key: p.key, status: owed, seq: null, error: rejection };
+          // A send is marked only by the same send re-pressed under its key (`supersedeQueued`): the
+          // newer press owns the key's sentence — see `MutationStatus`.
+          if (p.mutation.kind === "mail_send") return { id: p.id, key: p.key, status: "superseded", seq: null };
+          return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
         }
         this.queue.push(p);
         // NAMED, not adopted — see {@link MutationResult.entityId}. The adapter created a row for
@@ -7687,6 +7695,8 @@ export class OhmailEngine {
     if (m.kind !== "mail_send") return false;
     const header = outcome.providerMessageId;
     if (!header) return false;
+    // One copy per message: a re-press under the key confirms the same delivery again.
+    for (const meta of this.optimisticSent.values()) if (meta.header === header) return false;
     const sent = sentOverlayMessage(this.read(), m, header, { now: this.now, uuid: this.uuid });
     if (!sent) return false;
     const overlayId = `sent:${sent.id}`;

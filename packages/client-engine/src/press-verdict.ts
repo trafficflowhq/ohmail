@@ -44,6 +44,10 @@ export function pressVerdict(res: PressAnswer): PressVerdict {
       return { kind: "queued", wait: "organizer", holder: res.queuedWith?.name ?? null };
     case "rolled_back":
       return { kind: "refused", refusal: res.error };
+    case "superseded":
+      // A send only, and no reader of this verdict handles sends: its key is still going under
+      // the newer press, which is the wait this names.
+      return { kind: "queued", wait: "retry", holder: null };
     default: {
       /* The belt for a build that got past the type error: the most conservative of the three
          answers, never a fourth nobody can reach. */

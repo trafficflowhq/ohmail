@@ -1359,6 +1359,8 @@ export function useMailSend(
 
   const absorb = useCallback(
     (key: string, m: MailSend, res: MutationResult) => {
+      // Replaced on the wire by a newer press under this key: that press's answer settles the lane.
+      if (res.status === "superseded") return;
       let next = phaseFor(res);
       if (res.status === "queued") {
         // Remember the server's 202 the one time it is said, and re-apply it to every later
@@ -1590,8 +1592,8 @@ export function useMailSend(
     };
     /**
      * ASKED DIRECTLY, because the two indirect signals were both wrong and one of them silently. A falling edge on "a
-     * send is pending" never fires for the case this exists for: a replayed entry is removed from the queue BEFORE it
-     * is dispatched, so a mount that did not issue it never observes the pending state to fall from. Three pulls ran,
+     * send is pending" never fires for the case this exists for: a lone replayed entry leaves the queue the moment its
+     * turn is taken, so a mount that did not issue it never observes the pending state to fall from. Three pulls ran,
      * all empty, while the answer sat in the engine's map — the same ending the engine used to have, moved one layer
      * out. Pulling on every notification is the other bad option: `flushPending` takes the outbox gate and can
      * dispatch the queue, so that is a poll wearing a subscription's clothes. `hasLateResults()` is the exact
@@ -1605,6 +1607,8 @@ export function useMailSend(
       const results = await engine.flushPending();
       if (cancelled) return;
       for (const res of results) {
+        // Replaced on the wire by a newer press under its key: that press settles the lane.
+        if (res.status === "superseded") continue;
         /* OWNERSHIP FIRST, BEFORE ANYTHING IS DECIDED ON IT. A key this mount owns belongs to the
            live path; because the pull already consumed it, it is HANDED OVER rather than skipped —
            skipping it is how a delivered compose came to sit `queued` for ever. */

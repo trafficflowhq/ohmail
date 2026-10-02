@@ -2355,13 +2355,15 @@ function recipientOf(entry: string): { name: string | null; address: string } | 
  * fresh-key retry is exactly the duplicate delivery the send contract forbids. The composer
  * shows the check-Sent sentence and offers no re-send; Cancel is the way out.
  */
-export type SendOutcome = "sent" | "queued" | "failed" | "unverified";
+/** `superseded`: this press was replaced on the wire by a newer press under its key, which says the sentence. */
+export type SendOutcome = "sent" | "queued" | "failed" | "unverified" | "superseded";
 
 /** One classifier for a send's MutationResult — the composer and the flush ledger agree by construction. */
 export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
   if (!r) return "failed";
   if (r.status === "confirmed") return "sent";
   if (r.status === "queued") return "queued";
+  if (r.status === "superseded") return "superseded";
   return r.error?.code === "send_unverified" ? "unverified" : "failed";
 }
 
@@ -2633,6 +2635,8 @@ export async function flushQueued(
       if (sendAccepted(r)) onAccepted?.(r.key);
       continue;
     }
+    // The newer press under this key owns its one sentence.
+    if (r.status === "superseded") continue;
     /**
      * A WITHDRAWN INTENT OWES NO SENTENCE. Cancel took this verb off the queue, and the flush
      * that was already carrying it reports the rollback it made of it — "Reply failed." over a
@@ -2673,12 +2677,12 @@ export async function flushQueued(
 export type DraftDiscardOutcome = "discarded" | "stillSending" | "queued" | "refused";
 
 /**
- * HOW A SEND AGAIN ENDED — `sent`, or why not. Every ending but `sent` is said by the card IN THE
- * ROW and by nothing else: `stillRunning` / `notReached` are the resolve's two refusals,
+ * HOW A SEND AGAIN ENDED — `sent`, or why not. Every ending but `sent` and `superseded` (a newer
+ * press of the row says it) is said by the card IN THE ROW and by nothing else: `stillRunning` / `notReached` are the resolve's two refusals,
  * `bodyUnknown` is a text this mirror never received, and the last three are the send's own.
  */
 export type DraftSendAgainOutcome =
-  | "sent" | "stillRunning" | "notReached" | "bodyUnknown" | "queued" | "unverified" | "failed";
+  | "sent" | "superseded" | "stillRunning" | "notReached" | "bodyUnknown" | "queued" | "unverified" | "failed";
 
 /**
  * WHAT A CLOSING COMPOSER HANDS OVER TO BE KEPT — the text on screen and whose message it answers.
@@ -4250,6 +4254,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       done = await releaseConfirmed([first]);
     }
     const outcome = sendOutcomeOfResult(settled);
+    // Replaced on the wire by a newer press under this key: that press says the one sentence.
+    if (outcome === "superseded") return { outcome };
     /* The 202 is said once, then later answers for the key are `in_flight`: either one counts. */
     const accepted = outcome === "queued" && (sendAccepted(first) || sendAccepted(settled));
     /**

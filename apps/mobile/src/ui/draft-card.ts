@@ -11,7 +11,7 @@ import type { DraftHeldSays, DraftSendAgainOutcome, WorldDraft } from "../state/
 export type DraftDiscardRefusal = "stillSending";
 
 /** Why a Send again did not send, said in the row — never a toast. */
-export type DraftSendAgainRefusal = Exclude<DraftSendAgainOutcome, "sent">;
+export type DraftSendAgainRefusal = Exclude<DraftSendAgainOutcome, "sent" | "superseded">;
 
 /** The held row's sentence — the state line and the two acts' group label alike. */
 export function heldSentence(says: DraftHeldSays): string {

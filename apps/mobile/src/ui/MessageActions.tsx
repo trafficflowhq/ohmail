@@ -1414,7 +1414,8 @@ export function ComposeSheet({
       : forward
         ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId)
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
-    if (result.outcome === "sent") {
+    // `superseded`: a newer press of this reply carries it and says its sentence.
+    if (result.outcome === "sent" || result.outcome === "superseded") {
       onClose();
       return;
     }

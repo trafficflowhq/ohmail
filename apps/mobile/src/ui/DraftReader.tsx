@@ -125,7 +125,8 @@ export function DraftReader({
     setAsking(null);
     setBusy(true);
     const outcome = await w.actions.draftSendAgain(row.id);
-    if (outcome === "sent") { leave(); return; }
+    // `superseded`: a newer press of this row carries it and says its sentence.
+    if (outcome === "sent" || outcome === "superseded") { leave(); return; }
     setSendRefusal({ why: outcome, at: Date.now() });
     setBusy(false);
   };
