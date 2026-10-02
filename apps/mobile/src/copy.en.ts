@@ -2362,6 +2362,30 @@ const TABLE = {
   screeningNoteRetro: (target: string) =>
     `Becomes a rule — future mail from ${target} files there automatically, and ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed in another mail app or set aside are left alone.`,
   screeningRetroToggle: "Also move the mail already in your mailbox",
+  /**
+   * WHY SOME OF THE SENDER'S MAIL STAYED once the rule's past-mail pass finished — the web sheet's
+   * `screening.stayed*` lines, one per place and reason, and the move past it. The reasons are the
+   * server's (`GET /screener/stayed`); a row it names none for is not listed.
+   */
+  stayedReplied: (count: number, place: string) =>
+    count === 1 ? `1 stays in ${place}: you replied to it.` : `${count} stay in ${place}: you replied to them.`,
+  stayedSetAside: (count: number, place: string) =>
+    count === 1 ? `1 stays in ${place}: you set it aside.` : `${count} stay in ${place}: you set them aside.`,
+  stayedFiledElsewhere: (count: number, place: string) =>
+    count === 1 ? `1 stays in ${place}: filed in another mail app.` : `${count} stay in ${place}: filed in another mail app.`,
+  stayedFailedChecks: (count: number, place: string) =>
+    count === 1
+      ? `1 stays in ${place}: it failed the sender's sign-in checks.`
+      : `${count} stay in ${place}: they failed the sender's sign-in checks.`,
+  stayedMoveToo: (count: number): string => (count === 1 ? "Move it too" : "Move them too"),
+  /** The gate as a place a line names (`screening.placeScreener`). */
+  placeScreener: "the Screener",
+  /** What "Move it too" did — `screening.verdictMoved` and the press's partial pair (`ohbox.pressPartly*`). */
+  verdictMoved: (place: string, count: number) =>
+    `${place} — ${count === 1 ? "1 message" : `${count} messages`} moved.`,
+  pressPartlyRefused: (count: number) => (count === 1 ? "1 message did not change." : `${count} messages did not change.`),
+  pressPartlyQueued: (count: number) =>
+    count === 1 ? "1 message is queued for the organizer." : `${count} messages are queued for the organizer.`,
   /* ── THE SHEET'S RESOLVE STEP — the web sheet's words, one function per key ── */
   screeningRulesHead: "Their rules",
   screeningRuleAll: "All their mail",

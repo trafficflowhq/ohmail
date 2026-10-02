@@ -601,6 +601,10 @@ const NO_ACTIONS: WorldActions = {
   screenSender: () => undefined,
   screeningForecast: () => null,
   screeningRules: () => null,
+  screeningStayed: () => null,
+  // Nothing connected answers no reason: the sheet then lists none, never a guessed one.
+  stayedWhy: async () => new Map(),
+  moveStayed: () => undefined,
   screenUnscreened: async () => false,
   folderCreate: () => undefined,
   folderRename: () => undefined,
@@ -1527,6 +1531,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           screenSender: (id, dest, scope, applyRetro, press) => void acts.screenSender(id, dest, scope, applyRetro, press),
           screeningForecast: (id, dest, scope, applyRetro) => acts.screeningForecast(id, dest, scope, applyRetro),
           screeningRules: (id, scope) => acts.screeningRules(id, scope),
+          screeningStayed: (id, scope) => acts.screeningStayed(id, scope),
+          stayedWhy: (ids) => acts.stayedWhy(ids),
+          moveStayed: (ids, dest) => void acts.moveStayed(ids, dest),
           /* A press that held them asks the queue again at once, so the Screener lists them without
              waiting for the next drain; the read is the cadence's own (`foldersFlag.read`). */
           screenUnscreened: async () => {

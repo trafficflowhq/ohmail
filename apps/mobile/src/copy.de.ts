@@ -1541,6 +1541,28 @@ export const DE: Deck = {
   screeningNoteRetro: (target: string) =>
     `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Außerdem wendet ohmail die Regel auf die Post an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, in einem anderen Mailprogramm einsortiert oder geparkt hast, bleiben unberührt.`,
   screeningRetroToggle: "Auch die Post verschieben, die schon im Postfach liegt",
+  stayedReplied: (count: number, place: string) =>
+    count === 1 ? `1 bleibt in ${place}: Du hast darauf geantwortet.` : `${count} bleiben in ${place}: Du hast darauf geantwortet.`,
+  stayedSetAside: (count: number, place: string) =>
+    count === 1 ? `1 bleibt in ${place}: Du hast sie zurückgelegt.` : `${count} bleiben in ${place}: Du hast sie zurückgelegt.`,
+  stayedFiledElsewhere: (count: number, place: string) =>
+    count === 1
+      ? `1 bleibt in ${place}: in einem anderen Mailprogramm einsortiert.`
+      : `${count} bleiben in ${place}: in einem anderen Mailprogramm einsortiert.`,
+  stayedFailedChecks: (count: number, place: string) =>
+    count === 1
+      ? `1 bleibt in ${place}: Die Anmeldeprüfung des Absenders ist fehlgeschlagen.`
+      : `${count} bleiben in ${place}: Die Anmeldeprüfung des Absenders ist fehlgeschlagen.`,
+  // Inflected where the web's one "Auch verschieben" is not: the phone's decks inflect for number.
+  stayedMoveToo: (count: number) => (count === 1 ? "Die Nachricht auch verschieben" : "Die Nachrichten auch verschieben"),
+  // Dative after "in" (the web's "den Screener" is the accusative of a move, not a place).
+  placeScreener: "dem Screener",
+  verdictMoved: (place: string, count: number) =>
+    `${place} — ${count === 1 ? "1 Nachricht" : `${count} Nachrichten`} verschoben.`,
+  pressPartlyRefused: (count: number) =>
+    count === 1 ? "1 Nachricht hat sich nicht geändert." : `${count} Nachrichten haben sich nicht geändert.`,
+  pressPartlyQueued: (count: number) =>
+    count === 1 ? "1 Nachricht ist für den Organizer vorgemerkt." : `${count} Nachrichten sind für den Organizer vorgemerkt.`,
   /* ── THE SHEET'S RESOLVE STEP — the web sheet's words, one function per key ── */
   screeningRulesHead: "Ihre Regeln",
   screeningRuleAll: "Ihre ganze Post",

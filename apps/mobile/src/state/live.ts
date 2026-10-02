@@ -82,6 +82,7 @@ import {
   type RuleDTO,
   type ScreenDest,
   type ScreenerSenderDTO,
+  type StayedWhy,
   inverseMutations,
   routingSubject,
   type DecideIntent,
@@ -123,6 +124,7 @@ import {
   type ScreenIntent,
 } from "@ohmail/client-engine";
 import { destLabel, DESTINATIONS as SCREEN_DESTS, type MailTag } from "./model";
+import { moveStayedInBatches, stayedAsk, type StayedAsk } from "./sender-stayed";
 import { tagHueOf } from "../theme/palette";
 import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
@@ -3070,6 +3072,12 @@ export interface LiveWorldActions {
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   /** "Their rules": every rule deciding the sender's mail today, as the lists place it. */
   screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
+  /** The rows a finished rule pass left elsewhere, to ask the server why (`sender-stayed.ts`). */
+  screeningStayed(messageId: string, scope: Scope): StayedAsk | null;
+  /** The server's reason per row (`GET /screener/stayed`); a door that cannot answer names none. */
+  stayedWhy(ids: readonly string[]): Promise<ReadonlyMap<string, StayedWhy>>;
+  /** "Move it too": the named rows to the rule's place, through the one move door. */
+  moveStayed(ids: readonly string[], dest: Destination): Promise<boolean>;
   /**
    * THE OHBOX'S OFFER, PRESSED — the web's screening action on the same route: every shown group
    * goes to the Screener, and the sentence names what the server moved. `false` on a refusal.
@@ -4689,6 +4697,31 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return rulesInPlay({ reader: raw, placeOf: consentPartition(raw, options).placeOf, subject: at.subject, scope, match: at.match });
   };
 
+  /* WHY SOME OF THE SENDER'S MAIL STAYED — the web sheet's ask, over the same placement the lists
+     use, newest first; the reasons are the server's (`engine.whyStayed`). */
+  const screeningStayed = (messageId: string, scope: Scope): StayedAsk | null => {
+    const at = subjectFor(messageId, scope);
+    if (!at) return null;
+    const raw = engine.read();
+    const options = deps.presentedOptions?.() ?? presentedOptions(now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
+    return stayedAsk({
+      reader: raw, placeOf: consentPartition(raw, options).placeOf, subject: [...at.subject].sort(newestFirst),
+      scope, match: at.match, mailboxId: at.m.mailboxId,
+    });
+  };
+  const stayedWhy = (ids: readonly string[]): Promise<ReadonlyMap<string, StayedWhy>> => engine.whyStayed(ids);
+  /* "MOVE IT TOO" — the web's door: a `move` per row, in its message's order, a batch at a time,
+     and the sentence from the answers (`screening.verdictMoved` and the press's partial pair). */
+  const moveStayed = async (ids: readonly string[], dest: Destination): Promise<boolean> => {
+    const folder = FOLDER_OF_VIEW[dest as ScreenDest];
+    const r = await moveStayedInBatches(ids, folder, (m) =>
+      inMessageOrder(m, () => engine.mutate(m).catch((): MutationResult | null => null)));
+    if (r.moved > 0) toast(refuse("verdictMoved", destDone(dest), r.moved));
+    if (r.refused > 0) toast(refuse("pressPartlyRefused", r.refused));
+    else if (r.waiting > 0) toast(refuse("pressPartlyQueued", r.waiting));
+    return r.refused === 0;
+  };
+
   /* The web's press (`screener-state.ts#pressUnscreened`): the count said is the one the SERVER
      moved, since another door may have decided a sender since the offer was drawn. */
   const screenUnscreened = async (): Promise<boolean> => {
@@ -4927,7 +4960,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
-    screeningForecast, screeningRules, screenUnscreened,
+    screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
     draftDiscard, draftResolve, draftSendAgain, draftKeep,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
@@ -5047,6 +5080,9 @@ export interface WorldActions {
   screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): void;
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
+  screeningStayed(messageId: string, scope: Scope): StayedAsk | null;
+  stayedWhy(ids: readonly string[]): Promise<ReadonlyMap<string, StayedWhy>>;
+  moveStayed(ids: readonly string[], dest: Destination): void;
   /** The Ohbox's undecided-sender offer, pressed — awaited by its card. See {@link LiveWorldActions.screenUnscreened}. */
   screenUnscreened(): Promise<boolean>;
   /* The folder verbs — see {@link LiveWorldActions} for each arm's contract. */
@@ -5118,6 +5154,9 @@ export function stableActions(current: () => WorldActions): WorldActions {
     screenSender: (id, dest, scope, applyRetro, press) => void current().screenSender(id, dest, scope, applyRetro, press),
     screeningForecast: (id, dest, scope, applyRetro) => current().screeningForecast(id, dest, scope, applyRetro),
     screeningRules: (id, scope) => current().screeningRules(id, scope),
+    screeningStayed: (id, scope) => current().screeningStayed(id, scope),
+    stayedWhy: (ids) => current().stayedWhy(ids),
+    moveStayed: (ids, dest) => void current().moveStayed(ids, dest),
     screenUnscreened: () => current().screenUnscreened(),
     folderCreate: (mailboxId, name) => void current().folderCreate(mailboxId, name),
     folderRename: (id, name) => void current().folderRename(id, name),

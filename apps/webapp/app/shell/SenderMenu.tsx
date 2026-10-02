@@ -66,9 +66,6 @@ import {
   type SenderScreening,
 } from "./sender-screening";
 
-/** Rows one ask names — the server's own ceiling (`WHY_STAYED_IDS_MAX`). */
-const STAYED_ASK_MAX = 100;
-
 /** One line per place and reason, in the order the rows came: the newest first. */
 export function stayedLines(
   elsewhere: ReadonlyArray<{ id: string; place: ScreeningPlace }>, why: ReadonlyMap<string, StayedWhy>,
@@ -263,7 +260,8 @@ export function SenderMenu({
      above read the same mail; a row the server names no reason for is not listed. */
   const winner = twinWinner(ruleTwins(sender.rules, scope, ruleMatchOf(sender, scope)));
   const passDone = winner?.retro?.requestedAt != null && winner.retro.doneAt != null;
-  const askIds = passDone ? (subject.elsewhere ?? []).slice(0, STAYED_ASK_MAX).map((e) => e.id) : [];
+  // EVERY ROW: the engine pages the route's ceiling, so the lines count what the split counts.
+  const askIds = passDone ? (subject.elsewhere ?? []).map((e) => e.id) : [];
   const askKey = askIds.join(",");
   const [why, setWhy] = useState<{ key: string; map: ReadonlyMap<string, StayedWhy> } | null>(null);
   useEffect(() => {

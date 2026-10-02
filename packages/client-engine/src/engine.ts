@@ -118,6 +118,9 @@ const withheldMarkerOf = (w: unknown): WithheldMarker | null => (isWithheldMarke
  * request is recorded and the install that organizes the mailbox will carry it out, so nothing
  * here retries and nothing here may report it done.
  */
+/** Ids per `GET /screener/stayed` — the route's own ceiling (`WHY_STAYED_IDS_MAX`). */
+export const WHY_STAYED_PAGE = 100;
+
 export type MutationStatus = "confirmed" | "queued" | "awaiting_organizer" | "rolled_back";
 
 /**
@@ -5453,11 +5456,17 @@ export class OhmailEngine {
   async whyStayed(ids: readonly string[]): Promise<Map<string, StayedWhy>> {
     const ask = this.adapter.whyStayed;
     if (!ask || ids.length === 0) return new Map();
+    // EVERY ROW IS ASKED, a page of the route's ceiling at a time: a line counting only the first
+    // page would read "100 stay" over 150. One page failing answers nothing, never a partial count.
+    const out = new Map<string, StayedWhy>();
     try {
-      return new Map((await ask.call(this.adapter, ids)).map((r) => [r.id, r.why] as const));
+      for (let at = 0; at < ids.length; at += WHY_STAYED_PAGE) {
+        for (const r of await ask.call(this.adapter, ids.slice(at, at + WHY_STAYED_PAGE))) out.set(r.id, r.why);
+      }
     } catch {
       return new Map();
     }
+    return out;
   }
 
   async refreshHeldReleases(): Promise<void> {

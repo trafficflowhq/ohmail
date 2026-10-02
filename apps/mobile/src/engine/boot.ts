@@ -462,6 +462,9 @@ function accountGuarded(
        `mutate`'s rules. Left out of this literal, the engine reads "this door has no offer". */
     unscreened: () => adapter.unscreened(),
     screenUnscreened: (addresses) => adapter.screenUnscreened(addresses),
+    /* Why a sender's rows stayed — a read of this account's own messages, on `screenerWaiting`'s
+       rule. Left out, the engine reads "this door names no reason" and the sheet lists none. */
+    whyStayed: (ids) => adapter.whyStayed(ids),
   };
 }
 

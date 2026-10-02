@@ -98,6 +98,8 @@ import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
 import { holdReader } from "./reader-held";
 import { failedSendLine } from "./send-failed";
+import type { StayedWhy } from "../state/sender-stayed";
+import { stayedRows } from "./sender-stayed-lines";
 import { useKeyboardLift } from "./keyboard-lift";
 
 /**
@@ -803,6 +805,18 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   const hasDomain = m.from.address.includes("@") && domain !== "";
   const target = scope === "domain" ? `@${domain}` : m.from.address;
   const inPlay = w.actions.screeningRules(m.id, scope);
+  /* WHY SOME OF THEIR MAIL STAYED once the rule's past-mail pass finished — asked of the server
+     once per row set, one line per place and reason, as the web sheet asks it. */
+  const ask = w.actions.screeningStayed(m.id, scope);
+  const askKey = ask ? ask.elsewhere.map((e) => e.id).join(",") : "";
+  const [why, setWhy] = useState<{ key: string; map: ReadonlyMap<string, StayedWhy> } | null>(null);
+  useEffect(() => {
+    if (askKey === "") return;
+    let live = true;
+    void w.actions.stayedWhy(askKey.split(",")).then((map) => { if (live) setWhy({ key: askKey, map }); });
+    return () => { live = false; };
+  }, [askKey, w.actions]);
+  const stayed = stayedRows(ask, why && why.key === askKey ? why.map : null);
   const press = (dest: Destination) => {
     const f = w.actions.screeningForecast(m.id, dest, scope, applyRetro);
     const cls = f ? phoneStepClass(f, scope) : null;
@@ -854,6 +868,22 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
           {inPlay.inside ? (
             <Txt variant="caption" tone="ink2">{Copy.screeningRuleInsideCount(inPlay.inside.senders, inPlay.inside.count)}</Txt>
           ) : null}
+        </View>
+      ) : null}
+      {stayed.length > 0 ? (
+        <View style={{ paddingHorizontal: 14, paddingBottom: 8, gap: 4 }}>
+          {stayed.map((row) => (
+            <View key={row.key} style={{ gap: 2 }}>
+              <Txt variant="caption" tone="ink2">{row.text}</Txt>
+              {row.move ? (
+                <Button
+                  label={row.move.label}
+                  variant="quiet"
+                  onPress={() => { const mv = row.move!; onClose(); w.actions.moveStayed(mv.ids, mv.dest); }}
+                />
+              ) : null}
+            </View>
+          ))}
         </View>
       ) : null}
       {/* THE PAST-MAIL OPTION, ABOVE THE DESTINATIONS, because it changes what pressing one of
