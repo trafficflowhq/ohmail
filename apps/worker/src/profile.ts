@@ -207,7 +207,11 @@ export class OrganizerProfileSync {
    * engine's `foreign` refusal guarantees we surfaced it before superseding it.
    */
   private seenForeignFingerprints = new Set<string>();
-  /** Locators of held questions released since the last tidy that removed what it planned. */
+  /**
+   * Locators of held questions released since the last tidy that removed what it planned. In
+   * memory only (a ruled bound): a restart before that tidy forgets them, and the released record
+   * then stays until the ordinary ten-minute rule removes it at this install's next settings change.
+   */
   private released: ProfileLocator[] = [];
   /** A detection marker that could not be written durably yet — owed, and retried next tick. */
   private markerPending: MarkerFact | null = null;

@@ -395,7 +395,9 @@ export class ProfileImportService {
   /**
    * WHERE THE DOCUMENT THE PERSON WAS SHOWN SITS — from the organizer's found-marker for this
    * fingerprint, which records its writer and write stamp. `undefined` when the marker names
-   * another document or predates the install id: the read then answers the folder's newest.
+   * another document or predates the install id: the read then answers the folder's newest. The
+   * ruled bound: such a marker answers `changed` once this install has published beside the held
+   * document, and the card asks again after the next marker; it ages out with those markers.
    */
   private async shownAt(ctx: ServiceContext, mailboxId: string, fingerprint: string): Promise<ProfileLocator | undefined> {
     const m = await latestProfileFoundMarker(asTx(ctx), ctx.accountId, mailboxId);

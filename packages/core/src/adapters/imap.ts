@@ -1706,8 +1706,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   /**
    * The delimiter `connect()` learned, or a refusal: no server path is built from a value nobody
-   * learned. The class both hosts already read as a connection that ended, so they re-dial rather
-   * than count a failure; nothing in production reaches this before `connect()` resolves.
+   * learned. The sidecar and the worker's connection-event handler read this class as a connection
+   * that ended and re-dial; the worker's synchronous cycle catch has no arm for it and counts it as
+   * a sync failure. Nothing in production reaches this before `connect()` resolves.
    */
   private learnedDelimiter(): string {
     if (this.delimiter === null) {
