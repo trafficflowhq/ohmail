@@ -34,7 +34,13 @@ export function pinnedLookup(pin: readonly string[]): LookupFunction {
     if (opts.family === 4) list = all.filter((r) => r.family === 4);
     else if (opts.family === 6) list = all.filter((r) => r.family === 6);
     if (list.length === 0) list = all;   // never hand back an empty set for a family we lack
-    if (opts.all) cb(null, list);
-    else cb(null, list[0]!.address, list[0]!.family);
+    // LATER, as a resolver answers. `tls.connect` dials inside its own body and then sets SNI on the
+    // handle, so an answer inside the call lets a connect the kernel refuses at once destroy that
+    // handle first: a TypeError out of the call and an error nobody listens for, which ends the
+    // process. A microtask and not `process.nextTick`, which a phone's engine does not have.
+    queueMicrotask(() => {
+      if (opts.all) cb(null, list);
+      else cb(null, list[0]!.address, list[0]!.family);
+    });
   } as LookupFunction;
 }
