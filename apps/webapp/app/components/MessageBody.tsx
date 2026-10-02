@@ -32,6 +32,7 @@ import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
 import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
+import { treeWithin } from "./html-tree-budget";
 
 /**
  * The English sentences — the FALLBACK, not the source: every string comes
@@ -2222,6 +2223,25 @@ export interface SanitizedMail {
  */
 export const MAX_HTML_CHARS = 512 * 1024;
 
+/**
+ * How much of a sender's `alt`, `title`, `abbr` or `aria-*` text an element keeps. That text is
+ * read out whole as an accessible name or description, on the frame and in the walk alike (the
+ * walk reads the post-passed tree), and no page or tree bound counts it.
+ */
+export const MAX_ATTR_TEXT_CHARS = 1_024;
+
+/** Cut {@link MAX_ATTR_TEXT_CHARS}-long sender text on one element, never inside a surrogate pair. */
+function cutAttrText(node: Element): void {
+  const attrs = node.attributes;
+  for (let i = 0; i < attrs.length; i++) {
+    const { name, value } = attrs[i]!;
+    if (value.length <= MAX_ATTR_TEXT_CHARS) continue;
+    if (name !== "alt" && name !== "title" && name !== "abbr" && !name.startsWith("aria-")) continue;
+    const high = value.charCodeAt(MAX_ATTR_TEXT_CHARS - 1);
+    node.setAttribute(name, value.slice(0, high >= 0xd800 && high <= 0xdbff ? MAX_ATTR_TEXT_CHARS - 1 : MAX_ATTR_TEXT_CHARS));
+  }
+}
+
 /** True when this environment has a DOM the sanitizer can parse with. */
 export function sanitizerAvailable(): boolean {
   return typeof window !== "undefined" && DOMPurify.isSupported === true;
@@ -2327,6 +2347,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    */
   const onAttributes = (node: Element): void => {
     const tag = node.tagName.toLowerCase();
+    cutAttrText(node);
 
     // Decided FIRST, and used by both the style-attribute rewrite below and the img branch, so
     // the answer cannot depend on which of them happens to run first.
@@ -3040,49 +3061,23 @@ const PROBE_PX = 600;
 const MAX_FRAME_PX = 20_000;
 
 /**
- * What one frame may draw. A document is laid out and given its accessibility tree whole, so past
- * either bound a designed mail renders as text with the oversize sentence, as past
- * {@link MAX_HTML_CHARS}: a 511 KiB newsletter built a 13,705-node tree, and a 256 KiB table of
- * one-word rows 43,917 nodes and 411 ms of main thread; WebKit showed 2,000 elements of newsletter
- * rows in 163 ms and 2,500 in 191-199. Text, not bytes: an embedded picture is an attribute and costs no layout. Ordinary
- * newsletters sit far under both.
+ * What one frame may draw, counted over the TREE the frame builds from its srcdoc: the shell's own
+ * elements included, `<style>` text not. A sanitized document can re-parse into a far larger tree
+ * (an inner `<p>` re-opens every enclosing `<b>`), so the count is {@link treeWithin} over the exact
+ * string the frame is handed. Past either bound a designed mail renders as text with the oversize
+ * sentence: a 511 KiB newsletter built a 13,705-node tree, a 256 KiB table of one-word rows 43,917
+ * nodes and 411 ms of main thread; WebKit showed 2,000 elements of newsletter rows in 163 ms.
  */
 export const MAX_FRAME_ELEMENTS = 2_048;
 export const MAX_FRAME_TEXT_CHARS = 2 * BODY_PAGE_CHARS;
 
 /**
- * Past this many elements in the html part the sanitize alone is the cost (a 511 KiB letter of
- * 7,400 short paragraphs: a 200 ms task before its text part was drawn), and neither the frame nor
- * the walk could draw the result: the text part renders with the oversize sentence, as past
- * {@link MAX_HTML_CHARS}, and nothing is parsed.
+ * Past this many elements in the tree the FIRST parse builds, the sanitize alone is the cost (a
+ * 511 KiB letter of 7,400 short paragraphs: a 200 ms task before its text part was drawn), and
+ * neither the frame nor the walk could draw the result: the text part renders with the oversize
+ * sentence, as past {@link MAX_HTML_CHARS}, and neither `DOMParser` nor the sanitizer is reached.
  */
 export const MAX_PARSE_ELEMENTS = MAX_RICH_NODES;
-
-/** Does markup hold more than `limit` elements? A `<` followed by a letter opens one. */
-export function elementsPast(markup: string, limit: number): boolean {
-  let n = 0;
-  for (let i = markup.indexOf("<"); i !== -1; i = markup.indexOf("<", i + 1)) {
-    const c = markup.charCodeAt(i + 1) | 32;
-    if (c >= 97 && c <= 122 && ++n > limit) return true;
-  }
-  return false;
-}
-
-/** Does sanitized markup fit one frame? A `<` opening a tag is an element; text `<` is `&lt;`. */
-export function frameFits(markup: string): boolean {
-  let elements = 0, text = 0, at = 0;
-  for (;;) {
-    const lt = markup.indexOf("<", at);
-    text += (lt === -1 ? markup.length : lt) - at;
-    if (text > MAX_FRAME_TEXT_CHARS) return false;
-    if (lt === -1) return true;
-    const c = markup.charCodeAt(lt + 1) | 32;
-    if (c >= 97 && c <= 122 && ++elements > MAX_FRAME_ELEMENTS) return false;
-    const gt = markup.indexOf(">", lt + 1);
-    if (gt === -1) return true;
-    at = gt + 1;
-  }
-}
 
 /**
  * HOW SMALL THE MAIL MAY BE SHRUNK BEFORE FITTING STOPS BEING WORTH IT. Scale-to-fit trades size for the absence of a
@@ -3498,7 +3493,11 @@ export function MessageBody({
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
-    if (elementsPast(html, MAX_PARSE_ELEMENTS)) return { state: "oversize" as const };
+    // The length first, so a part past it is parsed by nobody; then the tree the first parse in
+    // `sanitizeMailHtml` would build, counted under a budget before anything else parses it.
+    if (html.length > MAX_HTML_CHARS || !treeWithin(html, { elements: MAX_PARSE_ELEMENTS }).fits) {
+      return { state: "oversize" as const };
+    }
     const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids } =
       sanitizeMailHtml(html, {
         imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels,
@@ -3507,10 +3506,6 @@ export function MessageBody({
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const };
     if (clean.trim().length === 0) return null;
-    // Past one frame: a letter keeps its own path (the walk, else the text part) and loses only
-    // the flip to its layout; a designed mail, or a letter with no text part, renders as text.
-    const fits = frameFits(clean);
-    if (!fits && (!prose || !hasText)) return { state: "oversize" as const };
     const doc = buildMailDocument(clean, {
       // `proxy` is non-null exactly when the reader has consented AND a source could be
       // stated, so this is the one value both the rewrite and the policy were decided from.
@@ -3526,6 +3521,11 @@ export function MessageBody({
       // Ignored whenever the filter is on — see FRAME_CSS.
       paper: clampedPaper(background),
     });
+    // Counted over `doc`, the string the frame parses, never over `clean`. Past one frame a letter
+    // keeps its own path (the walk, else the text part) and loses only the flip to its layout; a
+    // designed mail, or a letter with no text part, renders as text.
+    const fits = treeWithin(doc, { elements: MAX_FRAME_ELEMENTS, textChars: MAX_FRAME_TEXT_CHARS }).fits;
+    if (!fits && (!prose || !hasText)) return { state: "oversize" as const };
     return {
       state: "ok" as const,
       /**
@@ -3556,7 +3556,7 @@ export function MessageBody({
       doc,
       /** This document's own name — see {@link frameIdentity}. It is the frame element's key. */
       frameKey: frameIdentity(doc),
-      /** Whether the frame may be offered at all — see {@link frameFits}. */
+      /** Whether the frame may be offered at all: its document's tree fits {@link MAX_FRAME_ELEMENTS}. */
       frameFits: fits,
       blocked,
       sheets,
