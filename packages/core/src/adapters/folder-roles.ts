@@ -10,6 +10,17 @@ export interface RoleFolder {
   flags?: ReadonlySet<string>;
 }
 
+/**
+ * What the session lets the decision read. `serverFlags`: honour LIST role attributes — only when the
+ * session advertises SPECIAL-USE, XLIST or IMAP4rev2, imapflow 1.5.0's own test, so a server sending
+ * them unasked (Exchange's shape) decides by name as 0.25.8 did. `guessParents`: canonical prefixes
+ * the server's NAMESPACE announced, admitted beside the fixed ones.
+ */
+export interface RoleContext {
+  serverFlags: boolean;
+  guessParents?: readonly string[];
+}
+
 /** What answered: the server's flag, the folder ohmail stored, a name, or nothing. */
 export interface RoleDecision {
   path: string | null;
@@ -50,27 +61,43 @@ function lowerFlags(f: RoleFolder): Set<string> {
   return new Set([...(f.flags ?? [])].map((x) => String(x).toLowerCase()));
 }
 
+/** The folder with its role attributes removed — what a session without the capability says. */
+function withoutRoleFlags(f: RoleFolder): RoleFolder {
+  return { path: f.path, flags: new Set([...(f.flags ?? [])].filter((x) => !ANY_ROLE_FLAG.has(String(x).toLowerCase()))) };
+}
+
+/** imapflow 1.5.0's order for the folders it did not guess: segment by segment, `localeCompare`. */
+function bySegments(a: string, b: string): number {
+  const as = a.split("/"), bs = b.split("/");
+  for (let i = 0; i < as.length; i++) {
+    if (as[i] !== bs[i]) return as[i]!.localeCompare(bs[i] ?? "");
+  }
+  return a.localeCompare(b);
+}
+
 function eligible(f: RoleFolder): boolean {
   const flags = lowerFlags(f);
   return !flags.has("\\noselect") && !flags.has("\\nonexistent") && !OHMAIL_SEGMENT.test(f.path);
 }
 
-function atGuessDepth(path: string): boolean {
-  const parts = path.split("/");
-  return parts.length === 1 || (parts.length === 2 && GUESS_PARENT.test(parts[0]!));
+function atGuessDepth(path: string, parents: readonly string[] = []): boolean {
+  if (!path.includes("/")) return true;
+  const parent = path.slice(0, path.lastIndexOf("/"));
+  if (!parent.includes("/") && GUESS_PARENT.test(parent)) return true;
+  return parents.some((p) => p.toLowerCase() === parent.toLowerCase());
 }
 
 /** The role the pinned table gives this folder's name — imapflow 1.5.0's fold — at guess depth. */
-export function tableRoleOf(path: string): FolderRole | null {
-  if (!atGuessDepth(path)) return null;
+export function tableRoleOf(path: string, parents: readonly string[] = []): FolderRole | null {
+  if (!atGuessDepth(path, parents)) return null;
   return NAMES.get(leafOf(path).toLowerCase().replace(/‎/g, "").trim()) ?? null;
 }
 
 /** The role this folder's NAME reads as, at guess depth — the pinned table, then the belts. */
-export function nameRoleOf(path: string): FolderRole | null {
-  const tabled = tableRoleOf(path);
+export function nameRoleOf(path: string, parents: readonly string[] = []): FolderRole | null {
+  const tabled = tableRoleOf(path, parents);
   if (tabled) return tabled;
-  if (!atGuessDepth(path)) return null;
+  if (!atGuessDepth(path, parents)) return null;
   for (const role of ["sent", "junk", "trash"] as const) if (BELT[role]!(path)) return role;
   return null;
 }
@@ -79,12 +106,13 @@ export function nameRoleOf(path: string): FolderRole | null {
  * Which folder holds `role`, by a precedence ohmail owns rather than the IMAP library's: the
  * server's SPECIAL-USE flag; then the folder stored at the last attach, so a role never moves;
  * then a name, with 0.25.8's own tie-breaks so a first attach decides as it did — the pinned
- * table first by path (imapflow 1.5.0's sort), then the belts in LIST order.
+ * table first by path, then the belts by path segment (both imapflow 1.5.0's sorts).
  */
 export function decideFolderRole(
-  role: FolderRole, folders: readonly RoleFolder[], stored?: string | null,
+  role: FolderRole, folders: readonly RoleFolder[], stored: string | null | undefined, ctx: RoleContext,
 ): RoleDecision {
-  const usable = folders.filter(eligible);
+  const parents = ctx.guessParents ?? [];
+  const usable = folders.map((f) => (ctx.serverFlags ? f : withoutRoleFlags(f))).filter(eligible);
   const flagged = usable.filter((f) => lowerFlags(f).has(FLAG[role])).map((f) => f.path);
   if (flagged.length > 0) {
     const pick = stored != null && flagged.includes(stored)
@@ -95,11 +123,13 @@ export function decideFolderRole(
   if (stored != null && unflagged.some((f) => f.path === stored)) {
     return { path: stored, by: "stored", candidates: [] };
   }
-  const tabled = unflagged.filter((f) => tableRoleOf(f.path) === role).map((f) => f.path)
+  const tabled = unflagged.filter((f) => tableRoleOf(f.path, parents) === role).map((f) => f.path)
     .sort((a, b) => a.localeCompare(b));
   if (tabled.length > 0) return { path: tabled[0]!, by: "name", candidates: tabled };
   const belt = BELT[role];
-  const belted = belt ? unflagged.filter((f) => atGuessDepth(f.path) && belt(f.path)).map((f) => f.path) : [];
+  const belted = belt
+    ? unflagged.filter((f) => atGuessDepth(f.path, parents) && belt(f.path)).map((f) => f.path).sort(bySegments)
+    : [];
   if (belted.length > 0) return { path: belted[0]!, by: "name", candidates: belted };
   return { path: null, by: "none", candidates: [] };
 }

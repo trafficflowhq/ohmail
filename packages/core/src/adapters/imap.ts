@@ -100,7 +100,7 @@ import {
   type RequestReaderIo, type RequestOrganizerIo,
 } from "./organizer-lease.js";
 import { makeProfileIo, type ProfileImapClient, type ProfileIo } from "./organizer-profile.js";
-import { decideFolderRole, type FolderRole, type RoleFolder } from "./folder-roles.js";
+import { decideFolderRole, type FolderRole, type RoleContext, type RoleFolder } from "./folder-roles.js";
 // The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
 // `fetchCapped` can enforce the same number BEFORE the download, from RFC822.SIZE alone.
 import { MAX_RAW_MESSAGE_BYTES } from "../mime.js";
@@ -2235,7 +2235,26 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private roleOf(role: FolderRole, list: ListResponse[]) {
     const folders: RoleFolder[] = list.map((f) => ({ path: this.toCanonical(f.path), flags: f.flags }));
     const stored = role === "drafts" ? null : this.config.storedFolders?.[role];
-    return decideFolderRole(role, folders, stored);
+    return decideFolderRole(role, folders, stored, this.roleContext());
+  }
+
+  /**
+   * What this session lets the role decision read: the server's role attributes only when it
+   * advertises SPECIAL-USE, XLIST or IMAP4rev2 (imapflow 1.5.0's test), and the personal
+   * NAMESPACE prefixes as places a name may be read, beside the fixed `INBOX`/`[Gmail]` ones.
+   */
+  private roleContext(): RoleContext {
+    const caps = this.client?.capabilities;
+    const has = (c: string): boolean => caps?.has?.(c) ?? false;
+    const enabled = (this.client as unknown as { enabled?: { has?(c: string): boolean } } | undefined)?.enabled;
+    const rev2 = (enabled?.has?.("IMAP4REV2") ?? false) || (has("IMAP4rev2") && !has("IMAP4rev1"));
+    const parents = personalNamespacesOf(this.client as unknown as MetaNamespaceSource)
+      .flatMap((n) => {
+        const d = n.delimiter ?? "";
+        const raw = d && n.prefix?.endsWith(d) ? n.prefix.slice(0, -d.length) : (n.prefix ?? "");
+        return raw ? [d && d !== "/" ? raw.split(d).join("/") : raw] : [];
+      });
+    return { serverFlags: has("SPECIAL-USE") || has("XLIST") || rev2, guessParents: parents };
   }
 
   /**
@@ -2264,6 +2283,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const admitted: string[] = [];
     const excluded = new Map<string, string>();
     // The folder a NAME or the stored answer gave a role is not read, as imapflow's winner was not.
+    const honoured = this.roleContext().serverFlags;
     const named = new Map<string, string>();
     for (const role of ["sent", "junk", "trash", "drafts"] as const) {
       const d = this.roleOf(role, list);
@@ -2272,7 +2292,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     for (const entry of list) {
       const path = this.toCanonical(entry.path);
       const reason = passiveFolderExclusion(
-        { path, specialUse: serverRoleFlag(entry.flags), nameRole: named.get(path) ?? null, flags: entry.flags },
+        { path, specialUse: honoured ? serverRoleFlag(entry.flags) : null, nameRole: named.get(path) ?? null, flags: entry.flags },
         sent,
       );
       if (reason === null) admitted.push(path);
