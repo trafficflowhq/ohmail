@@ -2899,6 +2899,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         needsCredentialSince ??= now();
         launchSkipped = true;
         if (timer) { clearTimeout(timer); timer = null; }
+        wakePending = false;
+        ringQueued = false;
         if (heartbeatTimer) { clearTimeout(heartbeatTimer); heartbeatTimer = null; }
         /* Nothing is dialled from here, so there is no outage to report and no refusal left to
            honour: every clock and flag the removed password earned goes with it. */
@@ -7381,6 +7383,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           heldForRemoval = !stopped;
           stopped = true;
           if (timer) clearTimeout(timer);
+          wakePending = false;
+          ringQueued = false;
           if (heartbeatTimer) clearTimeout(heartbeatTimer);
           if (waiting) {
             log("local_mailbox_pass_awaited", {
