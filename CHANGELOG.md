@@ -240,6 +240,12 @@ such as an IPv6-only server on a host without IPv6, the background organizer exi
 syncing every mailbox it served. That mailbox is now retried as unreachable and the others keep
 syncing. A push notification endpoint it cannot reach no longer stops it either.
 
+### The Microsoft sign-in note says where it applies
+<!-- changes: land-batch-k88.md -->
+
+The landing page and the README now say that Microsoft 365 and Exchange connect with your Microsoft
+sign-in on ohmail Cloud and on self-hosted servers set up for it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
