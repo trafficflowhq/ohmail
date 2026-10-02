@@ -167,7 +167,14 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
    */
   const headStyles: Element[] = [];
   const findHeadStyles = (nodes: readonly ChildNode[]): void => {
-    for (const n of nodes) {
+    const stack: Array<{ nodes: readonly ChildNode[]; at: number }> = [{ nodes, at: 0 }];
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1]!;
+      if (top.at === top.nodes.length) {
+        stack.pop();
+        continue;
+      }
+      const n = top.nodes[top.at++]!;
       if (!(n instanceof Element)) continue;
       if (n.tagName === "head") {
         for (const c of n.children) {
@@ -175,7 +182,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
         }
         continue;
       }
-      if (n.tagName === "html") findHeadStyles(n.children);
+      if (n.tagName === "html") stack.push({ nodes: n.children, at: 0 });
     }
   };
   findHeadStyles(doc.children);
@@ -188,15 +195,15 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
     out.push("<style>", cssTextSafe(neutral), "</style>");
   };
 
-  const emitElement = (el: Element): void => {
+  /** One element's own output; answers the children to walk next and the tag that closes them. */
+  const emitElement = (el: Element): { children: readonly ChildNode[]; close: string | null } | null => {
     const tag = el.tagName;
     if (!ALLOWED_TAG_SET.has(tag)) {
-      if (!DROP_CONTENT.has(tag)) walk(el.children);
-      return;
+      return DROP_CONTENT.has(tag) ? null : { children: el.children, close: null };
     }
     if (tag === "style") {
       emitStyle(el);
-      return;
+      return null;
     }
 
     const attr = (name: string): string | null => {
@@ -282,21 +289,33 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
     const attrs = kept.map(([n, v]) => ` ${n}="${escAttr(v)}"`).join("");
     if (VOID_TAGS.has(tag)) {
       out.push(`<${tag}${attrs}/>`);
-      return;
+      return null;
     }
     out.push(`<${tag}${attrs}>`);
-    walk(el.children);
-    out.push(`</${tag}>`);
+    return { children: el.children, close: `</${tag}>` };
   };
 
+  /**
+   * Depth first over an explicit stack, in the order the recursion had, so a message nested
+   * thousands deep costs heap and not the call stack (2,000 nested `<b>` overflowed the reader's).
+   */
   const walk = (nodes: readonly ChildNode[]): void => {
-    for (const n of nodes) {
+    const stack: Array<{ nodes: readonly ChildNode[]; at: number; close: string | null }> = [{ nodes, at: 0, close: null }];
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1]!;
+      if (top.at === top.nodes.length) {
+        stack.pop();
+        if (top.close !== null) out.push(top.close);
+        continue;
+      }
+      const n = top.nodes[top.at++]!;
       if (n instanceof Text) {
         out.push(escText(n.data));
         continue;
       }
       if (n instanceof Element) {
-        emitElement(n);
+        const inner = emitElement(n);
+        if (inner !== null) stack.push({ nodes: inner.children, at: 0, close: inner.close });
         continue;
       }
       // Comments, doctypes, CDATA, processing instructions: dropped.
@@ -307,13 +326,17 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
 
   /** The body's children when the mail has a document structure; the whole parse otherwise. */
   const findBody = (nodes: readonly AnyNode[]): Element | null => {
-    for (const n of nodes) {
+    const stack: Array<{ nodes: readonly AnyNode[]; at: number }> = [{ nodes, at: 0 }];
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1]!;
+      if (top.at === top.nodes.length) {
+        stack.pop();
+        continue;
+      }
+      const n = top.nodes[top.at++]!;
       if (!(n instanceof Element)) continue;
       if (n.tagName === "body") return n;
-      if (n.tagName === "html") {
-        const inner = findBody(n.children);
-        if (inner) return inner;
-      }
+      if (n.tagName === "html") stack.push({ nodes: n.children, at: 0 });
     }
     return null;
   };
