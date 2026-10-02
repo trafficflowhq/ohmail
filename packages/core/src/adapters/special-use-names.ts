@@ -4,8 +4,7 @@
  * Systems OÜ), copied so a dependency bump cannot change which folder ohmail files into or reads.
  * imapflow 1.7.8 added names (Gesendet, Papierkorb, Cestino, …) and, guessing alphabetically,
  * moved Sent and Trash for mailboxes holding both spellings. Lower-case, compared after the same
- * fold imapflow applies, minus Trash's bare `bin` and `deleted`: the write-side belt refuses those on
- * purpose (`TRASH_BY_NAME`). Adding a name is a product change with its own control, never a bump.
+ * fold imapflow applies. Adding a name is a product change with its own control, never a bump.
  */
 export const PINNED_ROLE_NAMES = {
   sent: [
@@ -28,7 +27,7 @@ export const PINNED_ROLE_NAMES = {
     "발신 메시지", "보낸 편지함",
   ],
   trash: [
-    "articole șterse", "borttagna objekt", "deleted items", "deleted messages",
+    "articole șterse", "bin", "borttagna objekt", "deleted", "deleted items", "deleted messages",
     "elementi eliminati", "elementos borrados", "elementos eliminados", "gelöschte objekte", "gelöschte elemente", "item dipadam",
     "itens apagados", "itens excluídos", "kustutatud üksused", "mục đã xóa", "odstraněné položky", "odstraněná pošta",
     "pesan terhapus", "poistetut", "praht", "prügikast", "silinmiş öğeler", "slettede beskeder",

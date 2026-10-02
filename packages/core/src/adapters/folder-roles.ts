@@ -10,11 +10,11 @@ export interface RoleFolder {
   flags?: ReadonlySet<string>;
 }
 
-/** What answered: the server's flag, the folder ohmail stored, one name, or nothing usable. */
+/** What answered: the server's flag, the folder ohmail stored, a name, or nothing. */
 export interface RoleDecision {
   path: string | null;
-  by: "server" | "stored" | "name" | "ambiguous" | "none";
-  /** Every folder the name tier matched — two or more is why `ambiguous` took none. */
+  by: "server" | "stored" | "name" | "none";
+  /** Every folder the answering name tier matched; the first is the one taken. */
   candidates: readonly string[];
 }
 
@@ -24,9 +24,13 @@ const FLAG: Record<FolderRole, string> = {
 /** A folder the server gave ANY role is never a name candidate for another one. */
 const ANY_ROLE_FLAG = new Set(["\\sent", "\\junk", "\\trash", "\\drafts", "\\archive", "\\all", "\\flagged", "\\important"]);
 
-const SENT_LEAF = /^sent( items| messages| mail)?$/i;
-const BELT: Record<FolderRole, RegExp | null> = {
-  sent: SENT_LEAF, junk: JUNK_BY_NAME, trash: TRASH_BY_NAME, drafts: null,
+/** 0.25.8's belts: Sent on the canonical path, Junk and Trash on the leaf. */
+const SENT_BY_NAME = /^(inbox\/)?sent( items| messages| mail)?$/i;
+const BELT: Record<FolderRole, ((path: string) => boolean) | null> = {
+  sent: (p) => SENT_BY_NAME.test(p),
+  junk: (p) => JUNK_BY_NAME.test(leafOf(p)),
+  trash: (p) => TRASH_BY_NAME.test(leafOf(p)),
+  drafts: null,
 };
 
 const NAMES: ReadonlyMap<string, FolderRole> = new Map(
@@ -38,6 +42,10 @@ const NAMES: ReadonlyMap<string, FolderRole> = new Map(
 const GUESS_PARENT = /^(inbox|\[gmail\]|\[google mail\])$/i;
 const OHMAIL_SEGMENT = /(?:^|\/)ohmail(?:\/|$)/i;
 
+function leafOf(path: string): string {
+  return path.split("/").pop() ?? path;
+}
+
 function lowerFlags(f: RoleFolder): Set<string> {
   return new Set([...(f.flags ?? [])].map((x) => String(x).toLowerCase()));
 }
@@ -47,25 +55,31 @@ function eligible(f: RoleFolder): boolean {
   return !flags.has("\\noselect") && !flags.has("\\nonexistent") && !OHMAIL_SEGMENT.test(f.path);
 }
 
-/** The role this folder's NAME reads as, at guess depth — the pinned table, then our belts. */
-export function nameRoleOf(path: string): FolderRole | null {
+function atGuessDepth(path: string): boolean {
   const parts = path.split("/");
-  if (parts.length > 2 || (parts.length === 2 && !GUESS_PARENT.test(parts[0]!))) return null;
-  const leaf = parts[parts.length - 1]!;
-  const folded = leaf.toLowerCase().replace(/‎/g, "").trim();
-  const named = NAMES.get(folded);
-  if (named) return named;
-  for (const role of ["sent", "junk", "trash"] as const) {
-    if (BELT[role]!.test(leaf)) return role;
-  }
+  return parts.length === 1 || (parts.length === 2 && GUESS_PARENT.test(parts[0]!));
+}
+
+/** The role the pinned table gives this folder's name — imapflow 1.5.0's fold — at guess depth. */
+export function tableRoleOf(path: string): FolderRole | null {
+  if (!atGuessDepth(path)) return null;
+  return NAMES.get(leafOf(path).toLowerCase().replace(/‎/g, "").trim()) ?? null;
+}
+
+/** The role this folder's NAME reads as, at guess depth — the pinned table, then the belts. */
+export function nameRoleOf(path: string): FolderRole | null {
+  const tabled = tableRoleOf(path);
+  if (tabled) return tabled;
+  if (!atGuessDepth(path)) return null;
+  for (const role of ["sent", "junk", "trash"] as const) if (BELT[role]!(path)) return role;
   return null;
 }
 
 /**
  * Which folder holds `role`, by a precedence ohmail owns rather than the IMAP library's: the
- * server's SPECIAL-USE flag; then the folder ohmail stored for the role at the last attach, so a
- * role never moves silently; then exactly one folder whose name reads as the role. Two name
- * matches take neither. `stored` must be canonical; an absent or unusable one is skipped.
+ * server's SPECIAL-USE flag; then the folder stored at the last attach, so a role never moves;
+ * then a name, with 0.25.8's own tie-breaks so a first attach decides as it did — the pinned
+ * table first by path (imapflow 1.5.0's sort), then the belts in LIST order.
  */
 export function decideFolderRole(
   role: FolderRole, folders: readonly RoleFolder[], stored?: string | null,
@@ -81,9 +95,11 @@ export function decideFolderRole(
   if (stored != null && unflagged.some((f) => f.path === stored)) {
     return { path: stored, by: "stored", candidates: [] };
   }
-  const candidates = unflagged
-    .filter((f) => nameRoleOf(f.path) === role)
-    .map((f) => f.path).sort();
-  if (candidates.length === 1) return { path: candidates[0]!, by: "name", candidates };
-  return { path: null, by: candidates.length > 1 ? "ambiguous" : "none", candidates };
+  const tabled = unflagged.filter((f) => tableRoleOf(f.path) === role).map((f) => f.path)
+    .sort((a, b) => a.localeCompare(b));
+  if (tabled.length > 0) return { path: tabled[0]!, by: "name", candidates: tabled };
+  const belt = BELT[role];
+  const belted = belt ? unflagged.filter((f) => atGuessDepth(f.path) && belt(f.path)).map((f) => f.path) : [];
+  if (belted.length > 0) return { path: belted[0]!, by: "name", candidates: belted };
+  return { path: null, by: "none", candidates: [] };
 }

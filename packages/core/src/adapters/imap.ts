@@ -2222,7 +2222,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   // ---- helpers ----
   /**
    * The mailbox's Sent folder, canonical, by OUR precedence (`folder-roles.ts`): the server's
-   * `\Sent` flag, then the folder stored at the last attach, then exactly one name match. Never
+   * `\Sent` flag, then the folder stored at the last attach, then a name, tied as 0.25.8 tied it. Never
    * imapflow's `specialUse`: off SPECIAL-USE that is a guess from a table that changes with the
    * dependency, and 1.7.8 moved Sent between `Sent` and `Gesendet` by alphabet. A miss is not
    * "this mailbox has no Sent folder"; see {@link resolveSentFolder}.
@@ -2263,12 +2263,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       : PASSIVE_FOLDERS_MAX_NO_STATUS;
     const admitted: string[] = [];
     const excluded = new Map<string, string>();
-    // A role a NAME decided, or every name candidate of a role two names contest: neither is read.
+    // The folder a NAME or the stored answer gave a role is not read, as imapflow's winner was not.
     const named = new Map<string, string>();
     for (const role of ["sent", "junk", "trash", "drafts"] as const) {
       const d = this.roleOf(role, list);
-      const paths = d.by === "name" || d.by === "stored" ? [d.path!] : d.by === "ambiguous" ? d.candidates : [];
-      for (const p of paths) if (!named.has(p)) named.set(p, `\\${role}`);
+      if ((d.by === "name" || d.by === "stored") && !named.has(d.path!)) named.set(d.path!, `\\${role}`);
     }
     for (const entry of list) {
       const path = this.toCanonical(entry.path);
@@ -2343,8 +2342,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * The provider's native `\Junk` and `\Trash`, resolved without creating anything — the
    * discovery behind the three user-commanded writes ({@link MailboxAdapter.findSpecialFolders}).
    * By the precedence `findSent` uses (`folder-roles.ts`): the server's flag, the stored folder,
-   * then one name match from the pinned table or the `JUNK_BY_NAME`/`TRASH_BY_NAME` belts; two
-   * names take neither. `\Noselect` and the `ohmail` namespace are excluded. Positive answers are memoised for the connection; a null
+   * then a name from the pinned table or the `JUNK_BY_NAME`/`TRASH_BY_NAME` belts, tied as 0.25.8
+   * tied them. `\Noselect` and the `ohmail` namespace are excluded. Positive answers are memoised for the connection; a null
    * is re-asked, so a mailbox that gains a Junk folder is picked up on the next connect.
    * Read-only: one LIST.
    */
@@ -4367,8 +4366,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * used to be SPECIAL-USE then `mailboxCreate("Sent")`: creating a folder is the most
    * destructive thing on this path, and it was the FIRST fallback — while the read path matched
    * names, so one adapter could find `Sent Mail` to read and create `Sent` to write. Both now ask
-   * {@link findSent}; two names contesting Sent take neither there, and the create below then
-   * files into an existing `Sent` rather than a guess.
+   * {@link findSent}, so the create below runs only where no flag, stored folder or name answers.
    */
   private async resolveSentFolder(): Promise<string> {
     if (this.sentFolder) return this.sentFolder;
