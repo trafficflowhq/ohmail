@@ -292,7 +292,8 @@ export function useShellVerbs({
           kept: v.kept, keptPlace: placeLabel(v.keptPlace), term: v.term, domain: displayDomain(v.rule.match),
         } : {}),
         ...(v.key === "keptMany" ? { kept: v.kept } : {}),
-        ...(v.key === "still" ? { still: v.still, stillPlace: placeLabel(v.stillPlace) } : {}),
+        ...(v.key === "still" ? { still: v.still, stillPlace: v.stillPlace === null ? t("screening.placeHistory") : placeLabel(v.stillPlace) } : {}),
+        ...(v.key === "stillSpread" ? { still: v.still } : {}),
         ...(v.key === "undecided" ? { still: v.still, stillPlace: placeLabel(v.stillPlace), term: v.term } : {}),
         ...(v.key === "stillLegacy" ? { still: v.still, folder: v.folder, stillPlace: placeLabel(v.folder) } : {}),
       });

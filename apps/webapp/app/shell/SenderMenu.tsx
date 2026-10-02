@@ -58,6 +58,7 @@ import {
   RETRO_DEFAULT_ON,
   SCREENING_DESTS,
   countedOf,
+  ownFolderName,
   ownFolderOf,
   planScreeningChange,
   ruleMatchOf,
@@ -276,7 +277,7 @@ export function SenderMenu({
   /** A place the lists show mail in, by the names the rail uses. */
   const placeName = (p: ScreeningPlace): string => {
     const folder = ownFolderOf(p);
-    if (folder !== null) return placeLabel(folder);
+    if (folder !== null) return ownFolderName(folder.path, subject.places.map((q) => q.place));
     return p === "screener" ? t("placeScreener") : p === "history" ? t("placeHistory") : piles[p as ScreeningDest];
   };
   /** A rule's destination by the same names; a folder of the user's own by its leaf. */
@@ -383,7 +384,7 @@ export function SenderMenu({
                 {s === "domain"
                   ? t("scopeCount", {
                       count: countedOf(sender.scopes.domain),
-                      senders: sender.scopes.domain.senders,
+                      senders: sender.scopes.domain.placedSenders,
                     })
                   : t("scopeCountOne", { count: countedOf(sender.scopes.sender) })}
               </small>
@@ -393,8 +394,9 @@ export function SenderMenu({
         </>
       ) : null}
 
-      <div className="sm-now">
-        {/* The counts are the places' own: a row in no place (Trash, Junk, Sent) is in no number. */}
+      {/* The counts are the places' own: a row in no place (Trash, Junk, Sent) is in no number, and
+          a subject with nothing in any place has no count line at all. */}
+      {countedOf(subject) > 0 ? <div className="sm-now">
         {subject.current
           ? t("nowIn", { place: placeName(subject.current), count: countedOf(subject) })
           : subject.places.length >= 2 && subject.places.length <= 3
@@ -404,7 +406,7 @@ export function SenderMenu({
                 places: subject.places.map((p) => t("nowSplitPart", { place: placeName(p.place), count: p.count })).join(" · "),
               })
             : t("nowSpread", { count: countedOf(subject) })}
-      </div>
+      </div> : null}
 
       {stayed.length > 0 && subject.ruled !== null ? (
         <div className="sm-stayed">

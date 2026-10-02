@@ -14,6 +14,7 @@ import {
   FOLDER_OF_VIEW,
   consentIndex,
   decidedDestination,
+  folderLeaf,
   isPersonsOwnFolder,
   mailboxProfiles,
   pressOverTwins,
@@ -110,6 +111,8 @@ export interface ScreeningSubject {
   representativeId: string | null;
   /** How many distinct addresses this subject covers — 1 for `sender`, N for `domain`. */
   senders: number;
+  /** Of those, the addresses with at least one message in a place the sheet counts. */
+  placedSenders: number;
   /**
    * With a decision, the rows the lists show anywhere but its place — newest first, the rows the
    * sheet asks the server WHY about (`stayedFor`). Empty without one. Absent reads as empty.
@@ -161,9 +164,29 @@ export interface SenderScreening {
  */
 export type ScreeningPlace = ScreeningDest | "screener" | "history" | `folder:${string}`;
 
-/** A folder the person made, as a place; {@link ownFolderOf} reads the path back. */
-export const ownFolderPlace = (folder: string): ScreeningPlace => `folder:${folder}`;
-export const ownFolderOf = (p: ScreeningPlace): string | null => (p.startsWith("folder:") ? p.slice(7) : null);
+/**
+ * A folder the person made, as a place: keyed by its mailbox AND its path, because two mailboxes
+ * can each have a `Fixture` and those are two places. {@link ownFolderOf} reads both back.
+ */
+export const ownFolderPlace = (mailboxId: string, folder: string): ScreeningPlace => `folder:${mailboxId}|${folder}`;
+export function ownFolderOf(p: ScreeningPlace): { mailboxId: string; path: string } | null {
+  if (!p.startsWith("folder:")) return null;
+  const bar = p.indexOf("|");
+  return { mailboxId: p.slice(7, bar), path: p.slice(bar + 1) };
+}
+
+/**
+ * A folder place's name: its leaf, or its last two segments when another place shown beside it
+ * has the same leaf under a different path ("Work/Fixture", "Home/Fixture").
+ */
+export function ownFolderName(path: string, among: readonly ScreeningPlace[]): string {
+  const leaf = folderLeaf(path);
+  const clash = among.some((q) => {
+    const o = ownFolderOf(q);
+    return o !== null && o.path !== path && folderLeaf(o.path) === leaf;
+  });
+  return clash ? path.split("/").filter(Boolean).slice(-2).join("/") : leaf;
+}
 
 /** Only a pile is a rule's place: the gate, History and a folder the person made are not. */
 const isPile = (p: ScreeningPlace | null): p is ScreeningDest =>
@@ -280,7 +303,8 @@ function subjectOf(
   const shown = (m: EngineMessage): ScreeningPlace | undefined => {
     const place = placeOf?.has(m.id) ? placeOf.get(m.id)! : m.folder;
     if (place === null) return "history";
-    return DEST_OF_FOLDER.get(canonicalDestination(place) as Folder) ?? (isPersonsOwnFolder(place) ? ownFolderPlace(place) : undefined);
+    return DEST_OF_FOLDER.get(canonicalDestination(place) as Folder)
+      ?? (isPersonsOwnFolder(place) ? ownFolderPlace(m.mailboxId, place) : undefined);
   };
   const counts = new Map<ScreeningPlace, number>();
   for (const m of messages) {
@@ -309,6 +333,8 @@ function subjectOf(
     // which is correct: the server reads the representative's DOMAIN and rules on that.
     representativeId: held[0]?.id ?? null,
     senders: new Set(messages.map((m) => senderKey(m.from.address))).size,
+    // The chip counts what the split counts: an address with no message in any place is no sender here.
+    placedSenders: new Set(messages.filter((m) => shown(m) !== undefined).map((m) => senderKey(m.from.address))).size,
   };
 }
 

@@ -32,9 +32,13 @@ export type { StayedWhy };
  */
 export type StayedPlace = Destination | "screener" | "history" | `folder:${string}`;
 
-/** A folder the person made, as a place, and back: the web sheet's spelling. */
-export const ownFolderPlace = (folder: string): StayedPlace => `folder:${folder}`;
-export const ownFolderOf = (p: StayedPlace): string | null => (p.startsWith("folder:") ? p.slice(7) : null);
+/** A folder the person made, as a place keyed by mailbox and path, and back: the web sheet's spelling. */
+export const ownFolderPlace = (mailboxId: string, folder: string): StayedPlace => `folder:${mailboxId}|${folder}`;
+export function ownFolderOf(p: StayedPlace): { mailboxId: string; path: string } | null {
+  if (!p.startsWith("folder:")) return null;
+  const bar = p.indexOf("|");
+  return { mailboxId: p.slice(7, bar), path: p.slice(bar + 1) };
+}
 
 /** The web's batch for a visible move (`RETRO_VISIBLE_MOVES`): each batch answered before the next. */
 export const STAYED_MOVE_BATCH = 50;
@@ -76,7 +80,8 @@ export function stayedAsk(o: {
   const shown = (m: EngineMessage): StayedPlace | undefined => {
     const place = o.placeOf.has(m.id) ? o.placeOf.get(m.id)! : m.folder;
     if (place === null) return "history";
-    return PLACE_OF_FOLDER.get(canonicalDestination(place) as Folder) ?? (isPersonsOwnFolder(place) ? ownFolderPlace(place) : undefined);
+    return PLACE_OF_FOLDER.get(canonicalDestination(place) as Folder)
+      ?? (isPersonsOwnFolder(place) ? ownFolderPlace(m.mailboxId, place) : undefined);
   };
   const counts = new Map<StayedPlace, number>();
   for (const m of o.subject) {

@@ -119,7 +119,7 @@ export function verdictKeyOf(v: Exclude<StayVerdict, { key: "none" }>): string {
 }
 
 const VERDICT_KEY = {
-  keptMany: "verdictKeptMany", still: "verdictStill", stillLegacy: "verdictStillLegacy", applying: "verdictApplying",
+  keptMany: "verdictKeptMany", still: "verdictStill", stillSpread: "verdictStillSpread", stillLegacy: "verdictStillLegacy", applying: "verdictApplying",
   undecided: "verdictUndecided",
 } as const;
 
@@ -139,7 +139,10 @@ export function verdictAction(
       && ruleMatchKey(v.rule.match) === senderKey(pressed.address);
     return own ? { kind: "remove", ruleId: v.rule.id } : null;
   }
-  if (v.key === "still" || v.key === "stillLegacy" || v.key === "undecided") return { kind: "move", ids: [...v.ids] };
+  // Never past a message that failed its checks: the sheet offers no move for it either.
+  if (v.key === "still" || v.key === "stillSpread" || v.key === "stillLegacy" || v.key === "undecided") {
+    return v.movable ? { kind: "move", ids: [...v.ids] } : null;
+  }
   return null;
 }
 

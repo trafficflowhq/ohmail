@@ -15,10 +15,20 @@ export interface StayedRow {
   move: { label: string; ids: string[]; dest: Destination } | null;
 }
 
-/** A place by the names the lists use: a pile, the gate, History, or a folder by its leaf. */
-export function stayedPlaceName(p: StayedPlace): string {
+/**
+ * A place by the names the lists use: a pile, the gate, History, or a folder by its leaf, with its
+ * parent when another place in `among` has the same leaf under a different path ("Work/Fixture").
+ */
+export function stayedPlaceName(p: StayedPlace, among: readonly StayedPlace[] = []): string {
   const folder = ownFolderOf(p);
-  if (folder !== null) return folderLeafOf(folder);
+  if (folder !== null) {
+    const leaf = folderLeafOf(folder.path);
+    const clash = among.some((q) => {
+      const o = ownFolderOf(q);
+      return o !== null && o.path !== folder.path && folderLeafOf(o.path) === leaf;
+    });
+    return clash ? folder.path.split("/").filter(Boolean).slice(-2).join("/") : leaf;
+  }
   return p === "screener" ? Copy.placeScreener : p === "history" ? Copy.history : destDone(p as Destination);
 }
 
@@ -31,9 +41,10 @@ const SENTENCE: Record<StayedWhy, (count: number, place: string) => string> = {
 
 export function stayedRows(ask: StayedAsk | null, why: ReadonlyMap<string, StayedWhy> | null): StayedRow[] {
   if (!ask || !why) return [];
+  const among = ask.elsewhere.map((e) => e.place);
   return stayedLines(ask.elsewhere, why).map((line) => ({
     key: `${line.place}:${line.why}`,
-    text: SENTENCE[line.why](line.ids.length, stayedPlaceName(line.place)),
+    text: SENTENCE[line.why](line.ids.length, stayedPlaceName(line.place, among)),
     move: line.why === "failed-checks" ? null : { label: Copy.stayedMoveToo(line.ids.length), ids: line.ids, dest: ask.ruled },
   }));
 }

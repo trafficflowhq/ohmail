@@ -43,6 +43,8 @@ export interface PressStay {
   messageIds: string[];
   /** The rule keeping them there, for the rule causes; for `undecided`, the rule that decides. */
   rule: RuleDTO | null;
+  /** For `filed`: the mailbox, since the same path in two mailboxes is two places. */
+  mailboxId?: string;
 }
 
 export interface PressOutcome {
@@ -75,11 +77,11 @@ export function pressOutcome(input: {
   const index = consentIndex(input.rules, input.profiles);
   const groups = new Map<string, PressStay>();
   const atPlace: string[] = [];
-  const add = (cause: PressStayCause, where: Folder | null, id: string, ruled: RuleDTO | null) => {
-    const key = JSON.stringify([cause, where, ruled?.id ?? null]);
+  const add = (cause: PressStayCause, where: Folder | null, id: string, ruled: RuleDTO | null, mailboxId?: string) => {
+    const key = JSON.stringify([cause, where, ruled?.id ?? null, mailboxId ?? null]);
     const held = groups.get(key);
     if (held) held.messageIds.push(id);
-    else groups.set(key, { cause, place: where, messageIds: [id], rule: ruled });
+    else groups.set(key, { cause, place: where, messageIds: [id], rule: ruled, ...(mailboxId === undefined ? {} : { mailboxId }) });
   };
   for (const m of input.subject) {
     const filed = m.physicalFolder ?? m.folder;
@@ -87,7 +89,7 @@ export function pressOutcome(input: {
     if (!own && !isOrganizedFolder(filed)) continue;
     const shown = input.presented.get<EngineMessage>("message", m.id);
     const where = shown === undefined ? null : canonicalDestination(shown.folder) as Folder;
-    if (own) { add("filed", where, m.id, null); continue; }
+    if (own) { add("filed", where, m.id, null, m.mailboxId); continue; }
     if (where !== null && canonicalDestination(where) === place) { atPlace.push(m.id); continue; }
     const placed = messagePlacement(index, m, input.presented);
     const by = placed.undecided === null ? placed.rule : null;
@@ -120,23 +122,32 @@ function causeOf(r: RuleDTO): PressStayCause {
  * THE ONE SENTENCE AN OUTCOME EARNS, for every surface's copy. `none` when every pressed row is
  * at the place; otherwise the first class that holds: one subject rule of theirs keeping rows
  * elsewhere (`kept`, named), several rules (`keptMany`), rows the pass cannot reach or a folder
- * the person made holds (`still`, or `stillLegacy` when all sit in the pre-0.22 News folder), rows
- * it is still moving (`applying`).
+ * the person made holds (`still` for one place, `stillSpread` for several, `stillLegacy` when all
+ * sit in the pre-0.22 News folder), rows it is still moving (`applying`).
  */
 export type StayVerdict =
   | { key: "none" }
   /** `field` names which term the rule reads, so each surface says which one. */
   | { key: "kept"; count: number; kept: number; keptPlace: Folder; term: string; field: "subject" | "body"; rule: RuleDTO }
   | { key: "keptMany"; count: number; kept: number }
-  /** `folder` is the old folder's own name, the one any other mail app shows for it. */
-  | { key: "stillLegacy"; count: number; still: number; ids: string[]; folder: string }
-  | { key: "still"; count: number; still: number; stillPlace: string; ids: string[] }
+  /**
+   * `folder` is the old folder's own name, the one any other mail app shows for it. `movable`, on
+   * every verdict that names rows: false when one failed its sender's checks, the message the sheet
+   * offers no move for, so the sentence offers none either.
+   */
+  | { key: "stillLegacy"; count: number; still: number; ids: string[]; folder: string; movable: boolean }
+  /** Every staying row in ONE place: `stillPlace`, `null` for History, as the lists show it. */
+  | { key: "still"; count: number; still: number; stillPlace: Folder | null; ids: string[]; movable: boolean }
+  /** Staying rows in more than one place: no single place is named, and `ids` are all of them. */
+  | { key: "stillSpread"; count: number; still: number; ids: string[]; movable: boolean }
   /** Rows a rule for mail mentioning `term` decides, whose text this client does not hold. */
-  | { key: "undecided"; count: number; still: number; stillPlace: string; ids: string[]; term: string; rule: RuleDTO }
+  | { key: "undecided"; count: number; still: number; stillPlace: string; ids: string[]; term: string; rule: RuleDTO; movable: boolean }
   | { key: "applying"; count: number };
 
 export function stayVerdict(out: PressOutcome, reader: EntityReader): StayVerdict {
   const of = (c: PressStayCause) => out.away.filter((g) => g.cause === c);
+  const movable = (ids: readonly string[]) =>
+    ids.every((id) => reader.get<EngineMessage>("message", id)?.authVerdict !== "fail");
   const ruled = [...of("subject"), ...of("body"), ...of("domain"), ...of("address")];
   const only = ruled.length === 1 ? ruled[0]! : null;
   const t = only?.rule ? ruleTerms(only.rule) : null;
@@ -156,7 +167,7 @@ export function stayVerdict(out: PressOutcome, reader: EntityReader): StayVerdic
     const widest = [...unread].sort((a, b) => b.messageIds.length - a.messageIds.length)[0]!;
     const filed = reader.get<EngineMessage>("message", widest.messageIds[0]!);
     return {
-      key: "undecided", count: out.at, still: ids.length, ids, rule: widest.rule!,
+      key: "undecided", count: out.at, still: ids.length, ids, rule: widest.rule!, movable: movable(ids),
       stillPlace: widest.place ?? (filed === undefined ? "" : filed.physicalFolder ?? filed.folder),
       term: (widest.rule!.bodyContains ?? "").trim(),
     };
@@ -170,9 +181,15 @@ export function stayVerdict(out: PressOutcome, reader: EntityReader): StayVerdic
       const m = reader.get<EngineMessage>("message", id);
       return m === undefined ? "" : m.physicalFolder ?? m.folder;
     };
-    if (ids.every((id) => filed(id) === LEGACY_NEWS_FOLDER)) return { key: "stillLegacy", count: out.at, still: ids.length, ids, folder: LEGACY_NEWS_FOLDER };
-    const widest = [...left].sort((a, b) => b.messageIds.length - a.messageIds.length)[0]!;
-    return { key: "still", count: out.at, still: ids.length, stillPlace: widest.place ?? filed(widest.messageIds[0]!), ids };
+    if (ids.every((id) => filed(id) === LEGACY_NEWS_FOLDER)) {
+      return { key: "stillLegacy", count: out.at, still: ids.length, ids, folder: LEGACY_NEWS_FOLDER, movable: movable(ids) };
+    }
+    // THE SENTENCE NAMES EXACTLY WHAT ITS MOVE MOVES: one place is named with that place's rows;
+    // several are named as several, never by the largest. A folder of the person's own is a place
+    // per mailbox; History (`null`) is one place, as the sheet says it.
+    const placeKey = (g: PressStay) => (g.place === null ? "history" : JSON.stringify([g.place, g.mailboxId ?? null]));
+    if (new Set(left.map(placeKey)).size > 1) return { key: "stillSpread", count: out.at, still: ids.length, ids, movable: movable(ids) };
+    return { key: "still", count: out.at, still: ids.length, stillPlace: left[0]!.place, ids, movable: movable(ids) };
   }
   return of("moving").length > 0 ? { key: "applying", count: out.at } : { key: "none" };
 }
