@@ -1,11 +1,11 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql,
+  rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
   type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
-import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX } from "@trafficflow/core/rule-order";
+import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, ruleMatchKey } from "@trafficflow/core/rule-order";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -315,7 +315,7 @@ export class RulesService {
   ): Promise<RuleMutation | RuleRequestResult> {
     const kind = this.validKind(body.kind);
     const destination = this.validDestination(body.destination);
-    const match = this.validMatch(body.match);
+    const match = this.validMatch(body.match, kind);
     const priority = this.validPriority(body.priority);
     const applyRetro = this.validApplyRetro(body.applyRetro);
     const subjectContains = this.validSubjectContains(body.subjectContains, kind);
@@ -477,7 +477,7 @@ export class RulesService {
     const set: Record<string, unknown> = { updatedAt: ctx.now() };
     if (patch.kind !== undefined) set.kind = this.validKind(patch.kind);
     if (patch.destination !== undefined) set.destination = this.validDestination(patch.destination);
-    if (patch.match !== undefined) set.match = this.validMatch(patch.match);
+    if (patch.match !== undefined) set.match = this.validMatch(patch.match, patch.kind === undefined ? null : set.kind as string);
     if (patch.priority !== undefined) set.priority = this.validPriority(patch.priority);
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
     /* A PERSON NAMING WHERE A RULE FILES MAKES THE RULE THEIRS. A rule the Screener promoted or the
@@ -527,6 +527,10 @@ export class RulesService {
       }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
 
+      // A PATCH naming a match and no kind is keyed by the row's own kind, read just above.
+      if (patch.match !== undefined && patch.kind === undefined && before !== undefined) {
+        set.match = this.validMatch(patch.match, before.kind);
+      }
       if (patch.subjectContains !== undefined) {
         set.subjectContains = this.validSubjectContains(
           patch.subjectContains,
@@ -700,11 +704,23 @@ export class RulesService {
         return this.claimRequestReplay(bridgeTx(tx), ctx, opts, { pending: true, travel });
       }
 
+      /* THE SENDER'S RULE GOES, NOT ONE BYTE-SHAPE OF IT: the row and every twin under its key
+         (`ruleMatchKey` on both sides, the terms equal), one `delete` delta per row. The page shows
+         one row per key, so a twin left here would be a rule nobody can see still filing mail. */
+      if (!before) throw new ServiceError("not_found", 404, "rule not found");
+      const twins = await tx.select({ id: rules.id }).from(rules).where(and(
+        eq(rules.accountId, ctx.accountId), eq(rules.kind, before.kind),
+        sql`${ruleMatchKeySql(rules.match)} = ${ruleMatchKey(before.match)}`,
+        before.subjectContains === null ? isNull(rules.subjectContains) : eq(rules.subjectContains, before.subjectContains),
+        before.bodyContains === null ? isNull(rules.bodyContains) : eq(rules.bodyContains, before.bodyContains),
+      ));
+      const ids = [id, ...twins.map((t) => t.id).filter((t) => t !== id)];
       const deleted = await tx.delete(rules)
-        .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
+        .where(and(inArray(rules.id, ids), eq(rules.accountId, ctx.accountId)))
         .returning({ id: rules.id });
       if (deleted.length === 0) throw new ServiceError("not_found", 404, "rule not found");
-      const emitted = (await recordRuleDelta(tx, ctx.accountId, [id], "delete"))[0]!;
+      const seqs = await recordRuleDelta(tx, ctx.accountId, deleted.map((d) => d.id), "delete");
+      const emitted = seqs[seqs.length - 1]!;
 
       // Status 204 with `{}` for a body that is never read: `routes/rules.ts` replays this
       // ITSELF rather than through `withIdempotency`, because the shared replay path is
@@ -751,11 +767,21 @@ export class RulesService {
     }
     return canon as Folder;
   }
-  private validMatch(v: unknown): string {
+  /**
+   * A sender or domain rule's match is STORED as the key every reader compares (`ruleMatchKey`):
+   * a padded or re-cased spelling was found by the router and by no identity read. A key of
+   * nothing is no rule. A header name keeps its bytes (the router folds it on read); `kind` null
+   * is a PATCH that names no kind, keyed once the row's own kind is read.
+   */
+  private validMatch(v: unknown, kind: string | null): string {
     if (typeof v !== "string" || v.length === 0) {
       throw new ServiceError("validation_failed", 400, "match is required");
     }
-    return v;
+    if (kind === "header") return v;
+    if (kind === null) return v;
+    const key = ruleMatchKey(v);
+    if (key === "") throw new ServiceError("validation_failed", 400, "match is required");
+    return key;
   }
   private validPriority(v: unknown): number {
     if (v === undefined) return 0;

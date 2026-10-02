@@ -6,6 +6,7 @@ import {
   type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
+import { ruleMatchKey } from "../rule-order.js";
 import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type AwayThrottle } from "../away-eligibility.js";
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
@@ -165,12 +166,12 @@ const INVALID_TERM = Symbol("invalid-term");
 const hasNul = (v: string): boolean => v.includes("\u0000");
 
 /**
- * The natural key a rule is merged under, CASE-FOLDED the way the routing engine folds at match
- * time, so `Alice@Example.com` and `alice@example.com` are one key. The stored row keeps its
- * casing; the comparison alone folds. Terms are never `""` after normalization.
+ * The natural key a rule is merged under, keyed as every reader keys it (`ruleMatchKey`), so
+ * `Alice@Example.com` and ` alice@example.com` are one key. A new row is stored as that key; an
+ * existing row keeps its bytes. Terms are never `""` after normalization.
  */
 const ruleKey = (r: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): string =>
-  JSON.stringify([r.kind, r.match.toLowerCase(), (r.subjectContains ?? "").toLowerCase(), (r.bodyContains ?? "").toLowerCase()]);
+  JSON.stringify([r.kind, ruleMatchKey(r.match), (r.subjectContains ?? "").toLowerCase(), (r.bodyContains ?? "").toLowerCase()]);
 
 /** The destinations that screen a sender OUT of sight — where the app presents their held mail. */
 const SCREEN_OUT_FOLDERS: ReadonlySet<string> = new Set(["ohmail/Screened", "ohmail/Quarantine"]);
@@ -280,7 +281,8 @@ export async function applyOrganizerProfile(
       } else if (want) {
         const [row] = await tx.insert(rulesTbl).values({
           accountId: o.accountId,
-          kind: want.kind, match: want.match, destination: want.destination,
+          kind: want.kind, match: want.kind === "header" ? want.match : ruleMatchKey(want.match),
+          destination: want.destination,
           priority: want.priority, enabled: want.enabled, provenance: want.provenance,
           subjectContains: want.subjectContains, bodyContains: want.bodyContains,
           retroRequestedAt: null,

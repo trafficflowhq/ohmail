@@ -237,6 +237,17 @@ export function placingRule<R extends ClaimingRule>(
   return { rule, undecided };
 }
 
+/**
+ * THE ACTING TWIN of rows under one key: a rule that is on before one that is paused — the router
+ * never runs a paused rule (`placingRule` skips it) — then {@link compareRules}. The Rules page
+ * picks the row it shows by this, and the organizer's `findRulesByKey` states it in SQL; the
+ * parity test holds the two to one order.
+ */
+export function compareTwins(a: OrderedRule & { enabled?: boolean }, b: OrderedRule & { enabled?: boolean }): number {
+  const on = (b.enabled === false ? 0 : 1) - (a.enabled === false ? 0 : 1);
+  return on !== 0 ? on : compareRules(a, b);
+}
+
 /** A rule carrying the term outranks one without, within one kind: 0 wins. */
 const subjectRank = (r: OrderedRule): number => (subjectTermOf(r) === null ? 1 : 0);
 const bodyRank = (r: OrderedRule): number => (bodyTermOf(r) === null ? 1 : 0);

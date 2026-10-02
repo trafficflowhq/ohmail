@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
-  rules as rulesTbl, messages, folderState, auditLog, recordRuleDelta, auditAction, type Tx,
+  rules as rulesTbl, messages, folderState, auditLog, recordRuleDelta, auditAction, ruleMatchKeySql, type Tx,
 } from "@trafficflow/db";
 import type {
   AdapterPort, Destination, MigrationObservation, FolderScanner, NativeLocator, ScanOptions,
@@ -90,7 +91,9 @@ export class HeyMigrationService {
     // so a single migrated rule per (kind, match) is produced deterministically.
     const byKey = new Map<string, MigrationObservation>();
     for (const o of input.observations) {
-      const match = o.kind === "domain" ? o.senderOrDomain.toLowerCase() : o.senderOrDomain.toLowerCase();
+      // Stored as the key every reader compares (`ruleMatchKey`), so a re-run finds its own rows.
+      const match = ruleMatchKey(o.senderOrDomain);
+      if (match === "") continue;
       byKey.set(`${o.kind}:${match}`, { ...o, senderOrDomain: match });
     }
     const deduped = [...byKey.values()];
@@ -109,7 +112,7 @@ export class HeyMigrationService {
           .where(and(
             eq(rulesTbl.accountId, ctx.accountId),
             eq(rulesTbl.kind, o.kind),
-            eq(rulesTbl.match, o.senderOrDomain),
+            sql`${ruleMatchKeySql(rulesTbl.match)} = ${o.senderOrDomain}`,
             eq(rulesTbl.provenance, "migrated"),
           ))
           .limit(1);

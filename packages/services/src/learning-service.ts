@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
-  graduations, rules as rulesTbl, fenceErased, type LedgerTx, type Tx,
+  graduations, rules as rulesTbl, fenceErased, ruleMatchKeySql, type LedgerTx, type Tx,
   recordLearningSignal, patternKeyFor, parsePatternKey, demoteGraduatedRoute, recordRuleDelta,
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
   type LearningSignalInput, type LearningKind, type LearningLabel, type ParsedPattern,
@@ -130,7 +131,7 @@ export class LearningService {
       .where(and(
         eq(rulesTbl.accountId, accountId),
         eq(rulesTbl.kind, p.kind),
-        eq(rulesTbl.match, p.match),
+        sql`${ruleMatchKeySql(rulesTbl.match)} = ${ruleMatchKey(p.match)}`,
         eq(rulesTbl.destination, p.destination),
       ))
       .limit(1);
@@ -154,7 +155,7 @@ export class LearningService {
        screen was counting. Stamped HERE so the rule and the request commit together; `null` would
        mean "nobody asked", which is the state that produced the defect. */
     const [row] = await tx.insert(rulesTbl).values({
-      accountId, kind: p.kind, match: p.match, destination: p.destination,
+      accountId, kind: p.kind, match: ruleMatchKey(p.match), destination: p.destination,
       provenance: "promoted", enabled: true, retroRequestedAt: d.now(),
     }).returning({ id: rulesTbl.id });
     await recordRuleDelta(tx, accountId, [row!.id], "create");

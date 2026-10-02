@@ -2,6 +2,7 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { graduations, learningSignals, rules } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
+import { ruleMatchKeySql } from "./rule-match-sql.js";
 
 /**
  * The learning-signal write, on its own leaf — moved down the spine for `flag-intent.ts`'s
@@ -202,7 +203,8 @@ export async function demoteGraduatedRoute(
     .where(and(
       eq(rules.accountId, accountId),
       eq(rules.kind, p.kind),
-      eq(rules.match, p.match),
+      // Key to key, both through the one builder (no import of `screener-apply`, which imports this).
+      sql`${ruleMatchKeySql(rules.match)} = ${ruleMatchKeySql(sql`${p.match}`)}`,
       eq(rules.destination, p.destination),
       eq(rules.provenance, "promoted"),
       eq(rules.enabled, true),

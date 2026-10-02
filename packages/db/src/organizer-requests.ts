@@ -3,6 +3,7 @@ import { mailboxes, organizerRequests } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 import { fenceErased } from "./erasure-fence.js";
 import { dialect } from "./dialect/index.js";
+import { ruleMatchKey } from "./screener-apply.js";
 
 /**
  * `organizer_requests` — the READER'S OWN bookkeeping. The mailbox itself (`ohmail/_meta`, via
@@ -206,7 +207,7 @@ export async function listOutstandingForAccount(
     const state = r.state === "pending" || r.state === "sent" || r.state === "refused" ? r.state : null;
     if (state === null) continue;
     out.push({
-      id: r.id, scope, match: match.toLowerCase(), decidedAt: r.decidedAt, state,
+      id: r.id, scope, match: ruleMatchKey(match), decidedAt: r.decidedAt, state,
       refusedReason: state === "refused" ? r.refusedReason : null,
     });
   }

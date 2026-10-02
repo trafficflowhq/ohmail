@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, notInArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql, type SQL } from "drizzle-orm";
 import {
   accountSettings, awayResponders, folderState, mailboxes, messages, organizerRequests,
   rules as rulesTbl,
@@ -6,7 +6,8 @@ import {
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
-import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling } from "./screener-apply.js";
+import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
+import { ruleMatchKeySql } from "./rule-match-sql.js";
 
 /** The one bound, pinned beside the decide's lift in `screener-apply.ts` and re-exported here. */
 export { RULE_PRIORITY_MAX };
@@ -611,9 +612,9 @@ export async function applyProfileUpdate(
  * rules on one sender differing only in a narrowing term are two different rules on purpose — so
  * the key is `{kind, match, subjectContains, bodyContains}`; `{kind, match}` alone still names
  * the BARE rule the Screener promotes. The key cannot be edited: `set` may not contain a key
- * field — changing what a rule MATCHES is a different rule, expressed as a delete and a create. A
- * duplicate pair is resolved, not refused: refusing would strand the person's edit forever, so
- * the oldest wins (`created_at`, then `id`) — stable across retries.
+ * field — changing what a rule MATCHES is a different rule, expressed as a delete and a create.
+ * The match compares as `ruleMatchKey` on both sides; twins under one key are resolved, not
+ * refused: the router's order picks the acting one, a delete takes all, an edit collapses them.
  */
 
 /** `rules.kind` — the three the routing engine switches over. */
@@ -705,7 +706,8 @@ function asRuleKey(v: unknown): RuleKey | null {
   const o = v as Record<string, unknown>;
   if (typeof o.kind !== "string" || !RULE_KINDS.has(o.kind)) return null;
   if (typeof o.match !== "string") return null;
-  const match = o.match.trim();
+  // The key every reader compares (`ruleMatchKey`): spaces trimmed, lower case — never a second one.
+  const match = ruleMatchKey(o.match);
   if (match === "" || match.length > RULE_MATCH_MAX) return null;
   const subjectContains = asTerm(o.subjectContains);
   const bodyContains = asTerm(o.bodyContains);
@@ -832,25 +834,43 @@ interface FoundRule {
   provenance: string;
 }
 
-/** The oldest row matching the four-field key — deterministic, see the family header. */
-async function findRuleByKey(tx: Tx, accountId: string, key: RuleKey): Promise<FoundRule | null> {
-  const rows = await tx.select({
+/**
+ * EVERY ROW UNDER THE FOUR-FIELD KEY, the acting twin first. The match is compared key to key
+ * (`ruleMatchKeySql` against the key the validator made), so a row `POST /rules` stored padded or
+ * re-cased is found. Within one key the order is core's `compareTwins`: on before paused (the
+ * router never runs a paused rule), then priority, effect, provenance and id — the first row is
+ * the one the router runs. A parity test holds this SQL to that function.
+ */
+async function findRulesByKey(tx: Tx, accountId: string, key: RuleKey): Promise<FoundRule[]> {
+  return tx.select({
     id: rulesTbl.id, destination: rulesTbl.destination,
     priority: rulesTbl.priority, enabled: rulesTbl.enabled,
     subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
-    provenance: rulesTbl.provenance, createdAt: rulesTbl.createdAt,
+    provenance: rulesTbl.provenance,
   })
     .from(rulesTbl)
     .where(and(
       eq(rulesTbl.accountId, accountId),
       eq(rulesTbl.kind, key.kind),
-      eq(rulesTbl.match, key.match),
+      sql`${ruleMatchKeySql(rulesTbl.match)} = ${key.match}`,
       key.subjectContains === null ? isNull(rulesTbl.subjectContains) : eq(rulesTbl.subjectContains, key.subjectContains),
       key.bodyContains === null ? isNull(rulesTbl.bodyContains) : eq(rulesTbl.bodyContains, key.bodyContains),
     ))
-    .orderBy(asc(rulesTbl.createdAt), asc(rulesTbl.id))
-    .limit(1);
-  return rows[0] ?? null;
+    .orderBy(
+      desc(rulesTbl.enabled),
+      desc(rulesTbl.priority),
+      sql`case when ${rulesTbl.destination} in ('ohmail/Screener', 'ohmail/Screened', 'ohmail/Quarantine') then 0 else 1 end`,
+      sql`case ${rulesTbl.provenance} when 'manual' then 0 when 'migrated' then 1 when 'promoted' then 2 when 'seeded-from-sent' then 3 else 4 end`,
+      asc(rulesTbl.id),
+    );
+}
+
+/** The twins the acting row collapses: deleted in the caller's transaction, one delta each. */
+async function deleteTwins(tx: Tx, accountId: string, twins: readonly FoundRule[]): Promise<void> {
+  if (twins.length === 0) return;
+  const ids = twins.map((t) => t.id);
+  await tx.delete(rulesTbl).where(and(eq(rulesTbl.accountId, accountId), inArray(rulesTbl.id, ids)));
+  await recordRuleDelta(ledger(tx), accountId, ids, "delete");
 }
 
 /**
@@ -922,8 +942,9 @@ export async function applyRuleRequest(
        going to the old folder: a false state, not a lost write. So the difference is applied HERE,
        in this transaction, before anything is acked; an identical request still writes nothing,
        which is the idempotent replay this lookup exists for. */
-    const existing = await findRuleByKey(tx, accountId, key);
+    const [existing, ...twins] = await findRulesByKey(tx, accountId, key);
     if (existing) {
+      await deleteTwins(tx, accountId, twins);
       const diff = ruleCreateDiff(existing, payload);
       /* The backlog re-opens on the update path's terms: only when the ROUTING moved, never for a
          reorder or an on/off, and only if the request asked for the mail already filed. */
@@ -962,7 +983,7 @@ export async function applyRuleRequest(
     return { applied: true, op: "create", ruleId: row!.id, lastSeq };
   }
 
-  const found = await findRuleByKey(tx, accountId, key);
+  const [found, ...twins] = await findRulesByKey(tx, accountId, key);
   /* NOT FOUND IS AN OUTCOME, NOT A FAULT. The reader is editing a rule this organizer's store does
      not have — deleted here since, or never travelled. Named back so the person is told, on the
      move applier's reasoning: a record that quietly disappeared leaves them unable to tell
@@ -970,9 +991,11 @@ export async function applyRuleRequest(
   if (!found) return { applied: false, refusal: "no_such_rule" };
 
   if (payload.op === "delete") {
-    await tx.delete(rulesTbl).where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId)));
-    const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [found.id], "delete"))[0]!;
-    return { applied: true, op: "delete", ruleId: found.id, lastSeq };
+    // The sender's rule goes, not one byte-shape of it: every twin, one `delete` delta per row.
+    const ids = [found.id, ...twins.map((t) => t.id)];
+    await tx.delete(rulesTbl).where(and(eq(rulesTbl.accountId, accountId), inArray(rulesTbl.id, ids)));
+    const seqs = await recordRuleDelta(ledger(tx), accountId, ids, "delete");
+    return { applied: true, op: "delete", ruleId: found.id, lastSeq: seqs[seqs.length - 1]! };
   }
 
   const set: Partial<typeof rulesTbl.$inferInsert> = { updatedAt: now };
@@ -1005,6 +1028,8 @@ export async function applyRuleRequest(
     set.retroMoved = 0;
   }
 
+  // The person edited the one row they could see; its hidden twins collapse into it.
+  await deleteTwins(tx, accountId, twins);
   await tx.update(rulesTbl).set(set)
     .where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId)));
   const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [found.id], "update"))[0]!;
