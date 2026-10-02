@@ -1433,6 +1433,34 @@ export function queueCoverage(
   return { listed, boundary: Number.isNaN(at) ? Infinity : at };
 }
 
+/**
+ * THE INSTANT THE SERVER'S QUEUE SORTS A HELD LETTER BY (`heldSortKey`): the `Date:` header, else
+ * the arrival. `null` when the row carries neither.
+ */
+export function heldSortMs(m: EngineMessage): number | null {
+  const header = m.date == null ? Number.NaN : Date.parse(m.date);
+  if (Number.isFinite(header)) return header;
+  const arrived = m.arrivedAt == null ? Number.NaN : Date.parse(m.arrivedAt);
+  return Number.isFinite(arrived) ? arrived : null;
+}
+
+/**
+ * EACH SENDER'S NEWEST HELD LETTER, by {@link heldSortMs} — the representative the queue pages by.
+ * A page speaks for a sender by THAT letter, never letter by letter: two letters straddling the
+ * page's boundary are one sender the page has or has not reached.
+ */
+export function newestHeldBySender(messages: readonly EngineMessage[]): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  for (const m of messages) {
+    if (m.folder !== "ohmail/Screener") continue;
+    const ms = heldSortMs(m);
+    if (ms === null) continue;
+    const key = senderKey(m.from.address);
+    if (ms > (out.get(key) ?? Number.NEGATIVE_INFINITY)) out.set(key, ms);
+  }
+  return out;
+}
+
 /** Does the store's queue page name this message as a sender's representative? */
 export function screenerWaitingNames(reader: EntityReader, messageId: string): boolean {
   return reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
@@ -1490,13 +1518,15 @@ function pastThePage(
 ): ScreenerSenderDTO[] {
   const { listed, boundary } = queueCoverage(store);
   const onPage = new Set(store.senders.map((s) => senderKey(s.address)));
+  const newest = newestHeldBySender(reader.list<EngineMessage>("message"));
   const out: ScreenerSenderDTO[] = [];
   for (const [key, dto] of derived) {
     if (onPage.has(key) || dto.gatePhysical === false) continue;
     if (listed.has(key)) { out.push(dto); continue; }
-    const date = reader.get<EngineMessage>("message", dto.id)?.date;
-    const ms = date ? Date.parse(date) : Number.NaN;
-    if (Number.isNaN(ms) || ms <= boundary) out.push(dto);
+    // The sender's newest held letter, header else arrival, is what the page sorted them by.
+    const seed = reader.get<EngineMessage>("message", dto.id);
+    const ms = newest.get(key) ?? (seed ? heldSortMs(seed) : null);
+    if (ms === null || ms <= boundary) out.push(dto);
   }
   return out;
 }

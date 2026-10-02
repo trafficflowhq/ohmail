@@ -9,7 +9,7 @@ import {
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
 import {
-  isOwnSent, isResurfaced, messagesByDateDesc, queueCoverage, rulesList, screenerWaitingOf, senderKey,
+  isOwnSent, isResurfaced, messagesByDateDesc, newestHeldBySender, queueCoverage, rulesList, screenerWaitingOf, senderKey,
 } from "./selectors.js";
 import {
   MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, type EngineMessage,
@@ -377,13 +377,16 @@ function placedDestination(index: ConsentIndex, m: EngineMessage, bodies: BodyTe
 /**
  * WHAT THE STORE'S QUEUE PAGE SAYS ABOUT ONE SENDER'S MAIL — `true` when it answers "not waiting".
  * Mail the store keeps OUTSIDE the gate is never held, so a sender the page does not list is not
- * waiting over it. Mail AT the gate is spoken for only inside the page's range: newer than its last
- * row (the route orders by the representative's date), or anywhere when the page is the whole
- * queue. A subject the server is still deciding is left to the Screener's decided rows.
+ * waiting over it. Mail AT the gate is spoken for only inside the page's range: the sender's newest
+ * held letter newer than its last row (the route orders by that representative), or anywhere when
+ * the page is the whole queue. A subject the server is still deciding is left to the Screener's decided rows.
  */
-function storeSaysNotWaiting(reader: EntityReader): (m: EngineMessage, key: string) => boolean {
+function storeSaysNotWaiting(
+  reader: EntityReader, messages: readonly EngineMessage[],
+): (m: EngineMessage, key: string) => boolean {
   const store = screenerWaitingOf(reader);
   if (store === null) return () => false;
+  const newest = newestHeldBySender(messages);
   // No readable instant on the last row: the page speaks for no gate mail but its own.
   const { listed, boundary } = queueCoverage(store);
   const deciding = new Set(store.page.inFlight.map((d) => `${d.scope}:${d.match}`));
@@ -392,8 +395,9 @@ function storeSaysNotWaiting(reader: EntityReader): (m: EngineMessage, key: stri
     const at = key.lastIndexOf("@");
     if (at >= 0 && deciding.has(`domain:${key.slice(at + 1)}`)) return false;
     if (m.folder !== "ohmail/Screener") return true;
-    const ms = m.date ? Date.parse(m.date) : Number.NaN;
-    return !Number.isNaN(ms) && ms > boundary;
+    // By the sender's NEWEST held letter (header, else arrival), as the server pages them.
+    const ms = newest.get(key);
+    return ms !== undefined && ms > boundary;
   };
 }
 
@@ -491,7 +495,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const messages = reader.list<EngineMessage>("message");
   const index = consentIndex(rulesList(reader), mailboxProfiles(reader));
   const own = ownAddressKeys(reader, opts);
-  const notWaiting = storeSaysNotWaiting(reader);
+  const notWaiting = storeSaysNotWaiting(reader, messages);
   const heldAhead = heldAheadOfTheCopy(reader, messages);
   /* The user's own folders, when "Use folders" is on (FOLDERS-SPEC.md
    * §16.5). Two gates, both must say yes: the caller's
