@@ -43,8 +43,7 @@ One RFC822 message in `ohmail/_meta`:
   guaranteed not to contain `{`. Every string value except the format fields
   (`updatedAt`, `producer`, rule and notification kinds, a rule's provenance,
   the away reply's audience, rate, dates and piles) is written as JSON
-  `\uXXXX` escapes, so names and addresses are not searchable as text; any
-  JSON parser reads the same values. The body is 7-bit ASCII
+  `\uXXXX` escapes; any JSON parser reads the same values. The body is 7-bit ASCII
   (`Content-Transfer-Encoding: 7bit`).
 
 ## The JSON document, version 2
