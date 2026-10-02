@@ -20,6 +20,7 @@ import { buildPhoneMailDocument, frameHeightEstimate } from "../mail/mail-docume
 import { fetchRemoteImages, imagesSeenBy } from "../mail/remote-images";
 import { frameNavDecision, openConfirmedLink } from "../mail/frame-nav";
 import { sanitizeMailHtmlPhone } from "../mail/sanitize";
+import { frameReadingOf, noteFrameTree, planFrameCount, startFrameCount, type FrameReading } from "../mail/frame-tree";
 import { blockedNotice } from "../mail/notice";
 import { Sheet, SheetRow } from "./Sheet";
 import { Txt } from "./base";
@@ -42,6 +43,29 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     () => sanitizeMailHtmlPhone(html, { inlineImages: m.inlineImages, resolvedRemote }),
     [html, m.inlineImages, resolvedRemote],
   );
+  const theme = useMemo(
+    () => ({ bg: t.c.canvas, ink: t.c.ink, ink2: t.c.ink3, accent: t.c.accent, fontScale: 1 }),
+    [t.c.canvas, t.c.ink, t.c.ink3, t.c.accent],
+  );
+
+  // THE TREE IS COUNTED BEFORE THE FRAME EXISTS (`src/mail/frame-tree.ts`): the WebView mounts only
+  // once the document it would parse reads under the budget, a step per macrotask, and a reading is
+  // used only for the very document it was made for.
+  const plan = useMemo(() => planFrameCount(html, theme), [html, theme]);
+  const [counted, setCounted] = useState<{ key: string; reading: FrameReading } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const cancel = startFrameCount(plan, (count) => {
+      if (!alive) return;
+      noteFrameTree(count);
+      if (plan.known === null) setCounted({ key: plan.key, reading: count.reading });
+    });
+    return () => {
+      alive = false;
+      cancel();
+    };
+  }, [plan]);
+  const reading = frameReadingOf(plan, counted);
 
   // The document's own unresolved `cid:` references — the engine fetches THIS message's parts,
   // bounded, and the minted map re-renders this memo through the world.
@@ -79,7 +103,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imagesWanted, resolvedRemote === undefined, pictureUrls.length === 0, m.id]);
 
-  if (sanitized.oversize) {
+  if (sanitized.oversize || (reading !== null && !reading.fits)) {
     // The size fallback states its reason — a bare plain-text render reads as a bug.
     return (
       <View>
@@ -96,13 +120,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     ? [Copy.mailImagesRefused, said].filter((x) => x !== null).join(" ")
     : said;
   const canLoad = !imagesWanted && pictureUrls.length > 0;
-  const doc = buildPhoneMailDocument(sanitized.html, {
-    bg: t.c.canvas,
-    ink: t.c.ink,
-    ink2: t.c.ink3,
-    accent: t.c.accent,
-    fontScale: 1,
-  });
+  const doc = buildPhoneMailDocument(sanitized.html, theme);
   const height = frameHeightEstimate(sanitized.html, windowHeight);
 
   return (
@@ -139,27 +157,32 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
           </Txt>
         </View>
       )}
-      <WebView
-        // ONE document, rebuilt when the maps move; never a URL. `key` on the id keeps a
-        // recycled frame from showing the previous message during the swap.
-        key={m.id}
-        source={{ html: doc }}
-        originWhitelist={ALL_ORIGINS}
-        javaScriptEnabled={false}
-        domStorageEnabled={false}
-        allowFileAccess={false}
-        allowsInlineMediaPlayback={false}
-        setSupportMultipleWindows={false}
-        onShouldStartLoadWithRequest={(req) => {
-          const d = frameNavDecision(req.url, sanitized.links);
-          if (d.kind === "confirm") setLinkAsk(d.url);
-          if (d.kind === "compose") router.push({ pathname: "/compose", params: { mailto: d.url } });
-          return d.kind === "load";
-        }}
-        nestedScrollEnabled
-        style={{ height, backgroundColor: t.c.canvas }}
-        accessibilityLabel={Copy.mailFrameLabel}
-      />
+      {reading !== null && reading.fits ? (
+        <WebView
+          // ONE document, rebuilt when the maps move; never a URL. `key` on the id keeps a
+          // recycled frame from showing the previous message during the swap.
+          key={m.id}
+          source={{ html: doc }}
+          originWhitelist={ALL_ORIGINS}
+          javaScriptEnabled={false}
+          domStorageEnabled={false}
+          allowFileAccess={false}
+          allowsInlineMediaPlayback={false}
+          setSupportMultipleWindows={false}
+          onShouldStartLoadWithRequest={(req) => {
+            const d = frameNavDecision(req.url, sanitized.links);
+            if (d.kind === "confirm") setLinkAsk(d.url);
+            if (d.kind === "compose") router.push({ pathname: "/compose", params: { mailto: d.url } });
+            return d.kind === "load";
+          }}
+          nestedScrollEnabled
+          style={{ height, backgroundColor: t.c.canvas }}
+          accessibilityLabel={Copy.mailFrameLabel}
+        />
+      ) : (
+        // Where the frame will stand, as the WebView looks before its own first paint.
+        <View style={{ height, backgroundColor: t.c.canvas }} />
+      )}
       <Sheet open={linkAsk !== null} onClose={() => setLinkAsk(null)} label={Copy.mailOpenLinkTitle}>
         <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
           {Copy.mailOpenLinkTitle}
