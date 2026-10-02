@@ -81,14 +81,14 @@ export interface ReconcileApplyDeps extends Omit<PipelineDeps, "repo"> {
 }
 
 /** {@link adoptWithWitness}'s deps — both conditional folder-state writers and the account. */
-type AdoptDeps = {
+export type AdoptDeps = {
   repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
   accountId: string;
 };
 
 /**
- * THE ADOPTION WRITE, WITNESSED — the one shape both `adopt_external` arms take, the reconcile
- * runner's and the ingest arrival's. The mailbox is the master, so the observation is the truth AT
+ * THE ADOPTION WRITE, WITNESSED — the shape the ingest arrival's `adopt_external` arm takes (the
+ * only adoption there is: {@link applyReconcileAction} admits none). The mailbox is the master, so the observation is the truth AT
  * ITS INSTANT; `witness` is the desire read before this pass's work, and the adoption may move the
  * desire only while that witness still describes the row. ONE statement, because a completion
  * followed by a blind upsert leaves a window for the very decision this exists to preserve. On a
@@ -96,7 +96,7 @@ type AdoptDeps = {
  * path, which never touches `desired_folder`.
  * Invariant: no press is ever overwritten by an observation older than the press.
  */
-async function adoptWithWitness(
+export async function adoptWithWitness(
   deps: AdoptDeps, messageId: string, adopted: string, witness: string,
 ): Promise<{ matched: boolean; state: FolderStateRow }> {
   const { repo, accountId } = deps;
@@ -140,19 +140,18 @@ async function adoptWithWitness(
 }
 
 /**
- * The "Organization Writer": perform the port writes for a computed reconcile action. Idempotent,
- * and the OUTSIDE-transaction move path: `adapter.move` never sits inside the seq/change_log tx.
- * A gone source locator is DEFERRED, never thrown: all four call sites are a committed user
- * decision, and a gone locator says nothing about whether it can be carried out — throwing
- * reported a committed decision as a server error and abandoned the rows behind it. The deferral
- * writes no folder state — a post-I/O write of a pre-I/O value overwrites newer decisions —
- * leaving the row in the reconciler's queue. It does NOT re-resolve and move again: a MUTATION
- * may not. `deferred` rides the return so a counting caller does not over-report.
+ * The "Organization Writer": the port writes for a computed reconcile action. Idempotent, and the
+ * move runs OUTSIDE the seq/change_log tx. A gone source locator is DEFERRED, never thrown — each
+ * call site is a committed decision — and writes no folder state (a post-I/O write of a pre-I/O
+ * value overwrites newer decisions), leaving the row queued; `deferred` rides the return so a
+ * counting caller does not over-report. NO ADOPTION HERE: every caller carries a decision of ours
+ * (`move`, or the `none` repair); the person's hand is adopted only at arrival (`commitChange`),
+ * which feeds the override.
  */
 export async function applyReconcileAction(
   deps: ReconcileApplyDeps,
   ctx: ApplyContext,
-  action: ReconcileAction,
+  action: Exclude<ReconcileAction, { type: "adopt_external" }>,
 ): Promise<{ locator: NativeLocator; state: FolderStateRow; deferred?: boolean }> {
   const { repo, adapter, accountId } = deps;
   const { messageId, locator, state } = ctx;
@@ -272,21 +271,6 @@ export async function applyReconcileAction(
         return { locator: newLocator, state: live };
       }
       return { locator: newLocator, state: next };
-    }
-    case "adopt_external": {
-      // A tombstoned message that re-appears is being RESTORED by its user (mail 0065) — the
-      // adopt evidence is the same evidence, so the un-delete rides the same arm. Taken before
-      // the placement write rather than after it: the re-appearance is a fact whichever desire
-      // wins below, and it is the order the ingest path already clears in.
-      await repo.clearDeletedOnAdopt?.(messageId);
-      // `'external'` unconditionally, and NOT `action.attribution`: this is the reconcile runner,
-      // which carries an organizer's intent to the server. A reader issues no moves and never
-      // reaches it, so an adoption arriving here is a person's own hand by construction. The
-      // reader's adopt is committed in `commitChange` instead, which does read `attribution`.
-      const { state: settled } = await adoptWithWitness(
-        { repo, accountId }, messageId, action.newDesired, state.desiredFolder,
-      );
-      return { locator, state: settled };
     }
   }
 
@@ -1768,7 +1752,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // filing and let a pressed rule undo it — see the block where `readerAttribution` was, and
       // `reconciler.ts#ReconcileAction` for why the field is gone rather than merely unset.
 
-      // WITNESSED, like the reconcile runner's adoption: `e.state` was read in phase 1, OUTSIDE
+      // WITNESSED: `e.state` was read in phase 1, OUTSIDE
       // this transaction, so a press committed since owns `desired_folder` and this arrival's
       // observation is older than it. A miss records where the message IS and leaves the desire
       // to the newer press. The three writes below stand either way — the person's hand landing
