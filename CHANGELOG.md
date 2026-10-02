@@ -13,13 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.25.9] — 2026-10-02
-
 ### A message a rule screens leaves the phone's inbox when its body arrives
 <!-- changes: fix-026-bundle-and-placement-key.md -->
 
@@ -194,64 +187,10 @@ names. A folder ohmail already uses for one of them stays in use when another fo
 matches, and a server's own marking still comes first. A folder inside one of your own folders is
 never newly taken for Sent or Trash; one ohmail already uses stays.
 
-### Second-factor refusals in Settings are in your language
-<!-- changes: fix-026-refusal-sentences.md -->
+### Still to come
 
-When the check for your second factor in Settings refuses, it now says why in your language: a wrong
-code, a passkey that was not accepted, too many attempts, or a check that did not go through. The
-Account pane's sign-in check says its refusals in your language too.
-
-### A wrong verification code counts once
-<!-- changes: fix-026-step-up-once.md -->
-
-When the web app asks for your second factor again before a sensitive change, a wrong code or a
-refused passkey now counts as one attempt toward the sign-in limit, not two.
-
-### A very long html message is shown a page at a time
-<!-- changes: fix-026-html-body-512k.md -->
-
-A message whose html part holds more than one page of text is shown as plain text a page at a time,
-with "Show more". A designed message with more than 2,048 elements or 131,072 characters of text
-shows its plain-text version with a note, as a message over 512 KiB already did.
-
-### An html message is shown as text when drawing it would stall the window
-<!-- changes: fix-026-html-parse-bound.md -->
-
-Some html messages build hundreds of thousands of elements out of a few thousand tags — an 18 KB
-message could freeze the reading window for several seconds. The size of a message is now judged by
-the tree a browser would build from it, not by counting its tags, so such a message is shown as
-plain text with a note before it can stall the window.
-
-### Send + Done files the conversation as it is when the reply goes out
-<!-- changes: fix-026-send-and-done.md -->
-
-A reply sent with Send + Done that goes out later, for example when the connection comes back,
-files its conversation only if it is still in the Ohbox. A conversation you moved or filed in the
-meantime is left as it is, and so is one you read, unless it was set for Later. Mail that
-arrived after you pressed stays unread. Try again on a reply that did not go through now also
-files its conversation and offers Undo. On the phone, pressing Send + Done again while offline is
-no longer lost.
-
-### A dropped mail server connection no longer closes the phone app
-<!-- changes: fix-026-phone-socket-error-never-crashes.md -->
-
-On a phone organizing its own mailbox over STARTTLS, a connection the mail server reset could
-close the app. It now reconnects. When the phone does not accept the mail server's certificate
-during STARTTLS, Connect now says so, where it said the server offers no encrypted connection.
-
-### A mail server reached over TLS that the machine cannot reach no longer stops the organizer
-<!-- changes: fix-026-pin-answers-later.md -->
-
-When every address of a mailbox's server, reached over TLS, was one the machine could not reach,
-such as an IPv6-only server on a host without IPv6, the background organizer exited and stopped
-syncing every mailbox it served. That mailbox is now retried as unreachable and the others keep
-syncing. A push notification endpoint it cannot reach no longer stops it either.
-
-### The Microsoft sign-in note says where it applies
-<!-- changes: land-batch-k88.md -->
-
-The landing page and the README now say that Microsoft 365 and Exchange connect with your Microsoft
-sign-in on ohmail Cloud and on self-hosted servers set up for it.
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
 
 ## [0.25.8] — 2026-10-01
 
@@ -10925,8 +10864,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.9...HEAD
-[0.25.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.9
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.8...HEAD
 [0.25.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.8
 [0.25.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.7
 [0.25.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.6
