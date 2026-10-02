@@ -45,7 +45,6 @@ import {
   ApiError,
   apiConfigured,
   auth,
-  messageOf,
   type ErasureResult,
 } from "../../api-client";
 import { useRefusalSentence } from "../refusal-sentence";
@@ -70,7 +69,7 @@ export function AccountSection() {
   const [who, setWho] = useState<Who | null>(null);
   const [loading, setLoading] = useState(true);
   /**
-   * A failed read is not an empty result. The server's own sentence when `GET /auth/session` could not be ASKED, as
+   * A failed read is not an empty result. The renderer's sentence when `GET /auth/session` could not be ASKED, as
    * opposed to answering that there is no session. `null` in both the healthy case and the
    * genuinely-signed-out one, which is what keeps the signed-out card meaning what it says.
    */
@@ -160,7 +159,7 @@ export function AccountSection() {
          * not ask" and "you are not signed in" have opposite remedies.
          */
         if (alive.current && !(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
-          setSessionFailed(messageOf(err));
+          setSessionFailed(sentence(err));
         }
       } finally {
         if (alive.current) setLoading(false);

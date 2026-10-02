@@ -18,10 +18,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
-import { ApiError, auth, assertPasskey, webauthnAvailable } from "../../api-client";
+import { auth, assertPasskey, webauthnAvailable } from "../../api-client";
 import { isOwnerAbsent } from "../approve/settle-owner";
 import { useCeremonyGeneration } from "../ceremony-generation";
-import { useRefusalSentence } from "../refusal-sentence";
+import { serverAnswered, useRefusalSentence } from "../refusal-sentence";
 
 interface Props {
   /** The re-verification succeeded — retry the verb that was refused. */
@@ -45,19 +45,23 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
   const refusalSentence = useRefusalSentence();
 
   /**
-   * The refusal, told honestly. A lockout (423 `account_locked`) carries `retryAfter` seconds
-   * in its details, and "too many failed attempts" without the "for how long" reads as
-   * for ever — the sentence must say when trying again is worth it. Everything else goes through
-   * the one renderer: the server's own message, and the three owner refusals in the reader's language.
+   * The refusal, in the reader's language. A server answer is never shown as written: the step-up
+   * doors answer in lowercase English diagnostics ("two-factor verification failed"), so each maps
+   * to this prompt's sentence — a 401 by the factor `tried`, the lockout with its `retryAfter`
+   * ("too many attempts" without "for how long" reads as for ever), the throttle, and one sentence
+   * for anything else. Client-raised refusals go through the one renderer.
    */
   const refusalText = useCallback(
-    (err: unknown): string => {
-      if (err instanceof ApiError && err.code === "account_locked") {
+    (err: unknown, tried?: "code" | "passkey"): string => {
+      if (!serverAnswered(err)) return refusalSentence(err);
+      if (err.code === "account_locked") {
         const retryAfter = (err.details as { retryAfter?: unknown } | undefined)?.retryAfter;
         const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : 15 * 60;
         return t("stepUpLocked", { minutes: Math.max(1, Math.ceil(seconds / 60)) });
       }
-      return refusalSentence(err);
+      if (err.code === "sign_in_slowed") return t("stepUpSlowed");
+      if (err.status === 401 && tried) return t(tried === "code" ? "stepUpBadCode" : "stepUpBadPasskey");
+      return t("stepUpRefused");
     },
     [t, refusalSentence],
   );
@@ -94,7 +98,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
   }, []);
 
   const finish = useCallback(
-    (fn: () => Promise<void>) => {
+    (tried: "code" | "passkey", fn: () => Promise<void>) => {
       setBusy(true);
       setError(null);
       // BEFORE the first await: this closure's identity is the ceremony it started in, never
@@ -115,7 +119,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
           ceremony.end();
           setBusy(false);
           if (isOwnerAbsent(err) && onOwnerAbsent) { onOwnerAbsent(); return; }
-          setError(refusalText(err));
+          setError(refusalText(err, tried));
         }
       })();
     },
@@ -123,7 +127,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
   );
 
   const withPasskey = () =>
-    finish(async () => {
+    finish("passkey", async () => {
       const { options } = await auth.stepUpWebauthnOptions();
       const credential = await assertPasskey(options);
       await auth.stepUpWebauthnVerify({ credential });
@@ -132,7 +136,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
   const withCode = (e: React.FormEvent) => {
     e.preventDefault();
     if (busy || code.trim().length === 0) return;
-    finish(async () => {
+    finish("code", async () => {
       await auth.stepUpTotp({ code: code.trim() });
       setCode("");
     });
