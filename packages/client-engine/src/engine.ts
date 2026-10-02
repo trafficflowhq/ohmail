@@ -6156,6 +6156,8 @@ export class OhmailEngine {
     try {
       commit = await this.commitReplacement(pending, superseded);
     } catch (err) {
+      // A throw is a refusal too: what the supersession changed goes back, wire marks included.
+      this.undoSupersede(superseded);
       settleMarks();
       throw err;
     }

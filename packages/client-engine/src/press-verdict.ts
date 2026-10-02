@@ -45,8 +45,8 @@ export function pressVerdict(res: PressAnswer): PressVerdict {
     case "rolled_back":
       return { kind: "refused", refusal: res.error };
     case "superseded":
-      // A send only, and no reader of this verdict handles sends: its key is still going under
-      // the newer press, which is the wait this names.
+      // A send only: its key is still going under the newer press, which is the wait this names.
+      // The one send reader (`mail-send.ts`'s refusal read) takes it, rightly, as no refusal.
       return { kind: "queued", wait: "retry", holder: null };
     default: {
       /* The belt for a build that got past the type error: the most conservative of the three
