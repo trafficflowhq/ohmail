@@ -33,10 +33,14 @@ export type PlatformId = "apple" | "linux" | "windows";
 export type MobileId = "android" | "ios";
 
 /**
- * The Android APK, PINNED per release until the resolver lands (ANDROID-DOWNLOAD-LINK-NEEDS-A-RESOLVER).
- * `latest` resolves to the desktop page, which carries no APK, and never to the `android-v*`
- * prerelease page that does, so `latest/download/<asset>` answered 404. The pinned tag must equal
- * the root package's version: `download-assets.test.ts` refuses a stale pin the day it moves.
+ * The Android APK — the desktop row's mechanism, now that the APK is a release asset. This used to
+ * read the newest `android-v*` tag once per build and link that tag's page, on the premise that
+ * `latest` could never reach the APK (Android tags are pre-releases); the premise died when the
+ * release began attaching the signed APK to the stable release, and a tag baked at build time went
+ * stale — the button sat on `android-v0.15.0` two releases later. So the phone uses the same
+ * indirection and asset contract as the three desktop buttons: one published name under
+ * {@link RELEASE_BASE}, asserted in `download-assets.test.ts` and allow-listed in
+ * `no-third-party.test.ts`. GitHub resolves `latest` per request, so this link cannot fall behind.
  */
 export const ANDROID_APK_ASSET = "ohmail-android.apk";
 
@@ -44,7 +48,7 @@ export const ANDROID_APK_ASSET = "ohmail-android.apk";
  * The full literal, like the desktop entries below: the off-origin scan reads string
  * literals, and `download-assets.test.ts` asserts this is `RELEASE_BASE` + the asset name.
  */
-export const ANDROID_RELEASE_URL = "https://github.com/trafficflowhq/ohmail/releases/download/android-v0.25.8/ohmail-android.apk";
+export const ANDROID_RELEASE_URL = "https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk";
 
 export interface DownloadFormat {
   /** The published asset filename. The release MUST attach exactly this. */
