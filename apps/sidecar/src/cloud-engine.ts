@@ -10,7 +10,8 @@ import {
   type EntityType, type ServiceContext, type SyncResponse,
 } from "@trafficflow/services/mail";
 import {
-  openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
+  closeAfterFailedStart, openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress,
+  type OpenLocalDb,
 } from "./db.js";
 import { ensureLocalWorld, type LocalWorld } from "./identity.js";
 import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
@@ -2060,7 +2061,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     };
   } catch (err) {
     // The lock and the PGlite instance must not survive a failed assembly.
-    await opened.close();
+    await closeAfterFailedStart(opened);
     throw err;
   }
 }

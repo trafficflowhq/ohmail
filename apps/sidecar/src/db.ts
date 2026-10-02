@@ -222,9 +222,21 @@ export class StoreClosingError extends Error {
 export class StoreCloseTimeoutError extends Error {
   constructor(readonly pending: number, readonly waitedMs: number) {
     super(`the local store was left open: ${pending} admitted call(s) still ran after ${waitedMs} ms, `
-      + "and shutting Postgres down under them hangs the process; the next launch recovers the log");
+      + "and shutting Postgres down under them hangs the process; the next launch recovers what was "
+      + "written to the log");
     this.name = "StoreCloseTimeoutError";
   }
+}
+
+/**
+ * A FAILED START'S CLOSE: the store is closed on the way out, and the error the start reports stays
+ * the start's own. A close that timed out has already logged itself (`local_db_close_failed`), so it
+ * stands beside that error in the log rather than replacing it; any other close failure is thrown.
+ */
+export async function closeAfterFailedStart(opened: { close(): Promise<void> }): Promise<void> {
+  await opened.close().catch((err: unknown) => {
+    if (!(err instanceof StoreCloseTimeoutError)) throw err;
+  });
 }
 
 /** What {@link installCloseDoor} put in front of the client. */
@@ -234,8 +246,8 @@ interface CloseDoor {
   shut(): void;
   /** Calls admitted and not yet settled. */
   pending(): number;
-  /** Resolves `true` once nothing admitted is running and `also` has settled, `false` at `ms`. */
-  quiet(also: Promise<unknown>, ms: number): Promise<boolean>;
+  /** Resolves `true` once nothing admitted is running, `false` at `ms`. */
+  quiet(ms: number): Promise<boolean>;
 }
 
 /**
@@ -287,18 +299,17 @@ function installCloseDoor(client: PGlite, log: Diagnostic | undefined): CloseDoo
     client,
     shut: () => { shut = true; },
     pending: () => running,
-    quiet: (also, ms) => new Promise<boolean>((resolve) => {
+    quiet: (ms) => new Promise<boolean>((resolve) => {
       const deadline = setTimeout(() => { idle.delete(check); resolve(false); }, Math.max(0, ms));
       deadline.unref?.();
-      let alsoDone = false;
       const check = (): void => {
-        if (running !== 0 || !alsoDone) return;
+        if (running !== 0) return;
         idle.delete(check);
         clearTimeout(deadline);
         resolve(true);
       };
       idle.add(check);
-      void also.catch(() => undefined).then(() => { alsoDone = true; check(); });
+      check();
     }),
   };
 }
@@ -1833,9 +1844,11 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       storeBytes: () => storeHeapBytes(client),
       laneCensus: () => lanes.census(),
       analyzeSearchIfStale: () => (closed ? Promise.resolve(false) : analyzeSearchIfStale(client)),
-      /* ONE CLOSE, SHARED BY EVERY CALLER: refuse new calls, wait for the admitted ones and the
-         checkpoint chain, and only then Terminate. At the bound it throws and terminates nothing
-         (the store stays recorded open, so the next launch replays its log); a later call waits again. */
+      /* ONE CLOSE, SHARED BY EVERY CALLER: refuse new calls, wait for the admitted ones, and only then
+         Terminate. The checkpoint chain needs no wait of its own: every statement a checkpoint or fold
+         sends is admitted by the door, and one sent after the shut is refused unrun. At the bound it
+         throws and terminates nothing (the store stays recorded open, so the next launch replays its
+         log); a later call waits again. */
       close: () => {
         closing ??= (async () => {
           closed = true;
@@ -1844,7 +1857,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
           flush.stop();
           door.shut();
           const began = Date.now();
-          if (!(await door.quiet(checkpointing, closeWaitMs))) {
+          if (!(await door.quiet(closeWaitMs))) {
             const err = new StoreCloseTimeoutError(door.pending(), Date.now() - began);
             log?.("local_db_close_failed", { err, reason: err.message });
             throw err;

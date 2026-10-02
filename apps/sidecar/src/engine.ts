@@ -208,7 +208,8 @@ import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
 import { dialect, dialectOf } from "@trafficflow/db/dialect";
 import {
-  openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
+  closeAfterFailedStart, openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress,
+  type OpenLocalDb,
 } from "./db.js";
 import { inStoreLane, ingestIsRunning } from "./store-lanes.js";
 import { awaitFirstPage } from "./first-page-gate.js";
@@ -9560,7 +9561,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   } catch (err) {
     // The lock and the PGlite instance must not survive a failed assembly, or the next launch
     // finds a directory it cannot open and a message about a process that is already gone.
-    await opened.close();
+    await closeAfterFailedStart(opened);
     throw err;
   }
 }
