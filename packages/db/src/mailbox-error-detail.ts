@@ -68,15 +68,16 @@ export const SERVER_UNAVAILABLE_RESPONSE_CODES: ReadonlySet<string> = new Set(["
 export const OAUTH_ERROR_DETAIL_CODES: ReadonlySet<string> = new Set(["OAUTH_INVALID_GRANT"]);
 
 /**
- * The organizer's own refusal to dial a host, safe to STORE for the reason
- * {@link OAUTH_ERROR_DETAIL_CODES} is: it is a constant this codebase chose, not a server-supplied
- * atom, so echoing it to the account owner lets nobody else pick the words. The `error_code` beside
- * it is `connect` — the failure IS a connect-time one — and this detail is what tells a reader
- * which connect failure it was: a mail server whose address now points somewhere this deployment
- * will not connect to, rather than one that is merely down.
+ * The organizer's own refusals to dial, safe to STORE for the reason {@link OAUTH_ERROR_DETAIL_CODES}
+ * is: constants this codebase chose, not server-supplied atoms, so echoing one to the account owner
+ * lets nobody else pick the words. The `error_code` beside each is `connect` — no connection was
+ * made — and the detail tells a reader which refusal it was, rather than a server merely down.
  */
 export const DIAL_REFUSAL_DETAIL_CODES: ReadonlySet<string> = new Set([
+  // An address this deployment will not connect to.
   "MAILBOX_HOST_REFUSED",
+  // A stored port that carries no mail.
+  "MAILBOX_PORT_REFUSED",
   // A plaintext consent whose server's name no longer resolves to the person's own network.
   "MAILBOX_PLAINTEXT_REFUSED",
 ]);

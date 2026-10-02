@@ -61,7 +61,7 @@ if (!creds) { console.error("no imap credentials for this mailbox"); await owned
    organizer refuses would be a third answer about one network. */
 const adapter = new ImapAdapter({
   host: creds.imap.host, port: creds.imap.port, secure: creds.imap.secure,
-  ...(await checkedDial(dialHostGuardFromEnv(process.env), creds.imap.host, "imap", creds.imap)),
+  ...(await checkedDial(dialHostGuardFromEnv(process.env), creds.imap.host, creds.imap.port, "imap", creds.imap)),
   // The assembled `auth` union from the shared builder (this CLI passes no token source, so an
   // oauth2 mailbox refuses rather than restoring — a redacted-body restore is a password-era tool).
   auth: creds.imap.auth,

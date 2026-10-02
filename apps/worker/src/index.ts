@@ -2315,29 +2315,21 @@ export async function startWorkerWithLock(
         }
 
         /**
-         * THE DIAL'S OWN CHECK, at the moment of the dial. The stored host was cleared once, when
-         * this mailbox was added; everything since handed the NAME to a fresh socket that resolved
-         * it again. Under the managed policy this resolves and clears now and the dial goes to what
-         * cleared; under the self-host policy it clears nothing and the dial is by name, because a
-         * mail server on the operator's own network is legitimate there. Each transport is its own
-         * dial and gets its own check — the submission host is a different name, cleared separately.
+         * THE DIAL'S OWN CHECK, at the moment of the dial: host, port and the address it pins. Under
+         * the managed policy this resolves and clears now and the dial goes to what cleared; under the
+         * self-host policy it clears nothing and the dial is by name, because a mail server on the
+         * operator's own network is legitimate there. The organizer never sends, so the attach builds
+         * NO submission leg: a sending server's host or port can never stop receiving. The SIZE dial
+         * above asks its own check, and a send meets its refusal at the API's door.
          */
         adapter = makeAdapter({
           host: creds.imap.host, port: creds.imap.port, secure: creds.imap.secure,
           // The row's plaintext consent reaches the adapter only through the check, which admits
           // it at an address on the person's own network, pinned there.
-          ...(await checkedDial(dialHostGuard, creds.imap.host, "imap", creds.imap)),
+          ...(await checkedDial(dialHostGuard, creds.imap.host, creds.imap.port, "imap", creds.imap)),
           // The `auth` union already assembled by the shared builder: `{ user, pass }` for a
           // password mailbox, `{ user, fetchAccessToken }` for oauth2. Passed through untouched.
           auth: creds.imap.auth,
-          smtp: creds.smtp ? {
-            host: creds.smtp.host, port: creds.smtp.port, secure: creds.smtp.secure,
-            // The submission server's own plaintext consent, from the `smtp` row alone.
-            ...(await checkedDial(dialHostGuard, creds.smtp.host, "smtp", creds.smtp)),
-            // An smtp credential row is always a password (oauth mailboxes carry no smtp row); narrow
-            // to the password member so it fits `ImapConfig.smtp.auth`, and omit auth otherwise.
-            ...("pass" in creds.smtp.auth ? { auth: creds.smtp.auth } : {}),
-          } : undefined,
           sentDomain: config.sentDomain,
           // What the last attach decided for Sent, Junk and Trash: a role never moves by a name guess.
           storedFolders: await storedFoldersOf(repo, mb.mailboxId),

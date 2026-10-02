@@ -1,20 +1,20 @@
 import {
-  assertPublicHost, nodeHostResolver, privateNetworkScope, SsrfRefusal, type HostResolver,
+  clearMailDial, MailDialRefusal, MAX_PINNED_ADDRESSES, nodeHostResolver, privateNetworkScope, SsrfRefusal,
+  type HostResolver,
 } from "@trafficflow/core/net";
 
 /**
- * THE HOST GUARD AT THE ORGANIZER'S DIAL. A stored `meta.host` was cleared once, when the mailbox
- * was added; every dial since handed the NAME to a fresh socket that resolved it again, so the
- * address checked and the address dialled were two different facts. Here they are one act, and the
- * cleared addresses travel as `ImapConfig.pin` — the name is untouched, because SNI and
- * certificate validation must see what the person typed. It composes the same gate the API's door
- * does (`assertPublicHost`, `@trafficflow/core/net`) and not the API's module, which reaches a
- * package this app keeps out of its runtime graph: one implementation, two thin adapters.
+ * THE HOST GUARD AT THE ORGANIZER'S DIAL. A stored host was cleared once, when the mailbox was
+ * added; here it is resolved, checked and port-ruled at the moment of the dial, and the cleared
+ * addresses travel as `ImapConfig.pin` — the name is untouched, because SNI and certificate
+ * validation must see what the person typed. The decision is the API door's own (`clearMailDial`,
+ * `@trafficflow/core/net`); this adapter only says its refusals as the organizer's closed codes,
+ * because the API's module reaches a package this app keeps out of its runtime graph.
  */
 
-/** The deployment's verdict on a host: the addresses to pin, or `null` for "dial by name". */
+/** The deployment's verdict on a host and port: the addresses to pin, or `null` for "dial by name". */
 export interface DialHostGuard {
-  check(host: string, transport: "imap" | "smtp"): Promise<readonly string[] | null>;
+  check(host: string, port: number, transport: "imap" | "smtp"): Promise<readonly string[] | null>;
   /** Asked where a plaintext dial's host resolves NOW. Absent: no plaintext dial is admitted. */
   readonly scope?: HostResolver;
 }
@@ -32,13 +32,13 @@ function allowAnyDialHost(resolver: HostResolver): DialHostGuard {
 }
 
 /**
- * The MANAGED policy: private, loopback, link-local, CGNAT, unresolvable and unparseable targets
- * are refused before a socket exists, and what cleared is the pin. The resolver is required at
- * construction for the reason the gate states — a fallback to `node:dns` would make every test
- * take the refuse branch and ship the permit branch unexecuted.
+ * The MANAGED policy: a port that carries no mail, and private, loopback, link-local, CGNAT,
+ * unresolvable and unparseable targets, are refused before a socket exists; what cleared is the pin.
+ * The resolver is required at construction for the reason the gate states — a fallback to
+ * `node:dns` would make every test take the refuse branch and ship the permit branch unexecuted.
  */
 export function makeDialHostGuard(resolver: HostResolver): DialHostGuard {
-  return { check: async (host) => assertPublicHost(host, resolver), scope: resolver };
+  return { check: async (host, port, transport) => clearMailDial(resolver, host, port, transport), scope: resolver };
 }
 
 /**
@@ -75,6 +75,19 @@ export class MailboxHostRefused extends Error {
   }
 }
 
+/** A stored port that carries no mail. The detail the row stores, so Settings names the port. */
+export class MailboxPortRefused extends Error {
+  readonly code = "MAILBOX_PORT_REFUSED";
+  constructor(transport: "imap" | "smtp") {
+    super(`this mailbox's ${transport === "imap" ? "incoming (IMAP)" : "outgoing (SMTP)"} server is set to a port that does not carry mail`);
+    this.name = "MailboxPortRefused";
+  }
+}
+
+/** The socket's own code for a name that did not resolve, so the row says `connect`, not "could not tell". */
+const unresolved = (transport: "imap" | "smtp"): Error =>
+  Object.assign(new Error(`the ${transport} server's hostname did not resolve`), { code: "ENOTFOUND" });
+
 /**
  * A consented plaintext dial whose host no longer resolves to the person's own network. The
  * detail the mailbox row stores, so Settings says that sentence and not "not available".
@@ -102,10 +115,11 @@ const UNRESOLVED = "host did not resolve";
  * A RESOLVER OUTAGE IS NOT A VERDICT ABOUT A MAILBOX. Before this guard existed a DNS failure
  * arrived from the socket as an ordinary dial error and the mailbox was retried; a typed refusal
  * here would instead read as "this server can never be dialled again". So a failure to resolve
- * leaves by the ordinary door and only a cleared-and-refused address gets {@link MailboxHostRefused}.
+ * leaves by the ordinary door, carrying the socket's own `ENOTFOUND`, and only a refused port or a
+ * cleared-and-refused address gets a typed refusal. `port` is required: every leg is port-ruled.
  */
 export async function checkedDial(
-  guard: DialHostGuard | undefined, host: string, transport: "imap" | "smtp", leg?: DialLeg,
+  guard: DialHostGuard | undefined, host: string, port: number, transport: "imap" | "smtp", leg?: DialLeg,
 ): Promise<{ pin?: readonly string[]; allowInsecure?: true }> {
   // A COMPOSITION WITH NO POLICY REFUSES, and names the input. The alternative is a silent dial by
   // name, which is the state this whole module removes — and it would be invisible, because it
@@ -119,10 +133,11 @@ export async function checkedDial(
   }
   let cleared: readonly string[] | null;
   try {
-    cleared = await guard.check(host, transport);
+    cleared = await guard.check(host, port, transport);
   } catch (err) {
+    if (err instanceof MailDialRefusal && err.port !== undefined) throw new MailboxPortRefused(transport);
     if (err instanceof SsrfRefusal) {
-      if (err.why === UNRESOLVED) throw new Error(`the ${transport} server's hostname did not resolve`);
+      if (err.why === UNRESOLVED) throw unresolved(transport);
       throw new MailboxHostRefused(transport);
     }
     throw err;
@@ -134,7 +149,7 @@ export async function checkedDial(
      construction. An unanswered lookup leaves by the ordinary door, as above. */
   if (pin || !guard.scope) throw new MailboxPlaintextRefused(transport);
   const scope = await privateNetworkScope(host, guard.scope);
-  if (scope.kind === "unresolved") throw new Error(`the ${transport} server's hostname did not resolve`);
+  if (scope.kind === "unresolved") throw unresolved(transport);
   if (scope.kind === "public") throw new MailboxPlaintextRefused(transport);
-  return { pin: scope.pin, allowInsecure: true };
+  return { pin: scope.pin.slice(0, MAX_PINNED_ADDRESSES), allowInsecure: true };
 }

@@ -197,7 +197,7 @@ export {
 } from "./privacy-service.js";
 export {
   assertPublicHttpUrl, assertPublicHost, isBlockedAddress, isPrivateNetworkAddress, privateNetworkPin,
-  privateNetworkScope, nodeHostResolver, type HostResolver, type PrivateNetworkScope,
+  privateNetworkScope, nodeHostResolver, ssrfRefusalAsServiceError, type HostResolver, type PrivateNetworkScope,
 } from "./ssrf-guard.js";
 // RFC 8058 one-click unsubscribe, server-side. `mailto:` is never used and there is no
 // mail port in the module; the auth verdict it persists is demote-only — it can never promote.

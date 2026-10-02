@@ -5,8 +5,9 @@ import {
   ImapAdapter, buildImapAuth, verifySmtpLogin,
   type ImapConfig, type SmtpLoginProof,
 } from "@trafficflow/core/adapters/imap";
+import { MAIL_DIAL_PORTS, MAX_PINNED_ADDRESSES, MailDialRefusal, clearMailDial } from "@trafficflow/core/net";
 import {
-  ServiceError, assertPublicHost, privateNetworkPin, type HostResolver,
+  ServiceError, privateNetworkPin, ssrfRefusalAsServiceError, type HostResolver,
   type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
   type SmtpProbe, type SmtpProbeInput,
 } from "@trafficflow/services/mail";
@@ -25,11 +26,8 @@ import { imapAdmission } from "./routes/shared.js";
  * permit branch unexecuted.
  */
 
-/** The mail ports the hosted probe will dial. An explicit port outside this set is refused. */
-export const MAIL_PROBE_PORTS: Record<"imap" | "smtp", ReadonlySet<number>> = {
-  imap: new Set([143, 993]),
-  smtp: new Set([25, 465, 587]),
-};
+/** The mail ports the hosted probe will dial: the managed policy's one set (`mail-dial.ts`). */
+export const MAIL_PROBE_PORTS: Record<"imap" | "smtp", ReadonlySet<number>> = MAIL_DIAL_PORTS;
 
 /**
  * The add-time probe's host/port gate. `check` throws a {@link ServiceError} to refuse a dial; a
@@ -45,15 +43,8 @@ export interface ProbeHostGuard {
   check(host: string, port: number | undefined, transport: "imap" | "smtp"): Promise<readonly string[] | null>;
 }
 
-/**
- * The most addresses one probe will pin to. A DNS answer is attacker-influenced input — the
- * hostname came from a request body — and `assertPublicHost` returns every A/AAAA record it
- * cleared, with no ceiling; a TCP-mode answer can carry thousands. Truncating is safe and
- * refusing would not be: every address in the list was already cleared as public, so keeping the
- * first few narrows the dial without widening what it may reach. Sixteen is far above any real
- * mail host's record count (the largest providers publish 2–8).
- */
-export const MAX_PINNED_PROBE_ADDRESSES = 16;
+/** The most addresses one probe pins: the managed policy's one bound (`mail-dial.ts` says why). */
+export const MAX_PINNED_PROBE_ADDRESSES = MAX_PINNED_ADDRESSES;
 
 /**
  * The guard's answer as the dialler takes it: a bounded address list, or `undefined` for
@@ -95,10 +86,10 @@ export const ALLOW_ANY_PROBE_HOST: ProbeHostGuard = {
 };
 
 /**
- * The HOSTED policy: resolve the host through the injected resolver and refuse any private,
- * loopback, link-local, CGNAT, unresolvable or unparseable target (via {@link assertPublicHost}),
- * and refuse an explicit port that is not a {@link MAIL_PROBE_PORTS} port. The resolver is
- * REQUIRED — see the section header for why there is no `node:dns` default.
+ * The HOSTED policy: the managed decision (`clearMailDial`, the organizer asks the same one), said
+ * in this package's words. A port that carries no mail is refused with the ports on offer; a private,
+ * loopback, link-local, CGNAT, unresolvable or unparseable host is the gate's own refusal. The
+ * resolver is REQUIRED — see the section header for why there is no `node:dns` default.
  */
 export function makeProbeHostGuard(
   resolver: HostResolver,
@@ -109,29 +100,27 @@ export function makeProbeHostGuard(
     async check(
       host: string, port: number | undefined, transport: "imap" | "smtp",
     ): Promise<readonly string[]> {
-      if (port !== undefined && !MAIL_PROBE_PORTS[transport].has(port)) {
-        // A SENTENCE, COMPOSED FROM THE SET ITSELF so it cannot drift from what is actually
-        // dialled. This refusal reaches the connect form, where the person can only fix it if
-        // they are told which ports are on offer; the SSRF gate's own refusals are re-said one
-        // module over (`probe-host-refusal.ts`) and this one is already ours, so it passes that
-        // mapping untouched.
-        const offered = [...MAIL_PROBE_PORTS[transport]].sort((a, b) => a - b);
-        // The port and the set ride as FIELDS, so the dial door says them without reading this text.
-        throw new ServiceError(
-          "validation_failed", 400,
-          `Mail is not carried on port ${port}. Use ${offered.join(", ")}.`,
-          { port, ports: offered },
-        );
-      }
-      // Throws on a private/unresolvable/unparseable host — the port must never be opened to one.
       // The RETURN is the cleared address set, and returning it is the half that makes this a
       // whole guard rather than a check the socket is free to ignore. See {@link ProbeHostGuard}.
       try {
-        return await assertPublicHost(host, resolver);
+        return await clearMailDial(resolver, host, port, transport);
       } catch (err) {
-        // The switch rides on the refusal so `probe-host-refusal.ts` can name it; nothing else moves.
-        if (!opts.privateSwitch || !(err instanceof ServiceError)) throw err;
-        throw new ServiceError(err.code, err.httpStatus, err.message, { privateSwitch: opts.privateSwitch }, err.retryable);
+        /* A SENTENCE COMPOSED FROM THE SET ITSELF, for the connect form, where the person can only fix
+           a port if told which are on offer. It is already ours, so `probe-host-refusal.ts` passes it
+           untouched; the port and the set ride as FIELDS, so the dial door says them without this text. */
+        if (err instanceof MailDialRefusal && err.port !== undefined) {
+          const offered = [...(err.ports ?? [])];
+          throw new ServiceError(
+            "validation_failed", 400,
+            `Mail is not carried on port ${err.port}. Use ${offered.join(", ")}.`,
+            { port: err.port, ports: offered },
+          );
+        }
+        // The gate's refusal as this package has always said it; the switch rides on it so
+        // `probe-host-refusal.ts` can name it, and nothing else moves.
+        const said = ssrfRefusalAsServiceError(err);
+        if (!opts.privateSwitch || !(said instanceof ServiceError)) throw said;
+        throw new ServiceError(said.code, said.httpStatus, said.message, { privateSwitch: opts.privateSwitch }, said.retryable);
       }
     },
   };

@@ -19,18 +19,16 @@ import { checkedDial, type DialHostGuard } from "./dial-host-guard.js";
 
 /**
  * The production dial from this host: a real SMTP login on the TLS floor, on the worker's timeouts,
- * under the DEPLOYMENT'S OWN POLICY. This is the organizer's fifth dial, and the one that handed a
- * stored submission name to a fresh socket with no check and no pin — in the same attach callback
- * that clears the very same host for the connection. Same helper, same call shape and same refusal
- * class as the four adapter sites (`dial-host-guard.ts`). A FACTORY and not a constant, because a
- * guard that can be omitted is no guard: the policy is threaded from the composition root, and
- * `checkedDial` refuses a missing one by name. The refusal reaches `learnSmtpMaxSize`'s catch and
- * becomes a closed code — a probe that may not dial costs this mailbox its ceiling and nothing else.
+ * under the DEPLOYMENT'S OWN POLICY — host, port and pin, the same door and refusal classes as every
+ * adapter site (`dial-host-guard.ts`). The organizer's only submission dial: the attach builds no
+ * submission leg. A FACTORY and not a constant, because a guard that can be omitted is no guard, and
+ * `checkedDial` refuses a missing one by name. A refusal becomes a closed code in
+ * `learnSmtpMaxSize`'s catch: a probe that may not dial costs this mailbox its ceiling and nothing else.
  */
 export function makeSmtpSizeDial(guard: DialHostGuard | undefined): SmtpSizeDial {
   // The stored consent is the check's to admit, never spread through to the socket.
   return async ({ allowInsecure, ...smtp }) => verifySmtpLogin(
-    { ...smtp, ...(await checkedDial(guard, smtp.host, "smtp", { secure: smtp.secure, allowInsecure })) },
+    { ...smtp, ...(await checkedDial(guard, smtp.host, smtp.port, "smtp", { secure: smtp.secure, allowInsecure })) },
     WORKER_NET_TIMEOUTS,
   );
 }

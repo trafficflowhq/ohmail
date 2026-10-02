@@ -26,9 +26,10 @@ export {
  * Re-wrap a core refusal as the `ServiceError` this package's callers have always caught. Anything
  * that is NOT a refusal is rethrown as itself — a resolver that blew up in some novel way is a
  * fault, not a 400, and flattening it into one would tell a user their URL is malformed when the
- * truth is that our own DNS port is broken.
+ * truth is that our own DNS port is broken. Exported for the API's dial guard, which asks the core
+ * policy directly and must say its refusals in exactly these words.
  */
-function asServiceError(err: unknown): unknown {
+export function ssrfRefusalAsServiceError(err: unknown): unknown {
   if (err instanceof SsrfRefusal) {
     return new ServiceError("validation_failed", 400, `u is not a permitted url: ${err.why}`);
   }
@@ -47,7 +48,7 @@ export async function assertPublicHttpUrl(
   try {
     return await coreAssertPublicHttpUrl(raw, resolver, opts);
   } catch (err) {
-    throw asServiceError(err);
+    throw ssrfRefusalAsServiceError(err);
   }
 }
 
@@ -61,6 +62,6 @@ export async function assertPublicHost(
   try {
     return await coreAssertPublicHost(hostname, resolver);
   } catch (err) {
-    throw asServiceError(err);
+    throw ssrfRefusalAsServiceError(err);
   }
 }

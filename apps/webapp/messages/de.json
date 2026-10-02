@@ -2476,6 +2476,8 @@
     "err_sync": "Synchronisierung beim Lesen des Postfachs fehlgeschlagen.",
     "err_unknown": "Synchronisierung fehlgeschlagen, und wir konnten nicht sagen, warum.",
     "err_plaintext_refused": "Synchronisierung fehlgeschlagen — die Adresse des Mailservers liegt nicht mehr in deinem eigenen Netzwerk, darum schickt ohmail dein Passwort nicht unverschlüsselt dorthin.",
+    "err_host_refused": "Synchronisierung fehlgeschlagen — mit der Adresse dieses Mailservers verbindet sich ohmail nicht, darum wurde dein Passwort nicht dorthin geschickt. Prüfe die Servereinstellungen unter Einstellungen → Postfächer.",
+    "err_port_refused": "Synchronisierung fehlgeschlagen — beim Mailserver ist ein Port eingestellt, über den keine E-Mail läuft, darum wurde dein Passwort nicht dorthin geschickt. Ändere den Port unter Einstellungen → Postfächer.",
     "err_credential_unreadable": "Synchronisierung fehlgeschlagen — dieser Computer kann das gespeicherte Passwort nicht öffnen, darum wurde nichts an den Mailserver geschickt. Melde dich unter Einstellungen → Postfächer erneut an.",
     "err_credential_foreign_host": "Synchronisierung fehlgeschlagen — das gespeicherte Passwort gehört zu einem anderen Mailserver, darum wurde nichts geschickt. Melde dich unter Einstellungen → Postfächer erneut an.",
     "probe_auth": "Dieser Mailserver hat das Passwort abgelehnt. Wenn dein Anbieter ein anwendungsspezifisches Passwort verlangt, leg dort eines an und nimm es hier statt deines Kontopassworts.",

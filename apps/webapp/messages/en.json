@@ -2476,6 +2476,8 @@
     "err_sync": "Sync failed while reading the mailbox.",
     "err_unknown": "Sync failed, and we could not tell why.",
     "err_plaintext_refused": "Sync failed — the mail server's address is no longer on your own network, so ohmail will not send your password to it unencrypted.",
+    "err_host_refused": "Sync failed — the mail server's address is not one ohmail will connect to, so your password was not sent to it. Check the server settings in Settings → Mailboxes.",
+    "err_port_refused": "Sync failed — the mail server is set to a port that does not carry mail, so your password was not sent to it. Change the port in Settings → Mailboxes.",
     "err_credential_unreadable": "Sync failed — this computer can't open the saved password, so nothing was sent to the mail server. Sign in again in Settings → Mailboxes.",
     "err_credential_foreign_host": "Sync failed — the saved password belongs to a different mail server, so nothing was sent. Sign in again in Settings → Mailboxes.",
     "probe_auth": "That mail server refused the password. If your provider requires an app-specific password, generate one there and use it here instead of your account password.",

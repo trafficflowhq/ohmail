@@ -32,16 +32,19 @@ export const SMTP_SIZE_BATCH = 8;
  */
 export const SMTP_SIZE_DEADLINE_MS = 40_000;
 
-/** The dial from this host: a real SMTP login on the TLS floor, on the connect probe's timeouts. */
-export const apiSmtpSizeDial: SmtpSizeDial = (smtp) => verifySmtpLogin(smtp, PROBE_TIMEOUTS);
-
-/** {@link apiSmtpSizeDial}, with a consented plaintext leg re-asked at the dial like a send's. */
+/**
+ * The dial from this host: a real SMTP login on the TLS floor, on the connect probe's timeouts,
+ * through the send's own door on EVERY leg — host guard, pin, port rule, and a consented plaintext
+ * leg re-asked where its name resolves now. A refusal there is a closed code inside
+ * `learnSmtpMaxSize`: this mailbox goes without a ceiling today, and nothing is sent anywhere.
+ */
 function apiSmtpSizeDialFor(deps: ApiDeps): SmtpSizeDial {
-  return async ({ allowInsecure, ...smtp }) => (allowInsecure === true && !smtp.secure
-    ? verifySmtpLogin({
-      ...smtp, ...(await dialFieldsFor(deps, { host: smtp.host, port: smtp.port, secure: false, consent: true }, "smtp")),
-    }, PROBE_TIMEOUTS)
-    : verifySmtpLogin(smtp, PROBE_TIMEOUTS));
+  return async ({ allowInsecure, ...smtp }) => verifySmtpLogin({
+    ...smtp,
+    ...(await dialFieldsFor(deps, {
+      host: smtp.host, port: smtp.port, secure: smtp.secure, consent: allowInsecure === true,
+    }, "smtp")),
+  }, PROBE_TIMEOUTS);
 }
 
 interface CredMeta extends CredMetaAuth {

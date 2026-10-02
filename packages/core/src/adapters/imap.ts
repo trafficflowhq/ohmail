@@ -519,13 +519,14 @@ export function classifySmtpSizeFailure(err: unknown): SmtpSizeFailure {
   if (typeof code !== "string") return "unknown";
   switch (code) {
     case "EAUTH": return "auth_refused";
-    case "ETIMEDOUT": case "ETIMEOUT": case "ECONNECTION": case "ESOCKET": case "EDNS":
+    case "ETIMEDOUT": case "ETIMEOUT": case "ECONNECTION": case "ESOCKET": case "EDNS": case "ENOTFOUND":
       return "unreachable";
-    // A dial host guard's refusal, by the closed token the guard's own header states it raises —
-    // the only one here that is OURS, and a string because the guard lives in a host that core
-    // cannot import. Without this arm a policy refusal reads `unknown`, which is the one answer we
-    // provably know to be wrong: no connection was attempted, and that is what `unreachable` says.
-    case "MAILBOX_HOST_REFUSED": case "MAILBOX_PLAINTEXT_REFUSED": return "unreachable";
+    /* A dial door's refusal, by its closed code: the organizer's tokens and the API door's wire codes,
+       strings because both doors live in hosts core cannot import. No connection was made, which is
+       what `unreachable` says; without these arms a policy refusal read `unknown`. */
+    case "MAILBOX_HOST_REFUSED": case "MAILBOX_PLAINTEXT_REFUSED": case "MAILBOX_PORT_REFUSED":
+    case "mailbox_host_refused": case "mailbox_port_refused":
+      return "unreachable";
     case "ETLS": return "tls_refused";
     default: return "unknown";
   }
@@ -665,9 +666,9 @@ function loginAuth(auth: SmtpSizeDialAuth): Parameters<SMTPConnection["login"]>[
 export async function verifySmtpLogin(
   smtp: {
     host: string; port: number; secure: boolean; auth: SmtpSizeDialAuth;
-    /** The submission host's cleared addresses — see {@link ImapConfig.pin}. The add-time probe
-     * sets it (its host came from a request body and has just been through the SSRF gate); every
-     * stored-credential caller leaves it undefined and dials by name exactly as before. */
+    /** The submission host's cleared addresses — see {@link ImapConfig.pin}. The add-time probe and
+     * both SIZE passes set it from the deployment's guard; under the self-host policy it is absent
+     * and the dial is by name. */
     pin?: readonly string[];
     /** The probe's consent dial only — see {@link smtpTlsFloor}. */
     allowInsecure?: boolean;

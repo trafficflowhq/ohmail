@@ -705,7 +705,9 @@ export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): Ma
     // `dial-host-guard.ts`'s refusal, read by CLASS through the closed code it carries. `connect`
     // because that is what it is — no connection was made — never `auth` (nothing was presented)
     // and never `unknown`, which is where it fell before this arm existed.
-    if (code === "MAILBOX_HOST_REFUSED" || code === "MAILBOX_PLAINTEXT_REFUSED") return "connect";
+    if (code === "MAILBOX_HOST_REFUSED" || code === "MAILBOX_PORT_REFUSED" || code === "MAILBOX_PLAINTEXT_REFUSED") {
+      return "connect";
+    }
   }
 
   // ── THE FLAG: "the LOGIN command did not succeed", and nothing above it explained why. ──

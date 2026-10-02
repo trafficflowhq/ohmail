@@ -181,7 +181,7 @@ export async function runReconcileCron(
     // host the worker beside it refuses would be a second answer about one operator's machine.
     adapter = new ImapAdapter({
       host: config.imap.host, port: config.imap.port, secure: config.imap.secure,
-      ...(await checkedDial(config.dialHostGuard ?? dialHostGuardFromEnv(), config.imap.host, "imap")),
+      ...(await checkedDial(config.dialHostGuard ?? dialHostGuardFromEnv(), config.imap.host, config.imap.port, "imap")),
       auth: { user: config.imap.user, pass: config.imap.pass }, sentDomain: config.sentDomain,
     });
     await adapter.connect();

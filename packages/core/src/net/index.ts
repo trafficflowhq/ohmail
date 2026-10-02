@@ -18,6 +18,9 @@ export {
   type PinnedRequestOptions, type PinnedResponse,
 } from "./pinned-fetch.js";
 export {
+  MAIL_DIAL_PORTS, MAX_PINNED_ADDRESSES, MailDialRefusal, clearMailDial,
+} from "./mail-dial.js";
+export {
   makePushEndpointGuard, PUSH_ENDPOINT_MAX_LEN, type PushEndpointGuard,
 } from "./push-endpoint.js";
 /**
