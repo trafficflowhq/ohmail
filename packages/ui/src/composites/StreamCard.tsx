@@ -165,7 +165,7 @@ export function StreamCard({
   time,
   notice,
   subject,
-  body,
+  body: bodyIn,
   art,
   unread,
   current,
@@ -187,6 +187,8 @@ export function StreamCard({
   estWidthPx,
   actions,
 }: StreamCardProps) {
+  /* A message with no text part pages as an empty one: `pageEnds` and the slice below read its length. */
+  const body = bodyIn ?? "";
   const [open, setOpen] = useState(false);
   const [short, setShort] = useState(false);
   /* A page at a time, keyed on the body like the reader's: a 2 MiB text drawn whole held the window. */
