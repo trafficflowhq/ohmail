@@ -13,6 +13,21 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The approval page says when a computer asked from another network
+<!-- changes: fix-026-approval-names-a-different-network.md -->
+
+On the hosted service, when you confirm a computer's sign-in in the browser, the page now says when
+that computer asked from a different network than the one your browser is on, when it can tell the
+two networks apart. A self-hosted server no longer takes these browser approvals: the desktop app
+asks only the hosted service for one, and the server's approval page says so.
+
+### A reply edited while it waited to send goes out with the edited words
+<!-- changes: fix-026-repress-edited.md -->
+
+If a reply was waiting to send and you changed it and pressed Send again, the earlier words could
+go out while the app said "Reply sent.". The edited words are now saved first and sent. If the
+earlier words had already gone, the app says that instead, once.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
