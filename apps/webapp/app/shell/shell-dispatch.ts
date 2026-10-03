@@ -52,6 +52,24 @@ export interface ShellDispatchInput {
   refreshFacts: () => void;
 }
 
+/**
+ * THE VIEW DECIDES WHAT AN UNDO PUTS BACK (`OhboxView` registers it). `ask` runs before the
+ * reversal is sent: it answers the row it re-held, or `null` when the person has moved on since
+ * the verb. `settle` follows with whether THAT row's reversal took: the cursor comes back on yes,
+ * the hold goes on no.
+ */
+export interface UndoLink {
+  ask: (ids: readonly string[]) => string | null;
+  settle: (id: string, applied: boolean) => void;
+}
+
+/** The messages a mutation names — what an Undo of it brings back. */
+function messageIdsOf(m: EngineMutation): string[] {
+  const r = m as { messageId?: unknown; messageIds?: unknown };
+  if (typeof r.messageId === "string") return [r.messageId];
+  return Array.isArray(r.messageIds) ? r.messageIds.filter((x): x is string => typeof x === "string") : [];
+}
+
 /** What the shell composes with: the two windows, the four report doors and the armed Undo. */
 export interface ShellDispatch {
   fileAndRefresh: <T>(dispatch: Promise<T>) => Promise<T>;
@@ -80,6 +98,8 @@ export interface ShellDispatch {
     mutations: readonly EngineMutation[],
     say: (applied: number) => string | null,
   ) => Promise<number>;
+  /** Where the Ohbox registers its answer to an Undo — see {@link UndoLink}. */
+  undoLink: MutableRefObject<UndoLink | null>;
 }
 
 export function useShellDispatch({
@@ -90,6 +110,12 @@ export function useShellDispatch({
   const showLatest = useStableCallback(show);
   const door = useMemo(() => createUndoDoor(showLatest), [showLatest]);
   const toast = door.toast;
+  const undoLink = useRef<UndoLink | null>(null);
+  /* A held window's Undo sends nothing, so it has taken back everything it names. */
+  const rowsUndone = useStableCallback((ids: readonly string[]) => {
+    const mine = undoLink.current?.ask(ids) ?? null;
+    if (mine !== null) undoLink.current?.settle(mine, true);
+  });
   /**
    * Every filing dispatch goes through here. A filing decision writes `folder_state`; the strip
    * reports the outstanding work from `GET /mailboxes`, which is polled every 30 s and on
@@ -128,6 +154,7 @@ export function useShellDispatch({
        vacuous for `message_delete` instead of red. */
     mutate: (messageId) => fileAndRefresh(engine.mutate({ kind: "message_delete", messageId })),
     toast,
+    onUndone: rowsUndone,
     copy: {
       deleted: t("ohbox.toastDeleted"),
       undo: t("screener.toastUndo"),
@@ -371,8 +398,14 @@ export function useShellDispatch({
         toast(cancelled && held ? held.undone : t("ohbox.toastUndoExpired"));
         return;
       }
+      /* THE VIEW IS ASKED BEFORE THE ROW COMES BACK, so a re-held row lands in New, not Earlier. */
+      const mine = undoLink.current?.ask([...new Set(inverses.flatMap(messageIdsOf))]) ?? null;
       void Promise.all(inverses.map((mu) => dispatchPress(mu))).then((outs) => {
         const tally = tallyVerdicts(outs);
+        if (mine !== null) {
+          const took = (v: PressVerdict): boolean => v.kind === "applied" || (v.kind === "queued" && v.wait === "retry");
+          undoLink.current?.settle(mine, inverses.some((mu, i) => messageIdsOf(mu).includes(mine) && took(outs[i]!)));
+        }
         /* THE MAIL CAME BACK. Only a cancel that TOOK may add "and no rule was made" — past the
            window the rule is on its way and the honest sentence is the plain one. */
         if (tally.applied > 0) { toast(cancelled && held ? held.undone : t("ohbox.toastUndone")); return; }
@@ -462,5 +495,6 @@ export function useShellDispatch({
     toastWithUndo,
     mutateAndReport,
     mutateSetAndReport,
+    undoLink,
   };
 }

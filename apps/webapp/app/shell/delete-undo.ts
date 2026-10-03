@@ -160,6 +160,11 @@ export interface DeleteUndoDeps {
   /** Called whenever the held set changes, with a NEW set. */
   onHeld: (held: ReadonlySet<string>) => void;
   /**
+   * Undo took these back inside the window. The list puts them where they stood at the press —
+   * their place, the cursor and the open reader (`OhboxView`) — never where a re-filing would.
+   */
+  onUndone?: (ids: readonly string[]) => void;
+  /**
    * May these mailboxes be written to — the sentence to say, or `null` for yes. Takes EVERY mailbox
    * the press touches and is asked once for the whole press: a selection spanning a mailbox this
    * install organizes and one it only reads is a single gesture, and answering per message would
@@ -284,8 +289,9 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
        not claim it took something back. */
     if (!press) return false;
     const count = press.ids.length;
-    forget(pressId);
+    const ids = forget(pressId);
     disarmDeleteIntent(pressId);
+    deps.onUndone?.(ids);
     publish();
     deps.toast(say(deps.copy.undone, deps.copy.undoneMany, count));
     return true;
@@ -663,6 +669,7 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
       get copy() { return latest.current.copy; },
       refusal: (mailboxId) => latest.current.refusal(mailboxId),
       onHeld: setHeld,
+      onUndone: (ids) => latest.current.onUndone?.(ids),
       ...(latest.current.now ? { now: () => latest.current.now!() } : {}),
     }),
     [],

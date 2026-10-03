@@ -7,7 +7,7 @@
  * t opens the tag picker, x picks, u toggles unread.
  */
 import * as React from "react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThread, rowThreadOf } from "../shell/row-thread";
@@ -33,6 +33,7 @@ import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden } from "../shell/narrow";
 import { ACTED_FRESH_MS, nextSurvivor, readAfterVerb, type ActedMarker } from "../shell/after-verb";
 import { storageOwner } from "../shell/storage-owner";
+import type { UndoLink } from "../shell/shell-dispatch";
 import type { OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
@@ -173,6 +174,8 @@ export function OhboxView({
   onMarkSeen,
   onReadArmed,
   readerId,
+  undoLink,
+  onRestoreHold,
   doorbellInitials,
   doorbellHues,
   doorbellCount,
@@ -304,6 +307,10 @@ export function OhboxView({
    * of read-state. Optional: a harness mounted without it has no sheet to inform.
    */
   onReadArmed?: (id: string | null) => void;
+  /** Where this view answers an Undo (`UndoLink`): the row a verb took from under the cursor comes back as it stood. */
+  undoLink?: MutableRefObject<UndoLink | null>;
+  /** Re-take the hold an undone act ended (`engine.restoreOpenRow`); `true` when the row is held. */
+  onRestoreHold?: (id: string) => boolean;
   /**
    * Which message the reader sheet is showing, or `null` when closed. This
    * view does not open the sheet and renders nothing from it; it needs the
@@ -647,6 +654,9 @@ export function OhboxView({
    * person mid-triage asked with the verb itself.
    */
   const prevIds = useRef<string[]>([]);
+  /** The row a verb just took from under the cursor, and where the verb itself put the cursor. */
+  const verbTook = useRef<{ id: string; at: number } | null>(null);
+  const verbAdvance = useRef<string | null>(null);
   /* The previous render's selection, because `selectedId` is DERIVED in the shell
      (`allOhbox.find`): the render in which the acted row leaves the list is the render in
      which the prop already reads null — the stale id is not visible from here. */
@@ -658,6 +668,13 @@ export function OhboxView({
     prevIds.current = ids;
     prevSel.current = selectedId;
     const acted = lastActed?.current;
+    /* A VERB TOOK THE OPEN ROW OUT OF THE LIST: remember it as it stood, for an Undo. */
+    const fresh = (m: { at: number } | null | undefined): boolean => m != null && Date.now() - m.at <= ACTED_FRESH_MS;
+    const took = fresh(acted) ? acted!.id : fresh(verbTook.current) ? verbTook.current!.id : null;
+    if (took !== null && wasSel === took && before.includes(took) && !ids.includes(took)) {
+      verbTook.current = null;
+      suspend(took);
+    }
     if (!acted || wasSel !== acted.id || selectedId != null) return;
     if (ids.includes(acted.id)) return; // the verb left the row in place
     if (Date.now() - acted.at > ACTED_FRESH_MS) return;
@@ -670,7 +687,10 @@ export function OhboxView({
       return;
     }
     const next = nextSurvivor(before, new Set(ids), acted.id);
-    if (next != null) onSelect(next);
+    if (next != null) {
+      verbAdvance.current = next;
+      onSelect(next);
+    }
   });
 
   /**
@@ -782,6 +802,8 @@ export function OhboxView({
       // re-surfaces them the same way — see `promoted`. Only the direction, never the toggle:
       // `read` has nothing to promote and `move`/the horizons take the rows out of this list.
       if (action === "unread") promote(pickedIds);
+      /* A set holding the open row takes it from under the cursor like a single verb does. */
+      if (selectedId != null && pickedIds.includes(selectedId)) verbTook.current = { id: selectedId, at: Date.now() };
       /* A REFUSAL KEEPS THE SELECTION. Clearing afterwards is right for a verb that HAPPENED —
          the rows have been dealt with, and a set that survived would invite a second
          application of it. A reader's Move, Screening or Delete does not happen: `run` answers
@@ -790,7 +812,7 @@ export function OhboxView({
       if (bulk.run(action, pickedIds)) clearPicked();
       else setPickPanel(null);
     },
-    [bulk, pickedIds, clearPicked, promote],
+    [bulk, pickedIds, clearPicked, promote, selectedId],
   );
 
   /**
@@ -924,6 +946,22 @@ export function OhboxView({
   const [dwellOn, setDwellOn] = useState<string | null>(null);
 
   /**
+   * THE ROW A VERB TOOK FROM UNDER THE CURSOR, as it stood: its read hold, a running dwell, the
+   * sheet. `sel`, `reader0` and `armed0` are the selection, sheet and armed read the verb itself
+   * left; ANY later change of one of them, by any door, is moving on and spends the record.
+   */
+  const suspended = useRef<{
+    id: string; held: boolean; dwelling: boolean; reader: boolean;
+    sel: string | null; reader0: string | null; armed0: string | null;
+  } | null>(null);
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const onEnterReaderRef = useRef(onEnterReader);
+  onEnterReaderRef.current = onEnterReader;
+  const onRestoreHoldRef = useRef(onRestoreHold);
+  onRestoreHoldRef.current = onRestoreHold;
+
+  /**
    * Move the cursor because the USER moved it — j, k, and a click on an unselected row.
    *
    * DEPARTURE #1 of four. Landing on a different message is leaving the one before it, and it is
@@ -989,10 +1027,74 @@ export function OhboxView({
     // away is a departure. (A parent may re-render this view with the cursor prop one commit
     // behind its own click handling; a bare null must not spend a dwell that same commit.)
     if (selectedId !== null || prev === null) return;
+    /* A VERB TOOK THE ROW: its hold stays until Undo or a move decides, so Undo finds its place. */
+    if (suspended.current?.id === prev) return;
     if (dwellOn === null && heldRead.current === null) return;
     setDwellOn(null);
     leaveRead();
   }, [selectedId, dwellOn, leaveRead]);
+
+  /**
+   * MOVING ON, ONCE: the selection, the sheet or the armed read changing after the verb, by any
+   * door (a key, a click, →, a URL, a search, Back, Escape) — the verb's own advance excepted.
+   * It spends the record and lets go of the row's hold, so nothing stays in New nobody is on.
+   */
+  function suspend(id: string): void {
+    spendSuspended();
+    suspended.current = {
+      id, held: heldRead.current === id, dwelling: dwellOn === id, reader: false,
+      sel: selectedId, reader0: readerId, armed0: heldRead.current,
+    };
+    if (dwellOn === id) setDwellOn(null);
+  }
+  function spendSuspended(): void {
+    const s = suspended.current;
+    suspended.current = null;
+    if (s && heldRead.current === s.id) leaveRead();
+  }
+  useEffect(() => {
+    const s = suspended.current;
+    if (!s || (selectedId === s.sel && readerId === s.reader0 && armedRead === s.armed0)) return;
+    if (s.sel === null && selectedId !== null && selectedId === verbAdvance.current
+        && readerId === s.reader0 && armedRead === s.armed0) {
+      s.sel = selectedId;
+      verbAdvance.current = null;
+      return;
+    }
+    spendSuspended();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, readerId, armedRead]);
+
+  /**
+   * UNDO PUTS IT BACK AS IT STOOD AT THE PRESS — asked by the shell before the reversal is sent.
+   * `ask` re-takes the hold, so the row lands in New; `settle` restores the cursor, the dwell and
+   * the sheet only when THAT row's reversal took, and lets the hold go when it did not. The
+   * dwell's read stands.
+   */
+  useEffect(() => {
+    if (!undoLink) return;
+    const link: UndoLink = {
+      ask: (ids) => {
+        const s = suspended.current;
+        if (!s || !ids.includes(s.id)) return null;
+        if (s.held && !onRestoreHoldRef.current?.(s.id)) { spendSuspended(); return null; }
+        return s.id;
+      },
+      settle: (id, applied) => {
+        const s = suspended.current;
+        if (!s || s.id !== id) return;
+        if (!applied) { spendSuspended(); return; }
+        suspended.current = null;
+        if (s.held) hold(s.id);
+        onSelectRef.current(s.id);
+        if (s.dwelling) setDwellOn(s.id);
+        if (s.reader) onEnterReaderRef.current(s.id);
+      },
+    };
+    undoLink.current = link;
+    return () => { if (undoLink.current === link) undoLink.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoLink, hold]);
 
   /**
    * RELEASE THE `u` PIN WHEN THE CURSOR MOVES — the second half of `pinnedUnread`, declared
@@ -1083,9 +1185,15 @@ export function OhboxView({
    */
   const prevReaderId = useRef<string | null>(readerId);
   useEffect(() => {
-    const closed = prevReaderId.current !== null && readerId === null;
+    const was = prevReaderId.current;
+    const closed = was !== null && readerId === null;
     prevReaderId.current = readerId;
     if (!closed) return;
+    if (suspended.current?.id === was) {
+      suspended.current.reader = true;
+      suspended.current.reader0 = null;
+      return;
+    }
     if (typeof window === "undefined" || !window.matchMedia) return;
     if (!readColumnHidden()) return;
     leaveRead();

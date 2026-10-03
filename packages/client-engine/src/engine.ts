@@ -2304,6 +2304,8 @@ export class OhmailEngine {
   private overlayRev = 0;
   /** The row being read, held in "New for you" until it is left or answered — {@link holdOpenRow}. */
   private openRow: string | null = null;
+  /** The held row an act just took out of New — what {@link restoreOpenRow} may put back. */
+  private actedAwayRow: string | null = null;
   /**
    * THE OPTIMISTIC SENT COPIES, keyed by their overlay id — the confirm-time half of `mail_send`.
    *
@@ -4879,6 +4881,7 @@ export class OhmailEngine {
    * to the notify.
    */
   holdOpenRow(id: string): boolean {
+    this.actedAwayRow = null;
     if (id === this.openRow) return true;
     const next = ohboxView(this.read()).newForYou.some((m) => m.id === id) ? id : null;
     if (next !== this.openRow) this.setOpenRow(next);
@@ -4887,8 +4890,25 @@ export class OhmailEngine {
 
   /** The reader left `id` (any row when omitted): the row takes its arrival slot in Earlier. */
   releaseOpenRow(id?: string): void {
+    this.actedAwayRow = null;
     if (this.openRow === null || (id !== undefined && id !== this.openRow)) return;
     this.setOpenRow(null);
+  }
+
+  /**
+   * AN UNDONE ACT PUTS THE HOLD BACK. Only the row whose hold an act ended ({@link endHoldActedAway})
+   * may be held again without standing in New: it stood there when the act was pressed, so Undo
+   * returns it to that place rather than to Earlier. EVERY {@link holdOpenRow} or {@link releaseOpenRow}
+   * call since then spends it, a no-op one included: the reader moved. Safe before the inverse lands:
+   * a held row outside the Ohbox files nothing.
+   */
+  restoreOpenRow(id: string): boolean {
+    if (id === this.openRow) return true;
+    if (id !== this.actedAwayRow) return false;
+    this.actedAwayRow = null;
+    this.overlayRev++;
+    this.setOpenRow(id);
+    return true;
   }
 
   /** The row {@link holdOpenRow} holds, or `null`. */
@@ -4919,7 +4939,10 @@ export class OhmailEngine {
   private endHoldActedAway(effects: readonly MutationEffect[]): void {
     const held = this.openRow;
     if (held === null || !effects.some((e) => e.id === held)) return;
-    if (!ohboxView(this.read(), held).newForYou.some((m) => m.id === held)) this.openRow = null;
+    if (!ohboxView(this.read(), held).newForYou.some((m) => m.id === held)) {
+      this.openRow = null;
+      this.actedAwayRow = held;
+    }
   }
 
   /**

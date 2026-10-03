@@ -1159,9 +1159,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const {
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
     toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast, screenerRelease,
+    undoLink,
   } = useShellDispatch({ engine, reader, toast: hostToast, t, demo, refreshFacts });
   /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
   const toast = undoToast;
+  /** Re-take the hold an undone act ended — `engine.restoreOpenRow`, for `OhboxView`. */
+  const restoreOhboxHold = useStableCallback((id: string) => engine.restoreOpenRow(id));
 
   const theme = useTheme();
   /* THE SHELL TIMES ITSELF — startup marks, the three interaction percentiles and the frame
@@ -2528,6 +2531,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onMarkSeen={markSeen}
                 /* The view's armed read, held for the reader sheet's verb — see `ohboxArmedRead`. */
                 onReadArmed={setOhboxArmedRead}
+                /* An Undo puts the row back as it stood at the press — the view answers (`UndoLink`). */
+                undoLink={undoLink}
+                onRestoreHold={restoreOhboxHold}
                 /* WHICH MESSAGE THE SHEET IS SHOWING, so the view can tell when it CLOSES.
                    Reading is committed on the way out of a message, and at a width with no
                    reading column dismissing the sheet is the way out — often the only one, since
