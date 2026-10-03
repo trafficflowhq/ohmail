@@ -261,8 +261,9 @@ import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 
 /**
- * THE LOCAL ENGINE — `createApp(apiRoutes)` over on-disk PGlite, an `ImapAdapter` against the
- * user's own server, and the shared sync loop, assembled into one process.
+ * THE LOCAL ENGINE — `createApp` over `localRoutes` on on-disk PGlite (the host door, when armed,
+ * over `desktopHostRoutes`), an `ImapAdapter` against the user's own server, and the shared sync
+ * loop, assembled into one process.
  *
  * Everything a Cloud deployment configures and this one does not is an absence with a reason, not
  * an oversight. Read the service bag below as the answer to "what is Cloud, and what is mail?".

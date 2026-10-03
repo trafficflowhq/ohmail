@@ -1,7 +1,7 @@
 /**
  * `@ohmail/sidecar` — the LOCAL engine of the desktop's dual-mode design: the mailbox itself is the
  * master copy, and exactly one active organizer works it at a time. A Node process the desktop shell
- * spawns and owns; it runs `createApp(apiRoutes)` over PGlite on disk, an `ImapAdapter` against the
+ * spawns and owns; it runs `createApp` over `localRoutes` on PGlite on disk, an `ImapAdapter` for the
  * user's own server, and the worker's sync loop, while the UI keeps `HttpAdapter` given a `fetch`
  * that marshals over stdin/stdout. There is NO TCP listener unless host mode is armed — three
  * explicit knobs deep, never a default — so the stdio pipe stays the whole transport. Host mode
