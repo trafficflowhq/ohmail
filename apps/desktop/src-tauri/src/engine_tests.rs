@@ -1222,6 +1222,55 @@ fn an_exit_with_no_press_before_it_still_stops_the_engine() {
     let _ = pid;
 }
 
+/// THE RESTART DOOR'S RED CONTROL. Tauri's restart started the new copy while this engine still
+/// ran, and an engine that ignores the ask is the hard case: only the kill past its grace ends
+/// it. The new copy must start only after the engine has gone.
+#[cfg(unix)]
+#[test]
+fn a_restart_starts_the_new_copy_only_after_the_engine_has_left() {
+    let _live = live_process();
+    let fixture = Fixture::new("restart-deaf");
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve-deaf"), quick())));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let pid = shell.engine().pid().expect("a running engine has a pid");
+
+    let began = Instant::now();
+    let running_when_the_copy_started = restart_after(&shell, || alive(pid));
+
+    assert!(!running_when_the_copy_started, "the new copy started beside engine {pid}");
+    assert!(began.elapsed() >= quick().stop_grace, "a deaf engine was not held to its grace");
+    assert_eq!(shell.engine().state(), EngineState::Stopped);
+}
+
+/// A restart that did not happen — the Windows installer could not start after the engine left
+/// for it — leaves an app with an engine again and a quit that still stops it.
+#[test]
+fn a_restart_that_did_not_happen_starts_the_engine_again_and_a_quit_still_stops_it() {
+    let _live = live_process();
+    let fixture = Fixture::new("restart-resume");
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve"), quick())));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let before = shell.engine();
+
+    assert!(shell.stop_for_restart(), "the engine did not leave inside the bound");
+    assert_eq!(before.state(), EngineState::Stopped);
+    shell.resume_after_failed_restart();
+
+    assert!(!Arc::ptr_eq(&before, &shell.engine()), "the slot still holds the stopped engine");
+    assert!(
+        matches!(*shell.leaving.lock().expect("leaving"), Leaving::NotStarted),
+        "the quit was spent by a restart that never happened"
+    );
+}
+
 // ── Supervision: noticing, restarting, and knowing when to stop ─────────────────────────────
 
 #[test]
@@ -4306,13 +4355,14 @@ fn the_unlock_press_refuses_while_the_engine_has_not_given_up() {
     assert!(said.contains("has not given up"), "the refusal names the wrong thing: {said}");
 }
 
+/// A shell that has given up on its engine, with a lock holding `record` where the PLAN says the
+/// engine's data directory is — read the way the press reads it, so the fixture cannot drift from
+/// the resolution it exercises. Returns the shell, the root to remove, and the lock's path.
 #[cfg(unix)]
-#[test]
-fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
-    let _live = live_process();
+fn given_up_with_lock(name: &str, record: &str) -> (Shell, PathBuf, PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     with_key_in_env();
-    let root = candidate_root("unlock-retry");
+    let root = candidate_root(name);
     // A stored local door, so the plan is composed entirely from the configuration…
     let door = Config::Local(crate::config::LocalDoor {
         imap_host: "mail.example.org".to_string(),
@@ -4346,21 +4396,36 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
         leaving: Mutex::new(Leaving::NotStarted),
         pending_door: Mutex::new(None),
     };
-    // The lock sits where the PLAN says the engine's data directory is — read the way the press
-    // reads it, so the fixture cannot drift from the resolution it exercises.
     let planned = shell.planned(None);
     let Plan::Spawn(launch) = &planned else {
         panic!("the fixture composes an inert plan: {planned:?}");
     };
-    let dir = launch
-        .env
-        .iter()
-        .find(|(k, _)| k.as_os_str() == std::ffi::OsStr::new(DATA_DIR_VAR))
-        .map(|(_, v)| PathBuf::from(v.clone()))
-        .expect("the plan names no data directory");
+    let dir = plan_data_dir(launch).expect("the plan names no data directory");
     fs::create_dir_all(&dir).expect("data dir");
     let lock = dir.join("sidecar.lock");
-    fs::write(&lock, "{\"pid\":1}\n").expect("stale lock");
+    fs::write(&lock, record).expect("lock");
+    (shell, root, lock)
+}
+
+/// A pid that named a process this test started and reaped: gone by construction. Asserted gone
+/// through the press's own probe, so a recycled number fails here rather than passing by luck.
+#[cfg(unix)]
+fn reaped_pid() -> u32 {
+    let mut child = Command::new("sh").arg("-c").arg("exit 0").spawn().expect("a short-lived child");
+    let pid = child.id();
+    child.wait().expect("reap the child");
+    assert!(!process_is_running(pid), "pid {pid} was recycled before the press could ask about it");
+    pid
+}
+
+#[cfg(unix)]
+#[test]
+fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
+    let _live = live_process();
+    // STALE means the holder is gone. This fixture named pid 1 until the press judged the holder:
+    // pid 1 is init, running on every Unix, so its lock is now kept — the case below.
+    let dead = reaped_pid();
+    let (shell, root, lock) = given_up_with_lock("unlock-retry", &format!("{{\"pid\":{dead}}}\n"));
 
     let answered = shell.unlock_retry().expect("the press must act once the shell has given up");
     assert!(!lock.exists(), "the stale lock is still there after the press");
@@ -4371,6 +4436,91 @@ fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
     );
     shell.stop();
     let _ = fs::remove_dir_all(&root);
+}
+
+/// THE PRESS'S RED CONTROL. After a restart the lock's holder is the previous copy's engine, still
+/// running with no window, and the shell's own engine having given up says nothing about it: the
+/// press used to unlink that live lock and start a second engine on one store and one session.
+/// The lock must survive byte for byte, nothing may start, and once the holder is gone the same
+/// press acts.
+#[cfg(unix)]
+#[test]
+fn the_unlock_press_keeps_a_lock_whose_holder_is_still_running() {
+    let _live = live_process();
+    let mut holder = Command::new("sleep").arg("60").spawn().expect("a running holder");
+    let record = format!("{{\"pid\":{},\"nonce\":\"held\"}}\n", holder.id());
+    let (shell, root, lock) = given_up_with_lock("unlock-live", &record);
+
+    let refused = shell.unlock_retry().expect_err("a running holder's lock was removed");
+    assert!(refused.contains("still running"), "the refusal names the wrong thing: {refused}");
+    assert_eq!(fs::read_to_string(&lock).ok().as_deref(), Some(record.as_str()), "the lock was touched");
+    assert!(
+        matches!(shell.engine().state(), EngineState::Failed { .. }),
+        "a second engine was started beside the holder: {:?}",
+        shell.engine().state()
+    );
+
+    holder.kill().expect("end the holder");
+    holder.wait().expect("reap the holder");
+    shell.unlock_retry().expect("the holder has gone, so the press acts");
+    assert!(!lock.exists(), "the lock outlived its holder");
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_lock_record_names_its_pid_in_either_spelling_and_a_torn_one_names_none() {
+    assert_eq!(lock_pid(br#"{"pid":4242,"startTicks":7,"nonce":"n"}"#), Some(4242));
+    // The bare pid older builds wrote.
+    assert_eq!(lock_pid(b"4242\n"), Some(4242));
+    // Torn mid-write, empty, not a pid at all, or not text: no pid, so nobody's.
+    assert_eq!(lock_pid(br#"{"pid":4242,"startTi"#), None);
+    assert_eq!(lock_pid(b""), None);
+    assert_eq!(lock_pid(br#"{"pid":0}"#), None);
+    assert_eq!(lock_pid(br#"{"pid":-3}"#), None);
+    assert_eq!(lock_pid(b"\xff\xfe"), None);
+}
+
+#[test]
+fn the_judge_removes_a_torn_or_dead_lock_and_keeps_a_running_one() {
+    let dir = candidate_root("unlock-judge");
+    fs::create_dir_all(&dir).expect("dir");
+    let lock = dir.join("sidecar.lock");
+
+    fs::write(&lock, br#"{"pid":4242,"start"#).expect("torn");
+    assert_eq!(remove_unheld_lock(&lock, |_| panic!("a torn record names nobody to ask about")), Ok(()));
+    assert!(!lock.exists(), "a torn record survived");
+
+    fs::write(&lock, br#"{"pid":4242}"#).expect("dead");
+    assert_eq!(remove_unheld_lock(&lock, |pid| pid != 4242), Ok(()));
+    assert!(!lock.exists(), "a dead pid's lock survived");
+
+    fs::write(&lock, br#"{"pid":4242}"#).expect("running");
+    assert!(remove_unheld_lock(&lock, |pid| pid == 4242).is_err(), "a running pid's lock was removed");
+    assert!(lock.exists(), "a running pid's lock was removed");
+
+    fs::remove_file(&lock).expect("gone");
+    assert_eq!(remove_unheld_lock(&lock, |_| false), Ok(()), "an absent lock is nothing to refuse");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// COMPARE, THEN DELETE. The holder was judged gone, and a starting engine put its own record in
+/// that place before the removal: that record is a live engine's and must survive.
+#[test]
+fn a_lock_replaced_while_it_was_judged_is_kept() {
+    let dir = candidate_root("unlock-replaced");
+    fs::create_dir_all(&dir).expect("dir");
+    let lock = dir.join("sidecar.lock");
+    fs::write(&lock, br#"{"pid":4242}"#).expect("judged");
+    let replacement = br#"{"pid":5151,"nonce":"a later claim"}"#;
+
+    let refused = remove_unheld_lock(&lock, |_| {
+        fs::write(&lock, replacement).expect("a starting engine takes the lock");
+        false
+    });
+    assert!(refused.is_err(), "the replacement was removed");
+    assert_eq!(fs::read(&lock).expect("still there"), replacement.to_vec());
+    let _ = fs::remove_dir_all(&dir);
 }
 
 // ── THE FAILURE CARD'S "START OVER ON THIS COMPUTER" ─────────────────────────────────────────

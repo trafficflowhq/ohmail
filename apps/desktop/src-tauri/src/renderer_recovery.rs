@@ -133,10 +133,13 @@ fn offer_relaunch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .title(RELAUNCH_TITLE)
         .buttons(MessageDialogButtons::OkCancelCustom(RELAUNCH_BUTTON.into(), QUIT_BUTTON.into()))
         .show(move |relaunch| {
-            // Both through the event loop's own exit, so the engine is stopped on the way out.
+            // The quit waits for the engine after the loop (`leave_the_process`); a restart exits
+            // from inside it, so the relaunch waits for the engine first, as the update's does.
             if relaunch {
-                crate::inherited_fds::withhold_from_the_restart();
-                answer.request_restart();
+                crate::updater::after_the_engine(&answer, || {
+                    crate::inherited_fds::withhold_from_the_restart();
+                    answer.request_restart();
+                });
             } else {
                 answer.exit(0);
             }

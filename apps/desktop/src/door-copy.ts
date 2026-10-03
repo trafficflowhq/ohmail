@@ -733,14 +733,19 @@ const EN = {
   gateCredentialsWhy:
     "ohmail keeps the key that protects your mailbox passwords in Windows Credential Manager, and it did not answer. Press Try again; if it keeps happening, ohmail's log file has the details.",
   /* ── A LOCKED LOCAL STORE, in person words ───────────────────────────────────────────────
-     The engine reclaims a provably-stale lock on its own; what reaches this card is the residue
-     it may not decide alone — a record it cannot read (a torn file after a power cut) or a live
-     process it cannot tell apart from a second engine. The person CAN decide, so the card names
-     both possibilities and offers the one press that acts. Never the engine's own JSON line. */
+     The engine reclaims a provably-stale lock on its own; what reaches this card is a record it
+     cannot read (a torn file after a power cut) or a live process it cannot tell apart from a
+     second engine. The press removes the first and a dead process's lock, never a running one's:
+     after a restart that is the previous copy's engine, still closing. Never the engine's JSON. */
   gateLockedStore:
-    "Another copy of ohmail may be open on this computer, or the app did not close cleanly last "
-    + "time. If no other copy is open, ohmail can remove the leftover lock and try again.",
+    "Another copy of ohmail may still be running on this computer, or the app did not close "
+    + "cleanly last time. ohmail can remove the leftover lock and try again, but never while "
+    + "another copy is using it.",
   gateUnlockRetry: "Unlock and retry",
+  /* The press kept the lock: its process is still running, or the file would not go. */
+  gateUnlockRefused:
+    "The lock was kept: another copy of ohmail is still using it, or it could not be removed. "
+    + "Wait a moment and press again; if it keeps happening, restart this computer.",
   /* Any other structured failure names the engine's word for it and where the detail lives —
      never the raw log line. The word is a pointer a person can report, not a sentence. */
   gateEngineReported: (name: string) =>

@@ -83,8 +83,11 @@ describe("the failure class is read out of the shell's sentence", () => {
   });
 });
 
-/** A shell whose engine has given up on the lock, and a ledger of every command the window sent. */
-function fakeFailedShell(reason: string): { commands: string[] } {
+/**
+ * A shell whose engine has given up on the lock, and a ledger of every command the window sent.
+ * `keepsTheLock` is the shell finding the lock's process still running: the press is refused.
+ */
+function fakeFailedShell(reason: string, keepsTheLock = false): { commands: string[] } {
   const ledger = { commands: [] as string[] };
   let status: EngineStatus = { state: "failed", mode: "local", reason } as EngineStatus;
   const callbacks = new Map<number, (payload: unknown) => void>();
@@ -99,6 +102,9 @@ function fakeFailedShell(reason: string): { commands: string[] } {
       ledger.commands.push(command);
       if (command === "engine_status") return status;
       if (command === "engine_unlock_retry") {
+        if (keepsTheLock) {
+          throw "the lock belongs to process 4242, which is still running, so it was kept";
+        }
         // The shell removed the lock and re-entered start; the next status read says so.
         status = { state: "starting", mode: "local" } as EngineStatus;
         return status;
@@ -178,6 +184,26 @@ describe("the locked-store card", () => {
       ledger.commands.filter((c) => c === "engine_status").length,
       "the press never re-read the engine's state",
     ).toBeGreaterThan(asked);
+  });
+
+  it("a press the shell refuses says so under the button, and the card stays", async () => {
+    /* The lock's process is still running — after a restart, the previous copy's engine — so the
+       shell keeps the lock. Silence here read as a press that did nothing, inviting the next one. */
+    const ledger = fakeFailedShell(RAW_LOCKED_REASON, true);
+    const el = await render();
+    expect(el.textContent ?? "").not.toContain(DOOR_COPY.gateUnlockRefused);
+    const button = [...el.querySelectorAll("button")].find(
+      (b) => (b.textContent ?? "") === DOOR_COPY.gateUnlockRetry,
+    );
+    await act(async () => {
+      button!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    expect(ledger.commands, "the press never reached the shell").toContain("engine_unlock_retry");
+    const said = el.textContent ?? "";
+    expect(said, "a refused press said nothing").toContain(DOOR_COPY.gateUnlockRefused);
+    expect(said, "the card left after a refused press").toContain(DOOR_COPY.gateLockedStore);
+    expect(said, "the shell's own sentence reached the person").not.toContain("process 4242");
   });
 
   it("any other structured failure names the class in a sentence, never the object", async () => {

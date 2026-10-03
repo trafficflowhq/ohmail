@@ -699,10 +699,11 @@ export async function engineSwitchRestore(leftAt: string | null = null): Promise
 }
 
 /**
- * The failure card's one recovery press: remove a data-directory lock the person has judged
- * stale, and start the engine again. The shell resolves the lock's path from its own plan — the
- * window names no file — and it refuses unless it has already given up on the engine, so a press
- * can never unlink a live engine's lock. Answers the status AFTER the restart has begun.
+ * The failure card's one recovery press: remove a data-directory lock nothing holds any more, and
+ * start the engine again. The shell resolves the lock's path from its own plan — the window names
+ * no file — refuses unless it has given up on its own engine, and keeps a lock whose process is
+ * still running, so a press never unlinks a live engine's lock. Answers the status AFTER the
+ * restart has begun.
  */
 export async function engineUnlockRetry(): Promise<EngineStatus> {
   return (await withDeadline(THE_APP, () => shell().invoke(UNLOCK_COMMAND))) as EngineStatus;

@@ -1505,10 +1505,14 @@ describe("the Rust side", () => {
     // `File::open` or a directory listing is a new capability and fails here as it always did.
     expect(engine.match(/fs::read_to_string/g)).toHaveLength(1);
     expect(engine).not.toMatch(/fs::File::open/);
-    /* THE LOG'S TAIL IS THE ONE OTHER READ, and only of the log: one `File::open`, inside the tail
-       reader, whose one caller hands it the path the log was opened at. */
-    expect(engine.match(/\bFile::open\(/g)).toHaveLength(1);
+    /* THE LOG'S TAIL AND THE LOCK'S RECORD ARE THE TWO OTHER READS. The tail: one `File::open`
+       inside the tail reader, whose one caller hands it the path the log was opened at. The lock:
+       one inside `read_lock`, which the unlock press calls twice — to judge the holder, and to
+       check the file is still the one judged before removing it — on the plan's lock path only. */
+    expect(engine.match(/\bFile::open\(/g)).toHaveLength(2);
     expect(engine).toMatch(/fn tail_lines\(path: &Path, max_bytes: u64\) -> Vec<String> \{[\s\S]{0,120}?File::open\(path\)/);
+    expect(engine).toMatch(/fn read_lock\(lock: &Path\) -> io::Result<Option<HeldLock>> \{\s*let mut file = match File::open\(lock\)/);
+    expect(engine.match(/read_lock\(lock\)/g)).toHaveLength(2);
     expect(engine.match(/diagnostic_tail\(&path, DIAGNOSTIC_TAIL_LINES, DIAGNOSTIC_TAIL_BYTES\)/g)).toHaveLength(1);
     expect(engine).toMatch(/let lines = open_log_path\(\)\s*\.map\(\|path\| diagnostic_tail\(/);
     /* …and the diagnostic file's one write, beside the log under the constant name. */
@@ -1547,17 +1551,21 @@ describe("the Rust side", () => {
      * directory, or the copy it set aside, into it by rename, and this one removal empties it. */
     /* THE SECOND `remove_file` IS THE FAILURE CARD'S "UNLOCK AND RETRY", and the pin moved with
      * the reason: a data-directory lock whose owner the engine cannot judge (a torn record after
-     * a power cut, a live pid it cannot tell from a second engine) refuses every later start, and
-     * the person is the one authority for that call. The removal is held to the sweep's own
-     * standard — the path is the PLAN's data directory joined with the sidecar's constant lock
-     * name, never a value from the window, and the command refuses outright unless the shell has
-     * already given up on the engine, so it cannot unlink a live engine's lock. Both facts are
-     * asserted below beside the count. */
+     * a power cut, a live pid it cannot tell from a second engine) refuses every later start. The
+     * removal is held to the sweep's own standard — the path is the PLAN's data directory joined
+     * with the sidecar's constant lock name, never a value from the window — and the shell having
+     * given up on its OWN engine says nothing about the holder: after a restart it is the previous
+     * copy's engine, still running. So a running pid keeps its lock, and the file is read again
+     * and compared before it goes. Each fact is asserted below beside the count. */
     expect(engine.match(/fs::read_dir/g)).toHaveLength(1);
     expect(engine.match(/fs::remove_file/g)).toHaveLength(2);
     expect(engine.match(/fs::remove_dir_all/g)).toHaveLength(2);
-    expect(engine).toMatch(/let lock = dir\.join\("sidecar\.lock"\);/);
-    expect(engine.match(/fs::remove_file\(&lock\)/g)).toHaveLength(1);
+    expect(engine).toMatch(/let lock = dir\.join\("sidecar\.lock"\);\s*remove_unheld_lock\(&lock, process_is_running\)/);
+    expect(engine.match(/remove_unheld_lock\(&lock, process_is_running\)/g)).toHaveLength(1);
+    expect(engine.match(/fs::remove_file\(lock\)/g)).toHaveLength(1);
+    expect(engine).toMatch(
+      /fn remove_unheld_lock\(lock: &Path, running: impl Fn\(u32\) -> bool\) -> Result<\(\), String> \{[\s\S]*?if running\(pid\) \{[\s\S]*?Some\(now\) if now == judged => \{\}[\s\S]*?fs::remove_file\(lock\)/,
+    );
     expect(engine).toMatch(/if !matches!\(self\.engine\(\)\.state\(\), EngineState::Failed \{ \.\. \}\) \{/);
     expect(engine).toMatch(/let dir = config::candidate_data_dir\(root\);/);
     expect(engine.match(/fs::remove_dir_all\(&dir\)/g)).toHaveLength(1);
@@ -2158,6 +2166,30 @@ describe("the auto-updater", () => {
     expect(relaunch, "the relaunch branch was not found").toContain("answer.request_restart();");
     expect(relaunch.indexOf(withhold)).toBeGreaterThan(-1);
     expect(relaunch.indexOf(withhold)).toBeLessThan(relaunch.indexOf("answer.request_restart();"));
+
+    /* AND THE ENGINE HAS LEFT BEFORE EITHER. Tauri's restart starts the new copy and exits; nothing
+       stopped the engine or waited for it, so the new one met a lock a leaving engine held, or ran
+       beside one that would not leave on one saved session. Both restarts run inside the door,
+       the door stops the engine before it calls them, and no third restart exists to bypass it. */
+    expect(install.indexOf("after_the_engine(app, || {")).toBeGreaterThan(-1);
+    expect(install.indexOf("after_the_engine(app, || {")).toBeLessThan(install.indexOf(withhold));
+    expect(relaunch.indexOf("crate::updater::after_the_engine(&answer, || {")).toBeGreaterThan(-1);
+    expect(relaunch.indexOf("crate::updater::after_the_engine(&answer, || {")).toBeLessThan(relaunch.indexOf(withhold));
+    // Windows' install is its restart, so there the engine leaves before the install.
+    expect(install).toMatch(/#\[cfg\(windows\)\]\s*Some\(payload\) => after_the_engine\(app, \|\| payload\.update\.install\(&payload\.bytes\)\),/);
+    expect(updater).toMatch(
+      /pub\(crate\) fn after_the_engine<R: Runtime, T>\(app: &AppHandle<R>, then: impl FnOnce\(\) -> T\) -> T \{\s*#\[cfg\(feature = "local-engine"\)\]\s*\{\s*crate::engine::after_the_engine\(app, then\)/,
+    );
+    const engineSrc = read("src-tauri/src/engine.rs");
+    expect(engineSrc).toMatch(/pub fn restart_after<T>\(shell: &Arc<Shell>, then: impl FnOnce\(\) -> T\) -> T \{[\s\S]*?shell\.stop_for_restart\(\);[\s\S]*?then\(\)\s*\}/);
+    expect(engineSrc).toMatch(/pub fn stop_for_restart\(self: &Arc<Shell>\) -> bool \{\s*self\.begin_stop\(\);\s*self\.finish_stop\(SHUTDOWN_BOUND\)\s*\}/);
+    // The menu and the Settings press no longer install on the thread that draws.
+    expect(updater).not.toMatch(/Press::Restart => install_and_restart\(/);
+    const restarts = fs
+      .readdirSync(path.join(APP, "src-tauri/src"))
+      .filter((f) => f.endsWith(".rs") && !f.endsWith("_tests.rs"))
+      .flatMap((f) => code(read(`src-tauri/src/${f}`)).match(/\.(?:request_)?restart\(\)/g) ?? []);
+    expect(restarts, "a restart outside the two that run through the engine's door").toHaveLength(2);
   });
 
   /**

@@ -815,9 +815,9 @@ export function DesktopGate() {
 
        A STRUCTURED failure never renders its log line: `failureClass` picks the person's
        sentence (`doors.ts#failureClassOf` is where the class is read). For the locked store the
-       press that helps is removing the leftover lock — the shell refuses that unless the engine
-       has already given up, so the press can never take a live engine's lock — and the refresh
-       after it paints whatever the restart then says. */
+       press that helps is removing the leftover lock. The shell keeps a lock whose process is
+       still running — after a restart, the previous copy's engine — and the card says so; the
+       refresh after the press paints whatever the restart then says. */
     if (gate.failureClass === "LocalStoreOpenError") {
       return <StartOverNotice onSettled={() => void refresh()} />;
     }
@@ -828,13 +828,7 @@ export function DesktopGate() {
       return <KeyringNotice onSettled={() => void refresh()} />;
     }
     if (gate.failureClass === "DataDirLockedError") {
-      return (
-        <GateNotice
-          reason={DOOR_COPY.gateLockedStore}
-          actionLabel={DOOR_COPY.gateUnlockRetry}
-          onAction={() => void engineUnlockRetry().catch(() => undefined).then(() => void refresh())}
-        />
-      );
+      return <UnlockNotice onSettled={() => void refresh()} />;
     }
     /* EVERY OTHER GIVEN-UP ENGINE IS RESTARTED BY THE PRESS; a card with no engine behind it (an
        unreachable shell, a build without one) can only ask again, and its label says so. */
@@ -1732,6 +1726,31 @@ function KeyringNotice({ onSettled }: { onSettled: () => void }) {
     >
       {said === "still" ? <p role="alert">{DOOR_COPY.gateKeyringStillLocked}</p> : null}
       {said === "refused" ? <p role="alert">{DOOR_COPY.gateRetryRefused}</p> : null}
+    </GateNotice>
+  );
+}
+
+/**
+ * A LOCKED LOCAL STORE — `DataDirLockedError` in the sidecar. The press removes a torn record or a
+ * dead process's lock and starts the engine; a lock whose process is still running is kept, and a
+ * refused press says so under the button instead of leaving the card looking unpressed.
+ */
+function UnlockNotice({ onSettled }: { onSettled: () => void }) {
+  const [refused, setRefused] = useState(false);
+  const [pressing, setPressing] = useState(false);
+  const press = (): void => {
+    if (pressing) return;
+    setPressing(true);
+    void engineUnlockRetry()
+      .then(() => setRefused(false), () => setRefused(true))
+      .finally(() => {
+        setPressing(false);
+        onSettled();
+      });
+  };
+  return (
+    <GateNotice reason={DOOR_COPY.gateLockedStore} actionLabel={DOOR_COPY.gateUnlockRetry} onAction={press}>
+      {refused ? <p role="alert">{DOOR_COPY.gateUnlockRefused}</p> : null}
     </GateNotice>
   );
 }

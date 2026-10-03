@@ -136,6 +136,7 @@
 //! `{ "version", "notes", "pub_date", "platforms": { "<target>-<arch>":
 //! { "signature", "url" } } }`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use tauri::menu::MenuItem;
@@ -1133,7 +1134,15 @@ fn pressed<R: Runtime>(app: AppHandle<R>) {
     };
     match what {
         Press::Check => check(app, true),
-        Press::Restart => install_and_restart(&app),
+        // OFF THE THREAD THAT DRAWS: the restart waits for the engine to leave first, and the menu
+        // and the Settings press arrive on the main thread, where that wait would hold a window
+        // that can neither paint nor close. The dialog's press already arrives on its own thread.
+        Press::Restart => {
+            std::thread::Builder::new()
+                .name("ohmail-install".into())
+                .spawn(move || install_and_restart(&app))
+                .expect("ohmail: failed to start the install thread");
+        }
         // Disabled in the bar; belt and braces for a platform that lets a disabled item fire.
         Press::Nothing => {}
     }
@@ -1296,18 +1305,34 @@ fn prompt_ready<R: Runtime>(app: &AppHandle<R>, version: &str) {
 }
 
 /// Apply the waiting payload and relaunch into it. The only place anything is installed.
+///
+/// ONE AT A TIME: a press while an install is in flight is ignored until that install fails. With
+/// the presses off the main thread a second one would write the payload again under the first
+/// one's restart. And the engine leaves before the new copy starts — [`after_the_engine`].
 fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let outcome = {
         let state = app.state::<Updater<R>>();
         let pending = lock(&state.pending);
         match pending.as_ref() {
             // Nothing waiting: a press that raced the payload being dropped. Silent by design.
-            None => return,
+            None => {
+                INSTALLING.store(false, Ordering::SeqCst);
+                return;
+            }
+            // WINDOWS' INSTALL IS ITS RESTART: the plugin starts the installer and exits this
+            // process, and the installer replaces the runtime the engine runs on. So there the
+            // engine leaves BEFORE the install, and comes back if the installer could not start.
+            #[cfg(windows)]
+            Some(payload) => after_the_engine(app, || payload.update.install(&payload.bytes)),
+            #[cfg(not(windows))]
             Some(payload) => payload.update.install(&payload.bytes),
         }
     };
     match outcome {
-        Ok(()) => {
+        Ok(()) => after_the_engine(app, || {
             // Before the restart, and it survives it: the log flushes per write, so the last
             // line of the old build's log is the one saying why there is a new one.
             log_verdict(Verdict::Installed, None);
@@ -1315,8 +1340,11 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
             // this process does rather than when the new one quits.
             crate::inherited_fds::withhold_from_the_restart();
             app.restart();
-        }
+        }),
         Err(err) => {
+            #[cfg(windows)]
+            resume_the_engine(app);
+            INSTALLING.store(false, Ordering::SeqCst);
             // The one failure that always speaks, whoever started the check: the user pressed a
             // button that promised a restart, and nothing at all happening is the worst answer.
             log_verdict(Verdict::Failed, Some(error_class(&format!("{err:?}"))));
@@ -1324,6 +1352,34 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
             say_it_failed(app, "ohmail could not install the update. Try again in a moment.");
         }
     }
+}
+
+/// An install is in flight. See [`install_and_restart`].
+static INSTALLING: AtomicBool = AtomicBool::new(false);
+
+/// EVERY RESTART RUNS `then` THROUGH HERE, once the engine has left — stopped, waited for, and
+/// killed past its grace. Tauri's restart starts the new copy and exits, so without this the new
+/// engine met a lock a leaving one still held, or ran beside one that would not leave. The update
+/// and the renderer's relaunch both come here. The preview has no engine and runs `then` at once.
+pub(crate) fn after_the_engine<R: Runtime, T>(app: &AppHandle<R>, then: impl FnOnce() -> T) -> T {
+    #[cfg(feature = "local-engine")]
+    {
+        crate::engine::after_the_engine(app, then)
+    }
+    #[cfg(not(feature = "local-engine"))]
+    {
+        let _ = app;
+        then()
+    }
+}
+
+/// The Windows installer could not be started after the engine left for it: start it again.
+#[cfg(windows)]
+fn resume_the_engine<R: Runtime>(app: &AppHandle<R>) {
+    #[cfg(feature = "local-engine")]
+    crate::engine::resume_after_failed_restart(app);
+    #[cfg(not(feature = "local-engine"))]
+    let _ = app;
 }
 
 /// Was the refusal about the payload's IDENTITY rather than about its age?

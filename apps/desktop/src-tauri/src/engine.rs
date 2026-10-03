@@ -1448,6 +1448,41 @@ pub fn leave_the_process(shell: &Arc<Shell>, code: i32) -> ! {
     std::process::exit(code)
 }
 
+/// THE RESTART'S HALF OF ONE PROFILE, ONE ENGINE. Tauri's restart starts the new copy and exits:
+/// nothing stopped this engine or waited for it, so the new one met a lock a leaving engine still
+/// held, and an engine that would not leave ran on beside it, renewing one saved session. Every
+/// restart runs `then` through here, after the engine has left or been killed — [`SHUTDOWN_BOUND`]
+/// at most. On Windows `then` is the install, which starts the installer and exits itself.
+pub fn restart_after<T>(shell: &Arc<Shell>, then: impl FnOnce() -> T) -> T {
+    let began = Instant::now();
+    let left = shell.stop_for_restart();
+    log_line(format_args!(
+        "restart: the engine {} after {}ms",
+        if left { "has left" } else { "had not left inside the bound; restarting anyway" },
+        began.elapsed().as_millis()
+    ));
+    then()
+}
+
+/// [`restart_after`] for the running app, whose shell is in Tauri's state. No shell, no engine.
+pub fn after_the_engine<R: tauri::Runtime, T>(app: &tauri::AppHandle<R>, then: impl FnOnce() -> T) -> T {
+    use tauri::Manager;
+    let shell = app.try_state::<Arc<Shell>>().map(|state| Arc::clone(state.inner()));
+    match shell {
+        Some(shell) => restart_after(&shell, then),
+        None => then(),
+    }
+}
+
+/// [`Shell::resume_after_failed_restart`] for the running app.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn resume_after_failed_restart<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
+    if let Some(shell) = app.try_state::<Arc<Shell>>() {
+        shell.resume_after_failed_restart();
+    }
+}
+
 /// Marks a sign-out refusal taken BEFORE the engine was stopped or any file moved, so nothing
 /// about the install has changed. `engine_logout` reads it to decide whether host mode still has
 /// a listener to stand down beside — a refusal after the stop leaves the door gone, and leaving
@@ -1628,14 +1663,12 @@ impl Shell {
     /// The failure card's "Unlock and retry" press: remove the engine's data-directory lock and
     /// start it again. See [`engine_unlock_retry`] for who may ask and why.
     ///
-    /// The engine reclaims provably-stale locks on its own; what reaches this press is the
-    /// residue it may not decide — a record it cannot read (a torn file after a power cut), or a
-    /// live process it cannot tell apart from a second engine. The PERSON can decide that, so the
-    /// press acts only once the shell has GIVEN UP on the engine ([`EngineState::Failed`]): over
-    /// a running engine this would unlink a live lock and put two stores on one directory, which
-    /// is the corruption the lock exists to refuse. The lock's path comes from the shell's own
-    /// plan — the window names no file — and a lock already gone is not an error: whatever
-    /// removed it left nothing for the restart to trip on.
+    /// The engine reclaims provably-stale locks on its own; what reaches this press is a record it
+    /// cannot read (a torn file after a power cut) or a live process it cannot tell apart from a
+    /// second engine. The press waits for the shell to GIVE UP on its own engine, and that says
+    /// nothing about the holder: after a restart it is the previous copy's engine, still running
+    /// with no window. So a running pid keeps its lock ([`remove_unheld_lock`]) and only a torn
+    /// record or a dead pid is removed. The path comes from the shell's own plan.
     pub fn unlock_retry(&self) -> Result<serde_json::Value, String> {
         if !matches!(self.engine().state(), EngineState::Failed { .. }) {
             return Err(
@@ -1652,15 +1685,10 @@ impl Shell {
         // The sidecar's own lock file name — `LOCK_FILE` in `apps/sidecar/src/db.ts`; a desktop
         // test holds the two literals together.
         let lock = dir.join("sidecar.lock");
-        match fs::remove_file(&lock) {
-            Ok(()) => {}
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(format!(
-                    "the lock could not be removed ({err}); the engine was not restarted"
-                ));
-            }
-        }
+        remove_unheld_lock(&lock, process_is_running).map_err(|refused| {
+            log_line(format_args!("unlock and retry: {refused}"));
+            refused
+        })?;
         *self.pending_door.lock().expect("pending door") = None;
         self.replace(plan);
         Ok(self.status())
@@ -1780,8 +1808,8 @@ impl Shell {
                 Err(mpsc::RecvTimeoutError::Disconnected) => true,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     log_line(format_args!(
-                        "the engine had not finished leaving {}ms after the window closed; \
-                         quitting anyway, which closes its input",
+                        "the engine had not finished leaving {}ms after it was asked to; the \
+                         app is going anyway, which closes its input",
                         within.as_millis()
                     ));
                     false
@@ -1819,6 +1847,23 @@ impl Shell {
                 app.exit(0);
             })
             .expect("ohmail: failed to start the shutdown thread");
+    }
+
+    /// Stop the engine and wait for it, bounded by [`SHUTDOWN_BOUND`]: what a restart owes the copy
+    /// it starts. The quit's two halves back to back, because a restart leaves this process exactly
+    /// as a quit does — the stop on a thread of its own, the wait bounded, the kill past the grace.
+    pub fn stop_for_restart(self: &Arc<Shell>) -> bool {
+        self.begin_stop();
+        self.finish_stop(SHUTDOWN_BOUND)
+    }
+
+    /// A restart that did not happen after the engine was stopped for it — the Windows installer
+    /// could not be started. The engine comes back from the stored configuration, and a later
+    /// quit stops it the way it stops any engine.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn resume_after_failed_restart(&self) {
+        *self.leaving.lock().expect("shell shutdown") = Leaving::NotStarted;
+        self.replan();
     }
 
     /// Replace the running engine with one started from `next`.
@@ -4774,6 +4819,118 @@ fn engine_start_over(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::
 #[tauri::command(async)]
 fn engine_retry(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::Value, String> {
     shell.retry()
+}
+
+/// A lock file's bytes and when they were last written, read through ONE descriptor so the two
+/// describe the same file.
+#[derive(Debug, PartialEq, Eq)]
+struct HeldLock {
+    bytes: Vec<u8>,
+    modified: Option<std::time::SystemTime>,
+}
+
+/// The lock as it is now, or `None` where there is no file.
+fn read_lock(lock: &Path) -> io::Result<Option<HeldLock>> {
+    let mut file = match File::open(lock) {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let modified = file.metadata().and_then(|meta| meta.modified()).ok();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(Some(HeldLock { bytes, modified }))
+}
+
+/// The pid a lock's record names: the sidecar's JSON record, or the bare pid older builds wrote.
+/// `None` for a record that names none — empty, torn, or no shape the sidecar writes.
+fn lock_pid(bytes: &[u8]) -> Option<u32> {
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    let pid = if text.starts_with('{') {
+        serde_json::from_str::<serde_json::Value>(text).ok()?.get("pid")?.as_u64()?
+    } else {
+        text.parse::<u64>().ok()?
+    };
+    u32::try_from(pid).ok().filter(|&pid| pid > 0)
+}
+
+/// Remove the lock at `lock` unless a running process holds it, and only while it is still the
+/// file that was judged: a record a starting engine put back meanwhile is that engine's. `Ok`
+/// when nothing is left for the next start to trip on. `running` is [`process_is_running`]
+/// outside the tests, which use it to change the file between the two reads.
+fn remove_unheld_lock(lock: &Path, running: impl Fn(u32) -> bool) -> Result<(), String> {
+    let unreadable = |err: io::Error| format!("the lock could not be read ({err}); nothing was removed");
+    let Some(judged) = read_lock(lock).map_err(unreadable)? else { return Ok(()) };
+    if let Some(pid) = lock_pid(&judged.bytes) {
+        if running(pid) {
+            return Err(format!(
+                "the lock belongs to process {pid}, which is still running, so it was kept and the \
+                 engine was not restarted"
+            ));
+        }
+    }
+    match read_lock(lock).map_err(unreadable)? {
+        None => return Ok(()),
+        Some(now) if now == judged => {}
+        Some(_) => return Err("the lock changed while it was being checked; nothing was removed".to_string()),
+    }
+    match fs::remove_file(lock) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("the lock could not be removed ({err}); the engine was not restarted")),
+    }
+}
+
+/// Is `pid` a process the operating system still has? Whatever this cannot answer reads as
+/// running: that direction keeps a lock, and the other one puts two stores on one directory.
+#[cfg(unix)]
+fn process_is_running(pid: u32) -> bool {
+    extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    const ESRCH: i32 = 3;
+    // A pid above i32::MAX names no Unix process; 0 or below would name a process GROUP.
+    let Ok(pid) = i32::try_from(pid) else { return false };
+    if pid <= 0 {
+        return true;
+    }
+    // SAFETY: signal 0 delivers nothing; the kernel only answers whether the process exists.
+    if unsafe { kill(pid, 0) } == 0 {
+        return true;
+    }
+    // EPERM is a process that exists and belongs to somebody else: running.
+    io::Error::last_os_error().raw_os_error() != Some(ESRCH)
+}
+
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> bool {
+    type Handle = *mut std::ffi::c_void;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const ERROR_INVALID_PARAMETER: i32 = 87;
+    const STILL_ACTIVE: u32 = 259;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn GetExitCodeProcess(process: Handle, code: *mut u32) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+    // SAFETY: the narrowest access there is; the handle is closed before this returns.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        // No such process answers ERROR_INVALID_PARAMETER; access denied is one that exists.
+        return io::Error::last_os_error().raw_os_error() != Some(ERROR_INVALID_PARAMETER);
+    }
+    let mut code = 0u32;
+    // SAFETY: `process` is the open handle above and `code` a live u32.
+    let read = unsafe { GetExitCodeProcess(process, &mut code) };
+    unsafe { CloseHandle(process) };
+    // An exited process still opens while something holds a handle to it; its code says so.
+    read == 0 || code == STILL_ACTIVE
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_is_running(_pid: u32) -> bool {
+    true
 }
 
 /// The data directory an engine plan hands its child, or `None` when it names none.
