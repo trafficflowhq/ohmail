@@ -28,11 +28,12 @@ export const FRAME_STEP_WORK = 10_000;
 export const PHONE_FRAME_MAX_CHARS = 8_000_000;
 
 /**
- * Characters per MB of the app's memory class. Measured on one AVD at three heap limits: out of memory
- * at 8.40 million (64 MB) and 12.98 million (96 MB); at 128 MB 14.96 million drew and 16.79 million drew
- * an empty page. 65,000 per MB keeps every phone under half its first failure.
+ * Characters per MB of the app's memory class. Measured on one AVD with one non-ASCII character in the
+ * text (a document of ASCII alone is held at one byte a character and fails later): at 64 MB 6.41 million
+ * drew and 7.02 million ran out of memory, at 96 MB 10.99 and 12.06. 50,000 per MB is under half of the
+ * longest that drew at each heap, so under half of its first failure.
  */
-export const PHONE_FRAME_CHARS_PER_HEAP_MB = 65_000;
+export const PHONE_FRAME_CHARS_PER_HEAP_MB = 50_000;
 
 /** The ceiling of a low-RAM phone, and of one whose memory class cannot be read. */
 export const PHONE_FRAME_FLOOR_CHARS = 4_000_000;

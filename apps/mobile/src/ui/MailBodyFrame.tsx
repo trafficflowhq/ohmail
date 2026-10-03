@@ -27,6 +27,7 @@ import {
   planFrameCount,
   planFrameLength,
   startFrameCount,
+  type FramePlan,
   type FrameReading,
 } from "../mail/frame-tree";
 import { drawnLength } from "../mail/frame-length";
@@ -35,6 +36,35 @@ import { blockedNotice } from "../mail/notice";
 import { Sheet, SheetRow } from "./Sheet";
 import { Txt } from "./base";
 import { BodyPages } from "./BodyPages";
+
+interface Drawn {
+  id: string;
+  html: string;
+  doc: string;
+}
+
+/**
+ * Counts `plan` (nothing for null) a step per macrotask, logs it, and records a document whose own count
+ * fitted as drawn for this message and html; cancelled on cleanup. The reading the frame may act on.
+ */
+function useFrameCount(plan: FramePlan | null, id: string, html: string, setDrawn: (d: Drawn) => void): FrameReading | null {
+  const [counted, setCounted] = useState<{ key: string; reading: FrameReading } | null>(null);
+  useEffect(() => {
+    if (plan === null) return;
+    let alive = true;
+    const cancel = startFrameCount(plan, (count) => {
+      if (!alive) return;
+      noteFrameTree(count);
+      if (plan.known === null) setCounted({ key: plan.key, reading: count.reading });
+      if (count.reading.fits) setDrawn({ id, html, doc: plan.key });
+    });
+    return () => {
+      alive = false;
+      cancel();
+    };
+  }, [plan, id, html, setDrawn]);
+  return plan === null ? null : frameReadingOf(plan, counted);
+}
 
 export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText: () => void }) {
   const t = useTheme();
@@ -80,23 +110,18 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     () => (current === null ? planFrameLength(drawnChars ?? 0, ceiling) : planFrameCount(current, sanitized.oversize === true, ceiling)),
     [current, drawnChars, sanitized.oversize, ceiling],
   );
-  const [counted, setCounted] = useState<{ key: string; reading: FrameReading } | null>(null);
-  const [drawn, setDrawn] = useState<{ id: string; html: string; doc: string } | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const id = m.id;
-    const cancel = startFrameCount(plan, (count) => {
-      if (!alive) return;
-      noteFrameTree(count);
-      if (plan.known === null) setCounted({ key: plan.key, reading: count.reading });
-      if (count.reading.fits) setDrawn({ id, html, doc: plan.key });
-    });
-    return () => {
-      alive = false;
-      cancel();
-    };
-  }, [plan, m.id, html]);
-  const reading = frameReadingOf(plan, counted);
+  const [drawn, setDrawn] = useState<Drawn | null>(null);
+  const reading = useFrameCount(plan, m.id, html, setDrawn);
+  const kept = drawn !== null && drawn.id === m.id && drawn.html === html ? drawn.doc : null;
+  // A PICTURED STATE REFUSED WITH NOTHING KEPT FALLS BACK TO THE BARE DOCUMENT, NEVER TO TEXT: a remount
+  // after Show as text finds its pictures already minted, so no bare document was drawn first. The same
+  // html with no picture is counted, and once it fits it is the kept document (the images sentence).
+  const needBare = pictured && kept === null && reading !== null && !reading.fits;
+  const barePlan = useMemo(
+    () => (needBare ? planFrameCount(buildPhoneMailDocument(bare.html, theme), bare.oversize === true, ceiling) : null),
+    [needBare, bare, theme, ceiling],
+  );
+  const bareReading = useFrameCount(barePlan, m.id, html, setDrawn);
 
   // The document's own unresolved `cid:` references — the engine fetches THIS message's parts,
   // bounded, and the minted map re-renders this memo through the world.
@@ -134,8 +159,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imagesWanted, resolvedRemote === undefined, pictureUrls.length === 0, m.id]);
 
-  const kept = drawn !== null && drawn.id === m.id && drawn.html === html ? drawn.doc : null;
-  const shows = frameShows(reading, current, kept, sanitized.oversize === true);
+  const shows = frameShows(reading, current, kept, sanitized.oversize === true, barePlan === null ? "none" : bareReading);
   if (shows.show === "text") {
     // The size fallback states its reason — a bare plain-text render reads as a bug.
     return (

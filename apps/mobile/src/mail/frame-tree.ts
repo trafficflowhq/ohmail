@@ -158,17 +158,30 @@ export type FrameShows =
   | { show: "space" }
   | { show: "frame"; doc: string; withheld: boolean };
 
+/** The bare document's reading when a pictured state was refused with nothing kept; "none" when no fallback applies. */
+export type BareFallback = FrameReading | null | "none";
+
 /**
  * The frame's one decision. `current` is this state's document (null when it was not built), `kept`
  * the last document of the same message and html whose own count fitted. A refused state with a kept
- * document keeps it drawn and says the pictures were `withheld`: the pictures are what changes the
- * string for the same html. A refusal with nothing kept is the text part.
+ * document keeps it drawn and says the pictures were `withheld`. A PICTURED state refused with nothing
+ * kept (a remount after Show as text, its pictures already minted) never falls back to text for the
+ * pictures' sake: `bare` is the reading of the same html with no picture, and the frame waits for it
+ * (it becomes the kept document once it fits). Only an html part that does not fit bare is the text part.
  */
-export function frameShows(reading: FrameReading | null, current: string | null, kept: string | null, oversize: boolean): FrameShows {
+export function frameShows(
+  reading: FrameReading | null,
+  current: string | null,
+  kept: string | null,
+  oversize: boolean,
+  bare: BareFallback = "none",
+): FrameShows {
   if (oversize) return { show: "text" };
   if (reading !== null && reading.fits && current !== null) return { show: "frame", doc: current, withheld: false };
-  if (kept === null) return reading === null ? { show: "space" } : { show: "text" };
-  return { show: "frame", doc: kept, withheld: reading !== null };
+  if (kept !== null) return { show: "frame", doc: kept, withheld: reading !== null };
+  if (reading === null) return { show: "space" };
+  if (bare === "none") return { show: "text" };
+  return bare !== null && !bare.fits ? { show: "text" } : { show: "space" };
 }
 
 export const FRAME_TREE_EVENT = "mail_frame_tree";

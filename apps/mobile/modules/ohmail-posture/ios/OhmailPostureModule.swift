@@ -51,16 +51,25 @@ public class OhmailPostureModule: Module {
   }
 
   /**
-   * The mail frame's memory class in MB (`src/mail/frame-ceiling.ts`). iOS has no Java heap; the bound
-   * is the jetsam limit, so the class is what this process may still allocate (`os_proc_available_memory`,
-   * read at the call) divided by 16 MB: 2 GB free reads 128, 1.5 GB 96, 1 GB 64. The simulator has no
-   * limit and answers 0, which the JS takes as the floor. iOS names no low-RAM device.
+   * The mail frame's process memory in bytes (`processMemoryHeap` in `src/mail/frame-ceiling.ts` maps it):
+   * what this process may still allocate before its limit (`os_proc_available_memory`, 0 on the
+   * simulator, which has none), what it holds now (`phys_footprint`, the figure that limit is charged
+   * against), and the device's physical memory. Their sum is the limit, fixed for the process.
    */
-  private static let availableMbPerClassMb: UInt64 = 16
-
-  private static func memoryClass() -> Int {
-    let available = UInt64(os_proc_available_memory())
-    return Int(available / (1024 * 1024) / availableMbPerClassMb)
+  private static func processMemory() -> [String: Double] {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+    let kr = withUnsafeMutablePointer(to: &info) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+        task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+      }
+    }
+    let footprint = kr == KERN_SUCCESS ? Double(info.phys_footprint) : -1
+    return [
+      "available": Double(os_proc_available_memory()),
+      "footprint": footprint,
+      "physical": Double(ProcessInfo.processInfo.physicalMemory),
+    ]
   }
 
   private static func isDuo() -> Bool {
@@ -103,12 +112,8 @@ public class OhmailPostureModule: Module {
       return OhmailPostureModule.isDuo()
     }
 
-    Function("getMemoryClass") { () -> Int in
-      return OhmailPostureModule.memoryClass()
-    }
-
-    Function("isLowRamDevice") { () -> Bool in
-      return false
+    Function("getProcessMemory") { () -> [String: Double] in
+      return OhmailPostureModule.processMemory()
     }
 
     Function("getModelIdentifier") { () -> String in
