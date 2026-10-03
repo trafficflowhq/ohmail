@@ -27,7 +27,7 @@ export { csrfTokenFor } from "./csrf.js";
 
 // Route groups: auth (§2) + slice C (sync/SSE/push/mailboxes/rules) + the full table.
 export {
-  authRoutes, apiRoutes,
+  authRoutes, apiRoutes, desktopApprovalRoutes,
   syncRoutesGroup, eventsRoutesGroup, pushRoutesGroup, mailboxRoutesGroup, rulesRoutesGroup,
   messageRoutesGroup, threadRoutesGroup,
   screenerRoutesGroup, approvalRoutesGroup, triageRoutesGroup, searchRoutesGroup, privacyRoutesGroup,

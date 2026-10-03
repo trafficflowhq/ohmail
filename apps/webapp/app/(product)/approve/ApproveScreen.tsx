@@ -298,7 +298,17 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
   );
 }
 
-function Shell({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * A self-hosted server mounts no browser approval (`routes/desktop-approval.ts` is the hosted
+ * table's alone): the desktop asks only the hosted service, so a link here was made by somebody
+ * else. The page says so and nothing more: no settle, no read, no kept request, no footer.
+ */
+export function ApproveNotOffered() {
+  const t = useTranslations("approve");
+  return <Shell title={t("unavailableTitle")} foot={false}><p className="sub">{t("notOffered")}</p></Shell>;
+}
+
+function Shell({ title, children, foot = true }: { title: string; children: React.ReactNode; foot?: boolean }) {
   const t = useTranslations("approve");
   return (
     <div className="login">
@@ -307,7 +317,7 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
         <h1>{title}</h1>
         {children}
       </div>
-      <p className="login-foot"><Icon name="shield" /> {t("footer")}</p>
+      {foot ? <p className="login-foot"><Icon name="shield" /> {t("footer")}</p> : null}
     </div>
   );
 }

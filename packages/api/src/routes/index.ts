@@ -2,6 +2,8 @@ import type { Route } from "../router.js";
 /* The auth surface, whole, from its own mail-safe module — see `auth.ts` for why it moved out of
  * this file. Re-exported below so every consumer of this barrel sees exactly what it did. */
 import { authRoutes } from "./auth.js";
+// The browser approval of a desktop sign-in: this table only, never `selfHostRoutes`.
+import { desktopApprovalRoutes } from "./desktop-approval.js";
 import { syncRoutes } from "./sync.js";
 import { eventsRoutes } from "./events.js";
 import { pushRoutes } from "./push.js";
@@ -74,6 +76,7 @@ import { mailboxOAuthRoutes } from "./mailbox-oauth.js";
 import { pairRoutes } from "./pair.js";
 
 export { authRoutes } from "./auth.js";
+export { desktopApprovalRoutes } from "./desktop-approval.js";
 
 /** Sync, SSE, push, mailboxes (read), rules. */
 export const syncRoutesGroup: Route[] = syncRoutes;
@@ -208,6 +211,7 @@ export const apiRoutes: Route[] = [
   ...adminActionRoutes,
   ...adminOAuthRoutes,
   ...authRoutes,
+  ...desktopApprovalRoutes,
   // The pairing ceremony, directly after the auth surface it extends: `POST /pair` (ceremony,
   // step-up), `GET /pair` (read), `DELETE /pair/:id` (ceremony, step-up), `POST /pair/redeem`
   // (anonymous). Device-pair only in effect — the bag wires no invite bridge; see the import.

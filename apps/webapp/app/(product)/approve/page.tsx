@@ -1,4 +1,5 @@
-import { ApproveScreen } from "./ApproveScreen";
+import { SELF_HOST_BUILD } from "../../self-host-marketing";
+import { ApproveNotOffered, ApproveScreen } from "./ApproveScreen";
 import { isApprovalId } from "./approval-return";
 import type { SearchParamsLike } from "../../demo-mode";
 
@@ -9,6 +10,8 @@ import type { SearchParamsLike } from "../../demo-mode";
  * and dropped otherwise; repeated values take the FIRST.
  */
 export default async function ApprovePage(props: { searchParams?: Promise<SearchParamsLike> }) {
+  // A self-hosted server holds no approval to confirm; refuse before anything is read or kept.
+  if (SELF_HOST_BUILD) return <ApproveNotOffered />;
   const searchParams = await props.searchParams;
   const raw = searchParams?.request;
   const first = Array.isArray(raw) ? raw[0] : raw;

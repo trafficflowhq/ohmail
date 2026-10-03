@@ -2282,6 +2282,7 @@
     "requestedJustNowNoNetwork": "Requested just now.",
     "requestedMinutesAgoNoNetwork": "Requested {minutes} min ago.",
     "otherNetwork": "This request did not come from the network this browser is on.",
+    "notOffered": "This server does not approve computer sign-ins from a browser.",
     "signsInTo": "Confirm signs it in to {email}.",
     "confirm": "Confirm",
     "deny": "Not me",

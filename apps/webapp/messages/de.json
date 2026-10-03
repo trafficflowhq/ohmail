@@ -2282,6 +2282,7 @@
     "requestedJustNowNoNetwork": "Gerade eben angefragt.",
     "requestedMinutesAgoNoNetwork": "Vor {minutes} Min. angefragt.",
     "otherNetwork": "Diese Anfrage kam nicht aus dem Netzwerk, mit dem dieser Browser verbunden ist.",
+    "notOffered": "Dieser Server bestätigt keine Computer-Anmeldungen über den Browser.",
     "signsInTo": "Bestätigen meldet ihn bei {email} an.",
     "confirm": "Bestätigen",
     "deny": "Das war ich nicht",
