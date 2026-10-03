@@ -79,6 +79,10 @@
    lines; the window measures every drawn row, so its spacers stay true. */
 .rules-item.noted{height:auto;min-height:64px;padding:8px 0}
 .rules-item .meta.rules-waits{color:var(--ink2)}
+/* those lines are sentences, read whole: they wrap rather than ellipsise */
+.rules-item .meta.rules-waits,.rules-item .meta.rules-rank,.rules-item .meta.rules-copies,
+.rules-item.waiting .meta{white-space:normal;overflow-wrap:anywhere}
+.rules-view .rules-item .rules-lift{align-self:flex-start;margin-top:4px;font-size:calc(11.5px + var(--type-up));padding:4px 10px}
 /* the requests about rules this page no longer lists, above the list they belong to */
 .rules-waiting{margin-bottom:10px}
 .rules-item.waiting{height:auto;min-height:56px;padding:8px 0}

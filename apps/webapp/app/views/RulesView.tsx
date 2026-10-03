@@ -481,7 +481,10 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
     : null;
   const waitingGroup = apart.length > 0 ? (
     <div className="rules-waiting" role="list" aria-label={t("waitingGroup")}>
-      <ListGroupLabel group="waiting" index={0}>{t("waitingGroup")}</ListGroupLabel>
+      {/* NO `index`: this group stands outside the window's index space. At phone width the page is
+          the window's scroller, and a label claiming slot 0 was measured as row 0 — the window
+          re-measured for ever (React's update-depth error) and the pane did not render. */}
+      <ListGroupLabel group="waiting">{t("waitingGroup")}</ListGroupLabel>
       {apart.map((w, i) => {
         const { what, line } = apartLine(w);
         return (
@@ -556,13 +559,16 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
                 {t(rank.kind, { domain: displayRuleMatch(rank.domain), place: placeLabel(rank.place) })}
               </span>
             ) : null}
+            {/* The way back sits under the sentence it answers, not beside Change and Revoke. */}
+            {rank?.kind === "outranked" ? (
+              <Button variant="ghost" className="rules-lift" disabled={lockedWhy !== null} onClick={() => lift(rule)}>
+                {t("liftAction")}
+              </Button>
+            ) : null}
             {twinNote ? <span className="meta rules-copies">{twinNote}</span> : null}
             {waits ? <span className="meta rules-waits" role="status">{waits}</span> : null}
           </span>
           <span className="acts">
-            {rank?.kind === "outranked" ? (
-              <Button variant="ghost" disabled={lockedWhy !== null} onClick={() => lift(rule)}>{t("liftAction")}</Button>
-            ) : null}
             <Button
               variant="ghost"
               disabled={lockedWhy !== null}
