@@ -13,13 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.25.12] — 2026-10-03
-
 ### The sender sheet counts mail filed in another mail app where it is
 <!-- changes: fix-026-sheet-counts.md -->
 
@@ -62,34 +55,10 @@ it. The Rules page and the phone now list those changes, say on each rule whethe
 or was refused, and say when a sender rule outranks a domain rule. A rule is found however its
 address was typed, and once that computer carries a change out, this device's rules follow it.
 
-### The desktop app stays signed in when a session renewal is interrupted
-<!-- changes: triage-026-desktop-session.md -->
+### Still to come
 
-An interrupted renewal of the desktop app's session could sign it out and ask for the password
-again; the server now finishes a renewal or changes nothing, so the app's next try renews the
-session.
-
-### The organizer's log no longer names your mail server
-<!-- changes: fix-026-dial-door-census.md -->
-
-When the background organizer starts connecting to a mailbox, or cannot remove an old claim or
-settings copy from the mailbox's `ohmail/_meta` folder, its log line names the mailbox and the kind
-of error, never the mail server. A failed automatic unsubscribe is logged the same way, without the
-mailing list's server.
-
-### A new rule reaches the computer that organizes your mail
-
-A rule added on a device that does not organize the mailbox now reaches the computer that does.
-
-### A message that cannot be saved no longer holds up the rest of the mailbox
-<!-- changes: freeze-02512-phone-b-note.md -->
-
-On the phone and the desktop app, a message that kept failing to save was retried on every sync and
-the mailbox never moved past it. Such a message is now set aside after repeated attempts, or at once
-when the device cannot store it, and the next version of the app reads it again. If new messages keep
-failing with none saved in between, the app stops setting them aside and says that new mail could not
-be saved. A full or locked storage on the device is never taken as the message's fault, and a failure
-that is not the connection's no longer says the app could not reconnect.
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
 
 ## [0.25.11] — 2026-10-03
 
@@ -11094,8 +11063,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.12...HEAD
-[0.25.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.12
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.11...HEAD
 [0.25.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.11
 [0.25.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.10
 [0.25.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.9
