@@ -68,11 +68,13 @@ services:
       # the local CA would lock out every machine that has not installed that CA's root — the
       # step .env.example asks for, and one people do late. Same `:+` containment as above.
       OHMAIL_HSTS_DIRECTIVE: ${OHMAIL_TLS_INTERNAL:+header -Strict-Transport-Security}
-      # Read only by the external-TLS door: the address whose `X-Forwarded-*` Caddy honours.
-      # Those headers are whatever a caller typed unless something trustworthy set them, so the
-      # default is loopback — a terminator on this same box. No application code here reads
-      # `X-Forwarded-Proto`, and the session cookies carry `Secure` as a literal.
-      OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-127.0.0.1}
+      # Read only by the external-TLS door: the addresses whose `X-Forwarded-*` Caddy honours,
+      # and the api's terminator range below. A same-box terminator reaches the proxy from the
+      # compose network's gateway, never from loopback, so the default is Docker's address pool,
+      # and the terminator must set or replace X-Forwarded-For. `0.0.0.0/32` trusts no terminator
+      # (no connection comes from it): the one setting for a relay that adds nothing. No code
+      # here reads `X-Forwarded-Proto`; the cookies carry `Secure`.
+      OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-172.16.0.0/12}
       # The staging bucket's name, because the Caddyfile's browser-upload route matches the
       # path `/<bucket>/*` — path-style object addressing puts the bucket in the URL. Must
       # stay the same value the api and organizer read, which the shared default guarantees.
@@ -181,6 +183,14 @@ services:
       TF_VAPID_PUBLIC_KEY: ${TF_VAPID_PUBLIC_KEY:-}
       TF_ALERT_SECRET: ${TF_ALERT_SECRET:-}
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
+      # WHO MAY TELL THE api WHO THE CLIENT IS. Every request reaches the api from `proxy`, so the
+      # api believes the client address `proxy` writes into X-Forwarded-For and nobody else's. The
+      # name is resolved inside the api when the proxy first calls, so start order does not matter.
+      # Without this line every visitor shares the proxy's address: one wrong-password lockout and
+      # one signup limit for the whole server, and an audit trail that names nobody. On the
+      # external-TLS door the terminator's hop sits in front of the proxy's, so its range (the
+      # proxy's OHMAIL_TLS_TERMINATOR) is trusted here too and the api walks back past it.
+      TF_TRUSTED_PROXIES: ${TF_TRUSTED_PROXIES:-proxy${OHMAIL_EXTERNAL_TLS:+,${OHMAIL_TLS_TERMINATOR:-172.16.0.0/12}}}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
       MS_OAUTH_TENANT: ${MS_OAUTH_TENANT:-}

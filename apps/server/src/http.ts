@@ -17,5 +17,6 @@
  */
 export {
   makeHttpServer, toWebRequest, writeWebResponse, BodyTooLargeError,
-  type AdapterOptions,
+  makeTrustedProxies, parseTrustedProxyEntry, splitTrustedProxyList, systemLookup,
+  type AdapterOptions, type ForwardingNote, type TrustedProxies,
 } from "@trafficflow/core/adapters/http-host";

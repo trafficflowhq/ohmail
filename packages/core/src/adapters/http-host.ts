@@ -3,6 +3,13 @@ import { createServer as createTlsServer } from "node:https";
 import type { Socket } from "node:net";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { canonicalIp, type TrustedProxies } from "./trusted-proxies.js";
+
+export {
+  canonicalIp, makeTrustedProxies, parseTrustedProxyEntry, splitTrustedProxyList, systemLookup,
+  TRUSTED_PROXY_LOOKUP_MIN_MS, TRUSTED_PROXY_LOOKUP_TIMEOUT_MS, TRUSTED_PROXY_TTL_MS,
+  type TrustedProxies, type TrustedProxyEntry, type TrustedProxyNote, type TrustedProxyOptions,
+} from "./trusted-proxies.js";
 
 /**
  * The hand-rolled node:http adapter — IncomingMessage/ServerResponse to fetch Request/Response;
@@ -48,10 +55,37 @@ export interface AdapterOptions {
    * a flood is exactly the moment a line per socket would be a second denial of service.
    */
   onSocketRefused?: (why: SocketRefusal) => void;
+  /**
+   * The proxies whose `x-forwarded-for` this server believes (the self-host server's
+   * `TF_TRUSTED_PROXIES`). Absent, the socket peer is appended exactly as before, which is what
+   * the desktop's two doors rely on. Present, a trusted peer's trusted hops are stripped from the
+   * right and the nearest untrusted address becomes the last hop `clientIp()` reads; an untrusted
+   * peer is appended, in its canonical spelling.
+   */
+  trustedProxies?: TrustedProxies;
+  /** One fact about a forwarding header, said once per (kind, peer) and bounded; the caller logs it. */
+  onForwardingNote?: (note: ForwardingNote) => void;
 }
 
 /** Why a socket was turned away: the connection bound, or no complete request in time. */
 export type SocketRefusal = "bound" | "header_timeout";
+
+/**
+ * `untrusted_forwarder`: a peer outside the set sent `x-forwarded-for`, which usually means a proxy
+ * nobody named. `no_client_address`: a trusted peer sent no usable client address. Only the peer's
+ * own address is carried, never the header.
+ */
+export interface ForwardingNote {
+  kind: "untrusted_forwarder" | "no_client_address";
+  peer: string;
+}
+
+/** What {@link toWebRequest} needs to decide the client address; `serve()` resolves the peer first. */
+export interface ForwardingTrust {
+  proxies: Pick<TrustedProxies, "has">;
+  peerTrusted: boolean;
+  onNote?: (note: ForwardingNote) => void;
+}
 
 /**
  * Node's own answer to a client error, reproduced — ATTACHING a `clientError` listener suppresses
@@ -114,10 +148,41 @@ function hasBody(req: IncomingMessage): boolean {
   return len !== undefined && Number(len) > 0;
 }
 
+/**
+ * Rewrite `x-forwarded-for` so its last hop is the nearest address NOT in the trusted set. From an
+ * untrusted peer nothing in the header is believed: the peer is appended. From a trusted peer its
+ * trusted hops are stripped from the right; the hop left standing is the client, in canonical
+ * spelling. No hop, or one that is not an address, leaves no header at all: an unknown client,
+ * which the throttles never share a bucket on.
+ */
+function forwardFor(headers: Headers, peer: string, trust: ForwardingTrust): void {
+  const inbound = headers.get("x-forwarded-for");
+  if (!trust.peerTrusted) {
+    if (inbound !== null && peer !== "") trust.onNote?.({ kind: "untrusted_forwarder", peer });
+    if (peer !== "") headers.append("x-forwarded-for", peer);
+    else headers.delete("x-forwarded-for");
+    return;
+  }
+  const hops = (inbound ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  let i = hops.length - 1;
+  while (i >= 0) {
+    const hop = canonicalIp(hops[i]!);
+    if (hop === "" || !trust.proxies.has(hop)) break;
+    i--;
+  }
+  const client = i >= 0 ? canonicalIp(hops[i]!) : "";
+  if (client === "") {
+    headers.delete("x-forwarded-for");
+    trust.onNote?.({ kind: "no_client_address", peer });
+    return;
+  }
+  headers.set("x-forwarded-for", [...hops.slice(0, i), client].join(", "));
+}
+
 /** Build the fetch Request for one inbound message. Exported for the adapter's own tests. */
 export function toWebRequest(
   req: IncomingMessage,
-  opts: { bodyMaxBytes: number; onTooLarge: () => void },
+  opts: { bodyMaxBytes: number; onTooLarge: () => void; trust?: ForwardingTrust },
 ): Request {
   // The scheme is nominal — this process sits behind the operator's proxy and nothing downstream
   // reads it; the HOST half is real and feeds the cookie-auth decision (every asserted host must
@@ -148,15 +213,16 @@ export function toWebRequest(
       /* an unrepresentable header name/value never reaches a handler */
     }
   }
-  // …and this adapter APPENDS the socket's own peer address as the last `x-forwarded-for` hop,
-  // because it IS the nearest trusted proxy in `clientIp()`'s model (that function reads the
-  // LAST hop — the one entry a client cannot append after). Direct exposure: the last hop is
-  // the real peer, and a hand-typed `x-forwarded-for` buys nothing. Behind the operator's
-  // proxy: the last hop is the proxy's address, so per-IP limits key to the proxy — the
-  // over-restrictive, visible direction, which is the safe one; a trusted-proxy knob is the
-  // packaging layer's decision, not a default.
-  const peer = req.socket?.remoteAddress ?? "";
-  if (peer) headers.append("x-forwarded-for", peer);
+  // THE CLIENT ADDRESS: `clientIp()` reads the LAST `x-forwarded-for` hop. Without `trust` the
+  // socket peer is appended, so a typed header buys nothing; but behind a proxy that last hop is
+  // the PROXY, and every client then shares one throttle bucket and one audit address. With
+  // `trust` a trusted peer's word is taken instead (see {@link forwardFor}).
+  if (opts.trust) {
+    forwardFor(headers, canonicalIp(req.socket?.remoteAddress ?? ""), opts.trust);
+  } else {
+    const peer = req.socket?.remoteAddress ?? "";
+    if (peer) headers.append("x-forwarded-for", peer);
+  }
 
   const method = req.method ?? "GET";
   // GET/HEAD are ALWAYS body-less here — undici refuses to construct them with one, and
@@ -230,8 +296,9 @@ export function makeHttpServer(
   handle: (req: Request) => Promise<Response>,
   opts: AdapterOptions,
 ): Server {
+  const note = onceEachPeer(opts.onForwardingNote);
   const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
-    void serve(req, res, handle, opts).catch(() => {
+    void serve(req, res, handle, opts, note).catch(() => {
       // serve() answers its own failures; this catch only covers a socket that died while we
       // were answering, where there is nothing left to say and nobody left to say it to.
       res.destroy();
@@ -280,11 +347,26 @@ export function makeHttpServer(
   return server;
 }
 
+/** How many (kind, peer) notes one server says; past it a spray of new peers says nothing new. */
+const NOTED_PEERS_MAX = 256;
+
+function onceEachPeer(say?: (note: ForwardingNote) => void): ((note: ForwardingNote) => void) | undefined {
+  if (!say) return undefined;
+  const said = new Set<string>();
+  return (note) => {
+    const key = `${note.kind} ${note.peer}`;
+    if (said.has(key) || said.size >= NOTED_PEERS_MAX) return;
+    said.add(key);
+    say(note);
+  };
+}
+
 async function serve(
   req: IncomingMessage,
   res: ServerResponse,
   handle: (r: Request) => Promise<Response>,
   opts: AdapterOptions,
+  note?: (n: ForwardingNote) => void,
 ): Promise<void> {
   // A GET/HEAD that DECLARES a body is refused outright, connection destroyed. Nothing on this
   // API reads one, and the alternative was a measured bypass of the byte cap: the old adapter
@@ -309,8 +391,19 @@ async function serve(
     return;
   }
 
+  // The peer's verdict is the one async step (a configured name may need resolving), taken here
+  // so `toWebRequest` stays synchronous for its tests.
+  let trust: ForwardingTrust | undefined;
+  if (opts.trustedProxies) {
+    const peer = canonicalIp(req.socket?.remoteAddress ?? "");
+    const forwarding = req.headers["x-forwarded-for"] !== undefined;
+    trust = { proxies: opts.trustedProxies, peerTrusted: await opts.trustedProxies.trustsPeer(peer, forwarding) };
+    if (note) trust.onNote = note;
+  }
+
   let tooLarge = false;
   const webReq = toWebRequest(req, {
+    ...(trust ? { trust } : {}),
     bodyMaxBytes: opts.bodyMaxBytes,
     onTooLarge: () => {
       tooLarge = true;

@@ -42,6 +42,7 @@ SETTINGS="${ENV_DIR}/settings.env"
 DB_HOST="ohmail_db_1"
 MINIO_HOST="ohmail_minio_1"
 MAILPIT_HOST="ohmail_mailpit_1"
+PROXY_HOST="ohmail_proxy_1"
 
 mkdir -p "${ENV_DIR}" \
          "${DATA_DIR}/postgres" \
@@ -144,6 +145,7 @@ $(ring_lines)
 $(storage_lines)
 SMTP_URL=smtp://${MAILPIT_HOST}:1025
 MAIL_FROM=ohmail@selfhost.example
+TF_TRUSTED_PROXIES=${PROXY_HOST}
 EOF
 
 # The organizer reads DATABASE_URL_SESSION (not DATABASE_URL) and carries the SAME

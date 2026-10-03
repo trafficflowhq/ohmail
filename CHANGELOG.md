@@ -5634,7 +5634,7 @@ the terminator at port 80 on `OHMAIL_BIND`. This makes `tailscale serve`, an exi
 and a load balancer workable; the self-host guide's note that they were not is corrected.
 
 `X-Forwarded-For` and `X-Forwarded-Proto` are honoured from `OHMAIL_TLS_TERMINATOR` and nowhere
-else, defaulting to `127.0.0.1`. Session cookies are unaffected on either door.
+else. Session cookies are unaffected on either door.
 
 ### Two self-hosted stacks on one machine no longer adopt each other
 

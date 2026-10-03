@@ -874,22 +874,26 @@ export class AuthService extends SessionLifecycle {
 
     // The lockout on `login`'s client key, ahead of the scrypt verify so a locked-out client does
     // not spend our CPU, and RESERVED rather than read ({@link throttleReserve}). The link is
-    // owner-only (it came by mail), so there is no address ceiling here, and a wrong password never
-    // touches `user:<id>` — only a live second-factor lock there is honoured.
-    const { pwKey } = this.passwordKeys(user.email, ctx);
-    await this.throttleReserve(db, pwKey);
+    // owner-only (it came by mail), so an identified client meets no address ceiling here; an
+    // unknown one has no client key and meets the ceiling instead. A wrong password never touches
+    // `user:<id>` — only a live second-factor lock there is honoured.
+    const { pwKey, ceilingKey, hA } = this.passwordKeys(user.email, ctx);
+    const guessKey = pwKey ?? ceilingKey;
+    const guessPolicy = pwKey ? this.passwordPolicy() : this.ceilingPolicy();
+    if (pwKey) await this.throttleReserve(db, pwKey);
+    else await this.reserveCeiling(db, ceilingKey, hA);
     await this.throttleCheck(db, `user:${user.id}`);
 
     const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
     const ok = await this.deps.passwordHasher.verify(password, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher)) && cred !== undefined;
     if (!ok) {
-      await this.throttleLock(db, pwKey);
+      await this.throttleLock(db, guessKey, guessPolicy);
       await this.audit(db, user, "login_failed", "password", ctx);
       // `login`'s exact sentence. The token is still live and still single-use.
       throw new ServiceError("unauthorized", 401, "invalid email or password");
     }
 
-    await this.throttleRefund(db, pwKey);
+    await this.throttleRefund(db, guessKey, guessPolicy);
     await this.rehashIfStale(db, user.id, cred!.passwordHash, password);
 
     const methods = await this.enrolledMethods(db, user.id);
@@ -982,10 +986,11 @@ export class AuthService extends SessionLifecycle {
     // address meet the same statements. `pw:<hA>:<hC>` locks THIS client (423). `pwa:<hA>` counts
     // failures from clients that never signed in here and slows them past the ceiling (429); a
     // known client skips it. So a stranger holds only their own bucket, never the account holder's.
+    // An unknown client has no `pw:` key and is never known: the ceiling alone bounds it.
     // RESERVED, not read — see {@link throttleReserve}.
     const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(email, ctx);
-    const known = await this.isKnownClient(db, hA, hC);
-    await this.throttleReserve(db, pwKey);
+    const known = hC !== null && await this.isKnownClient(db, hA, hC);
+    if (pwKey) await this.throttleReserve(db, pwKey);
     if (!known) await this.reserveCeiling(db, ceilingKey, hA);
 
     // scoped-by: pre-auth sign-in — the row is located by the presented email, throttled and timing-hardened above
@@ -1002,7 +1007,7 @@ export class AuthService extends SessionLifecycle {
     const verified = await this.deps.passwordHasher.verify(
       b.password, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher));
     if (!verified || !user || !cred) {
-      await this.throttleLock(db, pwKey);
+      if (pwKey) await this.throttleLock(db, pwKey);
       if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
       if (user) await this.audit(db, user, "login_failed", "password", ctx);
       throw new ServiceError("unauthorized", 401, "invalid email or password");
@@ -1012,7 +1017,7 @@ export class AuthService extends SessionLifecycle {
     // `signInCompleted` on success, but the `twofa_required` return does NOT — and without a
     // refund a person who opens the 2FA screen `maxFailures` times without finishing would lock
     // their own client. See {@link throttleRefund} for why this is a decrement and never a reset.
-    await this.throttleRefund(db, pwKey);
+    if (pwKey) await this.throttleRefund(db, pwKey);
     if (!known) await this.throttleRefund(db, ceilingKey, this.ceilingPolicy());
     await this.rehashIfStale(db, user.id, cred.passwordHash, b.password);
 
@@ -2776,6 +2781,7 @@ export class AuthService extends SessionLifecycle {
   protected override async signInCompleted(db: Tx, user: typeof users.$inferSelect, ctx: ServiceContext): Promise<void> {
     const { pwKey, hA, hC } = this.passwordKeys(user.email, ctx);
     await this.throttleReset(db, `user:${user.id}`);
+    if (pwKey === null || hC === null) return;
     await this.throttleReset(db, pwKey);
     const now = new Date();
     await db.insert(authThrottle)
@@ -2800,11 +2806,18 @@ export class AuthService extends SessionLifecycle {
     }
   }
 
-  /** The password keys for an address and this request's client — {@link login}. */
-  private passwordKeys(email: string, ctx: ServiceContext): { pwKey: string; ceilingKey: string; hA: string; hC: string } {
+  /**
+   * The password keys for an address and this request's client — {@link login}. An UNKNOWN client
+   * (`ctx.ip` empty: a trusted proxy that named nobody) has no client key, so `pwKey` and `hC` are
+   * null: it takes no lock (five strangers could otherwise lock the holder out) and earns no
+   * known-marker (which would exempt every unknown client from the ceiling). The ceiling bounds it.
+   */
+  private passwordKeys(email: string, ctx: ServiceContext): { pwKey: string | null; ceilingKey: string; hA: string; hC: string | null } {
     const hA = this.keys.address(email.trim().toLowerCase());
-    const hC = this.keys.client((ctx.ip ?? "").trim());
-    return { pwKey: `${THROTTLE_PREFIX.password}${hA}:${hC}`, ceilingKey: `${THROTTLE_PREFIX.addressCeiling}${hA}`, hA, hC };
+    const ip = (ctx.ip ?? "").trim();
+    const hC = ip === "" ? null : this.keys.client(ip);
+    const pwKey = hC === null ? null : `${THROTTLE_PREFIX.password}${hA}:${hC}`;
+    return { pwKey, ceilingKey: `${THROTTLE_PREFIX.addressCeiling}${hA}`, hA, hC };
   }
 
   /** Has this client completed a sign-in to this address within the retention? */

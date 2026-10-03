@@ -8,6 +8,7 @@ import { pgTransportReason } from "@trafficflow/db/cloud";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
 import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
+import { parseTrustedProxyEntry, splitTrustedProxyList } from "./http.js";
 
 /**
  * Deployment configuration for the STANDALONE SELF-HOST SERVER — one long-running process an
@@ -206,6 +207,8 @@ export interface ServerConfig {
   vapidPublicKey: string | null;
   /** `TF_PUSH_ALLOW_PRIVATE=1` — see {@link loadServerConfig}. Absent means ENFORCE. */
   pushAllowPrivate: boolean;
+  /** `TF_TRUSTED_PROXIES` — see {@link loadTrustedProxies}. Empty means no peer's header is believed. */
+  trustedProxies: readonly string[];
   environment: string;
   bodyMaxBytes: number;
   headersTimeoutMs: number;
@@ -325,6 +328,22 @@ function loadOrigin(env: NodeJS.ProcessEnv): { origin: string; rpID: string; aut
       "back WebAuthn, and the hostname doubles as the passkey rpID",
     );
   }
+}
+
+/**
+ * `TF_TRUSTED_PROXIES`: the peers whose `x-forwarded-for` names the client — addresses, CIDRs and
+ * host names, separated by commas or spaces. Unset or empty trusts no peer, the strict branch, and
+ * there is no default here: the bundled compose names its own proxy. An address or CIDR that does
+ * not parse refuses the boot, naming the entry's position and never its text. A host name never
+ * does, because the proxy it names may start after this server.
+ */
+function loadTrustedProxies(env: NodeJS.ProcessEnv): string[] {
+  const entries = splitTrustedProxyList(trimmed(env, "TF_TRUSTED_PROXIES"));
+  entries.forEach((entry, i) => {
+    const parsed = parseTrustedProxyEntry(entry);
+    if ("problem" in parsed) throw new Error(`TF_TRUSTED_PROXIES entry ${i + 1} is not usable: ${parsed.problem}`);
+  });
+  return entries;
 }
 
 /** Both, or neither. Half an SMTP block is a mailer that looks configured and sends nothing. */
@@ -562,6 +581,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
      * because a security default nobody chose is not a default.
      */
     pushAllowPrivate: trimmed(env, "TF_PUSH_ALLOW_PRIVATE") === "1",
+    trustedProxies: loadTrustedProxies(env),
     /**
      * This install's VAPID **public** key, served by `GET /push/vapid-key` so a phone can register
      * its distributor with it. Empty means no keypair — an honest `null` on that route, not an

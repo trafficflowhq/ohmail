@@ -10,7 +10,7 @@ import {
 import { loadServerConfig } from "./config.js";
 import { buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
 import { handleServerRequest } from "./handler.js";
-import { makeHttpServer } from "./http.js";
+import { makeHttpServer, makeTrustedProxies, systemLookup } from "./http.js";
 import { mintFirstRunSetupToken, printSetupToken } from "./setup-token.js";
 
 /**
@@ -97,10 +97,28 @@ async function main(): Promise<void> {
     logger,
   };
 
+  // WHOSE `x-forwarded-for` NAMES THE CLIENT (`TF_TRUSTED_PROXIES`; the bundled compose names its
+  // own proxy). A configured name resolves when a peer first misses the set, and every change of
+  // its answer is logged once: that line is where an operator reads the resolved set. An
+  // untrusted peer that sends the header, or a trusted one that names no client, is logged once
+  // per peer, its address only, never the header.
+  const trustedProxies = makeTrustedProxies(cfg.trustedProxies, {
+    lookup: systemLookup,
+    onNote: (n) => {
+      if (n.kind === "resolved") logger.info("trusted_proxy_resolved", { host: n.name, resolved: n.addresses });
+      else logger.warn("trusted_proxy_unresolved", { host: n.name, configVar: "TF_TRUSTED_PROXIES" });
+    },
+  });
+  logger.info("trusted_proxies_configured", { configVar: "TF_TRUSTED_PROXIES", count: cfg.trustedProxies.length });
   const server = makeHttpServer((req) => handleServerRequest(req, rt), {
     bodyMaxBytes: cfg.bodyMaxBytes,
     headersTimeoutMs: cfg.headersTimeoutMs,
     requestTimeoutMs: cfg.requestTimeoutMs,
+    trustedProxies,
+    onForwardingNote: (n) => logger.warn(
+      n.kind === "untrusted_forwarder" ? "forwarded_header_from_untrusted_peer" : "trusted_proxy_sent_no_client_address",
+      { host: n.peer, configVar: "TF_TRUSTED_PROXIES" },
+    ),
   });
 
   server.listen(cfg.port, () => {

@@ -349,6 +349,24 @@ claim. Older stacks ran under a shared default name; after this update each
 already-connected mailbox may ask for one "Organize here" confirmation, and
 then stays organized under the install's own name.
 
+**One-time, if you keep your own compose file or run another proxy in front
+of the api:** the api takes a visitor's address only from the proxies named
+in `TF_TRUSTED_PROXIES`. The bundled compose file sets it to its own proxy
+service, `proxy`. Without it every visitor shares the proxy's address: five
+wrong passwords from anyone lock that account for everyone, one signup limit
+covers the whole server, and the sign-in history names nobody. The api log
+says so once, as `forwarded_header_from_untrusted_peer`. Add the line to the
+`api` service, naming your proxy if it is not the bundled one:
+
+```yaml
+      TF_TRUSTED_PROXIES: ${TF_TRUSTED_PROXIES:-proxy}
+```
+
+Only name a proxy that writes the visitor's address into `X-Forwarded-For`
+and replaces whatever the visitor sent, and name the proxy itself rather than
+a network where you can: any peer inside a named range may choose its own
+address.
+
 ## Private self-hosting, and ohmail over Tailscale
 
 Everything above assumes a public domain. It does not have to be. ohmail has
@@ -512,12 +530,30 @@ everything on the box, a load balancer — set `OHMAIL_EXTERNAL_TLS=1` in
 `.env`. The proxy then serves plain HTTP on port 80, holds no certificate and
 orders none, while `OHMAIL_ORIGIN` goes on naming the https address your
 terminator presents. Point the terminator at port 80 on `OHMAIL_BIND`
-(`127.0.0.1:80` with the default, which is what a same-box terminator wants),
-and set `OHMAIL_TLS_TERMINATOR` if it is on another host —
-`X-Forwarded-For` and `X-Forwarded-Proto` are honoured from that address and
-from nowhere else. This is what the two paragraphs below used to say was
-impossible; they are kept, corrected, because the reasoning in them is still
-the reason the switch is shaped this way.
+(`127.0.0.1:80` with the default, which is what a same-box terminator wants).
+`X-Forwarded-For` and `X-Forwarded-Proto` are honoured only from
+`OHMAIL_TLS_TERMINATOR`, by the proxy and, for the visitor's address, by the
+api behind it. Under Docker a same-box terminator reaches the proxy from the
+compose network's gateway, never from loopback, so the default is Docker's
+address pool, `172.16.0.0/12`. Set `OHMAIL_TLS_TERMINATOR` to your terminator's
+address when it is on another host, or when this box's Docker networks are
+outside that range.
+
+**Your terminator must set or replace `X-Forwarded-For` with the visitor's
+address**, because the stack believes what arrives from that range. A
+terminator that speaks HTTP can: Caddy does on its own, and nginx does with
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. A relay that
+only passes the connection through — socat, stunnel, a TCP (layer-4) load
+balancer — adds nothing, and a visitor could then put any address in that
+header: lock another address out of an account, or have it written into the
+sign-in records. With such a relay, or if you are not sure what yours does,
+set `OHMAIL_TLS_TERMINATOR=0.0.0.0/32`. No connection ever comes from that
+address, so neither the proxy nor the api believes a forwarded address, and
+every visitor shares one address, the way this door worked before.
+
+This is what the two paragraphs below used to say was impossible; they are
+kept, corrected, because the reasoning in them is still the reason the switch
+is shaped this way.
 
 **On `tailscale cert`.** Tailscale can issue a *publicly trusted* certificate
 for your `ts.net` name (`tailscale cert ohmail.<tailnet>.ts.net`), which

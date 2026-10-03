@@ -14,7 +14,10 @@ export const THROTTLE_SUBKEY_INFO = "ohmail auth-throttle v1";
 export interface ThrottleKeys {
   /** A sign-in address, normalized (trimmed, lowercased) by the caller. */
   address(email: string): string;
-  /** A client identity — the trusted client IP; `""` is one bucket for callers the host cannot identify. */
+  /**
+   * A client identity — the trusted client IP; `""` is one bucket for callers the host cannot
+   * identify, and takes no lock: the password lock never keys on it (`AuthService.passwordKeys`).
+   */
   client(ip: string): string;
 }
 
