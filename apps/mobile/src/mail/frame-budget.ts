@@ -19,10 +19,20 @@ export const FRAME_STEP_CHARS = 16_384;
 export const FRAME_STEP_WORK = 10_000;
 
 /**
- * The longest document the frame hands the WebView, in characters. Measured on a test phone (a 192 MB
- * Java heap) with one picture named N times: 8.4 million characters drew with a 49 MB heap, 12.5 million
- * with 141 MB, 16.8 million drew an empty page with no error anywhere, and 30.5 million ran the app out
- * of memory. This is under half the first failure. A longer document is refused like a tree past
- * {@link FRAME_BUDGET}, and one its pictures would make longer is refused before they are written.
+ * The longest document the frame hands the WebView on any phone, in characters. Measured on a test phone
+ * (a 192 MB Java heap) with one picture named N times: 8.4 million characters drew, 16.8 million drew an
+ * empty page with no error, 30.5 million ran the app out of memory. A smaller heap fails sooner (the
+ * WebView copies the document into the Java heap), so each phone's own ceiling is
+ * `phoneFrameMaxChars` in `frame-ceiling.ts`, which never exceeds this.
  */
 export const PHONE_FRAME_MAX_CHARS = 8_000_000;
+
+/**
+ * Characters per MB of the app's memory class. Measured on one AVD at three heap limits: out of memory
+ * at 8.40 million (64 MB) and 12.98 million (96 MB); at 128 MB 14.96 million drew and 16.79 million drew
+ * an empty page. 65,000 per MB keeps every phone under half its first failure.
+ */
+export const PHONE_FRAME_CHARS_PER_HEAP_MB = 65_000;
+
+/** The ceiling of a low-RAM phone, and of one whose memory class cannot be read. */
+export const PHONE_FRAME_FLOOR_CHARS = 4_000_000;

@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import Network
 import UIKit
+import os
 
 /**
  * The iOS half of the posture pair. `getHasFold` names the hardware: the iPhone Duo by its
@@ -49,6 +50,19 @@ public class OhmailPostureModule: Module {
     }
   }
 
+  /**
+   * The mail frame's memory class in MB (`src/mail/frame-ceiling.ts`). iOS has no Java heap; the bound
+   * is the jetsam limit, so the class is what this process may still allocate (`os_proc_available_memory`,
+   * read at the call) divided by 16 MB: 2 GB free reads 128, 1.5 GB 96, 1 GB 64. The simulator has no
+   * limit and answers 0, which the JS takes as the floor. iOS names no low-RAM device.
+   */
+  private static let availableMbPerClassMb: UInt64 = 16
+
+  private static func memoryClass() -> Int {
+    let available = UInt64(os_proc_available_memory())
+    return Int(available / (1024 * 1024) / availableMbPerClassMb)
+  }
+
   private static func isDuo() -> Bool {
     if duoModels.contains(modelIdentifier()) { return true }
     let name = ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? ""
@@ -87,6 +101,14 @@ public class OhmailPostureModule: Module {
 
     Function("getHasFold") { () -> Bool in
       return OhmailPostureModule.isDuo()
+    }
+
+    Function("getMemoryClass") { () -> Int in
+      return OhmailPostureModule.memoryClass()
+    }
+
+    Function("isLowRamDevice") { () -> Bool in
+      return false
     }
 
     Function("getModelIdentifier") { () -> String in

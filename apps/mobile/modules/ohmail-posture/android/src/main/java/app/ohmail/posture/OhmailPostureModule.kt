@@ -1,5 +1,6 @@
 package app.ohmail.posture
 
+import android.app.ActivityManager
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
@@ -34,6 +35,14 @@ class OhmailPostureModule : Module() {
 
   private fun connectivity(): ConnectivityManager? =
     appContext.reactContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+
+  /**
+   * The mail frame's length ceiling reads the app's heap here (`src/mail/frame-ceiling.ts`):
+   * `getMemoryClass` is `ActivityManager.memoryClass` in MB, `isLowRamDevice` the platform's flag.
+   * With no ActivityManager they answer 0 and true, which the JS takes as the floor.
+   */
+  private fun activityManager(): ActivityManager? =
+    appContext.reactContext?.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
 
   private fun networkState(): String = try {
     val cm = connectivity()
@@ -73,6 +82,8 @@ class OhmailPostureModule : Module() {
     Function("getNetwork") { networkState() }
     Function("getFolds") { lastFolds }
     Function("getHasFold") { sawAnyFold }
+    Function("getMemoryClass") { activityManager()?.memoryClass ?: 0 }
+    Function("isLowRamDevice") { activityManager()?.isLowRamDevice ?: true }
     Function("getLaunchOverride") {
       appContext.currentActivity?.intent?.getStringExtra("OHMAIL_POSTURE")
         ?: System.getenv("OHMAIL_POSTURE")

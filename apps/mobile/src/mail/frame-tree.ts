@@ -5,16 +5,16 @@
  * macrotask. The string is the one the WebView is handed in the consent state it is drawn in: a picture
  * that arrives, or a press of Show images, makes a new string, and that one is counted before it is
  * drawn. Readings are cached on the counted string itself, never on a message id. A document longer than
- * {@link PHONE_FRAME_MAX_CHARS} is refused without a count, and one the pictures would make that long is
- * refused before it is built (`frame-length.ts`).
+ * this phone's ceiling (`frame-ceiling.ts`, at most `PHONE_FRAME_MAX_CHARS`) is refused without a
+ * count, and one the pictures would make that long is refused before it is built (`frame-length.ts`).
  */
 import { treeStepper, type TreeReading } from "./html-tree-budget";
-import { FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK, PHONE_FRAME_MAX_CHARS } from "./frame-budget";
+import { FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK } from "./frame-budget";
 import { engineLogSink, type EngineLogSink } from "../engine/engine-log";
 
 /**
- * A count's reading, or why the frame was refused without one: past the html cap, a document past
- * {@link PHONE_FRAME_MAX_CHARS} (built, or read as that long before its pictures were written), or a
+ * A count's reading, or why the frame was refused without one: past the html cap, a document past this
+ * phone's ceiling (built, or read as that long before its pictures were written), or a
  * step that threw.
  */
 export type FrameReading = TreeReading | { fits: false; past: "oversize" | "length" | "error" };
@@ -28,6 +28,8 @@ export interface FramePlan {
   readonly cached: boolean;
   /** The counted document's length, or the length a refused one would have had. */
   readonly chars: number;
+  /** This phone's length ceiling the plan was made under. */
+  readonly ceiling: number;
 }
 
 /** The last readings, keyed on the counted document itself, so a reopen needs no step. */
@@ -56,23 +58,27 @@ function remember(key: string, reading: FrameReading): void {
   }
 }
 
-/** The plan for `doc`, the exact string the frame would mount; `oversize` is the sanitizer's own refusal. */
-export function planFrameCount(doc: string, oversize: boolean): FramePlan {
-  if (oversize) return { key: doc, known: { fits: false, past: "oversize" }, cached: false, chars: doc.length };
-  if (doc.length > PHONE_FRAME_MAX_CHARS) return { key: doc, known: { fits: false, past: "length" }, cached: false, chars: doc.length };
+/**
+ * The plan for `doc`, the exact string the frame would mount; `oversize` is the sanitizer's own refusal,
+ * `ceiling` this phone's length ceiling (`phoneFrameMaxChars`).
+ */
+export function planFrameCount(doc: string, oversize: boolean, ceiling: number): FramePlan {
+  if (oversize) return { key: doc, known: { fits: false, past: "oversize" }, cached: false, chars: doc.length, ceiling };
+  if (doc.length > ceiling) return { key: doc, known: { fits: false, past: "length" }, cached: false, chars: doc.length, ceiling };
   const hit = recall(doc);
-  return { key: doc, known: hit ?? null, cached: hit !== undefined, chars: doc.length };
+  return { key: doc, known: hit ?? null, cached: hit !== undefined, chars: doc.length, ceiling };
 }
 
-/** The plan for a document that was not built: its pictures would have made it `chars` long. */
-export function planFrameLength(chars: number): FramePlan {
-  return { key: "", known: { fits: false, past: "length" }, cached: false, chars };
+/** The plan for a document that was not built: its pictures would have made it `chars` long, past `ceiling`. */
+export function planFrameLength(chars: number, ceiling: number): FramePlan {
+  return { key: "", known: { fits: false, past: "length" }, cached: false, chars, ceiling };
 }
 
 /** What a count reports: its reading, the counted document's length, and what it cost on this thread. */
 export interface FrameCount {
   reading: FrameReading;
   chars: number;
+  ceiling: number;
   steps: number;
   maxStepMs: number;
   totalMs: number;
@@ -100,7 +106,7 @@ const tenths = (ms: number): number => Math.round(ms * 10) / 10;
  */
 export function startFrameCount(plan: FramePlan, onDone: (count: FrameCount) => void, schedule: FrameSchedule = nextMacrotask): () => void {
   if (plan.known !== null) {
-    onDone({ reading: plan.known, chars: plan.chars, steps: 0, maxStepMs: 0, totalMs: 0, wallMs: 0, cached: plan.cached });
+    onDone({ reading: plan.known, chars: plan.chars, ceiling: plan.ceiling, steps: 0, maxStepMs: 0, totalMs: 0, wallMs: 0, cached: plan.cached });
     return () => {};
   }
   const step = treeStepper(plan.key, FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK);
@@ -129,7 +135,7 @@ export function startFrameCount(plan: FramePlan, onDone: (count: FrameCount) => 
     }
     remember(plan.key, reading);
     onDone({
-      reading, chars: plan.chars, steps, maxStepMs: tenths(maxStepMs), totalMs: tenths(totalMs),
+      reading, chars: plan.chars, ceiling: plan.ceiling, steps, maxStepMs: tenths(maxStepMs), totalMs: tenths(totalMs),
       wallMs: tenths(now() - started), cached: false,
     });
   };
@@ -178,6 +184,7 @@ export function frameTreeLine(count: FrameCount, at: () => Date = () => new Date
     fits: r.fits,
     ...(r.fits ? { elements: r.elements, textChars: r.textChars, work: r.work } : { past: r.past }),
     chars: count.chars,
+    ceiling: count.ceiling,
     steps: count.steps,
     maxStepMs: count.maxStepMs,
     totalMs: count.totalMs,

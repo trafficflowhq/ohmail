@@ -30,7 +30,7 @@ import {
   type FrameReading,
 } from "../mail/frame-tree";
 import { drawnLength } from "../mail/frame-length";
-import { PHONE_FRAME_MAX_CHARS } from "../mail/frame-budget";
+import { phoneFrameCeiling } from "../mail/frame-ceiling-native";
 import { blockedNotice } from "../mail/notice";
 import { Sheet, SheetRow } from "./Sheet";
 import { Txt } from "./base";
@@ -54,8 +54,10 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     [t.c.canvas, t.c.ink, t.c.ink3, t.c.accent],
   );
   // THE PICTURES' LENGTH IS READ BEFORE THEY ARE WRITTEN (`src/mail/frame-length.ts`): a picture is
-  // written once per reference, so a state whose document would pass PHONE_FRAME_MAX_CHARS is refused
-  // without being built, and the sanitize below never writes it.
+  // written once per reference, so a state whose document would pass this phone's ceiling (its memory
+  // class, `src/mail/frame-ceiling.ts`) is refused without being built, and the sanitize below never
+  // writes it.
+  const ceiling = useMemo(() => phoneFrameCeiling(), []);
   const bare = useMemo(() => sanitizeMailHtmlPhone(html, {}), [html]);
   const pictures = useMemo(() => ({ inlineImages: m.inlineImages, resolvedRemote }), [m.inlineImages, resolvedRemote]);
   const pictured = (m.inlineImages?.size ?? 0) > 0 || (resolvedRemote?.size ?? 0) > 0;
@@ -63,7 +65,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
     () => (pictured ? drawnLength(html, pictures, bare, theme) : null),
     [pictured, html, pictures, bare, theme],
   );
-  const tooLong = drawnChars !== null && drawnChars > PHONE_FRAME_MAX_CHARS;
+  const tooLong = drawnChars !== null && drawnChars > ceiling;
   const sanitized = useMemo(
     () => (pictured && !tooLong ? sanitizeMailHtmlPhone(html, pictures) : bare),
     [pictured, tooLong, html, pictures, bare],
@@ -75,8 +77,8 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   // own count fitted, and keeps it, saying why, when the new state is refused.
   const current = useMemo(() => (tooLong ? null : buildPhoneMailDocument(sanitized.html, theme)), [tooLong, sanitized.html, theme]);
   const plan = useMemo(
-    () => (current === null ? planFrameLength(drawnChars ?? 0) : planFrameCount(current, sanitized.oversize === true)),
-    [current, drawnChars, sanitized.oversize],
+    () => (current === null ? planFrameLength(drawnChars ?? 0, ceiling) : planFrameCount(current, sanitized.oversize === true, ceiling)),
+    [current, drawnChars, sanitized.oversize, ceiling],
   );
   const [counted, setCounted] = useState<{ key: string; reading: FrameReading } | null>(null);
   const [drawn, setDrawn] = useState<{ id: string; html: string; doc: string } | null>(null);
