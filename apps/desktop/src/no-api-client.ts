@@ -1045,6 +1045,7 @@ export interface DesktopApprovalDTO {
     platform: string;
     requestedAt: string;
     ipClass: string;
+    network?: "same" | "different" | "unknown";
     expiresIn: number;
     approved: boolean;
 }
