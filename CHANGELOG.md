@@ -165,8 +165,8 @@ CSS parser that sanitizing outgoing mail never reaches.
 ### The IMAP library is updated
 <!-- changes: deps-026-upgrade.md -->
 
-The IMAP library is updated to imapflow 1.7.8, which hardens how a server's replies are read. Each
-received message's parse time is now written to the log, and a slow one as a warning.
+The IMAP library is updated to imapflow 1.7.8, which hardens how a server's replies are read. A
+received message that takes longer than 2 s to read is now written to the log as a warning.
 
 ### Attachments in nested messages open again
 <!-- changes: attachment-sections-026.md -->
