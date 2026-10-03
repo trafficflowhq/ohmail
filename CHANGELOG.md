@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.12] — 2026-10-03
+
 ### The sender sheet counts mail filed in another mail app where it is
 <!-- changes: fix-026-sheet-counts.md -->
 
@@ -73,11 +80,6 @@ mailing list's server.
 ### A new rule reaches the computer that organizes your mail
 
 A rule added on a device that does not organize the mailbox now reaches the computer that does.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.11] — 2026-10-03
 
@@ -11082,7 +11084,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.11...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.12...HEAD
+[0.25.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.12
 [0.25.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.11
 [0.25.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.10
 [0.25.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.9
