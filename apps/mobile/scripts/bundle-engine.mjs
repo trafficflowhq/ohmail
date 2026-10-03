@@ -218,7 +218,9 @@ export function workspaceSourceAliases(repo = REPO) {
  *  4. the desktop's own modules are matched by their exact relative specifier AND by the importer
  *     being inside `apps/sidecar/src` — a bare specifier check would rewrite `./db.js` written
  *     anywhere in the graph, and several packages have a file of that name;
- *  5. a package in `aliases.ONE_COPY` is resolved from its anchor's directory, whoever imports it.
+ *  5. a package in `aliases.ONE_COPY` is resolved from its anchor's directory, whoever imports it;
+ *  6. a row of `aliases.PACKAGE_MODULE_SUBSTITUTES` applies only when the importer IS the named file
+ *     inside that package (the path after its last `node_modules/`) and the specifier matches whole.
  */
 function substitutions(extraBare = {}) {
   const bare = aliases.bareSpecifiers();
@@ -351,6 +353,14 @@ function substitutions(extraBare = {}) {
           const resolved = await resolveFromAnchor(args.path, args.kind);
           applied.push([args.path, resolved]);
           return { path: resolved };
+        }
+        // 6 — a module inside a package, only where that package's own named file requires it.
+        const inPackage = args.importer.match(/^.*\/node_modules\/((?:@[^/]+\/)?[^/]+\/.+)$/);
+        const within = inPackage && Object.hasOwn(aliases.PACKAGE_MODULE_SUBSTITUTES, inPackage[1])
+          ? aliases.PACKAGE_MODULE_SUBSTITUTES[inPackage[1]] : null;
+        if (within && Object.hasOwn(within, args.path)) {
+          applied.push([args.path, within[args.path]]);
+          return { path: within[args.path] };
         }
         return null;   // everything else resolves normally
       });

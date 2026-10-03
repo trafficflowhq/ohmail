@@ -28,6 +28,11 @@ export const SHIMS: string;
 export const NODE_MODULES: SubstitutionTable;
 /** Non-builtin packages the engine reaches that have no place on a phone. */
 export const PACKAGE_ALIASES: SubstitutionTable;
+/**
+ * Modules inside a package, keyed by the importer's path inside its package (`nodemailer/lib/…`),
+ * then by the specifier exactly as that file writes it.
+ */
+export const PACKAGE_MODULE_SUBSTITUTES: Record<string, SubstitutionTable>;
 /** The desktop's own modules, keyed by the literal relative specifier written inside `src`. */
 export const SIDECAR_SUBSTITUTES: SubstitutionTable;
 /** `@trafficflow/api` entry points substituted for a phone-shaped twin. */
@@ -56,6 +61,7 @@ declare const aliases: {
   SHIMS: string;
   NODE_MODULES: SubstitutionTable;
   PACKAGE_ALIASES: SubstitutionTable;
+  PACKAGE_MODULE_SUBSTITUTES: Record<string, SubstitutionTable>;
   SIDECAR_SUBSTITUTES: SubstitutionTable;
   API_SUBSTITUTES: SubstitutionTable;
   SCHEMA_TWIN: { from: string; to: string };

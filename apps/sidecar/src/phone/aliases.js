@@ -134,6 +134,28 @@ const PACKAGE_ALIASES = {
 };
 
 /**
+ * MODULES INSIDE A PACKAGE, substituted only where that package's own file requires them.
+ *
+ * Keyed by the importer's path inside its package, then by the specifier exactly as that file
+ * writes it. nodemailer's entry requires every transport at load and its mailer requires the DKIM
+ * signer; this engine constructs one SMTP transport (`smtpTransportOptions` in the IMAP adapter
+ * sets no pool, sendmail, stream, JSON or SES option) and never passes `dkim`. Each shim refuses
+ * by name if it is ever constructed. About 65 KB leave the artifact.
+ */
+const PACKAGE_MODULE_SUBSTITUTES = {
+  "nodemailer/lib/nodemailer.js": {
+    "./smtp-pool": path.join(SHIMS, "nodemailer-smtp-pool.js"),
+    "./sendmail-transport": path.join(SHIMS, "nodemailer-sendmail-transport.js"),
+    "./stream-transport": path.join(SHIMS, "nodemailer-stream-transport.js"),
+    "./json-transport": path.join(SHIMS, "nodemailer-json-transport.js"),
+    "./ses-transport": path.join(SHIMS, "nodemailer-ses-transport.js"),
+  },
+  "nodemailer/lib/mailer/index.js": {
+    "../dkim": path.join(SHIMS, "nodemailer-dkim.js"),
+  },
+};
+
+/**
  * ONE COPY of the MIME libraries both mail parsers pin exactly. When `imapflow` and `mailparser`
  * pin different versions the bundle carries both — two charset tables of ~390 KB each. Every
  * importer resolves these as the ANCHOR does, whose pins are the newer ones, in a pnpm or an npm
@@ -239,11 +261,11 @@ function bareSpecifiers() {
 
 export {
   MOBILE, REPO, SHIMS, PHONE,
-  NODE_MODULES, PACKAGE_ALIASES, ONE_COPY, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN,
-  EXTERNAL, INJECT, bareSpecifiers,
+  NODE_MODULES, PACKAGE_ALIASES, PACKAGE_MODULE_SUBSTITUTES, ONE_COPY, SIDECAR_SUBSTITUTES,
+  API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
 };
 export default {
   MOBILE, REPO, SHIMS, PHONE,
-  NODE_MODULES, PACKAGE_ALIASES, ONE_COPY, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN,
-  EXTERNAL, INJECT, bareSpecifiers,
+  NODE_MODULES, PACKAGE_ALIASES, PACKAGE_MODULE_SUBSTITUTES, ONE_COPY, SIDECAR_SUBSTITUTES,
+  API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
 };
