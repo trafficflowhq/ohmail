@@ -226,7 +226,8 @@ export const POOLED_ACQUIRE_TIMEOUT_MS = 15_000;
  * carry `withSessionAcquireCeiling` in `packages/api`. Every caller of those two gives up sooner
  * than 15 s (the edge gate's probe after 1.5 s; the resume splash and the desktop engine retry), so
  * a longer wait only turns a retry into a timeout. Busy answers 503 `db_busy` with `Retry-After`
- * in 5 s. It bounds the wait to BEGIN, never a statement: a rotation that started runs to its end.
+ * in 5 s. It bounds the wait to BEGIN — a statement's, or a transaction's ({@link beginWithin}) —
+ * never the work: a rotation that began runs to its end, in one transaction.
  */
 export const SESSION_ACQUIRE_TIMEOUT_MS = 5_000;
 
@@ -241,19 +242,18 @@ export const SESSION_ACQUIRE_TIMEOUT_MS = 5_000;
 export const POOLED_MAX_CONNECTIONS = 4;
 
 /**
- * Thrown when a query spent {@link POOLED_ACQUIRE_TIMEOUT_MS} on the pooled handle without the
- * backend ever beginning to execute it. It means THIS statement had not started — the connection
- * was occupied by whatever sat ahead. Not a database-down signal — its own class, answered 503
- * with `Retry-After`. It deliberately does not claim nothing reached the server: the bytes were
- * pipelined, and {@link guardAcquire} does not cancel (see there), so the refused statement is
- * normally still executed and its result discarded — the same residue a platform kill leaves, but
- * at ~15 s with a named cause instead of 60 s with none. Retry safety for a MUTATION is therefore
- * not asserted: the 503 marks itself retryable only for a safe method or an `Idempotency-Key`.
+ * Thrown when a statement or a transaction spent its ceiling on the pooled handle without the
+ * backend beginning it — the connection was occupied by whatever sat ahead. Not a database-down
+ * signal: its own class, answered 503 with `Retry-After`. A refused STATEMENT may still reach the
+ * server: it was pipelined, and {@link guardAcquire} does not cancel, so it normally executes and
+ * its result is discarded. Retry safety for a mutation is therefore not asserted: the 503 marks
+ * itself retryable only for a safe method or an `Idempotency-Key`. A refused TRANSACTION writes
+ * nothing: {@link beginWithin} rolls it back before its callback runs.
  */
 export class DbAcquireTimeoutError extends Error {
   readonly code = "db_acquire_timeout";
-  constructor(readonly waitedMs: number) {
-    super(`the database connection did not begin this statement within ${waitedMs}ms`);
+  constructor(readonly waitedMs: number, what: "statement" | "transaction" = "statement") {
+    super(`the database connection did not begin this ${what} within ${waitedMs}ms`);
     this.name = "DbAcquireTimeoutError";
   }
 }
@@ -295,9 +295,9 @@ interface PooledQuery {
  * ceilings own it; only a statement that has not started is refused — refused, not cancelled (the
  * block at the timer says why). A statement allowed 55 s by {@link ROLE_DEFAULT_TIMEOUTS} keeps
  * all 55 s; what stops is other requests inheriting that 55 s and dying on the platform's knife.
- * Transactions are not reached: `sql.begin` opens through the driver's own internal handle, and
- * racing the whole promise risks a 503 to a caller whose write then commits anyway — strictly
- * worse than the 504 being fixed.
+ * A transaction's BEGIN never reaches this function — `sql.begin` opens through the driver's own
+ * internal handle — and racing the whole promise would answer 503 to a caller whose write then
+ * commits anyway. {@link beginWithin} bounds that wait instead, and rolls a refused one back.
  */
 function guardAcquire<Q extends object>(query: Q, ms: number): Q {
   const q = query as unknown as PooledQuery;
@@ -354,13 +354,14 @@ function guardAcquire<Q extends object>(query: Q, ms: number): Q {
 }
 
 /**
- * The pooled client with {@link guardAcquire} on every query it issues.
+ * The pooled client with {@link guardAcquire} on every query it issues and {@link beginWithin} on
+ * every transaction it opens.
  *
- * `unsafe` is the ONLY method overridden, and that is sufficient rather than lucky: drizzle's
- * postgres-js session reaches the driver through exactly `client.unsafe(sql, params)`,
- * `client.unsafe(sql, params).values()` and `client.begin(fn)`. Everything else — `options`
- * (which drizzle MUTATES at construction to install its type parsers), `begin`, `end`, `listen` —
- * passes through untouched to the client beneath (the one-flush door), so this cannot drift.
+ * Two methods overridden, and that is sufficient rather than lucky: drizzle's postgres-js session
+ * reaches the driver through exactly `client.unsafe(sql, params)`, `client.unsafe(sql,
+ * params).values()` and `client.begin(fn)`. Everything else — `options` (which drizzle MUTATES at
+ * construction to install its type parsers), `end`, `listen` — passes through untouched to the
+ * client beneath (the one-flush door), so this cannot drift.
  */
 function withAcquireCeiling(
   client: ReturnType<typeof postgres>, ms: number,
@@ -368,15 +369,58 @@ function withAcquireCeiling(
   const guarded = (...args: unknown[]) => guardAcquire(
     (client as unknown as { unsafe: (...a: unknown[]) => object }).unsafe(...args), ms,
   );
+  const begin = (...args: unknown[]) => beginWithin(client, args, ms);
   return new Proxy(client, {
     get(target, prop) {
       if (prop === "unsafe") return guarded;
+      if (prop === "begin") return begin;
       const value = Reflect.get(target, prop);
       return typeof value === "function"
         ? (value as (...a: unknown[]) => unknown).bind(target)
         : value;
     },
   }) as ReturnType<typeof postgres>;
+}
+
+/** The callback of a transaction its caller was already refused: thrown so the driver rolls back. */
+class AbandonedBegin extends Error {
+  constructor() {
+    super("this transaction's caller was refused before it began");
+    this.name = "AbandonedBegin";
+  }
+}
+
+/**
+ * Put a ceiling on the WAIT TO BEGIN A TRANSACTION, and on nothing after it. The driver calls the
+ * callback only once BEGIN has run on a reserved connection, so the callback's first act is the
+ * line between the two: it disarms the timer, or — when the timer has already refused the caller
+ * with {@link DbAcquireTimeoutError} — throws, and the driver answers ROLLBACK. A refused caller's
+ * transaction therefore writes nothing, ever; the abandoned promise's own rejection is swallowed.
+ * Whichever of the timer and the callback runs first decides; they cannot interleave. Every
+ * transaction on a pooled handle carries it: 15 s on the managed API's default handle, 5 s on the
+ * session doors — one that cannot begin in that time answers 503 `db_busy` instead of waiting.
+ */
+function beginWithin(client: ReturnType<typeof postgres>, args: unknown[], ms: number): Promise<unknown> {
+  const open = (client as unknown as { begin: (...a: unknown[]) => Promise<unknown> }).begin;
+  const fn = args[args.length - 1];
+  if (typeof fn !== "function") return Reflect.apply(open, client, args) as Promise<unknown>;
+  let refused = false;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      refused = true;
+      reject(new DbAcquireTimeoutError(ms, "transaction"));
+    }, ms);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    const begun = (sql: unknown): unknown => {
+      clearTimeout(timer);
+      if (refused) throw new AbandonedBegin();
+      return (fn as (s: unknown) => unknown)(sql);
+    };
+    Promise.resolve(Reflect.apply(open, client, [...args.slice(0, -1), begun])).then(
+      (value) => { clearTimeout(timer); if (!refused) resolve(value); },
+      (err: unknown) => { clearTimeout(timer); if (!refused) reject(err); },
+    );
+  });
 }
 
 /**

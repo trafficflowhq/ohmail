@@ -69,6 +69,12 @@ export function classifyRefreshFailure(err: unknown): RefreshFailure {
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
+/** What the rotation's transaction decided — the only three things that leave it. */
+type HotPathVerdict =
+  | { kind: "minted"; tokens: OAuthTokens }
+  | { kind: "refused"; message: string }
+  | { kind: "unclaimed" };
+
 /** The widest client-chosen attempt id this server will record. */
 const ATTEMPT_ID_MAX_CHARS = 128;
 
@@ -726,13 +732,13 @@ export class SessionLifecycle {
   }
 
   /**
-   * Rotate a refresh token — CLAIM FIRST, then decide. SELECT → check → UPDATE defeats the reuse
-   * detection it implements: two concurrent presentations both read `consumed_at === null`, both
-   * skip the revoke branch, both mint valid descendants — an attacker who races the legitimate
-   * client gets a working session AND leaves the family alive. Same defect class `consumeInvite`
-   * avoids, same fix: the claim IS the check — `UPDATE … WHERE consumed_at IS NULL AND revoked_at
-   * IS NULL AND expires_at > now RETURNING`. The classification read is deliberately AFTER the
-   * failed claim: on the hot path it never runs.
+   * Rotate a refresh token — the CLAIM decides, never a read of the token before it. SELECT →
+   * check → UPDATE defeats the reuse detection it implements: two concurrent presentations both
+   * read `consumed_at === null`, both skip the revoke branch, both mint valid descendants — an
+   * attacker who races the legitimate client gets a working session AND leaves the family alive.
+   * Same defect class `consumeInvite` avoids, same fix: the claim IS the check — `UPDATE … WHERE
+   * consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now RETURNING`. The classification
+   * read is deliberately AFTER the failed claim: on the hot path it never runs.
    */
   protected async rotateRefresh(
     ctx: ServiceContext, presented: string, grace: boolean, surface?: SessionSurface,
@@ -781,123 +787,129 @@ export class SessionLifecycle {
       if (presentedRow) refuseCrossAccountCredential(ctx, presentedRow.accountId);
     }
 
-    const [row] = await db.update(refreshTokens)
-      .set({ consumedAt: now, consumedByAttempt: attemptHash })
-      .where(and(
-        eq(refreshTokens.tokenHash, tokenHash),
-        isNull(refreshTokens.consumedAt),
-        isNull(refreshTokens.revokedAt),
-        gt(refreshTokens.expiresAt, now),
-      ))
-      .returning();
-
-    if (!row) {
-      // We did not get the row. Why not — and the answer decides whether a family dies.
-      const [existing] = await db.select().from(refreshTokens)
-        .where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
-      if (!existing || existing.revokedAt) {
-        throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
+    // ONE COMMIT: the session row, the claim, the checks and the successor. The claim used to
+    // autocommit alone, so a fault after it spent the token and minted nothing, and the client's
+    // retry of the only token it held was swept as theft. The session row is locked FIRST, the
+    // order every writer of a family takes, erasure's step 7 included: a claim before it would
+    // hold a token row while waiting for the session, a cycle with each of them. A refusal RETURNS
+    // its verdict so its revoke commits; an unclaimed token leaves for the classification below,
+    // which runs on the autocommitting handle, because the sweep's fallback there depends on it.
+    const outcome = await this.inTransaction(ctx, async (txCtx): Promise<HotPathVerdict> => {
+      const tx = asTx(txCtx);
+      const [session] = await dialect(ctx.db).forUpdate(tx.select().from(sessions)
+        .where(eq(sessions.id, tx.select({ id: refreshTokens.sessionId }).from(refreshTokens)
+          .where(eq(refreshTokens.tokenHash, tokenHash))))
+        .limit(1));
+      const [row] = await tx.update(refreshTokens)
+        .set({ consumedAt: now, consumedByAttempt: attemptHash })
+        .where(and(
+          eq(refreshTokens.tokenHash, tokenHash),
+          isNull(refreshTokens.consumedAt),
+          isNull(refreshTokens.revokedAt),
+          gt(refreshTokens.expiresAt, now),
+        ))
+        .returning();
+      if (!row) return { kind: "unclaimed" };
+      // A REVOKED or vanished session refuses, and its family goes with it. A revoker inside a
+      // transaction waits on the lock above and then revokes whatever this rotation minted, so
+      // what reaches this arm is a revoke that wrote the session row and not yet its tokens.
+      // Refusing holds the invariant "a rotation implies a live session".
+      if (!session || session.revokedAt != null) {
+        await this.revokeFamily(tx, row.familyId, now);
+        return { kind: "refused", message: "session is no longer active" };
       }
-      // Reuse detection: a consumed token presented again means it leaked — revoke the WHOLE
-      // family. EXCEPT the concurrent rotation, which is not theft: indistinguishable at an
-      // INSTANT, distinguishable over TIME. A browser shares one jar across tabs and
-      // single-flights refresh only per tab, so two tabs crossing the access expiry present the
-      // same `tf_refresh` at once; the loser used to get the family revoked — the "no longer
-      // authorized" a user hit by opening a new tab. The distinction keys on TIME-SINCE-CONSUMED,
-      // only on the surface with the race (`grace`): within `refreshReuseGraceMs`, on a live
-      // family within its cap, a re-presentation is re-rotated off the same family. Older — or
-      // ANY re-presentation on a strict surface — is a kept, replayed token: theft, and it
-      // revokes. The window is unchanged; the arm CONVERGES — see {@link convergeGrace}.
-      if (existing.consumedAt) {
-        const consumedMsAgo = now.getTime() - existing.consumedAt.getTime();
-        // A RETRY OF AN UNANSWERED ATTEMPT IS NOT A REUSE. A lost rotation response leaves the
-        // client holding the OLD token, and its retry was byte-identical to a replay. The claim
-        // recorded WHICH attempt spent this row, so a re-presentation naming that attempt is that
-        // client finishing its own rotation: bounded by the token's own window and, on the cookie
-        // surface, by ONE access window from that rotation, past which the name is ignored and
-        // the presentation is an unnamed one (a browser's captured renewal must not outlive the
-        // retry it exists for). An id-less presentation never matches an id-less consumption,
-        // and USE still beats the id — `replayRotation` refuses a chain that moved on.
-        const presentedName = !grace || consumedMsAgo <= this.cfg.accessTtlMs ? attemptHash : null;
-        if (presentedName !== null && existing.consumedByAttempt === presentedName
-          && existing.expiresAt.getTime() > now.getTime()) {
-          const replayed = await this.replayRotation(ctx, existing, presentedName, now, ttls);
-          if (replayed) return replayed;
-        }
-        if (grace && consumedMsAgo <= this.cfg.refreshReuseGraceMs) {
-          const converged = await this.convergeGrace(ctx, existing, now, ttls);
-          if (converged) return converged;
-        }
-        // The lost-response recovery, past the grace window, cookie surface only. A rotation is
-        // two halves: consume + mint, and the response carrying the new token into the jar. When
-        // the second half is LOST (lid closed mid-refresh) the jar keeps the OLD token, and its
-        // next presentation looked exactly like replayed theft and burned the family. Measured
-        // twice, a morning apart: 29.5 minutes after consumption with the successor never used;
-        // and 10.1 seconds, 114 ms past the old grace window. No grace width fixes the first
-        // shape. The discriminator is USE plus IDLE TIME: a stale jar always holds the family's
-        // newest-consumed token, and a tail still unconsumed after a FULL access window means no
-        // awake client drives the session. Both conditions live in `recoverLostRotation`;
-        // otherwise the presentation falls to the sweep.
-        if (grace) {
-          const recovered = await this.recoverLostRotation(ctx, existing, now, ttls);
-          if (recovered) return recovered;
-        }
-        // A CLAIM-KILLED row (`expires_at = consumed_at`) whose kill named NOBODY is refused
-        // plainly: a recovery's or a convergence's claim is not a presentation, so a late
-        // re-presentation is a double-lost jar or a token already dead, and sweeping would revoke
-        // the healthy line just re-established. Only the replay arm names the row it kills, and
-        // that row presented under ANOTHER name is a second holder — somebody replayed a captured
-        // request, or a late answer landed over the replay's line — so it sweeps, as its own
-        // event: the reuse alert reads event names only and must not count it as a stolen token.
-        // Within the grace window the arm above has already converged it.
-        if (existing.expiresAt.getTime() <= existing.consumedAt.getTime()) {
-          if (existing.consumedByAttempt !== null && existing.consumedByAttempt !== presentedName) {
-            throw await this.sweepFamily(ctx, existing, now, "refresh_attempt_revoked", "attempt_mismatch");
-          }
-          throw await this.expiredRefusal(ctx, existing, "superseded");
-        }
-        // The sweep leaves a ROW, and sweep + row are ONE TRANSACTION — with the sweep REDONE
-        // ALONE if it cannot commit. It used to leave nothing: the client got 401s and the only
-        // record was raw session rows correlated by `revoked_at` after the fact. Both naive forms
-        // fail: sequential autocommit can die between the two — a family revoked with NO record,
-        // permanently; one transaction ALONE fails the other way — the cookie handler answers any
-        // error by CLEARING the session cookies, so the consumed token is never re-presented,
-        // while the thief's descendant keeps the compromised family ALIVE. A bookkeeping fault
-        // must never veto a security sweep: on commit failure the catch redoes the sweep alone on
-        // the autocommitting handle — fail-closed. The base records nothing; the hosted tier
-        // writes `auth_events`. The user read is DEFENSIVE.
-        throw await this.sweepFamily(ctx, existing, now, "refresh_reuse_revoked");
+      // The absolute cap, when a surface has one. Rotation rolls the refresh window forward every
+      // time, so a used session renews indefinitely — the decision `config.ts` takes for both
+      // shipped surfaces, which set `absoluteTtlMs: null` and never reach this check. It stays,
+      // live and enforced, for any surface or deployment that DOES set a ceiling, measured from the
+      // SESSION's creation: a per-token measure would be exactly the rolling window this bounds.
+      if (ttls.absoluteTtlMs != null
+        && now.getTime() - session.createdAt.getTime() > ttls.absoluteTtlMs) {
+        await this.revokeFamily(tx, row.familyId, now);
+        return { kind: "refused", message: "session has reached its maximum lifetime" };
       }
-      throw await this.expiredRefusal(ctx, existing, "lapsed");
-    }
+      return { kind: "minted", tokens: await this.mintRotation(txCtx, tx, row, now, ttls) };
+    });
+    if (outcome.kind === "minted") return outcome.tokens;
+    if (outcome.kind === "refused") throw new ServiceError("refresh_revoked", 401, outcome.message);
 
-    // The absolute cap, when a surface has one. Rotation rolls the refresh window forward every
-    // time, so a used session renews indefinitely — the decision `config.ts` takes for both
-    // shipped surfaces, which set `absoluteTtlMs: null` and never reach this check. The check
-    // stays, live and enforced, for any surface or deployment that DOES set a ceiling: `null`
-    // means "no ceiling", a number means the number. Measured from the SESSION's creation, not
-    // the token's — a per-token measure would be exactly the rolling window this bounds. Checked
-    // before anything is written, so a capped session is refused rather than half-rotated.
-    const [session] = await db.select().from(sessions).where(eq(sessions.id, row.sessionId)).limit(1);
-    // A rotation on a REVOKED or vanished session must fail closed. On the hot path a claimed
-    // (un-revoked) token implies a live session, because `revokeFamily` kills tokens and session
-    // together — so this only bites the race where a revocation (logout, all-devices, a reuse
-    // sweep) commits AFTER this call claimed its token: the sweep cannot see a row inserted after
-    // it, so without this check that orphan could keep rotating on a dead session for ever (its
-    // access tokens are inert — `resolveSession` refuses a revoked session — but the mint LOOP is
-    // the defect). Refusing here holds the invariant "a rotation implies a live session" and caps
-    // the artifact at a single inert row.
-    if (!session || session.revokedAt != null) {
-      await this.revokeFamily(db, row.familyId, now);
-      throw new ServiceError("refresh_revoked", 401, "session is no longer active");
+    // We did not get the row. Why not — and the answer decides whether a family dies.
+    const [existing] = await db.select().from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
+    if (!existing || existing.revokedAt) {
+      throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
     }
-    if (ttls.absoluteTtlMs != null
-      && now.getTime() - session.createdAt.getTime() > ttls.absoluteTtlMs) {
-      await this.revokeFamily(db, row.familyId, now);
-      throw new ServiceError("refresh_revoked", 401, "session has reached its maximum lifetime");
+    // Reuse detection: a consumed token presented again means it leaked — revoke the WHOLE
+    // family. EXCEPT the concurrent rotation, which is not theft: indistinguishable at an
+    // INSTANT, distinguishable over TIME. A browser shares one jar across tabs and
+    // single-flights refresh only per tab, so two tabs crossing the access expiry present the
+    // same `tf_refresh` at once; the loser used to get the family revoked — the "no longer
+    // authorized" a user hit by opening a new tab. The distinction keys on TIME-SINCE-CONSUMED,
+    // only on the surface with the race (`grace`): within `refreshReuseGraceMs`, on a live
+    // family within its cap, a re-presentation is re-rotated off the same family. Older — or
+    // ANY re-presentation on a strict surface — is a kept, replayed token: theft, and it
+    // revokes. The window is unchanged; the arm CONVERGES — see {@link convergeGrace}.
+    if (existing.consumedAt) {
+      const consumedMsAgo = now.getTime() - existing.consumedAt.getTime();
+      // A RETRY OF AN UNANSWERED ATTEMPT IS NOT A REUSE. A lost rotation response leaves the
+      // client holding the OLD token, and its retry was byte-identical to a replay. The claim
+      // recorded WHICH attempt spent this row, so a re-presentation naming that attempt is that
+      // client finishing its own rotation: bounded by the token's own window and, on the cookie
+      // surface, by ONE access window from that rotation, past which the name is ignored and
+      // the presentation is an unnamed one (a browser's captured renewal must not outlive the
+      // retry it exists for). An id-less presentation never matches an id-less consumption,
+      // and USE still beats the id — `replayRotation` refuses a chain that moved on.
+      const presentedName = !grace || consumedMsAgo <= this.cfg.accessTtlMs ? attemptHash : null;
+      if (presentedName !== null && existing.consumedByAttempt === presentedName
+        && existing.expiresAt.getTime() > now.getTime()) {
+        const replayed = await this.replayRotation(ctx, existing, presentedName, now, ttls);
+        if (replayed) return replayed;
+      }
+      if (grace && consumedMsAgo <= this.cfg.refreshReuseGraceMs) {
+        const converged = await this.convergeGrace(ctx, existing, now, ttls);
+        if (converged) return converged;
+      }
+      // The lost-response recovery, past the grace window, cookie surface only. A rotation is
+      // two halves: consume + mint, and the response carrying the new token into the jar. When
+      // the second half is LOST (lid closed mid-refresh) the jar keeps the OLD token, and its
+      // next presentation looked exactly like replayed theft and burned the family. Measured
+      // twice, a morning apart: 29.5 minutes after consumption with the successor never used;
+      // and 10.1 seconds, 114 ms past the old grace window. No grace width fixes the first
+      // shape. The discriminator is USE plus IDLE TIME: a stale jar always holds the family's
+      // newest-consumed token, and a tail still unconsumed after a FULL access window means no
+      // awake client drives the session. Both conditions live in `recoverLostRotation`;
+      // otherwise the presentation falls to the sweep.
+      if (grace) {
+        const recovered = await this.recoverLostRotation(ctx, existing, now, ttls);
+        if (recovered) return recovered;
+      }
+      // A CLAIM-KILLED row (`expires_at = consumed_at`) whose kill named NOBODY is refused
+      // plainly: a recovery's or a convergence's claim is not a presentation, so a late
+      // re-presentation is a double-lost jar or a token already dead, and sweeping would revoke
+      // the healthy line just re-established. Only the replay arm names the row it kills, and
+      // that row presented under ANOTHER name is a second holder — somebody replayed a captured
+      // request, or a late answer landed over the replay's line — so it sweeps, as its own
+      // event: the reuse alert reads event names only and must not count it as a stolen token.
+      // Within the grace window the arm above has already converged it.
+      if (existing.expiresAt.getTime() <= existing.consumedAt.getTime()) {
+        if (existing.consumedByAttempt !== null && existing.consumedByAttempt !== presentedName) {
+          throw await this.sweepFamily(ctx, existing, now, "refresh_attempt_revoked", "attempt_mismatch");
+        }
+        throw await this.expiredRefusal(ctx, existing, "superseded");
+      }
+      // The sweep leaves a ROW, and sweep + row are ONE TRANSACTION — with the sweep REDONE
+      // ALONE if it cannot commit. It used to leave nothing: the client got 401s and the only
+      // record was raw session rows correlated by `revoked_at` after the fact. Both naive forms
+      // fail: sequential autocommit can die between the two — a family revoked with NO record,
+      // permanently; one transaction ALONE fails the other way — the cookie handler answers any
+      // error by CLEARING the session cookies, so the consumed token is never re-presented,
+      // while the thief's descendant keeps the compromised family ALIVE. A bookkeeping fault
+      // must never veto a security sweep: on commit failure the catch redoes the sweep alone on
+      // the autocommitting handle — fail-closed. The base records nothing; the hosted tier
+      // writes `auth_events`. The user read is DEFENSIVE.
+      throw await this.sweepFamily(ctx, existing, now, "refresh_reuse_revoked");
     }
-
-    return this.mintRotation(ctx, db, row, now, ttls);
+    throw await this.expiredRefusal(ctx, existing, "lapsed");
   }
 
   /**
@@ -1027,9 +1039,9 @@ export class SessionLifecycle {
         && (ttls.absoluteTtlMs == null
           || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
       if (!renewable) return null;
-      // Unbounded by design: a herd can leave two live tails for an instant (the hot path claims
-      // its token without this lock, so its insert can land after a converger swept), and the
-      // next presentation collapses whatever it finds rather than the one row it expected.
+      // Unbounded by design: it consumes every live tail it finds, not the one row it expected.
+      // The hot path takes this lock before its claim and mints under it, so a herd serializes
+      // here and the family rests on the one tail the last of it mints.
       await tx.update(refreshTokens)
         .set({ consumedAt: now, expiresAt: now })
         .where(and(
@@ -1218,13 +1230,12 @@ export class SessionLifecycle {
           ))
           .returning({ id: refreshTokens.id });
         if (claimed.length === 0) {
-          // The tail vanished between the classification and the claim: the HOT PATH's token
-          // claim is a single autocommitting UPDATE that does not take the session lock, so a
-          // live rotation can spend the tail in that gap. Reclassify
-          // rather than fall through — `null` here would flow into the reuse sweep and revoke
-          // the very family whose rotation just succeeded, and the cookie handler would clear
-          // the jar that rotation had just refilled. A fresh spend converges; anything else
-          // is genuinely the sweep's case (no live tip at all).
+          // The tail vanished between the classification and the claim. Every writer that spends
+          // a tail takes this session lock first, the hot path included, so this arm is defensive:
+          // it reclassifies rather than falls through, because `null` here would flow into the
+          // reuse sweep and revoke the very family whose rotation just succeeded, and the cookie
+          // handler would clear the jar that rotation had just refilled. A fresh spend converges;
+          // anything else is genuinely the sweep's case (no live tip at all).
           return (await classify()) === "racer"
             ? this.mintRotation(txCtx, tx, existing, now, ttls)
             : null;
@@ -1259,17 +1270,20 @@ export class SessionLifecycle {
    * so they are what this statement actually withdrew and not what a later SELECT happens to see;
    * only the LIVE rows are touched, so a family revoked twice reports zero the second time. Every
    * caller but one ignores the value — the exception is the authorization-code replay, which owes
-   * its log line a count it did not make up.
+   * its log line a count it did not make up. SESSIONS FIRST, then tokens — the order every writer
+   * of a family takes, erasure's step 7 included — so a revoke racing a rotation waits on the session
+   * row and then revokes the successor that rotation committed, rather than holding a token row the
+   * rotation waits for.
    */
   protected async revokeFamily(
     db: Tx, familyId: string, now: Date,
   ): Promise<{ sessions: number; refreshTokens: number }> {
-    const tokens = await db.update(refreshTokens).set({ revokedAt: now })
-      .where(and(eq(refreshTokens.familyId, familyId), isNull(refreshTokens.revokedAt)))
-      .returning({ id: refreshTokens.id });
     const live = await db.update(sessions).set({ revokedAt: now })
       .where(and(eq(sessions.familyId, familyId), isNull(sessions.revokedAt)))
       .returning({ id: sessions.id });
+    const tokens = await db.update(refreshTokens).set({ revokedAt: now })
+      .where(and(eq(refreshTokens.familyId, familyId), isNull(refreshTokens.revokedAt)))
+      .returning({ id: refreshTokens.id });
     return { sessions: live.length, refreshTokens: tokens.length };
   }
 

@@ -1,4 +1,5 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, like, or, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings,
   accountStorage,
@@ -449,6 +450,15 @@ export async function deleteAccount(
       tx.delete(accountLifecycleNotices).where(eq(accountLifecycleNotices.accountId, accountId)));
 
     // ── 7. Sessions, devices, and every credential the user holds ───────────────
+    // THE SESSION ROWS, FOR UPDATE, in id order, before anything here reads or deletes a token.
+    // Every other writer of a session family takes its session row before its token rows (the
+    // rotation, every revoke); the FKs force this step's deletes the other way. A renewal already
+    // holding a session commits first and its successor is recorded and deleted below; one arriving
+    // later waits here and finds nothing. Without it a renewal racing this step deadlocked it
+    // (40P01) or committed a successor behind the token delete (23503 on the session delete).
+    await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions)
+      .where(eq(sessions.accountId, accountId))
+      .orderBy(asc(sessions.id)));
     // The live tokens' HASHES are kept first (cloud 0043), so an installed app still holding one
     // is told the account was deleted instead of being answered as a stranger and renewing for
     // ever. A hash of a random secret and the account id — nothing about a person.
