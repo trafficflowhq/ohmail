@@ -1803,12 +1803,6 @@ export const DE: Deck = {
   pfiReplaceNoteBare:
     "Das Speichern ersetzt die Einstellungen im Postfach innerhalb weniger Minuten durch die dieses ohmail. Solange dieses ohmail keine eigenen hat, behält das Postfach sie.",
   pfiReplacedTitle: "Die Einstellungen dieses ohmail gehen innerhalb weniger Minuten ins Postfach.",
-  toastMoveQueuedWithRule: (place: string, holder: string) =>
-    `Für ${holder} vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
-  toastMoveQueuedWithRuleUnknown: (place: string) =>
-    `Für den Organizer vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
-  toastQueuedRuleUndone: (holder: string) => `Keine Regel angelegt. Die Nachricht wartet weiter auf ${holder}.`,
-  toastQueuedRuleUndoneUnknown: "Keine Regel angelegt. Die Nachricht wartet weiter auf den Organizer.",
   waitingStrip: (count: number, holder: string) =>
     `${count === 1 ? "1 Änderung wartet" : `${count} Änderungen warten`} auf ${holder}.`,
   waitingStripUnknown: (count: number) =>

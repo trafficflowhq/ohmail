@@ -2661,12 +2661,6 @@ const TABLE = {
   pfiReplacedTitle: "This ohmail's settings go to the mailbox within a few minutes.",
   /* WHAT WAITS ON THE ORGANIZER (the rules-page lane): a queued Move's rule, the pass that
      finished, and the list of what the other computer has not carried out yet. */
-  toastMoveQueuedWithRule: (place: string, holder: string) =>
-    `Queued for ${holder}: the letter and the sender's rule go to ${place} on its next pass.`,
-  toastMoveQueuedWithRuleUnknown: (place: string) =>
-    `Queued for the organizer: the letter and the sender's rule go to ${place} on its next pass.`,
-  toastQueuedRuleUndone: (holder: string) => `No rule was made. The letter still waits on ${holder}.`,
-  toastQueuedRuleUndoneUnknown: "No rule was made. The letter still waits on the organizer.",
   waitingStrip: (count: number, holder: string) =>
     `${count === 1 ? "1 change waits" : `${count} changes wait`} on ${holder}.`,
   waitingStripUnknown: (count: number) =>
