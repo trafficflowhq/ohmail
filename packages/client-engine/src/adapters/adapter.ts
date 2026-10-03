@@ -74,6 +74,12 @@ export interface MutationOutcome {
    */
   firstSend?: { status: string; at: string } | null;
   /**
+   * THE PRESS CHANGED THE WORDS AND THE SERVER KEPT THE EARLIER ONES — the resume's save was refused
+   * because a send already holds the row (409), or an older server took it over a row past `draft`.
+   * With `firstSend` it is the earlier message that went. Present only on `mail_send`, only when true.
+   */
+  earlierWordsKept?: boolean;
+  /**
    * The decision was accepted for somebody else to carry out — who, by
    * name. Only `screener_decide` carries it, and only where the mailbox is
    * organized by another install: the server records the decision, answers
@@ -125,10 +131,15 @@ export interface MutationQueued {
  */
 export type MutationAnswer = MutationOutcome | MutationQueued;
 
-/** The draft row a send created under its key, and the revision the create answered with. */
+/**
+ * The draft row a send wrote under its key: the revision it answered with, and which words it holds
+ * (`sendFingerprint` of the mutation that wrote it, or `null` when that is not known — an older
+ * record, or a save that did not land). A resume whose words differ, or are unknown, writes first.
+ */
 export interface CreatedDraftRow {
   id: string;
   revision: string | null;
+  fingerprint?: string | null;
 }
 
 /**

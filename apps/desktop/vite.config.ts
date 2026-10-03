@@ -824,6 +824,7 @@ export default defineConfig({
          compiles that file — and the leaf keeps the engine barrel out of the marketing bundle
          over in the web app. `tsconfig.json`'s `paths` carries the same pair. */
       { find: "@ohmail/client-engine/durable", replacement: r("../../packages/client-engine/src/durable.ts") },
+      { find: "@ohmail/client-engine/send-fingerprint", replacement: r("../../packages/client-engine/src/send-fingerprint.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
 

@@ -43,6 +43,7 @@ import { classifyWindowSyncFailure, type WindowSyncFailure } from "./window-sync
 import type { WindowSearchPhases } from "./search-phases.js";
 import { asSendAndDoneIntent, type SendAndDonePlan } from "./send-and-done.js";
 import { countNotify } from "./client-vitals.js";
+import { sendFingerprint } from "./send-fingerprint.js";
 import { UNJUDGED_WRITE_CODES, type UnjudgedWriteCode } from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
@@ -122,8 +123,8 @@ const withheldMarkerOf = (w: unknown): WithheldMarker | null => (isWithheldMarke
  * Idempotency-Key, a drive will send it again), `awaiting_organizer` is the SERVER's — the
  * request is recorded and the install that organizes the mailbox will carry it out, so nothing
  * here retries and nothing here may report it done. `superseded` is a send re-pressed under its
- * key while on the wire that then failed retryably: the newer press carries the key and says its
- * one sentence; this one says nothing (nothing of it waits, and the reply is still going).
+ * key while on the wire, whichever way it then settled: the newer press carries the key and says its
+ * one sentence; this one says nothing (a confirmation waits with the newer press, see `oneSpeaker`).
  */
 /** Ids per `GET /screener/stayed` — the route's own ceiling (`WHY_STAYED_IDS_MAX`). */
 export const WHY_STAYED_PAGE = 100;
@@ -181,6 +182,8 @@ export interface MutationResult {
    * screen when the two have come apart.
    */
   firstSend?: { status: string; at: string };
+  /** The press's newer words were kept back — see {@link MutationOutcome.earlierWordsKept}. */
+  earlierWordsKept?: true;
   /**
    * WHO THE SERVER RECORDED THIS FOR — present on `awaiting_organizer` and nowhere else. The
    * mutation reached the wire and the wire took it; what has NOT happened is the act. The
@@ -577,7 +580,8 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
 function isCreatedRow(v: unknown): v is CreatedDraftRow {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
-  return typeof r.id === "string" && r.id.length > 0 && (r.revision === null || typeof r.revision === "string");
+  return typeof r.id === "string" && r.id.length > 0 && (r.revision === null || typeof r.revision === "string")
+    && (r.fingerprint === undefined || r.fingerprint === null || typeof r.fingerprint === "string");
 }
 
 /** The persisted Send + Done intent of a send row, by PICK — see {@link asSendAndDoneIntent}. */
@@ -7472,6 +7476,54 @@ export class OhmailEngine {
     p: PendingMutation,
     opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
   ): Promise<MutationResult> {
+    const r = await this.dispatchOnce(p, opts);
+    return p.mutation.kind === "mail_send" ? await this.oneSpeaker(p, r) : r;
+  }
+
+  /**
+   * CONFIRMATIONS A NEWER PRESS UNDER THE SAME KEY WILL SPEAK FOR, by that press's entry id. Memory
+   * only: a kill loses it, and the newer press then says only its own sentence (a gap row).
+   */
+  private readonly silencedConfirms = new Map<string, { result: MutationResult; mutation: EngineMutation }>();
+
+  /**
+   * ONE KEY, ONE SPEAKER — the newest press. A send confirmed while a newer press under its key
+   * stands answers `superseded`, and its confirmation waits with that press: the newer press
+   * confirms and speaks for the key, or it ends without a delivery of its own (refused, withdrawn)
+   * and the earlier confirmation speaks instead — as the earlier words, when the two differ.
+   */
+  private async oneSpeaker(p: PendingMutation, r: MutationResult): Promise<MutationResult> {
+    const waiting = this.silencedConfirms.get(p.id);
+    if (r.status === "confirmed") {
+      this.silencedConfirms.delete(p.id);
+      if (p.supersededBy !== undefined) await this.replacementDecided(p.supersededBy);
+      if (p.supersededBy === undefined) return r;
+      const spoken = waiting?.result ?? {
+        ...r, firstSend: r.firstSend ?? { status: "sent", at: this.now().toISOString() },
+      };
+      this.silencedConfirms.set(p.supersededBy, { result: spoken, mutation: waiting?.mutation ?? p.mutation });
+      return { id: p.id, key: p.key, status: "superseded", seq: null };
+    }
+    if (waiting === undefined || r.status === "queued") return r;
+    this.silencedConfirms.delete(p.id);
+    if (r.status === "superseded") {
+      if (p.supersededBy !== undefined) this.silencedConfirms.set(p.supersededBy, waiting);
+      return r;
+    }
+    return this.spokenFor(waiting, p.mutation);
+  }
+
+  /** The waiting confirmation, said as the earlier words when the press that ended carried others. */
+  private spokenFor(waiting: { result: MutationResult; mutation: EngineMutation }, pressed: EngineMutation): MutationResult {
+    const differs = waiting.mutation.kind === "mail_send" && pressed.kind === "mail_send"
+      && sendFingerprint(waiting.mutation) !== sendFingerprint(pressed);
+    return { ...waiting.result, ...(differs ? { earlierWordsKept: true as const } : {}) };
+  }
+
+  private async dispatchOnce(
+    p: PendingMutation,
+    opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
+  ): Promise<MutationResult> {
     /**
      * THE WITHDRAWAL IS READ HERE, the line before the wire, because this is the only place every
      * road passes and the only moment at which "is this still wanted?" is a true question. A
@@ -7663,6 +7715,7 @@ export class OhmailEngine {
         // Rides the confirmed result for `pendingWith`'s reason: the server answered, and this
         // is the only thing that can say the answer was about an earlier press.
         ...(outcome.firstSend ? { firstSend: outcome.firstSend } : {}),
+        ...(outcome.earlierWordsKept === true ? { earlierWordsKept: true as const } : {}),
         ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
       };
     } catch (err) {
@@ -7866,6 +7919,9 @@ export class OhmailEngine {
    */
   private materializeSentOverlay(m: EngineMutation, outcome: MutationOutcome): boolean {
     if (m.kind !== "mail_send") return false;
+    // The words that went are not the ones in `m`, and this engine does not hold them: nothing is
+    // painted, and the real Sent row arrives on the drain.
+    if (outcome.earlierWordsKept === true) return false;
     const header = outcome.providerMessageId;
     if (!header) return false;
     // One copy per message: a re-press under the key confirms the same delivery again.
@@ -8100,6 +8156,12 @@ export class OhmailEngine {
       if (at >= 0) this.queue.splice(at, 1);
       this.overlays.delete(p.id);
       await this.markWithdrawn(p);
+      // An earlier press under this key was delivered and waited for this one to speak: it speaks now.
+      const waiting = this.silencedConfirms.get(p.id);
+      if (waiting !== undefined) {
+        this.silencedConfirms.delete(p.id);
+        this.lateResults.set(p.id, this.spokenFor(waiting, p.mutation));
+      }
     }
     if (rows.length === 0) return "gone";
     this.overlayRev++;

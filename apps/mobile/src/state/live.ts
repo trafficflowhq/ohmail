@@ -2493,42 +2493,13 @@ export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutatio
 }
 
 /**
- * KEYS WHOSE SEND WAS RESUMED OVER DIFFERENT WORDS — half of the two facts the sentence needs.
- * A second press supersedes the queued mutation, so by the time anything settles the earlier
- * text is nowhere left to read; only the moment of the resume sees both versions. The other half
- * is the server's `firstSend`: without it this press's own words are what went, and this mark
- * alone would name the wrong message. Keyed by ENGINE so a session swap takes its marks with
- * it rather than answering for the next account's keys.
+ * WAS THIS CONFIRMATION ABOUT AN EARLIER MESSAGE? Two facts, both the server's: this key was
+ * already settled (`firstSend`), and this press's changed words were kept back (`earlierWordsKept`,
+ * the resume's save refused over a row a send holds). One without the other is an ordinary send —
+ * a plain retry of the same words, or a resume whose newer words landed first.
  */
-const resumedOverOtherText = new WeakMap<OhmailEngine, Set<string>>();
-
-/** Mark this key as resumed over other words. */
-export function noteResumedOverOtherText(engine: OhmailEngine, key: string): void {
-  const marks = resumedOverOtherText.get(engine) ?? new Set<string>();
-  marks.add(key);
-  resumedOverOtherText.set(engine, marks);
-}
-
-/** Read the mark. */
-export function wasResumedOverOtherText(engine: OhmailEngine, key: string): boolean {
-  return resumedOverOtherText.get(engine)?.has(key) === true;
-}
-
-/** Spend the mark — only where the send settled and its sentence has been said. */
-export function forgetResumedOverOtherText(engine: OhmailEngine, key: string): void {
-  resumedOverOtherText.get(engine)?.delete(key);
-}
-
-/**
- * WAS THIS CONFIRMATION ABOUT AN EARLIER MESSAGE? Both facts, asked together, which is the only
- * way either is worth anything: the server says this key was already settled (so this press
- * delivered nothing), and this device says the press carried different words (so what went is
- * not what is on screen). One without the other is an ordinary send — a plain retry of the same
- * words, or a resume the server had never heard of — and says the ordinary sentence.
- */
-export function earlierVersionWent(engine: OhmailEngine, r: MutationResult | null): boolean {
-  if (r === null || r.status !== "confirmed" || r.firstSend === undefined) return false;
-  return wasResumedOverOtherText(engine, r.key);
+export function earlierVersionWent(r: MutationResult | null): boolean {
+  return r !== null && r.status === "confirmed" && r.earlierWordsKept === true && r.firstSend !== undefined;
 }
 
 /** One settled entry of {@link flushQueued}'s ledger: what happened, to which KIND of intent. */
@@ -2683,10 +2654,7 @@ export async function flushQueued(
       r.status === "confirmed" ? ("confirmed" as const)
         : r.error?.code === "send_unverified" ? ("unverified" as const)
           : ("rolled_back" as const);
-    const earlierWent = earlierVersionWent(engine, r);
-    // Terminal: the sentence is about to be said, so the mark is spent here rather than kept
-    // for a second announcement of the same send.
-    forgetResumedOverOtherText(engine, r.key);
+    const earlierWent = earlierVersionWent(r);
     const refusedSend = status === "rolled_back" && meta.kind === "mail_send";
     outcomes.set(r.key, {
       status, kind: meta.kind, forward: meta.forward, sendAt: meta.sendAt, earlierWent,
@@ -4383,13 +4351,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const accepted = outcome === "queued" && (sendAccepted(first) || sendAccepted(settled));
     /**
      * WHICH MESSAGE THIS CONFIRMATION IS ABOUT. A press that resumed a standing key is answered
-     * from the first reservation when there is one — never two copies, never a silent second
-     * delivery, but the words that left are the earlier ones, and the ordinary sentence would
-     * name a message nobody sent. The mark is spent only when this press SETTLED; a still-queued
-     * send leaves it for the reconnect flush, which is the surface that will announce it.
+     * from the first reservation when there is one — never two copies — and when its changed words
+     * were kept back the words that left are the earlier ones: the server's answer says so.
      */
-    const earlierWent = outcome !== "queued" && earlierVersionWent(engine, settled);
-    if (outcome !== "queued" && first !== null) forgetResumedOverOtherText(engine, first.key);
+    const earlierWent = outcome !== "queued" && earlierVersionWent(settled);
     const said = first ? done.get(first.key) : undefined;
     if (said) toast(said.say, said.opts);
     else if (outcome === "sent" || sayRefusals) {
@@ -4431,15 +4396,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const standing = intent === null
       ? undefined
       : [...engine.pendingMutations(), ...engine.inFlightMutations()].find((p) => sendIntentOf(p.mutation) === intent);
-    // WHAT THE RESUME MAY COST, WRITTEN DOWN WHILE BOTH VERSIONS EXIST. The key that stops a
-    // second copy also lets the server answer from the first reservation, and only this moment
-    // can see that the words changed — see `resumedOverOtherText`. Whether it cost anything is
-    // the server's half of the question, asked when the answer comes back.
-    const differs = standing !== undefined && sendTextDiffers(standing.mutation, m);
-    if (differs) noteResumedOverOtherText(engine, standing.key);
-    // Over a send on the wire, that send's own settlement spends the mark before this press's
-    // answer arrives; this answer is about the same key, so the mark is written again for it.
-    const overTheWire = differs && !engine.pendingMutations().includes(standing);
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
        the key would be replayed on the return after the first had gone, and each replay writes a
        draft of its own (`send-waits.ts`). Different words, or Send + Done pressed over a plain
@@ -4453,7 +4409,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // Send + Done's intent rides the send's own outbox row, so whichever road confirms it releases.
       ...(andDone !== null ? { andDone } : {}),
     }).then((r) => {
-      if (overTheWire) noteResumedOverOtherText(engine, r.key);
       noteQueuedSend(engine, r, m);
       return r;
     });

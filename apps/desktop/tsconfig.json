@@ -69,6 +69,7 @@
          platforms for exactly this omission; `test/durable-write-census.test.ts` holds both
          entries to each other so there is no fourth. */
       "@ohmail/client-engine/durable": ["../../packages/client-engine/src/durable.ts"],
+      "@ohmail/client-engine/send-fingerprint": ["../../packages/client-engine/src/send-fingerprint.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
       /* The calendar reader — one of the two `@trafficflow/*` specifiers the desktop program

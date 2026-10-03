@@ -542,6 +542,8 @@ export {
   // same number for a different job — it states a promise, this decides a transport — and the
   // parity suite pins both to the send service's constant.
   SEND_INLINE_MAX_TOTAL_BYTES,
+  // The save refusals a resumed send treats as the edit's own (`drafts-sent-words-frozen.test.ts` proves each).
+  EDIT_OWN_REFUSALS,
   type FetchLike,
   type HttpAdapterOptions,
   type ServerMessageView,

@@ -40,6 +40,7 @@ import type { WindowSyncFailure } from "../window-sync-failure.js";
 import type { WindowSearchPhases } from "../search-phases.js";
 import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
 import { sessionEndedResponse } from "../session-gate.js";
+import { sendFingerprint } from "../send-fingerprint.js";
 import { responseBlob } from "../bytes-blob.js";
 import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
 import { ORGANIZER_REQUESTS_PATH, waitingRequestsOf } from "../organizer-requests-wire.js";
@@ -262,6 +263,15 @@ function narrowBody(wire: Partial<MessageBodyWire>): MessageBodyWire {
  */
 const SEND_WIRE_STATUSES = new Set(["sent", "unverified", "queued", "in_flight", "failed"]);
 
+/**
+ * THE SAVE REFUSALS THE EDIT ITSELF CAUSED, as `DraftsService.update` raises them before it reads
+ * the row: a field it cannot take (400 `validation_failed` — subject, body, html, an address, the
+ * mailbox, a reply and a forward at once) or a size over a bound (413 `draft_too_large`, 413
+ * `payload_too_large` — the body, the recipient list). Any other refusal says nothing about the
+ * words and is retried under the key (`drafts-sent-words-frozen.test.ts` pins each code).
+ */
+export const EDIT_OWN_REFUSALS = new Set(["400 validation_failed", "413 draft_too_large", "413 payload_too_large"]);
+
 /** `POST /drafts/:id/send` answers this shape at 200 AND at 409 — never the error envelope. */
 interface SendWire {
   status?: "sent" | "unverified" | "failed" | "in_flight" | "queued";
@@ -329,13 +339,18 @@ export class HttpAdapter implements EngineAdapter {
    * `Idempotency-Key → draftId` for in-flight sends. A send is TWO requests — create the draft, then send it — and
    * only the second is idempotent server-side (`POST /drafts` is not `idempotent`-marked, so `withIdempotency`
    * short-circuits and a replay writes a SECOND draft). Remembering the draft this key already created means the
-   * engine's retry — same key, same envelope — re-sends the same draft instead of minting another. It is in-memory ON
-   * PURPOSE and needs no more durability than that: the engine's retry queue lives in the same object graph and dies
-   * on the same reload. The worst case when the memo is missed is one orphan `drafts` row that nobody sees — NEVER a
-   * second delivery, because `outbound_sends` is UNIQUE on `(accountId, idempotencyKey)` and a same-key request
-   * replays the first reservation's outcome without touching SMTP.
+   * engine's retry re-sends the same draft instead of minting another. A reload re-seeds it from the outbox row's
+   * `createdRow`. A resume whose words differ from {@link fingerprintForKey} PUTs them first, and the SERVER decides
+   * whether they still may land: a row a reservation already holds answers 409, never a rewrite. Never a second
+   * delivery either way — `outbound_sends` is UNIQUE on `(accountId, idempotencyKey)`.
    */
   private readonly draftForKey = new Map<string, string>();
+  /**
+   * THE WORDS THE ROW UNDER THIS KEY HOLDS, as {@link sendFingerprint} of the mutation that last wrote it (the create
+   * or an accepted PUT). Absent means unknown, and unknown PUTs — the conservative arm. Keyed and cleared with
+   * {@link draftForKey}.
+   */
+  private readonly fingerprintForKey = new Map<string, string>();
   /**
    * THE ROW VERSION THIS SEND WAS COMPOSED AGAINST, per Idempotency-Key — the revision the PUT (or
    * the create) answered with, carried on the send so the server can refuse a row another window
@@ -361,6 +376,7 @@ export class HttpAdapter implements EngineAdapter {
   private forgetSendKey(key: string): void {
     this.draftForKey.delete(key);
     this.revisionForKey.delete(key);
+    this.fingerprintForKey.delete(key);
   }
 
   /**
@@ -694,6 +710,16 @@ export class HttpAdapter implements EngineAdapter {
    * throws through `rejectionOf` so "the server said no" cannot be mistaken for "the draft is
    * empty". A body the server omits is `null` — the one answer that means "no text of record".
    */
+  /** `GET /drafts/:id`'s `status`, or `null` when the server did not answer it readably. */
+  private async draftStatusOf(draftId: string): Promise<string | null> {
+    try {
+      const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`);
+      if (!res.ok) return null;
+      const wire = (await res.json()) as { status?: unknown };
+      return typeof wire.status === "string" ? wire.status : null;
+    } catch { return null; }
+  }
+
   async fetchDraftBody(draftId: string): Promise<string | null> {
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
       const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`, { signal });
@@ -2072,7 +2098,8 @@ export class HttpAdapter implements EngineAdapter {
      * every send. The PUT is not optional and the reason is the debounce: autosave settles two seconds after the last
      * keystroke, so the last thing typed may not have reached the row. Sending without writing the mutation's own
      * fields first would deliver a message that is not the one on screen — the kind of defect nobody finds twice,
-     * because they stop trusting the product. A FAILED PUT DOES NOT STOP THE SEND.
+     * because they stop trusting the product. A FAILED PUT DOES NOT STOP A FIRST SEND; on a resume
+     * whose words changed, a save that never answered does (see below).
      */
 
     /**
@@ -2082,24 +2109,46 @@ export class HttpAdapter implements EngineAdapter {
      * network that cannot take a PUT is unlikely to take the send either, and that failure IS reported.
      */
     /* THE ROW THIS KEY ALREADY MADE, handed back after a reload: this adapter's memory of it is
-       seeded as the adapter that made it would hold it, so the send goes to that row with the
-       revision its create answered, and no PUT rewrites a row the server may already be sending. */
+       seeded as the adapter that made it would hold it — the row, the revision it was written at,
+       and which words it holds. */
     if (createdRow && !this.draftForKey.has(idempotencyKey)) {
       this.draftForKey.set(idempotencyKey, createdRow.id);
       if (createdRow.revision) {
         this.revisionForKey.set(idempotencyKey, createdRow.revision);
         this.noteDraftRevision(createdRow.id, createdRow.revision);
       }
+      if (createdRow.fingerprint) this.fingerprintForKey.set(idempotencyKey, createdRow.fingerprint);
     }
+    /**
+     * A RESUMED KEY WHOSE WORDS CHANGED WRITES THEM FIRST. Equal words replay the row as it stands;
+     * different or unknown ones are PUT, and the answer decides what this press may say: a row still
+     * `draft` took them, a row a reservation holds (409, or an older server's echo naming another
+     * status) keeps the earlier words, which went or are going under this key.
+     */
+    const pressed = sendFingerprint(m);
+    const resumed = this.draftForKey.has(idempotencyKey);
+    const rewrite = resumed && this.fingerprintForKey.get(idempotencyKey) !== pressed;
+    let earlierWordsKept = false;
     let draftId = this.draftForKey.get(idempotencyKey) ?? m.draftId;
-    if (draftId && !this.draftForKey.has(idempotencyKey)) {
+    if (draftId && (!resumed || rewrite)) {
       this.draftForKey.set(idempotencyKey, draftId);
       const wantsBcc = (m.bcc?.length ?? 0) > 0;
       // `draftId` is a `let` and a closure does not keep its narrowing; the row is fixed here.
       const row = draftId;
-      type PutEcho = { bcc?: unknown; mailboxId?: unknown; contentRevision?: unknown };
+      type PutEcho = { bcc?: unknown; mailboxId?: unknown; contentRevision?: unknown; status?: unknown };
+      /**
+       * How the last save ended: `answered` with an echo, `frozen` (a send holds the row), `own` (the
+       * edit itself was refused — {@link EDIT_OWN_REFUSALS}), or `unanswered`: no reply, an
+       * unreadable one, or any other refusal (a 503, a 429, a 404), which says nothing about the row.
+       */
+      let ended = "answered" as "answered" | "frozen" | "own" | "unanswered";
+      let refusal: MutationRejectedError | null = null;
+      /** The revision this client last saw for the row, read BEFORE the save moves it. */
+      const recordedRevision = this.revisionForKey.get(idempotencyKey) ?? this.revisionForDraft.get(row) ?? null;
       /** The save, expressed ONCE — the retry below is this same request, never a second copy. */
       const writeTheRow = async (): Promise<PutEcho | null> => {
+        ended = "unanswered";
+        refusal = null;
         try {
           const put = await this.request("PUT", `/drafts/${encodeURIComponent(row)}`, {
             body: {
@@ -2118,11 +2167,56 @@ export class HttpAdapter implements EngineAdapter {
               ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
             },
           });
-          return put.ok ? ((await put.json()) as PutEcho) : null;
+          if (put.ok) {
+            const echo = await put.json().catch(() => null) as PutEcho | null;
+            if (echo !== null && typeof echo === "object") { ended = "answered"; return echo; }
+            return null;
+          }
+          refusal = await this.rejectionOf(put);
+          if (put.status === 409 && (refusal.code === "draft_sent" || refusal.code === "send_recorded")) ended = "frozen";
+          else if (EDIT_OWN_REFUSALS.has(`${put.status} ${refusal.code ?? ""}`)) ended = "own";
         } catch { /* see above — the row stands, and the send is what matters */ }
         return null;
       };
       let echoed = await writeTheRow();
+      /**
+       * A RESUME'S SAVE THAT WAS NOT ANSWERED SENDS NOTHING, AND KEEPS ITS KEY. The row holds the
+       * earlier words or the newer ones and this press cannot tell which: sending would deliver the
+       * earlier ones under "sent", and forgetting the key would let the next press deliver a second
+       * message. It re-queues under the same key. A refusal of the edit itself stays a refusal, under
+       * the same key too, naming the row so the next press is about that row.
+       */
+      if (rewrite && ended === "unanswered") {
+        const r = refusal as MutationRejectedError | null;
+        throw new MutationRejectedError(
+          "The changed message could not be saved before sending. ohmail will try again under the same send.",
+          { code: r?.code ?? "network", status: r?.status ?? null, retryable: true, retryAfterMs: r?.retryAfterMs ?? null },
+        );
+      }
+      /**
+       * THE EDIT'S OWN REFUSAL ON A RESUMED KEY IS TRUE ONLY OF A ROW STILL A DRAFT. The server
+       * validates the patch before it reads the row, so a sent row answers it too: read the row
+       * first. Past `draft`, a send holds it and its words went or are going — the press goes on
+       * under the key as a frozen save does. A draft: nothing went, and the refusal is said. No
+       * answer: retried under the key.
+       */
+      if (rewrite && ended === "own") {
+        const r = refusal as unknown as MutationRejectedError;
+        const state = await this.draftStatusOf(row);
+        if (state === null) {
+          throw new MutationRejectedError(
+            "The changed message could not be saved before sending. ohmail will try again under the same send.",
+            { code: "network", retryable: true },
+          );
+        }
+        if (state === "draft") {
+          throw new MutationRejectedError(r.message, {
+            code: r.code, status: r.status, retryable: false, entityId: row,
+            ...(r.details !== undefined ? { details: r.details } : {}),
+          });
+        }
+        ended = "frozen";
+      }
       /**
        * THE SAVE FAILED AND THIS CLIENT HAS NEVER SEEN A VERSION OF THIS ROW — one more try.
        *
@@ -2131,68 +2225,93 @@ export class HttpAdapter implements EngineAdapter {
        * that used to go out unstated. So the one case that cannot be answered any other way buys
        * one repeat of the same request. A PUT is idempotent, so the repeat is free of consequence.
        */
-      if (echoed === null && !this.revisionForDraft.has(row)) echoed = await writeTheRow();
+      if (echoed === null && ended !== "frozen" && !this.revisionForDraft.has(row)) echoed = await writeTheRow();
+      /* A SEND ALREADY HOLDS THE ROW: its words are the ones that went or are going, so the press
+         goes on under the same key for the reservation to answer, and says the earlier words went.
+         The guards below are about THIS press's Bcc and identity, which are not the ones in play. */
+      const frozen = ended === "frozen";
+      /* A 200 over a row past `draft` comes from a server without the sent-row belt. It kept the
+         earlier words in the delivery only if it took DIFFERENT ones now: known by the fingerprint,
+         or with none known, by the revision moving. An unchanged restatement earns nothing. */
+      const pastDraft = echoed !== null && typeof echoed.status === "string" && echoed.status !== "draft";
+      const known = this.fingerprintForKey.get(idempotencyKey);
+      const rewritten = known !== undefined
+        ? known !== pressed
+        : recordedRevision !== null && typeof echoed?.contentRevision === "string" && echoed.contentRevision !== recordedRevision;
+      if (frozen || (pastDraft && rewritten)) earlierWordsKept = true;
+      if (!frozen) {
 
-      // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
-      //
-      // The create path below refuses to send when blind recipients were asked for and the
-      // server did not echo them, because an API that predates the field stores the draft
-      // WITHOUT them and the mail leaves addressed to To/Cc only — a wrong delivery the sender
-      // cannot see. Reusing an existing row skips that POST, so the same check runs here, and it
-      // is the one thing on this path that is NOT swallowed: an unverified Bcc is exactly the
-      // failure the guard exists for, and "the PUT did not answer" is not proof that it was
-      // stored. A send with no Bcc is unaffected and still tolerates a blipped PUT.
-      if (wantsBcc && !Array.isArray(echoed?.bcc)) {
-        this.forgetSendKey(idempotencyKey);
-        throw new MutationRejectedError(
-          "This message was not sent: the server did not confirm the Bcc recipients. Reload to update, then try again.",
-          { code: "bcc_unsupported", retryable: false },
-        );
-      }
-
-      // ── AND THE SAME GUARD FOR THE SENDING IDENTITY ─────────────────────────────────────
-      //
-      // The send that follows dials the ROW's mailbox, so the PUT above is what makes the
-      // picked From real — and a server that predates the movable column reads named fields
-      // and ignores the rest: the PUT "succeeds" and the echo carries the row's OLD mailbox.
-      // Going on to `/send` would deliver under an identity the sender explicitly moved off,
-      // which is a wrong-From delivery the recipient sees and the sender cannot. So the echo
-      // must name the picked mailbox, and anything else — the old id, or no echo because the
-      // PUT blipped — refuses the send. Text tolerates a blipped PUT because a stale row is
-      // at most one debounce old; the row's IDENTITY may be days old, so it does not.
-      if (m.mailboxId && echoed?.mailboxId !== m.mailboxId) {
-        this.forgetSendKey(idempotencyKey);
-        throw new MutationRejectedError(
-          "This message was not sent: the server did not confirm the sending address. Try again, or reload to update.",
-          { code: "from_mailbox_unconfirmed", retryable: false },
-        );
-      }
-
-      // THE VERSION THIS PRESS IS VOUCHING FOR. The PUT above wrote the message on screen and the
-      // answer says which version the row is now at; the send below carries it, so a second window
-      // whose autosave lands in between is refused instead of delivered. A server that predates the
-      // field echoes none and the send goes as it always did.
-      if (typeof echoed?.contentRevision === "string" && echoed.contentRevision.length > 0) {
-        this.revisionForKey.set(idempotencyKey, echoed.contentRevision);
-        this.noteDraftRevision(row, echoed.contentRevision);
-      } else if (echoed === null) {
-        /**
-         * NOTHING SAVED, SO NOTHING FRESH TO VOUCH WITH — and a press that vouches for nothing is
-         * admitted as unstated by the send route, which is how the other window's words used to
-         * leave under it. The last version this client was SHOWN stands in instead: a row this
-         * screen wrote and saw, so a row that has since moved is refused. A fresh read would
-         * vouch for text nobody here has looked at. With not even that the send is refused; the
-         * guards above already cover a Bcc or a picked From, and this is the ordinary reply.
-         */
-        const observed = this.revisionForDraft.get(row);
-        if (observed) this.revisionForKey.set(idempotencyKey, observed);
-        else {
+        // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
+        //
+        // The create path below refuses to send when blind recipients were asked for and the
+        // server did not echo them, because an API that predates the field stores the draft
+        // WITHOUT them and the mail leaves addressed to To/Cc only — a wrong delivery the sender
+        // cannot see. Reusing an existing row skips that POST, so the same check runs here, and it
+        // is the one thing on this path that is NOT swallowed: an unverified Bcc is exactly the
+        // failure the guard exists for, and "the PUT did not answer" is not proof that it was
+        // stored. A send with no Bcc is unaffected and still tolerates a blipped PUT.
+        if (wantsBcc && !Array.isArray(echoed?.bcc)) {
           this.forgetSendKey(idempotencyKey);
           throw new MutationRejectedError(
-            "This message was not sent: it could not be saved first, so ohmail cannot tell whether "
-              + "the draft is still the one on this screen. Try again.",
-            { code: "draft_unsaved", retryable: false },
+            "This message was not sent: the server did not confirm the Bcc recipients. Reload to update, then try again.",
+            { code: "bcc_unsupported", retryable: false },
           );
+        }
+
+        // ── AND THE SAME GUARD FOR THE SENDING IDENTITY ─────────────────────────────────────
+        //
+        // The send that follows dials the ROW's mailbox, so the PUT above is what makes the
+        // picked From real — and a server that predates the movable column reads named fields
+        // and ignores the rest: the PUT "succeeds" and the echo carries the row's OLD mailbox.
+        // Going on to `/send` would deliver under an identity the sender explicitly moved off,
+        // which is a wrong-From delivery the recipient sees and the sender cannot. So the echo
+        // must name the picked mailbox, and anything else — the old id, or no echo because the
+        // PUT blipped — refuses the send. Text tolerates a blipped PUT because a stale row is
+        // at most one debounce old; the row's IDENTITY may be days old, so it does not.
+        if (m.mailboxId && echoed?.mailboxId !== m.mailboxId) {
+          this.forgetSendKey(idempotencyKey);
+          throw new MutationRejectedError(
+            "This message was not sent: the server did not confirm the sending address. Try again, or reload to update.",
+            { code: "from_mailbox_unconfirmed", retryable: false },
+          );
+        }
+
+        // THE VERSION THIS PRESS IS VOUCHING FOR. The PUT above wrote the message on screen and the
+        // answer says which version the row is now at; the send below carries it, so a second window
+        // whose autosave lands in between is refused instead of delivered. A server that predates the
+        // field echoes none and the send goes as it always did.
+        if (typeof echoed?.contentRevision === "string" && echoed.contentRevision.length > 0) {
+          this.revisionForKey.set(idempotencyKey, echoed.contentRevision);
+          this.noteDraftRevision(row, echoed.contentRevision);
+        } else if (echoed === null) {
+          /**
+           * NOTHING SAVED, SO NOTHING FRESH TO VOUCH WITH — and a press that vouches for nothing is
+           * admitted as unstated by the send route, which is how the other window's words used to
+           * leave under it. The last version this client was SHOWN stands in instead: a row this
+           * screen wrote and saw, so a row that has since moved is refused. A fresh read would
+           * vouch for text nobody here has looked at. With not even that the send is refused; the
+           * guards above already cover a Bcc or a picked From, and this is the ordinary reply.
+           */
+          const observed = this.revisionForDraft.get(row);
+          if (observed) this.revisionForKey.set(idempotencyKey, observed);
+          else {
+            this.forgetSendKey(idempotencyKey);
+            throw new MutationRejectedError(
+              "This message was not sent: it could not be saved first, so ohmail cannot tell whether "
+                + "the draft is still the one on this screen. Try again.",
+              { code: "draft_unsaved", retryable: false },
+            );
+          }
+        }
+        // THE ROW IS REPORTED ON THIS ROAD TOO, so a reload replays it knowing which words it holds;
+        // a save that did not land records none, and the next resume asks again.
+        const wrote = echoed !== null && !earlierWordsKept;
+        if (wrote) this.fingerprintForKey.set(idempotencyKey, pressed);
+        if (onDraftRow) {
+          await onDraftRow({
+            id: row, revision: this.revisionForKey.get(idempotencyKey) ?? null,
+            fingerprint: this.fingerprintForKey.get(idempotencyKey) ?? null,
+          }).catch(() => undefined);
         }
       }
     }
@@ -2298,7 +2417,8 @@ export class HttpAdapter implements EngineAdapter {
       }
       // The row is reported BEFORE the send request, so a reload replays this row, not a new one.
       // A report that fails costs only that; the send still goes.
-      if (onDraftRow) await onDraftRow({ id: draftId, revision }).catch(() => undefined);
+      this.fingerprintForKey.set(idempotencyKey, pressed);
+      if (onDraftRow) await onDraftRow({ id: draftId, revision, fingerprint: pressed }).catch(() => undefined);
     }
 
     // ── SEND LATER (mail 0077): the press becomes an APPOINTMENT, not a delivery ─────────────
@@ -2438,6 +2558,7 @@ export class HttpAdapter implements EngineAdapter {
       return {
         changes: [], seq, providerMessageId: wire.providerMessageId ?? null,
         ...(firstSend ? { firstSend } : {}),
+        ...(earlierWordsKept ? { earlierWordsKept: true } : {}),
       };
     }
 

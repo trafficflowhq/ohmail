@@ -45,6 +45,7 @@
  */
 
 import type { MailSend } from "./compose";
+import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import { durableRemove, durableSet, type DurableWrite } from "./durable";
 import { storageOwner } from "./storage-owner";
 
@@ -117,74 +118,10 @@ export interface SendLock {
 }
 
 /**
- * FNV-1a, 32-bit, unsigned, base36 — short enough to read in a jar dump and stable across builds.
- *
- * Shared by the envelope and by each attachment's content rather than written twice, because the
- * two copies would be two chances for them to drift into different hashes of the same bytes.
+ * Which message this key belongs to — the shared fingerprint, so the web lock and the adapter's
+ * resume decision can never hash one message two ways. See `@ohmail/client-engine/send-fingerprint`.
  */
-function fnv1a(s: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    hash ^= s.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(36);
-}
-
-/**
- * Which message this key belongs to. The lane alone is not an identity: a compose that never autosaved
- * has `draftId: null`, so after a crash a new message's press would resume the stored key and the
- * server would replay the first send's result — the new mail silently unsent, worse than a duplicate.
- * FNV-1a over the composed envelope; not a security control — it only has to change when the user
- * changes what they wrote. Attachments fold in the content hash, not just name/type/length:
- * `ComposeAttach` re-encodes a picked file in place under its original name, and a re-picked correction
- * keeps all three — a length-only hash resumed the old key and said "Sent." about a file that never
- * left, and the server cannot close this (a replay returns from the conflict branch before any digest).
- */
-export function sendFingerprint(m: MailSend): string {
-  /**
-   * The display name is part of the recipient, because it is part of what goes out: the adapter puts
-   * the whole `EmailAddress` on the wire (`PUT /drafts/:id` and `POST /drafts` send `to: m.to ?? []`),
-   * so a message whose only correction was the name it addresses somebody by must not hash as the
-   * uncorrected one. `JSON.stringify` over a pair per recipient, not a delimiter join — a name is free
-   * text and could contain the delimiter. An absent name and a `null` one collapse on purpose: both
-   * record "no display name". The address keeps its lowercasing: a re-send with the address retyped
-   * in another case is the same message, which is exactly the press that must resume its key.
-   */
-  const addrs = (xs: ReadonlyArray<{ name?: string | null; address: string }> | undefined): string =>
-    JSON.stringify((xs ?? []).map((a) => [a.name ?? null, a.address.toLowerCase()]));
-  /**
-   * Every field the wire carries is hashed. Two were missing, and both were the same defect — a field
-   * the server is given that the fingerprint cannot see: `html ?? body` hashed one of the two bodies a
-   * rich message carries (the unhashed plain-text half is what a client that refuses HTML reads, and
-   * `withSignature` appends to it too), and `threadId` was sent and never hashed.
-   * `sendFingerprintFieldsCovered` in the test dir is the census that keeps this list equal to the
-   * mutation's own fields, so a field added to the wire cannot quietly stay out of the identity.
-   */
-  /**
-   * The draft row is the container, not the content, and hashing it was the defect: a row appears at
-   * the first autosave, is replaced when a send makes its own, and is absent for a press that beat the
-   * first save — so one unchanged message hashed as three, and a fingerprint that changes without the
-   * content changing is how a resume misses and a second Idempotency-Key is minted for mail that may
-   * already have gone. Which row a record names is still written down ({@link SendLock.draftId}, kept
-   * current by {@link attachSendLockDraft}) but is diagnostic only. `sendFingerprintFieldsCovered` in
-   * `send-lock-durable.test.tsx` exempts `draftId` by name for this reason.
-   */
-  const parts = [
-    m.inReplyTo ?? "", m.forwardOf ?? "", m.mailboxId ?? "",
-    m.threadId ?? "",
-    addrs(m.to), addrs(m.cc), addrs(m.bcc),
-    m.subject ?? "", m.body ?? "", m.html ?? "", m.sendAt ?? "",
-    // BY CONTENT — see the header. The length rides along beside the content hash rather than
-    // instead of it, so telling two files apart no longer depends on them differing in size.
-    // Hashed per attachment rather than concatenated into `parts`, which would allocate a second
-    // copy of every byte the person attached.
-    JSON.stringify((m.attachments ?? []).map((a) => [
-      a.filename, a.contentType, a.contentBase64.length, fnv1a(a.contentBase64),
-    ])),
-  ].join("\u0000");
-  return fnv1a(parts);
-}
+export { sendFingerprint };
 
 /**
  * How long a persisted key is still worth resuming. Seven days, chosen against the SERVER's horizons:
