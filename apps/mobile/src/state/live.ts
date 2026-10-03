@@ -4175,11 +4175,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        next poll (`withPullKick`). Once per press, never awaited by the sentence; never throws. */
     if (unsent.length > 0) void engine.requestPull({ mailboxIds: [m.mailboxId] });
     const queued = [...answers].reverse().find((r) => r?.status === "awaiting_organizer");
-    /* THE LETTER WAITS ON THE ORGANIZER, and the move alone is said and sent: a rule created from
-       a device that does not organize the mailbox is refused there today, so none travels with it. */
-    if (queued) {
-      dropHeld();
-      const holder = queued.queuedWith?.name ?? null;
+    const holder = queued?.queuedWith?.name ?? null;
+    /* THE LETTER WAITS ON THE ORGANIZER AND, WHERE THE PRESS DECIDES THE SENDER, ITS RULE GOES TOO
+       (the web's shape): the held routing commits at the window's close and travels as a rule
+       request, below, like any Move's. A press that decides no rule says the letter alone. */
+    if (queued && rules.length === 0) {
       /* Two calls rather than one with a spread: each sentence is passed exactly its own
          arguments, which is what `refusal.test.ts` reads out of this file's source. */
       toast(holder
@@ -4206,9 +4206,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* A PRESS THAT DECIDES THE SENDER SAYS SO, in the web's words (`screeningToast`): the letter
        moved and their future mail follows, or — the letter already filed there — the rule alone. */
     const who = m.from.name?.trim() || m.from.address;
-    const decides = mail.length > 0
-      ? refuse("toastRuledMoved", moveTargetLabel(dest), mail.length, who)
-      : refuse("toastRuledFuture", moveTargetLabel(dest), who);
+    const queuedSaid = holder
+      ? refuse("toastMoveQueuedWithRule", moveTargetLabel(dest), holder)
+      : refuse("toastMoveQueuedWithRuleUnknown", moveTargetLabel(dest));
+    const decides = queued ? queuedSaid
+      : mail.length > 0
+        ? refuse("toastRuledMoved", moveTargetLabel(dest), mail.length, who)
+        : refuse("toastRuledFuture", moveTargetLabel(dest), who);
     if (!opened?.held) {
       /* NO SESSION OR NO RECORD TO HOLD IT BY — the rules go now unless the window already sent
          them, and the sentence does not offer an undo it cannot honour. */
@@ -4230,6 +4234,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         if (outcome === "superseded") { toast(refuse("undoReplaced")); return; }
         const cancelled = outcome === "undone";
         const ruleBack = cancelled ? null : takeRoutingReversal(pressId);
+        /* A LETTER QUEUED FOR THE ORGANIZER has no way back from here: its request stands, and
+           only the rule is taken back. Said so, and no reversal of the letter is sent. */
+        if (queued && cancelled) {
+          toast(holder ? refuse("toastQueuedRuleUndone", holder) : refuse("toastQueuedRuleUndoneUnknown"));
+          return;
+        }
         // At the press, as `undoable` says it; a refusal overrides it when the inverse answers.
         toast(refuse(cancelled ? "toastRoutingUndone" : "toastUndone"));
         void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then(async (vs) => {
