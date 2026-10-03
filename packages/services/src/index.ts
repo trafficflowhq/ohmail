@@ -90,7 +90,7 @@ export {
 } from "./hey-migration.js";
 export {
   RulesService, rulesService,
-  type CreateRuleBody, type PatchRuleBody, type RuleMutation,
+  type CreateRuleBody, type PatchRuleBody, type RuleMutation, type RuleCreation,
   /* Mail 0094 — where a rule edit went, mailbox by mailbox. The panes that render "waiting on
      <machine>" read these, so they are exported rather than left inside the service. */
   type RuleTravel, type RuleRequestSent, type RuleRequestResult, type RuleRemoval,

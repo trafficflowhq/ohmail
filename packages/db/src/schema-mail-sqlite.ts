@@ -981,6 +981,13 @@ export const changeLog = sqliteTable("change_log", {
  */
 export const ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS = 420_727_017;
 
+/**
+ * The `classid` for one account's RULE KEYS: the two doors that create a rule (`POST /rules` on an
+ * organizing install, the organizer's `rule.create` apply) and the reader's belt take it before
+ * they read the key, so two creates under one key cannot both read "no row" and insert twins.
+ */
+export const ACCOUNT_RULE_KEY_LOCK_CLASS = 420_727_019;
+
 export const threads = sqliteTable("threads", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),

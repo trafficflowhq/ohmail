@@ -1330,12 +1330,12 @@ export async function driveOutstandingRequests(
     else if (outcome.next === "expired") expiredIds.push(row.id);
   }
 
+  const skipped: Array<{ requestId: string; reason: string }> = [];
   if (appliedIds.length > 0) {
-    // An applied rule request is applied to this install's own rows in the same unit, so the
-    // person's own press is what the rows say once the organizer has carried it out — unless they
-    // wrote the row again after deciding it (`settleReaderRuleRows`' guard).
+    // An applied rule request is applied to this install's own rows in the same unit, once every
+    // holder its press went to has carried it out — unless the person wrote the row again after
+    // deciding it (`settleReaderRuleRows`' guard).
     const appliedRules = sent.filter((r) => appliedIds.includes(r.id) && r.kind.startsWith("rule."));
-    const skipped: Array<{ requestId: string; reason: string }> = [];
     await db.transaction(async (tx) => {
       await markRequestsApplied(tx, appliedIds, now);
       for (const r of appliedRules) {
@@ -1343,11 +1343,19 @@ export async function driveOutstandingRequests(
         if (out.skipped) skipped.push({ requestId: r.id, reason: out.skipped });
       }
     });
-    for (const k of skipped) log("reader_rule_settle_skipped", { mailboxId: rt.mailboxId, accountId: rt.accountId, ...k });
   }
   for (const r of refusedRows) {
-    await db.transaction((tx) => markRequestsRefused(tx, [r.id], r.reason, now));
+    /* A delete refused `no_such_rule` FINISHES its leg: nothing under the key runs on that mailbox.
+       It can be the press's last leg to answer, so the belt is asked here too, in the same unit. */
+    const row = r.reason === "no_such_rule" ? sent.find((s) => s.id === r.id && s.kind === "rule.delete") : undefined;
+    await db.transaction(async (tx) => {
+      await markRequestsRefused(tx, [r.id], r.reason, now);
+      if (!row) return;
+      const out = await settleReaderRuleRows(tx, rt.accountId, row);
+      if (out.skipped) skipped.push({ requestId: r.id, reason: out.skipped });
+    });
   }
+  for (const k of skipped) log("reader_rule_settle_skipped", { mailboxId: rt.mailboxId, accountId: rt.accountId, ...k });
   if (expiredIds.length > 0) await db.transaction((tx) => markRequestsExpired(tx, expiredIds, now));
 
   if (sentCount > 0 || appliedIds.length > 0 || refusedRows.length > 0 || expiredIds.length > 0) {

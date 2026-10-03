@@ -1814,13 +1814,11 @@ export class HttpAdapter implements EngineAdapter {
        */
 
       /**
-       * The key is honoured now, and this paragraph used to say it was not: a retryable failure replayed by
-       * `flushPending` once wrote a second identical rule. The route now marks the POST `idempotent`, AND — the half
-       * marking alone would not supply — `RulesService.create` claims the key with `claimIdempotencyKey` INSIDE its
-       * own insert transaction, storing the verbatim 201 (a claim outside the transaction still lets the concurrent
-       * case mint two rows, which is why the service does it and not the middleware). A replayed key hands back the
-       * FIRST rule; the same key with a different body is a 409, never a silent second rule. Nothing on this line
-       * changed for that to become true — the key was already being forwarded against the day the claim landed.
+       * One rule per key: a create over a key the account already has a rule for answers THAT rule at 200, with a
+       * seq only when the server changed it, and the echo below upserts it by id. The `Idempotency-Key` decides the
+       * replay: a retry after a lost response gets its first press's status and body back, and the same key with a
+       * different body is a 409. The service claims the key inside its own transaction, which is what keeps the
+       * concurrent case to one answer.
        */
       case "rule_create": {
         const res = await this.request("POST", "/rules", {

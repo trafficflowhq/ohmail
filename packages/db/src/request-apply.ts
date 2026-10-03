@@ -1,11 +1,11 @@
 import { and, asc, desc, eq, inArray, isNull, notInArray, sql, type SQL } from "drizzle-orm";
 import {
-  accountSettings, awayResponders, folderState, mailboxes, messages, organizerRequests,
+  ACCOUNT_RULE_KEY_LOCK_CLASS, accountSettings, awayResponders, folderState, mailboxes, messages, organizerRequests,
   rules as rulesTbl,
 } from "./schema-mail.js";
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
-import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
+import { insertOrganizerRequest, listPressLegs, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
 import { accountWritesHere } from "./organizer-role.js";
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
@@ -849,6 +849,8 @@ export type RuleRefusal = "no_such_rule";
 
 export type ApplyRuleRequestResult =
   | { applied: true; op: "create" | "update" | "delete"; ruleId: string; lastSeq: bigint }
+  /** A create whose key already held the requested state: nothing written, no delta. */
+  | { applied: true; op: "unchanged"; ruleId: string; lastSeq: null }
   | { applied: false; refusal: RuleRefusal };
 
 /**
@@ -907,11 +909,11 @@ async function findRulesByKey(
 }
 
 /** The twins the acting row collapses: deleted in the caller's transaction, one delta each. */
-async function deleteTwins(tx: Tx, accountId: string, twins: readonly FoundRule[]): Promise<void> {
-  if (twins.length === 0) return;
+async function deleteTwins(tx: Tx, accountId: string, twins: readonly FoundRule[]): Promise<bigint[]> {
+  if (twins.length === 0) return [];
   const ids = twins.map((t) => t.id);
   await tx.delete(rulesTbl).where(and(eq(rulesTbl.accountId, accountId), inArray(rulesTbl.id, ids)));
-  await recordRuleDelta(ledger(tx), accountId, ids, "delete");
+  return recordRuleDelta(ledger(tx), accountId, ids, "delete");
 }
 
 /**
@@ -959,6 +961,70 @@ function samePlace(a: string, b: string): boolean {
   return canonicalNewsSpelling(a) === canonicalNewsSpelling(b);
 }
 
+/** What one create under a key did. `lastSeq` is `null` only when nothing at all was written. */
+export type RuleCreateOutcome =
+  | { created: true; ruleId: string; lastSeq: bigint; collapsed: string[] }
+  | { created: false; ruleId: string; lastSeq: bigint | null; collapsed: string[] };
+
+/**
+ * ONE RULE PER FOUR-FIELD KEY, on both create doors: `POST /rules` on an organizing install and the
+ * organizer's `rule.create` apply. A key that already has a row is RECONCILED, never doubled: its
+ * destination, priority and enabled take the request's values, the row becomes the person's, its
+ * twins collapse, and the backlog re-opens only when the routing moved. A request the row already
+ * satisfies writes nothing and records no delta. The account's rule-key lock comes first, so two
+ * creates under one key cannot both read "no row". `match` is the stored spelling (the local door's
+ * own); the lookup always compares `ruleMatchKey`.
+ */
+export async function reconcileRuleCreate(
+  tx: Tx, input: { accountId: string; create: ValidatedRuleCreate; now: Date; match?: string },
+): Promise<RuleCreateOutcome> {
+  const { accountId, create, now } = input;
+  const { key } = create;
+  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
+  /* A ROW UNDER THIS KEY IS NOT THE ANSWER ON ITS OWN. The key names WHICH rule; it says nothing
+     about where that rule files, how it ranks or whether it is on, and a reader working from a
+     stale profile creates over the organizer's rule with a destination of their own. So the
+     difference is applied here, before anything is acked or answered. */
+  const [existing, ...twins] = await findRulesByKey(tx, accountId, key);
+  if (existing) {
+    const collapsed = twins.map((t) => t.id);
+    const twinSeqs = await deleteTwins(tx, accountId, twins);
+    const diff = ruleCreateDiff(existing, create);
+    // Nothing differs: no write and no delta, so no client is woken for a change that is not one.
+    if (Object.keys(diff).length === 0) {
+      return { created: false, ruleId: existing.id, lastSeq: twinSeqs[twinSeqs.length - 1] ?? null, collapsed };
+    }
+    /* The backlog re-opens on the update path's terms: only when the ROUTING moved, never for a
+       reorder or an on/off, and only if the request asked for the mail already filed. */
+    const retro: Partial<typeof rulesTbl.$inferInsert> =
+      diff.destination !== undefined && create.applyRetro
+        ? { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 }
+        : {};
+    // Flat, not nested: the delta below is this write's door and the census reads them together.
+    await tx.update(rulesTbl)
+      .set({ ...diff, ...retro, updatedAt: now })
+      .where(and(eq(rulesTbl.id, existing.id), eq(rulesTbl.accountId, accountId)));
+    const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [existing.id], "update"))[0]!;
+    return { created: false, ruleId: existing.id, lastSeq, collapsed };
+  }
+  const [row] = await tx.insert(rulesTbl).values({
+    accountId,
+    kind: key.kind, match: input.match ?? key.match,
+    destination: create.destination,
+    priority: create.priority,
+    enabled: create.enabled,
+    // A create is a person's own press, never an inference.
+    provenance: "manual",
+    subjectContains: key.subjectContains,
+    bodyContains: key.bodyContains,
+    retroRequestedAt: create.applyRetro ? now : null,
+    // The writer's clock: the reader's belt compares a press's `decidedAt` against it.
+    updatedAt: now,
+  }).returning({ id: rulesTbl.id });
+  const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [row!.id], "create"))[0]!;
+  return { created: true, ruleId: row!.id, lastSeq, collapsed: [] };
+}
+
 /**
  * Apply one rule request. RETRO is the default: creating a rule applies it to mail already on
  * disk (mail 0034), so `retro_requested_at` is stamped on create unless the request says
@@ -976,54 +1042,13 @@ export async function applyRuleRequest(
   const { key } = payload;
 
   if (payload.op === "create") {
-    /* A ROW UNDER THIS KEY IS NOT THE ANSWER ON ITS OWN. The key names WHICH rule; it says nothing
-       about where that rule files, how it ranks or whether it is on — and a reader working from a
-       stale profile creates over the organizer's rule with a destination of their own. Acking
-       `applied` on the lookup alone told that person their rule was in force while their mail kept
-       going to the old folder: a false state, not a lost write. So the difference is applied HERE,
-       in this transaction, before anything is acked; an identical request still writes nothing,
-       which is the idempotent replay this lookup exists for. */
-    const [existing, ...twins] = await findRulesByKey(tx, accountId, key);
-    if (existing) {
-      await deleteTwins(tx, accountId, twins);
-      const diff = ruleCreateDiff(existing, payload);
-      /* The backlog re-opens on the update path's terms: only when the ROUTING moved, never for a
-         reorder or an on/off, and only if the request asked for the mail already filed. */
-      const retro: Partial<typeof rulesTbl.$inferInsert> =
-        diff.destination !== undefined && payload.applyRetro
-          ? { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 }
-          : {};
-      // Flat, not nested: the delta below is this write's door and the census reads them together.
-      if (Object.keys(diff).length > 0) await tx.update(rulesTbl)
-        .set({ ...diff, ...retro, updatedAt: now })
-        .where(and(eq(rulesTbl.id, existing.id), eq(rulesTbl.accountId, accountId)));
-      /* `op: "update"`, BECAUSE THAT IS WHAT THIS BRANCH DID. It answered `"create"` — the word
-         the REQUEST used — for a request that reconciled a row somebody else already had, and
-         the delta it records one line down is an `update`. Nothing was told the wrong word
-         today (`request-drain.ts` reduces the result to `applied`), but a seam that answers what
-         it was asked instead of what it did is one reader away from saying "created" about a
-         rule that existed. */
-      return {
-        applied: true, op: "update", ruleId: existing.id,
-        lastSeq: (await recordRuleDelta(ledger(tx), accountId, [existing.id], "update"))[0]!,
-      };
-    }
-    const [row] = await tx.insert(rulesTbl).values({
-      accountId,
-      kind: key.kind, match: key.match,
-      destination: payload.destination,
-      priority: payload.priority,
-      enabled: payload.enabled,
-      // See the header: a request is a person's own press.
-      provenance: "manual",
-      subjectContains: key.subjectContains,
-      bodyContains: key.bodyContains,
-      retroRequestedAt: payload.applyRetro ? now : null,
-      // The apply's clock, as an edit's is: the reader's belt applies at the press's `decidedAt`.
-      updatedAt: now,
-    }).returning({ id: rulesTbl.id });
-    const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [row!.id], "create"))[0]!;
-    return { applied: true, op: "create", ruleId: row!.id, lastSeq };
+    const out = await reconcileRuleCreate(tx, { accountId, create: payload, now });
+    if (out.created) return { applied: true, op: "create", ruleId: out.ruleId, lastSeq: out.lastSeq };
+    if (out.lastSeq === null) return { applied: true, op: "unchanged", ruleId: out.ruleId, lastSeq: null };
+    /* `op: "update"`, BECAUSE THAT IS WHAT THIS BRANCH DID: the row was already there and the
+       difference was written into it. A seam that answers the request's word instead of what it
+       did is one reader away from saying "created" about a rule that existed. */
+    return { applied: true, op: "update", ruleId: out.ruleId, lastSeq: out.lastSeq };
   }
 
   const [found, ...twins] = await findRulesByKey(tx, accountId, key);
@@ -1081,15 +1106,41 @@ export async function applyRuleRequest(
 
 /** Why the belt left a request's answer unapplied — logged once per request by the caller. */
 export type ReaderSettleSkip =
-  | "unreadable_payload" | "no_decided_at" | "no_row_stamp" | "newer_local_write" | "removed_after";
+  | "unreadable_payload" | "no_decided_at" | "press_unfinished" | "no_row_stamp" | "newer_local_write"
+  | "removed_after";
+
+/** One leg of a press, as {@link pressSettled} reads it. */
+export interface PressLeg {
+  state: string;
+  refusedReason: string | null;
+}
 
 /**
- * THE READER'S OWN ROWS FOLLOW THE ORGANIZER'S ANSWER: an applied `rule.*` ack is applied here with
- * the organizer's apply at the request's `decidedAt`, never asking the backlog. THE GUARD: ANY row
- * under the key written at or after `decidedAt` is the person's later hand and stands, since the
- * apply writes every twin; a press stamps its row and its legs with one instant. A missing stamp
- * skips. A CREATE ack inserts only where its press wrote no row here: where the press did, a
- * missing row is a later removal, made here or applied here from the other computer.
+ * HAS EVERY HOLDER A PRESS WAS SENT TO CARRIED IT OUT? Every leg finished and at least one
+ * applied. A leg is finished when `applied`, or, for a delete only, refused `no_such_rule`: that
+ * holder's own word that nothing under the key runs there. `expired`, `pending`, `sent` and every
+ * other refusal mean the press did not land on that mailbox, and the reader's row keeps saying what
+ * still runs there. A mailbox refused at the press has no leg and holds nothing back.
+ */
+export function pressSettled(op: ValidatedRuleRequest["op"], legs: readonly PressLeg[]): boolean {
+  const finished = (l: PressLeg): boolean => l.state === "applied"
+    || (op === "delete" && l.state === "refused" && l.refusedReason === "no_such_rule");
+  return legs.length > 0 && legs.every(finished) && legs.some((l) => l.state === "applied");
+}
+
+function sameKey(a: RuleKey, b: RuleKey): boolean {
+  return a.kind === b.kind && a.match === b.match
+    && a.subjectContains === b.subjectContains && a.bodyContains === b.bodyContains;
+}
+
+/**
+ * THE READER'S OWN ROWS FOLLOW THE ORGANIZERS' ANSWER, once per PRESS: the legs of one press share
+ * its kind, key and `decidedAt` (one instant for the press), and the rows under the key move only
+ * when {@link pressSettled} says every holder carried it out. Called on an applied ack and on a
+ * delete refused `no_such_rule`, in the unit that records it, with the organizer's apply at
+ * `decidedAt`. THE GUARD: any row under the key written at or after `decidedAt` is the person's
+ * later hand and stands. A CREATE inserts only where its press wrote no row here: where it did, a
+ * missing row is a later removal.
  */
 export async function settleReaderRuleRows(
   tx: Tx, accountId: string, request: { kind: string; payload: unknown; decidedAt: Date | null },
@@ -1098,6 +1149,11 @@ export async function settleReaderRuleRows(
   if (v === null) return { settled: false, skipped: "unreadable_payload" };
   const at = request.decidedAt;
   if (!(at instanceof Date) || Number.isNaN(at.getTime())) return { settled: false, skipped: "no_decided_at" };
+  const legs = (await listPressLegs(tx, accountId, request.kind, at))
+    .filter((l) => { const lv = validateRulePayload(l.kind, l.payload); return lv !== null && sameKey(lv.key, v.key); });
+  if (!pressSettled(v.op, legs)) return { settled: false, skipped: "press_unfinished" };
+  // The create door's order: the account's rule-key lock, then the rows.
+  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
   const rows = await findRulesByKey(tx, accountId, v.key, { lock: true });
   if (rows.some((r) => !(r.updatedAt instanceof Date))) return { settled: false, skipped: "no_row_stamp" };
   if (rows.some((r) => r.updatedAt!.getTime() >= at.getTime())) return { settled: false, skipped: "newer_local_write" };

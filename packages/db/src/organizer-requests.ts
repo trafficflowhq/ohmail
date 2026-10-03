@@ -145,6 +145,22 @@ export async function listSentRequests(tx: Tx, mailboxId: string): Promise<Organ
 }
 
 /**
+ * Every leg of one PRESS of this account: the rows of one kind decided at one instant, whatever
+ * their state. The caller narrows by the payload's key. Account first, so the read is the account's.
+ */
+export async function listPressLegs(
+  tx: Tx, accountId: string, kind: string, decidedAt: Date,
+): Promise<OrganizerRequestRow[]> {
+  const rows = await tx.select().from(organizerRequests)
+    .where(and(
+      eq(organizerRequests.accountId, accountId),
+      eq(organizerRequests.kind, kind),
+      eq(organizerRequests.decidedAt, decidedAt),
+    ));
+  return rows.map(toRow);
+}
+
+/**
  * How long a refusal is worth showing somebody. A `refused` row is terminal, so without a bound
  * it would ride the Screener list forever — a note about a decision made months ago. It is shown
  * for as long as an outstanding decision could have taken anyway (the same day-long window both

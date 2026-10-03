@@ -14,10 +14,10 @@ import { rules, readBody } from "./shared.js";
  * cross-account); invalid kind/destination/priority → 400. All three honour `Idempotency-Key`,
  * and the service writes the row in its own transaction — `idempotent: true` alone fixes nothing:
  * the middleware only exposes the handle, and a claim outside the transaction leaves the
- * concurrent case doubling the effect. What a retry costs differs per verb, and only POST is
- * about duplicate data: POST — a second rule (no unique constraint, so only the key tells a retry
- * from a deliberate duplicate); DELETE — a wrong answer, 404 for a revoke that succeeded; PATCH —
- * churn, not data.
+ * concurrent case doubling the effect. What a retry costs differs per verb: POST — a different
+ * answer (a create over a key that already has a rule reconciles it and answers 200, so a replay
+ * must hand back the first press's 201); DELETE — a wrong answer, 404 for a revoke that succeeded;
+ * PATCH — churn, not data.
  */
 export const rulesRoutes: Route[] = [
   {
@@ -35,9 +35,9 @@ export const rulesRoutes: Route[] = [
     pattern: "/rules",
     relay: true,
     cost: "work",
-    // A retried creation must replay the first rule, never mint a second: `rules` has no
-    // unique constraint, so two identical rules are legal and only the key can tell a
-    // retry from a deliberate duplicate.
+    // One rule per four-field key: a create over an existing key answers that rule (200), so a
+    // second rule is never minted. The key decides the replay's STATUS: a retry gets its first
+    // press's answer back, 201 included.
     options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<CreateRuleBody>(req);
@@ -54,7 +54,8 @@ export const rulesRoutes: Route[] = [
         // `travel` rides BESIDE the rule on a mixed account, never instead of it: the row exists
         // here AND the same edit is in flight to the installs holding the other mailboxes.
         result.travel === undefined ? result.rule : { ...result.rule, travel: result.travel },
-        { status: 201, seq: result.seq },
+        // 201 a new rule, 200 the rule already under this key; no X-Sync-Seq when nothing changed.
+        { status: result.created ? 201 : 200, seq: result.seq ?? undefined },
       );
     },
   },

@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
-  ruleCreatePayload, type OrganizedBy, type Tx,
+  ruleCreatePayload, reconcileRuleCreate, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
@@ -87,10 +87,8 @@ export type PatchRuleBody = Partial<CreateRuleBody> & {
 /**
  * Idempotency handle threaded in by the route; the row is written IN the create tx.
  *
- * `POST /rules` needs one because `rules` carries NO unique constraint — two identical
- * rules are a legal thing for a user to ask for, so nothing in the schema can tell a
- * retry apart from a deliberate second rule. The KEY is the only thing that can, which
- * is why it must be claimed rather than inferred from the row's content.
+ * `POST /rules` needs one for its ANSWER: a second create of one rule key answers the existing
+ * rule at 200, so only the key can hand a retry of the press that made it its own 201 back.
  */
 export interface RuleIdempotency {
   key: string;
@@ -136,12 +134,23 @@ export interface RuleMutation {
 }
 
 /**
+ * A create's result. `created` is false when the key already had a rule here: that rule is the
+ * answer, reconciled to the request, and `seq` is `null` when nothing about it changed.
+ */
+export interface RuleCreation {
+  rule: RuleDTO;
+  seq: number | null;
+  created: boolean;
+  travel?: RuleTravel;
+}
+
+/**
  * THE EDIT WROTE NOTHING HERE — every live mailbox is organized by another install; the account's
  * own row is untouched and the edit waits on those installs. `pending: true` is the discriminator
  * the route switches its 202 on, the shape `MessageService.move` and `ScreenerService.decide`
  * use. `rule` is the UNCHANGED local row for `update`/`remove` — the person is looking at it and
- * it has not changed yet — and absent for `create`, where no row exists until an organizer
- * applies and republishes.
+ * it has not changed yet — and absent for `create`, where no row exists here until every holder
+ * the press went to has applied it and the reader's cycle reads those acks (`settleReaderRuleRows`).
  */
 export interface RuleRequestResult {
   pending: true;
@@ -314,7 +323,7 @@ export class RulesService {
   async create(
     ctx: ServiceContext, body: CreateRuleBody,
     opts: { idempotency?: RuleIdempotency | null } = {},
-  ): Promise<RuleMutation | RuleRequestResult> {
+  ): Promise<RuleCreation | RuleRequestResult> {
     const kind = this.validKind(body.kind);
     const destination = this.validDestination(body.destination);
     const match = this.validMatch(body.match, kind);
@@ -345,65 +354,57 @@ export class RulesService {
       if (!plan.writeLocally) {
         /* NOTHING TO WRITE HERE — every live mailbox is organized elsewhere, and at least one
            holder took the request (a plan with neither has already thrown). No `rules` row and no
-           `change_log`: a row written here is the dead instruction above, and it would also be
-           DUPLICATED when the organizer applies the request and republishes its document. */
+           `change_log`: a row written here is the dead instruction above. This install's row is
+           written by the reader's cycle once every holder the press went to has applied it. */
         const travel = await fanOutRuleEdit(bridgeTx(tx), ctx, plan, "rule.create", travelling(), at);
         return this.claimRequestReplay(tx, ctx, opts, { pending: true, travel });
       }
 
-      const [row] = await tx.insert(rules).values({
+      /* ONE RULE PER KEY: a create over a key this install already has reconciles that rule, as
+         the organizer's apply does (`reconcileRuleCreate`), and answers it — 201 for a new row,
+         200 for an existing one, with no seq when nothing changed. `subjectContains` and
+         `bodyContains` are already `null` for "no second term" (`validSubjectContains`), and the
+         row is stamped with the press's instant, the `decidedAt` its travelled legs carry. */
+      const out = await reconcileRuleCreate(bridgeTx(tx), {
         accountId: ctx.accountId,
-        kind, match, destination, priority,
-        enabled: body.enabled ?? true,
-        provenance: "manual",
-        // NULL is the resting state and the only representation of "no second term" — see the
-        // migration's CHECK. `validSubjectContains` has already turned `""` and a whitespace-only
-        // string into `null`, so this can never insert a term that matches every subject.
-        subjectContains,
-        // The third term (mail 0052), on identical terms via `validBodyContains`.
-        bodyContains,
-        // The request, not the work. `NULL` means nobody ever asked this rule to reach mail
-        // already on disk, which is the honest state for a rule created with `applyRetro: false`
-        // and for every rule that existed before this column did.
-        retroRequestedAt: applyRetro ? at : null,
-        // The press's instant, the `decidedAt` its travelled legs carry: the reader's belt
-        // compares the two (`settleReaderRuleRows`), and the store's own clock is another one.
-        updatedAt: at,
-      }).returning({ id: rules.id });
-      const seq = (await recordRuleDelta(tx, ctx.accountId, [row!.id], "create"))[0]!;
+        create: {
+          op: "create",
+          key: { kind, match: ruleMatchKey(match), subjectContains, bodyContains },
+          destination, priority, enabled: body.enabled ?? true, applyRetro,
+        },
+        now: at,
+        match,
+      });
+      const seq = out.lastSeq === null ? null : Number(out.lastSeq);
 
-      // Materialize INSIDE the tx (reads the uncommitted insert) so the DTO stored below is
-      // byte-for-byte the one the route returns. Nothing after this tx touches the row.
-      const rule = await materializeRule(asDb(tx), ctx.accountId, row!.id);
+      // Materialize INSIDE the tx so the DTO stored below is byte-for-byte the one the route returns.
+      const rule = await materializeRule(asDb(tx), ctx.accountId, out.ruleId);
       if (!rule) throw new ServiceError("internal", 500, "rule vanished after write");
 
-      // Store the verbatim 201 IN this tx so a retry after a lost response replays the
-      // SAME rule instead of minting a second one. The engine's retry queue drains every
-      // pending action, and rule creation is a default on the sender sheet, so this is the
-      // ordinary case rather than a rare one. Inserted directly — services cannot import
-      // packages/api (copied from ApprovalService/PushService).
+      // Store the verbatim answer IN this tx, status included, so a retry after a lost response
+      // replays the SAME rule and status instead of minting a second one. Inserted directly:
+      // services cannot import packages/api.
       if (opts.idempotency) {
         const claimed = await claimIdempotencyKey(tx, {
           accountId: ctx.accountId,
           key: opts.idempotency.key,
           requestHash: opts.idempotency.requestHash,
-          responseStatus: 201,
+          responseStatus: out.created ? 201 : 200,
           responseJson: rule,
-          seq: Number(seq),
+          seq,
           now: ctx.now(),
         });
         // A LOST claim = a concurrent same-key request committed first. Throwing rolls THIS
-        // transaction back (the rule AND its change_log row) and the caller replays the
-        // winner's response.
+        // transaction back and the caller replays the winner's response.
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
       }
 
       /* THE MIXED ACCOUNT: the row above IS the rule for the mailboxes this install organizes, and
          the same edit travels to each install holding one of the others. Both halves, from one
          press, reported separately — never one "saved". */
-      if (!travelled(plan)) return { rule, seq: Number(seq) };
+      if (!travelled(plan)) return { rule, seq, created: out.created };
       const travel = await fanOutRuleEdit(bridgeTx(tx), ctx, plan, "rule.create", travelling(), at);
-      return { rule, seq: Number(seq), travel };
+      return { rule, seq, created: out.created, travel };
     });
   }
 
@@ -594,8 +595,8 @@ export class RulesService {
       if (!plan.writeLocally) {
         /* NOTHING TO UPDATE HERE. The local row is left EXACTLY as it is and handed back
            unchanged: the person is looking at it, it has not changed yet, and showing them the
-           value they typed would be the false state ruling 6 exists to end. It converges when the
-           organizer applies the request and republishes its document. */
+           value they typed would be the false state ruling 6 exists to end. The row takes the new
+           value in the reader's cycle once every holder the press went to has applied it. */
         travel = await fanOutRuleEdit(
           bridgeTx(tx), ctx, plan, "rule.update",
           ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance),
@@ -685,9 +686,8 @@ export class RulesService {
 
       if (!plan.writeLocally) {
         /* THE LOCAL ROW STAYS. Nothing here organizes anything, so deleting it would remove the
-           person's only visible copy of a rule that is still live on the machine that runs it —
-           and the organizer's next published document would put it straight back. It goes when
-           the organizer applies the request. */
+           person's only visible copy of a rule that is still live on the machine that runs it. It
+           goes in the reader's cycle once every holder the press went to has removed it. */
         if (!before) throw new ServiceError("not_found", 404, "rule not found");
         const travel = await fanOutRuleEdit(
           bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before), at,
