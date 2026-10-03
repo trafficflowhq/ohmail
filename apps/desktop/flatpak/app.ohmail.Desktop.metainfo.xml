@@ -74,6 +74,22 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.11" date="2026-10-03">
+      <description>
+        <ul>
+          <li>Automatic filing out of the Screener reads less</li>
+          <li>Changes made on a second install reach the organizer past 500 records</li>
+          <li>A reply pressed again while it is still sending goes once</li>
+          <li>The phone answers every press</li>
+          <li>Signing out of the desktop app ends its session at the server</li>
+          <li>Changes waiting for a sign-in are kept, and the screen says how many</li>
+          <li>The organizer checks a mail server's port, and Settings says why it will not connect</li>
+          <li>The desktop app no longer closes its local store under a write when it quits</li>
+          <li>An html message on the phone is shown as text when drawing it would stall the app</li>
+          <li>Showing the images of a message no longer closes the phone app</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.10" date="2026-10-03">
       <description>
         <ul>
@@ -130,37 +146,6 @@
       <description>
         <ul>
           <li>A crafted address header can no longer stall mail sync, and attachments are verified</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.6" date="2026-09-30">
-      <description>
-        <ul>
-          <li>The AI call log is complete again</li>
-          <li>Edits made during a takeover reach the mailbox</li>
-          <li>A browser sign-in in the desktop app waits through a closed window</li>
-          <li>Refused and blocked states say what happened</li>
-          <li>Signing in again asks before sending a password unencrypted</li>
-          <li>Setup, Settings and a press follow what the app already knows</li>
-          <li>Search on the phone finds the other forms of a word</li>
-          <li>Search says where it looks for part of a word</li>
-          <li>Search keeps saying "synced so far" through a long first import</li>
-          <li>The first search results on a device match what the full search finds</li>
-          <li>The phone app no longer closes when the outgoing server refuses the settings, or when you stop and remove a mailbox</li>
-          <li>On ohmail Cloud, pictures in older messages are no longer listed as files</li>
-          <li>The Screener places mail by the same rules everywhere</li>
-          <li>Held mail from your contacts can be let in</li>
-          <li>Put back what the Screener filed on its own</li>
-          <li>Stored-mail counts on the desktop, and arrival order below the list</li>
-          <li>A failed read no longer takes the way to subscribe away</li>
-          <li>A file fault says which side failed, and a tracking pixel is recognised in every picture format</li>
-          <li>Forwarding a message that is only attachments sends it with them</li>
-          <li>Builds install the dependency versions that were tested</li>
-          <li>Who organizes your mailboxes is said once, at the foot of the sidebar</li>
-          <li>Forward stands beside Reply on the message bar</li>
-          <li>A first mailbox without encryption, set up on the first launch</li>
-          <li>The phone no longer signs itself out after a display, font or language change</li>
-          <li>The phone keeps up with a large mailbox</li>
         </ul>
       </description>
     </release>

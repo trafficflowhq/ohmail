@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.11] — 2026-10-03
+
 ### Automatic filing out of the Screener reads less
 <!-- changes: db-026-folder-state-account.md -->
 
@@ -95,11 +102,6 @@ A message that names one picture many times could close the phone app when its i
 because the picture is copied into the message at every place it appears. The phone now works out
 how long the message would become before adding the pictures. When that is more than it can draw,
 the message stays as it was and says why the images are not shown.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.10] — 2026-10-03
 
@@ -11019,7 +11021,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.10...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.11...HEAD
+[0.25.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.11
 [0.25.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.10
 [0.25.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.9
 [0.25.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.8
