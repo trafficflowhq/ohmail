@@ -6,6 +6,7 @@ import {
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
+import { accountWritesHere } from "./organizer-role.js";
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 
@@ -643,6 +644,38 @@ export interface ValidatedRuleCreate {
   applyRetro: boolean;
 }
 
+/**
+ * THE TWO SHAPES A `rule.create` HAS TRAVELLED IN, named here and nowhere else. FLAT is what the
+ * doors send ({@link ruleCreatePayload}) and what every shipped organizer reads:
+ * `{ key, destination, priority?, enabled?, applyRetro? }`. NESTED is what earlier readers queued,
+ * the three fields under `set`, which no organizer read, so each was refused `invalid_payload`. A
+ * nested row still queued is read as the flat one. A payload naming a field in both places, or
+ * anything else under `set`, is refused whole: reading half of it would apply one of two answers.
+ */
+const RULE_CREATE_FIELDS = ["destination", "priority", "enabled"] as const;
+
+function ruleCreateFields(o: Record<string, unknown>): Record<string, unknown> | null {
+  if (!("set" in o)) return o;
+  const set = o.set;
+  if (set === null || typeof set !== "object" || Array.isArray(set)) return null;
+  const named = Object.keys(set);
+  if (!named.every((f) => (RULE_CREATE_FIELDS as readonly string[]).includes(f))) return null;
+  if (RULE_CREATE_FIELDS.some((f) => f in o)) return null;
+  return set as Record<string, unknown>;
+}
+
+/** The flat `rule.create` payload every door sends. `destination` is a {@link MOVE_DESTINATIONS} word. */
+export function ruleCreatePayload(input: {
+  key: RuleKey; destination: string; priority: number; enabled: boolean; applyRetro?: boolean;
+}): Record<string, unknown> {
+  const { key } = input;
+  return {
+    key: { kind: key.kind, match: key.match, subjectContains: key.subjectContains, bodyContains: key.bodyContains },
+    destination: input.destination, priority: input.priority, enabled: input.enabled,
+    ...(input.applyRetro === undefined ? {} : { applyRetro: input.applyRetro }),
+  };
+}
+
 /** `rule.update`'s payload, validated. `set` never contains a key field. */
 export interface ValidatedRuleUpdate {
   op: "update";
@@ -751,11 +784,13 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
   }
 
   if (kind === "rule.create") {
-    const destination = asRuleDestination(o.destination);
+    const f = ruleCreateFields(o);
+    if (f === null) return null;
+    const destination = asRuleDestination(f.destination);
     if (destination === null) return null;
-    const priority = o.priority === undefined ? 0 : o.priority;
+    const priority = f.priority === undefined ? 0 : f.priority;
     if (typeof priority !== "number" || !Number.isInteger(priority) || priority < 0 || priority > RULE_PRIORITY_MAX) return null;
-    const enabled = o.enabled === undefined ? true : o.enabled;
+    const enabled = f.enabled === undefined ? true : f.enabled;
     if (typeof enabled !== "boolean") return null;
     return { op: "create", key, destination, priority, enabled, applyRetro };
   }
@@ -1045,16 +1080,16 @@ export async function applyRuleRequest(
 }
 
 /** Why the belt left a request's answer unapplied — logged once per request by the caller. */
-export type ReaderSettleSkip = "unreadable_payload" | "no_decided_at" | "no_row_stamp" | "newer_local_write";
+export type ReaderSettleSkip =
+  | "unreadable_payload" | "no_decided_at" | "no_row_stamp" | "newer_local_write" | "removed_after";
 
 /**
- * THE READER'S OWN ROWS FOLLOW THE ORGANIZER'S ANSWER (READER-ONLY-RULE-REMOVAL-KEEPS-THE-ROW). An
- * applied `rule.*` ack is applied to this install's own rows with the organizer's apply, at the
- * request's `decidedAt` (the row then records the PRESS that made it), never asking the backlog
- * again. THE GUARD: a row under the key written at or after `decidedAt` is the person's own later
- * hand (a mixed account's local write, an Undo, an import) and stands. Both stamps are this
- * install's own clock (`ctx.now()` in `rules-service.ts` and `writeReaderRequest`); a missing
- * stamp on either side skips rather than applies.
+ * THE READER'S OWN ROWS FOLLOW THE ORGANIZER'S ANSWER: an applied `rule.*` ack is applied here with
+ * the organizer's apply at the request's `decidedAt`, never asking the backlog. THE GUARD: ANY row
+ * under the key written at or after `decidedAt` is the person's later hand and stands, since the
+ * apply writes every twin; a press stamps its row and its legs with one instant. A missing stamp
+ * skips. A CREATE ack inserts only where its press wrote no row here: where the press did, a
+ * missing row is a later removal, made here or applied here from the other computer.
  */
 export async function settleReaderRuleRows(
   tx: Tx, accountId: string, request: { kind: string; payload: unknown; decidedAt: Date | null },
@@ -1063,10 +1098,11 @@ export async function settleReaderRuleRows(
   if (v === null) return { settled: false, skipped: "unreadable_payload" };
   const at = request.decidedAt;
   if (!(at instanceof Date) || Number.isNaN(at.getTime())) return { settled: false, skipped: "no_decided_at" };
-  const [acting] = await findRulesByKey(tx, accountId, v.key, { lock: true });
-  if (acting) {
-    if (!(acting.updatedAt instanceof Date)) return { settled: false, skipped: "no_row_stamp" };
-    if (acting.updatedAt.getTime() >= at.getTime()) return { settled: false, skipped: "newer_local_write" };
+  const rows = await findRulesByKey(tx, accountId, v.key, { lock: true });
+  if (rows.some((r) => !(r.updatedAt instanceof Date))) return { settled: false, skipped: "no_row_stamp" };
+  if (rows.some((r) => r.updatedAt!.getTime() >= at.getTime())) return { settled: false, skipped: "newer_local_write" };
+  if (v.op === "create" && rows.length === 0 && await accountWritesHere(tx, accountId)) {
+    return { settled: false, skipped: "removed_after" };
   }
   const bare: ValidatedRuleRequest = v.op === "delete" ? v
     : v.op === "create" ? { ...v, applyRetro: false }

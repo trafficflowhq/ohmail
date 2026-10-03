@@ -3,7 +3,7 @@ import { and, eq, inArray, ne } from "drizzle-orm";
 import {
   insertOrganizerRequest, insertOrganizerRequestSet, readRequestEligibility, readAccountErasedAt,
   AccountErasedError, OrganizedElsewhereError, MailboxNotFoundError, mailboxes,
-  MOVE_DESTINATIONS, messages,
+  MOVE_DESTINATIONS, messages, fanOutPlace, writesHere,
   type OrganizedBy, type RequestRefusalReason, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -201,14 +201,16 @@ export async function planAccountFanOut(
     // A row that vanished between the two statements: it is not live any more, so it is not a
     // reason to refuse and not a place to send anything.
     if (!e || e.status === "disabled") continue;
-    if (e.role === "organizer") { organized.push(id); continue; }
-    if (e.takeoverPending) { awaiting.push(id); continue; }
+    const place = fanOutPlace(e);
+    if (place === "organized") { organized.push(id); continue; }
+    if (place === "awaiting") { awaiting.push(id); continue; }
     if (e.capable) { requestTo.push({ mailboxId: id, holder: e.by }); continue; }
     refused.push({ mailboxId: id, holder: e.by, reason: requestRefusalReason(e) });
   }
 
   const heldElsewhere = requestTo.length + refused.length;
-  const writeLocally = organized.length > 0 || awaiting.length > 0 || heldElsewhere === 0;
+  // The belt reads the same rule (`accountWritesHere`) to know whether this press wrote a row.
+  const writeLocally = writesHere({ organized: organized.length, awaiting: awaiting.length, held: heldElsewhere });
 
   /* NOTHING THIS PRESS COULD DO ANYWHERE. Every live mailbox is held by an install that will not
      take this kind, so there is no local write to make and no request to send — the one state that

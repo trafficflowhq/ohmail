@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
-  type OrganizedBy, type Tx,
+  ruleCreatePayload, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
@@ -220,8 +220,8 @@ interface RuleKeyFields {
  * differing only by a narrowing term are DIFFERENT rules filing to different places. A two-field
  * key collapses them, so the applier would look up one and act on the other, every guard green.
  * `{ kind, match }` with both terms null is the BARE (promoted-rule) case of this key. ONE PLACE:
- * the payload is defined by the drain that applies it; everything composed here is composed in
- * this one function, so when the shape moves no door changes.
+ * the payload is defined by the drain that applies it; an update or a delete is composed here, and
+ * a create's flat shape by `ruleCreatePayload`, beside the validator that reads it.
  */
 function ruleRequestPayload(
   key: RuleKeyFields,
@@ -274,12 +274,14 @@ function assertSetIsNotAKeyChange(set: Record<string, unknown>): void {
  */
 async function fanOutRuleEdit(
   tx: Tx, ctx: ServiceContext, plan: AccountFanOut, kind: RequestKind,
-  payload: Record<string, unknown>,
+  payload: Record<string, unknown>, decidedAt: Date,
 ): Promise<RuleTravel> {
   const pending: RuleRequestSent[] = [];
   for (const target of plan.requestTo) {
+    // `decidedAt` is the press's one instant, the one its local write is stamped with: the belt
+    // reads a row written at or after it as the person's own hand (`settleReaderRuleRows`).
     const sent = await writeReaderRequest(tx, ctx, {
-      mailboxId: target.mailboxId, kind, payload, holder: target.holder,
+      mailboxId: target.mailboxId, kind, payload, holder: target.holder, decidedAt,
     });
     pending.push({ mailboxId: target.mailboxId, requestId: sent.requestId, holder: target.holder });
   }
@@ -322,6 +324,12 @@ export class RulesService {
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
     return withAccountTx(ctx, async (tx) => {
+      // One instant for the press: the local row's stamp and every leg's `decidedAt`.
+      const at = ctx.now();
+      const travelling = (): Record<string, unknown> => ruleCreatePayload({
+        key: { kind, match, subjectContains, bodyContains },
+        destination: ruleDestinationWord(destination), priority, enabled: body.enabled ?? true, applyRetro,
+      });
       /**
        * A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (mail 0083, then 0094). A rule
        * is not a note: `evaluateRules` routes and `rule-retro.ts` re-files, both on the
@@ -339,17 +347,7 @@ export class RulesService {
            holder took the request (a plan with neither has already thrown). No `rules` row and no
            `change_log`: a row written here is the dead instruction above, and it would also be
            DUPLICATED when the organizer applies the request and republishes its document. */
-        const travel = await fanOutRuleEdit(
-          bridgeTx(tx), ctx, plan, "rule.create",
-          ruleRequestPayload(
-            { kind, match, subjectContains, bodyContains },
-            {
-              destination: ruleDestinationWord(destination),
-              priority, enabled: body.enabled ?? true,
-            },
-            applyRetro,
-          ),
-        );
+        const travel = await fanOutRuleEdit(bridgeTx(tx), ctx, plan, "rule.create", travelling(), at);
         return this.claimRequestReplay(tx, ctx, opts, { pending: true, travel });
       }
 
@@ -367,10 +365,10 @@ export class RulesService {
         // The request, not the work. `NULL` means nobody ever asked this rule to reach mail
         // already on disk, which is the honest state for a rule created with `applyRetro: false`
         // and for every rule that existed before this column did.
-        retroRequestedAt: applyRetro ? ctx.now() : null,
-        // This install's clock, the one a travelled request is decided by: the reader's belt
+        retroRequestedAt: applyRetro ? at : null,
+        // The press's instant, the `decidedAt` its travelled legs carry: the reader's belt
         // compares the two (`settleReaderRuleRows`), and the store's own clock is another one.
-        updatedAt: ctx.now(),
+        updatedAt: at,
       }).returning({ id: rules.id });
       const seq = (await recordRuleDelta(tx, ctx.accountId, [row!.id], "create"))[0]!;
 
@@ -404,17 +402,7 @@ export class RulesService {
          the same edit travels to each install holding one of the others. Both halves, from one
          press, reported separately — never one "saved". */
       if (!travelled(plan)) return { rule, seq: Number(seq) };
-      const travel = await fanOutRuleEdit(
-        bridgeTx(tx), ctx, plan, "rule.create",
-        ruleRequestPayload(
-          { kind, match, subjectContains, bodyContains },
-          {
-            destination: ruleDestinationWord(destination),
-            priority, enabled: body.enabled ?? true,
-          },
-          applyRetro,
-        ),
-      );
+      const travel = await fanOutRuleEdit(bridgeTx(tx), ctx, plan, "rule.create", travelling(), at);
       return { rule, seq: Number(seq), travel };
     });
   }
@@ -477,7 +465,9 @@ export class RulesService {
     ctx: ServiceContext, id: string, patch: PatchRuleBody,
     opts: { idempotency?: RuleIdempotency | null } = {},
   ): Promise<RuleMutation | RuleRequestResult> {
-    const set: Record<string, unknown> = { updatedAt: ctx.now() };
+    // One instant for the press: the local row's stamp and every leg's `decidedAt`.
+    const at = ctx.now();
+    const set: Record<string, unknown> = { updatedAt: at };
     if (patch.kind !== undefined) set.kind = this.validKind(patch.kind);
     if (patch.destination !== undefined) set.destination = this.validDestination(patch.destination);
     if (patch.match !== undefined) set.match = this.validMatch(patch.match, patch.kind === undefined ? null : set.kind as string);
@@ -609,6 +599,7 @@ export class RulesService {
         travel = await fanOutRuleEdit(
           bridgeTx(tx), ctx, plan, "rule.update",
           ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance),
+          at,
         );
         const unchanged = await materializeRule(asDb(tx), ctx.accountId, id);
         if (!unchanged) throw new ServiceError("not_found", 404, "rule not found");
@@ -651,6 +642,7 @@ export class RulesService {
       travel = await fanOutRuleEdit(
         bridgeTx(tx), ctx, plan, "rule.update",
         ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance),
+        at,
       );
       return { rule, seq: Number(seq), travel };
     });
@@ -670,6 +662,7 @@ export class RulesService {
     ctx: ServiceContext, id: string,
     opts: { idempotency?: RuleIdempotency | null } = {},
   ): Promise<RuleRemoval | RuleRequestResult> {
+    const at = ctx.now();
     const out = await asTx(ctx).transaction(async (tx): Promise<RuleRemoval | RuleRequestResult> => {
       /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (0083, then 0094) -----
        *
@@ -697,7 +690,7 @@ export class RulesService {
            the organizer applies the request. */
         if (!before) throw new ServiceError("not_found", 404, "rule not found");
         const travel = await fanOutRuleEdit(
-          bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before),
+          bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before), at,
         );
         /* THE ANSWER IS WHAT GETS STORED. `claimRequestReplay` stores the object it returns and
            the route sends that same object at 202, so a replay cannot describe an outcome the
@@ -746,7 +739,7 @@ export class RulesService {
       // The mixed account: gone here, and asked of every install that holds one of the others.
       if (!travelled(plan)) return { seq: Number(emitted) as number | null };
       const travel = await fanOutRuleEdit(
-        bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before!),
+        bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before!), at,
       );
       return { seq: Number(emitted) as number | null, travel };
     });

@@ -165,6 +165,7 @@ export {
   // than queueing a record the holder will never take.
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
   capabilitiesColumn, hasCapability, readRequestEligibility, decisionCanBeApplied,
+  fanOutPlace, writesHere, accountWritesHere,
   type OrganizerRole, type OrganizerKind, type OrganizerState, type OrganizerIntent,
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
@@ -193,7 +194,7 @@ export {
      shrink. Not for narrowing anything — `validateProfileUpdatePayload` is the door. */
   AWAY_PILES,
   validateProfileUpdatePayload, applyProfileUpdate,
-  RULE_TERM_MAX, RULE_MATCH_MAX, RULE_PRIORITY_MAX, validateRulePayload, applyRuleRequest, settleReaderRuleRows,
+  RULE_TERM_MAX, RULE_MATCH_MAX, RULE_PRIORITY_MAX, validateRulePayload, ruleCreatePayload, applyRuleRequest, settleReaderRuleRows,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
   type ValidatedProfileUpdate, type ProfileAwayUpdate, type ProfileScreeningUpdate,

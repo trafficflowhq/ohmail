@@ -132,10 +132,15 @@ export async function listPendingRequests(tx: Tx, mailboxId: string): Promise<Or
   return rows.map(toRow);
 }
 
-/** Every `sent` request on one mailbox — what the reader's cycle checks for presence/absence. */
+/**
+ * Every `sent` request on one mailbox, in the order they were decided — what the reader's cycle
+ * checks for presence/absence, and the order its belt settles acks in, so a removal decided after
+ * a create settles after it. `createdAt` breaks a tie of equal `decidedAt`, `id` the rest.
+ */
 export async function listSentRequests(tx: Tx, mailboxId: string): Promise<OrganizerRequestRow[]> {
   const rows = await tx.select().from(organizerRequests)
-    .where(and(eq(organizerRequests.mailboxId, mailboxId), eq(organizerRequests.state, "sent")));
+    .where(and(eq(organizerRequests.mailboxId, mailboxId), eq(organizerRequests.state, "sent")))
+    .orderBy(asc(organizerRequests.decidedAt), asc(organizerRequests.createdAt), asc(organizerRequests.id));
   return rows.map(toRow);
 }
 

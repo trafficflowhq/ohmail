@@ -495,6 +495,39 @@ export async function readRequestEligibility(
 }
 
 /**
+ * WHERE ONE LIVE MAILBOX PUTS A PRESS: organized here, waiting on this install's own takeover
+ * (both write here), or held by another install. The fan-out (`planAccountFanOut`) and the belt
+ * (`accountWritesHere`) read this one classification, so they agree on what a press wrote here.
+ */
+export function fanOutPlace(e: RequestEligibility): "organized" | "awaiting" | "held" {
+  if (e.role === "organizer") return "organized";
+  if (e.takeoverPending) return "awaiting";
+  return "held";
+}
+
+/** A press writes its row here when something here organizes, or nothing is held elsewhere. */
+export function writesHere(c: { organized: number; awaiting: number; held: number }): boolean {
+  return c.organized > 0 || c.awaiting > 0 || c.held === 0;
+}
+
+/**
+ * Whether a rule press on this account writes its row on this install, read now: the fan-out's own
+ * classification over the account's live mailboxes. The belt reads it to tell a press that wrote a
+ * row here (a missing row is a later removal) from one that wrote none.
+ */
+export async function accountWritesHere(tx: Tx, accountId: string): Promise<boolean> {
+  const live = await tx.select({ id: mailboxes.id }).from(mailboxes)
+    .where(and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled")));
+  const c = { organized: 0, awaiting: 0, held: 0 };
+  for (const { id } of live) {
+    const e = await readRequestEligibility(tx, accountId, id, CAPABILITY_RULES);
+    if (!e || e.status === "disabled") continue;
+    c[fanOutPlace(e)]++;
+  }
+  return writesHere(c);
+}
+
+/**
  * THE SENTENCE MATCHES THE REASON. "Another install is organizing" was said for every refusal,
  * including a mailbox nothing organizes; a holder is claimed only where one is named.
  */
