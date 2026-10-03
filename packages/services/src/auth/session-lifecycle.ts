@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
-import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import { bridgeTx, runInTransaction, type Db, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -212,12 +212,17 @@ export class SessionLifecycle {
       // ungated: taking back your own credential must never be hard, and it can only reduce
       // risk. `allDevices` reduces EVERYBODY's — which is the same act `revokeDevice` gates.
       await this.requireStepUp(ctx);
-      const revoked = await db.update(sessions).set({ revokedAt: now })
-        .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)))
-        .returning({ familyId: sessions.familyId });
-      await db.update(refreshTokens).set({ revokedAt: now })
-        .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
-      familyIds = [...new Set(revoked.map((r) => r.familyId))];
+      // In id order first, erasure's step-7 order, as `revokeClaimedSessions` takes them.
+      familyIds = await this.inTransaction(ctx, async (txCtx) => {
+        const tx = asTx(txCtx);
+        const mine = and(eq(sessions.userId, userId), isNull(sessions.revokedAt));
+        await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(mine).orderBy(asc(sessions.id)));
+        const revoked = await tx.update(sessions).set({ revokedAt: now }).where(mine)
+          .returning({ familyId: sessions.familyId });
+        await tx.update(refreshTokens).set({ revokedAt: now })
+          .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+        return [...new Set(revoked.map((r) => r.familyId))];
+      });
     } else if (ctx.sessionId) {
       const s = (await db.select().from(sessions).where(eq(sessions.id, ctx.sessionId)).limit(1))[0];
       if (s) {
@@ -479,6 +484,9 @@ export class SessionLifecycle {
   ): Promise<{ revoked: number }> {
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
+      // Locked in id order first, erasure's step-7 order: the claim alone locks in scan order, and
+      // the two orders deadlocked over two of one account's sessions.
+      await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(and(...preds)).orderBy(asc(sessions.id)));
       const claimed = await tx.update(sessions)
         .set({ revokedAt: now })
         .where(and(...preds))

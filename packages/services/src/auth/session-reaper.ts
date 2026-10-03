@@ -1,5 +1,6 @@
-import { and, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { refreshTokens, sessions, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 
 /**
  * The web-session reaper — maintenance revocation of long-idle plain browser sessions, which
@@ -47,24 +48,31 @@ export async function reapStaleWebSessions(
     // missing — a session that ROTATED in that window (`mintRotation` stamps `last_seen_at`
     // current) is a browser that just came back to life, which a maintenance pass must not
     // sign out. Only rows THIS statement flipped count.
-    const claimed = await db.update(sessions)
-      .set({ revokedAt: now })
-      .where(and(
-        inArray(sessions.id, ids),
-        isNull(sessions.deviceId),
-        eq(sessions.scope, "full"),
-        isNull(sessions.revokedAt),
-        lt(sessions.lastSeenAt, cutoff),
-      ))
-      .returning({ familyId: sessions.familyId });
-    if (claimed.length > 0) {
-      await db.update(refreshTokens)
+    const stale = and(
+      inArray(sessions.id, ids),
+      isNull(sessions.deviceId),
+      eq(sessions.scope, "full"),
+      isNull(sessions.revokedAt),
+      lt(sessions.lastSeenAt, cutoff),
+    );
+    // One transaction per chunk, its sessions locked in id order first, erasure's step-7 order: the
+    // update alone locks in scan order, and the two orders deadlocked over two stale sessions.
+    const claimed = await db.transaction(async (tx) => {
+      await dialect(db).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(stale).orderBy(asc(sessions.id)));
+      const rows = await tx.update(sessions)
         .set({ revokedAt: now })
-        .where(and(
-          inArray(refreshTokens.familyId, [...new Set(claimed.map((c) => c.familyId))]),
-          isNull(refreshTokens.revokedAt),
-        ));
-    }
+        .where(stale)
+        .returning({ familyId: sessions.familyId });
+      if (rows.length > 0) {
+        await tx.update(refreshTokens)
+          .set({ revokedAt: now })
+          .where(and(
+            inArray(refreshTokens.familyId, [...new Set(rows.map((c) => c.familyId))]),
+            isNull(refreshTokens.revokedAt),
+          ));
+      }
+      return rows;
+    });
     reaped += claimed.length;
   }
   return { reaped };
