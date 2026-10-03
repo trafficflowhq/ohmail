@@ -29,17 +29,12 @@ export function mailboxLabelKey(facts: readonly MailboxLabelFact[] | null): stri
 }
 
 /**
- * ONE mailbox is no question, so the answer is silence. `null` facts — the demo, a surface with no
- * `GET /mailboxes` probe — is the same silence: the honest degradation `ownAddresses: []` already
- * takes, rather than a guess. Above one, the mailbox's own label and the bare address where it has
- * none, which is the fallback the "me" chip already keeps.
- *
- * `"label"` is the mailbox's own label and nothing else, `null` where it has none: never the
- * address, for a sentence that names a mailbox beside one of its folders.
- *
- * `"short"` is the phone chip's form: the label where the mailbox has one, else the half of the
- * address that tells this account's mailboxes apart — the local part, the domain when two share a
- * local part, the address only when both halves collide.
+ * ONE mailbox is no question, so the answer is silence; `null` facts (the demo, no `GET /mailboxes`
+ * probe) are the same silence. Above one, the mailbox's own label, else the bare address, as the
+ * "me" chip keeps it. `"label"` is the label alone, `null` where there is none, never the address:
+ * for a sentence naming a mailbox beside one of its folders. `"short"` is the phone chip's form:
+ * the label, else the half of the address that tells this account's mailboxes apart (the local
+ * part, the domain when two share a local part, the address only when both halves collide).
  */
 export function mailboxLabelResolver(
   facts: readonly MailboxLabelFact[] | null,
