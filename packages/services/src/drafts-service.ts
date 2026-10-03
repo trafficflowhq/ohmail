@@ -11,6 +11,7 @@ import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftDTO } from "./dto/types.js";
+import { draftContentRevision } from "./draft-revision.js";
 import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./outbound-html.js";
 
 // The per-MESSAGE ceiling, imported rather than restated: two ceilings on one list that can
@@ -148,6 +149,12 @@ export type PatchDraftBody = Partial<CreateDraftBody>;
 export interface DraftMutation {
   draft: DraftDTO;
   seq: number;
+}
+
+/** An edit's result. `seq` is null for a restatement of a sent row, which writes nothing. */
+export interface DraftUpdate {
+  draft: DraftDTO;
+  seq: number | null;
 }
 
 /**
@@ -325,7 +332,7 @@ export class DraftsService {
   }
 
   /** PUT/PATCH /drafts/:id â full/partial edit of the composable fields. */
-  async update(ctx: ServiceContext, id: string, patch: PatchDraftBody): Promise<DraftMutation> {
+  async update(ctx: ServiceContext, id: string, patch: PatchDraftBody): Promise<DraftUpdate> {
     // An edit answers a scheduled-send failure â the sentence must not outlive the words it was
     // about, so any edit clears it. A `scheduled` row itself refuses edits below.
     const set: Record<string, unknown> = { updatedAt: ctx.now(), sendError: null };
@@ -413,22 +420,20 @@ export class DraftsService {
           "this message has a send we could not confirm; resolve it before editing it",
         );
       }
-      // Scope the UPDATE to the account: a cross-account id matches 0 rows. A mailbox move
-      // additionally requires `status = 'draft'` IN THE PREDICATE — not a prior read — because
-      // the send path flips the row to `sending` in its own transaction. A row WEARING AN
-      // APPOINTMENT is FROZEN (mail 0077): what the worker sends must be exactly what the user
-      // last saw. The predicate is `send_key IS NULL`, NOT `status <> 'scheduled'`: the worker's
-      // claim flips the row to 'draft' with the key standing, and a status-only freeze would let
-      // a stale client PUT win the row lock ahead of the reservation. The key covers every phase
-      // of an appointment's life; an ordinary draft never carries one. The edit flow is cancel →
-      // edit → schedule again, which re-mints the key, so "an edited message sends only its final
-      // content" is structural.
+      // Scope the UPDATE to the account: a cross-account id matches 0 rows. Every edit requires
+      // `status = 'draft'` IN THE PREDICATE — not a prior read — because the send path flips the
+      // row to `sending` in its own transaction, and a `sent` row's words are the account's record
+      // of what went. A row WEARING AN APPOINTMENT is FROZEN (mail 0077): what the worker sends must
+      // be exactly what the user last saw. The predicate is `send_key IS NULL`, NOT a status: the
+      // worker's claim flips the row to 'draft' with the key standing, and a status-only freeze would
+      // let a stale client PUT win the row lock ahead of the reservation. The key covers every phase
+      // of an appointment's life; an ordinary draft never carries one. Cancel → edit → schedule again
+      // re-mints the key, so "an edited message sends only its final content" is structural.
       const updated = await tx.update(drafts).set(set)
         .where(and(
           eq(drafts.id, id), eq(drafts.accountId, ctx.accountId),
-          ne(drafts.status, "scheduled"),
+          eq(drafts.status, "draft"),
           isNull(drafts.sendKey),
-          ...(movesMailbox ? [eq(drafts.status, "draft")] : []),
         ))
         .returning({ id: drafts.id });
       if (updated.length === 0) {
@@ -437,12 +442,32 @@ export class DraftsService {
         // appointment is refused the EDIT with the way forward named; a row past `draft` is
         // refused the mailbox MOVE â so the caller learns the identity is fixed rather than
         // that the draft vanished.
-        const [row] = await tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
+        const [row] = await tx.select({
+          status: drafts.status, sendKey: drafts.sendKey, mailboxId: drafts.mailboxId,
+          inReplyToMessageId: drafts.inReplyToMessageId, forwardOfMessageId: drafts.forwardOfMessageId,
+          subject: drafts.subject, body: drafts.body, html: drafts.html, to: drafts.to, cc: drafts.cc, bcc: drafts.bcc,
+        }).from(drafts)
           .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId))).limit(1);
         if (row && (row.status === "scheduled" || row.sendKey !== null)) {
           throw new ServiceError(
             "conflict", 409,
             "this message is scheduled to send; cancel the schedule to edit it",
+          );
+        }
+        /* A SENT ROW TAKES ONLY ITS OWN WORDS BACK. A client replaying a confirmed send after a
+           kill restates exactly what went, and refusing that would turn a delivered message into
+           a "not sent" on every older build; any other content is refused and nothing is written. */
+        if (row && row.status === "sent") {
+          if (draftContentRevision({ ...row, ...set } as typeof row) === draftContentRevision(row)) return null;
+          throw new ServiceError(
+            "draft_sent", 409,
+            "this message has already been sent; its words cannot be changed",
+          );
+        }
+        if (row && (row.status === "sending" || row.status === "unverified")) {
+          throw new ServiceError(
+            "send_recorded", 409,
+            "this message has a send on record; resolve it before editing it",
           );
         }
         if (row && movesMailbox) {
@@ -461,6 +486,11 @@ export class DraftsService {
       );
     });
 
+    if (seq === null) {
+      const draft = await materializeDraft(ctx.db, ctx.accountId, id);
+      if (!draft) throw new ServiceError("not_found", 404, "draft not found");
+      return { draft, seq: null };
+    }
     return this.finish(ctx, id, seq);
   }
 
