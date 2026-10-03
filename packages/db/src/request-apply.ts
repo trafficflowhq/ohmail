@@ -964,8 +964,10 @@ function samePlace(a: string, b: string): boolean {
 /** What one create under a key did. `lastSeq` is `null` only when nothing at all was written. */
 export type RuleCreateOutcome =
   | { created: true; ruleId: string; lastSeq: bigint; collapsed: string[] }
-  /** `changed`: the row under the key was written. Twins collapse either way, one delta each. */
-  | { created: false; changed: boolean; ruleId: string; lastSeq: bigint | null; collapsed: string[] };
+  /** The row under the key was written: its `update` delta is `lastSeq`. */
+  | { created: false; changed: true; ruleId: string; lastSeq: bigint; collapsed: string[] }
+  /** The row already held the request; `lastSeq` is the last collapsed twin's delete, if any went. */
+  | { created: false; changed: false; ruleId: string; lastSeq: bigint | null; collapsed: string[] };
 
 /**
  * ONE RULE PER FOUR-FIELD KEY, on both create doors: `POST /rules` on an organizing install and the
