@@ -7,9 +7,9 @@ import {
   type DrainCursor, type Tx,
 } from "@trafficflow/db";
 import {
-  authVerdictFromHeaders, httpsUnsubscribeUri, oneClickUnsubscribeUri, unsubscribeHeaderState,
+  authVerdictFromHeaders, createLogger, httpsUnsubscribeUri, oneClickUnsubscribeUri, unsubscribeHeaderState,
   UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
-  type AuthVerdict, type Destination, type UnsubscribeHeaderState,
+  type AuthVerdict, type Destination, type Logger, type UnsubscribeHeaderState,
 } from "@trafficflow/core/mail";
 import { bridgeTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -17,6 +17,7 @@ import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
+const defaultLog = createLogger({ service: "unsubscribe" });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -113,6 +114,8 @@ export interface UnsubscribeDeps {
    * types `async () => NO_TRUSTED_AUTHSERV_IDS`.
    */
   trustedAuthservIdsFor: (db: Tx, mailboxId: string) => Promise<ReadonlySet<string>>;
+  /** Where the sweep's failures are written: the hardened logger, so an error is its class and code. */
+  log?: Logger;
 }
 
 /** Why an unsubscribe was refused. `null` on the {@link UnsubscribeResult} of a success. */
@@ -518,6 +521,8 @@ interface MessageRow {
 export class UnsubscribeService {
   constructor(private readonly deps: UnsubscribeDeps) {}
 
+  private get log(): Logger { return this.deps.log ?? defaultLog; }
+
   /**
    * Read the message, persist what its own provider said about the author, and — if every gate
    * agrees — POST the one-click request once.
@@ -839,15 +844,15 @@ export class UnsubscribeService {
         // separately so a drain that is silently failing every request cannot look like a drain
         // that is correctly finding nothing to do.
         // A list's answer after the request left is counted as failed, never as a skip: a list
-        // refusing every request is a drain whose requests are dying. Logged without its details,
-        // which carry the list's link.
+        // refusing every request is a drain whose requests are dying. Logged by the hardened
+        // logger, so a cause is its class and code: its text can carry the list's server or link.
         if (err instanceof ServiceError && LIST_ANSWERS.has(err.code)) {
           sweep.failed += 1;
-          console.error(`[unsubscribe] message ${id}: ${err.code}`, err.cause ?? "");
+          this.log.error("unsubscribe_list_failed", { messageId: id, code: err.code, err: err.cause });
         } else if (err instanceof ServiceError) sweep.skipped += 1;
         else {
           sweep.failed += 1;
-          console.error(`[unsubscribe] message ${id}:`, err);
+          this.log.error("unsubscribe_sweep_failed", { messageId: id, err });
         }
       }
     }
@@ -1238,7 +1243,7 @@ export class UnsubscribeService {
         .limit(1);
       return row?.at != null;
     } catch (err) {
-      console.error("[unsubscribe] could not read the account switch; sending nothing:", err);
+      this.log.error("unsubscribe_switch_read_failed", { accountId: ctx.accountId, err });
       return true;
     }
   }
