@@ -27,6 +27,7 @@ import { MailRow } from "../../src/ui/MailRow";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { OrganizerStrip } from "../../src/ui/OrganizerStrip";
+import { WaitingStrip } from "../../src/ui/WaitingStrip";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { readingAtConnectLine } from "../../src/ui/standalone-form";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -108,6 +109,8 @@ function OhboxBody() {
             <UnscreenedOffer offer={shown.ohbox.unscreened} screen={w.actions.screenUnscreened} />
             {/* Who organizes this mailbox, where it is news — the Settings card's own claim. */}
             <OrganizerStrip />
+            {/* What waits on the computer that organizes this mailbox — the web's Rules list. */}
+            <WaitingStrip />
             <Doorbell initials={shown.doorbell.initials} count={shown.doorbell.count} />
           </>
         }

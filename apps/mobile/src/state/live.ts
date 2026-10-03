@@ -394,6 +394,7 @@ export { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
 // Which side failed for a file that could not be fetched — the web reader's own class table.
 export { attachmentFaultClass, type AttachmentFaultClass } from "@ohmail/client-engine";
 export { ruleMatchKey } from "@ohmail/client-engine";
+export type { WaitingOnOrganizerView } from "@ohmail/client-engine";
 /** Forward's one predicate and its ask, for the reader — the engine's own, through this seam. */
 export { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
 
@@ -510,22 +511,31 @@ function pressReadBack(
 }
 
 /**
- * Whether the backlog pass is finished for the rules a commit wrote — a create's server id, an
- * update's own. A rule with no stamp (an older server) or a create whose id is not known is NOT
- * finished: the phone never says every message arrived over a pass it cannot see.
+ * Where the backlog pass stands for the rules a commit wrote — a create's server id, an update's
+ * own: `done`, still `applying`, or `unknown` (a rule with no stamp, an older server, a create
+ * whose id is not known, a rule gone). The phone never says every message arrived over a pass it
+ * cannot see.
  */
-function retroFinished(
+function retroStateOf(
   reader: EntityReader, mutations: readonly EngineMutation[], answers: readonly (MutationResult | null)[],
-): boolean {
+): "done" | "applying" | "unknown" {
+  let applying = false;
   for (let i = 0; i < mutations.length; i++) {
     const m = mutations[i]!;
     const id = m.kind === "rule_update" ? m.ruleId : m.kind === "rule_create" ? answers[i]?.entityId : null;
     if (m.kind !== "rule_update" && m.kind !== "rule_create") continue;
-    if (!id) return false;
+    if (!id) return "unknown";
     const r = reader.get<RuleDTO>("rule", id);
-    if (!r?.retro || (r.retro.requestedAt !== null && r.retro.doneAt === null)) return false;
+    if (!r?.retro) return "unknown";
+    if (r.retro.requestedAt !== null && r.retro.doneAt === null) applying = true;
   }
-  return true;
+  return applying ? "applying" : "done";
+}
+
+function retroFinished(
+  reader: EntityReader, mutations: readonly EngineMutation[], answers: readonly (MutationResult | null)[],
+): boolean {
+  return retroStateOf(reader, mutations, answers) === "done";
 }
 
 /** A pile's name for a folder in either News spelling; a folder of the user's own by its leaf. */
@@ -4050,9 +4060,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * no less pending for being slow, which is why the sentence changes and nothing else does.
    */
   const stillWaitingFor = (messageId: string): Refusal | null => {
-    const waiting = engine.organizerRequests().find((r) => r.messageId === messageId);
+    // The merged list (the server's record and this session's), so a relaunch still answers it.
+    const waiting = engine.waitingOnOrganizer().find((r) => r.messageId === messageId && r.state !== "refused");
     if (!waiting) return null;
-    const holder = waiting.queuedWith.name;
+    const holder = waiting.holder.name;
     if (!waiting.slow) return null;
     return holder ? refuse("organizerStillWaiting", holder) : refuse("organizerStillWaitingUnknown");
   };
@@ -4164,9 +4175,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        next poll (`withPullKick`). Once per press, never awaited by the sentence; never throws. */
     if (unsent.length > 0) void engine.requestPull({ mailboxIds: [m.mailboxId] });
     const queued = [...answers].reverse().find((r) => r?.status === "awaiting_organizer");
-    if (queued) {
-      dropHeld();
-      const holder = queued.queuedWith?.name ?? null;
+    const holder = queued?.queuedWith?.name ?? null;
+    /* THE LETTER WAITS ON THE ORGANIZER AND, WHERE THE PRESS DECIDES THE SENDER, ITS RULE GOES TOO
+       (the web's shape): the held routing commits at the window's close and travels as a rule
+       request, below, like any Move's. A press that decides no rule says the letter alone. */
+    if (queued && rules.length === 0) {
       /* Two calls rather than one with a spread: each sentence is passed exactly its own
          arguments, which is what `refusal.test.ts` reads out of this file's source. */
       toast(holder
@@ -4193,9 +4206,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* A PRESS THAT DECIDES THE SENDER SAYS SO, in the web's words (`screeningToast`): the letter
        moved and their future mail follows, or — the letter already filed there — the rule alone. */
     const who = m.from.name?.trim() || m.from.address;
-    const decides = mail.length > 0
-      ? refuse("toastRuledMoved", moveTargetLabel(dest), mail.length, who)
-      : refuse("toastRuledFuture", moveTargetLabel(dest), who);
+    const queuedSaid = holder
+      ? refuse("toastMoveQueuedWithRule", moveTargetLabel(dest), holder)
+      : refuse("toastMoveQueuedWithRuleUnknown", moveTargetLabel(dest));
+    const decides = queued ? queuedSaid
+      : mail.length > 0
+        ? refuse("toastRuledMoved", moveTargetLabel(dest), mail.length, who)
+        : refuse("toastRuledFuture", moveTargetLabel(dest), who);
     if (!opened?.held) {
       /* NO SESSION OR NO RECORD TO HOLD IT BY — the rules go now unless the window already sent
          them, and the sentence does not offer an undo it cannot honour. */
@@ -4217,6 +4234,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         if (outcome === "superseded") { toast(refuse("undoReplaced")); return; }
         const cancelled = outcome === "undone";
         const ruleBack = cancelled ? null : takeRoutingReversal(pressId);
+        /* A LETTER QUEUED FOR THE ORGANIZER has no way back from here: its request stands, and
+           only the rule is taken back. Said so, and no reversal of the letter is sent. */
+        if (queued && cancelled) {
+          toast(holder ? refuse("toastQueuedRuleUndone", holder) : refuse("toastQueuedRuleUndoneUnknown"));
+          return;
+        }
         // At the press, as `undoable` says it; a refusal overrides it when the inverse answers.
         toast(refuse(cancelled ? "toastRoutingUndone" : "toastUndone"));
         void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then(async (vs) => {
@@ -4900,6 +4923,31 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const place = destDone(p.dest);
     const termOf = (r: RuleDTO) => (r.subjectContains ?? r.bodyContains ?? "").trim();
 
+    /* A PRESS TOLD "ohmail is applying the rule" IS TOLD ONCE WHEN IT HAS BEEN, while the app is
+       open (the web's `press-watch.ts`): the first engine change that reads the pass done says every
+       message is at the place, or what still stays. A pass that becomes unknown (the rule gone) is
+       forgotten, said nothing. */
+    const watchPass = (a: ScreenCommitAnswer): void => {
+      if (retroStateOf(engine.read(), a.mutations, a.answers) !== "applying") return;
+      const off = engine.subscribe(() => {
+        const state = retroStateOf(engine.read(), a.mutations, a.answers);
+        if (state === "applying") return;
+        off();
+        if (state !== "done") return;
+        const lists = deps.presented?.() ?? presentedOf(engine.read(), now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
+        const outcome = pressOutcome({
+          presented: lists, subject: engine.read().list<EngineMessage>("message").filter(p.ofSubject),
+          rules: rulesList(engine.read()), profiles: mailboxProfiles(engine.read()), wanted: p.wanted, retro: false,
+        });
+        const v = stayVerdict(outcome, engine.read());
+        if (v.key === "none") toast(refuse("screeningVerdictAll", outcome.at, p.target, place));
+        else if (v.key === "still" || v.key === "stillLegacy" || v.key === "undecided") {
+          const stay = pressReadBack(engine.read(), lists, p.ofSubject, p.wanted, place, false);
+          if (stay) toast(stay);
+        }
+      });
+    };
+
     const readBack = (a: ScreenCommitAnswer): boolean => {
       for (const id of a.changed) {
         const r = shown.find((x) => x.id === id);
@@ -4912,15 +4960,22 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       }
       const lists = deps.presented?.() ?? presentedOf(engine.read(), now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
       const stay = pressReadBack(engine.read(), lists, p.ofSubject, p.wanted, place, p.applyRetro);
-      if (stay) { toast(stay); return true; }
+      if (stay) {
+        toast(stay);
+        // The read-back's own "applying" sentence waits on the same pass.
+        if (p.applyRetro) watchPass(a);
+        return true;
+      }
       const at = pressOutcome({
         presented: lists, subject: engine.read().list<EngineMessage>("message").filter(p.ofSubject),
         rules: rulesList(engine.read()), profiles: mailboxProfiles(engine.read()), wanted: p.wanted, retro: false,
       }).at;
       // "All" only when no backlog pass is still applying the rule; an unknown pass never reads done.
-      toast(p.applyRetro && !retroFinished(engine.read(), a.mutations, a.answers)
+      const applying = p.applyRetro && !retroFinished(engine.read(), a.mutations, a.answers);
+      toast(applying
         ? refuse("liveVerdictApplying", at, place)
         : refuse("screeningVerdictAll", at, p.target, place));
+      if (applying) watchPass(a);
       return true;
     };
 

@@ -1803,4 +1803,26 @@ export const DE: Deck = {
   pfiReplaceNoteBare:
     "Das Speichern ersetzt die Einstellungen im Postfach innerhalb weniger Minuten durch die dieses ohmail. Solange dieses ohmail keine eigenen hat, behält das Postfach sie.",
   pfiReplacedTitle: "Die Einstellungen dieses ohmail gehen innerhalb weniger Minuten ins Postfach.",
+  toastMoveQueuedWithRule: (place: string, holder: string) =>
+    `Für ${holder} vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
+  toastMoveQueuedWithRuleUnknown: (place: string) =>
+    `Für den Organizer vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
+  toastQueuedRuleUndone: (holder: string) => `Keine Regel angelegt. Die Nachricht wartet weiter auf ${holder}.`,
+  toastQueuedRuleUndoneUnknown: "Keine Regel angelegt. Die Nachricht wartet weiter auf den Organizer.",
+  waitingStrip: (count: number, holder: string) =>
+    `${count === 1 ? "1 Änderung wartet" : `${count} Änderungen warten`} auf ${holder}.`,
+  waitingStripUnknown: (count: number) =>
+    `${count === 1 ? "1 Änderung wartet" : `${count} Änderungen warten`} auf den Organizer.`,
+  waitingStripOpen: "Anzeigen, was wartet",
+  waitingSheetTitle: "Wartet auf den Organizer",
+  waitingMove: (place: string) => `Eine Nachricht nach ${place}`,
+  waitingMoveSomewhere: "Eine verschobene Nachricht",
+  waitingRuleRemove: (match: string) => `Die Regel für ${match} aufheben`,
+  waitingRuleChange: (match: string, place: string) => `Die Regel für ${match}: sortiert in ${place}`,
+  waitingRuleChangeSomewhere: (match: string) => `Eine Änderung der Regel für ${match}`,
+  waitingDecision: (match: string) => `Deine Screener-Entscheidung zu ${match}`,
+  waitingSettings: "Eine Änderung der Einstellungen",
+  waitingOther: "Eine Änderung",
+  waitingTheOrganizer: "Der Organizer",
+  waitingRefused: (holder: string) => `${holder} hat das nicht ausgeführt.`,
 };

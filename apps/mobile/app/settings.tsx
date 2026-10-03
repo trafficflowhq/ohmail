@@ -92,6 +92,7 @@ import { writePhoneDiagnostics } from "../src/engine/diagnostics";
 import { nativePhoneDiagnosticDeps, shareDiagnosticFile } from "../src/engine/diagnostics-native";
 import { diagnosticSaid, type DiagnosticPress } from "../src/ui/diagnostic-said";
 import { selfCheckRowSaid, type SelfCheckPress } from "../src/ui/self-check-said";
+import { WaitingStrip } from "../src/ui/WaitingStrip";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen() {
@@ -210,6 +211,7 @@ function SettingsBody() {
 
         {/* this phone — first, because it is the only block that says what this phone IS */}
         <ThisPhonePanel />
+        <WaitingStrip />
 
         {/* a "Not now" whose settings document still stands in the mailbox: Import, or Save */}
         <SavedSettingsPanel />

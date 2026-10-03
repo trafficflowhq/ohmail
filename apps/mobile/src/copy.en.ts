@@ -2659,6 +2659,30 @@ const TABLE = {
   pfiReplaceNoteBare:
     "Saving replaces the settings in the mailbox with this ohmail's own within a few minutes. While this ohmail has none of its own, the mailbox keeps them.",
   pfiReplacedTitle: "This ohmail's settings go to the mailbox within a few minutes.",
+  /* WHAT WAITS ON THE ORGANIZER (the rules-page lane): a queued Move's rule, the pass that
+     finished, and the list of what the other computer has not carried out yet. */
+  toastMoveQueuedWithRule: (place: string, holder: string) =>
+    `Queued for ${holder}: the letter and the sender's rule go to ${place} on its next pass.`,
+  toastMoveQueuedWithRuleUnknown: (place: string) =>
+    `Queued for the organizer: the letter and the sender's rule go to ${place} on its next pass.`,
+  toastQueuedRuleUndone: (holder: string) => `No rule was made. The letter still waits on ${holder}.`,
+  toastQueuedRuleUndoneUnknown: "No rule was made. The letter still waits on the organizer.",
+  waitingStrip: (count: number, holder: string) =>
+    `${count === 1 ? "1 change waits" : `${count} changes wait`} on ${holder}.`,
+  waitingStripUnknown: (count: number) =>
+    `${count === 1 ? "1 change waits" : `${count} changes wait`} on the organizer.`,
+  waitingStripOpen: "Show what waits",
+  waitingSheetTitle: "Waiting on the organizer",
+  waitingMove: (place: string) => `A message to ${place}`,
+  waitingMoveSomewhere: "A message moved",
+  waitingRuleRemove: (match: string) => `Remove the rule for ${match}`,
+  waitingRuleChange: (match: string, place: string) => `The rule for ${match}: files into ${place}`,
+  waitingRuleChangeSomewhere: (match: string) => `A change to the rule for ${match}`,
+  waitingDecision: (match: string) => `Your Screener decision about ${match}`,
+  waitingSettings: "A settings change",
+  waitingOther: "A change",
+  waitingTheOrganizer: "The organizer",
+  waitingRefused: (holder: string) => `${holder} did not carry this out.`,
 };
 
 /**
