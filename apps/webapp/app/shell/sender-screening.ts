@@ -176,16 +176,24 @@ export function ownFolderOf(p: ScreeningPlace): { mailboxId: string; path: strin
 }
 
 /**
- * A folder place's name: its leaf, or its last two segments when another place shown beside it
- * has the same leaf under a different path ("Work/Fixture", "Home/Fixture").
+ * A folder place's name: its leaf, or its last two segments when another place shown beside it has
+ * the same leaf under a different path ("Work/Fixture", "Home/Fixture"). When a place in ANOTHER
+ * mailbox still reads the same, `inMailbox` adds this one's mailbox label ("Fixture (Work)"); it
+ * returns the name unchanged for a mailbox with no label, and the address is never used.
  */
-export function ownFolderName(path: string, among: readonly ScreeningPlace[]): string {
-  const leaf = folderLeaf(path);
-  const clash = among.some((q) => {
-    const o = ownFolderOf(q);
-    return o !== null && o.path !== path && folderLeaf(o.path) === leaf;
-  });
-  return clash ? path.split("/").filter(Boolean).slice(-2).join("/") : leaf;
+export function ownFolderName(
+  place: { mailboxId: string; path: string }, among: readonly ScreeningPlace[],
+  inMailbox?: (name: string, mailboxId: string) => string,
+): string {
+  const folders = among.map(ownFolderOf).filter((o): o is { mailboxId: string; path: string } => o !== null);
+  const base = (path: string) => {
+    const leaf = folderLeaf(path);
+    const clash = folders.some((o) => o.path !== path && folderLeaf(o.path) === leaf);
+    return clash ? path.split("/").filter(Boolean).slice(-2).join("/") : leaf;
+  };
+  const name = base(place.path);
+  const twin = folders.some((o) => o.mailboxId !== place.mailboxId && base(o.path) === name);
+  return twin && inMailbox ? inMailbox(name, place.mailboxId) : name;
 }
 
 /** Only a pile is a rule's place: the gate, History and a folder the person made are not. */

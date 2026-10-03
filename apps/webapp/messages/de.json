@@ -3213,6 +3213,7 @@
     "verdictKeptDomainBody": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {kept, plural, one {1 bleibt} other {# bleiben}} nach deiner Regel für alle bei {domain} (Text enthält »{term}«) in {keptPlace}.",
     "verdictKeptMany": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {kept, plural, one {1 bleibt} other {# bleiben}}, wo deine Regeln sie einsortieren.",
     "verdictStill": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {still, plural, one {1 liegt} other {# liegen}} noch in {stillPlace}.",
+    "folderInMailbox": "{folder} ({mailbox})",
     "verdictStillSpread": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {still, plural, one {1 liegt} other {# liegen}} noch an mehreren Orten.",
     "verdictUndecided": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {still, plural, one {1 liegt} other {# liegen}} noch in {stillPlace}, wo deine Regel für Text mit »{term}« sie halten kann.",
     "verdictStillLegacy": "{count, plural, one {1 liegt} other {# liegen}} in {place} · {still, plural, one {1 liegt} other {# liegen}} noch im Ordner {folder}, dem alten Namen von {stillPlace}.",

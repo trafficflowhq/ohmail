@@ -2384,6 +2384,8 @@ const TABLE = {
     count === 1 ? `1 stays in ${place}: you replied to it.` : `${count} stay in ${place}: you replied to them.`,
   stayedSetAside: (count: number, place: string) =>
     count === 1 ? `1 stays in ${place}: you set it aside.` : `${count} stay in ${place}: you set them aside.`,
+  /** A folder of the person's own beside its mailbox's label, when two mailboxes have one of that name. */
+  folderInMailbox: (folder: string, mailbox: string) => `${folder} (${mailbox})`,
   stayedFiledElsewhere: (count: number, place: string) =>
     count === 1 ? `1 stays in ${place}: filed in another mail app.` : `${count} stay in ${place}: filed in another mail app.`,
   stayedFailedChecks: (count: number, place: string) =>

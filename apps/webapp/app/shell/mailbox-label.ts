@@ -34,13 +34,16 @@ export function mailboxLabelKey(facts: readonly MailboxLabelFact[] | null): stri
  * takes, rather than a guess. Above one, the mailbox's own label and the bare address where it has
  * none, which is the fallback the "me" chip already keeps.
  *
+ * `"label"` is the mailbox's own label and nothing else, `null` where it has none: never the
+ * address, for a sentence that names a mailbox beside one of its folders.
+ *
  * `"short"` is the phone chip's form: the label where the mailbox has one, else the half of the
  * address that tells this account's mailboxes apart — the local part, the domain when two share a
  * local part, the address only when both halves collide.
  */
 export function mailboxLabelResolver(
   facts: readonly MailboxLabelFact[] | null,
-): (mailboxId: string, form?: "short") => string | null {
+): (mailboxId: string, form?: "short" | "label") => string | null {
   if (facts === null || facts.length <= 1) return () => null;
   const byId = new Map(facts.map((m) => [m.id, m.displayName?.trim() || m.address] as const));
   const halves = (a: string): [string, string] => {
@@ -57,6 +60,7 @@ export function mailboxLabelResolver(
     if (domain && seen(1, domain) === 1) return [m.id, domain] as const;
     return [m.id, m.address] as const;
   }));
-  return (mailboxId: string, form?: "short") =>
-    (form === "short" ? shortById : byId).get(mailboxId) ?? null;
+  const labelById = new Map(facts.map((m) => [m.id, m.displayName?.trim() || null] as const));
+  return (mailboxId: string, form?: "short" | "label") =>
+    (form === "label" ? labelById : form === "short" ? shortById : byId).get(mailboxId) ?? null;
 }

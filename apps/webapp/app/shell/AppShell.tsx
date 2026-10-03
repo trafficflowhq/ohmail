@@ -3620,6 +3620,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           onSubjectRule={senderMenu!.address == null ? () => openSubjectRule(senderMenu!.messageId, null) : undefined}
           // Why a finished rule pass left some of their mail elsewhere, and the move past it.
           stayedFor={stayedFor}
+          mailboxNameOf={(id) => mailboxLabelOf(id, "label")}
           onMoveToo={(ids, dest) => { setSenderMenu(null); moveStayed(ids, dest); }}
           onClose={() => setSenderMenu(null)}
         />

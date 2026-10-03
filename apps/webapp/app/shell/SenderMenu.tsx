@@ -132,6 +132,7 @@ export function SenderMenu({
   onOpenDetail,
   onSubjectRule,
   stayedFor,
+  mailboxNameOf,
   onMoveToo,
   autoUnsubscribe = true,
   forecastFor,
@@ -177,6 +178,11 @@ export function SenderMenu({
    * the subject's mail is still shown elsewhere (`GET /screener/stayed`). Absent: no reason named.
    */
   stayedFor?: (ids: readonly string[]) => Promise<ReadonlyMap<string, StayedWhy>>;
+  /**
+   * A mailbox's own label, `null` where it has none — never its address. Names a folder of the
+   * person's own beside its mailbox when two mailboxes have one of that name.
+   */
+  mailboxNameOf?: (mailboxId: string) => string | null;
   /** "Move it too": the same move a verdict's "Move them" makes, to the rule's place. */
   onMoveToo?: (ids: readonly string[], dest: ScreeningDest) => void;
   /**
@@ -277,7 +283,12 @@ export function SenderMenu({
   /** A place the lists show mail in, by the names the rail uses. */
   const placeName = (p: ScreeningPlace): string => {
     const folder = ownFolderOf(p);
-    if (folder !== null) return ownFolderName(folder.path, subject.places.map((q) => q.place));
+    if (folder !== null) {
+      return ownFolderName(folder, subject.places.map((q) => q.place), (name, mailboxId) => {
+        const label = mailboxNameOf?.(mailboxId) ?? null;
+        return label === null ? name : t("folderInMailbox", { folder: name, mailbox: label });
+      });
+    }
     return p === "screener" ? t("placeScreener") : p === "history" ? t("placeHistory") : piles[p as ScreeningDest];
   };
   /** A rule's destination by the same names; a folder of the user's own by its leaf. */

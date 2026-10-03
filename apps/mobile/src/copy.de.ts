@@ -1555,6 +1555,7 @@ export const DE: Deck = {
     count === 1 ? `1 bleibt in ${place}: Du hast darauf geantwortet.` : `${count} bleiben in ${place}: Du hast darauf geantwortet.`,
   stayedSetAside: (count: number, place: string) =>
     count === 1 ? `1 bleibt in ${place}: Du hast sie zurückgelegt.` : `${count} bleiben in ${place}: Du hast sie zurückgelegt.`,
+  folderInMailbox: (folder: string, mailbox: string) => `${folder} (${mailbox})`,
   stayedFiledElsewhere: (count: number, place: string) =>
     count === 1
       ? `1 bleibt in ${place}: in einem anderen Mailprogramm einsortiert.`

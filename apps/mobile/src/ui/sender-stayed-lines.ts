@@ -17,17 +17,25 @@ export interface StayedRow {
 
 /**
  * A place by the names the lists use: a pile, the gate, History, or a folder by its leaf, with its
- * parent when another place in `among` has the same leaf under a different path ("Work/Fixture").
+ * parent when another place in `among` has the same leaf under a different path ("Work/Fixture"),
+ * and with its mailbox's label when a place in another mailbox still reads the same ("Fixture
+ * (Work)"). `labelOf` answers a mailbox's own label or `null`, never its address.
  */
-export function stayedPlaceName(p: StayedPlace, among: readonly StayedPlace[] = []): string {
+export function stayedPlaceName(
+  p: StayedPlace, among: readonly StayedPlace[] = [], labelOf?: (mailboxId: string) => string | null,
+): string {
   const folder = ownFolderOf(p);
   if (folder !== null) {
-    const leaf = folderLeafOf(folder.path);
-    const clash = among.some((q) => {
-      const o = ownFolderOf(q);
-      return o !== null && o.path !== folder.path && folderLeafOf(o.path) === leaf;
-    });
-    return clash ? folder.path.split("/").filter(Boolean).slice(-2).join("/") : leaf;
+    const folders = among.map(ownFolderOf).filter((o): o is { mailboxId: string; path: string } => o !== null);
+    const base = (path: string) => {
+      const leaf = folderLeafOf(path);
+      const clash = folders.some((o) => o.path !== path && folderLeafOf(o.path) === leaf);
+      return clash ? path.split("/").filter(Boolean).slice(-2).join("/") : leaf;
+    };
+    const name = base(folder.path);
+    const twin = folders.some((o) => o.mailboxId !== folder.mailboxId && base(o.path) === name);
+    const label = twin ? labelOf?.(folder.mailboxId) ?? null : null;
+    return label === null ? name : Copy.folderInMailbox(name, label);
   }
   return p === "screener" ? Copy.placeScreener : p === "history" ? Copy.history : destDone(p as Destination);
 }
@@ -39,12 +47,14 @@ const SENTENCE: Record<StayedWhy, (count: number, place: string) => string> = {
   "failed-checks": (n, p) => Copy.stayedFailedChecks(n, p),
 };
 
-export function stayedRows(ask: StayedAsk | null, why: ReadonlyMap<string, StayedWhy> | null): StayedRow[] {
+export function stayedRows(
+  ask: StayedAsk | null, why: ReadonlyMap<string, StayedWhy> | null, labelOf?: (mailboxId: string) => string | null,
+): StayedRow[] {
   if (!ask || !why) return [];
   const among = ask.elsewhere.map((e) => e.place);
   return stayedLines(ask.elsewhere, why).map((line) => ({
     key: `${line.place}:${line.why}`,
-    text: SENTENCE[line.why](line.ids.length, stayedPlaceName(line.place, among)),
+    text: SENTENCE[line.why](line.ids.length, stayedPlaceName(line.place, among, labelOf)),
     move: line.why === "failed-checks" ? null : { label: Copy.stayedMoveToo(line.ids.length), ids: line.ids, dest: ask.ruled },
   }));
 }

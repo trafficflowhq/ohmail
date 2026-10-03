@@ -225,7 +225,7 @@ export function useShellDerivations({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [mailboxLabelKey(facts)],
   );
-  const mailboxLabelOf = useStableCallback((mailboxId: string, form?: "short"): string | null =>
+  const mailboxLabelOf = useStableCallback((mailboxId: string, form?: "short" | "label"): string | null =>
     mailboxLabels(mailboxId, form));
   /**
    * …AND THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH.

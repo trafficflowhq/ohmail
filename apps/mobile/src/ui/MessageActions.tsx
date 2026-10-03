@@ -816,7 +816,9 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
     void w.actions.stayedWhy(askKey.split(",")).then((map) => { if (live) setWhy({ key: askKey, map }); });
     return () => { live = false; };
   }, [askKey, w.actions]);
-  const stayed = stayedRows(ask, why && why.key === askKey ? why.map : null);
+  // A mailbox by its own label beside a folder two mailboxes share a name for; never its address.
+  const labelOf = (id: string) => w.mailboxes.rows.find((r) => r.id === id)?.displayName?.trim() || null;
+  const stayed = stayedRows(ask, why && why.key === askKey ? why.map : null, labelOf);
   const press = (dest: Destination) => {
     const f = w.actions.screeningForecast(m.id, dest, scope, applyRetro);
     const cls = f ? phoneStepClass(f, scope) : null;
