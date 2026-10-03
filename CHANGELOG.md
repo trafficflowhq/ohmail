@@ -18,6 +18,79 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.25.12] — 2026-10-03
+
+### The sender sheet counts mail filed in another mail app where it is
+<!-- changes: fix-026-sheet-counts.md -->
+
+When a rule moves a sender's mail already in your mailbox, a message another mail app had filed
+in a folder of yours stays there. On the web and the desktop, the sender sheet now counts it in
+that folder, for example "6 messages — Ohbox 5 · Fixture 1". On every surface the sheet names the
+reason, filed in another mail app, with "Move it too". On the web and the desktop, the sentence
+once the rule has finished says where such mail stayed, or "several places" when it stayed in more
+than one, where it used to say all of their mail was in the Ohbox; its "Move them" moves exactly
+the mail it counts. Mail of theirs in Trash or Junk is not counted.
+
+### A lost session renewal no longer signs the browser out
+<!-- changes: triage-026-ux-suite-session-revoked-at-first-load.md -->
+
+- When the answer to a session renewal is lost on the way back, as when a laptop lid closes or the
+  network drops mid-request, the browser retries it under the same name and stays signed in. It used
+  to be signed out as if its session had been stolen.
+- A refresh refused as expired is now recorded with the other session events.
+
+### The address check refuses every IPv6 range that is not public internet
+<!-- changes: fix-026-ssrf-ipv6.md -->
+
+Before a server connects to a mail server, a remote image, an unsubscribe link or a push endpoint on
+your behalf, it checks every address the name points to. The IPv6 check now admits public internet
+addresses only: site-local (`fec0::/10`), reserved, documentation and protocol-assignment ranges are
+refused, and an address that carries an IPv4 address, such as 6to4 or the NAT64 prefix, is judged by
+that IPv4 address. A self-hosted server with `TF_PROBE_ALLOW_PRIVATE=1` still connects to mail
+servers on its own network.
+
+### The engine log no longer writes a line per received message
+<!-- changes: fix-026-mime-parse-quiet.md -->
+
+A first sync no longer fills the engine log with one line per message. A message that takes longer
+than 2 s to read is still logged as a warning.
+
+### The Rules page says what is waiting for your other computer
+
+When the computer that organizes your mail is another one, a rule you remove or change waits for
+it. The Rules page and the phone now list those changes, say on each rule whether one is waiting
+or was refused, and say when a sender rule outranks a domain rule. A rule is found however its
+address was typed, and once that computer carries a change out, this device's rules follow it.
+
+### The desktop app stays signed in when a session renewal is interrupted
+<!-- changes: triage-026-desktop-session.md -->
+
+An interrupted renewal of the desktop app's session could sign it out and ask for the password
+again; the server now finishes a renewal or changes nothing, so the app's next try renews the
+session.
+
+### The organizer's log no longer names your mail server
+<!-- changes: fix-026-dial-door-census.md -->
+
+When the background organizer starts connecting to a mailbox, or cannot remove an old claim or
+settings copy from the mailbox's `ohmail/_meta` folder, its log line names the mailbox and the kind
+of error, never the mail server. A failed automatic unsubscribe is logged the same way, without the
+mailing list's server.
+
+### A new rule reaches the computer that organizes your mail
+
+A rule added on a device that does not organize the mailbox now reaches the computer that does.
+
+### A message that cannot be saved no longer holds up the rest of the mailbox
+<!-- changes: freeze-02512-phone-b-note.md -->
+
+On the phone and the desktop app, a message that kept failing to save was retried on every sync and
+the mailbox never moved past it. Such a message is now set aside after repeated attempts, or at once
+when the device cannot store it, and the next version of the app reads it again. If new messages keep
+failing with none saved in between, the app stops setting them aside and says that new mail could not
+be saved. A full or locked storage on the device is never taken as the message's fault, and a failure
+that is not the connection's no longer says the app could not reconnect.
+
 ## [0.25.11] — 2026-10-03
 
 ### Automatic filing out of the Screener reads less
@@ -11021,7 +11094,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.11...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.12...HEAD
+[0.25.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.12
 [0.25.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.11
 [0.25.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.10
 [0.25.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.9
