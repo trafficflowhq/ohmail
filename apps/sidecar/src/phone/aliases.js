@@ -140,7 +140,7 @@ const PACKAGE_ALIASES = {
  * writes it. nodemailer's entry requires every transport at load and its mailer requires the DKIM
  * signer; this engine constructs one SMTP transport (`smtpTransportOptions` in the IMAP adapter
  * sets no pool, sendmail, stream, JSON or SES option) and never passes `dkim`. Each shim refuses
- * by name if it is ever constructed. About 65 KB leave the artifact.
+ * by name if it is ever constructed. About 64 KB leave the artifact.
  */
 const PACKAGE_MODULE_SUBSTITUTES = {
   "nodemailer/lib/nodemailer.js": {
