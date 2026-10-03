@@ -11,7 +11,7 @@ import { maybeStartLanListener, type LanListener } from "./host-lan.js";
 import { createHostPower } from "./host-power.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
-import { createSidecarLog, createSidecarLogger, diagnosticFor } from "./log.js";
+import { createSidecarLog, createSidecarLogger, diagnosticFor, type Diagnostic } from "./log.js";
 import { resolveVitalsIntervalMs } from "./vitals.js";
 import type { PhaseHeader } from "./protocol.js";
 
@@ -52,6 +52,7 @@ export function claimStdout(): Writable {
     },
   });
   real.on("error", (err) => sink.destroy(err));
+  ignoreEpipe(sink);
 
   const toStderr = ((chunk: unknown, encoding?: unknown, cb?: unknown): boolean => {
     const done = typeof encoding === "function" ? encoding : cb;
@@ -341,8 +342,49 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
   };
 }
 
+/**
+ * A GONE SHELL DOES NOT END THE ENGINE MID-CLOSE. Its input ending answers the window's held
+ * session wait, and that frame meets a closed pipe; so does the next log line. Node reports each
+ * EPIPE as an `error` event, and with nobody listening the process died before its store was
+ * closed. Both are dropped here — the frame writer still sees its failed write, and the shutdown
+ * already under way finishes. Anything that is not EPIPE still ends the process, as it did.
+ */
+export function ignoreEpipe(stream: NodeJS.EventEmitter): void {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EPIPE") throw err;
+  });
+}
+
+/**
+ * HOW LONG THE ENGINE TAKES TO LEAVE, AT MOST, ONCE ASKED — the shell's own grace (`STOP_GRACE`,
+ * `engine.rs`). With the shell alive nothing changes: it kills at the same moment. With it gone,
+ * nothing else bounded a stuck close, and that engine kept its data-directory lock and its renewal
+ * clock past the next launch.
+ */
+export const SHUTDOWN_DEADLINE_MS = 5_000;
+
+let shutdownDeadline: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Start the shutdown's clock, once. Armed when the input ENDS — a request still in flight holds
+ * `host.finished()`, so a clock started inside `shutdown` might never start — and by every other way
+ * in. Not unref'd: it is the one thing that must still fire when nothing else keeps this process up.
+ */
+function armShutdownDeadline(log: Diagnostic, reason: string, inFlight: () => number): void {
+  if (shutdownDeadline !== null) return;
+  shutdownDeadline = setTimeout(() => {
+    log("shutdown_deadline", {
+      reason: `${reason}: the close had not finished, so the engine leaves without it`,
+      boundMs: SHUTDOWN_DEADLINE_MS,
+      inFlight: inFlight(),
+    });
+    process.exit(1);
+  }, SHUTDOWN_DEADLINE_MS);
+}
+
 export async function runSidecar(): Promise<void> {
   const stdout = claimStdout();
+  ignoreEpipe(process.stderr);
   // The hardened logger from `packages/core`, on stderr. This used to be a hand-rolled
   // `JSON.stringify` whose comment claimed the worker's shape; `log.ts` in this package records
   // what that cost. Every `log(...)` below goes through the allowlist, the value patterns and the
@@ -378,6 +420,7 @@ export async function runSidecar(): Promise<void> {
    */
   const shutdown = (reason: string, code: number): Promise<void> => {
     shuttingDown ??= (async () => {
+      armShutdownDeadline(log, reason, () => host?.inFlight ?? 0);
       log("shutdown", { reason, inFlight: host?.inFlight ?? 0 });
       try {
         // Both network doors stop admitting and drain before the store can close under them —
@@ -419,6 +462,8 @@ export async function runSidecar(): Promise<void> {
       void shutdown("transport_fatal", 1);
     },
   });
+  // The input ending starts the shutdown's clock, even while a request still holds `finished()`.
+  process.stdin.once("end", () => armShutdownDeadline(log, "stdin_closed", () => host?.inFlight ?? 0));
 
   await host.ready({
     baseUrl: "http://sidecar",
@@ -498,6 +543,7 @@ export async function runSidecar(): Promise<void> {
  */
 export async function runCloudSidecar(): Promise<void> {
   const stdout = claimStdout();
+  ignoreEpipe(process.stderr);
   const log = createSidecarLog();
   let cloud: CloudSidecar | null = null;
 
@@ -513,6 +559,7 @@ export async function runCloudSidecar(): Promise<void> {
       // stdio requests, and it is zero exactly when the mirror's own pull is what a quit is waiting
       // for — so a line carrying only that reported an idle process while a drain held the database
       // open past the grace period. `mirrorDraining` names the state that was actually blocking.
+      armShutdownDeadline(log, reason, () => host?.inFlight ?? 0);
       log("shutdown", {
         reason,
         inFlight: host?.inFlight ?? 0,
@@ -554,6 +601,7 @@ export async function runCloudSidecar(): Promise<void> {
   /* The shell closing stdin is a quit too: the held session questions are answered first, or
      `host.finished()` below would wait out their hold before this process could leave. */
   process.stdin.once("end", () => cloud?.releaseHeld());
+  process.stdin.once("end", () => armShutdownDeadline(log, "stdin_closed", () => host?.inFlight ?? 0));
   host = serveOverStdio({
     handle: (req) => cloud!.handle(req),
     input: process.stdin,
