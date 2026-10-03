@@ -20,7 +20,7 @@
  * usage:
  *   perf-smoke-check.mjs --samples <tsv> --engine-log <log> [--bundle <file>]
  *                        [--expect-messages <n>] [--fixture-messages <n>] [--runner-s <build step s>]
- *                        [--budget-table <file>]   (defaults to the perf budgets table beside it)
+ *                        [--engine-dir <dir>] [--budget-table <file>]   (both derived when absent)
  *   perf-smoke-check.mjs --boot --platform <linux_x64|macos|windows> --engine-log <log> [--runner-s <n>]
  *   perf-smoke-check.mjs --sample --pid <pid> --out <tsv> --seconds <n> [--interval <s>]
  *   perf-smoke-check.mjs --perf-smoke-only   the selftest: every arm watched failing and admitting
@@ -41,7 +41,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
  */
 export const CEILING_RULE = {
   percentile: 0.95, interpolation: "linear", margin: 0.10, roundUpToMs: 100, minReadings: 5,
-  // The runner band: a slower-than-median build step widens a timing ceiling by its factor, capped.
+  // The runner band: a slower-than-median runner widens a timing ceiling by its factor, capped.
   runnerFactorCap: 1.5,
 };
 
@@ -67,6 +67,15 @@ export const TIMING_READINGS = {
       [242, 1, 4168, 2212, 1339, 175, 134, 6669, 577],
       [242, 2, 3734, 1973, 1346, 160, 85, 5689, 435],
     ],
+    /* Runs 243-245 (0.25.9-0.25.11), read 2026-10-03 the same way. They feed ONLY the store-open
+     * ceiling, so the two timing ceilings and both medians stay the ones measured over `rows`. */
+    laterRows: [
+      [243, 1, 3984, 2236, 1344, 160, 113, 6299, 445],
+      [244, 1, 4770, 2718, 1645, 181, 125, 7779, 718],
+      [245, 1, 5300, 2954, 1886, 196, 145, 9546, 596],
+    ],
+    /* The store every row above opened: its open time stands for the runner only on these bytes. */
+    store: { pglite: "0.2.17", extensions: ["btree_gin", "pg_trgm"] },
   },
   macos: {
     instrument: "The packaged engine starts with no node on PATH: an empty data dir, a dead IMAP port",
@@ -119,9 +128,9 @@ export function ceilingFrom(values, rule = CEILING_RULE) {
 export function deriveTiming(readings = TIMING_READINGS, rule = CEILING_RULE) {
   const out = {};
   for (const [platform, t] of Object.entries(readings)) {
-    const col = (name) => {
+    const col = (name, rows = t.rows) => {
       const at = t.columns.indexOf(name);
-      return at < 0 ? [] : t.rows.map((r) => r[at]).filter((v) => typeof v === "number");
+      return at < 0 ? [] : rows.map((r) => r[at]).filter((v) => typeof v === "number");
     };
     const phaseP95 = {};
     for (const name of PHASE_FIELDS) {
@@ -129,12 +138,16 @@ export function deriveTiming(readings = TIMING_READINGS, rule = CEILING_RULE) {
       if (values.length >= rule.minReadings) phaseP95[name] = Math.round(quantile(values, rule.percentile));
     }
     const runner = col("buildStepS");
+    const pglite = col("pgliteOpenMs");
     out[platform] = {
       engine_ready: ceilingFrom(col("totalReadyMs"), rule),
       start_to_list: ceilingFrom(col("listUsableMs"), rule),
+      pglite_open: ceilingFrom([...pglite, ...col("pgliteOpenMs", t.laterRows ?? [])], rule),
       phaseP95,
       runnerStep: t.runnerStep,
       runnerReferenceS: runner.length >= rule.minReadings ? Math.round(quantile(runner, 0.5)) : null,
+      pgliteReferenceMs: pglite.length >= rule.minReadings ? Math.round(quantile(pglite, 0.5)) : null,
+      store: t.store ?? null,
     };
   }
   return out;
@@ -148,15 +161,17 @@ export const PLATFORM_TIMING = deriveTiming();
 
 /**
  * One timing reading against its ceiling and the runner band. PASS at or under the ceiling; over
- * it, CLASSIFY when the build step ran slower than its median by a factor f and the reading is
- * within ceiling x min(f, cap); FAIL otherwise, an unread runner included.
+ * it, CLASSIFY when the runner ran slower than its median by a factor f and the reading is within
+ * ceiling x min(f, cap); FAIL otherwise, an unread runner included. `factor` is the store-open
+ * form (null with `factorWhy` when refused); without it, the build step's seconds give f.
  */
-export function timingVerdict({ readingMs, ceilingMs, runnerS, runnerReferenceS, rule = CEILING_RULE }) {
+export function timingVerdict({ readingMs, ceilingMs, runnerS, runnerReferenceS, factor: given, factorWhy, rule = CEILING_RULE }) {
   if (readingMs <= ceilingMs) return { status: "PASS", bandMs: null, factor: null };
-  if (!(runnerS > 0) || !(runnerReferenceS > 0)) {
+  if (given === null) return { status: "FAIL", bandMs: null, factor: null, why: factorWhy };
+  if (given === undefined && (!(runnerS > 0) || !(runnerReferenceS > 0))) {
     return { status: "FAIL", bandMs: null, factor: null, why: "the runner's speed is unread, so nothing can widen the ceiling" };
   }
-  const factor = runnerS / runnerReferenceS;
+  const factor = given ?? runnerS / runnerReferenceS;
   if (factor <= 1) {
     return { status: "FAIL", bandMs: null, factor, why: "the runner was not slower than its median" };
   }
@@ -164,6 +179,43 @@ export function timingVerdict({ readingMs, ceilingMs, runnerS, runnerReferenceS,
   return readingMs <= bandMs
     ? { status: "CLASSIFY", bandMs, factor }
     : { status: "FAIL", bandMs, factor, why: "over the runner band as well" };
+}
+
+/* ── THE STORE'S OPEN TIME IS THE RUNNER'S READING ON LINUX ─────────────────────────────────
+ * pglite's open runs pinned bytes and none of our code, and over the 18 recorded runs it tracks
+ * engine_ready at r=0.92 and start_to_list at 0.91, where the build step's seconds read 0.57 and
+ * 0.70. So its ratio to its median widens the Linux ceilings; it has its own ceiling, never
+ * widened, so a slower open in our code is not divided out; and a different pglite or extension
+ * set refuses the comparison by name until the readings are retaken.
+ */
+export function readStoreIdentity(engineDir) {
+  const pkg = join(engineDir, "node_modules", "@electric-sql", "pglite", "package.json");
+  const bundle = join(engineDir, "ohmail-engine.mjs");
+  if (!existsSync(pkg)) return { unread: `no pglite package at ${pkg}` };
+  if (!existsSync(bundle)) return { unread: `no engine bundle at ${bundle}` };
+  const version = JSON.parse(readFileSync(pkg, "utf8")).version ?? null;
+  const names = readFileSync(bundle, "latin1").matchAll(/@electric-sql\/pglite\/contrib\/([a-z0-9_]+)/g);
+  return { pglite: version, extensions: [...new Set([...names].map((m) => m[1]))].sort() };
+}
+
+const storeName = (s) => `pglite ${s.pglite} with ${s.extensions.length ? s.extensions.join(", ") : "no extensions"}`;
+
+/** Why the shipped store cannot stand for the runner, or null when it is the recorded one. */
+export function storeRefusal(actual, recorded) {
+  if (actual === null) return "the shipped store was not read (no --engine-dir and no --bundle)";
+  if (actual.unread) return `the shipped store is unread: ${actual.unread}`;
+  if (!recorded) return "no recorded store to compare it with";
+  if (storeName(actual) === storeName(recorded)) return null;
+  return `the shipped store is ${storeName(actual)} and the readings were taken on ${storeName(recorded)}; retake TIMING_READINGS before its open time stands for the runner`;
+}
+
+/** The Linux band's factor: this run's store open over its recorded median, or null and why. */
+export function storeAllowance(pgliteOpenMs, storeIdentity, timing) {
+  const refused = storeRefusal(storeIdentity, timing?.store);
+  if (refused) return { factor: null, why: refused };
+  if (!(timing?.pgliteReferenceMs > 0)) return { factor: null, why: "no store-open median to compare it with" };
+  if (!(pgliteOpenMs > 0)) return { factor: null, why: "the boot line carries no pgliteOpenMs" };
+  return { factor: pgliteOpenMs / timing.pgliteReferenceMs, why: null };
 }
 
 /** The runner's reading as the verdict line prints it. */
@@ -516,10 +568,12 @@ export function phaseNote(bp, timing, judged) {
 }
 
 /** One timing arm: the reading, its ceiling, and the band's numbers when the band was asked. */
-function timingArm(add, id, readingMs, ceilingMs, runnerS, timing, suffix, note) {
-  const v = timingVerdict({ readingMs, ceilingMs, runnerS, runnerReferenceS: timing?.runnerReferenceS });
+function timingArm(add, id, readingMs, ceilingMs, runnerS, timing, suffix, note, allowance = null) {
+  const v = timingVerdict({ readingMs, ceilingMs, runnerS, runnerReferenceS: timing?.runnerReferenceS,
+    ...(allowance ? { factor: allowance.factor, factorWhy: allowance.why } : {}) });
   let reading = `${readingMs} ms against ${ceilingMs} ms${suffix}`;
-  if (v.status === "CLASSIFY") reading += `, inside the runner band of ${v.bandMs} ms (build step x${v.factor.toFixed(2)})`;
+  const by = allowance ? "pglite open" : "build step";
+  if (v.status === "CLASSIFY") reading += `, inside the runner band of ${v.bandMs} ms (${by} x${v.factor.toFixed(2)})`;
   if (v.status === "FAIL" && v.why) reading += ` — ${v.why}${v.bandMs ? ` (band ${v.bandMs} ms)` : ""}`;
   add(id, "DECIDES", v.status, reading, typeof note === "function" ? note(v.status !== "PASS") : note);
 }
@@ -528,7 +582,7 @@ function timingArm(add, id, readingMs, ceilingMs, runnerS, timing, suffix, note)
  * A DECIDES arm is one that has been watched failing on a real measurement, and only a DECIDES
  * arm can turn the run red. Everything else is printed, and says on its own line that it is.
  */
-export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fixtureMessages, deriveBudget, runnerS = null }) {
+export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fixtureMessages, deriveBudget, runnerS = null, storeIdentity = null }) {
   const arms = [];
   const timing = PLATFORM_TIMING.linux_x64;
   const add = (id, kind, status, reading, note) => arms.push({ id, kind, status, reading, note });
@@ -579,11 +633,26 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
    * this function rather than reported as a green with no arms behind it. */
   const boot = bootPhases(log);
   const readyMs = boot?.total ?? null;
+  const pgliteMs = boot?.phases.find(([k]) => k === "pgliteOpenMs")?.[1] ?? null;
+  const allowance = storeAllowance(pgliteMs, storeIdentity, timing);
   if (readyMs === null) {
     add("engine_ready", "RECORDED", "UNREAD", "<the log carries no boot_phases line>", "");
   } else {
     timingArm(add, "engine_ready", readyMs, BUDGETS.engineReadyMs, runnerS, timing, "",
-      (judged) => phaseNote(boot, timing, judged));
+      (judged) => phaseNote(boot, timing, judged), allowance);
+  }
+  /* The store's own ceiling, which the runner band never widens. Unasked (no store read) it is
+   * printed; a store that was asked and is unread or not the recorded one reddens by name. */
+  const pgCeiling = timing.pglite_open.ceilingMs;
+  if (pgliteMs === null) {
+    add("pglite_open", "RECORDED", "UNREAD", "<the boot line carries no pgliteOpenMs>", "");
+  } else if (storeIdentity === null) {
+    add("pglite_open", "RECORDED", "READ", `${pgliteMs} ms against ${pgCeiling} ms, the shipped store unread`, "");
+  } else {
+    const refused = storeRefusal(storeIdentity, timing.store);
+    add("pglite_open", "DECIDES", refused === null && pgliteMs <= pgCeiling ? "PASS" : "FAIL",
+      refused ?? `${pgliteMs} ms against ${pgCeiling} ms`,
+      "the store's own open, never widened by the runner band");
   }
 
   const rssBytes = lastField(log, "engine_vitals", "rss");
@@ -666,7 +735,7 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
     }
     const value = fold === "sum" ? values.reduce((a, b) => a + b, 0) : Math.max(...values);
     if (within === "timing") {
-      timingArm(add, id, value, BUDGETS.startToListMs, runnerS, timing, ` (goal ${BUDGETS.startToListGoalMs} ms)`, note);
+      timingArm(add, id, value, BUDGETS.startToListMs, runnerS, timing, ` (goal ${BUDGETS.startToListGoalMs} ms)`, note, allowance);
       continue;
     }
     add(id, kind, within ? (within(value) ? "PASS" : "FAIL") : "READ", reading(value), note);
@@ -737,7 +806,10 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
    * refusals above, `renderer_peak` always decides, because this check's own sampler is the
    * instrument for it. A guard for a state that cannot be reached is a line nobody can watch
    * fail — the shapes that CAN leave this check saying nothing are the three refusals above. */
-  return { arms, runnerLine: runnerLine(runnerS, timing) };
+  const store = allowance.factor === null
+    ? `runner: pglite open unread (${allowance.why})`
+    : `runner: pglite open ${pgliteMs} ms against its median ${timing.pgliteReferenceMs} ms (x${allowance.factor.toFixed(2)})`;
+  return { arms, runnerLine: `${store} · ${runnerLine(runnerS, timing).replace(/^runner: /, "")}, recorded` };
 }
 
 /**
@@ -921,20 +993,38 @@ export const SAMPLE_LOG_SLOW = [
 
 /* The runner-band arms: a normal run, a slow runner, and a product regression on a normal runner,
  * each built from the ok log with only the boot line's total moved. */
-export function bootLog(totalReadyMs) {
-  return SAMPLE_LOG_OK.replace('"totalReadyMs":1850', `"totalReadyMs":${totalReadyMs}`);
+export function bootLog(totalReadyMs, pgliteOpenMs = 120) {
+  return SAMPLE_LOG_OK.replace('"totalReadyMs":1850', `"totalReadyMs":${totalReadyMs}`)
+    .replace('"pgliteOpenMs":120', `"pgliteOpenMs":${pgliteOpenMs}`);
+}
+
+/* A recorded Linux reading (a TIMING_READINGS row) as the log the smoke reads: its boot line and
+ * its window's list mark, so the ruled controls run on real numbers. */
+export function recordedLog(run, attempt) {
+  const t = TIMING_READINGS.linux_x64;
+  const row = [...t.rows, ...t.laterRows].find((r) => r[0] === run && r[1] === attempt);
+  if (!row) throw new Error(`no recorded Linux reading for run ${run} attempt ${attempt}`);
+  const v = (name) => row[t.columns.indexOf(name)];
+  const boot = `{"service":"sidecar","event":"boot_phases","pgliteOpenMs":${v("pgliteOpenMs")},"adoptBaselineMs":${v("adoptBaselineMs")},"migrateMs":${v("migrateMs")},"searchSetupMs":${v("searchSetupMs")},"totalReadyMs":${v("totalReadyMs")}}`;
+  const ui = `{"service":"ui","event":"ui_vitals","listUsableMs":${v("listUsableMs")},"openP95Ms":null,"longFrames":0,"longTasks":0,"deriveMs":null,"deriveP50Ms":null,"deriveP95Ms":null,"deriveCount":0}`;
+  return { log: SAMPLE_LOG_OK.replace(/^.*"boot_phases".*$/m, boot) + `\n${ui}`, runnerS: v("buildStepS"), row: Object.fromEntries(t.columns.map((c, i) => [c, row[i]])) };
 }
 
 export function selftest(write) {
-  const ref = PLATFORM_TIMING.linux_x64.runnerReferenceS;
+  const linux = PLATFORM_TIMING.linux_x64;
+  const pg = linux.pgliteReferenceMs;
   const ceiling = BUDGETS.engineReadyMs;
   const bands = [
-    ["a normal run on a median runner", bootLog(ceiling - 500), ref, 0],
-    ["a slow runner over the ceiling", bootLog(ceiling + 300), Math.round(ref * 1.2), 5],
-    ["a product regression, median runner", bootLog(ceiling * 2), ref, 1],
-    ["a product regression, slow runner", bootLog(ceiling * 2), Math.round(ref * 1.2), 1],
-    ["over the ceiling, runner unread", bootLog(ceiling + 300), null, 1],
+    ["a normal run on a median runner", bootLog(ceiling - 500, pg), linux.store, 0],
+    ["a slow runner over the ceiling", bootLog(ceiling + 300, Math.round(pg * 1.2)), linux.store, 5],
+    ["a product regression, median runner", bootLog(ceiling * 2, pg), linux.store, 1],
+    ["a product regression, slow runner", bootLog(ceiling * 2, Math.round(pg * 1.2)), linux.store, 1],
+    ["over the ceiling, store unread", bootLog(ceiling + 300, Math.round(pg * 1.2)), null, 1],
+    ["over the ceiling, another pglite", bootLog(ceiling + 300, Math.round(pg * 1.2)), { ...linux.store, pglite: "0.3.0" }, 1],
+    ["a slower store open of our own", bootLog(ceiling + 300, linux.pglite_open.ceilingMs + 400), linux.store, 1],
   ];
+  /* The ruled controls over recorded readings: 0.25.7's first red (run 241/1) and 0.25.11 (245/1). */
+  const recorded = [["run 241/1, the 0.25.7 red", 241, 1, 5], ["run 245/1, 0.25.11", 245, 1, 0]];
   const cases = [
     ["a released build's own shape", releasedShapeSample(), SAMPLE_LOG_SLOW, 1],
     ["a build inside its budgets", withinBudgetSample(), SAMPLE_LOG_OK, 0],
@@ -953,14 +1043,18 @@ export function selftest(write) {
   for (const [name, samples, log, want] of cases) {
     judge(name, render(collect({ samples, log, uiInBundle: false, expectMessages: 10000, fixtureMessages: 10000 })), want, "PERF_SMOKE");
   }
-  for (const [name, log, runnerS, want] of bands) {
-    judge(name, render(collect({ samples: withinBudgetSample(), log, uiInBundle: false, expectMessages: 10000, fixtureMessages: 10000, runnerS })), want, "PERF_SMOKE");
+  for (const [name, log, storeIdentity, want] of bands) {
+    judge(name, render(collect({ samples: withinBudgetSample(), log, uiInBundle: false, expectMessages: 10000, fixtureMessages: 10000, runnerS: linux.runnerReferenceS, storeIdentity })), want, "PERF_SMOKE");
+  }
+  for (const [name, run, attempt, want] of recorded) {
+    const r = recordedLog(run, attempt);
+    judge(name, render(collect({ samples: withinBudgetSample(), log: r.log, uiInBundle: true, expectMessages: 10000, fixtureMessages: 10000, runnerS: r.runnerS, storeIdentity: linux.store })), want, "PERF_SMOKE");
   }
   const mac = PLATFORM_TIMING.macos;
   judge("macOS boot inside its ceiling", render(collectBoot({ log: bootLog(mac.engine_ready.ceilingMs - 100), platform: "macos", runnerS: mac.runnerReferenceS })), 0, "PERF_SMOKE_BOOT");
   judge("macOS boot regression", render(collectBoot({ log: bootLog(mac.engine_ready.ceilingMs * 2), platform: "macos", runnerS: mac.runnerReferenceS })), 1, "PERF_SMOKE_BOOT");
   judge("Windows boot, no distribution yet", render(collectBoot({ log: bootLog(9000), platform: "windows", runnerS: null })), 0, "PERF_SMOKE_BOOT");
-  const total = cases.length + bands.length + 3;
+  const total = cases.length + bands.length + recorded.length + 3;
   write(bad === 0
     ? "\nPERF_SMOKE_SELFTEST: GREEN -- every arm refuses the shape it exists for and admits the other\n"
     : `\nPERF_SMOKE_SELFTEST: RED -- ${bad} of ${total} cases answered wrongly\n`);
@@ -1045,6 +1139,11 @@ if (RUN_AS_SCRIPT) {
       process.exit(3);
     }
     const vocabulary = bundleVocabulary(opt("bundle", null));
+    /* The shipped engine beside the AppImage's binary (usr/bin -> usr/lib/ohmail/engine/bin), or
+     * --engine-dir; with neither, the store is unasked and its open time widens nothing. */
+    const bundleArg = opt("bundle", null);
+    const engineDir = opt("engine-dir", null) ?? (bundleArg ? join(dirname(bundleArg), "..", "lib", "ohmail", "engine", "bin") : null);
+    const storeIdentity = engineDir === null ? null : readStoreIdentity(engineDir);
     const deriveBudget = readDeriveP95Budget(opt("budget-table", DEFAULT_BUDGET_TABLE));
     const { text, code } = render(collect({
       samples: readFileSync(samplesPath, "utf8"),
@@ -1055,6 +1154,7 @@ if (RUN_AS_SCRIPT) {
       fixtureMessages: fixture,
       deriveBudget,
       runnerS,
+      storeIdentity,
     }));
     process.stdout.write(`${text}\n`);
     process.exit(code);
