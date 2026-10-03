@@ -465,6 +465,9 @@ function accountGuarded(
     /* Why a sender's rows stayed — a read of this account's own messages, on `screenerWaiting`'s
        rule. Left out, the engine reads "this door names no reason" and the sheet lists none. */
     whyStayed: (ids) => adapter.whyStayed(ids),
+    /* What waits on the organizer — this account's own requests, on `screenerWaiting`'s rule. Left
+       out, the phone lists only what this session sent and a relaunch forgets the rest. */
+    organizerRequests: () => adapter.organizerRequests(),
   };
 }
 

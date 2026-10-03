@@ -214,6 +214,31 @@ export async function listOutstandingForAccount(
   return out;
 }
 
+/** How many of this install's newest requests the waiting list reads. */
+export const WAITING_REQUESTS_READ_MAX = 200;
+
+/**
+ * THIS INSTALL'S REQUESTS A SURFACE LISTS AS WAITING ON THE ORGANIZER, newest first: every one
+ * still `pending`/`sent`, and every one RESOLVED within {@link REFUSAL_VISIBLE_FOR_MS} — a refusal
+ * carries its reason that long, and an applied or expired row is how a client holding the request
+ * learns it is over when no change says so. Bounded to the newest {@link WAITING_REQUESTS_READ_MAX}.
+ */
+export async function listRequestsForSurface(tx: Tx, accountId: string, now: Date): Promise<OrganizerRequestRow[]> {
+  const since = new Date(now.getTime() - REFUSAL_VISIBLE_FOR_MS);
+  const rows = await tx.select().from(organizerRequests)
+    .where(and(
+      eq(organizerRequests.accountId, accountId),
+      or(
+        eq(organizerRequests.state, "pending"),
+        eq(organizerRequests.state, "sent"),
+        gt(organizerRequests.resolvedAt, since),
+      ),
+    ))
+    .orderBy(desc(organizerRequests.decidedAt), desc(organizerRequests.id))
+    .limit(WAITING_REQUESTS_READ_MAX);
+  return rows.map(toRow);
+}
+
 /** How many of this install's newest `profile.update` rows a settings pane reads. */
 export const PROFILE_REQUESTS_READ_MAX = 200;
 

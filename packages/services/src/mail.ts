@@ -118,6 +118,9 @@ export {
 export {
   readProfileChange, readMailboxProfileChanges, type ProfileChangeWire, type ProfileChangeReading,
 } from "./profile-change.js";
+export {
+  listWaitingOnOrganizer, type WaitingRequestDTO, type WaitingTarget,
+} from "./waiting-requests.js";
 
 
 export {

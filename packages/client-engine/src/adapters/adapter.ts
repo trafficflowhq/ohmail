@@ -3,6 +3,7 @@ import type { WindowSyncFailure } from "../window-sync-failure.js";
 import type { WindowSearchPhases } from "../search-phases.js";
 import type {
   EngineMutation, MessageBodyBatchWire, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult,
+  WaitingRequestWire,
 } from "../types.js";
 
 /**
@@ -103,9 +104,15 @@ export interface MutationQueued {
   queuedWith: { name: string | null };
   /**
    * The server's `organizer_requests.id`, or `null` from a door that answers a queued state
-   * without naming one (the rules family, whose 202 carries `travel` instead).
+   * without naming one. The first of {@link requestIds}.
    */
   requestId: string | null;
+  /**
+   * EVERY request the press made: a rule edit's 202 names none at the top and one per held mailbox
+   * under `travel.pending`, and the server's list settles the press only by these. Absent from an
+   * adapter that names one id at most: `requestId` alone then.
+   */
+  requestIds?: string[];
   changes: SyncChange[];
   seq: null;
 }
@@ -445,6 +452,12 @@ export interface EngineAdapter {
    * the mirror's own derivation, and the surface says the count is this device's.
    */
   screenerWaiting?(page?: { cursor?: string; limit?: number }): Promise<ScreenerWaitingWire>;
+
+  /**
+   * `GET /organizer-requests` — what this door's requests to the organizer stand at. Optional: a
+   * door without it leaves the waiting list to the requests this session sent itself.
+   */
+  organizerRequests?(): Promise<WaitingRequestWire[]>;
 
   /**
    * `POST /screener/unscreened` — THE PRESS. Sends the named sender groups, or every group shown

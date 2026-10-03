@@ -12,6 +12,7 @@ import { threadRoutes } from "./threads.js";
 import { screenerRoutes } from "./screener.js";
 import { trashRoutes } from "./trash.js";
 import { approvalRoutes } from "./approvals.js";
+import { organizerRequestRoutes } from "./organizer-requests.js";
 import { triageRoutes } from "./triage.js";
 import { searchRoutes } from "./search.js";
 import { privacyRoutes } from "./privacy.js";
@@ -222,6 +223,7 @@ export const apiRoutes: Route[] = [
   ...screenerRoutes,
   ...trashRoutes,
   ...approvalRoutes,
+  ...organizerRequestRoutes,
   ...triageRoutes,
   ...searchRoutes,
   ...privacyRoutes,

@@ -96,7 +96,7 @@ export {
   REQUEST_STATES, TERMINAL_REQUEST_STATES, REFUSAL_VISIBLE_FOR_MS, insertOrganizerRequest, insertOrganizerRequestSet, listPendingRequests,
   listSentRequests, listOutstandingForAccount, markRequestsSent, markRequestsApplied,
   markRequestsExpired, markRequestsRefused, listStaleSentRequests, mailboxRowsHeld,
-  listProfileRequestsNaming, PROFILE_REQUESTS_READ_MAX,
+  listProfileRequestsNaming, PROFILE_REQUESTS_READ_MAX, listRequestsForSurface, WAITING_REQUESTS_READ_MAX,
   type RequestState, type OrganizerRequestRow, type OutstandingMatch,
 } from "./organizer-requests.js";
 // Which rules the act on suggestions wrote — the Rules pane's own group, from one reading.

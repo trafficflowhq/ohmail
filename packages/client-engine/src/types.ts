@@ -1883,6 +1883,33 @@ export interface ScreenerWaitingSenderDTO {
   total: number;
 }
 
+/**
+ * ONE ROW OF `GET /organizer-requests` — a request this door sent the install that organizes a
+ * mailbox, still in flight or resolved within a day. The target is the server's projection per
+ * kind; the stored payload never travels.
+ */
+export interface WaitingRequestWire {
+  id: string;
+  kind: string;
+  state: "pending" | "sent" | "applied" | "expired" | "refused";
+  mailboxId: string;
+  holder: { name: string | null };
+  decidedAt: ISODateTime;
+  resolvedAt: ISODateTime | null;
+  refusedReason: string | null;
+  target: WaitingTargetWire;
+}
+
+export type WaitingTargetWire =
+  | {
+    rule: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null };
+    destination?: string;
+  }
+  | { messageId: string | null; folder: string | null }
+  | { scope: string; match: string }
+  | { fields: string[] }
+  | { unknown: true };
+
 export const OUTBOX_TYPE = "outbox_entry";
 export const OUTBOX_ABANDONED_TYPE = "outbox_abandoned";
 /**

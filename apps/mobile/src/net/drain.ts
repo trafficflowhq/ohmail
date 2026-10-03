@@ -14,6 +14,8 @@ export interface DrainEngine {
   start(): Promise<void>;
   syncOnce(): Promise<void>;
   hydrate(): Promise<void>;
+  /** After a round's sync: what waits on the organizer, floor-bounded (the engine owns no timer). */
+  pollWaitingOnOrganizer?(): void;
 }
 
 import { faultDetail, type RefusalArg } from "../refusal";
@@ -103,6 +105,7 @@ export class SyncRunner {
       let account = false;
       try {
         await (first ? engine.start() : engine.syncOnce());
+        engine.pollWaitingOnOrganizer?.();
       } catch (err) {
         account = isAccessRefusal(err);
         outcome = { ok: false, first, err, failures: account ? this.failed : this.failed + 1 };

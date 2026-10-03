@@ -12,6 +12,7 @@ import { screeningRoutes } from "./screening.js";
 // Mail 0083. See the mount below: THE STANDALONE DOOR HAD NO SCREENING WINDOW AT ALL.
 import { consentRoutes } from "./consent.js";
 import { approvalRoutes } from "./approvals.js";
+import { organizerRequestRoutes } from "./organizer-requests.js";
 import { triageRoutes } from "./triage.js";
 import { searchRoutes } from "./search.js";
 import { privacyRoutes } from "./privacy.js";
@@ -124,6 +125,7 @@ export const localRoutes: Route[] = [
    */
   ...withoutFoldersFlag(consentRoutes),
   ...approvalRoutes,
+  ...organizerRequestRoutes,
   ...triageRoutes,
   ...searchRoutes,
   ...privacyRoutes,

@@ -11,6 +11,7 @@ import {
   type MessageBodyWire,
   type OhmailView,
   type RuleDTO,
+  type WaitingRequestWire,
   type SyncChange,
   type SyncResponse,
   type SyncSnapshotPage,
@@ -41,6 +42,7 @@ import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
 import { sessionEndedResponse } from "../session-gate.js";
 import { responseBlob } from "../bytes-blob.js";
 import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
+import { ORGANIZER_REQUESTS_PATH, waitingRequestsOf } from "../organizer-requests-wire.js";
 
 /** The store's facets, read defensively; `null` when the answer carried none (the page part). */
 function facetsOf(wire: unknown): ServerSearchFacets | null {
@@ -1333,10 +1335,14 @@ export class HttpAdapter implements EngineAdapter {
     const holder = b.holder
       ? named(b.holder)
       : (legs.map((leg) => named((leg as { holder?: unknown } | null)?.holder)).find((n) => n !== null) ?? null);
+    // The request ids: the top-level one a move or decision names, else one per rule leg.
+    const ids = [b.requestId, ...legs.map((leg) => (leg as { requestId?: unknown } | null)?.requestId)]
+      .filter((v): v is string => typeof v === "string" && v !== "");
     return {
       settlement: "queued",
       queuedWith: { name: holder },
-      requestId: typeof b.requestId === "string" && b.requestId !== "" ? b.requestId : null,
+      requestId: ids[0] ?? null,
+      requestIds: [...new Set(ids)],
       changes: [],
       seq: null,
     };
@@ -2735,6 +2741,13 @@ export class HttpAdapter implements EngineAdapter {
       ids.push(grant.id);
     }
     return ids;
+  }
+
+  /** `GET /organizer-requests` — see {@link EngineAdapter.organizerRequests}. */
+  async organizerRequests(): Promise<WaitingRequestWire[]> {
+    const res = await this.request("GET", ORGANIZER_REQUESTS_PATH);
+    if (!res.ok) throw await this.rejectionOf(res);
+    return waitingRequestsOf(await res.json().catch(() => null));
   }
 }
 

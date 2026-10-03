@@ -28,6 +28,8 @@ import {
 } from "./search.js";
 import { isOwnSent, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
 import { outrankCoveringDomains } from "./address-rank.js";
+import { canonicalDestination } from "@trafficflow/core/folder-name";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { consentIndex, decidedDestination, namedByBodyTerm, warmBodyTermNames } from "./consent-cutline.js";
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
@@ -80,6 +82,8 @@ import {
   type WithheldMarker,
   type HeldReleaseGroupDTO,
   type RuleDTO,
+  type WaitingRequestWire,
+  type WaitingTargetWire,
   type UnscreenedGroupDTO,
   type ScreenerWaitingDTO,
   type ScreenerWaitingPageDTO,
@@ -199,6 +203,27 @@ export interface MutationResult {
  * It is not on any retry queue here: nothing this client does moves it, and only a change
  * arriving through /sync settles it.
  */
+/** One row of {@link OhmailEngine.waitingOnOrganizer} — what a surface lists as waiting. */
+export interface WaitingOnOrganizerView {
+  /** The server's request id, or `null` for a request this session holds that names none. */
+  requestId: string | null;
+  /** The request kind (`rule.delete`, `message.move`, …). */
+  kind: string;
+  state: "pending" | "sent" | "refused";
+  holder: { name: string | null };
+  /** The mailbox the request went to, where the server named it. */
+  mailboxId: string | null;
+  decidedAt: ISODateTime;
+  /** Why the organizer said no — only on `refused`. */
+  refusedReason: string | null;
+  target: WaitingTargetWire;
+  /** The mirror's rule the request names, by key, or `null`. */
+  ruleId: string | null;
+  messageId: string | null;
+  /** Past {@link ORGANIZER_REQUEST_SLOW_MS} and still in flight. */
+  slow: boolean;
+}
+
 export interface OrganizerRequestView {
   id: string;
   key: string;
@@ -1908,6 +1933,13 @@ export const OUTBOX_BACKOFF_CAP_MS = 3_600_000;
 export const ORGANIZER_REQUEST_SLOW_MS = 5 * 60_000;
 
 /**
+ * THE FLOOR BETWEEN TWO READS OF THE WAITING LIST from {@link OhmailEngine.pollWaitingOnOrganizer}.
+ * The organizer's ack writes no change, so on a quiet mailbox no sync page would ever ask; the
+ * surface's own cadence polls, and this bounds how often a poll reads. The engine owns no timer.
+ */
+export const ORGANIZER_REQUESTS_REREAD_MS = 30_000;
+
+/**
  * HOW OLD an UNKEYED CREATE may be and still replay — the server's own `idempotencyExpiry`
  * (24 h), mirrored as a literal for the same reason every compose-cap mirror is: this bundle
  * pulls in no server module. Only `rule_create` and a first `draft_save` are judged by it; see
@@ -2135,6 +2167,17 @@ const QUEUE_VERBS: ReadonlySet<EngineMutation["kind"]> = new Set<EngineMutation[
   "screener_decide", "rule_create", "rule_update", "rule_delete",
 ]);
 
+/** The verbs a reader's door can record for the install that organizes the mailbox. */
+const TRAVELLING_VERBS: ReadonlySet<EngineMutation["kind"]> = new Set<EngineMutation["kind"]>([
+  "screener_decide", "rule_create", "rule_update", "rule_delete", "move", "message_delete",
+]);
+
+/** The request kind an in-session verb travels as, until the server lists it. */
+const WIRE_KIND: Partial<Record<EngineMutation["kind"], string>> = {
+  screener_decide: "screener.decide", rule_create: "rule.create", rule_update: "rule.update",
+  rule_delete: "rule.delete", move: "message.move", message_delete: "message.move",
+};
+
 /** A queue row off the wire as the mirror stores it. */
 function waitingRow(item: ScreenerWaitingItemWire, order: number, total: number): ScreenerWaitingSenderDTO {
   return {
@@ -2311,8 +2354,16 @@ export class OhmailEngine {
    */
   private readonly organizerQueue = new Map<string, {
     id: string; key: string; mutation: EngineMutation;
-    queuedWith: { name: string | null }; requestId: string | null; at: number;
+    queuedWith: { name: string | null }; requestId: string | null; requestIds: string[]; at: number;
   }>();
+  /** When the waiting list was last asked for (engine clock), and whether that read was refused. */
+  private lastWaitingReadAt = Number.NEGATIVE_INFINITY;
+  private waitingRefused = false;
+  /** The server's waiting list, last read — see {@link waitingOnOrganizer}. `null` until asked. */
+  private waitingServer: WaitingRequestWire[] | null = null;
+  private waitingAsk: Promise<void> | null = null;
+  private waitingAgain = false;
+  private waitingAsked = false;
   /** Count of drains whose page loop has BEGUN — the happens-before token {@link awaitingEcho} compares. */
   private drainEpoch = 0;
   /** {@link OhmailEngine.restoreOutbox}'s latch. */
@@ -4213,6 +4264,9 @@ export class OhmailEngine {
   private noteApplied(changes: SyncChange[]): void {
     this.countReceived(changes);
     this.settleOrganizerRequests(changes);
+    // While anything waits, each page asks the list again: the organizer's act arrives as a page.
+    if (changes.length > 0) this.waitingRefused = false;
+    if (changes.length > 0 && this.somethingWaits()) this.refreshWaitingOnOrganizer();
     this.noteMessagesRemoved(changes);
     this.noteGateArrivals(changes);
     this.noteStoreChanges(changes);
@@ -4293,6 +4347,23 @@ export class OhmailEngine {
         return ch.type === "message" && ch.id === m.messageId && ch.op === "delete";
       case "screener_decide":
         return ch.type === "screener_sender" && ch.id === m.senderId;
+      // A rule request is confirmed by the rule's own change saying what was asked: the row gone,
+      // the row filing where the change asked (an edit by somebody else is not this request's), or
+      // a row under the created key (the organizer applies a create of an existing key as an edit).
+      case "rule_delete":
+        return ch.type === "rule" && ch.id === m.ruleId && ch.op === "delete";
+      case "rule_update": {
+        if (ch.type !== "rule" || ch.id !== m.ruleId || ch.op !== "update") return false;
+        const r = ch.entity as RuleDTO | undefined;
+        return r !== undefined && canonicalDestination(r.destination) === canonicalDestination(m.destination);
+      }
+      case "rule_create": {
+        if (ch.type !== "rule" || ch.op === "delete") return false;
+        const r = ch.entity as RuleDTO | undefined;
+        return r !== undefined && r.kind === m.ruleKind && ruleMatchKey(r.match) === ruleMatchKey(m.match)
+          && (r.subjectContains ?? null) === (m.subjectContains ?? null)
+          && (r.bodyContains ?? null) === (m.bodyContains ?? null);
+      }
       default:
         return false;
     }
@@ -4317,6 +4388,102 @@ export class OhmailEngine {
         at: new Date(r.at).toISOString(),
         slow: now - r.at >= ORGANIZER_REQUEST_SLOW_MS,
       }));
+  }
+
+  /**
+   * WHAT WAITS ON THE ORGANIZER, as every surface lists it — the server's list (`GET
+   * /organizer-requests`, the record that outlives this session) merged with the requests this
+   * session sent and the server has not listed yet, keyed by request id; the server's state wins.
+   * Newest first. A request the server lists as over is not in it; a refusal is, for a day. The
+   * first read asks the server; an answer settles the in-session queue.
+   */
+  waitingOnOrganizer(): WaitingOnOrganizerView[] {
+    if (!this.waitingAsked) this.refreshWaitingOnOrganizer();
+    const now = this.now().getTime();
+    const rules = rulesList(this.read());
+    const ruleIdOf = (k: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): string | null =>
+      rules.find((r) => r.kind === k.kind && ruleMatchKey(r.match) === ruleMatchKey(k.match)
+        && (r.subjectContains ?? null) === k.subjectContains && (r.bodyContains ?? null) === k.bodyContains)?.id ?? null;
+    const out: WaitingOnOrganizerView[] = [];
+    const listed = new Set<string>();
+    for (const w of this.waitingServer ?? []) {
+      listed.add(w.id);
+      if (w.state === "applied" || w.state === "expired") continue;
+      const t = w.target as Record<string, unknown>;
+      const rule = (t.rule ?? null) as { kind: string; match: string; subjectContains: string | null; bodyContains: string | null } | null;
+      out.push({
+        requestId: w.id, kind: w.kind, state: w.state, holder: w.holder, mailboxId: w.mailboxId, decidedAt: w.decidedAt,
+        refusedReason: w.refusedReason, target: w.target,
+        ruleId: rule ? ruleIdOf(rule) : null,
+        messageId: typeof t.messageId === "string" ? t.messageId : null,
+        slow: w.state !== "refused" && now - Date.parse(w.decidedAt) >= ORGANIZER_REQUEST_SLOW_MS,
+      });
+    }
+    for (const r of this.organizerQueue.values()) {
+      // Listed by the server under any of its ids: the server's rows speak for this press.
+      if (r.requestIds.some((id) => listed.has(id))) continue;
+      const m = r.mutation;
+      out.push({
+        requestId: r.requestId, kind: WIRE_KIND[m.kind] ?? m.kind, state: "pending", holder: r.queuedWith, mailboxId: null,
+        decidedAt: new Date(r.at).toISOString(), refusedReason: null, target: { unknown: true },
+        ruleId: "ruleId" in m ? m.ruleId : null,
+        messageId: "messageId" in m ? m.messageId : null,
+        slow: now - r.at >= ORGANIZER_REQUEST_SLOW_MS,
+      });
+    }
+    return out.sort((a, b) => Date.parse(b.decidedAt) - Date.parse(a.decidedAt));
+  }
+
+  /**
+   * ASK THE SERVER WHAT WAITS, coalesced: one read in flight at a time, a second ask during it runs
+   * once more after it. A request the answer lists as over (applied, expired or refused) leaves the
+   * in-session queue: the server row is the settle of record when no change says so. Never throws.
+   */
+  refreshWaitingOnOrganizer(): void {
+    const ask = this.adapter.organizerRequests?.bind(this.adapter);
+    if (!ask) return;
+    this.waitingAsked = true;
+    if (this.waitingAsk) { this.waitingAgain = true; return; }
+    this.lastWaitingReadAt = this.now().getTime();
+    this.waitingAsk = (async () => {
+      try {
+        const rows = await ask();
+        this.waitingRefused = false;
+        this.waitingServer = rows;
+        // A press the server lists, under every id it made, is the server's to say from now on:
+        // its rows carry the state, so the session's entry leaves rather than speak twice.
+        const listed = new Set(rows.map((w) => w.id));
+        for (const [id, r] of this.organizerQueue) {
+          if (r.requestIds.length > 0 && r.requestIds.every((rid) => listed.has(rid))) this.organizerQueue.delete(id);
+        }
+        this.overlayRev++;
+        this.notify();
+      } catch {
+        // A refused read is not retried on a clock: a page with changes or a queued press asks again.
+        this.waitingRefused = true;
+      } finally {
+        this.waitingAsk = null;
+        if (this.waitingAgain) { this.waitingAgain = false; this.refreshWaitingOnOrganizer(); }
+      }
+    })();
+  }
+
+  /**
+   * THE SURFACE'S CADENCE ASKS, the engine owns no timer: the web scheduler's tick and the phone's
+   * drain round call this after their sync. It reads only while something waits, not under
+   * {@link ORGANIZER_REQUESTS_REREAD_MS} since the last read, and never after a refused read until
+   * a page with changes or a queued press clears it. A no-op where the adapter lists nothing.
+   */
+  pollWaitingOnOrganizer(): void {
+    if (!this.adapter.organizerRequests || !this.somethingWaits() || this.waitingRefused) return;
+    if (this.now().getTime() - this.lastWaitingReadAt < ORGANIZER_REQUESTS_REREAD_MS) return;
+    this.refreshWaitingOnOrganizer();
+  }
+
+  /** Is anything listed or queued as waiting — what keeps the drain asking again. */
+  private somethingWaits(): boolean {
+    return this.organizerQueue.size > 0
+      || (this.waitingServer ?? []).some((w) => w.state === "pending" || w.state === "sent");
   }
 
   private countReceived(changes: SyncChange[]): void {
@@ -6079,6 +6246,12 @@ export class OhmailEngine {
    */
   async mutate(m: EngineMutation, opts: { key?: string; andDone?: SendAndDonePlan } = {}): Promise<MutationResult> {
     const result = await this.mutateOnce(m, opts);
+    // A verb that may travel to another install re-reads what waits — on a 202 AND on an applied
+    // answer, since a mixed account's rule removal is applied here and asked there.
+    if ((result.status === "awaiting_organizer" || result.status === "confirmed") && TRAVELLING_VERBS.has(m.kind)) {
+      if (result.status === "awaiting_organizer") this.waitingRefused = false;
+      this.refreshWaitingOnOrganizer();
+    }
     // A decision the server took changes who is waiting; the page is re-read on this one road.
     if (result.status !== "rolled_back" && QUEUE_VERBS.has(m.kind) && this.screenerWait.armed) {
       this.reaskScreenerWaiting();
@@ -7666,7 +7839,8 @@ export class OhmailEngine {
     await this.dropOutbox(p.id);
     this.organizerQueue.set(p.id, {
       id: p.id, key: p.key, mutation: p.mutation,
-      queuedWith: outcome.queuedWith, requestId: outcome.requestId, at: this.now().getTime(),
+      queuedWith: outcome.queuedWith, requestId: outcome.requestId,
+      requestIds: outcome.requestIds ?? (outcome.requestId ? [outcome.requestId] : []), at: this.now().getTime(),
     });
     this.overlayRev++;
     this.notify();
