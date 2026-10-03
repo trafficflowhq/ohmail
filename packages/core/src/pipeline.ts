@@ -502,8 +502,9 @@ export interface PlanDeps {
   accountId: string;
   mailboxId: string;
   /**
-   * The caller's log: each message's parse time as `mime_parse_ms`, and an unmatched file as
-   * `attachment_section_unmatched` (ids and a reason, never a name). Absent: unlogged.
+   * The caller's log: each message's parse time as `mime_parse_ms` at debug (a parse over 2 s
+   * at warn), and an unmatched file as `attachment_section_unmatched` (ids and a reason, never a
+   * name). Absent: unlogged.
    */
   log?: Logger;
   /**
