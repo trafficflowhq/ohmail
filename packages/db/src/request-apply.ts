@@ -832,6 +832,8 @@ interface FoundRule {
   bodyContains: string | null;
   /** Never a request's to write; read so a person's press can make an inferred rule theirs. */
   provenance: string;
+  /** Read for the reader's belt only ({@link settleReaderRuleRows}): when this row was last written. */
+  updatedAt: Date | null;
 }
 
 /**
@@ -841,12 +843,14 @@ interface FoundRule {
  * router never runs a paused rule), then priority, effect, provenance and id — the first row is
  * the one the router runs. A parity test holds this SQL to that function.
  */
-async function findRulesByKey(tx: Tx, accountId: string, key: RuleKey): Promise<FoundRule[]> {
-  return tx.select({
+async function findRulesByKey(
+  tx: Tx, accountId: string, key: RuleKey, opts: { lock?: boolean } = {},
+): Promise<FoundRule[]> {
+  const q = tx.select({
     id: rulesTbl.id, destination: rulesTbl.destination,
     priority: rulesTbl.priority, enabled: rulesTbl.enabled,
     subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
-    provenance: rulesTbl.provenance,
+    provenance: rulesTbl.provenance, updatedAt: rulesTbl.updatedAt,
   })
     .from(rulesTbl)
     .where(and(
@@ -863,6 +867,8 @@ async function findRulesByKey(tx: Tx, accountId: string, key: RuleKey): Promise<
       sql`case ${rulesTbl.provenance} when 'manual' then 0 when 'migrated' then 1 when 'promoted' then 2 when 'seeded-from-sent' then 3 else 4 end`,
       asc(rulesTbl.id),
     );
+  // The belt reads to decide a write: the rows are held, so a local write in flight is read once committed.
+  return opts.lock ? dialect(tx).forUpdate(q) : q;
 }
 
 /** The twins the acting row collapses: deleted in the caller's transaction, one delta each. */
@@ -978,6 +984,8 @@ export async function applyRuleRequest(
       subjectContains: key.subjectContains,
       bodyContains: key.bodyContains,
       retroRequestedAt: payload.applyRetro ? now : null,
+      // The apply's clock, as an edit's is: the reader's belt applies at the press's `decidedAt`.
+      updatedAt: now,
     }).returning({ id: rulesTbl.id });
     const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [row!.id], "create"))[0]!;
     return { applied: true, op: "create", ruleId: row!.id, lastSeq };
@@ -1034,6 +1042,36 @@ export async function applyRuleRequest(
     .where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId)));
   const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [found.id], "update"))[0]!;
   return { applied: true, op: "update", ruleId: found.id, lastSeq };
+}
+
+/** Why the belt left a request's answer unapplied — logged once per request by the caller. */
+export type ReaderSettleSkip = "unreadable_payload" | "no_decided_at" | "no_row_stamp" | "newer_local_write";
+
+/**
+ * THE READER'S OWN ROWS FOLLOW THE ORGANIZER'S ANSWER (READER-ONLY-RULE-REMOVAL-KEEPS-THE-ROW). An
+ * applied `rule.*` ack is applied to this install's own rows with the organizer's apply, at the
+ * request's `decidedAt` (the row then records the PRESS that made it), never asking the backlog
+ * again. THE GUARD: a row under the key written at or after `decidedAt` is the person's own later
+ * hand (a mixed account's local write, an Undo, an import) and stands. Both stamps are this
+ * install's own clock (`ctx.now()` in `rules-service.ts` and `writeReaderRequest`); a missing
+ * stamp on either side skips rather than applies.
+ */
+export async function settleReaderRuleRows(
+  tx: Tx, accountId: string, request: { kind: string; payload: unknown; decidedAt: Date | null },
+): Promise<{ settled: boolean; skipped?: ReaderSettleSkip }> {
+  const v = validateRulePayload(request.kind, request.payload);
+  if (v === null) return { settled: false, skipped: "unreadable_payload" };
+  const at = request.decidedAt;
+  if (!(at instanceof Date) || Number.isNaN(at.getTime())) return { settled: false, skipped: "no_decided_at" };
+  const [acting] = await findRulesByKey(tx, accountId, v.key, { lock: true });
+  if (acting) {
+    if (!(acting.updatedAt instanceof Date)) return { settled: false, skipped: "no_row_stamp" };
+    if (acting.updatedAt.getTime() >= at.getTime()) return { settled: false, skipped: "newer_local_write" };
+  }
+  const bare: ValidatedRuleRequest = v.op === "delete" ? v
+    : v.op === "create" ? { ...v, applyRetro: false }
+      : { ...v, applyRetro: false, retroAsked: false };
+  return { settled: (await applyRuleRequest(tx, { accountId, payload: bare, now: at })).applied };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
   type OrganizedBy, type Tx,
@@ -368,6 +368,9 @@ export class RulesService {
         // already on disk, which is the honest state for a rule created with `applyRetro: false`
         // and for every rule that existed before this column did.
         retroRequestedAt: applyRetro ? ctx.now() : null,
+        // This install's clock, the one a travelled request is decided by: the reader's belt
+        // compares the two (`settleReaderRuleRows`), and the store's own clock is another one.
+        updatedAt: ctx.now(),
       }).returning({ id: rules.id });
       const seq = (await recordRuleDelta(tx, ctx.accountId, [row!.id], "create"))[0]!;
 
@@ -708,16 +711,13 @@ export class RulesService {
          (`ruleMatchKey` on both sides, the terms equal), one `delete` delta per row. The page shows
          one row per key, so a twin left here would be a rule nobody can see still filing mail. */
       if (!before) throw new ServiceError("not_found", 404, "rule not found");
-      const twins = await tx.select({ id: rules.id }).from(rules).where(and(
+      // One statement over the key, no id list: the row's twins are named by what makes them one.
+      const deleted = await tx.delete(rules).where(and(
         eq(rules.accountId, ctx.accountId), eq(rules.kind, before.kind),
         sql`${ruleMatchKeySql(rules.match)} = ${ruleMatchKey(before.match)}`,
         before.subjectContains === null ? isNull(rules.subjectContains) : eq(rules.subjectContains, before.subjectContains),
         before.bodyContains === null ? isNull(rules.bodyContains) : eq(rules.bodyContains, before.bodyContains),
-      ));
-      const ids = [id, ...twins.map((t) => t.id).filter((t) => t !== id)];
-      const deleted = await tx.delete(rules)
-        .where(and(inArray(rules.id, ids), eq(rules.accountId, ctx.accountId)))
-        .returning({ id: rules.id });
+      )).returning({ id: rules.id });
       if (deleted.length === 0) throw new ServiceError("not_found", 404, "rule not found");
       const seqs = await recordRuleDelta(tx, ctx.accountId, deleted.map((d) => d.id), "delete");
       const emitted = seqs[seqs.length - 1]!;

@@ -3,7 +3,7 @@ import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
   applyMessageMove, validateMovePayload, type MoveRefusal,
   applyProfileUpdate, validateProfileUpdatePayload,
-  applyRuleRequest, validateRulePayload, type RuleRefusal,
+  applyRuleRequest, validateRulePayload, settleReaderRuleRows, type RuleRefusal,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
   listStaleSentRequests, markRequestsExpired, markRequestsRefused, mailboxRowsHeld,
@@ -1330,7 +1330,21 @@ export async function driveOutstandingRequests(
     else if (outcome.next === "expired") expiredIds.push(row.id);
   }
 
-  if (appliedIds.length > 0) await db.transaction((tx) => markRequestsApplied(tx, appliedIds, now));
+  if (appliedIds.length > 0) {
+    // An applied rule request is applied to this install's own rows in the same unit, so the
+    // person's own press is what the rows say once the organizer has carried it out — unless they
+    // wrote the row again after deciding it (`settleReaderRuleRows`' guard).
+    const appliedRules = sent.filter((r) => appliedIds.includes(r.id) && r.kind.startsWith("rule."));
+    const skipped: Array<{ requestId: string; reason: string }> = [];
+    await db.transaction(async (tx) => {
+      await markRequestsApplied(tx, appliedIds, now);
+      for (const r of appliedRules) {
+        const out = await settleReaderRuleRows(tx, rt.accountId, r);
+        if (out.skipped) skipped.push({ requestId: r.id, reason: out.skipped });
+      }
+    });
+    for (const k of skipped) log("reader_rule_settle_skipped", { mailboxId: rt.mailboxId, accountId: rt.accountId, ...k });
+  }
   for (const r of refusedRows) {
     await db.transaction((tx) => markRequestsRefused(tx, [r.id], r.reason, now));
   }
