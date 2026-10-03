@@ -3610,18 +3610,14 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         await io.removeClaims(toRelease);
       } catch (err) {
         // Failing to release is not failing to stand down — we are already not organizing; the
-        // only cost is the winner waiting out the staleness window. Logged, never thrown. A bare
-        // string under `err` is safe here, and not by accident — do not "fix" it: `log.ts`'s
-        // redactor special-cases the `err` key through `describeError`, which reads `name` and
-        // `code`; a string has neither, so this reduces to `errorClass: "String"` and the message
-        // is discarded before anything is written. Passing `err` whole survives no better and
-        // costs the one property this line has: an IMAP driver's error carries the failing
-        // command and, on a login path, the credential — reducing to a string HERE means there is
-        // no object for a future redactor bug to walk. `op` rides along because this catch wraps
-        // ONE operation, and the literal keeps that true.
+        // only cost is the winner waiting out the staleness window. Logged, never thrown. The
+        // caught value goes to the logger WHOLE: `log.ts` writes an Error as its class and code,
+        // never its message, which can carry the mail server's name or the failing command. A
+        // string here would be written out as `errorText`. `op` rides along because this catch
+        // wraps ONE operation, and the literal keeps that true.
         log("lease_release_failed", {
           op: "remove_claims" satisfies LeaseOp,
-          err: err instanceof Error ? err.message : String(err),
+          err,
         });
       }
     }
@@ -3767,7 +3763,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         } catch (err) {
           log("lease_release_failed", {
             op: "remove_claims" satisfies LeaseOp,
-            err: err instanceof Error ? err.message : String(err),
+            err,
           });
         }
       }
@@ -3814,7 +3810,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       } catch (err) {
         log("lease_release_failed", {
           op: "remove_claims" satisfies LeaseOp,
-          err: err instanceof Error ? err.message : String(err),
+          err,
         });
       }
     }
@@ -3834,7 +3830,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     } catch (releaseErr) {
       log("lease_release_failed", {
         op: "remove_claims" satisfies LeaseOp,
-        err: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
+        err: releaseErr,
       });
     }
   };
@@ -3862,16 +3858,10 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       if (verdict.displace.length === 0) {
         // An ORDINARY renew's failed cleanup is harmless: the folder holds our new claim plus
         // our own older copies, and readers coalesce by newest heartbeat. The next renew tries
-        // again.
-        //
-        // The bare string under `err` is deliberate, for the reason spelled out at
-        // `lease_release_failed` above: `log.ts` special-cases `err` into `describeError`, a
-        // string has no `name`/`code`, so this emits `errorClass: "String"` and nothing else.
-        // Passing the error object instead would hand a redactor an IMAP driver error that can
-        // carry the failing command and the credential.
+        // again. The error goes to the logger whole, as at `lease_release_failed` above.
         log("lease_cleanup_failed", {
           op: "remove_claims" satisfies LeaseOp,
-          err: err instanceof Error ? err.message : String(err),
+          err,
         });
       } else {
         // A TAKEOVER's removal is judged by the re-read below, not by what the driver reported:
@@ -4011,7 +4001,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       if (removalErr !== null) {
         log("lease_cleanup_failed", {
           op: "remove_claims" satisfies LeaseOp,
-          err: removalErr instanceof Error ? removalErr.message : String(removalErr),
+          err: removalErr,
         });
       }
     }

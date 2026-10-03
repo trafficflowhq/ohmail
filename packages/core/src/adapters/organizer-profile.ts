@@ -2018,7 +2018,7 @@ async function tidyPass(
     } catch (err) {
       args.log("profile_cleanup_failed", {
         op: "remove_profiles" satisfies ProfileOp,
-        err: err instanceof Error ? err.message : String(err),
+        err,
       });
     }
   }
@@ -2028,7 +2028,7 @@ async function tidyPass(
     } catch (err) {
       args.log("profile_cleanup_failed", {
         op: "mark_seen" satisfies ProfileOp,
-        err: err instanceof Error ? err.message : String(err),
+        err,
       });
     }
   }
@@ -2227,7 +2227,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
       } catch (err) {
         log("profile_cleanup_failed", {
           op: "remove_profiles" satisfies ProfileOp,
-          err: err instanceof Error ? err.message : String(err),
+          err,
         });
       }
     }
@@ -2258,7 +2258,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
        The caller owes a tidy, and until one sticks the gate holds every later write. */
     log("profile_cleanup_failed", {
       op: "remove_profiles" satisfies ProfileOp,
-      err: err instanceof Error ? err.message : String(err),
+      err,
     });
     return { written: true, removed: 0, owed: true };
   }
