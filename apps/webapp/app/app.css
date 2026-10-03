@@ -3865,6 +3865,7 @@ input.set-tag-input {
   padding: 12px 14px;
   color: var(--ink2);
 }
+.join-note + .join-hint { margin-top: 12px; }
 .join-note a {
   color: var(--accent-ink);
   font-weight: 600;

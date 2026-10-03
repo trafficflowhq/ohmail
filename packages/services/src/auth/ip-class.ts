@@ -21,6 +21,29 @@ export function ipClassOf(raw: string | null | undefined): string {
   return `${groups.slice(0, 3).join(":")}::/48`;
 }
 
+/** What the approval read answers about the two networks; never either class itself. */
+export type NetworkVerdict = "same" | "different" | "unknown";
+
+/**
+ * Is a reader at `readerIp` on the network a request's stored class names? Only two classes of
+ * one family are compared: a class missing on either side, or an IPv4 class against an IPv6 one
+ * (one machine can reach a server over both), is `unknown`, never `different`.
+ */
+export function networkVerdict(storedClass: string | null | undefined, readerIp: string | null | undefined): NetworkVerdict {
+  const stored = (storedClass ?? "").trim();
+  const reader = ipClassOf(readerIp);
+  const family = familyOf(stored);
+  if (family === null || family !== familyOf(reader)) return "unknown";
+  return stored === reader ? "same" : "different";
+}
+
+/** The family a class was written for by `ipClassOf`, or null for an empty or foreign one. */
+function familyOf(cls: string): 4 | 6 | null {
+  if (cls.endsWith(".x.x")) return 4;
+  if (cls.endsWith("::/48")) return 6;
+  return null;
+}
+
 /** The eight hextets of a valid IPv6 literal, lowercase and without leading zeros. */
 function expandV6(ip: string): string[] | null {
   const bare = ip.split("%")[0]!;

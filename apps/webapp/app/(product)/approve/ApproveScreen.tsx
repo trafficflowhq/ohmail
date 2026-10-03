@@ -270,6 +270,11 @@ export function ApproveScreen({ request = "" }: { request?: string }) {
         {asked.platform ? <li>{asked.platform}</li> : null}
         <li>{when}</li>
       </ul>
+      {/* The server compared the computer's network with this browser's. Only `different` draws the
+          line: an unknown or missing answer says nothing rather than guess. */}
+      {asked.network === "different" ? (
+        <p className="join-note" role="note" data-testid="approve-network">{t("otherNetwork")}</p>
+      ) : null}
       {named ? <p className="join-hint" data-testid="approve-account">{t("signsInTo", { email: named })}</p> : null}
 
       {phase === "stepUp" ? (

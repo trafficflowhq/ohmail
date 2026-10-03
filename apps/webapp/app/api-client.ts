@@ -1518,6 +1518,8 @@ export interface DesktopApprovalDTO {
   platform: string;
   requestedAt: string;
   ipClass: string;
+  /** The server's comparison of the computer's network with this browser's; an older server sends none. */
+  network?: "same" | "different" | "unknown";
   expiresIn: number;
   approved: boolean;
 }

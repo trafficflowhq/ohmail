@@ -27,7 +27,7 @@ import { bridgeTx, type Db, type ServiceContext } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
-import { ipClassOf } from "./ip-class.js";
+import { ipClassOf, networkVerdict, type NetworkVerdict } from "./ip-class.js";
 import { clampPageLimit } from "../pagination.js";
 // The ONE definition of "a valid address" — see {@link requireEmail} for why registration
 // borrows the mailer's predicate instead of growing a second one.
@@ -1285,10 +1285,15 @@ export class AuthService extends SessionLifecycle {
   /**
    * What the page shows before the press. Session-gated. A row bound to another user is 404
    * whatever its state; an unbound or own row answers its state's sentence, or the facts.
+   * `network` compares the request's class with this reader's own and is the only thing said
+   * about the reader's network: no address or class of it goes back.
    */
   async readDesktopApproval(
     ctx: ServiceContext, approvalId: string,
-  ): Promise<{ label: string; platform: string; requestedAt: string; ipClass: string; expiresIn: number; approved: boolean }> {
+  ): Promise<{
+    label: string; platform: string; requestedAt: string; ipClass: string; network: NetworkVerdict;
+    expiresIn: number; approved: boolean;
+  }> {
     const userId = this.requireUser(ctx);
     const now = ctx.now();
     const row = await this.approvalRow(asTx(ctx), approvalId);
@@ -1297,6 +1302,7 @@ export class AuthService extends SessionLifecycle {
     if (refusal) throw refusal;
     return {
       label: row.label, platform: row.platform, ipClass: row.ipClass,
+      network: networkVerdict(row.ipClass, ctx.ip),
       requestedAt: row.createdAt.toISOString(),
       expiresIn: Math.max(0, Math.floor((row.expiresAt.getTime() - now.getTime()) / 1000)),
       approved: row.approvedAt !== null,

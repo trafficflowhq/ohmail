@@ -2281,6 +2281,7 @@
     "requestedMinutesAgo": "Vor {minutes} Min. angefragt aus {network}.",
     "requestedJustNowNoNetwork": "Gerade eben angefragt.",
     "requestedMinutesAgoNoNetwork": "Vor {minutes} Min. angefragt.",
+    "otherNetwork": "Diese Anfrage kam nicht aus dem Netzwerk, mit dem dieser Browser verbunden ist.",
     "signsInTo": "Bestätigen meldet ihn bei {email} an.",
     "confirm": "Bestätigen",
     "deny": "Das war ich nicht",
