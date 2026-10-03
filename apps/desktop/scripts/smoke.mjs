@@ -650,6 +650,13 @@ function installShellStub(window) {
         if ((url === "/messages/timeline" || url.startsWith("/messages/timeline?")) && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", servedTimeline(url)));
         }
+        /* WHAT WAITS ON THE ORGANIZER — `GET /organizer-requests`, read at boot by the engine's
+           waiting list (the Rules page and its strip). This world's install organizes its own
+           mailbox and sent nothing, so nothing waits: the route's own empty answer. GET only.
+           Added after the check named it red. */
+        if (url === "/organizer-requests" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { items: [] }));
+        }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
            at boot has to be modelled here; until it is, this says so by name. */
