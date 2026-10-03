@@ -5925,6 +5925,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // `organizing` is the gate's own answer for THIS pass, handed down rather than read
             // back off the engine, so a demotion or a promotion applies to the very next PASS.
             role: organizing ? "organizer" : "reader",
+            // The FIRST cycle of a drain files pending moves before its folder walk, so a Move
+            // rung by a press reaches the server first. Later cycles follow the previous tail.
+            fileBeforeWalk: cycles === 0,
             // A demoted install keeps draining as a READER, and a reader holds no lease — its
             // `\Seen` push is the one verb it may write. The hosted worker's composition, from the
             // same role expression, so "no lease" and "not asked" stay apart at the write boundary.

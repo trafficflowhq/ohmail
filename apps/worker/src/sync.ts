@@ -124,6 +124,13 @@ export interface SyncDeps {
    * `reconcileFlags` (the reader's ONE IMAP write verb). REQUIRED: an omitted `role` reads as ORGANIZER, and an organizer that is not the organizer is two installs moving one person's mail.
    */
   role: OrganizerRole;
+  /**
+   * FILE PENDING MOVES BEFORE THE FOLDER WALK. Set by the local door on the first cycle of a drain,
+   * so a Move pressed on the phone or the desktop reaches the server before `buildCursor`,
+   * `changesSince` and ingest. Absent ⇒ the hosted order, unchanged. A reader skips it like every
+   * move; the tail `reconcileMailbox` still runs, and `\Seen` writes stay there.
+   */
+  fileBeforeWalk?: boolean;
   /** Optional AI classifier (design §5.3). Absent ⇒ Phase-0 routing (no AI branch). */
   classifier?: ClassifierPort;
   /**
@@ -1101,6 +1108,25 @@ async function syncCycleWithin(
     }
   }
 
+  // ── A PENDING MOVE BEFORE THE WALK (see `SyncDeps.fileBeforeWalk`) ─────────────────────────
+  //
+  // Before the cursor, so the walk below already reads the moved message at its new locator: the
+  // completion writes it, and `buildCursor` reads it as known. A member gone from its source stays
+  // pending and the walk adopts it, as after a crash. A refusal ends the cycle; any other failure
+  // is the tail pass's to retry, and must not stop new mail coming in.
+  if (deps.fileBeforeWalk === true && !readerMode) {
+    try {
+      await reconcileFolders(deps, at, true);
+    } catch (err) {
+      rethrowRefusal(err);
+      log?.warn("filing_before_walk_failed", {
+        mailboxId, accountId, err,
+        reason: "the pending moves could not be filed before the folder walk; the walk runs and "
+          + "the reconcile pass after it files them",
+      });
+    }
+  }
+
   const persistedFolders = new Map<string, PersistedFolderCursor>();
   const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet, persistedFolders);
   const batch = await adapter.changesSince(cursor);
@@ -1928,7 +1954,7 @@ const folderLabel = (folder: string): string => (isOrganizedFolder(folder) ? fol
  * server did not say where, so nothing is recorded and nothing is re-issued. Never a half-filed
  * group either way. A throw takes the per-message path, where a message earns its own verdict.
  */
-async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor): Promise<boolean> {
+async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor, beforeWalk = false): Promise<boolean> {
   const { repo, accountId, mailboxId } = deps;
   // One row over the budget, so "there is more" is a fact about the queue rather than a guess
   // from a full page.
@@ -2007,9 +2033,9 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor): Promise<bo
   for (const group of groups.values()) {
     for (let i = 0; i < group.length; i += FILING_BATCH_MAX) {
       const chunk = group.slice(i, i + FILING_BATCH_MAX);
-      const batched = await fileChunk(deps, chunk, special, at);
+      const batched = await fileChunk(deps, chunk, special, at, beforeWalk);
       if (batched !== null) { reopened = reopened || batched.reopened; continue; }
-      for (const p of chunk) reopened = (await fileOne(deps, p, special, at)) || reopened;
+      for (const p of chunk) reopened = (await fileOne(deps, p, special, at, beforeWalk)) || reopened;
     }
   }
   await refillLeftJunk(deps, groups, special);
@@ -2083,6 +2109,7 @@ async function sentFolderOf(deps: SyncDeps): Promise<{ sentFolder?: string | nul
  */
 async function fileChunk(
   deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap, at: CyclePageCursor,
+  beforeWalk = false,
 ): Promise<{ reopened: boolean } | null> {
   const { adapter, accountId, mailboxId, log } = deps;
   if (typeof adapter.moveMany !== "function") return null;
@@ -2154,7 +2181,7 @@ async function fileChunk(
         // filing is voided. See {@link voidGoneFiling}. Cross-checking
         // `result.gone` as well would be a second reading of one fact, with a branch no test can
         // redden.
-        if (!newLoc) { await voidGoneFiling(r, accountId, p, special, true); continue; }
+        if (!newLoc) { await voidGoneFiling(r, accountId, p, special, !beforeWalk); continue; }
         // Mail 0065: ONE completion writer for every path that lands a move — the ordinary
         // converge, the junk filing's satisfied/parked/husked shape, and the delete's park.
         // Written ONLY here, after `moveMany` reported the batch whole: the claim follows the
@@ -2223,6 +2250,9 @@ async function voidGoneFiling(
   repo: WorkerRepo, accountId: string, p: PendingFolderState, special: SpecialFolderMap,
   absentAtSource: boolean,
 ): Promise<void> {
+  /* `absentAtSource` is FALSE from the pass before the walk: there an absent UID is most often an
+     external move the walk has not read yet, and the walk adopts it by Message-ID. Only a delete
+     already on record voids there. */
   /* THE MOVE'S OWN READING CLOSES IT TOO. Waiting for ingest was unbounded wherever ingest cannot
      see the delete (0.25.2's Sent scan): the row stayed due with no attempt and no audit. When the
      server answered for the locator's epoch and holds no such UID, and that locator is the only
@@ -2306,6 +2336,7 @@ async function voidGoneFiling(
  */
 async function fileOne(
   deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap, at: CyclePageCursor,
+  beforeWalk = false,
 ): Promise<boolean> {
   const { adapter, accountId, mailboxId, log } = deps;
   // Mail 0065: the physical destination was decided when the row was grouped — a spam verdict
@@ -2329,7 +2360,7 @@ async function fileOne(
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
-      await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special, err.absent));
+      await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special, err.absent && !beforeWalk));
       return false;
     }
     if (isTransportFailure(err)) {
