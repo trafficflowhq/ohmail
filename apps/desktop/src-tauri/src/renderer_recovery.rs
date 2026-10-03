@@ -135,13 +135,14 @@ fn offer_relaunch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .show(move |relaunch| {
             // The quit waits for the engine after the loop (`leave_the_process`); a restart exits
             // from inside it, so the relaunch waits for the engine first, as the update's does.
+            // Both wait for an install still writing (the install fence, `updater.rs`).
             if relaunch {
                 crate::updater::after_the_engine(&answer, || {
                     crate::inherited_fds::withhold_from_the_restart();
                     answer.request_restart();
                 });
             } else {
-                answer.exit(0);
+                crate::updater::quit(&answer, 0);
             }
         });
 }

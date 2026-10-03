@@ -1239,14 +1239,15 @@ fn a_restart_starts_the_new_copy_only_after_the_engine_has_left() {
     let pid = shell.engine().pid().expect("a running engine has a pid");
 
     let began = Instant::now();
-    let running_when_the_copy_started = restart_after(&shell, || alive(pid));
+    let idle = fence_for_tests(Duration::from_secs(30));
+    let running_when_the_copy_started = restart_after(&shell, idle, || alive(pid));
 
     assert!(!running_when_the_copy_started, "the new copy started beside engine {pid}");
     assert!(began.elapsed() >= quick().stop_grace, "a deaf engine was not held to its grace");
     assert_eq!(shell.engine().state(), EngineState::Stopped);
 }
 
-/// A restart that did not happen — the Windows installer could not start after the engine left
+/// A restart that did not happen — preparing the Windows installer failed after the engine left
 /// for it — leaves an app with an engine again and a quit that still stops it.
 #[test]
 fn a_restart_that_did_not_happen_starts_the_engine_again_and_a_quit_still_stops_it() {
@@ -1269,6 +1270,138 @@ fn a_restart_that_did_not_happen_starts_the_engine_again_and_a_quit_still_stops_
         matches!(*shell.leaving.lock().expect("leaving"), Leaving::NotStarted),
         "the quit was spent by a restart that never happened"
     );
+}
+
+// ── The install fence, on the close and the restart ─────────────────────────────────────────
+//
+// The stub, the probes and the fences are `updater_tests.rs`'s: the plugin's AppImage install
+// parked between its rename and its chmod, and exits that record whether the image was whole.
+
+use crate::updater::tests::{exit_probe, fence_for_tests, StubInstall, HELD_FOR};
+
+/// THE CLOSE DURING AN INSTALL keeps the window, saying so, until the install returns; then the
+/// window goes and the app exits. Without the fence read in `leave_with` the window went at the
+/// press and the app exited mid-write, which left the AppImage truncated and not executable.
+#[test]
+fn a_close_during_an_install_keeps_the_window_and_exits_only_once_the_install_has_returned() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let mut stub = StubInstall::parked(fence, "close");
+    let shell = Arc::new(Shell::inert_for_tests());
+    let (told_tx, told) = mpsc::channel();
+    let (hidden, hide) = exit_probe(stub.image());
+    let (exited, exit) = exit_probe(stub.image());
+
+    shell.leave_with(fence, Duration::from_secs(5), move || { let _ = told_tx.send(()); }, hide, exit);
+
+    assert!(hidden.recv_timeout(HELD_FOR).is_err(), "the window went while the install was writing");
+    assert!(exited.try_recv().is_err(), "the app exited while the install was writing");
+    told.try_recv().expect("the window was not told the close waits for the install");
+    assert!(fence.quit_waits(), "the report would not say a quit waits");
+    stub.finish();
+    let whole = hidden.recv_timeout(Duration::from_secs(10)).expect("the window was never hidden");
+    assert!(whole, "the window went before the image was whole");
+    let whole = exited.recv_timeout(Duration::from_secs(10)).expect("the app never exited");
+    assert!(whole, "the app exited before the image was whole and executable");
+}
+
+/// THE POSITIVE ARM: with nothing installing, a close is what it was — the window hidden by the
+/// press itself, the app gone as soon as the engine has left, and nothing said.
+#[cfg(unix)]
+#[test]
+fn a_close_with_no_install_in_flight_hides_at_the_press_and_exits_once_the_engine_has_left() {
+    let _live = live_process();
+    let fixture = Fixture::new("close-no-install");
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve"), quick())));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let pid = shell.engine().pid().expect("a running engine has a pid");
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let told = Arc::new(AtomicU32::new(0));
+    let counted = Arc::clone(&told);
+    let (hid_tx, hid) = mpsc::channel();
+    let (exit_tx, exited) = mpsc::channel();
+    let began = Instant::now();
+
+    shell.leave_with(
+        fence,
+        Duration::from_secs(5),
+        move || { counted.fetch_add(1, Ordering::SeqCst); },
+        move || { let _ = hid_tx.send(()); },
+        move || { let _ = exit_tx.send((began.elapsed(), alive(pid))); },
+    );
+
+    hid.try_recv().expect("the press did not hide the window itself");
+    let (at, engine_alive) = exited.recv_timeout(Duration::from_secs(10)).expect("the app never exited");
+    assert!(!engine_alive, "the app exited before engine {pid} had left");
+    assert!(at < Duration::from_secs(2), "a close with nothing installing took {at:?}");
+    assert_eq!(told.load(Ordering::SeqCst), 0, "the window was told about an install that is not there");
+}
+
+/// THE BOUND ARM, on the close: an install that never returns keeps the window to the bound and no
+/// longer, and the line is written once.
+#[test]
+fn a_close_during_an_install_that_never_returns_goes_at_the_bound() {
+    static OUTLIVED: AtomicU32 = AtomicU32::new(0);
+    fn counted(_: Duration) {
+        OUTLIVED.fetch_add(1, Ordering::SeqCst);
+    }
+    let bound = Duration::from_millis(600);
+    let fence: &'static InstallFence = Box::leak(Box::new(InstallFence::new(bound, counted)));
+    let stuck = fence.begin_install().expect("the fence is open");
+    let shell = Arc::new(Shell::inert_for_tests());
+    let (hid_tx, hid) = mpsc::channel();
+    let (exit_tx, exited) = mpsc::channel();
+    let began = Instant::now();
+
+    shell.leave_with(
+        fence,
+        Duration::from_secs(5),
+        || {},
+        move || { let _ = hid_tx.send(began.elapsed()); },
+        move || { let _ = exit_tx.send(began.elapsed()); },
+    );
+
+    let hidden_at = hid.recv_timeout(Duration::from_secs(10)).expect("the window was never hidden");
+    let exited_at = exited.recv_timeout(Duration::from_secs(10)).expect("the app never exited");
+    assert!(hidden_at >= bound, "the window went before the bound: {hidden_at:?}");
+    assert!(exited_at >= bound && exited_at < bound + Duration::from_secs(2), "exited at {exited_at:?}");
+    assert_eq!(OUTLIVED.load(Ordering::SeqCst), 1, "install_outlived_quit_bound was not said exactly once");
+    drop(stuck);
+}
+
+/// A RESTART DURING AN INSTALL — the relaunch card's, or any — waits for the install before it
+/// stops the engine: the engine serves until then, and the new copy starts from a whole image.
+#[test]
+fn a_restart_during_an_install_waits_for_it_before_it_stops_the_engine() {
+    let _live = live_process();
+    let fixture = Fixture::new("restart-install");
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve"), quick())));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let mut stub = StubInstall::parked(fence, "restart-after");
+    let (restarted, restart) = exit_probe(stub.image());
+    let restarting = {
+        let shell = Arc::clone(&shell);
+        thread::spawn(move || restart_after(&shell, fence, restart))
+    };
+
+    assert!(restarted.recv_timeout(HELD_FOR).is_err(), "the restart went while the install was writing");
+    assert!(
+        matches!(shell.engine().state(), EngineState::Serving { .. }),
+        "the engine was stopped while the restart waited for the install"
+    );
+    stub.finish();
+    let whole = restarted.recv_timeout(Duration::from_secs(20)).expect("the restart never went");
+    assert!(whole, "the new copy started before the image was whole");
+    restarting.join().unwrap();
+    assert_eq!(shell.engine().state(), EngineState::Stopped);
 }
 
 // ── Supervision: noticing, restarting, and knowing when to stop ─────────────────────────────

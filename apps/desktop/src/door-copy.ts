@@ -397,6 +397,8 @@ const EN = {
   reload: "Reload",
   /* The shell reloaded the window after its web process died (`renderer-reloaded.ts`). */
   rendererReloaded: "ohmail's window stopped and was reloaded.",
+  /* A quit waits for the update's install to finish writing the app (`update-closing.ts`). */
+  updateClosing: "Installing the update. ohmail closes when it is done.",
   mailboxLabel: "Mailbox",
   mailboxesLabel: "Mailboxes",
   doorNotChosen: "Not chosen",
@@ -742,10 +744,17 @@ const EN = {
     + "cleanly last time. ohmail can remove the leftover lock and try again, but never while "
     + "another copy is using it.",
   gateUnlockRetry: "Unlock and retry",
-  /* The press kept the lock: its process is still running, or the file would not go. */
+  /* The press kept the lock because its process is still running: the one refusal that may name
+     another copy, and only as the likely one, since a recycled pid is a running program too. */
   gateUnlockRefused:
-    "The lock was kept: another copy of ohmail is still using it, or it could not be removed. "
-    + "Wait a moment and press again; if it keeps happening, restart this computer.",
+    "The lock was kept: the program holding it is still running, most likely another copy of "
+    + "ohmail. Wait a moment and press again; if it keeps happening, restart this computer.",
+  /* The press found no engine to start (an inert plan: the key store did not answer, for one). */
+  gateUnlockNoEngine:
+    "Nothing was removed: ohmail could not get the mail engine ready to start. Press again "
+    + "in a moment; if it keeps happening, ohmail's log file has the details.",
+  /* The shell did not answer inside the bridge's deadline, so what the press did is not known. */
+  gateUnlockNoAnswer: "ohmail did not answer in time. If this card is still here in a moment, press again.",
   /* Any other structured failure names the engine's word for it and where the detail lives —
      never the raw log line. The word is a pointer a person can report, not a sentence. */
   gateEngineReported: (name: string) =>

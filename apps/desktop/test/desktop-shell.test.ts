@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 /* The namespace lists themselves, so the marker contract below reads the build config
@@ -49,6 +50,28 @@ const rustCode = (rs: string): string =>
     .split("\n")
     .filter((line) => !/^\s*\/\//.test(line))
     .join("\n");
+
+/**
+ * EVERY SPELLING OF A RESTART a census must count: the method (`app.restart()`,
+ * `request_restart()`), Tauri's public process function (`tauri::process::restart(&env)`, or
+ * `process::restart` after a `use`), and the method named as a path (`AppHandle::restart(&app)`,
+ * `AppHandle::<R>::request_restart`) — called or handed on as a value.
+ */
+const RESTART_SPELLINGS: readonly RegExp[] = [
+  /\.(?:request_)?restart\(\)/g,
+  /\bprocess::restart\b/g,
+  /\bAppHandle(?:::<[^>]*>)?::(?:request_)?restart\b/g,
+];
+const restartsIn = (code: string): string[] => RESTART_SPELLINGS.flatMap((re) => code.match(re) ?? []);
+/** Every install CALL: on Windows an install is a restart too, so each one is counted. */
+const installsIn = (code: string): string[] => code.match(/\.install\(/g) ?? [];
+/** Every non-test `.rs` under `root` as code, subdirectories included, keyed by relative path. */
+const rustSources = (root: string): Record<string, string> =>
+  Object.fromEntries(
+    (fs.readdirSync(root, { recursive: true }) as string[])
+      .filter((f) => f.endsWith(".rs") && !f.endsWith("_tests.rs"))
+      .map((f) => [f, rustCode(fs.readFileSync(path.join(root, f), "utf8"))]),
+  );
 
 /** "a b; c d" → { a: ["b"], c: ["d"] } */
 function directives(csp: string): Record<string, string[]> {
@@ -1897,10 +1920,24 @@ describe("the auto-updater", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^[ \t]*\/\/.*$/gm, "");
     const named = [...engineCode.matchAll(/updater/g)];
-    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(3);
+    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(9);
     expect(engineCode).toMatch(/crate::updater::update_state/);
     expect(engineCode).toMatch(/crate::updater::update_press/);
     expect(engineCode).toMatch(/crate::updater::update_poll/);
+    /* AND THE INSTALL FENCE, WHICH IS NOT THE FLOW. The close and every restart are engine.rs's,
+       and none may end the process while an install writes the app, so this file reads the fence
+       (its type, the app's one fence, a restart's wait) and asks for its exit through the
+       updater's one door, saying so in the window. Six mentions, each named: nothing here checks,
+       fetches, verifies or installs. */
+    const fence = engineCode.match(/crate::updater::\w+/g) ?? [];
+    expect(fence.filter((name) => !/update_(?:state|press|poll)$/.test(name)).sort()).toEqual([
+      "crate::updater::FENCE",
+      "crate::updater::InstallFence",
+      "crate::updater::after_install",
+      "crate::updater::after_install",
+      "crate::updater::quit",
+      "crate::updater::say_a_quit_waits",
+    ]);
     // And none of the flow, nor the plugin, nor a permission on it.
     for (const forbidden of [
       "tauri_plugin_updater",
@@ -2083,7 +2120,8 @@ describe("the auto-updater", () => {
     const relabel = /fn relabel<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
     expect(relabel, "the relabel helper was not found").toContain("set_text");
     expect(relabel).toContain("menu_text(kind, &flow)");
-    expect(relabel).toMatch(/report\(&flow, last, env!\("CARGO_PKG_VERSION"\), kind\)/);
+    expect(relabel).toMatch(/told\(&flow, last, kind\)/);
+    expect(updater).toMatch(/fn told\(flow: &Flow, last: Option<Check>, kind: InstallKind\) -> serde_json::Value \{\s*let mut told = report\(flow, last, env!\("CARGO_PKG_VERSION"\), kind\);/);
   });
 
   /**
@@ -2176,20 +2214,109 @@ describe("the auto-updater", () => {
     expect(relaunch.indexOf("crate::updater::after_the_engine(&answer, || {")).toBeGreaterThan(-1);
     expect(relaunch.indexOf("crate::updater::after_the_engine(&answer, || {")).toBeLessThan(relaunch.indexOf(withhold));
     // Windows' install is its restart, so there the engine leaves before the install.
-    expect(install).toMatch(/#\[cfg\(windows\)\]\s*Some\(payload\) => after_the_engine\(app, \|\| payload\.update\.install\(&payload\.bytes\)\),/);
+    expect(install).toMatch(/#\[cfg\(windows\)\]\s*Some\(payload\) => after_the_engine\(app, \|\| fenced\(&FENCE, \|\| payload\.update\.install\(&payload\.bytes\)\)\),/);
+    expect(install).toMatch(/#\[cfg\(not\(windows\)\)\]\s*Some\(payload\) => fenced\(&FENCE, \|\| payload\.update\.install\(&payload\.bytes\)\),/);
     expect(updater).toMatch(
-      /pub\(crate\) fn after_the_engine<R: Runtime, T>\(app: &AppHandle<R>, then: impl FnOnce\(\) -> T\) -> T \{\s*#\[cfg\(feature = "local-engine"\)\]\s*\{\s*crate::engine::after_the_engine\(app, then\)/,
+      /pub\(crate\) fn after_the_engine<R: Runtime, T>\(app: &AppHandle<R>, then: impl FnOnce\(\) -> T\) -> T \{\s*#\[cfg\(feature = "local-engine"\)\]\s*\{\s*crate::engine::after_the_engine\(app, &FENCE, then\)\s*\}\s*#\[cfg\(not\(feature = "local-engine"\)\)\]\s*\{\s*let _ = app;\s*after_install\(&FENCE, then\)/,
     );
     const engineSrc = read("src-tauri/src/engine.rs");
-    expect(engineSrc).toMatch(/pub fn restart_after<T>\(shell: &Arc<Shell>, then: impl FnOnce\(\) -> T\) -> T \{[\s\S]*?shell\.stop_for_restart\(\);[\s\S]*?then\(\)\s*\}/);
+    // THE INSTALL FIRST, THEN THE ENGINE, THEN THE NEW COPY: a restart's exit can be held nowhere
+    // later, so the restart door itself waits for an install still writing.
+    expect(engineSrc).toMatch(/pub fn restart_after<T>\(shell: &Arc<Shell>, fence: &InstallFence, then: impl FnOnce\(\) -> T\) -> T \{\s*crate::updater::after_install\(fence, \|\| \{[\s\S]*?shell\.stop_for_restart\(\);[\s\S]*?then\(\)\s*\}\)\s*\}/);
+    expect(updater).toMatch(/pub\(crate\) fn after_install<T>\(fence: &InstallFence, then: impl FnOnce\(\) -> T\) -> T \{\s*fence\.wait\(\);\s*then\(\)\s*\}/);
     expect(engineSrc).toMatch(/pub fn stop_for_restart\(self: &Arc<Shell>\) -> bool \{\s*self\.begin_stop\(\);\s*self\.finish_stop\(SHUTDOWN_BOUND\)\s*\}/);
     // The menu and the Settings press no longer install on the thread that draws.
     expect(updater).not.toMatch(/Press::Restart => install_and_restart\(/);
-    const restarts = fs
-      .readdirSync(path.join(APP, "src-tauri/src"))
-      .filter((f) => f.endsWith(".rs") && !f.endsWith("_tests.rs"))
-      .flatMap((f) => code(read(`src-tauri/src/${f}`)).match(/\.(?:request_)?restart\(\)/g) ?? []);
-    expect(restarts, "a restart outside the two that run through the engine's door").toHaveLength(2);
+    /* NO THIRD RESTART AND NO THIRD INSTALL, in any spelling, in any module of the tree: the two
+       restarts above, and the two cfg arms of the one install (on Windows itself a restart). */
+    const sources = rustSources(path.join(APP, "src-tauri/src"));
+    const restarts = Object.entries(sources).flatMap(([f, src]) => restartsIn(src).map((r) => `${f}: ${r}`));
+    expect(restarts.sort(), "a restart outside the two that run through the engine's door").toEqual([
+      "renderer_recovery.rs: .request_restart()",
+      "updater.rs: .restart()",
+    ]);
+    const installs = Object.entries(sources).flatMap(([f, src]) => installsIn(src).map(() => f));
+    expect(installs, "an install outside the two arms that run inside the fence").toEqual([
+      "updater.rs",
+      "updater.rs",
+    ]);
+  });
+
+  /**
+   * THE CENSUS ABOVE SEES WHAT IT CLAIMS TO. Each planted spelling is one restart, a mention in a
+   * comment is none, an install is counted, and a module in a subdirectory is read — each of these
+   * was a spelling the earlier census let through.
+   */
+  it("counts every planted spelling of a restart, every install, in every module", () => {
+    const planted = [
+      "app.restart();",
+      "answer.request_restart();",
+      "tauri::process::restart(&app.env());",
+      "process::restart(&env);",
+      "AppHandle::restart(&app);",
+      "tauri::AppHandle::<R>::request_restart(&app);",
+      "let go = AppHandle::restart;",
+    ];
+    for (const line of planted) {
+      expect(restartsIn(rustCode(`fn f() {\n    ${line}\n}\n`)), line).toHaveLength(1);
+    }
+    expect(restartsIn(rustCode("// app.restart()\n/* tauri::process::restart(&env) */\nfn f() {}\n"))).toEqual([]);
+    expect(installsIn(rustCode("fn f() {\n    payload.update.install(&payload.bytes);\n}\n"))).toHaveLength(1);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ohmail-restart-census-"));
+    try {
+      fs.mkdirSync(path.join(dir, "door"));
+      fs.writeFileSync(path.join(dir, "main.rs"), "fn main() {}\n");
+      fs.writeFileSync(path.join(dir, "door", "mod.rs"), "fn f(app: AppHandle) {\n    app.restart();\n}\n");
+      fs.writeFileSync(path.join(dir, "door", "door_tests.rs"), "fn t(app: AppHandle) {\n    app.restart();\n}\n");
+      const found = Object.entries(rustSources(dir)).flatMap(([f, src]) => restartsIn(src).map(() => f));
+      expect(found, "a module in a subdirectory was not read").toEqual([path.join("door", "mod.rs")]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * EVERY EXIT THE APP ASKS FOR PASSES THE INSTALL FENCE. An exit during the AppImage install left
+   * an image that would not start; `updater_tests.rs` and `engine_tests.rs` drive each door against
+   * a stub install parked mid-write. What they cannot see is that no exit goes around the doors.
+   */
+  it("asks for every exit through the install fence", () => {
+    const sources = rustSources(path.join(APP, "src-tauri/src"));
+    const exits = Object.entries(sources).flatMap(([f, src]) => (src.match(/\.exit\(/g) ?? []).map(() => f));
+    expect(exits, "an exit asked for outside updater::quit").toEqual(["updater.rs"]);
+    expect(updater).toMatch(
+      /pub fn quit<R: Runtime>\(app: &AppHandle<R>, code: i32\) \{\s*let leaving = app\.clone\(\);\s*quit_with\(&FENCE, \|\| say_a_quit_waits\(app\), move \|\| leaving\.exit\(code\)\);/,
+    );
+    /* The window's sentence is sent from the thread that draws, so it never relabels the menu item:
+       a relabel holds the item's lock while it waits for that thread. */
+    const say = /pub\(crate\) fn say_a_quit_waits<R: Runtime>[\s\S]*?\n\}\n/.exec(updater)?.[0] ?? "";
+    expect(say, "say_a_quit_waits was not found").not.toBe("");
+    expect(say, "the quit's sentence does not send the window its report").toContain("app.emit(STATE_EVENT, report)");
+    expect(rustCode(say), "the quit's sentence relabels the menu item on the thread that draws").not.toMatch(/relabel\(|set_text|lock\(&state\.item\)/);
+    const quitWith = /pub\(crate\) fn quit_with\([\s\S]*?\n\}\n/.exec(updater)?.[0] ?? "";
+    expect(quitWith, "quit_with was not found").toMatch(/if !fence\.must_wait\(\) \{\s*return exit\(\);\s*\}/);
+    // The doors: the tray, the relaunch card's Quit, and the close's last step.
+    expect(read("src-tauri/src/host.rs")).toMatch(/TRAY_QUIT_ID => crate::updater::quit\(app, 0\),/);
+    expect(read("src-tauri/src/renderer_recovery.rs")).toMatch(/\} else \{\s*crate::updater::quit\(&answer, 0\);/);
+    const engineSrc = read("src-tauri/src/engine.rs");
+    expect(engineSrc).toMatch(/self\.leave_with\(\s*&crate::updater::FENCE,[\s\S]*?move \|\| crate::updater::quit\(&leaving, 0\),\s*\);/);
+    // The close reads the fence before it hides the window.
+    const leave = /pub\(crate\) fn leave_with\([\s\S]*?\n    \}\n/.exec(engineSrc)?.[0] ?? "";
+    expect(leave.indexOf("fence.must_wait()"), "leave_with was not found").toBeGreaterThan(-1);
+    expect(leave.indexOf("fence.must_wait()")).toBeLessThan(leave.indexOf("hide();"));
+    // The install holds the fence for its own call.
+    expect(updater).toMatch(
+      /fn fenced<T>\(fence: &InstallFence, install: impl FnOnce\(\) -> T\) -> Option<T> \{\s*let _writing = fence\.begin_install\(\)\?;\s*Some\(install\(\)\)/,
+    );
+    // An exit Tauri raises is held and the last event closes the fence, in EVERY build: the
+    // handler sits ahead of the engine's cfg, so the preview's close is held too.
+    const main = read("src-tauri/src/main.rs");
+    const handler = /let on_event = move[\s\S]*?#\[cfg\(feature = "local-engine"\)\]/.exec(main)?.[0] ?? "";
+    expect(handler).toMatch(/tauri::RunEvent::ExitRequested \{ code, api, \.\. \} => \{\s*updater::on_exit_requested\(_app, \*code, api\)/);
+    expect(handler).toMatch(/tauri::RunEvent::Exit => updater::at_exit\(\),/);
+    // After the loop, one exit: `leave_the_process`, which the last event's close came before.
+    const processExits = Object.entries(sources).flatMap(([f, src]) => (src.match(/process::exit\(/g) ?? []).map(() => f));
+    expect(processExits).toEqual(["engine.rs"]);
   });
 
   /**
@@ -2279,7 +2406,7 @@ describe("the auto-updater", () => {
     // Verification is the plugin's and is reached the same way it always was: the ONLY bytes this
     // module can install are the ones `download` returned.
     expect(updater).toMatch(/let bytes = match fetched \{/);
-    expect(updater).toMatch(/Some\(payload\) => payload\.update\.install\(&payload\.bytes\)/);
+    expect(updater).toMatch(/Some\(payload\) => fenced\(&FENCE, \|\| payload\.update\.install\(&payload\.bytes\)\)/);
 
     /* AND A REFUSED VERSION IS NOT AN ERROR REPORT. It used to raise a dialog reading "Ignoring
        offered version 0.9.0: it is not newer than the installed 0.9.1", which is a sentence about

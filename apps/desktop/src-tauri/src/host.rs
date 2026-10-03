@@ -1290,8 +1290,8 @@ fn stand_up_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, runtime: &Arc<Hos
             .on_menu_event(|app, event| match event.id().as_ref() {
                 TRAY_OPEN_ID => show_main_window(app),
                 // The tray's Quit is the app's quit: the exit event stops the engine on the same
-                // path the menu bar's Quit has always taken.
-                TRAY_QUIT_ID => app.exit(0),
+                // path the menu bar's Quit has always taken, once an install still writing returns.
+                TRAY_QUIT_ID => crate::updater::quit(app, 0),
                 _ => {}
             });
         if let Some(icon) = app.default_window_icon() {

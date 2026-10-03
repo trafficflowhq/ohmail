@@ -133,6 +133,11 @@ export interface UpdateReport {
   /** Unix milliseconds, or null when no check has finished in this run. */
   lastCheckedAt: number | null;
   lastResult: UpdateResult;
+  /**
+   * A quit is waiting for the update's install to finish writing the app, and the window says so
+   * until it closes (`update-closing.ts`). False from a shell that does not say.
+   */
+  closing: boolean;
 }
 
 interface TauriInternals {
@@ -187,6 +192,7 @@ export function reportOfPayload(payload: unknown): UpdateReport | null {
         ? raw.lastCheckedAt
         : null,
     lastResult: oneOf(raw.lastResult, UPDATE_RESULTS) ?? "never",
+    closing: raw.closing === true,
   };
 }
 

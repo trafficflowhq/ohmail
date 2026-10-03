@@ -66,6 +66,7 @@
 //! rather than hammering a directory another process legitimately owns.
 
 use crate::config::{self, Config, Mode};
+use crate::updater::InstallFence;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
@@ -1451,26 +1452,35 @@ pub fn leave_the_process(shell: &Arc<Shell>, code: i32) -> ! {
 /// THE RESTART'S HALF OF ONE PROFILE, ONE ENGINE. Tauri's restart starts the new copy and exits:
 /// nothing stopped this engine or waited for it, so the new one met a lock a leaving engine still
 /// held, and an engine that would not leave ran on beside it, renewing one saved session. Every
-/// restart runs `then` through here, after the engine has left or been killed — [`SHUTDOWN_BOUND`]
-/// at most. On Windows `then` is the install, which starts the installer and exits itself.
-pub fn restart_after<T>(shell: &Arc<Shell>, then: impl FnOnce() -> T) -> T {
-    let began = Instant::now();
-    let left = shell.stop_for_restart();
-    log_line(format_args!(
-        "restart: the engine {} after {}ms",
-        if left { "has left" } else { "had not left inside the bound; restarting anyway" },
-        began.elapsed().as_millis()
-    ));
-    then()
+/// restart runs `then` through here: once an install still writing has returned (`fence`; nothing
+/// can hold a restart's exit later), then once the engine has left or been killed —
+/// [`SHUTDOWN_BOUND`] at most. On Windows `then` is the install, which starts the installer and
+/// exits itself.
+pub fn restart_after<T>(shell: &Arc<Shell>, fence: &InstallFence, then: impl FnOnce() -> T) -> T {
+    crate::updater::after_install(fence, || {
+        let began = Instant::now();
+        let left = shell.stop_for_restart();
+        log_line(format_args!(
+            "restart: the engine {} after {}ms",
+            if left { "has left" } else { "had not left inside the bound; restarting anyway" },
+            began.elapsed().as_millis()
+        ));
+        then()
+    })
 }
 
-/// [`restart_after`] for the running app, whose shell is in Tauri's state. No shell, no engine.
-pub fn after_the_engine<R: tauri::Runtime, T>(app: &tauri::AppHandle<R>, then: impl FnOnce() -> T) -> T {
+/// [`restart_after`] for the running app, whose shell is in Tauri's state. No shell, no engine:
+/// only the install is waited for.
+pub fn after_the_engine<R: tauri::Runtime, T>(
+    app: &tauri::AppHandle<R>,
+    fence: &InstallFence,
+    then: impl FnOnce() -> T,
+) -> T {
     use tauri::Manager;
     let shell = app.try_state::<Arc<Shell>>().map(|state| Arc::clone(state.inner()));
     match shell {
-        Some(shell) => restart_after(&shell, then),
-        None => then(),
+        Some(shell) => restart_after(&shell, fence, then),
+        None => crate::updater::after_install(fence, then),
     }
 }
 
@@ -1489,6 +1499,12 @@ pub fn resume_after_failed_restart<R: tauri::Runtime>(app: &tauri::AppHandle<R>)
 /// the tailnet registration pointing at a freed port is the hazard `host.rs` names in its own
 /// words. Stripped before the sentence reaches a person.
 pub const LOGOUT_UNCHANGED: &str = "\u{1}unchanged\u{1}";
+
+/// The unlock press's two refusals the card words apart, leading the shell's sentence: a running
+/// holder (the only one whose card may say another copy is using the store) and an inert plan.
+/// Spelled again in `bridge-fetch.ts`, where `unlockRefusal` reads them.
+pub const UNLOCK_HELD: &str = "held: ";
+pub const UNLOCK_NO_ENGINE: &str = "no-engine: ";
 
 #[cfg(test)]
 impl Shell {
@@ -1677,7 +1693,9 @@ impl Shell {
         }
         let plan = self.planned(None);
         let Plan::Spawn(launch) = &plan else {
-            return Err("this install has no engine to start; nothing was removed".to_string());
+            return Err(format!(
+                "{UNLOCK_NO_ENGINE}this install has no engine to start; nothing was removed"
+            ));
         };
         let dir = plan_data_dir(launch).ok_or_else(|| {
             "the engine's plan names no data directory; nothing was removed".to_string()
@@ -1830,21 +1848,67 @@ impl Shell {
     /// theory — with the close allowed to proceed the window stayed on screen for the whole
     /// shutdown however little the handlers did. So the loop is kept alive, with nothing on
     /// screen, until the engine has left; then this ends it.
+    ///
+    /// AN INSTALL STILL WRITING KEEPS THE WINDOW: the close waits for it, bounded, with the window
+    /// saying so, and hides it after (the install fence, `updater.rs`). The exit is
+    /// [`crate::updater::quit`], like every exit the app asks for.
     pub fn leave_then_exit<R: tauri::Runtime>(
         self: &Arc<Shell>,
         app: &tauri::AppHandle<R>,
         within: Duration,
     ) {
+        use tauri::Manager;
+        let hiding = app.clone();
+        let leaving = app.clone();
+        self.leave_with(
+            &crate::updater::FENCE,
+            within,
+            || crate::updater::say_a_quit_waits(app),
+            move || {
+                if let Some(window) = hiding.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            },
+            move || crate::updater::quit(&leaving, 0),
+        );
+    }
+
+    /// [`Shell::leave_then_exit`] with the app's three acts handed in: `waiting` tells the window
+    /// that the install is finishing, `hide` takes the window off the screen, `exit` ends the app.
+    /// With no install writing it is the close as it was: hidden at the press, gone once the
+    /// engine has left.
+    pub(crate) fn leave_with(
+        self: &Arc<Shell>,
+        fence: &'static InstallFence,
+        within: Duration,
+        waiting: impl FnOnce(),
+        hide: impl FnOnce() + Send + 'static,
+        exit: impl FnOnce() + Send + 'static,
+    ) {
+        let installing = fence.must_wait();
+        let hide_later = if installing {
+            Some(hide)
+        } else {
+            hide();
+            None
+        };
         if !self.begin_stop() {
             return;
         }
+        if installing {
+            fence.quit_asked();
+            waiting();
+        }
         let shell = Arc::clone(self);
-        let app = app.clone();
         thread::Builder::new()
             .name("ohmail-leave".into())
             .spawn(move || {
+                if let Some(hide) = hide_later {
+                    fence.wait();
+                    hide();
+                }
                 shell.finish_stop(within);
-                app.exit(0);
+                exit();
             })
             .expect("ohmail: failed to start the shutdown thread");
     }
@@ -1857,9 +1921,9 @@ impl Shell {
         self.finish_stop(SHUTDOWN_BOUND)
     }
 
-    /// A restart that did not happen after the engine was stopped for it — the Windows installer
-    /// could not be started. The engine comes back from the stored configuration, and a later
-    /// quit stops it the way it stops any engine.
+    /// A restart that did not happen after the engine was stopped for it — preparing the Windows
+    /// installer failed, the one failure the plugin returns. The engine comes back from the stored
+    /// configuration, and a later quit stops it the way it stops any engine.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub fn resume_after_failed_restart(&self) {
         *self.leaving.lock().expect("shell shutdown") = Leaving::NotStarted;
@@ -4864,8 +4928,8 @@ fn remove_unheld_lock(lock: &Path, running: impl Fn(u32) -> bool) -> Result<(), 
     if let Some(pid) = lock_pid(&judged.bytes) {
         if running(pid) {
             return Err(format!(
-                "the lock belongs to process {pid}, which is still running, so it was kept and the \
-                 engine was not restarted"
+                "{UNLOCK_HELD}the lock belongs to process {pid}, which is still running, so it was \
+                 kept and the engine was not restarted"
             ));
         }
     }

@@ -199,6 +199,16 @@ fn main() {
     #[cfg(feature = "local-engine")]
     let quitting = std::sync::Arc::clone(&shell);
     let on_event = move |_app: &tauri::AppHandle, _event: tauri::RunEvent| {
+        // THE INSTALL FENCE, in every build (`updater.rs`): an exit this app did not ask for waits
+        // for an install still writing, as a quit does, and the loop's last event lets no install
+        // start under the exit.
+        match &_event {
+            tauri::RunEvent::ExitRequested { code, api, .. } => {
+                updater::on_exit_requested(_app, *code, api)
+            }
+            tauri::RunEvent::Exit => updater::at_exit(),
+            _ => {}
+        }
         // The close/quit policy is `host::lifecycle_action` — ONE function, tested against the
         // contract that disarmed is exactly the behaviour above this feature existed: Destroyed
         // stops the engine, a close request passes through, Exit stops. Armed swaps the close
@@ -263,7 +273,6 @@ fn main() {
                     host::LifecycleAction::Nothing => {
                         #[cfg(not(target_os = "macos"))]
                         if signal == host::WindowSignal::MainCloseRequested {
-                            use tauri::Manager;
                             if let tauri::RunEvent::WindowEvent {
                                 event: tauri::WindowEvent::CloseRequested { api, .. },
                                 ..
@@ -271,9 +280,8 @@ fn main() {
                             {
                                 api.prevent_close();
                             }
-                            if let Some(window) = _app.get_webview_window("main") {
-                                let _ = window.hide();
-                            }
+                            // The hide is `leave_then_exit`'s: an install still writing keeps the
+                            // window, saying so, until the install returns.
                             shell.leave_then_exit(_app, engine::SHUTDOWN_BOUND);
                         }
                     }

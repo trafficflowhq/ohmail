@@ -701,12 +701,31 @@ export async function engineSwitchRestore(leftAt: string | null = null): Promise
 /**
  * The failure card's one recovery press: remove a data-directory lock nothing holds any more, and
  * start the engine again. The shell resolves the lock's path from its own plan — the window names
- * no file — refuses unless it has given up on its own engine, and keeps a lock whose process is
- * still running, so a press never unlinks a live engine's lock. Answers the status AFTER the
- * restart has begun.
+ * no file — refuses unless it has given up on its own engine, keeps a lock whose process is still
+ * running, and removes only a lock it read unchanged twice. Answers the status AFTER the restart
+ * has begun; a refusal is read by {@link unlockRefusal}.
  */
 export async function engineUnlockRetry(): Promise<EngineStatus> {
   return (await withDeadline(THE_APP, () => shell().invoke(UNLOCK_COMMAND))) as EngineStatus;
+}
+
+/** Why an unlock press was refused, as the card words it. Only `held` may name another copy. */
+export type UnlockRefusal = "held" | "noEngine" | "noAnswer" | "other";
+
+/** The words the shell leads two refusals with: `UNLOCK_HELD` and `UNLOCK_NO_ENGINE` in `engine.rs`. */
+export const UNLOCK_HELD = "held: ";
+export const UNLOCK_NO_ENGINE = "no-engine: ";
+
+/**
+ * The class of a refused unlock press: the lock's process still running, no engine to start (an
+ * inert plan), a call the deadline gave up on, or anything else, which the card words generically.
+ */
+export function unlockRefusal(err: unknown): UnlockRefusal {
+  if (err instanceof Error && err.name === "BridgeDeadlineError") return "noAnswer";
+  const said = typeof err === "string" ? err : err instanceof Error ? err.message : "";
+  if (said.startsWith(UNLOCK_HELD)) return "held";
+  if (said.startsWith(UNLOCK_NO_ENGINE)) return "noEngine";
+  return "other";
 }
 
 /**

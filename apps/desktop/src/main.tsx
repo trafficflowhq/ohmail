@@ -19,6 +19,7 @@ import { stampColumns } from "../../webapp/app/shell/column-store";
 import { setUiVitalsInterval, setUiVitalsSink } from "../../webapp/app/shell/ui-vitals";
 import { DesktopLocale } from "./DesktopLocale.js";
 import { RendererReloaded, takeReloadedMark } from "./renderer-reloaded.js";
+import { UpdateClosing } from "./update-closing.js";
 import "../../webapp/app/app.css";
 // After app.css for the webapp door's reason: the Zero layout ladder (data-layout="zero",
 // stamped by this file's boot block below) re-arranges the same shell in this window too.
@@ -203,6 +204,7 @@ const paint = (bootFailure: unknown): void =>
         >
           <ToastHost>
             <RendererReloaded reloaded={RENDERER_RELOADED} />
+            <UpdateClosing />
             {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
                 own render, and the throw this exists for comes from `DesktopGate` building the
                 client engine. `GateBoundary.tsx` has the released build that went white for want

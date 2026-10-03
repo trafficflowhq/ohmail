@@ -57,6 +57,7 @@ const report = (over: Partial<UpdateReport> = {}): UpdateReport => ({
   canInstall: false,
   lastCheckedAt: START,
   lastResult: "upToDate",
+  closing: false,
   ...over,
 });
 

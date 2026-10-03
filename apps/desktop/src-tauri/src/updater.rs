@@ -137,7 +137,8 @@
 //! { "signature", "url" } } }`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use tauri::menu::MenuItem;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
@@ -859,6 +860,14 @@ pub fn report(
     })
 }
 
+/// What the window is told: [`report`], and `closing` — a quit is waiting for an install to finish
+/// writing ([`FENCE`]), which the window says until it closes.
+fn told(flow: &Flow, last: Option<Check>, kind: InstallKind) -> serde_json::Value {
+    let mut told = report(flow, last, env!("CARGO_PKG_VERSION"), kind);
+    told["closing"] = serde_json::Value::Bool(FENCE.quit_waits());
+    told
+}
+
 /// Take a lock, and take it even if a previous holder panicked.
 ///
 /// A poisoned lock here would disable the updater for the life of the process, which is a worse
@@ -1063,15 +1072,15 @@ pub fn adopt_menu_item<R: Runtime>(app: &AppHandle<R>, item: MenuItem<R>) {
 /// runs before this bundle's scripts do, so a pane that only listened would open blank after the
 /// one transition it cared about had already happened.
 ///
-/// It names nothing and reaches nothing — no argument, no feed, no path. The answer is [`report`]
-/// over state this process already holds.
+/// It names nothing and reaches nothing — no argument, no feed, no path. The answer is [`told`]:
+/// [`report`] over state this process already holds.
 #[cfg(feature = "local-engine")]
 #[tauri::command]
 pub fn update_state<R: Runtime>(app: AppHandle<R>) -> serde_json::Value {
     let state = app.state::<Updater<R>>();
     let flow = lock(&state.flow);
     let last = *lock(&state.last);
-    report(&flow, last, env!("CARGO_PKG_VERSION"), install_kind())
+    told(&flow, last, install_kind())
 }
 
 /// SETTINGS → UPDATES, THE PRESS. Exactly what picking the menu item does, and nothing else.
@@ -1137,6 +1146,7 @@ fn pressed<R: Runtime>(app: AppHandle<R>) {
         // OFF THE THREAD THAT DRAWS: the restart waits for the engine to leave first, and the menu
         // and the Settings press arrive on the main thread, where that wait would hold a window
         // that can neither paint nor close. The dialog's press already arrives on its own thread.
+        // So the window stays live during the install, and a quit there waits for it ([`FENCE`]).
         Press::Restart => {
             std::thread::Builder::new()
                 .name("ohmail-install".into())
@@ -1308,7 +1318,8 @@ fn prompt_ready<R: Runtime>(app: &AppHandle<R>, version: &str) {
 ///
 /// ONE AT A TIME: a press while an install is in flight is ignored until that install fails. With
 /// the presses off the main thread a second one would write the payload again under the first
-/// one's restart. And the engine leaves before the new copy starts — [`after_the_engine`].
+/// one's restart. The install runs inside the [`FENCE`], so no exit passes while it writes, and the
+/// engine leaves before the new copy starts — [`after_the_engine`].
 fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return;
@@ -1323,16 +1334,19 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
                 return;
             }
             // WINDOWS' INSTALL IS ITS RESTART: the plugin starts the installer and exits this
-            // process, and the installer replaces the runtime the engine runs on. So there the
-            // engine leaves BEFORE the install, and comes back if the installer could not start.
+            // process whether or not the installer started, and the installer replaces the runtime
+            // the engine runs on. So there the engine leaves BEFORE the install. It comes back only
+            // when preparing the installer failed, the one failure the plugin returns.
             #[cfg(windows)]
-            Some(payload) => after_the_engine(app, || payload.update.install(&payload.bytes)),
+            Some(payload) => after_the_engine(app, || fenced(&FENCE, || payload.update.install(&payload.bytes))),
             #[cfg(not(windows))]
-            Some(payload) => payload.update.install(&payload.bytes),
+            Some(payload) => fenced(&FENCE, || payload.update.install(&payload.bytes)),
         }
     };
     match outcome {
-        Ok(()) => after_the_engine(app, || {
+        // An exit closed the fence first: the app is going, and nothing was written.
+        None => INSTALLING.store(false, Ordering::SeqCst),
+        Some(Ok(())) => after_the_engine(app, || {
             // Before the restart, and it survives it: the log flushes per write, so the last
             // line of the old build's log is the one saying why there is a new one.
             log_verdict(Verdict::Installed, None);
@@ -1341,7 +1355,7 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
             crate::inherited_fds::withhold_from_the_restart();
             app.restart();
         }),
-        Err(err) => {
+        Some(Err(err)) => {
             #[cfg(windows)]
             resume_the_engine(app);
             INSTALLING.store(false, Ordering::SeqCst);
@@ -1354,26 +1368,249 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// Run `install` inside the fence, so no exit passes while it writes; `None`, and nothing run,
+/// once an exit has closed it.
+fn fenced<T>(fence: &InstallFence, install: impl FnOnce() -> T) -> Option<T> {
+    let _writing = fence.begin_install()?;
+    Some(install())
+}
+
 /// An install is in flight. See [`install_and_restart`].
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
-/// EVERY RESTART RUNS `then` THROUGH HERE, once the engine has left — stopped, waited for, and
-/// killed past its grace. Tauri's restart starts the new copy and exits, so without this the new
-/// engine met a lock a leaving one still held, or ran beside one that would not leave. The update
-/// and the renderer's relaunch both come here. The preview has no engine and runs `then` at once.
+// ── THE INSTALL FENCE ────────────────────────────────────────────────────────────────────────
+//
+// THE PROCESS NEVER EXITS WHILE AN INSTALL IS WRITING THE INSTALLED APP. The AppImage install
+// renames the running image away, writes the new one in its place and sets the execute bit last,
+// so an exit in between left a truncated file that would not start (measured: an exit 150 ms in
+// left 32 of 126 MiB at mode 664). Every exit the app asks for passes this fence — the close,
+// [`quit`], every restart ([`after_the_engine`]) — and one it did not ask for is held at
+// `ExitRequested` ([`on_exit_requested`]). A quit that meets a writing install waits for it off the
+// thread that draws, with the window saying so; the loop's last event closes the fence ([`at_exit`]).
+
+/// How long a quit waits for an install. The measured write is 0.6-1.3 s; an install still writing
+/// past this is stuck, and the quit goes anyway after saying so once (`install_outlived_quit_bound`).
+pub const QUIT_WAITS_FOR_INSTALL: Duration = Duration::from_secs(60);
+
+/// Whether an install is writing, and what the exits waiting on it share.
+pub struct InstallFence {
+    state: Mutex<Fence>,
+    returned: Condvar,
+    bound: Duration,
+    outlived: fn(Duration),
+}
+
+struct Fence {
+    /// Installs between their first write to the installed app and their last.
+    writing: u32,
+    /// A quit is waiting on the install, and the window says so.
+    quit_waits: bool,
+    /// When every wait stops, set by the first: a second quit adds no second bound.
+    gives_up_at: Option<Instant>,
+    /// `outlived` has been called for this install: once, however many quits waited.
+    said: bool,
+    /// The process is going, and no install may start.
+    closed: bool,
+}
+
+/// An install writing. Dropped when the install returns, and every waiting exit goes on.
+pub struct InstallHold<'a>(&'a InstallFence);
+
+impl InstallFence {
+    pub const fn new(bound: Duration, outlived: fn(Duration)) -> Self {
+        Self {
+            state: Mutex::new(Fence {
+                writing: 0,
+                quit_waits: false,
+                gives_up_at: None,
+                said: false,
+                closed: false,
+            }),
+            returned: Condvar::new(),
+            bound,
+            outlived,
+        }
+    }
+
+    /// An install starts writing. `None` once the process is going.
+    pub fn begin_install(&self) -> Option<InstallHold<'_>> {
+        let mut fence = lock(&self.state);
+        if fence.closed {
+            return None;
+        }
+        fence.writing += 1;
+        Some(InstallHold(self))
+    }
+
+    /// Must an exit asked for now wait? An install is writing and the bound has not run out.
+    pub fn must_wait(&self) -> bool {
+        let fence = lock(&self.state);
+        fence.writing > 0 && fence.gives_up_at.map_or(true, |at| Instant::now() < at)
+    }
+
+    /// A quit is waiting on an install still writing: the `closing` the window is told.
+    pub fn quit_waits(&self) -> bool {
+        let fence = lock(&self.state);
+        fence.quit_waits && fence.writing > 0
+    }
+
+    /// A quit is about to wait: what [`InstallFence::quit_waits`] reads, while the install writes.
+    pub fn quit_asked(&self) {
+        let mut fence = lock(&self.state);
+        if fence.writing > 0 {
+            fence.quit_waits = true;
+        }
+    }
+
+    /// Wait for the install to return, never past the bound. `false` when the bound ran out.
+    pub fn wait(&self) -> bool {
+        self.wait_in(lock(&self.state)).1
+    }
+
+    /// The last wait before the process goes: [`InstallFence::wait`], and then no install starts.
+    pub fn close_for_exit(&self) -> bool {
+        let (mut fence, returned) = self.wait_in(lock(&self.state));
+        fence.closed = true;
+        returned
+    }
+
+    fn wait_in<'a>(&'a self, mut fence: MutexGuard<'a, Fence>) -> (MutexGuard<'a, Fence>, bool) {
+        if fence.writing == 0 {
+            return (fence, true);
+        }
+        let gives_up_at = *fence.gives_up_at.get_or_insert_with(|| Instant::now() + self.bound);
+        loop {
+            if fence.writing == 0 {
+                return (fence, true);
+            }
+            let now = Instant::now();
+            if now >= gives_up_at {
+                if !fence.said {
+                    fence.said = true;
+                    (self.outlived)(self.bound);
+                }
+                return (fence, false);
+            }
+            fence = match self.returned.wait_timeout(fence, gives_up_at - now) {
+                Ok((fence, _)) => fence,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+        }
+    }
+}
+
+impl Drop for InstallHold<'_> {
+    fn drop(&mut self) {
+        let mut fence = lock(&self.0.state);
+        fence.writing = fence.writing.saturating_sub(1);
+        if fence.writing == 0 {
+            fence.quit_waits = false;
+            fence.gives_up_at = None;
+            fence.said = false;
+        }
+        self.0.returned.notify_all();
+    }
+}
+
+/// The app's fence, read by every exit it asks for.
+pub static FENCE: InstallFence = InstallFence::new(QUIT_WAITS_FOR_INSTALL, outlived_the_bound);
+
+/// A quit waited the whole bound for an install still writing, and goes now.
+fn outlived_the_bound(bound: Duration) {
+    let ms = bound.as_millis().to_string();
+    emit(line("install_outlived_quit_bound", &[("boundMs", &ms)]));
+}
+
+/// EVERY QUIT THE APP ASKS FOR ITSELF — the tray's, the relaunch card's, a close's last step. While
+/// an install writes, the window says so and the exit follows the install on a thread of its own,
+/// so nothing waits on the thread that draws.
+pub fn quit<R: Runtime>(app: &AppHandle<R>, code: i32) {
+    let leaving = app.clone();
+    quit_with(&FENCE, || say_a_quit_waits(app), move || leaving.exit(code));
+}
+
+/// [`quit`] with its two acts handed in: `waiting` tells the window, `exit` ends the app.
+pub(crate) fn quit_with(
+    fence: &'static InstallFence,
+    waiting: impl FnOnce(),
+    exit: impl FnOnce() + Send + 'static,
+) {
+    if !fence.must_wait() {
+        return exit();
+    }
+    fence.quit_asked();
+    waiting();
+    std::thread::Builder::new()
+        .name("ohmail-quitwait".into())
+        .spawn(move || {
+            fence.wait();
+            exit();
+        })
+        .expect("ohmail: failed to start the quit thread");
+}
+
+/// AN EXIT THE APP DID NOT ASK FOR — its last window gone, the system's Quit — is held while an
+/// install writes and asked again by [`quit`]. A restart cannot be held here (Tauri ignores the
+/// prevent for its code), which is why every restart waits before it asks ([`after_the_engine`]).
+pub fn on_exit_requested<R: Runtime>(app: &AppHandle<R>, code: Option<i32>, api: &tauri::ExitRequestApi) {
+    if holds_the_exit(&FENCE, code) {
+        api.prevent_exit();
+        quit(app, code.unwrap_or(0));
+    }
+}
+
+/// Is this exit request held for an install?
+pub(crate) fn holds_the_exit(fence: &InstallFence, code: Option<i32>) -> bool {
+    code != Some(tauri::RESTART_EXIT_CODE) && fence.must_wait()
+}
+
+/// The loop's last event: wait for an install still writing, then let none start.
+pub fn at_exit() {
+    FENCE.close_for_exit();
+}
+
+/// The window, told that a quit waits for the install: shown again if it was hidden, and sent the
+/// report with `closing` set ([`told`]). NOT [`relabel`]: this runs on the thread that draws, and a
+/// relabel holds the menu item's lock while it waits for that thread, so a second one there would
+/// wait on the first for ever.
+pub(crate) fn say_a_quit_waits<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+    }
+    let report = {
+        let state = app.state::<Updater<R>>();
+        let flow = lock(&state.flow);
+        let last = *lock(&state.last);
+        told(&flow, last, install_kind())
+    };
+    let _ = app.emit(STATE_EVENT, report);
+}
+
+/// EVERY RESTART RUNS `then` THROUGH HERE, once no install is writing and the engine has left —
+/// stopped, waited for, and killed past its grace. Tauri's restart starts the new copy and exits,
+/// so without this the new engine met a lock a leaving one still held, or ran beside one that would
+/// not leave, and a restart during an install cut the new image short. The update and the
+/// renderer's relaunch both come here. The preview has no engine and waits for the install alone.
 pub(crate) fn after_the_engine<R: Runtime, T>(app: &AppHandle<R>, then: impl FnOnce() -> T) -> T {
     #[cfg(feature = "local-engine")]
     {
-        crate::engine::after_the_engine(app, then)
+        crate::engine::after_the_engine(app, &FENCE, then)
     }
     #[cfg(not(feature = "local-engine"))]
     {
         let _ = app;
-        then()
+        after_install(&FENCE, then)
     }
 }
 
-/// The Windows installer could not be started after the engine left for it: start it again.
+/// A restart's first wait: for an install still writing, bounded; then `then`.
+pub(crate) fn after_install<T>(fence: &InstallFence, then: impl FnOnce() -> T) -> T {
+    fence.wait();
+    then()
+}
+
+/// Preparing the Windows installer failed after the engine left for it: start the engine again.
+/// An installer that was started and then failed is not seen here; the plugin had already exited.
 #[cfg(windows)]
 fn resume_the_engine<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(feature = "local-engine")]
@@ -1496,7 +1733,7 @@ fn relabel<R: Runtime>(app: &AppHandle<R>) {
         let last = *lock(&state.last);
         let kind = install_kind();
         let (label, enabled) = menu_text(kind, &flow);
-        (label, enabled, report(&flow, last, env!("CARGO_PKG_VERSION"), kind))
+        (label, enabled, told(&flow, last, kind))
     };
     // A bar that has not been built yet (this runs before `menu.rs` hands the item over on a very
     // early check) simply has nothing to relabel; `adopt_menu_item` relabels once on arrival. On a
@@ -1784,4 +2021,4 @@ pub fn signed_release(signature_b64: &str) -> Option<SignedRelease> {
 
 #[cfg(test)]
 #[path = "updater_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -1845,3 +1845,295 @@ fn the_logged_endpoint_is_the_configs_and_never_a_second_copy_of_it() {
     assert_eq!(endpoints.len(), 1, "one pinned feed, and the log names that one");
     assert!(endpoints[0].as_str().unwrap().starts_with("https://"));
 }
+
+/* ── THE INSTALL FENCE ───────────────────────────────────────────────────────────────────────────
+ *
+ * A close, the tray's Quit or the relaunch card during the AppImage install exited mid-write and
+ * left an image that would not start. `StubInstall` is the plugin's install parked between its
+ * rename and its chmod; each exit door is driven against it with its exit handed in, and the exit
+ * records whether the image was whole when it ran. `engine_tests.rs` drives the close and the
+ * engine's restart against the same stub. */
+
+use super::{
+    after_install, fenced, holds_the_exit, outlived_the_bound, quit_with, told, InstallFence, FENCE,
+    QUIT_WAITS_FOR_INSTALL,
+};
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// The stub's image size: the property is the order of the writes and the exit, not the bytes.
+const IMAGE: usize = 256 * 1024;
+
+/// A fence of the test's own, so no other case's install or quit is on it.
+pub(crate) fn fence_for_tests(bound: Duration) -> &'static InstallFence {
+    fn quiet(_: Duration) {}
+    Box::leak(Box::new(InstallFence::new(bound, quiet)))
+}
+
+/// The plugin's AppImage install, parked: the running image renamed away and a quarter of the new
+/// one written in its place, not executable; let go, it writes the rest and sets the execute bit.
+/// It holds the fence for all of it, as `fenced` does around the real install.
+pub(crate) struct StubInstall {
+    dir: PathBuf,
+    image: PathBuf,
+    go: Option<mpsc::Sender<()>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl StubInstall {
+    /// A stub inside `fence`, returned once it sits between its rename and its chmod.
+    pub(crate) fn parked(fence: &'static InstallFence, name: &str) -> StubInstall {
+        let dir = std::env::temp_dir().join(format!("ohmail-fence-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let image = dir.join("ohmail.AppImage");
+        fs::write(&image, vec![1u8; IMAGE]).unwrap();
+        set_executable(&image, true);
+        let (parked_tx, parked) = mpsc::channel();
+        let (go, let_go) = mpsc::channel::<()>();
+        let (at, kept) = (image.clone(), dir.join("current_app.AppImage"));
+        let thread = thread::spawn(move || {
+            let _writing = fence.begin_install().expect("the fence was closed before the install");
+            fs::rename(&at, &kept).unwrap();
+            let new = vec![2u8; IMAGE];
+            fs::write(&at, &new[..IMAGE / 4]).unwrap();
+            set_executable(&at, false);
+            parked_tx.send(()).unwrap();
+            let _ = let_go.recv();
+            fs::write(&at, &new).unwrap();
+            set_executable(&at, true);
+        });
+        parked.recv_timeout(Duration::from_secs(10)).expect("the stub never reached its park");
+        StubInstall { dir, image, go: Some(go), thread: Some(thread) }
+    }
+
+    pub(crate) fn image(&self) -> PathBuf {
+        self.image.clone()
+    }
+
+    /// Let the stub write the rest and set the execute bit, and wait for it to return.
+    pub(crate) fn finish(&mut self) {
+        drop(self.go.take());
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
+    }
+}
+
+impl Drop for StubInstall {
+    fn drop(&mut self) {
+        self.finish();
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path, on: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(if on { 0o755 } else { 0o644 })).unwrap();
+}
+
+#[cfg(not(unix))]
+fn set_executable(_: &Path, _: bool) {}
+
+/// Whole and executable: what no exit may come before.
+pub(crate) fn image_is_whole(image: &Path) -> bool {
+    let Ok(meta) = fs::metadata(image) else { return false };
+    #[cfg(unix)]
+    let executable = {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    };
+    #[cfg(not(unix))]
+    let executable = true;
+    meta.len() == IMAGE as u64 && executable
+}
+
+/// An exit that records whether the image was whole when it ran.
+pub(crate) fn exit_probe(image: PathBuf) -> (mpsc::Receiver<bool>, impl FnOnce() + Send + 'static) {
+    let (ran, read) = mpsc::channel();
+    (read, move || {
+        let _ = ran.send(image_is_whole(&image));
+    })
+}
+
+/// How long an exit is watched NOT happening while the stub is parked.
+pub(crate) const HELD_FOR: Duration = Duration::from_millis(300);
+
+#[test]
+fn the_shipped_bound_is_a_minute() {
+    // The measured write is 0.6-1.3 s; the bound is for an install that is stuck, not slow.
+    assert_eq!(QUIT_WAITS_FOR_INSTALL, Duration::from_secs(60));
+}
+
+/// The tray's Quit and the relaunch card's Quit: `quit` is `quit_with` over the app's fence.
+#[test]
+fn a_quit_during_an_install_exits_only_once_the_install_has_returned() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let mut stub = StubInstall::parked(fence, "quit");
+    let told_window = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&told_window);
+    let (exited, exit) = exit_probe(stub.image());
+
+    quit_with(fence, move || { counted.fetch_add(1, Ordering::SeqCst); }, exit);
+
+    assert!(exited.recv_timeout(HELD_FOR).is_err(), "the quit exited while the install was writing");
+    assert_eq!(told_window.load(Ordering::SeqCst), 1, "the window was not told the quit waits");
+    assert!(fence.quit_waits(), "the report would not say a quit waits");
+    stub.finish();
+    let whole = exited.recv_timeout(Duration::from_secs(10)).expect("the quit never exited");
+    assert!(whole, "the quit exited before the image was whole and executable");
+    assert!(!fence.quit_waits(), "the window is still told a quit waits on an install that returned");
+}
+
+/// THE POSITIVE ARM: nothing installing, and the quit is what it always was — the exit, at once, on
+/// the thread that asked, with nothing said.
+#[test]
+fn a_quit_with_no_install_in_flight_exits_at_once_on_the_thread_that_asked() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let told_window = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&told_window);
+    let (ran, on) = mpsc::channel();
+    let began = Instant::now();
+
+    quit_with(fence, move || { counted.fetch_add(1, Ordering::SeqCst); }, move || {
+        let _ = ran.send(thread::current().id());
+    });
+
+    let exited_on = on.try_recv().expect("the exit had not run when the quit returned");
+    assert_eq!(exited_on, thread::current().id(), "a quit with nothing to wait for went through a thread");
+    assert!(began.elapsed() < Duration::from_millis(100), "the quit took {:?}", began.elapsed());
+    assert_eq!(told_window.load(Ordering::SeqCst), 0, "the window was told about an install that is not there");
+}
+
+/// THE BOUND ARM: an install that never returns holds every quit to ONE bound, counted from the
+/// first quit that waited, and the line is written once.
+#[test]
+fn an_install_that_never_returns_holds_quits_to_one_bound_and_is_said_once() {
+    static OUTLIVED: AtomicUsize = AtomicUsize::new(0);
+    fn counted(_: Duration) {
+        OUTLIVED.fetch_add(1, Ordering::SeqCst);
+    }
+    let bound = Duration::from_millis(1000);
+    let fence: &'static InstallFence = Box::leak(Box::new(InstallFence::new(bound, counted)));
+    let stuck = fence.begin_install().expect("the fence is open");
+    let (ran, went) = mpsc::channel();
+    let first_asked = Instant::now();
+
+    let first = ran.clone();
+    quit_with(fence, || {}, move || { let _ = first.send(first_asked.elapsed()); });
+    thread::sleep(Duration::from_millis(500));
+    let second = ran.clone();
+    quit_with(fence, || {}, move || { let _ = second.send(first_asked.elapsed()); });
+
+    let one = went.recv_timeout(Duration::from_secs(10)).expect("a quit never went");
+    let two = went.recv_timeout(Duration::from_secs(10)).expect("a quit never went");
+    assert!(one.min(two) >= bound, "a quit went before the bound: {one:?}, {two:?}");
+    assert!(
+        one.max(two) < bound + Duration::from_millis(300),
+        "the second quit waited a bound of its own: {one:?}, {two:?}"
+    );
+    assert_eq!(OUTLIVED.load(Ordering::SeqCst), 1, "install_outlived_quit_bound was not said exactly once");
+    assert!(!fence.must_wait(), "a quit asked after the bound would wait again");
+    drop(stuck);
+}
+
+#[test]
+fn the_outlived_line_names_its_event_and_its_bound() {
+    let lines = captured(|| outlived_the_bound(QUIT_WAITS_FOR_INSTALL));
+    assert_eq!(lines.len(), 1);
+    let seen = as_json(&lines[0]);
+    assert_eq!(seen["service"], serde_json::json!("updater"));
+    assert_eq!(seen["event"], serde_json::json!("install_outlived_quit_bound"));
+    assert_eq!(seen["boundMs"], serde_json::json!("60000"));
+}
+
+/// An exit the app did not ask for — its last window gone, the system's Quit — is held while an
+/// install writes. A restart's exit never is: Tauri ignores the prevent for its code, so holding
+/// it here would be a promise nothing keeps.
+#[test]
+fn an_exit_the_app_did_not_ask_for_is_held_while_an_install_writes_and_a_restart_never_is() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let codes = [None, Some(0), Some(1), Some(tauri::RESTART_EXIT_CODE)];
+    for code in codes {
+        assert!(!holds_the_exit(fence, code), "{code:?} held with nothing installing");
+    }
+    let writing = fence.begin_install().expect("the fence is open");
+    assert!(holds_the_exit(fence, None), "the last window's exit was not held");
+    assert!(holds_the_exit(fence, Some(0)), "an exit asked with a code was not held");
+    assert!(!holds_the_exit(fence, Some(tauri::RESTART_EXIT_CODE)), "a restart's exit was held");
+    drop(writing);
+    for code in codes {
+        assert!(!holds_the_exit(fence, code), "{code:?} still held after the install returned");
+    }
+}
+
+/// The loop's last event, the backstop for any exit that slipped past the doors: it waits for the
+/// install, and after it no install starts.
+#[test]
+fn the_loops_last_event_waits_for_the_install_and_then_lets_none_start() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let mut stub = StubInstall::parked(fence, "at-exit");
+    let (exited, exit) = exit_probe(stub.image());
+    let last_event = thread::spawn(move || {
+        fence.close_for_exit();
+        exit();
+    });
+    assert!(exited.recv_timeout(HELD_FOR).is_err(), "the last event went while the install was writing");
+    stub.finish();
+    assert!(exited.recv_timeout(Duration::from_secs(10)).expect("the last event never went"));
+    last_event.join().unwrap();
+    assert!(fence.begin_install().is_none(), "an install started under the exit");
+    assert_eq!(fenced(fence, || "installed"), None, "an install ran under the exit");
+}
+
+/// The relaunch card's Relaunch and the update's restart: every restart waits for an install still
+/// writing before it asks, because its exit can be held nowhere later.
+#[test]
+fn a_restart_starts_the_new_copy_only_once_the_install_has_returned() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let mut stub = StubInstall::parked(fence, "restart");
+    let (restarted, restart) = exit_probe(stub.image());
+    let relaunch = thread::spawn(move || after_install(fence, restart));
+    assert!(restarted.recv_timeout(HELD_FOR).is_err(), "the restart went while the install was writing");
+    stub.finish();
+    assert!(restarted.recv_timeout(Duration::from_secs(10)).expect("the restart never went"));
+    relaunch.join().unwrap();
+}
+
+/// WINDOWS' INSTALL RUNS INSIDE ITS OWN RESTART, so the restart's wait comes before the install's
+/// hold and never waits for itself.
+#[test]
+fn an_install_inside_its_own_restart_does_not_wait_for_itself() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let began = Instant::now();
+    let installed = after_install(fence, || fenced(fence, || fence.must_wait()));
+    assert_eq!(installed, Some(true), "the install did not run inside the fence");
+    assert!(began.elapsed() < Duration::from_secs(1), "the restart waited {:?} for its own install", began.elapsed());
+    assert!(!fence.must_wait(), "the fence is still held after the install returned");
+}
+
+#[test]
+fn the_install_holds_the_fence_for_its_own_call_and_no_longer() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    assert!(!fence.must_wait());
+    assert_eq!(fenced(fence, || fence.must_wait()), Some(true), "an exit would not wait for the install");
+    assert!(!fence.must_wait(), "the fence outlived the install");
+}
+
+/// The window is told `closing` while a quit waits on an install that is still writing, and only
+/// then. The app's own fence, held here for the length of the case and released by it.
+#[test]
+fn the_window_is_told_closing_only_while_a_quit_waits_on_a_writing_install() {
+    let closing = || told(&Flow::default(), None, InstallKind::AppImage)["closing"].clone();
+    assert_eq!(closing(), serde_json::json!(false));
+    let writing = FENCE.begin_install().expect("the app's fence is open in the tests");
+    assert_eq!(closing(), serde_json::json!(false), "closing with no quit asked");
+    FENCE.quit_asked();
+    assert_eq!(closing(), serde_json::json!(true), "a waiting quit is not told");
+    drop(writing);
+    assert_eq!(closing(), serde_json::json!(false), "closing after the install returned");
+}

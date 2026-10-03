@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 import { DesktopGate } from "../src/DesktopGate.js";
 import { DOOR_COPY } from "../src/door-copy.js";
 import { failureClassOf, gateFor } from "../src/doors.js";
-import type { EngineStatus } from "../src/bridge-fetch.js";
+import { UNLOCK_HELD, UNLOCK_NO_ENGINE, unlockRefusal, type EngineStatus } from "../src/bridge-fetch.js";
+import { deadlineError } from "../src/shell-deadline.js";
 import messages from "../../webapp/messages/en.json";
 
 /**
@@ -83,11 +84,15 @@ describe("the failure class is read out of the shell's sentence", () => {
   });
 });
 
+/** The shell's refusal when the lock's process is still running, as `engine.rs` composes it. */
+const HELD_REFUSAL = `${UNLOCK_HELD}the lock belongs to process 4242, which is still running, so it was kept`;
+
 /**
  * A shell whose engine has given up on the lock, and a ledger of every command the window sent.
- * `keepsTheLock` is the shell finding the lock's process still running: the press is refused.
+ * `refusal`, when given, is what the unlock press is refused with — the shell's own sentence, or
+ * the window's deadline giving up on the call.
  */
-function fakeFailedShell(reason: string, keepsTheLock = false): { commands: string[] } {
+function fakeFailedShell(reason: string, refusal?: unknown): { commands: string[] } {
   const ledger = { commands: [] as string[] };
   let status: EngineStatus = { state: "failed", mode: "local", reason } as EngineStatus;
   const callbacks = new Map<number, (payload: unknown) => void>();
@@ -102,9 +107,7 @@ function fakeFailedShell(reason: string, keepsTheLock = false): { commands: stri
       ledger.commands.push(command);
       if (command === "engine_status") return status;
       if (command === "engine_unlock_retry") {
-        if (keepsTheLock) {
-          throw "the lock belongs to process 4242, which is still running, so it was kept";
-        }
+        if (refusal !== undefined) throw refusal;
         // The shell removed the lock and re-entered start; the next status read says so.
         status = { state: "starting", mode: "local" } as EngineStatus;
         return status;
@@ -186,12 +189,10 @@ describe("the locked-store card", () => {
     ).toBeGreaterThan(asked);
   });
 
-  it("a press the shell refuses says so under the button, and the card stays", async () => {
-    /* The lock's process is still running — after a restart, the previous copy's engine — so the
-       shell keeps the lock. Silence here read as a press that did nothing, inviting the next one. */
-    const ledger = fakeFailedShell(RAW_LOCKED_REASON, true);
+  /** Press Unlock and retry against a shell that refuses with `refusal`; the card's text after. */
+  async function refusedWith(refusal: unknown): Promise<string> {
+    const ledger = fakeFailedShell(RAW_LOCKED_REASON, refusal);
     const el = await render();
-    expect(el.textContent ?? "").not.toContain(DOOR_COPY.gateUnlockRefused);
     const button = [...el.querySelectorAll("button")].find(
       (b) => (b.textContent ?? "") === DOOR_COPY.gateUnlockRetry,
     );
@@ -201,9 +202,48 @@ describe("the locked-store card", () => {
     for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
     expect(ledger.commands, "the press never reached the shell").toContain("engine_unlock_retry");
     const said = el.textContent ?? "";
-    expect(said, "a refused press said nothing").toContain(DOOR_COPY.gateUnlockRefused);
     expect(said, "the card left after a refused press").toContain(DOOR_COPY.gateLockedStore);
+    return said;
+  }
+
+  const SENTENCES = [
+    DOOR_COPY.gateUnlockRefused,
+    DOOR_COPY.gateUnlockNoEngine,
+    DOOR_COPY.gateUnlockNoAnswer,
+    DOOR_COPY.gateRetryRefused,
+  ];
+  /** The one sentence under the button, and none of the other three. */
+  const saysOnly = (said: string, sentence: string): void => {
+    for (const other of SENTENCES) {
+      if (other === sentence) expect(said, "a refused press said nothing").toContain(other);
+      else expect(said, `a refused press also said: ${other}`).not.toContain(other);
+    }
+  };
+
+  it("a press the shell refuses for a running holder says another copy may hold it", async () => {
+    /* The lock's process is still running — after a restart, the previous copy's engine — so the
+       shell keeps the lock. Silence here read as a press that did nothing, inviting the next one. */
+    const said = await refusedWith(HELD_REFUSAL);
+    saysOnly(said, DOOR_COPY.gateUnlockRefused);
     expect(said, "the shell's own sentence reached the person").not.toContain("process 4242");
+  });
+
+  it("a press with no engine to start says nothing was removed, and names no other copy", async () => {
+    /* An inert plan — the key store did not answer, for one: nothing holds the lock, so "another
+       copy is using it" would be false. */
+    const said = await refusedWith(`${UNLOCK_NO_ENGINE}this install has no engine to start; nothing was removed`);
+    saysOnly(said, DOOR_COPY.gateUnlockNoEngine);
+  });
+
+  it("a press the shell did not answer in time says so, and names no other copy", async () => {
+    // The value the bridge's deadline rejects with when the shell's call is still in flight.
+    const said = await refusedWith(deadlineError("the app"));
+    saysOnly(said, DOOR_COPY.gateUnlockNoAnswer);
+  });
+
+  it("any other refusal gets the generic sentence, and names no other copy", async () => {
+    const said = await refusedWith("the lock changed while it was being checked; nothing was removed");
+    saysOnly(said, DOOR_COPY.gateRetryRefused);
   });
 
   it("any other structured failure names the class in a sentence, never the object", async () => {
@@ -232,5 +272,23 @@ describe("the two spellings of the lock file are one", () => {
     const sidecar = fs.readFileSync(path.resolve(here, "../../sidecar/src/db.ts"), "utf8");
     expect(rust).toContain('dir.join("sidecar.lock")');
     expect(sidecar).toContain('export const LOCK_FILE = "sidecar.lock";');
+  });
+
+  /**
+   * The two words the shell leads its refusals with live in two languages too, and the card's
+   * sentence depends on them: a word the window does not read falls to the generic sentence.
+   */
+  it("the shell leads the two refusals the card words apart with the words the window reads", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const rust = fs.readFileSync(path.resolve(here, "../src-tauri/src/engine.rs"), "utf8");
+    expect(rust).toContain(`pub const UNLOCK_HELD: &str = "${UNLOCK_HELD}";`);
+    expect(rust).toContain(`pub const UNLOCK_NO_ENGINE: &str = "${UNLOCK_NO_ENGINE}";`);
+    expect(rust).toMatch(/"\{UNLOCK_HELD\}the lock belongs to process \{pid\}, which is still running/);
+    expect(rust).toMatch(/"\{UNLOCK_NO_ENGINE\}this install has no engine to start; nothing was removed"/);
+    expect(unlockRefusal(HELD_REFUSAL)).toBe("held");
+    expect(unlockRefusal(`${UNLOCK_NO_ENGINE}x`)).toBe("noEngine");
+    expect(unlockRefusal(deadlineError("the app"))).toBe("noAnswer");
+    expect(unlockRefusal("the lock could not be read (denied); nothing was removed")).toBe("other");
+    expect(unlockRefusal(undefined)).toBe("other");
   });
 });

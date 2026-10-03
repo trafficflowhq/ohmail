@@ -35,7 +35,15 @@ import {
   unknownSpeaks, type HostConnection,
 } from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
-import { bridgeAvailable, bridgeFetch, engineRetry, engineStartOver, engineUnlockRetry } from "./bridge-fetch.js";
+import {
+  bridgeAvailable,
+  bridgeFetch,
+  engineRetry,
+  engineStartOver,
+  engineUnlockRetry,
+  unlockRefusal,
+  type UnlockRefusal,
+} from "./bridge-fetch.js";
 import {
   cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
@@ -1732,17 +1740,18 @@ function KeyringNotice({ onSettled }: { onSettled: () => void }) {
 
 /**
  * A LOCKED LOCAL STORE — `DataDirLockedError` in the sidecar. The press removes a torn record or a
- * dead process's lock and starts the engine; a lock whose process is still running is kept, and a
- * refused press says so under the button instead of leaving the card looking unpressed.
+ * dead process's lock and starts the engine; a lock whose process is still running is kept. A
+ * refused press says why under the button instead of leaving the card looking unpressed, and only
+ * a running holder is told as another copy (`unlockRefusal`).
  */
 function UnlockNotice({ onSettled }: { onSettled: () => void }) {
-  const [refused, setRefused] = useState(false);
+  const [refused, setRefused] = useState<UnlockRefusal | null>(null);
   const [pressing, setPressing] = useState(false);
   const press = (): void => {
     if (pressing) return;
     setPressing(true);
     void engineUnlockRetry()
-      .then(() => setRefused(false), () => setRefused(true))
+      .then(() => setRefused(null), (err: unknown) => setRefused(unlockRefusal(err)))
       .finally(() => {
         setPressing(false);
         onSettled();
@@ -1750,9 +1759,23 @@ function UnlockNotice({ onSettled }: { onSettled: () => void }) {
   };
   return (
     <GateNotice reason={DOOR_COPY.gateLockedStore} actionLabel={DOOR_COPY.gateUnlockRetry} onAction={press}>
-      {refused ? <p role="alert">{DOOR_COPY.gateUnlockRefused}</p> : null}
+      {refused !== null ? <p role="alert">{unlockSentence(refused)}</p> : null}
     </GateNotice>
   );
+}
+
+/** The sentence under the unlock button, read at render so the catalogue's language applies. */
+function unlockSentence(refused: UnlockRefusal): string {
+  switch (refused) {
+    case "held":
+      return DOOR_COPY.gateUnlockRefused;
+    case "noEngine":
+      return DOOR_COPY.gateUnlockNoEngine;
+    case "noAnswer":
+      return DOOR_COPY.gateUnlockNoAnswer;
+    case "other":
+      return DOOR_COPY.gateRetryRefused;
+  }
 }
 
 /**

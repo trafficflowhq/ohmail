@@ -348,6 +348,7 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
  * EPIPE as an `error` event, and with nobody listening the process died before its store was
  * closed. Both are dropped here — the frame writer still sees its failed write, and the shutdown
  * already under way finishes. Anything that is not EPIPE still ends the process, as it did.
+ * Measured on Linux; which error Windows reports for a pipe nobody reads is not.
  */
 export function ignoreEpipe(stream: NodeJS.EventEmitter): void {
   stream.on("error", (err: NodeJS.ErrnoException) => {
