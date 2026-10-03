@@ -501,7 +501,7 @@ function pressReadBack(
         v.count, place, v.kept, folderName(v.keptPlace), v.rule.match, v.term)
       : refuse("liveVerdictKept", v.count, place, v.kept, folderName(v.keptPlace), v.term);
     case "keptMany": return refuse("liveVerdictKeptMany", v.count, place, v.kept);
-    case "still": return refuse("liveVerdictStill", v.count, place, v.still, v.stillPlace === null ? Copy.history : folderName(v.stillPlace));
+    case "still": return refuse("liveVerdictStill", v.count, place, v.still, v.stillPlace === null ? refuse("history") : folderName(v.stillPlace));
     case "stillSpread": return refuse("liveVerdictStillSpread", v.count, place, v.still);
     case "stillLegacy": return refuse("liveVerdictStillLegacy", v.count, place, v.still, v.folder, folderName(v.folder));
     case "applying": return refuse("liveVerdictApplying", v.count, place);
