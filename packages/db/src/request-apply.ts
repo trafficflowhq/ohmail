@@ -849,8 +849,8 @@ export type RuleRefusal = "no_such_rule";
 
 export type ApplyRuleRequestResult =
   | { applied: true; op: "create" | "update" | "delete"; ruleId: string; lastSeq: bigint }
-  /** A create whose key already held the requested state: nothing written, no delta. */
-  | { applied: true; op: "unchanged"; ruleId: string; lastSeq: null }
+  /** A create whose row already held the requested state; `lastSeq` names collapsed twins' deletes, if any. */
+  | { applied: true; op: "unchanged"; ruleId: string; lastSeq: bigint | null }
   | { applied: false; refusal: RuleRefusal };
 
 /**
@@ -964,14 +964,16 @@ function samePlace(a: string, b: string): boolean {
 /** What one create under a key did. `lastSeq` is `null` only when nothing at all was written. */
 export type RuleCreateOutcome =
   | { created: true; ruleId: string; lastSeq: bigint; collapsed: string[] }
-  | { created: false; ruleId: string; lastSeq: bigint | null; collapsed: string[] };
+  /** `changed`: the row under the key was written. Twins collapse either way, one delta each. */
+  | { created: false; changed: boolean; ruleId: string; lastSeq: bigint | null; collapsed: string[] };
 
 /**
  * ONE RULE PER FOUR-FIELD KEY, on both create doors: `POST /rules` on an organizing install and the
  * organizer's `rule.create` apply. A key that already has a row is RECONCILED, never doubled: its
  * destination, priority and enabled take the request's values, the row becomes the person's, its
  * twins collapse, and the backlog re-opens only when the routing moved. A request the row already
- * satisfies writes nothing and records no delta. The account's rule-key lock comes first, so two
+ * satisfies writes nothing to it and records no delta of its own; twins under the key collapse on
+ * every path, one `delete` delta each. The account's rule-key lock comes first, so two
  * creates under one key cannot both read "no row". `match` is the stored spelling (the local door's
  * own); the lookup always compares `ruleMatchKey`.
  */
@@ -992,7 +994,7 @@ export async function reconcileRuleCreate(
     const diff = ruleCreateDiff(existing, create);
     // Nothing differs: no write and no delta, so no client is woken for a change that is not one.
     if (Object.keys(diff).length === 0) {
-      return { created: false, ruleId: existing.id, lastSeq: twinSeqs[twinSeqs.length - 1] ?? null, collapsed };
+      return { created: false, changed: false, ruleId: existing.id, lastSeq: twinSeqs[twinSeqs.length - 1] ?? null, collapsed };
     }
     /* The backlog re-opens on the update path's terms: only when the ROUTING moved, never for a
        reorder or an on/off, and only if the request asked for the mail already filed. */
@@ -1005,7 +1007,7 @@ export async function reconcileRuleCreate(
       .set({ ...diff, ...retro, updatedAt: now })
       .where(and(eq(rulesTbl.id, existing.id), eq(rulesTbl.accountId, accountId)));
     const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [existing.id], "update"))[0]!;
-    return { created: false, ruleId: existing.id, lastSeq, collapsed };
+    return { created: false, changed: true, ruleId: existing.id, lastSeq, collapsed };
   }
   const [row] = await tx.insert(rulesTbl).values({
     accountId,
@@ -1044,7 +1046,8 @@ export async function applyRuleRequest(
   if (payload.op === "create") {
     const out = await reconcileRuleCreate(tx, { accountId, create: payload, now });
     if (out.created) return { applied: true, op: "create", ruleId: out.ruleId, lastSeq: out.lastSeq };
-    if (out.lastSeq === null) return { applied: true, op: "unchanged", ruleId: out.ruleId, lastSeq: null };
+    // The row was not written: `unchanged`, with the seq of the twins it collapsed if any went.
+    if (!out.changed) return { applied: true, op: "unchanged", ruleId: out.ruleId, lastSeq: out.lastSeq };
     /* `op: "update"`, BECAUSE THAT IS WHAT THIS BRANCH DID: the row was already there and the
        difference was written into it. A seam that answers the request's word instead of what it
        did is one reader away from saying "created" about a rule that existed. */
@@ -1116,16 +1119,16 @@ export interface PressLeg {
 }
 
 /**
- * HAS EVERY HOLDER A PRESS WAS SENT TO CARRIED IT OUT? Every leg finished and at least one
- * applied. A leg is finished when `applied`, or, for a delete only, refused `no_such_rule`: that
- * holder's own word that nothing under the key runs there. `expired`, `pending`, `sent` and every
- * other refusal mean the press did not land on that mailbox, and the reader's row keeps saying what
- * still runs there. A mailbox refused at the press has no leg and holds nothing back.
+ * HAS EVERY HOLDER A PRESS WAS SENT TO CARRIED IT OUT? Every leg finished. A leg is finished when
+ * `applied`, or, for a delete only, refused `no_such_rule`: that holder's word that the end state,
+ * nothing under the key, already holds there. `expired`, `pending`, `sent` and every other refusal
+ * mean the press did not land on that mailbox, and the reader's row keeps saying what still runs
+ * there. No legs is not a press. A mailbox refused at the press, or disabled since, has no leg.
  */
 export function pressSettled(op: ValidatedRuleRequest["op"], legs: readonly PressLeg[]): boolean {
   const finished = (l: PressLeg): boolean => l.state === "applied"
     || (op === "delete" && l.state === "refused" && l.refusedReason === "no_such_rule");
-  return legs.length > 0 && legs.every(finished) && legs.some((l) => l.state === "applied");
+  return legs.length > 0 && legs.every(finished);
 }
 
 function sameKey(a: RuleKey, b: RuleKey): boolean {
@@ -1136,11 +1139,11 @@ function sameKey(a: RuleKey, b: RuleKey): boolean {
 /**
  * THE READER'S OWN ROWS FOLLOW THE ORGANIZERS' ANSWER, once per PRESS: the legs of one press share
  * its kind, key and `decidedAt` (one instant for the press), and the rows under the key move only
- * when {@link pressSettled} says every holder carried it out. Called on an applied ack and on a
- * delete refused `no_such_rule`, in the unit that records it, with the organizer's apply at
- * `decidedAt`. THE GUARD: any row under the key written at or after `decidedAt` is the person's
- * later hand and stands. A CREATE inserts only where its press wrote no row here: where it did, a
- * missing row is a later removal.
+ * when {@link pressSettled} says every live holder carried it out or, for a delete, holds nothing
+ * under the key. Called on an applied ack and on a delete refused `no_such_rule`, in the unit that
+ * records it, with the organizer's apply at `decidedAt`. The rule-key lock precedes the leg read.
+ * THE GUARD: any row under the key written at or after `decidedAt` is the person's later hand and
+ * stands. A CREATE inserts only where its press wrote no row here.
  */
 export async function settleReaderRuleRows(
   tx: Tx, accountId: string, request: { kind: string; payload: unknown; decidedAt: Date | null },
@@ -1149,11 +1152,12 @@ export async function settleReaderRuleRows(
   if (v === null) return { settled: false, skipped: "unreadable_payload" };
   const at = request.decidedAt;
   if (!(at instanceof Date) || Number.isNaN(at.getTime())) return { settled: false, skipped: "no_decided_at" };
+  // The create door's order: the account's rule-key lock, then the legs and the rows, so two final
+  // legs of one press settling at once each read the other's committed state.
+  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
   const legs = (await listPressLegs(tx, accountId, request.kind, at))
     .filter((l) => { const lv = validateRulePayload(l.kind, l.payload); return lv !== null && sameKey(lv.key, v.key); });
   if (!pressSettled(v.op, legs)) return { settled: false, skipped: "press_unfinished" };
-  // The create door's order: the account's rule-key lock, then the rows.
-  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
   const rows = await findRulesByKey(tx, accountId, v.key, { lock: true });
   if (rows.some((r) => !(r.updatedAt instanceof Date))) return { settled: false, skipped: "no_row_stamp" };
   if (rows.some((r) => r.updatedAt!.getTime() >= at.getTime())) return { settled: false, skipped: "newer_local_write" };

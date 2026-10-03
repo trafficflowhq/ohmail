@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, ne, or } from "drizzle-orm";
 import { mailboxes, organizerRequests } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 import { fenceErased } from "./erasure-fence.js";
@@ -145,19 +145,22 @@ export async function listSentRequests(tx: Tx, mailboxId: string): Promise<Organ
 }
 
 /**
- * Every leg of one PRESS of this account: the rows of one kind decided at one instant, whatever
- * their state. The caller narrows by the payload's key. Account first, so the read is the account's.
+ * Every LIVE leg of one PRESS of this account: the rows of one kind decided at one instant, whatever
+ * their state, on a mailbox that is not disabled (a tombstone organizes nothing, as the fan-out
+ * reads it; an erased mailbox's legs are already gone). The caller narrows by the payload's key.
  */
 export async function listPressLegs(
   tx: Tx, accountId: string, kind: string, decidedAt: Date,
 ): Promise<OrganizerRequestRow[]> {
-  const rows = await tx.select().from(organizerRequests)
+  const rows = await tx.select({ r: organizerRequests }).from(organizerRequests)
+    .innerJoin(mailboxes, and(eq(mailboxes.id, organizerRequests.mailboxId), eq(mailboxes.accountId, organizerRequests.accountId)))
     .where(and(
       eq(organizerRequests.accountId, accountId),
       eq(organizerRequests.kind, kind),
       eq(organizerRequests.decidedAt, decidedAt),
+      ne(mailboxes.status, "disabled"),
     ));
-  return rows.map(toRow);
+  return rows.map((x) => toRow(x.r));
 }
 
 /**

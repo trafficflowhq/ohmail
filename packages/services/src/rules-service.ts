@@ -687,7 +687,8 @@ export class RulesService {
       if (!plan.writeLocally) {
         /* THE LOCAL ROW STAYS. Nothing here organizes anything, so deleting it would remove the
            person's only visible copy of a rule that is still live on the machine that runs it. It
-           goes in the reader's cycle once every holder the press went to has removed it. */
+           goes in the reader's cycle once every holder the press went to has removed it or holds
+           nothing under its key. */
         if (!before) throw new ServiceError("not_found", 404, "rule not found");
         const travel = await fanOutRuleEdit(
           bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before), at,

@@ -1333,8 +1333,8 @@ export async function driveOutstandingRequests(
   const skipped: Array<{ requestId: string; reason: string }> = [];
   if (appliedIds.length > 0) {
     // An applied rule request is applied to this install's own rows in the same unit, once every
-    // holder its press went to has carried it out — unless the person wrote the row again after
-    // deciding it (`settleReaderRuleRows`' guard).
+    // live holder its press went to has carried it out (for a delete, or holds nothing under the
+    // key) — unless the person wrote the row again after deciding it (`settleReaderRuleRows`).
     const appliedRules = sent.filter((r) => appliedIds.includes(r.id) && r.kind.startsWith("rule."));
     await db.transaction(async (tx) => {
       await markRequestsApplied(tx, appliedIds, now);
