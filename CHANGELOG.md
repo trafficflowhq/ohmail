@@ -81,6 +81,16 @@ mailing list's server.
 
 A rule added on a device that does not organize the mailbox now reaches the computer that does.
 
+### A message that cannot be saved no longer holds up the rest of the mailbox
+<!-- changes: freeze-02512-phone-b-note.md -->
+
+On the phone and the desktop app, a message that kept failing to save was retried on every sync and
+the mailbox never moved past it. Such a message is now set aside after repeated attempts, or at once
+when the device cannot store it, and the next version of the app reads it again. If new messages keep
+failing with none saved in between, the app stops setting them aside and says that new mail could not
+be saved. A full or locked storage on the device is never taken as the message's fault, and a failure
+that is not the connection's no longer says the app could not reconnect.
+
 ## [0.25.11] — 2026-10-03
 
 ### Automatic filing out of the Screener reads less

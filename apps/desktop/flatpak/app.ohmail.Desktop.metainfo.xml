@@ -85,6 +85,7 @@
           <li>The desktop app stays signed in when a session renewal is interrupted</li>
           <li>The organizer's log no longer names your mail server</li>
           <li>A new rule reaches the computer that organizes your mail</li>
+          <li>A message that cannot be saved no longer holds up the rest of the mailbox</li>
         </ul>
       </description>
     </release>
