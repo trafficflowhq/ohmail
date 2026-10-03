@@ -75,6 +75,13 @@
 .rules-item .meta{font-size:calc(11.5px + var(--type-up));color:var(--ink3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rules-item .acts{display:flex;gap:6px;flex:none}
+/* A row that says more — what waits on the organizer, how it ranks, its copies — grows to its
+   lines; the window measures every drawn row, so its spacers stay true. */
+.rules-item.noted{height:auto;min-height:64px;padding:8px 0}
+.rules-item .meta.rules-waits{color:var(--ink2)}
+/* the requests about rules this page no longer lists, above the list they belong to */
+.rules-waiting{margin-bottom:10px}
+.rules-item.waiting{height:auto;min-height:56px;padding:8px 0}
 .rules-view .rules-item .acts .btn,
 .rules-view .rules-confirm .btn{font-size:calc(11.5px + var(--type-up));padding:5px 12px}
 /* AT PHONE WIDTH THE RULE SAYS WHOSE IT IS. Beside Change and Revoke the title kept about five

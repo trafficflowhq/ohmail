@@ -21,6 +21,7 @@ import {
   type NotificationChannels,
   type RuleDTO,
   type TagDTO,
+  type WaitingOnOrganizerView,
 } from "@ohmail/client-engine";
 import {
   Button,
@@ -439,6 +440,10 @@ export function SettingsView({
     pastMail: (rule: RuleDTO, destination: Folder | null) => number | null;
     /** Where a press can land, from the roster — see `RulesPosture`. Absent reads as organizer. */
     posture?: RulesPosture;
+    /** The rule requests waiting on the organizer — `engine.waitingOnOrganizer()`, `rule.*` only. */
+    waiting?: readonly WaitingOnOrganizerView[];
+    /** A mailbox's address by id — what a waiting removal names. */
+    mailboxLabel?: (mailboxId: string) => string | null;
   };
   /**
    * CREATE / RENAME / RECOLOUR / DELETE — one object, or a read-only list. The same rule as {@link rules} and for the
@@ -1222,7 +1227,7 @@ export function SettingsView({
 
           {shown === "rules" && rules ? (
             <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} pastMail={rules.pastMail}
-              posture={rules.posture} />
+              posture={rules.posture} waiting={rules.waiting} mailboxLabel={rules.mailboxLabel} />
           ) : null}
 
           {shown === "tags" ? (

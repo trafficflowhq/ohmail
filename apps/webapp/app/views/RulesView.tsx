@@ -31,8 +31,8 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, ListGroupLabel, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
-import { FOLDER_OF_VIEW, pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
-import type { Folder, PressAnswer, RuleDTO } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, PROFILE_RULES_SENT_MAX, pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
+import type { Folder, PressAnswer, RuleDTO, WaitingOnOrganizerView } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { usePileNames } from "../shell/decision-copy";
 import { placeLabel } from "../shell/format";
@@ -42,6 +42,7 @@ import { useListWindow } from "../shell/list-window";
 import { organizerRefusalOf, organizerRefusalSentence } from "../shell/organizer-refusal";
 import { postureRefusal, type RulesPosture } from "../shell/rules-posture";
 import { useFocusFollows } from "../shell/focus-follows";
+import { actingRules, outrankOf, twinsDiffer, waitingByRow } from "./rules-standing";
 import "./rules.css";
 
 /**
@@ -234,9 +235,16 @@ export interface RulesViewProps {
   pastMail: (rule: RuleDTO, destination: Folder | null) => number | null;
   /** What a press can do here, from the roster (`rulesPostureOf`); absent reads as organizer. */
   posture?: RulesPosture;
+  /** The rule requests waiting on the organizer (`engine.waitingOnOrganizer()`, `rule.*`). */
+  waiting?: readonly WaitingOnOrganizerView[];
+  /** A mailbox's address by id, for a request about a rule this page no longer lists. */
+  mailboxLabel?: (mailboxId: string) => string | null;
 }
 
-export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: RulesViewProps) {
+export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, posture, waiting = [], mailboxLabel }: RulesViewProps) {
+  /* ONE ROW PER KEY, the twin the router runs; the rest are counted on it and go with it. */
+  const { shown: rules, copies, others } = useMemo(() => actingRules(allRules), [allRules]);
+  const { onRow, apart } = useMemo(() => waitingByRow(waiting, rules, allRules), [waiting, rules, allRules]);
   const t = useTranslations("rules");
   const piles = usePileNames();
   /** A place in the sheet's words where it has one ("Screened out"), else the place label. */
@@ -431,7 +439,72 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
     });
   };
 
+  /** The holder's name, or the words for an unnamed one. */
+  const holderOf = (w: WaitingOnOrganizerView): string => w.holder.name ?? t("theOrganizer");
+  /** What a request said and where it stands, in one line — null for a row nothing waits on. */
+  const waitingLine = (w: WaitingOnOrganizerView | undefined): string | null => {
+    if (!w) return null;
+    const holder = holderOf(w);
+    if (w.state === "refused") {
+      return w.refusedReason === "no_such_rule" ? t("refusedGone", { holder }) : t("refusedOther", { holder });
+    }
+    const date = ruleDate(w.decidedAt);
+    const dest = (w.target as { destination?: string }).destination;
+    const said = w.kind === "rule.delete" ? t("waitingRemoval", { holder, date })
+      : dest ? t(w.kind === "rule.create" ? "waitingCreate" : "waitingChange", { holder, place: placeLabel(dest), date })
+        : t("waitingRemoval", { holder, date });
+    return w.slow ? `${said} ${t("waitingSlow", { holder })}` : said;
+  };
+  /** A request about a rule this page does not list: removed here, or not yet made there. */
+  const apartLine = (w: WaitingOnOrganizerView): { what: string; line: string } => {
+    const r = (w.target as { rule?: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null } }).rule;
+    const what = r ? whatOf({ kind: r.kind, match: r.match, subjectContains: r.subjectContains, bodyContains: r.bodyContains } as RuleDTO) : t("theOrganizer");
+    if (w.state !== "refused" && w.kind === "rule.delete") {
+      return {
+        what,
+        line: t("waitingRemovedHere", {
+          holder: holderOf(w), mailbox: (w.mailboxId ? mailboxLabel?.(w.mailboxId) : null) ?? t("theMailbox"), date: ruleDate(w.decidedAt),
+        }),
+      };
+    }
+    return { what, line: waitingLine(w) ?? "" };
+  };
+  /** Let an outranked address rule decide again: the same place, lifted at the write (`enrich`). */
+  const lift = (rule: RuleDTO): void => {
+    setRefusal(null);
+    void onRetarget(rule.id, canonicalDestination(rule.destination) as Folder, false).then((r) =>
+      report(r, t("toastLifted"), t("toastRetargetQueued"), t("toastRetargetFailed")));
+  };
+  const leftBehind = Math.max(0, allRules.length - PROFILE_RULES_SENT_MAX);
+  const boundNote = leftBehind > 0
+    ? <SettingsNote>{t("profileBound", { max: PROFILE_RULES_SENT_MAX, count: leftBehind })}</SettingsNote>
+    : null;
+  const waitingGroup = apart.length > 0 ? (
+    <div className="rules-waiting" role="list" aria-label={t("waitingGroup")}>
+      <ListGroupLabel group="waiting" index={0}>{t("waitingGroup")}</ListGroupLabel>
+      {apart.map((w, i) => {
+        const { what, line } = apartLine(w);
+        return (
+          <div key={w.requestId ?? `apart-${i}`} className="rules-item waiting" role="listitem" data-waiting-kind={w.kind}>
+            <span className="body">
+              <b className="what">{what}</b>
+              <span className="meta">{line}</span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
+
   if (rules.length === 0) {
+    if (waitingGroup) {
+      return (
+        <SettingsSection className="rules-view">
+          {waitingGroup}
+          <SettingsNote>{t("noCount")}</SettingsNote>
+        </SettingsSection>
+      );
+    }
     return (
       <SettingsSection className="rules-view">
         <p className="set-note-inline">{t("empty")}</p>
@@ -452,10 +525,21 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
       ? t("meta", { origin, date: ruleDate(rule.createdAt) })
       : t("metaPaused", { origin, date: ruleDate(rule.createdAt) });
     const openHere = open !== null && "ruleId" in open && open.ruleId === rule.id;
+    const waits = waitingLine(onRow.get(rule.id));
+    const rank = outrankOf(rule, allRules);
+    const twins = copies.get(rule.id) ?? 0;
+    const behind = others.get(rule.id) ?? [];
+    // Twins filing elsewhere, or paused where this row runs, are rules of their own: named, not counted.
+    const twinNote = twins === 0 ? null : twinsDiffer(rule, behind)
+      ? t("otherTwins", {
+        count: behind.length,
+        list: behind.map((o) => t(o.enabled ? "twinPlace" : "twinPaused", { place: placeLabel(o.destination) })).join("; "),
+      })
+      : t("copies", { count: twins });
     return (
       <Fragment key={rule.id}>
         <div
-          className={openHere ? "rules-item editing" : "rules-item"}
+          className={`rules-item${openHere ? " editing" : ""}${waits || rank || twins > 0 ? " noted" : ""}`}
           data-rule-id={rule.id}
           data-index={index}
           role="listitem"
@@ -467,8 +551,18 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
             <span className="meta">
               {meta} · {t("filesInto", { place: placeLabel(rule.destination) })}
             </span>
+            {rank ? (
+              <span className="meta rules-rank" data-rank={rank.kind}>
+                {t(rank.kind, { domain: displayRuleMatch(rank.domain), place: placeLabel(rank.place) })}
+              </span>
+            ) : null}
+            {twinNote ? <span className="meta rules-copies">{twinNote}</span> : null}
+            {waits ? <span className="meta rules-waits" role="status">{waits}</span> : null}
           </span>
           <span className="acts">
+            {rank?.kind === "outranked" ? (
+              <Button variant="ghost" disabled={lockedWhy !== null} onClick={() => lift(rule)}>{t("liftAction")}</Button>
+            ) : null}
             <Button
               variant="ghost"
               disabled={lockedWhy !== null}
@@ -576,6 +670,8 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
           <b>{refusal.lead}</b>{refusal.why ? <> {refusal.why}</> : null}
         </p>
       ) : null}
+
+      {waitingGroup}
 
       {showSearch || showFacets || showBulk ? (
         <div className="rules-toolbar">
@@ -695,6 +791,7 @@ export function RulesView({ rules, onRevoke, onRetarget, pastMail, posture }: Ru
         )}
       </div>
 
+      {boundNote}
       <SettingsNote>{t("noCount")}</SettingsNote>
     </SettingsSection>
   );

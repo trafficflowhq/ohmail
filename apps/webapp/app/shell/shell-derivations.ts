@@ -540,6 +540,12 @@ export function useShellDerivations({
   );
   /** Every rule the consent gate has written, newest first. */
   const rules = useMemo(() => rulesList(reader), [reader, derived]);
+  /** The rule requests waiting on the organizer — the Rules page's own group (`waitingOnOrganizer`). */
+  const rulesWaiting = useMemo(
+    // Optional-called: a test's engine double that never organizes has no list to read.
+    () => (engine.waitingOnOrganizer?.() ?? []).filter((w) => w.kind.startsWith("rule.")),
+    [engine, reader, derived],
+  );
   const mailboxes = useMemo(
     () => reader.list<MailboxEntity>("mailbox"),
     [reader, derived],
@@ -646,7 +652,7 @@ export function useShellDerivations({
     folderUnread,
     openFolder,
     folderMessages,
-    rules,
+    rules, rulesWaiting,
     mailboxes,
     draft,
     aiChip,
