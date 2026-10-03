@@ -55,6 +55,12 @@ import { gatedRefusal } from "./gated-refusal";
 /** `stepup`: the erase was refused for a closed window and waits on the prompt. */
 type Stage = "facts" | "stepup" | "erasing" | "done";
 
+/** What a failed erase's answer says the release did before the failure (`details.subscription`). */
+function releaseOf(err: unknown): ErasureResult["subscription"] | null {
+  const s = err instanceof ApiError ? (err.details as { subscription?: unknown } | undefined)?.subscription : undefined;
+  return s === "none" || s === "cancelled" || s === "cancel_failed" ? s : null;
+}
+
 interface Who {
   accountId: string;
   email: string;
@@ -89,6 +95,11 @@ export function AccountSection() {
   /** A factor landed after the prompt's Cancel and was discarded: nothing was erased, and it is said. */
   const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
   const [result, setResult] = useState<ErasureResult | null>(null);
+  /**
+   * A press that failed AFTER the subscription was cancelled: kept, because the retry's release has
+   * nothing left to cancel and answers `none`, and the receipt must still say it was cancelled.
+   */
+  const [cancelledEarlier, setCancelledEarlier] = useState(false);
 
   const [signingOut, setSigningOut] = useState(false);
   /** The wipe was blocked by another tab: the mail is still on this browser. See `doSignOut`. */
@@ -207,13 +218,20 @@ export function AccountSection() {
         return;
       }
       // Back to the top, the typed address kept. A refusal the SERVER answered rolled its one
-      // transaction back and is said in our words, never its "internal error"; a request that
-      // never got an answer keeps the client's own sentence, which claims nothing either way.
+      // transaction back and is said in our words, never its "internal error", naming what the
+      // release had already done; one whose outcome it could not confirm says exactly that. A
+      // request that never got an answer keeps the client's own sentence, which claims nothing.
+      const released = releaseOf(err);
+      const cancelled = released === "cancelled" || cancelledEarlier;
+      if (released === "cancelled") setCancelledEarlier(true);
       setStage("facts");
       setError(why === "sign-in" ? td("stepUpExpired")
-        : err instanceof ApiError && err.status >= 400 ? t("eraseRefused") : sentence(err));
+        : !(err instanceof ApiError && err.status >= 400) ? sentence(err)
+          : err.code === "erasure_unconfirmed" ? t("eraseUnconfirmed")
+            : cancelled ? t("eraseRefusedSubCancelled")
+              : released === "cancel_failed" ? t("eraseRefusedSubFailed") : t("eraseRefused"));
     }
-  }, [sentence, t, td]);
+  }, [sentence, t, td, cancelledEarlier]);
 
   // ── The states that are not the ceremony ────────────────────────────────────────────
 
@@ -239,16 +257,17 @@ export function AccountSection() {
     );
   }
   if (stage === "done" && result) {
+    const subscription = cancelledEarlier ? "cancelled" : result.subscription;
     return (
       <Pane>
         <h2 className="acct-h">{t("doneTitle")}</h2>
         <p className="acct-lead">{t("doneBody")}</p>
         {/* The server's own sentence about what survives, verbatim. */}
         <p className="acct-fine">{result.retained}</p>
-        {result.subscription === "cancelled" ? (
+        {subscription === "cancelled" ? (
           <p className="acct-fine">{t("doneSubCancelled")}</p>
         ) : null}
-        {result.subscription === "cancel_failed" ? (
+        {subscription === "cancel_failed" ? (
           <p className="acct-warn" role="alert">{t("doneSubFailed")}</p>
         ) : null}
         {/* The account is erased and the LOCAL copy is not. Said here, beside the receipt,

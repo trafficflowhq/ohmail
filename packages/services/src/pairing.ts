@@ -1,7 +1,7 @@
 import { and, count, eq, gt, isNull, isNotNull, desc, type SQL } from "drizzle-orm";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { type Tx } from "@trafficflow/db";
-import { pairingTokens } from "@trafficflow/db";
+import { pairingTokens, users } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
 import { PAIRED_DEVICE_KINDS, type PairedDeviceKind } from "./auth/session-lifecycle.js";
 import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
@@ -262,15 +262,7 @@ export async function consumePairingToken(
   if (!GRANTS.has(input.grant)) return null;
   const now = ctx.now();
 
-  const conditions: SQL[] = [
-    eq(pairingTokens.tokenHash, hashToken(raw)),
-    eq(pairingTokens.grant, input.grant),
-    isNull(pairingTokens.consumedAt),
-    isNull(pairingTokens.revokedAt),
-    gt(pairingTokens.expiresAt, now),
-  ];
-  if (input.grant === "device-pair") conditions.push(isNotNull(pairingTokens.createdByUserId));
-
+  const conditions = liveTokenConditions(raw, input.grant, now);
   const [row] = await asTx(ctx).update(pairingTokens)
     .set({ consumedAt: now })
     .where(and(...conditions))
@@ -282,6 +274,19 @@ export async function consumePairingToken(
     });
   if (!row) return null;
   return { ...row, grant: row.grant as PairingGrant };
+}
+
+/** The burn's conjuncts, one list: the redeem's account read asks exactly what the burn will. */
+function liveTokenConditions(raw: string, grant: PairingGrant, now: Date): SQL[] {
+  const conditions: SQL[] = [
+    eq(pairingTokens.tokenHash, hashToken(raw)),
+    eq(pairingTokens.grant, grant),
+    isNull(pairingTokens.consumedAt),
+    isNull(pairingTokens.revokedAt),
+    gt(pairingTokens.expiresAt, now),
+  ];
+  if (grant === "device-pair") conditions.push(isNotNull(pairingTokens.createdByUserId));
+  return conditions;
 }
 
 /** What a device-pair link's hash reads as, without spending it. `unknown` for every miss. */
@@ -351,15 +356,25 @@ export async function redeemDevicePair(
     throw new ServiceError("validation_failed", 400,
       `device kind must be one of ${[...PAIRED_DEVICE_KINDS].map((k) => `"${k}"`).join(", ")}`);
   }
+  // THE CREATOR'S ACCOUNT, read before the burn so the fence can be the transaction's first
+  // statement: one plain read with the burn's own conjuncts. A miss is the burn's answer, given
+  // before anything is spent; the burn then has to name the same creator.
+  const raw = typeof input.token === "string" ? input.token.trim() : "";
+  if (raw.length === 0 || raw.length > 512) throw pairingInvalid();
+  const [owner] = await asTx(ctx).select({ userId: users.id, accountId: users.accountId })
+    .from(pairingTokens).innerJoin(users, eq(users.id, pairingTokens.createdByUserId))
+    .where(and(...liveTokenConditions(raw, "device-pair", ctx.now())))
+    .limit(1);
+  if (!owner) throw pairingInvalid();
   return runInTransaction(ctx, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "device-pair" });
-    if (!consumed || consumed.createdByUserId === null) throw pairingInvalid();
+    if (!consumed || consumed.createdByUserId !== owner.userId) throw pairingInvalid();
     return auth.establishPairedDevice(txCtx, {
       userId: consumed.createdByUserId,
       label: consumed.label.length > 0 ? consumed.label : "Paired device",
       kind,
     });
-  });
+  }, { fence: { accountId: owner.accountId } });
 }
 
 function requireUser(ctx: ServiceContext): string {

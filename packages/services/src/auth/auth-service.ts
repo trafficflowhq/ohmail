@@ -3,7 +3,8 @@ import { randomInt, randomUUID } from "node:crypto";
 // login-token row, and the shadowing turns a comparison into "call an object".
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
-  accounts, users, devices, sessions, readAccountErasedAt, type Tx,
+  accounts, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle, markFenced,
+  type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -410,6 +411,11 @@ const invalidDesktopChallenge = (): ServiceError => new ServiceError(
   "That link request is not one this browser can complete. Open the page again from the app.",
 );
 
+/** A sign-in on an account erased under it: the answer its credentials give once it is gone. */
+const refusedSignIn = (): never => {
+  throw new ServiceError("unauthorized", 401, "invalid email or password");
+};
+
 /**
  * The `purpose` a desktop APPROVAL request is stored under — the fourth value, mutually invisible
  * to the other three by the same query rule. The only purpose whose row may carry no user (cloud
@@ -761,6 +767,8 @@ export class AuthService extends SessionLifecycle {
 
       // scoped-by: sign-up creates the account itself — there is no prior account to scope by
       const [acct] = await tx.insert(accounts).values({ name: b.displayName }).returning();
+      // FENCED BY CREATION: no erasure can stamp a row before the transaction that inserts it commits.
+      markFenced(tx, acct!.id);
       const [user] = await tx.insert(users).values({
         accountId: acct!.id, email, displayName: b.displayName,
         // #9 — a consumed ROW that PROVES control is the only thing that stamps: mailed invites
@@ -918,7 +926,7 @@ export class AuthService extends SessionLifecycle {
       // Login's own re-entry rule. See the header for why a factor changes the answer.
       if (methods.length === 0) return this.establishEnrollment(txCtx, user);
       return { status: "verified" as const };
-    });
+    }, { fence: { accountId: user.accountId } });
   }
 
   /**
@@ -1031,18 +1039,23 @@ export class AuthService extends SessionLifecycle {
     // first factor. This does not lower the bar — for a user with no second factor
     // the password IS the only factor in existence — and the per-user lockout
     // above still governs how many guesses that takes.
-    if (methods.length === 0) return this.establishEnrollment(ctx, user);
+    // BOTH ARMS write a row keyed to the user (a session, a login token), so each opens on the
+    // account row; one erased under it answers what its credentials answer once it is gone.
+    const fence = { accountId: user.accountId, onErased: refusedSignIn };
+    if (methods.length === 0) return this.inTransaction(ctx, (txCtx) => this.establishEnrollment(txCtx, user), { fence });
 
     // First factor OK → mint a single-use, short-lived login token carrying the
     // user's enrolled 2FA methods (never a full session on step one).
     const rawToken = generateToken();
-    await db.insert(loginTokens).values({
-      userId: user.id,
-      tokenHash: hashToken(rawToken),
-      methods,
-      purpose: "login",
-      expiresAt: new Date(ctx.now().getTime() + this.cfg.loginTokenTtlMs),
-    });
+    await this.inTransaction(ctx, async (txCtx) => {
+      await asTx(txCtx).insert(loginTokens).values({
+        userId: user.id,
+        tokenHash: hashToken(rawToken),
+        methods,
+        purpose: "login",
+        expiresAt: new Date(ctx.now().getTime() + this.cfg.loginTokenTtlMs),
+      });
+    }, { fence });
     return { status: "twofa_required", loginToken: rawToken, methods };
   }
 
@@ -1089,6 +1102,8 @@ export class AuthService extends SessionLifecycle {
     if (raw.length > 0 && !DESKTOP_CHALLENGE_RE.test(raw)) throw invalidDesktopChallenge();
     const challengeHash = raw.length > 0 ? raw : null;
 
+    // The account is read BEFORE the transaction, so the fence can be its first statement.
+    const { accountId } = await this.loadUser(asTx(ctx), userId);
     // A mint SUPERSEDES: at most one desktop code per user, and it is a real bound. Security —
     // "show me another code" must kill the one on screen (most likely shown on a shared screen).
     // Growth — `login_tokens` has no reaper and this route has no throttle, so DELETE rather than
@@ -1124,7 +1139,7 @@ export class AuthService extends SessionLifecycle {
       // needs, and the claim's own `login` row lands later and from a different address — so
       // without this line the first sign of a second machine is the machine.
       await this.audit(db, await this.loadUser(db, userId), "desktop_link_issued", undefined, ctx);
-    });
+    }, { fence: { accountId } });
     return { code, expiresIn: Math.floor(this.cfg.desktopLinkTtlMs / 1000) };
   }
 
@@ -1321,56 +1336,62 @@ export class AuthService extends SessionLifecycle {
    */
   async confirmDesktopApproval(ctx: ServiceContext, approvalId: string): Promise<{ approved: true }> {
     const userId = this.requireUser(ctx);
-    const db = asTx(ctx);
     const now = ctx.now();
     if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
-    const [bound] = await db.update(loginTokens)
-      .set({ userId, approvedAt: now })
-      .where(and(
-        eq(loginTokens.id, approvalId),
-        eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
-        or(isNull(loginTokens.userId), eq(loginTokens.userId, userId)),
-        isNull(loginTokens.approvedAt),
-        isNull(loginTokens.consumedAt),
-        isNull(loginTokens.revokedAt),
-        gt(loginTokens.expiresAt, now),
-      ))
-      .returning({ id: loginTokens.id });
-    if (!bound) {
-      const row = await this.approvalRow(db, approvalId);
-      if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
-      const refusal = approvalRefusal(row, now);
-      if (refusal) throw refusal;
-      return { approved: true };
-    }
-    await this.audit(db, await this.loadUser(db, userId), "desktop_approval_confirmed", undefined, ctx);
-    return { approved: true };
+    // The bind gives the row to this user, a row the erasure deletes: opened on the account row.
+    return this.inTransaction(ctx, async (txCtx) => {
+      const db = asTx(txCtx);
+      const [bound] = await db.update(loginTokens)
+        .set({ userId, approvedAt: now })
+        .where(and(
+          eq(loginTokens.id, approvalId),
+          eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
+          or(isNull(loginTokens.userId), eq(loginTokens.userId, userId)),
+          isNull(loginTokens.approvedAt),
+          isNull(loginTokens.consumedAt),
+          isNull(loginTokens.revokedAt),
+          gt(loginTokens.expiresAt, now),
+        ))
+        .returning({ id: loginTokens.id });
+      if (!bound) {
+        const row = await this.approvalRow(db, approvalId);
+        if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
+        const refusal = approvalRefusal(row, now);
+        if (refusal) throw refusal;
+        return { approved: true as const };
+      }
+      await this.audit(db, await this.loadUser(db, userId), "desktop_approval_confirmed", undefined, txCtx);
+      return { approved: true as const };
+    }, { fence: { accountId: ctx.accountId } });
   }
 
   /** "Not me": the request is dead for the desktop that made it, confirmed or not, until claimed. */
   async denyDesktopApproval(ctx: ServiceContext, approvalId: string): Promise<{ denied: true }> {
     const userId = this.requireUser(ctx);
-    const db = asTx(ctx);
     const now = ctx.now();
     if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
-    const [killed] = await db.update(loginTokens)
-      .set({ userId, revokedAt: now })
-      .where(and(
-        eq(loginTokens.id, approvalId),
-        eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
-        or(isNull(loginTokens.userId), eq(loginTokens.userId, userId)),
-        isNull(loginTokens.consumedAt),
-        isNull(loginTokens.revokedAt),
-        gt(loginTokens.expiresAt, now),
-      ))
-      .returning({ id: loginTokens.id });
-    if (!killed) {
-      const row = await this.approvalRow(db, approvalId);
-      if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
-      throw approvalRefusal(row, now) ?? approvalDenied();
-    }
-    await this.audit(db, await this.loadUser(db, userId), "desktop_approval_denied", undefined, ctx);
-    return { denied: true };
+    // Fenced for the confirm's reason: this bind gives the row to this user too.
+    return this.inTransaction(ctx, async (txCtx) => {
+      const db = asTx(txCtx);
+      const [killed] = await db.update(loginTokens)
+        .set({ userId, revokedAt: now })
+        .where(and(
+          eq(loginTokens.id, approvalId),
+          eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
+          or(isNull(loginTokens.userId), eq(loginTokens.userId, userId)),
+          isNull(loginTokens.consumedAt),
+          isNull(loginTokens.revokedAt),
+          gt(loginTokens.expiresAt, now),
+        ))
+        .returning({ id: loginTokens.id });
+      if (!killed) {
+        const row = await this.approvalRow(db, approvalId);
+        if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
+        throw approvalRefusal(row, now) ?? approvalDenied();
+      }
+      await this.audit(db, await this.loadUser(db, userId), "desktop_approval_denied", undefined, txCtx);
+      return { denied: true as const };
+    }, { fence: { accountId: ctx.accountId } });
   }
 
   /**
@@ -1421,15 +1442,22 @@ export class AuthService extends SessionLifecycle {
       }
       throw approvalWrongVerifier();
     }
+    // THE OWNER, read before the burn: the fence must be the transaction's first statement. A row no
+    // browser has confirmed has no owner and cannot be spent, so it is answered from this read as the
+    // burn would answer it, and the burn below is bound to the user the fence was taken for.
+    if (row.userId === null) {
+      const refusal = approvalRefusal(row, now);
+      if (refusal) throw refusal;
+      return { status: "pending" as const, retryAfterMs: DESKTOP_APPROVAL_POLL_MS };
+    }
+    const owner = await this.loadUser(db, row.userId);
     // Before the burn, for `claimDesktopLink`'s reason: a claimant holding another account's
     // session must be refused while the approval can still be spent by the right desktop.
-    if (ctx.accountId && row.userId) {
-      refuseCrossAccountCredential(ctx, (await this.loadUser(db, row.userId)).accountId);
-    }
+    if (ctx.accountId) refuseCrossAccountCredential(ctx, owner.accountId);
 
-    // THE BURN DECIDES, and every other answer is read off the row after it missed: pending,
-    // used, denied, expired. So `approved_at IS NOT NULL` and `expires_at > now` below are the
-    // only places those rules live, and the concurrent loser reads `approval_used`.
+    // THE BURN DECIDES a confirmed row, and every other answer is read off the row after it missed:
+    // pending, used, denied, expired (the same `approvalRefusal` the unconfirmed arm above asks). The
+    // concurrent loser reads `approval_used`.
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       const [spent] = await tx.update(loginTokens)
@@ -1438,12 +1466,13 @@ export class AuthService extends SessionLifecycle {
           eq(loginTokens.id, row.id),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
           eq(loginTokens.challengeHash, hashToken(verifier)),
+          eq(loginTokens.userId, owner.id),
           isNotNull(loginTokens.approvedAt),
           isNull(loginTokens.consumedAt),
           isNull(loginTokens.revokedAt),
           gt(loginTokens.expiresAt, now),
         ))
-        .returning({ userId: loginTokens.userId, label: loginTokens.label, approvedAt: loginTokens.approvedAt });
+        .returning({ label: loginTokens.label, approvedAt: loginTokens.approvedAt });
       if (!spent) {
         const again = await this.approvalRow(tx, approvalId);
         if (!again) throw approvalExpired();
@@ -1451,8 +1480,7 @@ export class AuthService extends SessionLifecycle {
         if (refusal) throw refusal;
         return { status: "pending" as const, retryAfterMs: DESKTOP_APPROVAL_POLL_MS };
       }
-      if (spent.userId === null) throw approvalUsed();
-      const user = await this.loadUser(tx, spent.userId);
+      const user = await this.loadUser(tx, owner.id);
       const [dev] = await tx.insert(devices).values({
         accountId: user.accountId, userId: user.id, kind,
         label: spent.label || (APPROVAL_DEVICE_LABELS[kind] ?? "ohmail for desktop"), ip: txCtx.ip ?? "",
@@ -1461,7 +1489,7 @@ export class AuthService extends SessionLifecycle {
         kind, deviceId: dev!.id, twofaAt: spent.approvedAt, surface: "native",
       });
       return { tokens: established.tokens! };
-    });
+    }, { fence: { accountId: owner.accountId } });
   }
 
   // ── WebAuthn (primary 2FA) ──────────────────────────────────────────────────
@@ -1526,7 +1554,7 @@ export class AuthService extends SessionLifecycle {
       const twofaEnrolled = await this.twofaEnrolled(db, userId);
       const session = await this.exchangeEnrollmentSession(tctx, userId, "webauthn", o.client);
       return { credentialId: row!.id, twofaEnrolled, ...(session ? { session } : {}) };
-    });
+    }, { fence: { accountId: ctx.accountId } });
   }
 
   async webauthnAssertOptions(ctx: ServiceContext, b: { loginToken: string }): Promise<{ options: unknown }> {
@@ -1627,7 +1655,7 @@ export class AuthService extends SessionLifecycle {
       }
       await db.delete(totpSecrets).where(and(eq(totpSecrets.userId, userId), eq(totpSecrets.activated, false)));
       await db.insert(totpSecrets).values({ userId, secretEnc: ciphertext, keyVersion, activated: false });
-    });
+    }, { fence: { accountId: user.accountId } });
 
     const otpauthUrl = totpUri({ issuer: this.cfg.totpIssuer, label: user.email, secret });
     return { secret, otpauthUrl };
@@ -1658,7 +1686,7 @@ export class AuthService extends SessionLifecycle {
       const twofaEnrolled = await this.twofaEnrolled(db, userId);
       const session = await this.exchangeEnrollmentSession(tctx, userId, "totp", o.client);
       return { twofaEnrolled, ...(session ? { session } : {}) };
-    });
+    }, { fence: { accountId: ctx.accountId } });
   }
 
   /**
@@ -1797,7 +1825,7 @@ export class AuthService extends SessionLifecycle {
       }
       await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
       await this.revokeOtherSessions(txCtx, userId);
-    });
+    }, { fence: { accountId: ctx.accountId, onErased: () => undefined } });
   }
 
   // Step-up re-verification — the inline ceremony behind a stale 5-minute window. `withStepUp`
@@ -1997,7 +2025,7 @@ export class AuthService extends SessionLifecycle {
         values.push({ userId, codeHash: hashToken(code), batchId });
       }
       await db.insert(recoveryCodes).values(values);
-    });
+    }, { fence: { accountId: ctx.accountId } });
     return { codes, generatedAt: ctx.now().toISOString() };
   }
 
@@ -2070,7 +2098,8 @@ export class AuthService extends SessionLifecycle {
     let spent: { est: SessionEstablished; remaining: number };
     try {
       spent = await this.inTransaction(ctx, (txCtx) =>
-        this.spendRecoveryCode(txCtx, user, { codeId: row.id, loginTokenId: lt.id, batchId }));
+        this.spendRecoveryCode(txCtx, user, { codeId: row.id, loginTokenId: lt.id, batchId }),
+      { fence: { accountId: user.accountId } });
     } catch (e) {
       // The counted failure has to SURVIVE, so it is written out here rather than inside a
       // transaction that has just rolled back.
@@ -2136,6 +2165,8 @@ export class AuthService extends SessionLifecycle {
     this.validateAuthorizeQuery(q);
     const now = ctx.now();
     const handle = generateToken();
+    // The account is read BEFORE the transaction, so the fence can be its first statement.
+    const { accountId } = await this.loadUser(asTx(ctx), userId);
 
     // A mint SUPERSEDES, exactly as {@link issueDesktopLink} does and for its reasons: at most one
     // open authorization request per user, so a second link clicked cannot leave a first one
@@ -2176,7 +2207,7 @@ export class AuthService extends SessionLifecycle {
         },
         expiresAt: new Date(now.getTime() + this.cfg.oauthAuthorizeRequestTtlMs),
       });
-    });
+    }, { fence: { accountId } });
     return { request: handle, expiresIn: Math.floor(this.cfg.oauthAuthorizeRequestTtlMs / 1000) };
   }
 
@@ -2584,13 +2615,22 @@ export class AuthService extends SessionLifecycle {
     db: Tx, ctx: ServiceContext,
     v: { userId?: string; loginTokenId?: string; challenge: string; type: string; origin: string },
   ): Promise<void> {
-    await db.insert(webauthnChallenges).values({
-      ...(v.userId !== undefined ? { userId: v.userId } : {}),
-      ...(v.loginTokenId !== undefined ? { loginTokenId: v.loginTokenId } : {}),
-      challenge: v.challenge, type: v.type,
-      rpId: this.cfg.rpID, origin: v.origin,
-      expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
-    });
+    const open = async (tx: Tx): Promise<void> => {
+      await tx.insert(webauthnChallenges).values({
+        ...(v.userId !== undefined ? { userId: v.userId } : {}),
+        ...(v.loginTokenId !== undefined ? { loginTokenId: v.loginTokenId } : {}),
+        challenge: v.challenge, type: v.type,
+        rpId: this.cfg.rpID, origin: v.origin,
+        expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
+      });
+    };
+    // A challenge bound to the session's own USER is a row the erasure deletes, so it opens on
+    // that account's row. An assertion's challenge names only its login token: no key to `users`.
+    if (v.userId !== undefined) {
+      await this.inTransaction(ctx, (txCtx) => open(asTx(txCtx)), { fence: { accountId: ctx.accountId } });
+    } else {
+      await open(db);
+    }
     await pruneWebauthnChallenges(db, { now: ctx.now() }).catch(() => 0);
   }
 
@@ -3009,13 +3049,20 @@ export class AuthService extends SessionLifecycle {
     event: AuthAuditEvent["event"], method: AuthAuditEvent["method"] | undefined, ctx: ServiceContext,
     detail?: string,
   ): Promise<void> {
-    /* THE FENCE, AND ONLY ON THE HALF THAT HAS AN ACCOUNT. `auth_events` carries an IP and a
-       device per attempt, and the sweep deletes every row bearing this account id — so a login
-       that began before the deletion and finished after it wrote the person's IP and device back
-       under the account they had erased. An attempt with NO user is the throttle's shape: it must
-       keep being recorded for an address that has no account at all, which is exactly the caller
-       this trail exists to describe, so it is written unfenced as it always was. */
-    if (user != null) {
+    /* THE FENCE, AND ONLY ON THE HALF THAT HAS AN ACCOUNT: the sweep deletes every row bearing the
+       account id, and a late row would put the person's IP and device back. The read below runs only
+       OUTSIDE a transaction; a user-less row (the throttle's shape) is written unfenced as always.
+       Inside one it would come after the writer's row locks, the order the erasure deadlocks on, so
+       the transaction must have opened with the fence: its brand stands in for the read (the share
+       lock it took blocks the stamp), and a transaction without it is refused by name. */
+    const fenced = fencedAccountOf(db);
+    if (fenced === undefined && inTransactionHandle(db)) {
+      throw new Error(`auth audit inside a transaction the fence did not open: ${event}`);
+    }
+    if (user != null && fenced !== undefined && fenced !== user.accountId) {
+      throw new Error(`auth audit in a transaction fenced for another account: ${event}`);
+    }
+    if (user != null && fenced === undefined) {
       const erasedAt = await readAccountErasedAt(db, dialect(db), user.accountId);
       if (erasedAt != null) return;
     }
@@ -3087,6 +3134,8 @@ export class AuthService extends SessionLifecycle {
       }
       return out;
     }
+    // Asked before the fence, which needs the session's account: the same 401 `super.logout` gives.
+    this.requireUser(ctx);
     return this.inTransaction(ctx, async (txCtx) => {
       const out = await super.logout(txCtx, b);
       const db = asTx(txCtx);
@@ -3115,7 +3164,7 @@ export class AuthService extends SessionLifecycle {
       }
       await this.pruneWakeRegistrations(db, out.familyIds);
       return out;
-    });
+    }, { fence: { accountId: ctx.accountId, onErased: () => ({ familyIds: [] }) } });
   }
 
   /**

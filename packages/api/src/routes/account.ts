@@ -1,4 +1,4 @@
-import { deleteAccount, throttleKeysFor } from "@trafficflow/services";
+import { deleteAccount, erasureOutcome, throttleKeysFor } from "@trafficflow/services";
 import type { ReleaseOutcome } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
@@ -7,6 +7,7 @@ import { reopenedCatchUp, resumeAfterReopen } from "../account-reopen.js";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
+import { isDbBusy } from "../middleware.js";
 import { sessionEnded } from "../session-end.js";
 import { accessFor, cookieSurface, entitlementsPort, json, readBody } from "./shared.js";
 import type { ApiDeps } from "../deps.js";
@@ -19,6 +20,50 @@ import type { Route } from "../router.js";
  */
 export const RETURN_SESSION_ID_MAX_CHARS = 255;
 const RETURN_SESSION_ID = /^[A-Za-z0-9_-]{1,255}$/;
+
+/** The database's answers that pass on their own: a deadlock, a lock wait or a statement cut short. */
+const TRANSIENT_DB_CODES: ReadonlySet<string> = new Set(["40P01", "55P03", "57014"]);
+
+/**
+ * THE ERASURE FAILED AFTER THE MONEY WAS STOPPED. The answer carries what the release did, so the
+ * page can say the subscription is already cancelled, and it is thrown, never `sessionEnded`, so no
+ * cookie is cleared and the session stays for the retry. 503 `erasure_unconfirmed` when no read
+ * could say whether it committed; else 503 `erasure_contended` (retryable) for a cause that
+ * passes on its own, 500 `erasure_failed` for anything else.
+ */
+function erasureFailed(err: unknown, subscription: ReleaseOutcome, outcome: "not_erased" | "unknown"): ServiceError {
+  if (outcome === "unknown") {
+    return new ServiceError("erasure_unconfirmed", 503,
+      "the account's deletion could not be confirmed; reload to see whether it went through", { subscription });
+  }
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | null;
+  const code = e?.code ?? e?.cause?.code;
+  if (isDbBusy(err) || (typeof code === "string" && TRANSIENT_DB_CODES.has(code))) {
+    return new ServiceError("erasure_contended", 503,
+      "the account could not be deleted right now; nothing else was removed", { subscription }, true);
+  }
+  return new ServiceError("erasure_failed", 500,
+    "the account could not be deleted; nothing else was removed", { subscription });
+}
+
+/** The receipt's counts, from the erasure's own result: what it removed, expired and kept, per table. */
+function erasureCounts(result: Awaited<ReturnType<typeof deleteAccount>>) {
+  return {
+    usersErased: result.usersErased,
+    tables: result.deleted,
+    // Reported separately because it is not a delete. Staged attachment tickets are the
+    // only rows erasure touches whose bytes live outside the database, and the row is the
+    // key the sweep removes them BY — so erasure brings their expiry forward and the next
+    // maintenance pass takes row and object together. See `account-deletion-service.ts`.
+    stagingTicketsExpired: result.stagingTicketsExpired,
+    // The signup funnel, reported separately for the same reason: these rows are
+    // PSEUDONYMISED, not deleted. The operator's count of who was waiting, invited and
+    // registered is a fact about the service; the address on the row is not, and it goes.
+    redactedTables: result.redacted,
+    // Refunds still owed, kept pseudonymised until they are paid; 0 on an unmetered host.
+    retainedPending: result.retainedPending,
+  };
+}
 
 /** What an erasure leaves on a host with no billing program: the pseudonymous account row and the token hashes. */
 const RETAINED_UNMETERED =
@@ -74,25 +119,22 @@ export const accountRoutes: Route[] = [
       }
 
       // A refund still owed is kept for the drain only where one runs, which is a metered host.
-      const result = await deleteAccount(ctx, {
-        throttleKeys: throttleKeysFor(deps.keyProvider), drainsRefunds: port !== null,
-      });
+      let result: Awaited<ReturnType<typeof deleteAccount>> | null = null;
+      try {
+        result = await deleteAccount(ctx, {
+          throttleKeys: throttleKeysFor(deps.keyProvider), drainsRefunds: port !== null,
+        });
+      } catch (err) {
+        // "Not deleted" only once a read made after the failure finds no stamp: an answer lost after
+        // the commit went out is a failure here and not a fact. A transaction the pool never began
+        // is not asked. A committed erasure answers its receipt, without the counts it took along.
+        const outcome = isDbBusy(err) ? "not_erased" : await erasureOutcome(ctx);
+        if (outcome !== "erased") throw erasureFailed(err, subscription, outcome);
+      }
       return sessionEnded(json(
         {
           erased: true,
-          usersErased: result.usersErased,
-          tables: result.deleted,
-          // Reported separately because it is not a delete. Staged attachment tickets are the
-          // only rows erasure touches whose bytes live outside the database, and the row is the
-          // key the sweep removes them BY — so erasure brings their expiry forward and the next
-          // maintenance pass takes row and object together. See `account-deletion-service.ts`.
-          stagingTicketsExpired: result.stagingTicketsExpired,
-          // The signup funnel, reported separately for the same reason: these rows are
-          // PSEUDONYMISED, not deleted. The operator's count of who was waiting, invited and
-          // registered is a fact about the service; the address on the row is not, and it goes.
-          redactedTables: result.redacted,
-          // Refunds still owed, kept pseudonymised until they are paid; 0 on an unmetered host.
-          retainedPending: result.retainedPending,
+          ...(result === null ? {} : erasureCounts(result)),
           // Said plainly rather than buried: the operator's own audit trail and the
           // customer's confirmation mail both read from this. A host with no billing program
           // keeps no billing records, so it names what it does keep.
@@ -104,6 +146,7 @@ export const accountRoutes: Route[] = [
       ));
     },
   },
+
   /**
    * `GET /account/access` — what the entitlements program says this account may do, and since the
    * wall, THE WALL READING ITSELF: it sits on `ACCESS_REFUSED_MAY_REACH_ROUTES`, so a refused

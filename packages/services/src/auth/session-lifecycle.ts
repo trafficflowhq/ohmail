@@ -3,7 +3,7 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { bridgeTx, runInTransaction, type Db, type ServiceContext } from "../context.js";
+import { bridgeTx, runInTransaction, type Db, type ServiceContext, type TransactionFence } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
 import { surfaceTtls, type SurfaceTtls } from "./config.js";
@@ -55,6 +55,18 @@ export function classifyRefreshFailure(err: unknown): RefreshFailure {
   if (!(err instanceof ServiceError) || err.httpStatus >= 500) return "fault";
   return err.httpStatus === 401 ? "session_refused" : "request_refused";
 }
+
+const isAccountErased = (err: unknown): boolean => err instanceof ServiceError && err.code === "account_erased";
+
+/**
+ * THE REFRESH DOOR'S ANSWER FOR AN ACCOUNT ERASED UNDER IT: the 401 a token gets once the erasure has
+ * deleted it, so the cookie door clears the jar and a declared client is told `account_erased`.
+ * Never the reuse sentence, which the phone shows as theft.
+ */
+const erasedRefusal = (): ServiceError => new ServiceError("refresh_revoked", 401, "invalid refresh token");
+
+/** A `.catch` for the fenced rotation arms: an erased account becomes {@link erasedRefusal}. */
+const erasedAsRevoked = (err: unknown): never => { throw isAccountErased(err) ? erasedRefusal() : err; };
 
 /**
  * SessionLifecycle — the session MACHINERY, carved out of `AuthService` so the desktop-as-host
@@ -181,11 +193,12 @@ export class SessionLifecycle {
    */
   protected async inTransaction<T>(
     ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
+    opts: { readonly fence?: TransactionFence<T> } = {},
   ): Promise<T> {
     // Delegates, and does not re-implement: `runInTransaction` is the ONE buffered wrapper, and
     // the reason it is shared is that the second copy of this rule — private to `pairing.ts` —
-    // never learned to buffer at all.
-    return runInTransaction(ctx, fn);
+    // never learned to buffer at all. The fence rides along: one opener, one rule.
+    return runInTransaction(ctx, fn, opts);
   }
 
   /**
@@ -250,28 +263,33 @@ export class SessionLifecycle {
     const db = asTx(ctx);
     const [row] = await db.select({
       familyId: refreshTokens.familyId, userId: refreshTokens.userId, sessionId: refreshTokens.sessionId,
+      accountId: refreshTokens.accountId,
     }).from(refreshTokens).where(eq(refreshTokens.tokenHash, hashToken(presented))).limit(1);
     const sessionId = ctx.sessionId ?? null;
     const [own] = sessionId
-      ? await db.select({ familyId: sessions.familyId, userId: sessions.userId })
+      ? await db.select({ familyId: sessions.familyId, userId: sessions.userId, accountId: sessions.accountId })
         .from(sessions).where(eq(sessions.id, sessionId)).limit(1)
       : [];
     // family → whose sign-out it is, for the audit row: the token's session, else the resolved one.
-    const named = new Map<string, { userId: string; sessionId: string }>();
-    if (row) named.set(row.familyId, { userId: row.userId, sessionId: row.sessionId });
-    if (own && sessionId && !named.has(own.familyId)) named.set(own.familyId, { userId: own.userId, sessionId });
+    const named = new Map<string, { userId: string; sessionId: string; accountId: string }>();
+    if (row) named.set(row.familyId, { userId: row.userId, sessionId: row.sessionId, accountId: row.accountId });
+    if (own && sessionId && !named.has(own.familyId)) {
+      named.set(own.familyId, { userId: own.userId, sessionId, accountId: own.accountId });
+    }
     if (named.size === 0) throw new ServiceError("unauthorized", 401, "nothing to sign out");
     const familyIds = [...named.keys()];
     try {
-      await this.inTransaction(ctx, async (txCtx) => {
-        const tx = asTx(txCtx);
-        for (const [familyId, who] of named) {
+      // ONE TRANSACTION PER FAMILY: a fence names one account, and one jar can hold two. An erased
+      // account's family is already gone, so its turn does nothing and writes no row.
+      for (const [familyId, who] of named) {
+        await this.inTransaction(ctx, async (txCtx) => {
+          const tx = asTx(txCtx);
           await this.revokeFamily(tx, familyId, now);
           const [user] = await tx.select().from(users).where(eq(users.id, who.userId)).limit(1);
           await this.audit(tx, user ?? null, "logout", undefined, txCtx,
             `family=${familyId} session=${who.sessionId} by=refresh`);
-        }
-      });
+        }, { fence: { accountId: who.accountId, onErased: () => undefined } });
+      }
     } catch {
       // The revoke alone, on the request's own handle: the family dies even when its record cannot.
       for (const familyId of familyIds) await this.revokeFamily(db, familyId, now);
@@ -505,7 +523,7 @@ export class SessionLifecycle {
         await this.audit(tx, u, "device_revoked", undefined, txCtx);
       }
       return { revoked: claimed.length };
-    });
+    }, { fence: { accountId: ctx.accountId, onErased: () => ({ revoked: 0 }) } });
   }
 
   /**
@@ -591,7 +609,7 @@ export class SessionLifecycle {
     return this.inTransaction({ ...ctx, supersedes: null }, async (txCtx) => {
       await this.supersede(asTx(txCtx), previous, txCtx.now());
       return this.mintEstablished(txCtx, user, o);
-    });
+    }, { fence: { accountId: user.accountId } });
   }
 
   /**
@@ -870,11 +888,11 @@ export class SessionLifecycle {
       const presentedName = !grace || consumedMsAgo <= this.cfg.accessTtlMs ? attemptHash : null;
       if (presentedName !== null && existing.consumedByAttempt === presentedName
         && existing.expiresAt.getTime() > now.getTime()) {
-        const replayed = await this.replayRotation(ctx, existing, presentedName, now, ttls);
+        const replayed = await this.replayRotation(ctx, existing, presentedName, now, ttls).catch(erasedAsRevoked);
         if (replayed) return replayed;
       }
       if (grace && consumedMsAgo <= this.cfg.refreshReuseGraceMs) {
-        const converged = await this.convergeGrace(ctx, existing, now, ttls);
+        const converged = await this.convergeGrace(ctx, existing, now, ttls).catch(erasedAsRevoked);
         if (converged) return converged;
       }
       // The lost-response recovery, past the grace window, cookie surface only. A rotation is
@@ -888,7 +906,7 @@ export class SessionLifecycle {
       // awake client drives the session. Both conditions live in `recoverLostRotation`;
       // otherwise the presentation falls to the sweep.
       if (grace) {
-        const recovered = await this.recoverLostRotation(ctx, existing, now, ttls);
+        const recovered = await this.recoverLostRotation(ctx, existing, now, ttls).catch(erasedAsRevoked);
         if (recovered) return recovered;
       }
       // A CLAIM-KILLED row (`expires_at = consumed_at`) whose kill named NOBODY is refused
@@ -938,8 +956,10 @@ export class SessionLifecycle {
         const [reuseUser] = await tx.select().from(users)
           .where(eq(users.id, existing.userId)).limit(1);
         await this.audit(tx, reuseUser ?? null, event, undefined, txCtx, detail);
-      });
-    } catch {
+      }, { fence: { accountId: existing.accountId } });
+    } catch (err) {
+      // An erased account left no family to sweep and no theft to report: the door's plain 401.
+      if (isAccountErased(err)) return erasedRefusal();
       // The audit write must not block the security action: reuse still revokes the family.
       await this.revokeFamily(db, existing.familyId, now);
     }
@@ -1066,7 +1086,7 @@ export class SessionLifecycle {
       await this.audit(tx, user ?? null, "refresh_replayed", undefined, txCtx,
         `family=${existing.familyId} session=${existing.sessionId} surface=cookie`);
       return this.mintRotation(txCtx, tx, existing, now, ttls);
-    });
+    }, { fence: { accountId: existing.accountId } });
   }
 
   /**
@@ -1132,7 +1152,7 @@ export class SessionLifecycle {
       await this.audit(tx, user ?? null, "refresh_replayed", undefined, txCtx,
         `family=${existing.familyId} session=${existing.sessionId}`);
       return this.mintRotation(txCtx, tx, tail, now, ttls);
-    });
+    }, { fence: { accountId: existing.accountId } });
   }
 
   /**
@@ -1257,17 +1277,18 @@ export class SessionLifecycle {
         await this.audit(tx, user ?? null, "refresh_recovered", undefined, txCtx,
           `family=${existing.familyId} session=${existing.sessionId}`);
         return this.mintRotation(txCtx, tx, existing, now, ttls);
-      });
+      }, { fence: { accountId: existing.accountId } });
     } catch (err) {
       /*
        * A FAULT IS NOT A REPLAY. This answered `null` for every thrown value, and `null` here
        * falls into the reuse sweep below the call — so a driver error or a lock timeout inside
-       * the recovery revoked the family and told the person their token had been stolen.
-       * Only a REFUSAL may answer `null`; nothing in here refuses today, and the arm is kept so
-       * a future one lands on the sweep rather than on a 500. Everything else is rethrown: the
-       * transaction has rolled back, so the presented token, the dormant tail and the family are
-       * exactly as they were and the next attempt re-runs this classification unchanged.
+       * the recovery revoked the family and told the person their token had been stolen. An
+       * erased account is not a replay either: the fence's refusal goes back to the door, which
+       * answers it as its plain 401. Only another REFUSAL may answer `null`, and nothing here
+       * makes one. Everything else is rethrown: the transaction rolled back, so the presented
+       * token, the dormant tail and the family are exactly as they were.
        */
+      if (isAccountErased(err)) throw err;
       if (classifyRefreshFailure(err) !== "fault") return null;
       throw err;
     }

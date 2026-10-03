@@ -1,5 +1,7 @@
 import { eq } from "drizzle-orm";
-import { carryDialect, dialect, type Dialect, type LockMode } from "./dialect/index.js";
+import {
+  carryDialect, dialect, ERASURE_FENCE_BRAND, IN_TRANSACTION_BRAND, type Dialect, type LockMode,
+} from "./dialect/index.js";
 import { accounts, mailboxes } from "./schema-mail.js";
 import type { MailboxMustBeLive, Tx } from "./change-log.js";
 
@@ -79,6 +81,28 @@ export async function readMailboxErasedAt(
   return row.erasedAt;
 }
 
+/**
+ * THE BRAND: `tx`'s transaction took `accountId`'s row `FOR SHARE` as its first statement and found
+ * no stamp. Set by the openers that took that read (and once by an account's own creation, a row
+ * no erasure can stamp before it commits); savepoints inherit it (`dialect/index.ts`).
+ */
+export function markFenced(tx: object, accountId: string): void {
+  Object.defineProperty(tx, ERASURE_FENCE_BRAND, {
+    value: accountId, enumerable: false, configurable: true, writable: false,
+  });
+}
+
+/** The account `handle`'s transaction is fenced for, or `undefined`. */
+export function fencedAccountOf(handle: unknown): string | undefined {
+  const v = (handle as Record<symbol, unknown> | null)?.[ERASURE_FENCE_BRAND];
+  return typeof v === "string" ? v : undefined;
+}
+
+/** Whether `handle` is a transaction (or a savepoint in one) rather than the pool it came from. */
+export function inTransactionHandle(handle: unknown): boolean {
+  return (handle as Record<symbol, unknown> | null)?.[IN_TRANSACTION_BRAND] === true;
+}
+
 /** What a fenced write is scoped to. `mailboxId` is supplied when the write is mailbox-keyed. */
 export interface FenceScope {
   readonly accountId: string;
@@ -147,6 +171,8 @@ export async function fencedAccountWrite<T>(
   return handle.transaction(async (raw) => {
     const tx = carryDialect(db, raw as object) as unknown as Tx;
     await fenceErased(tx, d, scope);
+    // Branded only where the read WAS the first statement: not inside a transaction it did not open.
+    if (!inTransactionHandle(db) || fencedAccountOf(db) === scope.accountId) markFenced(tx, scope.accountId);
     return fn(tx);
   });
 }

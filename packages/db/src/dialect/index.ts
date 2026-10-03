@@ -28,6 +28,30 @@ export const DIALECT_BRAND: unique symbol = Symbol.for("ohmail.db.dialect") as n
 /** Marks a `transaction` this module has already wrapped, so branding twice wraps once. */
 const TRANSACTION_WRAPPED: unique symbol = Symbol.for("ohmail.db.dialect.txWrapped") as never;
 
+/** Set on every handle a wrapped `transaction` hands its callback: a transaction, not the pool. */
+export const IN_TRANSACTION_BRAND: unique symbol = Symbol.for("ohmail.db.inTransaction") as never;
+
+/**
+ * The account whose erasure fence this transaction's FIRST statement took (`erasure-fence.ts`
+ * writes and reads it). A savepoint inherits it from its parent here: the share lock is the outer
+ * transaction's and is held until that commits.
+ */
+export const ERASURE_FENCE_BRAND: unique symbol = Symbol.for("ohmail.db.erasureFence") as never;
+
+/** What the wrapper below stamps on every handle it hands out, beside the dialect brand. */
+function intoTransaction<T extends object>(tx: T, parent: object): T {
+  Object.defineProperty(tx, IN_TRANSACTION_BRAND, {
+    value: true, enumerable: false, configurable: true, writable: false,
+  });
+  const fence = (parent as Record<symbol, unknown>)[ERASURE_FENCE_BRAND];
+  if (typeof fence === "string") {
+    Object.defineProperty(tx, ERASURE_FENCE_BRAND, {
+      value: fence, enumerable: false, configurable: true, writable: false,
+    });
+  }
+  return tx;
+}
+
 /**
  * Stamp a handle with the dialect it speaks. Called by the factories, by nobody else. The brand
  * is inherited by TRANSACTIONS, which is the point: a driver's transaction object is a fresh
@@ -49,7 +73,8 @@ export function brandDialect<T extends object>(db: T, name: DialectName): T {
   if (typeof original === "function"
     && (original as unknown as Record<symbol, unknown>)[TRANSACTION_WRAPPED] !== true) {
     const wrapped = function (this: unknown, fn: (tx: object, ...i: unknown[]) => unknown, ...rest: unknown[]) {
-      return original.call(this, (tx: object, ...inner: unknown[]) => fn(brandDialect(tx, name), ...inner), ...rest);
+      return original.call(this, (tx: object, ...inner: unknown[]) =>
+        fn(intoTransaction(brandDialect(tx, name), db), ...inner), ...rest);
     } as TxFn;
     Object.defineProperty(wrapped, TRANSACTION_WRAPPED, { value: true, enumerable: false });
     Object.defineProperty(db, "transaction", {

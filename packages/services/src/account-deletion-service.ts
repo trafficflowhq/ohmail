@@ -56,6 +56,7 @@ import {
   workflowProposals,
   workflowRuns,
   workflows,
+  readAccountErasedAt,
   type LedgerTx,
 } from "@trafficflow/db";
 import {
@@ -124,6 +125,21 @@ export interface DeleteAccountResult {
    * the refund drain still settles it. Zero on a host that drains nothing.
    */
   retainedPending: number;
+}
+
+/**
+ * WHETHER THIS ACCOUNT'S ERASURE COMMITTED, asked after its answer was lost: the stamp is the
+ * erasure's first statement and commits only with the rest, and a `FOR SHARE` read waits out a
+ * commit still in flight. `unknown` when even this read cannot be made, or finds no account row.
+ */
+export async function erasureOutcome(ctx: ServiceContext): Promise<"erased" | "not_erased" | "unknown"> {
+  try {
+    const erasedAt = await readAccountErasedAt(bridgeTx(ctx.db), dialect(ctx.db), ctx.accountId);
+    if (erasedAt instanceof Date) return "erased";
+    return erasedAt === null ? "not_erased" : "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 /** Rows affected across the three drivers — see `rows-affected.ts` for why there is one copy. */
@@ -450,12 +466,14 @@ export async function deleteAccount(
       tx.delete(accountLifecycleNotices).where(eq(accountLifecycleNotices.accountId, accountId)));
 
     // ── 7. Sessions, devices, and every credential the user holds ───────────────
-    // THE SESSION ROWS, FOR UPDATE, in id order, before anything here reads or deletes a token.
-    // Every other writer of a session family takes its session row before its token rows (the
-    // rotation, every revoke); the FKs force this step's deletes the other way. A renewal already
-    // holding a session commits first and its successor is recorded and deleted below; one arriving
-    // later waits here and finds nothing. Without it a renewal racing this step deadlocked it
-    // (40P01) or committed a successor behind the token delete (23503 on the session delete).
+    // THE SESSION ROWS, FOR UPDATE, in id order, before anything here reads or deletes a token: every
+    // writer of a session family takes its session row first, and without this a renewal racing the
+    // step deadlocked it (40P01) or committed behind the token delete (23503). Every transaction
+    // that writes a row this erasure deletes opens on the account row (the fence), so it commits
+    // before this transaction's first statement or waits behind it; the hot-path renewal needs no
+    // fence, it meets the session lock. Not ordered: a write made OUTSIDE any transaction (a sign-in
+    // that supersedes nothing, a pairing token, an authorization code, a verification link) can
+    // still land a row between its table's delete below and `DELETE users`, which then refuses.
     await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions)
       .where(eq(sessions.accountId, accountId))
       .orderBy(asc(sessions.id)));

@@ -73,6 +73,7 @@ export {
 // calls this and converts the answer to a `ServiceError`.
 export {
   readAccountErasedAt, readMailboxErasedAt, fenceErased, fenceErasedMailbox, fencedAccountWrite,
+  markFenced, fencedAccountOf, inTransactionHandle,
   AccountErasedError, MailboxErasedError, type FenceScope,
 } from "./erasure-fence.js";
 

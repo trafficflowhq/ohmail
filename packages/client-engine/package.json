@@ -6,9 +6,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./durable": "./src/durable.ts",
-    "./send-fingerprint": "./src/send-fingerprint.ts"
+    "./send-fingerprint": "./src/send-fingerprint.ts",
+    "./html-tree-budget": "./src/html-tree-budget.ts"
   },
   "dependencies": {
+    "parse5": "7.3.0",
     "@ohmail/fixtures": "*",
     "@trafficflow/core": "*"
   }

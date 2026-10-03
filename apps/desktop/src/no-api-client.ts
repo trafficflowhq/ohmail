@@ -520,8 +520,8 @@ export interface MailboxErasure {
 
 export interface ErasureResult {
     erased: true;
-    usersErased: number;
-    tables: Record<string, number>;
+    usersErased?: number;
+    tables?: Record<string, number>;
     retained: string;
     subscription: "none" | "cancelled" | "cancel_failed";
 }

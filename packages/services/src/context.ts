@@ -1,7 +1,10 @@
 import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
-import { carryDialect, type LockMode } from "@trafficflow/db/dialect";
-import { claimIdempotencyKey, fencedAccountWrite, type LedgerTx, type Tx } from "@trafficflow/db";
+import { carryDialect, dialect, type LockMode } from "@trafficflow/db/dialect";
+import {
+  AccountErasedError, claimIdempotencyKey, fencedAccountOf, fencedAccountWrite, inTransactionHandle, markFenced,
+  readAccountErasedAt, type LedgerTx, type Tx,
+} from "@trafficflow/db";
 import { asServiceRefusal } from "./erasure-fence.js";
 import { IdempotencyRaceLost } from "./errors.js";
 
@@ -141,16 +144,46 @@ export interface ServiceContext {
  */
 export async function runInTransaction<T>(
   ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
+  opts: { readonly fence?: TransactionFence<T> } = {},
 ): Promise<T> {
+  const fence = opts.fence;
+  const held = fencedAccountOf(ctx.db);
+  if (fence !== undefined && fence.accountId === "") throw new Error("a fenced transaction names no account");
+  if (fence !== undefined && held === undefined && inTransactionHandle(ctx.db)) {
+    throw new Error("a fenced transaction was opened inside a transaction the fence did not open: "
+      + "the account row would not be its first statement");
+  }
+  if (fence !== undefined && held !== undefined && held !== fence.accountId) {
+    throw new Error("a transaction fenced for one account cannot open one fenced for another");
+  }
   let pending: string | null = null;
   const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
-  const result = await tx.transaction(async (handle) => fn({
-    ...ctx,
-    db: carryDialect(ctx.db, handle as object) as unknown as ServiceContext["db"],
-    noteCredentialAccount: (accountId: string) => { pending = accountId; },
-  }));
+  const result = await tx.transaction(async (handle) => {
+    const db = carryDialect(ctx.db, handle as object) as unknown as ServiceContext["db"];
+    if (held !== undefined) markFenced(db, held);
+    else if (fence !== undefined) {
+      // THE FIRST STATEMENT. A stamp ends the transaction here, before the body takes a row.
+      const erasedAt = await readAccountErasedAt(bridgeTx(db), dialect(ctx.db), fence.accountId);
+      if (erasedAt != null) {
+        if (fence.onErased !== undefined) return fence.onErased();
+        throw asServiceRefusal(new AccountErasedError(fence.accountId));
+      }
+      markFenced(db, fence.accountId);
+    }
+    return fn({ ...ctx, db, noteCredentialAccount: (accountId: string) => { pending = accountId; } });
+  });
   if (pending !== null) ctx.noteCredentialAccount?.(pending);
   return result;
+}
+
+/**
+ * The account a transaction writes under, read `FOR SHARE` as its FIRST statement: the erasure
+ * takes the same row first, so the only order between them is that row, then the account's own.
+ * A stamp answers `onErased()` without running the body, or refuses 410 `account_erased`.
+ */
+export interface TransactionFence<T> {
+  readonly accountId: string;
+  readonly onErased?: () => T;
 }
 
 /**

@@ -2137,9 +2137,10 @@ export interface MailboxErasure {
 /** What `DELETE /account` answers. Every field is stated on the confirmation screen. */
 export interface ErasureResult {
   erased: true;
-  usersErased: number;
+  /** Absent with `tables` when the deletion was confirmed by a read after its own answer was lost. */
+  usersErased?: number;
   /** Rows removed per table — the operator's audit line, not something the UI enumerates. */
-  tables: Record<string, number>;
+  tables?: Record<string, number>;
   /** The server's own sentence about what survives. Shown verbatim, never paraphrased. */
   retained: string;
   /**
