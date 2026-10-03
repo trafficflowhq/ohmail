@@ -356,7 +356,9 @@ function mintAttemptId(): string {
 /** The attempt this renewal goes out as: the one still owed, or a new one, written down BEFORE it goes. */
 function attemptFor(csrf: string | null): string {
   const owed = owedAttempt();
-  if (owed !== null && Date.now() - owed.at < ACCESS_WINDOW_MS && (csrf === null || owed.csrf === csrfMark(csrf))) {
+  // 0 <= age < window: a stamp in the future is any script's to write, and it is discarded.
+  const age = owed === null ? -1 : Date.now() - owed.at;
+  if (owed !== null && age >= 0 && age < ACCESS_WINDOW_MS && (csrf === null || owed.csrf === csrfMark(csrf))) {
     return owed.id;
   }
   const next: PendingAttempt = { id: mintAttemptId(), csrf: csrfMark(csrf), at: Date.now() };

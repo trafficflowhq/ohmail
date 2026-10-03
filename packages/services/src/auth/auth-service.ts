@@ -3009,6 +3009,27 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
+   * The base hook's ONCE, on the trail itself: the row is skipped when this user already has one of
+   * this event whose `device` starts with `key` inside the window. Measured on the DATABASE's clock,
+   * the one `at` is stamped with, so a skewed app clock cannot widen or empty the window.
+   */
+  protected override async auditOnce(
+    db: Tx, user: typeof users.$inferSelect | null, event: AuthAuditEvent["event"], ctx: ServiceContext,
+    detail: string, key: string, withinMs: number,
+  ): Promise<void> {
+    if (user != null) {
+      const [seen] = await db.select({ id: authEvents.id }).from(authEvents)
+        .where(and(
+          eq(authEvents.userId, user.id), eq(authEvents.event, event), like(authEvents.device, `${key}%`),
+          gt(authEvents.at, sql`now() - make_interval(secs => ${Math.ceil(withinMs / 1000)})`),
+        ))
+        .limit(1);
+      if (seen) return;
+    }
+    await this.audit(db, user, event, undefined, ctx, detail);
+  }
+
+  /**
    * The hosted revoke takes the device's WAKE REGISTRATIONS down with its sessions.
    * `push_subscriptions` rows carry the registering session's `device_id`, so revoking a paired
    * phone must also stop the worker POSTing wakes to its UnifiedPush endpoint — a revoked device

@@ -1549,6 +1549,8 @@ export async function evaluateAlertsWithScope(
   // (never `device`, which carries a client-chosen user-agent, and never `ip`); only 42501 is
   // swallowed.
   try {
+    // `refresh_attempt_revoked` (a named kill presented under another name) is NOT read here: this
+    // rule counts stolen-token sweeps, and that sweep is also what a late answer to a browser leaves.
     const reuseCut = new Date(now.getTime() - t.reuseRevokedWindowMs);
     const reuseRows = await db
       .select({ accountId: authEvents.accountId, at: authEvents.at })

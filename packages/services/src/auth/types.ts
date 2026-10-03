@@ -212,7 +212,12 @@ export interface AuthAuditEvent {
     // A presentation REFUSED AS EXPIRED: the rolling window closed (`cause=lapsed`), or a newer line
     // had killed the row (`cause=superseded`), the late answer a jar kept. Counted so a sign-out
     // nobody revoked is visible; `device` carries `family=<id> session=<id> cause=<cause>`.
-    | "refresh_expired";
+    | "refresh_expired"
+    // A family SWEPT because a row the replay arm killed, under one attempt's name, came back
+    // under another: a captured renewal request was replayed, or a late answer landed over the
+    // replay's line. Its own name so the reuse alert, which reads event names only, can tell it
+    // from a stolen token; `device` carries `family=<id> session=<id> cause=attempt_mismatch`.
+    | "refresh_attempt_revoked";
   method?: "webauthn" | "totp" | "recovery_code" | "password";
   ip: string;
   device?: string;

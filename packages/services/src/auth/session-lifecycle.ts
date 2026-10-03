@@ -811,17 +811,17 @@ export class SessionLifecycle {
       if (existing.consumedAt) {
         const consumedMsAgo = now.getTime() - existing.consumedAt.getTime();
         // A RETRY OF AN UNANSWERED ATTEMPT IS NOT A REUSE. A lost rotation response leaves the
-        // client holding the OLD token, and its retry was byte-identical to a replay — an
-        // ordinary dropped answer cost somebody their pairing. The claim recorded WHICH attempt
-        // spent this row, so a re-presentation naming that attempt is that client finishing its
-        // own rotation, and it is bounded by that token's OWN window — no second clock: the id
-        // discriminates, so time only bounds claimability (the grace below needs a number because
-        // time is all it has). `attemptHash !== null` first: an id-less presentation must never
-        // match an id-less consumption, or the arm swallows the strict case whole. USE still
-        // beats the id — `replayRotation` refuses a chain that moved on under another attempt.
-        if (attemptHash !== null && existing.consumedByAttempt === attemptHash
+        // client holding the OLD token, and its retry was byte-identical to a replay. The claim
+        // recorded WHICH attempt spent this row, so a re-presentation naming that attempt is that
+        // client finishing its own rotation: bounded by the token's own window and, on the cookie
+        // surface, by ONE access window from that rotation, past which the name is ignored and
+        // the presentation is an unnamed one (a browser's captured renewal must not outlive the
+        // retry it exists for). An id-less presentation never matches an id-less consumption,
+        // and USE still beats the id — `replayRotation` refuses a chain that moved on.
+        const presentedName = !grace || consumedMsAgo <= this.cfg.accessTtlMs ? attemptHash : null;
+        if (presentedName !== null && existing.consumedByAttempt === presentedName
           && existing.expiresAt.getTime() > now.getTime()) {
-          const replayed = await this.replayRotation(ctx, existing, attemptHash, now, ttls);
+          const replayed = await this.replayRotation(ctx, existing, presentedName, now, ttls);
           if (replayed) return replayed;
         }
         if (grace && consumedMsAgo <= this.cfg.refreshReuseGraceMs) {
@@ -842,16 +842,18 @@ export class SessionLifecycle {
           const recovered = await this.recoverLostRotation(ctx, existing, now, ttls);
           if (recovered) return recovered;
         }
-        // A CLAIM-KILLED row is refused PLAINLY, never with the sweep. A recovery's claim
-        // stamps the dormant tail it consumes with `expires_at = consumed_at` (see the claim),
-        // because that consumption is not a PRESENTATION: nobody outside this server ever held
-        // the row's token in a spendable state after the kill. A late re-presentation of such
-        // a row is therefore either the double-lost jar (its recovery response was lost TOO —
-        // sign in again is the right answer) or a thief holding a token that was already dead;
-        // neither names a second live holder of the family's real chain, and sweeping would
-        // revoke the healthy line the recovery just re-established. Within the grace window
-        // the arm above has already converged it, exactly like any fresh consumption.
+        // A CLAIM-KILLED row (`expires_at = consumed_at`) whose kill named NOBODY is refused
+        // plainly: a recovery's or a convergence's claim is not a presentation, so a late
+        // re-presentation is a double-lost jar or a token already dead, and sweeping would revoke
+        // the healthy line just re-established. Only the replay arm names the row it kills, and
+        // that row presented under ANOTHER name is a second holder — somebody replayed a captured
+        // request, or a late answer landed over the replay's line — so it sweeps, as its own
+        // event: the reuse alert reads event names only and must not count it as a stolen token.
+        // Within the grace window the arm above has already converged it.
         if (existing.expiresAt.getTime() <= existing.consumedAt.getTime()) {
+          if (existing.consumedByAttempt !== null && existing.consumedByAttempt !== presentedName) {
+            throw await this.sweepFamily(ctx, existing, now, "refresh_attempt_revoked", "attempt_mismatch");
+          }
           throw await this.expiredRefusal(ctx, existing, "superseded");
         }
         // The sweep leaves a ROW, and sweep + row are ONE TRANSACTION — with the sweep REDONE
@@ -864,20 +866,7 @@ export class SessionLifecycle {
         // must never veto a security sweep: on commit failure the catch redoes the sweep alone on
         // the autocommitting handle — fail-closed. The base records nothing; the hosted tier
         // writes `auth_events`. The user read is DEFENSIVE.
-        try {
-          await this.inTransaction(ctx, async (txCtx) => {
-            const tx = asTx(txCtx);
-            await this.revokeFamily(tx, existing.familyId, now);
-            const [reuseUser] = await tx.select().from(users)
-              .where(eq(users.id, existing.userId)).limit(1);
-            await this.audit(tx, reuseUser ?? null, "refresh_reuse_revoked", undefined, txCtx,
-              `family=${existing.familyId} session=${existing.sessionId}`);
-          });
-        } catch {
-          // The audit write must not block the security action: reuse still revokes the family.
-          await this.revokeFamily(db, existing.familyId, now);
-        }
-        throw new ServiceError("refresh_revoked", 401, "refresh token reuse detected");
+        throw await this.sweepFamily(ctx, existing, now, "refresh_reuse_revoked");
       }
       throw await this.expiredRefusal(ctx, existing, "lapsed");
     }
@@ -912,6 +901,32 @@ export class SessionLifecycle {
   }
 
   /**
+   * THE SWEEP, one body for both of its events: the family revoked and the row written in ONE
+   * transaction, redone ALONE if it cannot commit (the block above its first call says why).
+   * `refresh_attempt_revoked` carries `cause=attempt_mismatch`; `refresh_reuse_revoked` no cause.
+   */
+  private async sweepFamily(
+    ctx: ServiceContext, existing: typeof refreshTokens.$inferSelect, now: Date,
+    event: "refresh_reuse_revoked" | "refresh_attempt_revoked", cause?: "attempt_mismatch",
+  ): Promise<ServiceError> {
+    const db = asTx(ctx);
+    const detail = `family=${existing.familyId} session=${existing.sessionId}${cause ? ` cause=${cause}` : ""}`;
+    try {
+      await this.inTransaction(ctx, async (txCtx) => {
+        const tx = asTx(txCtx);
+        await this.revokeFamily(tx, existing.familyId, now);
+        const [reuseUser] = await tx.select().from(users)
+          .where(eq(users.id, existing.userId)).limit(1);
+        await this.audit(tx, reuseUser ?? null, event, undefined, txCtx, detail);
+      });
+    } catch {
+      // The audit write must not block the security action: reuse still revokes the family.
+      await this.revokeFamily(db, existing.familyId, now);
+    }
+    return new ServiceError("refresh_revoked", 401, "refresh token reuse detected");
+  }
+
+  /**
    * The `refresh_expired` refusal, recorded: `cause=lapsed` for a rolling window that closed, and
    * `cause=superseded` for a row a newer line killed, which a jar holds when a late answer landed over
    * the live one. Best effort: the refusal is the verdict, and a bookkeeping fault never turns it into
@@ -923,8 +938,9 @@ export class SessionLifecycle {
     try {
       const db = asTx(ctx);
       const [user] = await db.select().from(users).where(eq(users.id, row.userId)).limit(1);
-      await this.audit(db, user ?? null, "refresh_expired", undefined, ctx,
-        `family=${row.familyId} session=${row.sessionId} cause=${cause}`);
+      await this.auditOnce(db, user ?? null, "refresh_expired", ctx,
+        `family=${row.familyId} session=${row.sessionId} cause=${cause}`, `family=${row.familyId} `,
+        this.cfg.accessTtlMs);
     } catch {
       /* the refusal stands without its row */
     }
@@ -1310,6 +1326,19 @@ export class SessionLifecycle {
     _detail?: string,
   ): Promise<void> {
     /* no event table on the lifecycle half — see the doc comment */
+  }
+
+  /**
+   * An event that can repeat, written at most ONCE per `key` (a prefix of its `device` detail)
+   * per `withinMs`: one dead token presented fifty times is one row, not fifty pushing a person's
+   * real events out of their own trail. The lifecycle half records nothing; the hosted tier asks
+   * its trail first.
+   */
+  protected async auditOnce(
+    db: Tx, user: typeof users.$inferSelect | null, event: AuthAuditEvent["event"], ctx: ServiceContext,
+    detail: string, _key: string, _withinMs: number,
+  ): Promise<void> {
+    await this.audit(db, user, event, undefined, ctx, detail);
   }
 
   /**
