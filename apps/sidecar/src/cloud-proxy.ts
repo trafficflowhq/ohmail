@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
-import { offlineResponse, REQUEST_DEADLINE_MS, type CloudAuth } from "./cloud-auth.js";
+import { mayRenewFor, offlineResponse, REQUEST_DEADLINE_MS, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
 import { leftOf } from "./pair-undo.js";
@@ -243,8 +243,9 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     }
 
     /* A WRITE ANSWERED 401 WAS NOT JUDGED: its session ended at the server (removed elsewhere, the
-       refresh refused). The window is answered the signed-out wait and keeps it for that session. */
-    if (mutation && res.status === 401) {
+       refresh refused). The window is answered the signed-out wait and keeps it for that session.
+       Where the 401 IS the judgement, a wrong code, the window reads it as the account said it. */
+    if (mutation && res.status === 401 && mayRenewFor(url.pathname)) {
       void res.body?.cancel().catch(() => undefined);
       return new Response(JSON.stringify({
         error: { code: "not_signed_in", message: "this install is not signed in to a hosted account yet", retryable: true },

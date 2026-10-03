@@ -93,6 +93,24 @@ function mintAttemptId(): string {
   return `r${mintPairScope()}`;
 }
 
+/**
+ * THE ROUTES WHOSE 401 IS AN ANSWER: a wrong code, a wrong password, a spent single-use token. A
+ * lapsed access token gets the same 401, so a renewal there would send the credential twice: two
+ * attempts against the sign-in throttle and a rotated pairing per wrong code. Path prefixes, held to the
+ * server by `factor-routes-never-refresh.test.ts`, which drives this transport over every route
+ * the server checks such a credential on.
+ */
+const NEVER_RENEW = [
+  "/auth/login", "/auth/register", "/auth/refresh", "/auth/verify-email", "/auth/2fa/", "/auth/step-up/",
+  "/pair/redeem", "/admin/staff/", "/auth/desktop-claim", "/auth/desktop-approval/claim", "/oauth/token",
+];
+
+/** May a 401 here be renewed and the request sent again? Read below the origin, where the URL names one. */
+function mayRenewFor(url: string): boolean {
+  const route = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "");
+  return !NEVER_RENEW.some((p) => route.startsWith(p));
+}
+
 /** The same loose-init shape `bridge-fetch.ts` uses, satisfying both http-adapter declarations. */
 type FetchLike = (url: string, init?: unknown) => Promise<Response>;
 
@@ -403,13 +421,13 @@ export class BearerManager {
 
   /**
    * The transport `HttpAdapter` and every injected wire run on: the platform fetch with the
-   * Authorization header stamped by the MANAGER on every attempt, plus ONE recovery — a 401
-   * rotates the pair and replays once. One, not a loop: a second 401 on a token minted
-   * milliseconds ago is a revocation. The recovery is bound to the GENERATION the refused
-   * attempt was stamped in: a 401 whose stamp an earlier rotation replaced restamps and
-   * replays WITHOUT rotating — rotating on stale refusals burns the fresh refresh token and
-   * invalidates the fresh access token under requests already carrying it. The manager's
-   * header merges LAST, so a rotation landing between the adapter building its headers and
+   * Authorization header stamped by the MANAGER on every attempt, plus ONE recovery: a 401 rotates
+   * the pair and replays once, never where the 401 is an answer ({@link NEVER_RENEW}). One, not a
+   * loop: a second 401 on a token minted milliseconds ago is a revocation. The recovery is bound to
+   * the GENERATION the refused attempt was stamped in: a 401 whose stamp an earlier rotation
+   * replaced restamps and replays WITHOUT rotating — rotating on stale refusals burns the fresh
+   * refresh token and invalidates the fresh access token under requests already carrying it. The
+   * manager's header merges LAST, so a rotation landing between the adapter building its headers and
    */
 
   /*
@@ -424,7 +442,7 @@ export class BearerManager {
     });
     const stampedIn = this.generation;
     const first = await this.fetchImpl(url, stamped());
-    if (first.status !== 401 || this.refresh === null) return first;
+    if (first.status !== 401 || this.refresh === null || !mayRenewFor(url)) return first;
     if (this.generation === stampedIn && !(await this.rotate())) return first;
     // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
     // was stamped — both mean the same thing: replay once under the current generation.

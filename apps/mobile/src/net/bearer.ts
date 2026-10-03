@@ -86,6 +86,25 @@ async function erasesAccount(res: Response, accountId: string | null): Promise<b
   }
 }
 
+/**
+ * THE ROUTES WHOSE 401 IS AN ANSWER: a wrong code, a wrong password, a spent single-use token. A
+ * lapsed access token gets the same 401, so a renewal there would send the credential twice: two
+ * attempts against the sign-in throttle and a rotated session per wrong code. Path prefixes, held to the
+ * server by `test/factor-routes-never-refresh.test.ts`, which drives this transport over every
+ * route the server checks such a credential on. `/auth/logout` is not here: a cold launch sends it
+ * with no access token, and the renewal is what lets it land.
+ */
+const NEVER_RENEW = [
+  "/auth/login", "/auth/register", "/auth/refresh", "/auth/verify-email", "/auth/2fa/", "/auth/step-up/",
+  "/pair/redeem", "/admin/staff/", "/auth/desktop-claim", "/auth/desktop-approval/claim", "/oauth/token",
+];
+
+/** May a 401 here be renewed and the request sent again? Read below the origin and the `/api` mount. */
+function mayRenewFor(url: string): boolean {
+  const route = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "").replace(/^\/api(?=\/)/, "");
+  return !NEVER_RENEW.some((p) => route.startsWith(p));
+}
+
 /** The same loose-init fetch shape the engine's HttpAdapter and the desktop manager ride. */
 export type FetchLike = (url: string, init?: unknown) => Promise<Response>;
 
@@ -334,12 +353,12 @@ export class BearerManagerRN implements SessionRenewalDoor {
   /**
    * The transport the engine's `HttpAdapter` and the pairing probes run on: the platform fetch
    * with the Authorization header stamped by the MANAGER on every attempt, plus ONE recovery —
-   * a 401 rotates the pair and replays the request once with the fresh token. The recovery is
-   * bound to the GENERATION the refused attempt was stamped in; a stale 401 restamps and
-   * replays WITHOUT rotating (the desktop header's cascade). The manager's header merges LAST,
-   * so a rotation that landed between the adapter building its headers and this call wins over
-   * the stale copy; everything else the caller set — the Idempotency-Key included — travels as
-   * it was. An arrow property so it can be handed to `HttpAdapterOptions.fetch` bare.
+   * a 401 rotates the pair and replays once, never where the 401 is an answer ({@link NEVER_RENEW}).
+   * The recovery is bound to the GENERATION the refused attempt was stamped in; a stale 401
+   * restamps and replays WITHOUT rotating (the desktop header's cascade). The manager's header
+   * merges LAST, so a rotation landing between the adapter building its headers and this call
+   * wins over the stale copy; everything else the caller set, the Idempotency-Key included,
+   * travels as it was. An arrow property so it can be handed to `HttpAdapterOptions.fetch` bare.
    */
   fetch: FetchLike = async (url, init) => {
     const options = (init ?? {}) as LooseInit;
@@ -349,7 +368,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     });
     const stampedIn = this.generation;
     const first = await this.heard(await this.fetchImpl(url, stamped()));
-    if (first.status !== 401 || this.refresh === null) return first;
+    if (first.status !== 401 || this.refresh === null || !mayRenewFor(url)) return first;
     if (this.generation === stampedIn && !(await this.rotate())) return first;
     // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
     // was stamped — both mean the same thing: replay once under the current generation.
