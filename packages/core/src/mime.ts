@@ -303,9 +303,10 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
       budget.clear();
     }
   } finally {
-    // Every parse's wall time, refusals included, so a slow shape is measured where it runs.
+    // Every parse's wall time, refusals included, so a slow shape is measured where it runs. An
+    // ordinary parse is debug, which the default level drops: one line per message said nothing.
     const ms = Date.now() - startedAt;
-    opts.log?.[ms > 2000 ? "warn" : "info"]("mime_parse_ms", { ms, bytes });
+    opts.log?.[ms > 2000 ? "warn" : "debug"]("mime_parse_ms", { ms, bytes });
   }
 
   // A lowercased header-name → raw-values map from the raw header lines (parsed.headers folds
