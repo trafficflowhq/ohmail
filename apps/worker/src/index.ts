@@ -2345,10 +2345,9 @@ export async function startWorkerWithLock(
         // Said BEFORE the dial, because everything after it can still be slow: a hung provider,
         // a lease gate over four IMAP round-trips, a first `ensureFolders` against a real
         // server. Without this line an attach that never returns looks exactly like a worker
-        // that never tried — which is precisely how a boot-time outage once read.
-        log.info("mailbox_attach_started", {
-          mailboxId: mb.mailboxId, accountId: mb.accountId, host: creds.imap.host,
-        });
+        // that never tried — which is precisely how a boot-time outage once read. It names the
+        // mailbox, never the stored server.
+        log.info("mailbox_attach_started", { mailboxId: mb.mailboxId, accountId: mb.accountId });
 
         // ── EVERY PHASE IS TIMED, BECAUSE "WHICH PHASE DOMINATES" WAS UNANSWERABLE ─────────
         //
