@@ -1,6 +1,9 @@
 import { matchSpec } from "./match-path.js";
 import { MalformedPathError, normalizePathname } from "./canonical-path.js";
 
+/** The relay's canonicalizer, for a caller that decides on the route a forwarded spelling names. */
+export { normalizePathname };
+
 /**
  * Which routes a Cloud-mode install's write-through relay may forward to the server its door
  * names. A projection of `Route.relay`, not a second opinion — `relay-allowlist-census.test.ts`

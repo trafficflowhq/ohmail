@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describeError } from "@trafficflow/core/mail";
 import type { KeyProvider } from "@trafficflow/core/mail";
+import { normalizePathname } from "@trafficflow/api/relay-allowlist";
 import { writeAtomic } from "./fs-atomic.js";
 import type { Diagnostic } from "./log.js";
 
@@ -83,9 +84,12 @@ const NEVER_RENEW = [
   "/auth/step-up/totp", "/auth/step-up/webauthn/verify", "/auth/2fa/totp/activate", "/auth/2fa/webauthn/register/verify",
 ];
 
-/** May a 401 at this path be renewed, and does it say anything about the session at all? */
+/** May a 401 at this path be renewed? Asked of the canonical route, as the relay's allowlist is (the
+ * `/api` mount, doubled slashes and escapes are one route); a path that does not canonicalize never is. */
 export function mayRenewFor(path: string): boolean {
-  return !NEVER_RENEW.some((p) => path.startsWith(p));
+  let route: string;
+  try { route = normalizePathname(path.replace(/[?#][\s\S]*$/, "")); } catch { return false; }
+  return !NEVER_RENEW.some((p) => route.startsWith(p));
 }
 
 /** Renew at this share of the access window (jittered ±5 %), so expiry never meets a request. */
