@@ -136,23 +136,30 @@ function blockedIpv4(b: number[]): boolean {
   return false;
 }
 
-/** The IPv6 refusal set — and every v4-carrying form is unwrapped, not waved through. */
+/**
+ * The IPv6 refusal set, deny by default. Every v4-carrying form is unwrapped through the IPv4 set,
+ * never waved through; past those only global unicast (2000::/3) is admitted, less its non-global
+ * ranges.
+ */
 function blockedIpv6(b: Uint8Array): boolean {
   const zeroThrough = (n: number): boolean => b.slice(0, n).every((o) => o === 0);
-  const tailV4 = (): number[] => [b[12]!, b[13]!, b[14]!, b[15]!];
+  const v4At = (i: number): number[] => [b[i]!, b[i + 1]!, b[i + 2]!, b[i + 3]!];
+  const nat64 = b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b;
 
   if (b.every((o) => o === 0)) return true;                                   // ::
   if (zeroThrough(15) && b[15] === 1) return true;                            // ::1 loopback
   if (zeroThrough(10) && b[10] === 0xff && b[11] === 0xff) {
-    return blockedIpv4(tailV4());                                             // ::ffff:a.b.c.d (v4-mapped)
+    return blockedIpv4(v4At(12));                                             // ::ffff:a.b.c.d (v4-mapped)
   }
-  if (zeroThrough(12)) return blockedIpv4(tailV4());                          // ::a.b.c.d (v4-compatible)
-  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b) {
-    return blockedIpv4(tailV4());                                             // 64:ff9b::/96 NAT64
-  }
-  if ((b[0]! & 0xfe) === 0xfc) return true;                                   // fc00::/7 unique-local
-  if (b[0] === 0xfe && (b[1]! & 0xc0) === 0x80) return true;                  // fe80::/10 link-local
-  if (b[0] === 0xff) return true;                                             // ff00::/8 multicast
+  if (zeroThrough(12)) return blockedIpv4(v4At(12));                          // ::a.b.c.d (v4-compatible)
+  if (nat64 && b.slice(4, 12).every((o) => o === 0)) return blockedIpv4(v4At(12)); // 64:ff9b::/96 NAT64, exactly
+  if (b[0] === 0x20 && b[1] === 0x02) return blockedIpv4(v4At(2));            // 2002::/16 6to4
+  // Nothing outside 2000::/3 is public: fc00::/7, fe80::/10, fec0::/10, ff00::/8, 64:ff9b:1::/48,
+  // 100::/64, 5f00::/16 and every IETF-reserved block end here.
+  if ((b[0]! & 0xe0) !== 0x20) return true;
+  if (b[0] === 0x20 && b[1] === 0x01 && (b[2]! & 0xfe) === 0) return true;    // 2001::/23 IETF, Teredo included
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x0d && b[3] === 0xb8) return true; // 2001:db8::/32 documentation
+  if (b[0] === 0x3f && b[1] === 0xff && (b[2]! & 0xf0) === 0) return true;    // 3fff::/20 documentation
   return false;
 }
 
