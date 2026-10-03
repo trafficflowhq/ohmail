@@ -116,6 +116,19 @@ const READS_BACK: ReadonlySet<string> = new Set([
   "toastAlready", "toastMoved", "toastRuled", "toastRetargeted", "toastAlreadyRuled",
   "toastAlreadyRuledRetro", "toastRuledFuture", "toastRuledMoved", "toastClaimed", "toastClaimedRetro",
 ]);
+/**
+ * THE SENTENCE A VERDICT EARNS, as `sayVerdict` toasts it: the key `verdictKeyOf` names, with the
+ * arguments `verdictArgs` builds — one place named as the sheet names it, History in the person's
+ * language. Exported so a test reads the shell's own wiring rather than a copy of it.
+ */
+export function verdictSentence(
+  t: ReturnType<typeof useTranslations>, v: Exclude<StayVerdict, { key: "none" }>, sender: string, place: string,
+): string {
+  return t(`screening.${verdictKeyOf(v)}`, verdictArgs(v, {
+    sender, place, history: t("screening.placeHistory"), label: placeLabel, domain: displayDomain,
+  }));
+}
+
 export interface ShellVerbsInput {
   engine: OhmailEngine;
   /** The mirror as it is — `engine.read()` from the render, never re-read here. */
@@ -286,9 +299,7 @@ export function useShellVerbs({
     /* THE SENTENCE A VERDICT EARNS, with the one press it may offer (`press-verdict.ts`). */
     const sayVerdict = (v: Exclude<StayVerdict, { key: "none" }>) => {
       const wanted = FOLDER_OF_VIEW[dest];
-      const text = t(`screening.${verdictKeyOf(v)}`, verdictArgs(v, {
-        sender: who, place, history: t("screening.placeHistory"), label: placeLabel, domain: displayDomain,
-      }));
+      const text = verdictSentence(t, v, who, place);
       const act = verdictAction(v, { scope, address: sender.address });
       if (act?.kind === "remove") {
         // Their own subject rule for this address keeps some of this mail elsewhere. Removing it
