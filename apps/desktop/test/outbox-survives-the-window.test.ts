@@ -8,13 +8,13 @@ import { createLocalEngine } from "../src/bridge-fetch.js";
 import { createWindowOutbox, windowOutboxFilesOf, windowOutboxOwnerKey } from "../../sidecar/src/window-outbox.js";
 
 /**
- * A CHANGE MADE WHILE THE SERVER IS OUT OF REACH OUTLIVES THE WINDOW.
- *
- * The window's engine is the one `createLocalEngine` builds, over a stand-in shell whose far side
- * is the sidecar's real outbox door on a real directory and a hosted account that answers the
- * Cloud door's `503 offline_read_only` until it comes back. "Closing the window" drops the engine;
- * "relaunching" builds a fresh one over the same directory. Before the fix the outbox was memory
- * only, and a send queued offline never left.
+ * A CHANGE MADE WHILE THE SERVER IS OUT OF REACH OUTLIVES THE WINDOW. The engine `createLocalEngine`
+ * builds runs over a stand-in shell: the sidecar's real outbox door on a real directory, and a hosted
+ * account answering `503 offline_read_only` until it comes back. "Closing the window" drops the
+ * engine; "relaunching" waits for the window's outbox writes to land (the shipped sidecar keeps ONE
+ * door per launch), then builds a fresh door and engine over the same directory. The one case that
+ * closes INSIDE that gap asks only that the replay carries the original key. Before the fix the
+ * outbox was memory only, and a send queued offline never left.
  */
 
 type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
@@ -49,12 +49,17 @@ interface World {
   sendRequests: number;
   /** Anything else the window asked for — read by name, so an unexpected request is visible. */
   otherReads: string[];
+  /** The key each DELETE request carried, in order. */
+  deleteKeys: string[];
+  /** While set, an outbox write that only removes records waits for it: the window closes in the gap. */
+  holdRemovals: Promise<void> | null;
 }
 
 /** Install the stand-in; the answer relaunches the sidecar — a fresh door over the same directory. */
-function standInShell(w: World): () => void {
+function standInShell(w: World): (settle: boolean) => Promise<void> {
   let door = createWindowOutbox({ dataDir: w.dir, owner: OWNER, authorized: async () => true, log: () => undefined, scope: () => MAILBOX });
   let drafts = 0;
+  let inFlight = 0;
   host.__TAURI_INTERNALS__ = {
     invoke: async (command, payload) => {
       if (command !== "engine_request") throw new Error(`the stand-in has no ${command}`);
@@ -62,10 +67,18 @@ function standInShell(w: World): () => void {
       const key = p.headers.find(([n]) => n.toLowerCase() === "idempotency-key")?.[1] ?? "";
       const body = new TextDecoder().decode(Uint8Array.from(p.body));
       if (p.url.startsWith("/local/window/outbox")) {
-        const res = await door.handle(new Request(`http://sidecar${p.url}`, {
-          method: p.method, ...(p.method === "GET" ? {} : { body }),
-        }));
-        return encode(res.status, res.status === 204 ? "" : await res.text(), JSON_TYPE);
+        // The door this window was launched against, even when the write lands after a relaunch.
+        const at = door;
+        inFlight++;
+        try {
+          if (w.holdRemovals && p.method === "POST" && /"puts":\[\]/.test(body)) await w.holdRemovals;
+          const res = await at.handle(new Request(`http://sidecar${p.url}`, {
+            method: p.method, ...(p.method === "GET" ? {} : { body }),
+          }));
+          return encode(res.status, res.status === 204 ? "" : await res.text(), JSON_TYPE);
+        } finally {
+          inFlight--;
+        }
       }
       if (!w.online) return encode(503, OFFLINE, JSON_TYPE);
       if (p.method === "POST" && p.url === "/drafts") {
@@ -85,6 +98,7 @@ function standInShell(w: World): () => void {
       const del = /^\/messages\/([^/]+)$/.exec(p.url);
       if (p.method === "DELETE" && del) {
         w.deleted.push(del[1]!);
+        w.deleteKeys.push(key);
         return encode(200, JSON.stringify({ id: del[1], updatedAt: "2026-09-26T08:00:00.000Z" }), JSON_TYPE);
       }
       // The drain after a replay: an empty account, so its success is what retires the echo.
@@ -101,15 +115,19 @@ function standInShell(w: World): () => void {
       return encode(404, JSON.stringify({ error: { code: "not_found", message: "not in the stand-in" } }), JSON_TYPE);
     },
   };
-  return () => {
+  return async (settle) => {
+    for (let waited = 0; settle && inFlight > 0 && waited < 5_000; waited++) {
+      await new Promise((r) => { setTimeout(r, 1); });
+    }
     door = createWindowOutbox({ dataDir: w.dir, owner: OWNER, authorized: async () => true, log: () => undefined, scope: () => MAILBOX });
   };
 }
 
-let relaunchSidecar: () => void = () => undefined;
+let relaunchSidecar: (settle: boolean) => Promise<void> = async () => undefined;
 
-async function launch(): Promise<OhmailEngine> {
-  relaunchSidecar();
+/** `settle: false` closes the window before its last outbox write lands. */
+async function launch(settle = true): Promise<OhmailEngine> {
+  await relaunchSidecar(settle);
   const engine = createLocalEngine(MAILBOX);
   await engine.hydrate();
   return engine;
@@ -134,7 +152,7 @@ let w: World;
 beforeEach(() => {
   w = {
     dir: mkdtempSync(join(tmpdir(), "outbox-window-")), online: false, loseNextSendAnswer: false,
-    delivered: [], deleted: [], sendRequests: 0, otherReads: [],
+    delivered: [], deleted: [], sendRequests: 0, otherReads: [], deleteKeys: [], holdRemovals: null,
   };
   relaunchSidecar = standInShell(w);
 });
@@ -186,6 +204,28 @@ describe("the desktop window's outbox survives the window", () => {
     const fourth = await launch();
     await drive(fourth);
     expect(w.sendRequests).toBe(2);
+  });
+
+  it("a window closed before its delete's record was removed replays that delete under the same key", async () => {
+    const first = await launch();
+    expect((await first.mutate({ kind: "message_delete", messageId: "m-1" })).status).toBe("queued");
+    w.online = true;
+    let release!: () => void;
+    w.holdRemovals = new Promise((r) => { release = r; });
+
+    const second = await launch();
+    await drive(second);
+    expect(w.deleteKeys).toHaveLength(1);
+    // The record's removal is still on its way when the window closes.
+    const third = await launch(false);
+    await drive(third);
+    release();
+    // Sent again, under the first request's key: the server answers it from its idempotency record.
+    expect(w.deleteKeys).toHaveLength(2);
+    expect(w.deleteKeys[1]).toBe(w.deleteKeys[0]);
+    expect(w.deleteKeys[0]).not.toBe("");
+    // Both removals land before the directory goes.
+    await relaunchSidecar(true);
   });
 
   it("a queued change is on the door's disk before the window can close, not after an answer", async () => {
