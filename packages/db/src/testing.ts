@@ -181,12 +181,39 @@ export const FREEZE_ENV = "OHMAIL_FREEZE";
  */
 export function sharedBoxRefusal(url: string, env: NodeJS.ProcessEnv, worktree = "\"$PWD\""): string | null {
   if (databaseOf(url) !== SHARED_BOX_DB) return null;
-  if (env[FREEZE_ENV] === "1") return null;
+  if (env[FREEZE_ENV] === "1") return boxDoorHeld(env) ? null : boxDoorRefusal();
   return (
     `this run resolved to the SHARED box database (${SHARED_BOX_DB}) and no ${FREEZE_ENV}=1 was set. ` +
     "Co-tenants on that database share its advisory keys, so a leader-lock or lease case here reads " +
     "another checkout's state and the green means nothing. Give this checkout its own database — " +
     `bash scripts/lane-db.sh ${worktree} — or set OHMAIL_FREEZE=1 if this really is the freeze run.`
+  );
+}
+
+/** Exported by `box-lock.sh` to the command it runs while it holds the Postgres lock. */
+export const BOX_TOKEN_ENV = "OHMAIL_BOX_TOKEN";
+
+/**
+ * OHMAIL_FREEZE=1 IS A CLAIM, AND THE DOOR VOUCHES FOR IT. A run once set it beside a bare
+ * `flock` while another run held the box's priority claim, which only `box-lock.sh` honours, and
+ * this harness admitted it on the flag alone. The door writes a random
+ * token to `<BOX_LOCK_DIR or /tmp>/ohmail-pg.token` inside the lock and exports it; the shared box
+ * is admitted only when the two agree, so a run that did not come through the door is refused.
+ */
+export function boxDoorHeld(env: NodeJS.ProcessEnv): boolean {
+  const token = env[BOX_TOKEN_ENV];
+  if (!token || !/^[0-9a-f]{32}$/.test(token)) return false;
+  try {
+    return readFileSync(join(env.BOX_LOCK_DIR || "/tmp", "ohmail-pg.token"), "utf8").trim() === token;
+  } catch { return false; }
+}
+
+function boxDoorRefusal(): string {
+  return (
+    `${FREEZE_ENV}=1 was set, but this run did not come through the box door: no ${BOX_TOKEN_ENV} matching ` +
+    "the token box-lock.sh writes while it holds the Postgres lock. A bare flock jumps the landing's and the " +
+    "freeze's priority claim, which only the door honours — use box-lock.sh " +
+    "(box-lock.sh pg <LANE> -- <command>), or give this checkout its own database with scripts/lane-db.sh."
   );
 }
 
