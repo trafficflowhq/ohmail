@@ -166,10 +166,13 @@ function blockedIpv6(b: Uint8Array): boolean {
 /**
  * True when `ip` must never be connected to. **Unparseable is blocked** — the
  * guard has no way to reason about a string it cannot decode, and the safe
- * reading of "I do not know what this is" is "no".
+ * reading of "I do not know what this is" is "no". So is any zone id (`%`):
+ * every range that needs one is refused anyway, and the socket keeps only the
+ * first 39 characters before it, so it could dial another address than this read.
  */
 export function isBlockedAddress(ip: string): boolean {
   const bare = ip.startsWith("[") && ip.endsWith("]") ? ip.slice(1, -1) : ip;
+  if (bare.includes("%")) return true;
   const v4 = parseIpv4(bare);
   if (v4) return blockedIpv4(v4);
   const v6 = parseIpv6(bare);
