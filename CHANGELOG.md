@@ -28,6 +28,64 @@ If a reply was waiting to send and you changed it and pressed Send again, the ea
 go out while the app said "Reply sent.". The edited words are now saved first and sent. If the
 earlier words had already gone, the app says that instead, once.
 
+### A self-hosted server tells its visitors apart
+<!-- changes: fix-026-selfhost-client-ip.md -->
+
+Every visitor of a self-hosted server reaches it through the bundled proxy, and the server took them
+all for one visitor: five wrong passwords from anyone locked an account on every device, one signup
+limit covered the whole server, and the server's sign-in records named the proxy. The server now
+takes a visitor's address from the proxies named in `TF_TRUSTED_PROXIES`, which the compose file
+sets to its own proxy, and from nobody else. If you keep your own compose file, add
+`TF_TRUSTED_PROXIES: ${TF_TRUSTED_PROXIES:-proxy}` to the `api` service; until you do, the server
+log names the variable once.
+
+Behind a TLS terminator of your own (`OHMAIL_EXTERNAL_TLS`), the proxy and the server take a
+forwarded address only from `OHMAIL_TLS_TERMINATOR`, which now defaults to Docker's address pool,
+`172.16.0.0/12`, because a terminator on the same box arrives from there and never from loopback.
+The terminator must set or replace `X-Forwarded-For` with the visitor's address; Caddy does on its
+own, nginx with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. A relay that only
+passes the connection through, such as socat, stunnel or a TCP load balancer, adds nothing: set
+`OHMAIL_TLS_TERMINATOR=0.0.0.0/32` with one, and no forwarded address is believed.
+
+### Restarting the desktop app waits for its mail engine
+<!-- changes: fix-026-desktop-restart.md -->
+
+Installing an update or relaunching after the window stopped could start the new copy while the old
+mail engine was still closing, and Unlock and retry could then start a second engine that signed the
+app out. A restart now waits for the engine to close, and Unlock and retry keeps a lock that a
+running copy still holds. Closing or quitting the app while an update installs now waits for the
+install to finish (up to a minute) instead of ending it partway, which left an AppImage that would
+not start.
+
+### A Move is sent before the folder check
+<!-- changes: fix-026-standalone-move.md -->
+
+On a phone or computer that organizes its own mailbox, a Move reaches the mail server at the start
+of the next sync instead of after ohmail has checked every folder for new mail.
+
+### Undo puts a message back where it was in the Ohbox
+<!-- changes: triage-026-web-undo-row.md -->
+
+After a message had been open for two seconds, undoing Delete, Park or Answer later put it under
+Earlier, often out of sight, and undoing a Delete left the selection on another message. Undo now
+puts it back in its place in New, selected and open, unless you have moved on since; it moves to
+Earlier when you move on, as any message you have read does.
+
+### One rule per sender, and a rule change waits for every organizer
+
+Adding a rule that already exists updates it instead of adding a copy, and a rule changed on a
+device that does not organize your mail shows as changed once every computer that organizes it
+has made the change.
+
+### A phone with less memory keeps a margin when it shows a long message's images
+<!-- changes: fix-026-phone-frame-ceiling-by-heap.md -->
+
+How long a message the phone draws with its images now depends on the memory the system gives the
+app: on Android its memory class, 50,000 characters per MB of it; on iPhone the app's memory limit.
+It is never more than 8 million characters, and a phone that reports low memory, or does not say,
+draws at most 4 million. A message that would be longer
+with its images is drawn without them and says why, also after Show as text and Show original.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
