@@ -1492,7 +1492,7 @@ export function ComposeSheet({
               </Txt>
               <TextInput
                 value={to}
-                onChangeText={setTo}
+                onChangeText={(v) => { if (phase === "idle") setTo(v); }}
                 editable={phase === "idle"}
                 /* THE FIELD A NEW MAIL OPENS ON — a composer whose first keystroke lands in
                    the body is a composer that asks for the message before the audience. */
@@ -1524,7 +1524,7 @@ export function ComposeSheet({
               </Txt>
               <TextInput
                 value={subject}
-                onChangeText={setSubject}
+                onChangeText={(v) => { if (phase === "idle") setSubject(v); }}
                 editable={phase === "idle"}
                 placeholder={Copy.composeSubjectPlaceholder}
                 placeholderTextColor={t.c.ink3}
@@ -1546,9 +1546,12 @@ export function ComposeSheet({
           {/* Frozen the moment Send is pressed: the dispatch captured the fields at the
               press, and an editable field over a sending/queued/unverified state would
               display words the wire will not carry. */}
+          {/* `editable` alone does not stop an input method still attached to the field from
+              committing text (measured on an APK): the change is refused here too, so the screen
+              never shows words the send under way will not carry. */}
           <TextInput
             value={body}
-            onChangeText={setBody}
+            onChangeText={(v) => { if (phase === "idle") setBody(v); }}
             editable={phase === "idle"}
             placeholder={bodyPlaceholder}
             placeholderTextColor={t.c.ink3}
