@@ -107,11 +107,14 @@ export function UnsavedChangesList({
       // terminal answer has to be said here or it is said nowhere. A confirmed or queued retry
       // simply removes the row (the list re-reads); anything else leaves a sentence.
       const code = outcome.error?.code ?? null;
-      setSaid(code === null ? null : { id, code, message: outcome.error?.message ?? "" });
+      // A send whose key had already gone is answered from that delivery: said, never sent again.
+      const went = outcome.status === "confirmed" && outcome.firstSend !== undefined;
+      setSaid(went ? { id, code: "already_sent", message: t("unsavedSendAlreadyWent") }
+        : code === null ? null : { id, code, message: outcome.error?.message ?? "" });
     } finally {
       setBusy(null);
     }
-  }, [onRetry, release]);
+  }, [onRetry, release, t]);
 
   const discard = useCallback(async (id: string) => {
     setBusy(id);
@@ -207,7 +210,8 @@ export function UnsavedChangesList({
                     back on the next render offering a press that cannot do anything. */}
                 {!m.retryable ? null : (
                   <button type="button" disabled={busy === m.id} onClick={() => void retry(m.id)}>
-                    {t("unsavedRetry")}
+                    {/* An expired send: its sentence names Send, so its control is Send. */}
+                    {m.error.code === "send_expired" ? t("unsavedSend") : t("unsavedRetry")}
                   </button>
                 )}
                 <button

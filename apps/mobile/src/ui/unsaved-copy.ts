@@ -57,6 +57,20 @@ export function describeKind(m: Pick<AbandonedMutation, "mutation">): string {
  * modelled. Repeating it puts the app's own noise in front of a person and reads as the app
  * explaining itself; saying what is actually known is shorter and true.
  */
+/** The strip's control for a row: an expired send's sentence names Send, so its control is Send. */
+export function retryLabel(m: AbandonedMutation): string {
+  return m.error.code === "send_expired" ? Copy.unsavedSend : Copy.unsavedRetry;
+}
+
+/**
+ * What a retry from the strip says, or `null` for nothing: a send whose key had already gone is
+ * answered from that delivery (said, never sent again); a refusal says its own words.
+ */
+export function retrySaid(o: { status?: string; firstSend?: unknown; error?: { code?: string | null; message?: string } | null }): string | null {
+  if (o.status === "confirmed" && o.firstSend !== undefined) return Copy.unsavedSendAlreadyWent;
+  return (o.error?.code ?? null) === null ? null : o.error?.message ?? "";
+}
+
 export function reason(m: AbandonedMutation): string {
   if (m.error.code === "send_expired") return Copy.unsavedSendExpired;
   const opaque = m.error.code === null

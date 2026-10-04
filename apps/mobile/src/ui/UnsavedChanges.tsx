@@ -11,7 +11,7 @@ import { useState } from "react";
 import { ScrollView, View, useWindowDimensions } from "react-native";
 import type { AbandonedMutation, MutationResult, QueuedChange } from "../state/live";
 import { Copy } from "../copy";
-import { describeKind, reason } from "./unsaved-copy";
+import { describeKind, reason, retryLabel, retrySaid } from "./unsaved-copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
 import { Tap, Txt } from "./base";
@@ -58,12 +58,11 @@ export function UnsavedChanges() {
    * `send_unverified` with nothing on screen leaves a person free to send again on mail that may
    * already have left.
    */
-  const act = async (id: string, fn: (id: string) => Promise<{ error?: { code?: string | null; message?: string } | null }>) => {
+  const act = async (id: string, fn: (id: string) => Promise<{ status?: string; firstSend?: unknown; error?: { code?: string | null; message?: string } | null }>) => {
     setBusy(id);
     try {
-      const outcome = await fn(id);
-      const code = outcome.error?.code ?? null;
-      setSaid(code === null ? null : { id, message: outcome.error?.message ?? "" });
+      const message = retrySaid(await fn(id));
+      setSaid(message === null ? null : { id, message });
     } finally {
       setBusy(null);
     }
@@ -144,7 +143,7 @@ export function UnsavedChanges() {
                   onPress={() => void act(m.id, world.actions.retryAbandoned)}
                   accessibilityRole="button"
                 >
-                  <Txt variant="meta" tone="accent">{Copy.unsavedRetry}</Txt>
+                  <Txt variant="meta" tone="accent">{retryLabel(m)}</Txt>
                 </Tap>
               )}
               <Tap
