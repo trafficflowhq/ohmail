@@ -2,7 +2,8 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   awayResponders, contacts, mailboxes as mailboxesTbl, notifyRules as notifyRulesTbl,
   rules as rulesTbl, tags as tagsTbl,
-  lockAccountRuleKeys, recordChanges, recordProfileImportResolution, rerouteOwnHeldBag, resolveImportAsk, ruleDelta,
+  fenceErased, lockAccountRuleKeys, recordChanges, recordProfileImportResolution, rerouteOwnHeldBag,
+  resolveImportAsk, ruleDelta,
   type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -237,6 +238,12 @@ export async function applyOrganizerProfile(
   await lockAccountRuleKeys(tx as unknown as Tx, o.accountId);
   // Then, before any read the merge will act on — see {@link PROFILE_IMPORT_LOCK_CLASS}.
   await dialect(tx).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, o.accountId);
+  /* Then this mailbox's row FOR UPDATE, before the first write: the merge updates it last, and
+     taken there it came after the contacts and held mail it writes, out of every writer's order
+     (shared earlier, two appliers would deadlock at that update). Both erasures refuse here too. */
+  await fenceErased(tx as unknown as Tx, dialect(tx), {
+    accountId: o.accountId, mailboxId: o.mailboxId, mailboxLock: "update",
+  });
   const changes: ChangeInput[] = [];
   const now = o.now;
 

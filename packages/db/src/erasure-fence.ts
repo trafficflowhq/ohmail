@@ -110,6 +110,12 @@ export interface FenceScope {
   readonly mailboxId?: string | undefined;
   /** `"update"` for a caller whose transaction will later take `accounts FOR UPDATE`. */
   readonly lock?: LockMode | undefined;
+  /**
+   * The MAILBOX arm's strength alone, for a caller that will later UPDATE the row it fences: two
+   * such callers sharing it first would each wait on the other's share at their UPDATE. Absent,
+   * the arm takes `lock`. The account arm is untouched, so fences on other mailboxes still share it.
+   */
+  readonly mailboxLock?: LockMode | undefined;
 }
 
 /**
@@ -124,7 +130,7 @@ export async function fenceErased(tx: Tx, d: Dialect, scope: FenceScope): Promis
   const erasedAt = await readAccountErasedAt(tx, d, scope.accountId, scope.lock);
   if (erasedAt != null) throw new AccountErasedError(scope.accountId);
   if (scope.mailboxId === undefined) return;
-  const mailboxErasedAt = await readMailboxErasedAt(tx, d, scope.mailboxId, scope.lock);
+  const mailboxErasedAt = await readMailboxErasedAt(tx, d, scope.mailboxId, scope.mailboxLock ?? scope.lock);
   if (mailboxErasedAt != null) throw new MailboxErasedError(scope.mailboxId);
 }
 

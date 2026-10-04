@@ -1,5 +1,5 @@
 import { and, asc, eq, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
-import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, accounts, folderState, messages, routingDecisions,
   applyScreenerDecision, recordChanges, fencedAccountWrite,
@@ -261,16 +261,18 @@ export async function screenerAutoActPass(
     }
 
     try {
-      const applied = await db.transaction(async (txRaw) => {
-        const tx = carryDialect(db, txRaw as object) as typeof txRaw;
-        // THE REVOKE CHECK, PER SENDER UNDER THE ACCOUNT'S ROW LOCK, `screener-auto.ts`'s shape:
-        // a consent withdrawn mid-page leaves the rest waiting. The lock also serializes a cycle
-        // tail against a failover driver.
+      // THE FENCE FIRST, then the settings row: the account's erasure takes `accounts` and then
+      // `account_settings`, so a pass holding the settings row while it waits on the fence inside
+      // the decision is a deadlock the erasure can lose (AUTO-ACT-TAKES-SETTINGS-BEFORE-THE-FENCE).
+      const applied = await fencedAccountWrite(db, { accountId }, async (tx) => {
+        // THE REVOKE CHECK, PER SENDER UNDER THE ACCOUNT'S SETTINGS ROW LOCK, `screener-auto.ts`'s
+        // shape: a consent withdrawn mid-page leaves the rest waiting. The lock also serializes a
+        // cycle tail against a failover driver.
         await dialect(tx).forUpdate(
           tx.select({ accountId: accountSettings.accountId }).from(accountSettings)
             .where(eq(accountSettings.accountId, accountId)).limit(1),
         );
-        if (!(await consent.stillGiven(tx as unknown as Tx))) return null;
+        if (!(await consent.stillGiven(tx))) return null;
         const applied = await applyScreenerDecision(tx, {
           accountId, scope: "sender", address: plan.address,
           appliedFolder: plan.appliedFolder, decision: plan.decision,
@@ -291,7 +293,7 @@ export async function screenerAutoActPass(
           // NOT A PRESS: a filing this pass makes never licenses an unsubscribe.
           decidedBy: "pass",
         });
-        if (plan.refused && applied.skipped === undefined) await clearActRefusal(tx as unknown as Tx, accountId, plan.suggestionId, now());
+        if (plan.refused && applied.skipped === undefined) await clearActRefusal(tx, accountId, plan.suggestionId, now());
         return applied;
       });
       if (applied === null) {

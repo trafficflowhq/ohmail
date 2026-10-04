@@ -524,13 +524,15 @@ export async function rescueJunk(
   const nowAt = deps.now?.() ?? ctx.now();
 
   /* THE MAILBOX ARM TOO, not the account alone: `junk_rescues` is keyed by mailbox and a mailbox
-     erasure leaves the account standing, so an account-only fence would let a command be recorded
-     against a mailbox whose mirror has just been swept. The account is fenced as the transaction
-     opens; the second verb then takes the rule-key lock BEFORE the mailbox row (every rules
-     writer's order, rule-key before any mailbox lock), and only then is the mailbox arm asked. */
+     erasure leaves the account standing. The account is fenced as the transaction opens; the
+     second verb then takes the rule-key lock, and only then the mailbox row, FOR UPDATE: the
+     doorbell below updates that row, and two presses holding it shared would each wait on the
+     other's share at their UPDATE. Taken exclusively here, the second press queues at the fence. */
   return withAccountTx(ctx, async (tx) => {
     if (sender !== null) await lockAccountRuleKeys(tx as unknown as Tx, accountId);
-    await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Parameters<typeof dialect>[0]), { accountId, mailboxId: args.mailboxId });
+    await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Parameters<typeof dialect>[0]), {
+      accountId, mailboxId: args.mailboxId, mailboxLock: "update",
+    });
     const allowed = sender !== null
       ? await allowSender(tx, accountId, sender, nowAt)
       : undefined;

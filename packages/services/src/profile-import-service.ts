@@ -300,8 +300,8 @@ export class ProfileImportService {
     if (refusal !== null || fresh.state !== "found") throw refusalError(refusal ?? "changed");
     const doc = fresh.doc;
 
-    // The account fence alone, as before the hand-over existed: the merge's lock serializes
-    // appliers, and a mailbox share taken ahead of it would deadlock their mailbox-row update.
+    // The account fence alone: the merge takes the rule-key lock, its own lock and this mailbox's
+    // row FOR UPDATE itself, in that order, before its first write.
     return withAccountTx(ctx, async (tx) => applyOrganizerProfile(tx, {
       accountId: ctx.accountId, mailboxId, doc, fingerprint, now,
     }));

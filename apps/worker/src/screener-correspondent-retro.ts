@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
-  auditAction, auditLog, contacts, fencedAccountWrite, folderState, learningSignals, messages,
+  auditAction, auditLog, contacts, fencedAccountWrite, folderState, learningSignals, lockAccountRuleKeys, messages,
   recordChange, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, SCREENER_FOLDER, admitsDestination,
   SCREENER_ACT_TRIGGER_PREFIX, type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -127,19 +127,26 @@ function heldWhere(accountId: string): SQL[] {
   ];
 }
 
-/** One sender's held mail to the Ohbox, in one transaction, guarded by the lock on each row. */
+/**
+ * One sender's held mail to the Ohbox, in one transaction, guarded by the lock on each row. The
+ * rule-key lock first, then the contact, then the rows: a Screener decision about the same sender
+ * takes that lock, records its rule, and only then reaches `contacts` and the held bag, so a release
+ * holding the rows while it waits on the contact (or the change-log sequence) deadlocked with it.
+ * A correspondent is taught as a contact even when the gate no longer holds their mail.
+ */
 async function release(
   db: Tx, accountId: string, address: string, evidence: CorrespondentEvidence, now: Date,
 ): Promise<number> {
   return fencedAccountWrite(db, { accountId }, async (tx) => {
+    await lockAccountRuleKeys(tx, accountId);
+    await tx.insert(contacts).values({ accountId, address })
+      .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
     const rows = await dialect(tx).forUpdate(tx.select({
       messageId: messages.id, mailboxId: messages.mailboxId, observedFolder: folderState.observedFolder,
     }).from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(...heldWhere(accountId), eq(sql`lower(${messages.fromAddress})`, address))));
     if (rows.length === 0) return 0;
-    await tx.insert(contacts).values({ accountId, address })
-      .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
     for (const r of rows) {
       await upsertDesired(tx, r, OHBOX, now);
       await recordChange(ledger(tx), {
@@ -197,6 +204,8 @@ async function retireAutoActRules(db: Tx, accountId: string, limit: number, now:
   const retire = candidates.filter((r) => found.has(ruleMatchKey(r.match)));
   if (retire.length === 0) return 0;
   return fencedAccountWrite(db, { accountId }, async (tx) => {
+    // A rules writer: the account's rule-key lock before its first `rules` statement.
+    await lockAccountRuleKeys(tx, accountId);
     const off = await tx.update(rulesTbl).set({ enabled: false, updatedAt: now })
       .where(and(eq(rulesTbl.accountId, accountId), eq(rulesTbl.enabled, true),
         inArray(rulesTbl.id, retire.map((r) => r.id))))
