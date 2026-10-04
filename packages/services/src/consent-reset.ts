@@ -2,8 +2,8 @@ import { and, eq, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertAccountOrganizes,
-  accountSettings, contacts, folderState, learningSignals, messages, recordChanges, recordRuleDelta,
-  routingDecisions, rules, type Tx,
+  accountSettings, contacts, folderState, learningSignals, lockAccountRuleKeys, messages, recordChanges,
+  recordRuleDelta, routingDecisions, rules, type Tx,
 } from "@trafficflow/db";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -120,6 +120,10 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
         target: accountSettings.accountId,
         set: { updatedAt: ctx.now() },
       });
+    /* THE RULE-KEY LOCK, after the settings row and before the first delta: this deletes every rule,
+       and a decision that stamps no settings row (the drain's, the held-mail release's) holds a rule
+       row and then waits on the change-log counter this reset takes next — they deadlocked. */
+    await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
     const doomed = await tx.select({ id: rules.id }).from(rules).where(eq(rules.accountId, ctx.accountId));
 
     // The change-log rows are written BEFORE the delete so a crash between them leaves a
