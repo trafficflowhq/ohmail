@@ -116,7 +116,6 @@ import {
   NOT_DERIVED_FROM,
   beginDerive,
   takeClientEngineVitals,
-  SEND_EXPIRED_CODE,
   joinableStandingSend,
   type MessageBody,
 } from "@ohmail/client-engine";
@@ -2423,7 +2422,7 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  * because asking again cannot help; every other failure keeps the plain one.
  */
 export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyNotSignedIn"
-  | "replyForwardOriginalUnavailable" | "replySendExpired" | "replyFailed";
+  | "replyForwardOriginalUnavailable" | "replyFailed";
 
 export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   const code = r?.error?.code;
@@ -2432,8 +2431,7 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
       : code === "send_unreachable" ? "replyUnreachable"
         : code === "mailbox_not_signed_in" ? "replyNotSignedIn"
           : code === "forward_original_unavailable" ? "replyForwardOriginalUnavailable"
-            : code === SEND_EXPIRED_CODE ? "replySendExpired"
-              : "replyFailed";
+            : "replyFailed";
 }
 
 /** The refused send's sentence as a refusal, each key spelled out so the refusal census reads it. */
@@ -2443,8 +2441,7 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
       : kind === "replyUnreachable" ? refuse("replyUnreachable")
         : kind === "replyNotSignedIn" ? refuse("replyNotSignedIn")
           : kind === "replyForwardOriginalUnavailable" ? refuse("replyForwardOriginalUnavailable")
-            : kind === "replySendExpired" ? refuse("replySendExpired")
-              : refuse("replyFailed");
+            : refuse("replyFailed");
 }
 
 /**
@@ -4418,33 +4415,20 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * defect. Standing means queued OR on the wire: a send in the air resumes its key too, the queue
    * read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
    */
-  /** A send kept past a day for this intent, as the standing send a re-press joins. */
-  /**
-   * A send kept past a day for this press, as the standing send it joins: the same intent, or for a
-   * new mail with no row (no intent) the same words to the same people.
-   */
-  const expiredSendFor = (m: EngineMutation, intent: string | null): { id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan } | undefined => {
-    const a = engine.abandoned().find((x) => x.error.code === SEND_EXPIRED_CODE && x.mutation.kind === "mail_send"
-      && (intent !== null ? sendIntentOf(x.mutation) === intent : sendIntentOf(x.mutation) === null && !sendTextDiffers(x.mutation, m)));
-    return a === undefined ? undefined : { id: a.id, key: a.key, mutation: a.mutation };
-  };
-
   const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null): Promise<MutationResult> => {
     const intent = sendIntentOf(m);
     // Queued or on the wire, and not a send already confirmed and kept for its echo.
-    const live = intent === null
+    const standing = intent === null
       ? undefined
       : [...engine.pendingMutations(), ...engine.inFlightMutations()]
         .find((p) => joinableStandingSend(p) && sendIntentOf(p.mutation) === intent);
-    // A send kept past a day and refused: pressing again goes under its key, never a second one.
-    const standing = live ?? expiredSendFor(m, intent);
-    /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS — a send that IS waiting:
-       queued or on the wire. A kept record waits for nothing, so the press below re-queues it under
-       its key. A second row under the key would be replayed on the return after the first had gone,
-       and each replay writes a draft of its own (`send-waits.ts`). */
-    if (live !== undefined && networkNow() === "offline" && !sendTextDiffers(live.mutation, m)
-      && sameIntent(live.andDone ?? null, andDone)) {
-      return Promise.resolve({ id: live.id, key: live.key, status: "queued", seq: null });
+    /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
+       the key would be replayed on the return after the first had gone, and each replay writes a
+       draft of its own (`send-waits.ts`). Different words, or Send + Done pressed over a plain
+       Send (or back), take the resume below: the latest press decides, under the same key. */
+    if (standing !== undefined && networkNow() === "offline" && !sendTextDiffers(standing.mutation, m)
+      && sameIntent(standing.andDone ?? null, andDone)) {
+      return Promise.resolve({ id: standing.id, key: standing.key, status: "queued", seq: null });
     }
     return engine.mutate(m, {
       ...(standing === undefined ? {} : { key: standing.key }),

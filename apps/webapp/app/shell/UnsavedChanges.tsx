@@ -52,7 +52,6 @@ export function UnsavedChanges({ variant }: { variant: "shell" | "rail" }) {
       // retried send answering `send_unverified` invisible: no warning, no record (it is deleted
       // before dispatch), and a person free to press send again on mail that may already have left.
       onRetry={(id) => engine.retryAbandoned(id)}
-      // A kept send's lock record goes with it, or its composer's next press replays that key.
       onDiscard={(id) => discardUnsavedChange(engine, id)}
     />
   );
@@ -212,8 +211,7 @@ export function UnsavedChangesList({
                     back on the next render offering a press that cannot do anything. */}
                 {!m.retryable ? null : (
                   <button type="button" disabled={busy === m.id} onClick={() => void retry(m.id)}>
-                    {/* An expired send: its sentence names Send, so its control is Send. */}
-                    {m.error.code === "send_expired" ? t("unsavedSend") : t("unsavedRetry")}
+                    {t("unsavedRetry")}
                   </button>
                 )}
                 <button
@@ -312,7 +310,6 @@ function describe(m: AbandonedMutation, t: Translate): string {
  * not say why. Anything the server DID phrase for a human is passed through untouched.
  */
 function reason(m: AbandonedMutation, t: Translate): string {
-  if (m.error.code === "send_expired") return t("unsavedSendExpired");
   const opaque = m.error.code === null
     || m.error.code === "internal"
     || m.error.message.trim() === "";

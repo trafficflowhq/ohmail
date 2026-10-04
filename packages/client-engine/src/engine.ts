@@ -722,14 +722,6 @@ function supersedeKey(m: EngineMutation): string | null {
 const OUTBOX_EXPIRED_MESSAGE = "This change is too old to send safely — it would be created twice.";
 
 /**
- * A SEND OLDER THAN A DAY IS NOT REPLAYED ON ITS OWN: refused before it dials and kept, so the
- * person decides. Send again or Try again goes under the same key ({@link OhmailEngine.mutate}
- * retires this record), so a send that did leave earlier is answered from its reservation.
- */
-export const SEND_EXPIRED_CODE = "send_expired";
-const SEND_EXPIRED_MESSAGE = "Not sent. This message waited more than a day — press Send to send it.";
-
-/**
  * IS THIS QUEUED OR WIRE ENTRY A SEND A NEW PRESS MAY JOIN? Not one the server confirmed and the
  * engine keeps only for its echo (`confirmed`): a press joining it is answered from that delivery
  * and never goes. The one reading both surfaces' standing-send lookups share.
@@ -6385,16 +6377,14 @@ export class OhmailEngine {
     /**
      * So a send whose durable record was refused is rolled back and says so; the composer still holds the text.
      */
-    // An expired send pressed again under its key sends the row it made, never a second one.
-    const expired = enriched.kind === "mail_send" && opts.key !== undefined ? this.expiredSendsUnder(key) : [];
-    const expiredRow = expired.find((e) => isCreatedRow(e.createdRow))?.createdRow
-      ?? (enriched.kind === "mail_send" && opts.key !== undefined ? this.confirmedRows.get(key) : undefined);
+    // A press under a key whose send just confirmed sends the row that send made, never a second one.
+    const confirmedRow = enriched.kind === "mail_send" && opts.key !== undefined ? this.confirmedRows.get(key) : undefined;
     const pending: PendingMutation = {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
-      ...(superseded.createAttempted || expired.some((e) => e.createAttempted === true) ? { createAttempted: true } : {}),
+      ...(superseded.createAttempted ? { createAttempted: true } : {}),
       ...(superseded.createdRow !== undefined ? { createdRow: superseded.createdRow }
-        : expiredRow !== undefined ? { createdRow: expiredRow } : {}),
+        : confirmedRow !== undefined ? { createdRow: confirmedRow } : {}),
       ...(this.ownerName !== null ? { owner: this.ownerName } : {}),
       // With the send's durable row, never in a surface's memory: the arm outlives the surface.
       ...andDoneOf({ mutation: enriched, andDone: opts.andDone }),
@@ -6461,8 +6451,6 @@ export class OhmailEngine {
         ),
       };
     }
-    // The newer press under an expired send's key is that send now: its kept record goes.
-    for (const e of expired) await this.discardAbandoned(e.id);
 
     /**
      * The fresh verb takes the same gate as every other road. It was the last dispatch outside {@link outboxGate},
@@ -7046,9 +7034,7 @@ export class OhmailEngine {
     if (pastCreateDedupe(e, this.now().getTime())) return refuse(e, "outbox_expired", OUTBOX_EXPIRED_MESSAGE);
 
     const p: PendingMutation = {
-      // Try again on an expired send IS the press again: it goes now, under its key.
-      id: e.id, key: e.key, mutation: e.mutation, n: e.n,
-      at: e.lastError?.code === SEND_EXPIRED_CODE ? this.now().getTime() : e.at,
+      id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n,
       restored: true, attempts: 0,
       // Try again on a record whose create went out unread is still not a second create.
       ...(e.createAttempted === true ? { createAttempted: true } : {}),
@@ -7159,36 +7145,6 @@ export class OhmailEngine {
    * out anyway on the next launch. A refused transaction leaves the record listed rather than
    * removing it from a surface while the verb it names is still queued on disk.
    */
-  /** {@link SEND_EXPIRED_CODE}: kept with its key and refused, never dialled. */
-  private async expireSend(p: PendingMutation): Promise<MutationResult> {
-    const error = new MutationRejectedError(SEND_EXPIRED_MESSAGE, { code: SEND_EXPIRED_CODE, retryable: false });
-    const record: PersistedOutboxEntry = {
-      v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
-      attempts: p.attempts ?? 0,
-      lastError: { message: error.message, code: SEND_EXPIRED_CODE, status: null },
-      ...(p.createAttempted === true ? { createAttempted: true } : {}),
-      ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
-      ...andDoneOf(p),
-    };
-    this.overlays.delete(p.id);
-    this.awaitingEcho.delete(p.id);
-    try {
-      await this.store.commitLocal([{ type: OUTBOX_ABANDONED_TYPE, id: p.id, entity: record }], [{ type: OUTBOX_TYPE, id: p.id }]);
-    } catch {
-      this.abandonedLocally.set(p.id, record);
-      this.localRefusalRev++;
-    }
-    this.overlayRev++;
-    this.notify();
-    return { id: p.id, key: p.key, status: "rolled_back", seq: null, error };
-  }
-
-  /** The expired sends kept under this key — see {@link SEND_EXPIRED_CODE}. */
-  private expiredSendsUnder(key: string): PersistedOutboxEntry[] {
-    return this.abandonedRows().map((r) => r.entry)
-      .filter((e) => e.key === key && e.mutation.kind === "mail_send" && e.lastError?.code === SEND_EXPIRED_CODE);
-  }
-
   async discardAbandoned(id: string): Promise<void> {
     try {
       await this.store.commitLocal([], [
@@ -7662,9 +7618,6 @@ export class OhmailEngine {
           code: OUTBOX_WITHDRAWN_CODE, retryable: false,
         }),
       };
-    }
-    if (p.mutation.kind === "mail_send" && this.now().getTime() - p.at > OUTBOX_UNKEYED_CREATE_TTL_MS) {
-      return await this.expireSend(p);
     }
     try {
       const outcome = await this.adapter.mutate(p.mutation, {

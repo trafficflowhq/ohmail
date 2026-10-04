@@ -93,9 +93,6 @@ export function SendStatus({
                 ? { tone: "error", text: t("statusNotSignedIn") }
               : send.code === "forward_original_unavailable"
                 ? { tone: "error", text: t("statusForwardOriginalUnavailable") }
-              /* Kept more than a day and not sent on its own: Send is the way it goes now, under its key. */
-              : send.code === "send_expired"
-                ? { tone: "error", text: t("statusSendExpired") }
               /**
                * ANOTHER WINDOW WROTE THIS DRAFT BETWEEN THE LAST SAVE AND THIS PRESS. `warn`, not
                * `error`: nothing failed and nothing left — the row simply is not the message this

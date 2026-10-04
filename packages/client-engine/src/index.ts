@@ -654,8 +654,6 @@ export {
   // with — a surface reads the code to say nothing rather than "it failed".
   type WithdrawOutcome,
   OUTBOX_WITHDRAWN_CODE,
-  // A send kept past a day and refused before it dialled — the surface says "press Send again".
-  SEND_EXPIRED_CODE,
   // Which queued or wire entry a new send press may join — both surfaces' lookups.
   joinableStandingSend,
   // The two structural capabilities an adapter WRAPPER has to forward by hand. Exported so a

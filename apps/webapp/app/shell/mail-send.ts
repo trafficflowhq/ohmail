@@ -34,7 +34,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { OUTBOX_TYPE, SEND_EXPIRED_CODE, joinableStandingSend, pressVerdict } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, joinableStandingSend, pressVerdict } from "@ohmail/client-engine";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
@@ -258,8 +258,8 @@ export function sendUnsettledFromLastSession(
   /** `sendPendingInOutbox(engine, lane)` — the verb, which two of the arms below turn on. */
   pendingOnLane: boolean,
   owner: string | null = null,
-  /** {@link standingSends}: the lanes no age prunes, and which keys are known not pending. */
-  standing: { lanes?: ReadonlySet<string>; settled?: (key: string) => boolean } = {},
+  /** {@link sendSettledIn}: which keys the engine knows are not pending. */
+  standing: { settled?: (key: string) => boolean } = {},
 ): boolean {
   /**
    * THE COMPOSE ON SCREEN IS THE MESSAGE A SEND IS STILL CARRYING: KEYED ON IDENTITY, NOT ON THE LANE, and the
@@ -295,9 +295,7 @@ export function sendUnsettledFromLastSession(
 
   /* The lane's records, with the outbox exempting a pending one from the age limit — and from
      this read's own pruning, which would otherwise delete the answer before anybody read it. */
-  const exempt = new Set(standing.lanes ?? []);
-  if (pendingOnLane) exempt.add(lane);
-  const rows = allSendLocks(Date.now(), owner, exempt.size > 0 ? exempt : undefined)
+  const rows = allSendLocks(Date.now(), owner, pendingOnLane ? new Set([lane]) : undefined)
     // THIS MOUNT'S OWN PRESSES ARE NOT "FROM THE LAST SESSION", and leaving them in was the whole
     // of a measured regression: every record is written by a press, so a rule that reads them all
     // refuses the very resume the record exists for — 23 cases went red saying so, four of them
@@ -327,8 +325,8 @@ export function sendUnsettledFromLastSession(
         sides — remove either and the case stayed green. The re-derivation is the one kept, because
         it leaves the hold available to a LATER session that inherits a record of its own, where the
         session comparison would have refused every hold for the life of the mount. */
-  /* A record whose send the engine knows is not pending (kept past a day, sent by Try again,
-     discarded) holds nothing: the hold reads the outbox, and a record is only its key. */
+  /* A record whose send the engine knows is not pending (confirmed, refused, withdrawn) holds
+     nothing: the hold reads the outbox, and a record is only its key. */
   const settled = standing.settled ?? (() => false);
   return latch.fp !== null && rows.some((r) => r.bfp === latch.fp && !settled(r.key));
 }
@@ -339,20 +337,16 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
 }
 
 /**
- * THE KEY THIS LANE'S SEND IS ALREADY GOING UNDER — queued, on the wire, on disk for a replay that
- * has not taken its turn, or kept past a day. A re-press JOINS it (the engine supersedes the older
- * entry under one key). A send confirmed and kept only for its echo is not standing. The compose
- * lane names every new message, so it joins only a kept send of this same message (`fp`).
+ * THE KEY THIS LANE'S SEND IS ALREADY GOING UNDER — queued, on the wire, or on disk for a replay
+ * that has not taken its turn. A re-press JOINS it (the engine supersedes the older entry under one
+ * key). A send confirmed and kept only for its echo is not standing. The compose lane names every
+ * new message, so it joins nothing here: its own record resumes its key (`resumeSendLock`).
  */
-export function standingSendKey(engine: OhmailEngine, lane: string, fp: string | null = null): string | null {
+export function standingSendKey(engine: OhmailEngine, lane: string): string | null {
+  if (lane === COMPOSE_SEND_KEY) return null;
   const surface = lane.startsWith("fwd:") ? "inline" : "compose";
   const onLane = (m: { kind?: string } | undefined): boolean =>
     m?.kind === "mail_send" && sendKeyOf(m as unknown as MailSend, surface) === lane;
-  const kept = typeof engine.abandoned === "function" ? engine.abandoned() : [];
-  const expired = kept.filter((a) => a.error.code === SEND_EXPIRED_CODE && onLane(a.mutation));
-  if (lane === COMPOSE_SEND_KEY) {
-    return fp === null ? null : expired.find((a) => sendFingerprint(a.mutation as unknown as MailSend) === fp)?.key ?? null;
-  }
   // A hand-rolled partial engine (a surface test's double) may lack the wire or the reader.
   const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
   for (const p of [...engine.pendingMutations(), ...wire]) {
@@ -362,7 +356,7 @@ export function standingSendKey(engine: OhmailEngine, lane: string, fp: string |
   for (const r of disk as ReadonlyArray<OutboxRow & { key?: string }>) {
     if (pendingSendRow(r) && onLane(r.mutation) && typeof r.key === "string") return r.key;
   }
-  return expired[0]?.key ?? null;
+  return null;
 }
 
 /**
@@ -395,23 +389,21 @@ type OutboxRow = { mutation?: { kind?: string }; withdrawn?: boolean; confirmed?
 /** A send still on its way: a `mail_send` row that Cancel did not withdraw. */
 const pendingSendRow = (r: OutboxRow): boolean => r.mutation?.kind === "mail_send" && r.withdrawn !== true && r.confirmed !== true;
 
-/** The durable outbox's pending sends: their lanes as the press derives them, both surfaces' lanes, and keys. */
-type DurableSends = { lanes: Set<string>; both: Set<string>; keys: Set<string> };
+/** The durable outbox's pending sends: their lanes as the press derives them, and their keys. */
+type DurableSends = { lanes: Set<string>; keys: Set<string> };
 
 function indexDurableSends(reader: EntityReader): DurableSends {
-  const out: DurableSends = { lanes: new Set(), both: new Set(), keys: new Set() };
+  const out: DurableSends = { lanes: new Set(), keys: new Set() };
   for (const r of reader.list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow>) {
     if (!pendingSendRow(r)) continue;
-    const m = r.mutation as unknown as MailSend;
-    out.lanes.add(sendKeyOf(m));
-    for (const l of lanesOfSend(m)) out.both.add(l);
+    out.lanes.add(sendKeyOf(r.mutation as unknown as MailSend));
     if (typeof r.key === "string") out.keys.add(r.key);
   }
   return out;
 }
 
 function durableSends(engine: OhmailEngine): DurableSends {
-  if (typeof engine.read !== "function") return { lanes: new Set(), both: new Set(), keys: new Set() };
+  if (typeof engine.read !== "function") return { lanes: new Set(), keys: new Set() };
   const reader = engine.read();
   // A hand-rolled partial reader has no stamp to invalidate on; it gets the honest uncached read.
   if (typeof reader.stampOf !== "function") return indexDurableSends(reader);
@@ -428,89 +420,28 @@ export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): 
   return durableSends(engine).lanes.has(lane);
 }
 
-/** A send's lanes on both surfaces: a forward's inline dock is not the compose lane. */
-const lanesOfSend = (m: MailSend): string[] => [sendKeyOf(m, "compose"), sendKeyOf(m, "inline")];
-
 /**
- * WHICH SENDS STAND. `lanes`: every lane a send is queued, on the wire, on the durable outbox or
- * kept past a day on — no age prunes their lock records, so one lane's re-stamp cannot delete
- * another's. `kept`: the keys of sends kept past a day. `settled(key)`: the engine knows that send
- * is not pending — kept, or absent from an outbox it has restored. Before the restore it is only kept.
+ * WHICH SEND KEYS THE ENGINE KNOWS ARE NOT PENDING: once it has restored its outbox, a key that is
+ * not queued, on the wire or on the durable outbox. Before the restore it knows none, and a
+ * composer held for such a send stays held.
  */
-export function standingSends(engine: OhmailEngine): {
-  lanes: Set<string>; kept: Set<string>; settled: (key: string) => boolean;
-} {
-  const lanes = new Set<string>();
-  const kept = new Set<string>();
-  for (const a of typeof engine.abandoned === "function" ? engine.abandoned() : []) {
-    if (a.error.code !== SEND_EXPIRED_CODE || a.mutation.kind !== "mail_send") continue;
-    kept.add(a.key);
-    for (const l of lanesOfSend(a.mutation as unknown as MailSend)) lanes.add(l);
-  }
-  const pending = new Set<string>();
+export function sendSettledIn(engine: OhmailEngine): (key: string) => boolean {
+  if (typeof engine.outboxKnown !== "function" || !engine.outboxKnown()) return () => false;
+  const pending = new Set<string>(durableSends(engine).keys);
   const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
   for (const p of [...engine.pendingMutations(), ...wire]) {
-    if (p.mutation.kind !== "mail_send" || (p as { confirmed?: true }).confirmed === true) continue;
-    pending.add(p.key);
-    for (const l of lanesOfSend(p.mutation as unknown as MailSend)) lanes.add(l);
+    if (joinableStandingSend(p)) pending.add(p.key);
   }
-  const durable = durableSends(engine);
-  for (const k of durable.keys) pending.add(k);
-  for (const l of durable.both) lanes.add(l);
-  const known = typeof engine.outboxKnown === "function" && engine.outboxKnown();
-  return { lanes, kept, settled: (key) => kept.has(key) || (known && !pending.has(key)) };
-}
-
-const KEPT_LOCK_RESTAMP_MS = 24 * 60 * 60 * 1000;
-
-/**
- * A KEPT SEND'S LOCK RECORD LIVES AS LONG AS THE KEPT SEND: re-stamped once it is a day old, so a
- * press after Try again still finds the key it went under. Skipped where the decoder would evict
- * another claim on the lane (it keeps one ordinary claim per lane): that claim is a live send's.
- */
-export function standKeptLocks(engine: OhmailEngine, owner: string | null = storageOwner()): void {
-  const standing = standingSends(engine);
-  if (standing.kept.size === 0) return;
-  const now = Date.now();
-  const rows = allSendLocks(now, owner, standing.lanes);
-  for (const r of rows) {
-    if (!standing.kept.has(r.key) || now - r.at < KEPT_LOCK_RESTAMP_MS) continue;
-    const evicts = rows.some((o) => o !== r && o.lane === r.lane && !(o.unverified === true && o.fp !== r.fp));
-    if (!evicts) claimSendLock({ ...r, at: now }, owner);
-  }
+  return (key) => !pending.has(key);
 }
 
 /**
- * DISCARD, FROM THE STRIP OR THE COMPOSER: a kept send and its lock record go in one step, so the
- * words pressed again later are a new send and not that key's replay. The record goes only once the
- * engine has removed the kept send. Every web discard of an unsaved change comes through here.
+ * DISCARD, FROM EITHER STRIP: the one web door to the engine's discard of an unsaved change. A
+ * discarded send never reached the server (a delivered or unverified one is not listed for
+ * discard with a key worth keeping), so it leaves the lock records as they are.
  */
-export async function discardUnsavedChange(
-  engine: OhmailEngine, id: string, owner: string | null = storageOwner(),
-): Promise<void> {
-  const kept = engine.abandoned().find((a) => a.id === id);
+export async function discardUnsavedChange(engine: OhmailEngine, id: string): Promise<void> {
   await engine.discardAbandoned(id);
-  if (kept?.mutation.kind !== "mail_send" || kept.error.code !== SEND_EXPIRED_CODE) return;
-  if (engine.abandoned().some((a) => a.id === id)) return;
-  const lanes = new Set([...standingSends(engine).lanes, ...lanesOfSend(kept.mutation as unknown as MailSend)]);
-  for (const r of allSendLocks(Date.now(), owner, lanes)) {
-    if (r.key === kept.key) releaseSendLock(r.lane, r.fp, owner);
-  }
-}
-
-/**
- * The kept send of the message a composer holds: a reply or forward lane's own, or for the compose
- * lane the one whose lock record carries this compose session. `null` when none is kept.
- */
-function keptSendOnScreen(engine: OhmailEngine, lane: string, owner: string | null): string | null {
-  const kept = (typeof engine.abandoned === "function" ? engine.abandoned() : []).filter((a) =>
-    a.error.code === SEND_EXPIRED_CODE && a.mutation.kind === "mail_send"
-    && lanesOfSend(a.mutation as unknown as MailSend).includes(lane));
-  if (lane !== COMPOSE_SEND_KEY) return kept[0]?.id ?? null;
-  const session = composeSessionId(owner);
-  const keys = new Set(allSendLocks(Date.now(), owner, standingSends(engine).lanes)
-    .filter((r) => r.lane === lane && r.session !== undefined && r.session === session).map((r) => r.key));
-  return kept.find((a) => keys.has(a.key))?.id ?? null;
 }
 
 /** There is one compose surface, so its send state needs one key. */
@@ -1563,9 +1494,7 @@ export function useMailSend(
         // and releasing the lane would delete the record saying an earlier message may already
         // have been delivered — see `releaseSendLock`.
         const fp = sendFingerprint(m);
-        // A send kept past a day keeps its record standing, unmarked: the next press resumes its key.
-        if (res.error?.code === SEND_EXPIRED_CODE) standKeptLocks(engine, owner.current);
-        else if (next.phase !== "unverified") releaseSendLock(key, fp, owner.current);
+        if (next.phase !== "unverified") releaseSendLock(key, fp, owner.current);
         // DURABLY, because the phase below is component state: reopening the draft, a reload or
         // another tab all start from `idle`, and each of those is a way back to a send that may
         // already have gone. The lock is the only thing that survives them.
@@ -1699,22 +1628,6 @@ export function useMailSend(
     return true;
   };
 
-  /* A kept send's record is re-stamped while it stands — at mount, as the kept list changes, and
-     hourly — so its age never prunes it before Try again and the press after it. */
-  useEffect(() => {
-    let last = -1;
-    let seen: unknown = null;
-    const check = (): void => {
-      const list = typeof engine.abandoned === "function" ? engine.abandoned() : null;
-      if (list === seen && Date.now() - last < 60 * 60 * 1000) return;
-      seen = list;
-      last = Date.now();
-      standKeptLocks(engine, owner.current);
-    };
-    check();
-    return engine.subscribe(check);
-  }, [engine]);
-
   /**
    * AN ANSWER NO PRESS ON THIS MOUNT OWNS — a restored send's — read through its record. Both
    * destructive pulls reach it: the restore collector, and `flush`, which consumed it too and used
@@ -1723,7 +1636,6 @@ export function useMailSend(
   const adoptForeign = useRef<(res: MutationResult) => void>(() => {});
   adoptForeign.current = (res: MutationResult): void => {
     if (res.status === "superseded") return;
-    if (res.error?.code === SEND_EXPIRED_CODE) standKeptLocks(engine, owner.current);
     const record = recordForSendKey(res.key, Date.now(), owner.current);
     if (record === null) return;
     /* WHICH SURFACE THIS ANSWER MAY SPEAK TO, asked ONCE because both endings below need it
@@ -1838,8 +1750,7 @@ export function useMailSend(
          wire is carrying — a second key for a message that may yet be delivered. Nothing
          beyond the release and the sentence: settling is the `confirmed` ending, and the row
          the adapter made for a press that carried none is not adopted here. */
-      // A send kept past a day keeps its record standing: the next press resumes its key.
-      if (res.error?.code !== SEND_EXPIRED_CODE) releaseSendLock(record.lane, record.fp, owner.current);
+      releaseSendLock(record.lane, record.fp, owner.current);
       /* The live path's own failure sentence, on the surface this answer is about: without it
          the composer comes back editable saying nothing, which is a message the person
          pressed Send on and no account of what happened to it. */
@@ -2069,7 +1980,7 @@ export function useMailSend(
       if (key === COMPOSE_SEND_KEY
         && sendUnsettledFromLastSession(
           key, latch.current ?? { fp: null, session: null }, ownKeys.current,
-          sendPendingInDurableOutbox(engine, key), owner.current, standingSends(engine),
+          sendPendingInDurableOutbox(engine, key), owner.current, { settled: sendSettledIn(engine) },
         )) {
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
         return;
@@ -2122,11 +2033,9 @@ export function useMailSend(
          describe the message that went, not the buffer as it stands some time afterwards. */
       const bufferFp = key === COMPOSE_SEND_KEY ? composeBufferFingerprint() : null;
       const subject = id.subjects[0];
-      /* THROUGH THE IDENTITY, not the fingerprint alone: the session and the subjects scope the resume.
-         A kept send's record is re-stamped first, so the resume's own age sweep cannot take it. */
-      standKeptLocks(engine, owner.current);
+      /* THROUGH THE IDENTITY, not the fingerprint alone: the session and the subjects scope the resume. */
       const resumed = resumeSendLock(key, id, now, owner.current);
-      const standing = standingSendKey(engine, key, fp);
+      const standing = standingSendKey(engine, key);
       const sendKey = standing ?? resumed ?? crypto.randomUUID();
       if (sendKey !== resumed) {
         claimSendLock({
@@ -2187,13 +2096,9 @@ export function useMailSend(
     for (const [k, l] of queued.current) {
       if (l === lane) { key = k; break; }
     }
-    // Nothing queued on this lane: nothing to withdraw, and the caller carries on — but a send kept
-    // past a day for the message on screen is discarded with it, its record released.
-    if (key === null) {
-      const kept = keptSendOnScreen(engine, lane, owner.current);
-      if (kept !== null) await discardUnsavedChange(engine, kept, owner.current);
-      return "close";
-    }
+    // Nothing queued on this lane: there is nothing to withdraw and the caller carries on. Not a
+    // refusal — a compose with no send out is the ordinary case for Cancel.
+    if (key === null) return "close";
     const outcome = await engine.withdrawQueued(key);
     /* THE REQUEST HAS LEFT AND THIS DEVICE CANNOT UN-SEND IT. Nothing is released: the send is
        still owed an answer and the lane must stay locked until it has one. */
@@ -2239,7 +2144,7 @@ export function useMailSend(
       restoredPending: (lane: string) => lane === COMPOSE_SEND_KEY
         && sendUnsettledFromLastSession(
           lane, latch.current ?? { fp: null, session: null }, ownKeys.current,
-          sendPendingInDurableOutbox(engine, lane), owner.current, standingSends(engine),
+          sendPendingInDurableOutbox(engine, lane), owner.current, { settled: sendSettledIn(engine) },
         ),
     }),
     [stateFor, send, withdraw],

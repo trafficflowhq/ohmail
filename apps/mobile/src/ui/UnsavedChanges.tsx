@@ -11,7 +11,7 @@ import { useState } from "react";
 import { ScrollView, View, useWindowDimensions } from "react-native";
 import type { AbandonedMutation, MutationResult, QueuedChange } from "../state/live";
 import { Copy } from "../copy";
-import { describeKind, reason, retryLabel, retrySaid } from "./unsaved-copy";
+import { describeKind, reason, retrySaid } from "./unsaved-copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
 import { Tap, Txt } from "./base";
@@ -143,7 +143,7 @@ export function UnsavedChanges() {
                   onPress={() => void act(m.id, world.actions.retryAbandoned)}
                   accessibilityRole="button"
                 >
-                  <Txt variant="meta" tone="accent">{retryLabel(m)}</Txt>
+                  <Txt variant="meta" tone="accent">{Copy.unsavedRetry}</Txt>
                 </Tap>
               )}
               <Tap
