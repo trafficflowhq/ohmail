@@ -257,9 +257,9 @@ export function sendUnsettledFromLastSession(
   ownKeys: ReadonlySet<string>,
   /** `sendPendingInOutbox(engine, lane)` — the verb, which two of the arms below turn on. */
   pendingOnLane: boolean,
-  owner: string | null = null,
+  owner: string | null,
   /** {@link standingOf}: which keys the engine knows are not pending, and which records it still owes an ending. */
-  standing: { settled?: (key: string) => boolean; owed?: SendLockOwed } = {},
+  standing: { settled: (key: string) => boolean; owed: SendLockOwed },
 ): boolean {
   /**
    * THE COMPOSE ON SCREEN IS THE MESSAGE A SEND IS STILL CARRYING: KEYED ON IDENTITY, NOT ON THE LANE, and the
@@ -295,8 +295,8 @@ export function sendUnsettledFromLastSession(
 
   /* The lane's records. This read sweeps aged records on EVERY lane, so it keeps whatever is still
      owed an ending (see `SendLockOwed`): before the outbox is read, that is every record. */
-  const settled = standing.settled ?? (() => false);
-  const rows = allSendLocks(Date.now(), standing.owed ?? ((k) => !settled(k)), owner)
+  const settled = standing.settled;
+  const rows = allSendLocks(Date.now(), standing.owed, owner)
     // THIS MOUNT'S OWN PRESSES ARE NOT "FROM THE LAST SESSION", and leaving them in was the whole
     // of a measured regression: every record is written by a press, so a rule that reads them all
     // refuses the very resume the record exists for — 23 cases went red saying so, four of them
@@ -396,7 +396,10 @@ function indexDurableSends(reader: EntityReader): DurableSends {
   const out: DurableSends = { lanes: new Set(), keys: new Set() };
   for (const r of reader.list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow>) {
     if (!pendingSendRow(r)) continue;
-    out.lanes.add(sendKeyOf(r.mutation as unknown as MailSend));
+    const m = r.mutation as unknown as MailSend;
+    out.lanes.add(sendKeyOf(m));
+    // A forward is on the inline dock's lane as well: the row does not say which surface sent it.
+    if (m.forwardOf != null) out.lanes.add(inlineForwardKey(m.forwardOf));
     if (typeof r.key === "string") out.keys.add(r.key);
   }
   return out;
@@ -421,6 +424,17 @@ export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): 
 }
 
 /**
+ * A REPLY OR FORWARD DOCK WHOSE SEND IS STILL ON THE DURABLE OUTBOX IS HELD, as the live path holds it
+ * (`InlineReply`'s `inFlight`: sending or queued). After a restart the lane's phase is `idle`, so the
+ * dock was editable while the old words waited, and the ending's clear then took words nobody sent.
+ * Held as `queued`, it says what the live path says while it waits, and nothing new can be written.
+ */
+export function replyDockState(engine: OhmailEngine, state: SendState, lane: string): SendState {
+  if (state.phase !== "idle" && state.phase !== "failed") return state;
+  return sendPendingInDurableOutbox(engine, lane) ? { phase: "queued" } : state;
+}
+
+/**
  * WHICH SEND KEYS THE ENGINE KNOWS ARE NOT PENDING: once it has restored its outbox, a key that is
  * not queued, on the wire or on the durable outbox. Before the restore it knows none, and a
  * composer held for such a send stays held.
@@ -435,16 +449,23 @@ export function sendSettledIn(engine: OhmailEngine): (key: string) => boolean {
   return (key) => !pending.has(key);
 }
 
+/** The keys each engine has pressed under — this window's own presses, which its outbox view holds. */
+const pressedHere = new WeakMap<object, Set<string>>();
+
 /**
  * WHICH SEND RECORDS ARE STILL OWED AN ENDING — the one reading every deletion in `send-lock.ts` is
- * handed. A key not settled (the outbox unread, or the key queued, on the wire or on the durable
- * outbox) is owed, and while any late answer waits uncollected every key is: that answer names a
- * mutation, not a key, and it is the record that turns it back into a message.
+ * handed. Owed: a key not settled (the outbox unread, or queued, on the wire, on the durable outbox);
+ * every key while a late answer waits uncollected (it names a mutation, not a key); and a record
+ * written after this engine's outbox view by a press this engine did not make: another window's
+ * send, whose outbox row this view cannot see, so "settled" here is not a fact.
  */
 export function sendLockOwed(engine: OhmailEngine): SendLockOwed {
   const settled = sendSettledIn(engine);
   const late = typeof engine.hasLateResults === "function" && engine.hasLateResults();
-  return (key) => late || !settled(key);
+  const since = typeof engine.outboxViewSince === "function" ? engine.outboxViewSince() : null;
+  const mine = pressedHere.get(engine);
+  return (r) => late || !settled(r.key)
+    || (mine?.has(r.key) !== true && (since === null || r.at > since));
 }
 
 /** What the composer's hold reads off the engine: which keys are settled, and which are owed. */
@@ -2081,6 +2102,10 @@ export function useMailSend(
       }
 
       ownKeys.current.add(sendKey);
+      // This engine's press: its row is in this engine's own outbox view (`sendLockOwed`).
+      let pressed = pressedHere.get(engine);
+      if (pressed === undefined) pressedHere.set(engine, pressed = new Set());
+      pressed.add(sendKey);
       locked.current.add(key);
       setPhase(key, { phase: "sending", since: Date.now() });
       // ACKNOWLEDGE FIRST, WORK SECOND — see {@link afterPaint}. The lock and the durable claim

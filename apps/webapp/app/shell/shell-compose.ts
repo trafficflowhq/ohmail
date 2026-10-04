@@ -83,6 +83,7 @@ import {
   promoteOrphanedReplyLane,
   readReplyDraft,
   readReplyMeta,
+  replyDockState,
   REPLY_DRAFT_PREFIX,
   SEND_IN_FLIGHT_PHASES,
   sendLockOwed,
@@ -1702,7 +1703,7 @@ export function useShellCompose({
    * A forward's lane (`fwd:<id>`) names no reply row, so it passes through untouched.
    */
   const replySendState = useStableCallback((lane: string): SendState => {
-    const state = mailSend.stateOf(lane);
+    const state = replyDockState(engine, mailSend.stateOf(lane), lane);
     const row = heldReplyRow(lane);
     if (row === null) return state;
     return heldRowUnverified(

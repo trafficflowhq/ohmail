@@ -267,21 +267,22 @@ function isLive(r: SendLock, nowMs: number): boolean {
 }
 
 /**
- * A SEND RECORD IS NEVER DELETED WHILE ITS KEY IS OWED: the outbox has not been read yet, or the key is
- * on the outbox, the queue, the wire, or an uncollected late answer. Only that send's ending can still
- * reach its surface, and the record is what turns the ending back into a message. An owed record
- * outlives every sweep. One that is not owed may go when its send ENDED, when a newer record on its
- * lane REPLACES it, or when it AGED past {@link SEND_LOCK_TTL_MS}. Age keeps one other job: whether a
- * new press may resume, join or be held. {@link dropSendLocks} is the only save that shrinks the jar.
+ * A SEND RECORD IS NEVER DELETED WHILE IT IS OWED: the outbox has not been read yet, its key is on the
+ * outbox, the queue, the wire or an uncollected late answer, or it was written after this window's
+ * view of the outbox was taken by a press this window did not make (a window judges only what it can
+ * see). An owed record outlives every sweep. One that is not owed may go when its send ENDED, when a
+ * newer record on its lane REPLACES it, or when it AGED past {@link SEND_LOCK_TTL_MS}. Age keeps one
+ * other job: whether a new press may resume, join or be held. {@link dropSendLocks} is the only save
+ * that shrinks the jar, and `sendLockOwed` in `mail-send.ts` is the only reading it is handed.
  */
-export type SendLockOwed = (key: string) => boolean;
+export type SendLockOwed = (r: SendLock) => boolean;
 
 /** Why a caller asks a record to go — see {@link SendLockOwed}. */
 export type SendLockDrop = "ended" | "replaced" | "aged";
 
 function mayDrop(r: SendLock, why: SendLockDrop, owed: SendLockOwed, nowMs: number): boolean {
   // A later format's record is carried, never deleted: this build cannot read what it means.
-  if (r.v > SEND_LOCK_FORMAT || owed(r.key)) return false;
+  if (r.v > SEND_LOCK_FORMAT || owed(r)) return false;
   return why === "aged" ? !isLive(r, nowMs) : true;
 }
 

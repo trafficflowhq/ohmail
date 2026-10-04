@@ -2400,6 +2400,8 @@ export class OhmailEngine {
   private drainEpoch = 0;
   /** {@link OhmailEngine.restoreOutbox}'s latch. */
   private outboxRestored = false;
+  /** {@link OhmailEngine.outboxViewSince}: `Date.now()` as the first load of this engine's outbox began. */
+  private outboxViewAt: number | null = null;
   /**
    * Restored verbs whose target was not in the mirror at the restore — the desktop window's mirror
    * is empty until its first drain. Painted at a drain's settle once the rows are there, so a
@@ -2894,6 +2896,7 @@ export class OhmailEngine {
    */
   async hydrate(): Promise<void> {
     if (this.hydrating) return this.hydrating;
+    this.outboxViewAt ??= Date.now();
     this.hydrating = this.store
       .load()
       // Reconcile the no-raw-secret-at-rest rule before publishing: a body cached by an older
@@ -3187,6 +3190,7 @@ export class OhmailEngine {
    * — only the local paint is skipped.
    */
   restoreOutbox(): void {
+    this.outboxViewAt ??= Date.now();
     // Calling this IS the statement that the store was loaded first, so it also arms the drive's
     // own door — a host that loaded and restored has nothing left for `restoreOutboxIfLoaded` to
     // wait on.
@@ -3207,6 +3211,18 @@ export class OhmailEngine {
    */
   outboxKnown(): boolean {
     return this.outboxRestored;
+  }
+
+  /**
+   * WHEN THIS ENGINE'S VIEW OF THE OUTBOX WAS TAKEN, in `Date.now()` ms, or `null` before it was.
+   * The store reads the outbox from disk when it loads and never again (`store.ts`, the keep set),
+   * so a verb another tab queued after this moment is on disk and not here: a key this engine
+   * calls settled is settled only if it was named before this. Taken as the first load BEGAN,
+   * which is the earlier and safe end; a host that loaded the store itself is stamped at its
+   * `restoreOutbox()` call.
+   */
+  outboxViewSince(): number | null {
+    return this.outboxViewAt;
   }
 
   /**
