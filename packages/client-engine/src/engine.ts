@@ -344,6 +344,8 @@ interface PendingMutation {
   owner?: string;
   /** The Send + Done intent — see {@link MutationResult.andDone}. Persisted with the row. */
   andDone?: SendAndDonePlan;
+  /** The intent was handed over on a confirmation — see {@link PersistedOutboxEntry.released}. */
+  released?: true;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
   /** Epoch ms before which no drive may dispatch this verb. */
@@ -488,6 +490,12 @@ interface PersistedOutboxEntry {
    * (`section`, `source`, `messageIds`); an older row's carried mutations are read and ignored.
    */
   andDone?: SendAndDonePlan;
+  /**
+   * THE SEND + DONE INTENT WAS HANDED OVER ON A CONFIRMATION while this row was kept (its echo
+   * not yet in the mirror). A replay after a kill confirms the send again from its key and carries
+   * no intent, so a Done the person undid is not filed a second time. Absent reads as not handed.
+   */
+  released?: boolean;
 }
 
 /**
@@ -573,6 +581,7 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
     ...(p.owner !== undefined ? { owner: p.owner } : {}),
     ...andDoneOf(p),
+    ...(p.released === true ? { released: true } : {}),
   };
 }
 
@@ -3293,7 +3302,8 @@ export class OhmailEngine {
       // memory of the unreadable create is gone. Without this the replay re-POSTs the create.
       ...(e.createAttempted === true ? { createAttempted: true } : {}),
       ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
-      ...andDoneOf(e),
+      // A released intent stays on the row as a record and never rides a replay's confirmation.
+      ...(e.released === true ? { released: true as const } : andDoneOf(e)),
       /**
        * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
        * 2` shape in place, so records written before it can carry a `nextAt` that came from a `Retry-After` and no
@@ -7712,7 +7722,13 @@ export class OhmailEngine {
       // Both are released together by {@link OhmailEngine.drain}'s sweep, and
       // a kill before that sweep replays the entry under its original key — the server's
       // idempotency machinery answers with the stored response, never a second effect.
+      const intent = p.released === true ? undefined : p.andDone;
       if (!echoPending && this.settleConfirmed(p.id, p.mutation, shadow)) await this.dropOutbox(p.id);
+      else if (intent !== undefined) {
+        // KEPT for its echo: the intent is handed over on THIS result, so the row says so.
+        p.released = true;
+        await this.putOutbox(p);
+      }
       // The Sent copy was materialised the instant the server confirmed, above — a rejection
       // reaches the `catch` below and never gets here, which is the "DROP on send rejection"
       // half, unchanged by moving the call up.
@@ -7739,7 +7755,7 @@ export class OhmailEngine {
         // is the only thing that can say the answer was about an earlier press.
         ...(outcome.firstSend ? { firstSend: outcome.firstSend } : {}),
         ...(outcome.earlierWordsKept === true ? { earlierWordsKept: true as const } : {}),
-        ...(p.andDone !== undefined ? { andDone: p.andDone } : {}),
+        ...(intent !== undefined ? { andDone: intent } : {}),
       };
     } catch (err) {
       const rejection = err instanceof MutationRejectedError
