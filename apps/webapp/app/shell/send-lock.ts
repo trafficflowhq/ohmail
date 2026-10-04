@@ -915,6 +915,20 @@ export function recordForSendKey(
 }
 
 /**
+ * AN ENDING OF A SEND (confirmed, refused, unverified) SPEAKS TO THE COMPOSER WHOSE RECORD NAMES ITS
+ * KEY, AT ANY AGE. The age limit decides only whether a NEW press may join, or be held by, an old
+ * record; it never decides whether an answer the server already gave is heard. A send replayed eight
+ * days after its press is confirmed like any other, and reading its record through the limit left the
+ * sent words in an editable composer, one edit away from a second copy. It prunes nothing, and it
+ * reads this build's format only, as {@link recordForSendKey}.
+ */
+export function recordForEndedSend(key: string, owner: string | null = storageOwner()): SendLock | null {
+  const rows = load(owner);
+  if (rows === null) return null;
+  return rows.find((r) => r.key === key && r.v <= SEND_LOCK_FORMAT) ?? null;
+}
+
+/**
  * Record that ONE MESSAGE's send on this lane came back unverified. See {@link SendLock.unverified}.
  *
  * Keyed by `(lane, fingerprint)` for the same reason {@link releaseSendLock} is: the lane may hold

@@ -46,7 +46,7 @@ import {
 } from "./compose";
 import { durableRemove, durableSet } from "./durable";
 import {
-  allSendLocks, attachSendLockDraft, claimSendLock, holdOf, markSendLockUnverified, recordForSendKey,
+  allSendLocks, attachSendLockDraft, claimSendLock, holdOf, markSendLockUnverified, recordForEndedSend,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
   sendSubjects, unverifiedSendIntents, type Hold, type SendIntent,
 } from "./send-lock";
@@ -258,8 +258,8 @@ export function sendUnsettledFromLastSession(
   /** `sendPendingInOutbox(engine, lane)` — the verb, which two of the arms below turn on. */
   pendingOnLane: boolean,
   owner: string | null = null,
-  /** {@link sendSettledIn}: which keys the engine knows are not pending. */
-  standing: { settled?: (key: string) => boolean } = {},
+  /** {@link sendSettledIn}: which keys the engine knows are not pending; `outboxKnown` its restore. */
+  standing: { settled?: (key: string) => boolean; outboxKnown?: boolean } = {},
 ): boolean {
   /**
    * THE COMPOSE ON SCREEN IS THE MESSAGE A SEND IS STILL CARRYING: KEYED ON IDENTITY, NOT ON THE LANE, and the
@@ -294,8 +294,12 @@ export function sendUnsettledFromLastSession(
   if (unverifiedSendIntents(lane, owner).some((i) => intentNamesLatched(i, latch))) return false;
 
   /* The lane's records, with the outbox exempting a pending one from the age limit — and from
-     this read's own pruning, which would otherwise delete the answer before anybody read it. */
-  const rows = allSendLocks(Date.now(), owner, pendingOnLane ? new Set([lane]) : undefined)
+     this read's own pruning, which would otherwise delete the answer before anybody read it. An
+     outbox not yet read cannot say the send is not pending, so until then this lane is exempt too:
+     the shell renders before it hydrates, and a sweep here deleted an eight-day send's record
+     before its replay confirmed. Other lanes are swept as ever. */
+  const unread = standing.outboxKnown === false;
+  const rows = allSendLocks(Date.now(), owner, pendingOnLane || unread ? new Set([lane]) : undefined)
     // THIS MOUNT'S OWN PRESSES ARE NOT "FROM THE LAST SESSION", and leaving them in was the whole
     // of a measured regression: every record is written by a press, so a rule that reads them all
     // refuses the very resume the record exists for — 23 cases went red saying so, four of them
@@ -433,6 +437,14 @@ export function sendSettledIn(engine: OhmailEngine): (key: string) => boolean {
     if (joinableStandingSend(p)) pending.add(p.key);
   }
   return (key) => !pending.has(key);
+}
+
+/** What the composer's hold reads off the engine: which keys are settled, and whether it can say yet. */
+export function standingOf(engine: OhmailEngine): { settled: (key: string) => boolean; outboxKnown?: boolean } {
+  return {
+    settled: sendSettledIn(engine),
+    ...(typeof engine.outboxKnown === "function" ? { outboxKnown: engine.outboxKnown() } : {}),
+  };
 }
 
 /**
@@ -1636,7 +1648,8 @@ export function useMailSend(
   const adoptForeign = useRef<(res: MutationResult) => void>(() => {});
   adoptForeign.current = (res: MutationResult): void => {
     if (res.status === "superseded") return;
-    const record = recordForSendKey(res.key, Date.now(), owner.current);
+    // At any age: see `recordForEndedSend`.
+    const record = recordForEndedSend(res.key, owner.current);
     if (record === null) return;
     /* WHICH SURFACE THIS ANSWER MAY SPEAK TO, asked ONCE because both endings below need it
        and for the same reason. The full argument is in the confirmed arm, where this test was
@@ -1980,7 +1993,7 @@ export function useMailSend(
       if (key === COMPOSE_SEND_KEY
         && sendUnsettledFromLastSession(
           key, latch.current ?? { fp: null, session: null }, ownKeys.current,
-          sendPendingInDurableOutbox(engine, key), owner.current, { settled: sendSettledIn(engine) },
+          sendPendingInDurableOutbox(engine, key), owner.current, standingOf(engine),
         )) {
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
         return;
@@ -2144,7 +2157,7 @@ export function useMailSend(
       restoredPending: (lane: string) => lane === COMPOSE_SEND_KEY
         && sendUnsettledFromLastSession(
           lane, latch.current ?? { fp: null, session: null }, ownKeys.current,
-          sendPendingInDurableOutbox(engine, lane), owner.current, { settled: sendSettledIn(engine) },
+          sendPendingInDurableOutbox(engine, lane), owner.current, standingOf(engine),
         ),
     }),
     [stateFor, send, withdraw],
