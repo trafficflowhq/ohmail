@@ -140,7 +140,7 @@ export type RuleRowWrite = Omit<Partial<typeof rulesTbl.$inferInsert>, "id" | "a
 /** What {@link writeRuleUnderKey} did under the key. `lastSeq` is the last delta it recorded, if any. */
 export interface KeyWriteResult {
   op: "create" | "update" | "unchanged" | "skipped";
-  /** The one row under the key afterwards; `null` only when `skip` met a key that has a row. */
+  /** The one row under the key afterwards; `null` only when the write was skipped. */
   ruleId: string | null;
   lastSeq: bigint | null;
   /** The row the router ran before the write, and the rows collapsed into the survivor. */
@@ -152,23 +152,26 @@ export interface KeyWriteResult {
  * THE ONE WRITER FOR A DOOR THAT NAMES A SENDER, NOT A ROW (the Screener's decision, "Not junk,
  * always allow", the HEY import): converge the key onto its ACTING row, then write that row's
  * difference (`diff`, empty = unchanged, no delta) or insert `insert` where the key has none.
- * `skip` writes nothing at all over a key that has any row. Deltas: the twin deletes, then the
- * row's own, so the last seq names the row.
+ * `skip` writes nothing at all over a key that has any row; `onlyOver` writes only where every row
+ * under the key, paused included, is the door's own (anything else there is a decision, and
+ * nothing is written or collapsed). Deltas: the twin deletes, then the row's own.
  */
 export async function writeRuleUnderKey(tx: Tx, input: {
   accountId: string; key: RuleKey; now: Date;
   /** The stored spelling of `match` for an insert; the lookup always compares `key.match`. */
   match?: string;
-  overExisting: "converge" | "skip";
+  overExisting: "converge" | "skip" | { onlyOver: (row: FoundRule) => boolean };
   diff: (survivor: FoundRule) => RuleRowWrite;
   /** `retroRequestedAt` is required: every door states whether the backlog was asked for. */
   insert: RuleRowWrite & { destination: string; retroRequestedAt: Date | null };
 }): Promise<KeyWriteResult> {
   const { accountId, key, now } = input;
   await lockAccountRuleKeys(tx, accountId);
-  if (input.overExisting === "skip") {
-    const [any] = await findRulesByKey(tx, accountId, key);
-    if (any) return { op: "skipped", ruleId: null, lastSeq: null, acting: any, collapsed: [] };
+  const over = input.overExisting;
+  if (over !== "converge") {
+    const rows = await findRulesByKey(tx, accountId, key);
+    const decided = over === "skip" ? rows.length > 0 : rows.some((r) => !over.onlyOver(r));
+    if (decided) return { op: "skipped", ruleId: null, lastSeq: null, acting: rows[0] ?? null, collapsed: [] };
   }
   const c = await convergeRuleKey(tx, { accountId, key });
   if (c.survivor) {

@@ -1,9 +1,9 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
   accountSettings, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
-  recordChanges, recordRuleDelta, ruleMatchKeySql, rules, PROFILE_SIGNATURE_MAX,
+  lockAccountRuleKeys, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, PROFILE_SIGNATURE_MAX,
   TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
@@ -440,7 +440,9 @@ async function ownAddresses(ctx: ServiceContext): Promise<Set<string>> {
 const ownList = (own: Set<string>) => sql`(${sql.join([...own].map((a) => sql`${a}`), sql`, `)})`;
 
 /**
- * Addresses that already carry an enabled sender rule — a decision the seed must not overwrite.
+ * Addresses whose bare sender key already has a rule — a decision the seed must not write beside,
+ * enabled or paused alike (CONSENT-SEED-WRITES-BESIDE-A-PAUSED-RULE). A rule narrowed by a subject
+ * or body term is another key and decides nothing about the bare one.
  *
  * Takes a query runner rather than a `ServiceContext` because it is asked twice and the second
  * time it MUST run on the confirmation's own transaction handle: the answer it gives outside a
@@ -466,7 +468,8 @@ async function decidedSenders(
       .where(and(
         eq(rules.accountId, accountId),
         eq(rules.kind, "sender"),
-        eq(rules.enabled, true),
+        isNull(rules.subjectContains),
+        isNull(rules.bodyContains),
         inArray(ruleMatchKeySql(rules.match), part),
       ));
     for (const r of rows) out.add(ruleMatchKey(r.match));
@@ -561,7 +564,11 @@ export async function confirmSeed(
         set: { updatedAt: ctx.now() },
       });
 
-    // The question the lock was taken for. `alreadyDecided` above was computed BEFORE the
+    // THE RULE-KEY LOCK, after the settings row and before the read that decides the writes:
+    // every rules writer's order, so a Screener decision or a rule press cannot add a row under a
+    // key between this read and the insert below.
+    await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
+    // The question the locks were taken for. `alreadyDecided` above was computed BEFORE the
     // transaction opened and is stale by definition; this is the same question asked where the
     // answer cannot change under us.
     const decidedNow = await decidedSenders(tx, ctx.accountId, accept.map((c) => c.address));

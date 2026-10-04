@@ -1,15 +1,20 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { canonicalDestination } from "@trafficflow/core/mail";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
-  graduations, rules as rulesTbl, fenceErased, ruleMatchKeySql, type LedgerTx, type Tx,
+  graduations, fenceErased, lockAccountRuleKeys, writeRuleUnderKey, type LedgerTx, type Tx,
   recordLearningSignal, patternKeyFor, parsePatternKey, demoteGraduatedRoute, recordRuleDelta,
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
+  type FoundRule, type RuleRowWrite,
   type LearningSignalInput, type LearningKind, type LearningLabel, type ParsedPattern,
 } from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
+
+/** A promotion nobody pressed: the only row a graduation may write over (never a person's). */
+const promotedByNobody = (row: FoundRule): boolean => row.provenance === "promoted" && row.personDecidedAt === null;
 
 // Re-exported rather than re-declared: `packages/db/src/learning-signal.ts` is now the ONE
 // definition (see its own header for why — the worker's request drain needs the write and may
@@ -61,9 +66,9 @@ export class LearningService {
 
   /**
    * Promotion / demotion pass for a pattern. When a `sender:<addr>→<dest>`
-   * pattern has graduated and no equivalent enabled promoted rule exists yet, create
-   * one. When accumulated overrides push net negative past the demotion threshold,
-   * disable the promoted rule (`demotions++`) and clear `graduated` — all in SQL.
+   * pattern has graduated, write its promoted rule under the sender's key
+   * ({@link ensurePromotedRule}). When accumulated overrides push net negative past the demotion
+   * threshold, disable the promoted rule (`demotions++`) and clear `graduated` — all in SQL.
    */
   async promoteOrDemote(ctx: ServiceContext, patternKey: string): Promise<void> {
     const outer = asTx(ctx);
@@ -104,8 +109,10 @@ export class LearningService {
        promotion that inserted the rule and its change-log row into an account that was gone. */
     await withAccountTx(ctx, async (tx) => {
       const d = dialect(tx);
+      // Both arms write `rules`: the account's rule-key lock after the fence, before either.
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
       if (promote) {
-        await this.ensurePromotedRule(tx, d, ctx.accountId, parsed);
+        await this.ensurePromotedRule(tx, d, ctx.accountId, parsed, ctx.now());
         return;
       }
       const { ruleIds } = await demoteGraduatedRoute(tx, ctx.accountId, patternKey);
@@ -114,51 +121,34 @@ export class LearningService {
   }
 
   /**
-   * The promotion write, and its delta beside it: whichever arm moves the row files for that row,
-   * in this transaction. Nothing is announced when the rule was already standing exactly like
-   * this — a delta a client cannot tell from a real move is noise.
+   * The promotion write, through the sender's KEY (LEARNING-PROMOTION-ADDS-A-TWIN): a key with no
+   * row gets the promoted rule; a key whose every row is a promotion nobody pressed is converged
+   * onto its acting row, switched on and retargeted there. A manual, migrated or person-decided
+   * row under the key, paused included, is a decision, and nothing is written over it. Nothing is
+   * announced when the row already reads this way.
    */
   private async ensurePromotedRule(
-    tx: LedgerTx, d: Dialect, accountId: string, p: ParsedPattern,
+    tx: LedgerTx, d: Dialect, accountId: string, p: ParsedPattern, now: Date,
   ): Promise<void> {
-    // Locally, rather than as a claim about the one caller: this method inserts into `rules` and
-    // a second caller opening its own transaction would leave the promotion unfenced while the
-    // door above still read as covering it.
+    // Locally, rather than as a claim about the one caller: this method writes `rules`, and a
+    // second caller opening its own transaction would leave the promotion unfenced.
     await fenceErased(tx, d, { accountId });
-    const existing = await tx
-      .select({ id: rulesTbl.id })
-      .from(rulesTbl)
-      .where(and(
-        eq(rulesTbl.accountId, accountId),
-        eq(rulesTbl.kind, p.kind),
-        sql`${ruleMatchKeySql(rulesTbl.match)} = ${ruleMatchKey(p.match)}`,
-        eq(rulesTbl.destination, p.destination),
-      ))
-      .limit(1);
-    if (existing.length > 0) {
-      // `enabled = false` in the WHERE, so the returned row is the one whose state CHANGED —
-      // the same construction the demotion uses, for the same reason: a delta announcing a rule
-      // that already read this way is noise a client cannot tell from a real move.
-      // scoped-by: existing[0].id comes from the account-scoped rules read above
-      const flipped = await tx.update(rulesTbl)
-        .set({ enabled: true, updatedAt: d.now() })
-        .where(and(eq(rulesTbl.id, existing[0]!.id), eq(rulesTbl.enabled, false)))
-        .returning({ id: rulesTbl.id });
-      await recordRuleDelta(tx, accountId, flipped.map((r) => r.id), "update");
-      return;
-    }
-    /* THE RETRO REQUEST IS PART OF THIS WRITE, not a later press (the 2026-09-16 ruling).
-       A promotion is a decision the person made — it graduates off their own approvals — and a
-       rule that claims a sender's mail without asking for the backlog leaves that mail where it
-       was. Measured on a live account: eight rules created over two days with retro_requested_at
-       NULL, and fifteen of their messages still at the gate days later, which is what the release
-       screen was counting. Stamped HERE so the rule and the request commit together; `null` would
-       mean "nobody asked", which is the state that produced the defect. */
-    const [row] = await tx.insert(rulesTbl).values({
-      accountId, kind: p.kind, match: ruleMatchKey(p.match), destination: p.destination,
-      provenance: "promoted", enabled: true, retroRequestedAt: d.now(),
-    }).returning({ id: rulesTbl.id });
-    await recordRuleDelta(tx, accountId, [row!.id], "create");
+    /* THE RETRO REQUEST IS PART OF THIS WRITE (the 2026-09-16 ruling): a promotion graduates off
+       the person's own approvals, and a rule that claims a sender's mail without asking for the
+       backlog leaves that mail where it was (measured: fifteen messages still at the gate days
+       later). `null` would mean "nobody asked", the state that produced the defect. */
+    const retro = { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 };
+    await writeRuleUnderKey(bridgeTx(tx), {
+      accountId, now, overExisting: { onlyOver: promotedByNobody },
+      key: { kind: p.kind, match: ruleMatchKey(p.match), subjectContains: null, bodyContains: null },
+      diff: (row) => {
+        const w: RuleRowWrite = {};
+        if (canonicalDestination(row.destination) !== canonicalDestination(p.destination)) w.destination = p.destination;
+        if (!row.enabled) w.enabled = true;
+        return Object.keys(w).length === 0 ? w : { ...w, ...retro };
+      },
+      insert: { destination: p.destination, provenance: "promoted", enabled: true, retroRequestedAt: now },
+    });
   }
 
 }
