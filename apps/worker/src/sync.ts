@@ -1961,6 +1961,9 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor, beforeWalk 
   const pending = await repo.listPendingFolderStates(mailboxId, RECONCILE_MOVES_PER_CYCLE + 1);
   const owesMore = pending.length > RECONCILE_MOVES_PER_CYCLE;
   const work = owesMore ? pending.slice(0, RECONCILE_MOVES_PER_CYCLE) : pending;
+  // Nothing to file before the walk: return before the folder names and the adapter are asked, so
+  // an idle local drain reads them as often as the hosted order does.
+  if (beforeWalk && work.length === 0) return false;
 
   // Mail 0065 — where a spam verdict physically files. Read once per pass; a repo without the
   // discovery answers "neither exists", which keeps the pre-0065 behaviour byte-for-byte.
