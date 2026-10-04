@@ -268,6 +268,16 @@ export const SETTLE_DEADLINE_MS = 15_000;
  * hung holder cannot stop a submit. Past it, the mint revokes the jar's previous session on the server and aborts the
  * request here (outcome `superseded`), so neither half of the late answer can sign the browser back in.
  */
+/**
+ * Is a refresh of this tab in flight now? `api()` and the engine's transport ask before a request
+ * leaves and wait for it (`refreshSettled`): a rotation replaces the access token, so a request that
+ * leaves beside one carries the token being replaced and is refused once (cold boot, and every
+ * scheduled renewal with a request in flight).
+ */
+export function refreshInFlight(): boolean {
+  return inFlight !== null;
+}
+
 export async function refreshSettled(): Promise<void> {
   // Read once: `inFlight` is nulled by the callback's own `finally`, so re-reading after the
   // await could see a LATER refresh and wait for that one too — an unbounded wait dressed as a
@@ -580,11 +590,23 @@ export const RENEW_JITTER_MS = 60_000;
  */
 export const SESSION_MINTED_KEY = "ohmail.session.mintedAt";
 let mintedHere: number | null = null;
+let mintsHere = 0;
+
+/**
+ * How many sessions this page has received (a renewal's 204 or a ceremony's mint). A request that
+ * meets a 401 after this moved since it LEFT carried the access token a renewal replaced: it is sent
+ * once more on the new jar, never renewed again — a second rotation refused every request that had
+ * left beside the first (measured on a cold boot: three rotations for one page load).
+ */
+export function sessionMints(): number {
+  return mintsHere;
+}
 
 function noteSessionMinted(): void {
   // A new session is the one gesture that lifts an erased-account wall (`account-erased.ts`).
   clearAccountErased();
   mintedHere = Date.now();
+  mintsHere += 1;
   durableSet(SESSION_MINTED_KEY, String(mintedHere), "session-mint");
 }
 
@@ -629,13 +651,18 @@ function armRenewal(): void {
   // From the mint, capped at a whole lead (a clock stepped back); unknown age renews at once.
   const minted = lastSessionMint();
   const due = minted === null ? 0 : Math.min(lead, minted + lead - Date.now());
-  renewTimer = setTimeout(() => { renewTimer = null; void renew(1); }, Math.max(1, due));
   if (!watchingVisibility && typeof document !== "undefined") {
     watchingVisibility = true;
     document.addEventListener("visibilitychange", () => {
       if (renewOwed && !tabHidden()) { renewOwed = false; void renew(1); }
     });
   }
+  // DUE NOW is started HERE, synchronously: the confirm that publishes this revival opens the sync
+  // gate on its next line, and a renewal one timer tick later raced the first snapshot, which left
+  // on the access token the rotation was replacing and answered 401.
+  // In flight first, every request waits for it (`refreshInFlight`).
+  if (due <= 0) { void renew(1); return; }
+  renewTimer = setTimeout(() => { renewTimer = null; void renew(1); }, due);
 }
 
 /**

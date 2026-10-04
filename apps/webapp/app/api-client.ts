@@ -11,7 +11,8 @@
 
 import { csrfToken as readCsrfToken } from "./csrf";
 import {
-  REFRESH_ENDPOINT, isRecoverable, mayRefreshFor, resumeSession, retryAfterMsOf, withSessionCookieLock,
+  REFRESH_ENDPOINT, isRecoverable, mayRefreshFor, refreshInFlight, refreshSettled, resumeSession, retryAfterMsOf,
+  sessionMints, withSessionCookieLock,
 } from "./session-refresh";
 import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
 import type { TravelledChangeWire } from "./shell/travelled-change";
@@ -464,6 +465,12 @@ let writesSent = 0;
  * and `res.json()` on an empty body throws.
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  // A renewal of this tab in flight is waited for first (bounded, never throws): a request beside it
+  // carries the access token the rotation replaces. Not on a cookie-writing ceremony (the lock orders
+  // those) nor on a path that never renews.
+  if (refreshInFlight() && opts.ceremony !== true && mayRefreshFor(path) && !writesSessionCookies(path)) {
+    await refreshSettled();
+  }
   /*
    * NOTHING LEAVES A TAB WHOSE SESSION IS OVER, except what can end that state.
    *
@@ -529,6 +536,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     });
   }
 
+  const mintsAtSend = sessionMints();
   try {
     const seen: { account?: string | null } = {};
     const answer = await hearing<T>(path, opts, seen);
@@ -552,7 +560,8 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
      * then: a request this client may no longer make gets no recovery attempt on somebody else's credential.
      */
     mustHold();
-    const resumed = await resumeSession();
+    // Renewed since this left (`sessionMints`): the new jar is the remedy, not another rotation.
+    const resumed = sessionMints() !== mintsAtSend ? "resumed" : await resumeSession();
     if (resumed === "unavailable") throw sessionUncheckedError();
     if (resumed !== "resumed") throw err;
     // The refresh rewrites the whole jar, so the question has to be asked again before the
@@ -604,13 +613,18 @@ function renewalUnavailableResponse(): Response {
  * server reads one press. A refused renewal or a second refusal is the answer the caller sees.
  */
 async function sessionTransport(url: string, init?: RequestInit): Promise<Response> {
-  const first = await fetch(url, init);
   const path = apiPathOf(url);
-  if (path === null || !mayRefreshFor(path) || writesSessionCookies(path)) return first;
+  const renews = path !== null && mayRefreshFor(path) && !writesSessionCookies(path);
+  // `api()`'s wait for a renewal in flight; a request that waited carries the renewed jar's token.
+  const waited = renews && refreshInFlight();
+  if (waited) await refreshSettled();
+  const mintsAtSend = sessionMints();
+  const first = await fetch(url, waited ? withFreshCsrf(init) : init);
+  if (!renews || path === null) return first;
   if (!isRecoverable(first.status, await refusalCodeOf(first))) return first;
   // `api()`'s two questions around its refresh: never renew, nor re-send, on another account's jar.
   if (!apiOwnerHolds(path)) return first;
-  const resumed = await resumeSession();
+  const resumed = sessionMints() !== mintsAtSend ? "resumed" : await resumeSession();
   if (resumed === "unavailable") {
     void first.body?.cancel().catch(() => undefined);
     return renewalUnavailableResponse();
