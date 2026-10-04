@@ -193,6 +193,8 @@ export interface StandaloneEngine {
        * reason; absent or null reads as not held.
        */
       writeOffsHeldSince?: Date | null;
+      /** SINCE WHEN THIS PHONE'S OWN STORE HAS REFUSED THE MAIL; read with the hold. Absent reads as answering. */
+      storeFaultSince?: Date | null;
       /**
        * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`, or
        * `produced_nothing_readable`. The third is the one no surface could report: a drain came

@@ -28,6 +28,8 @@ import {
   dialect, type LogMark,
 } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
+import { markStoreStatement, StoreStatementFaultError } from "@trafficflow/core/mail";
+import { statementKind, storeWriteGauge } from "./store-writes.js";
 import type { LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
 import { DEFAULT_NET_TIMEOUTS, WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
@@ -442,24 +444,32 @@ export function oneTransactionAtATime<T extends object>(db: T, waitMs = TRANSACT
   let tail: Promise<unknown> = Promise.resolve();
   handle.transaction = function serialized(fn: unknown, config?: unknown): Promise<unknown> {
     let started = false;
-    const run = tail.then(
-      () => { started = true; return inner.call(handle, fn, config); },
-      () => { started = true; return inner.call(handle, fn, config); },
-    );
+    let refused = false;
+    /* A REFUSED TRANSACTION NEVER RUNS. Its caller has been told it failed, so a body that ran at its
+       turn afterwards would commit a write nobody waits for (a refused ingest write committed late,
+       and the replay then read it as a duplicate). */
+    const turn = (): Promise<unknown> => {
+      if (refused) return Promise.resolve(undefined);
+      started = true;
+      return inner.call(handle, fn, config);
+    };
+    const run = tail.then(turn, turn);
     // The CHAIN keeps the entry whatever the caller is told, and swallows so that one transaction's
     // failure does not reject the next caller's turn.
     tail = run.catch(() => undefined);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         if (started) return;   // it is running; a slow transaction is not this failure
-        reject(new Error(
+        refused = true;
+        // The store's own refusal, marked at source: whatever caused the wait, it is not the message.
+        reject(new StoreStatementFaultError("store.transactionWait", new Error(
           "this store allows one transaction at a time, and this one waited " +
             `${waitMs} ms without its turn. The usual cause is a transaction opened on the ` +
             "database handle from INSIDE another transaction's body: a nested transaction must be " +
             "opened on the transaction object it is nested in, which the driver renders as a " +
             "savepoint, not on the handle — the handle's turn cannot come round until the outer " +
             "one returns.",
-        ));
+        )));
       }, waitMs);
       run.then(
         (value) => { clearTimeout(timer); resolve(value); },
@@ -515,14 +525,24 @@ export async function openPhoneStore(
   });
   const migrateMs = Date.now() - migrateStarted;
 
+  /* THE STORE'S STATEMENT DOOR, marked: these two callbacks carry every statement, `begin`, `commit`
+     and `rollback` included, and no caller's code runs inside them — so a throw here is the store's,
+     whatever its text (see `StoreStatementFaultError`). */
+  const writes = storeWriteGauge();
   const db = drizzleSqliteProxy(
     async (sql, params, method) => {
-      if (method === "run") {
-        await exec.run(sql, params as readonly unknown[]);
-        return { rows: [] };
+      try {
+        if (method === "run") {
+          await exec.run(sql, params as readonly unknown[]);
+          writes.statementOk(sql);
+          return { rows: [] };
+        }
+        const { rows } = await exec.all(sql, params as readonly unknown[]);
+        writes.statementOk(sql);
+        return { rows: method === "get" ? [...(rows[0] ?? [])] : rows.map((r) => [...r]) };
+      } catch (err) {
+        throw markStoreStatement(`store.${method}`, err);
       }
-      const { rows } = await exec.all(sql, params as readonly unknown[]);
-      return { rows: method === "get" ? [...(rows[0] ?? [])] : rows.map((r) => [...r]) };
     },
     /* THE BATCH CALLBACK IS WHAT MAKES A TRANSACTION ONE CALL, and it is the SECOND argument —
        `drizzle(callback, batchCallback?, config?)`. Passed third (beside an `undefined` config) it
@@ -532,7 +552,12 @@ export async function openPhoneStore(
        lost. Measured against the driver's own overloads rather than assumed from the order the
        parameters are documented in. */
     async (queries): Promise<{ rows: unknown[] }[]> => {
-      await exec.batch(queries.map((q) => ({ sql: q.sql, params: q.params as readonly unknown[] })));
+      try {
+        await exec.batch(queries.map((q) => ({ sql: q.sql, params: q.params as readonly unknown[] })));
+      } catch (err) {
+        throw markStoreStatement("store.batch", err);
+      }
+      writes.committed(queries.some((q) => statementKind(q.sql) === "write"));
       return queries.map(() => ({ rows: [] }));
     },
   );
@@ -551,6 +576,7 @@ export async function openPhoneStore(
     dataDir: "",
     pgDataDir: "",
     timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs, compactMs: 0, searchSetupMs: 0 },
+    storeWrites: writes.count,
     /* THE DEVICE JOURNAL'S OWN CENSUS — `boot_phases` carries it on the phone as on a computer. */
     migrations: { pending, applied: applied.length, slowest },
     // A write-ahead checkpoint is a PGlite concept the engine calls where a drain ends.

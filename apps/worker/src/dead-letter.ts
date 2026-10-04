@@ -1,5 +1,11 @@
-import { MimeParseError, MimeTooLargeError, storeFaultOf, type NativeLocator, type StoreFaultName } from "@trafficflow/core/mail";
+import {
+  MimeParseError, MimeTooLargeError, StoreStatementFaultError, storeFaultOf, type NativeLocator, type StoreFaultName,
+} from "@trafficflow/core/mail";
 import { epochOf, parseRef, sameEpoch } from "@trafficflow/core/adapters/imap";
+
+/* The device store's mark lives beside `storeFaultOf` in core's log leaf, which imports nothing: the
+   stores that throw it (apps/sidecar's db.ts and mobile.ts) must not reach this module's IMAP import. */
+export { markStoreStatement, StoreStatementFaultError } from "@trafficflow/core/mail";
 
 /**
  * A throw that came out of THIS PROCESS'S DATABASE, whatever code it carries. {@link isDatabaseFault}
@@ -21,6 +27,33 @@ export class DatabaseFaultError extends Error {
     this.name = "DatabaseFaultError";
     this.op = op;
   }
+}
+
+/**
+ * Is this throw the DEVICE STORE refusing — a store mark in its chain whose cause no structured field
+ * names as the message's value? A marked constraint or bind refusal is the message's and raises nothing.
+ */
+export function isDeviceStoreFault(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; depth < 5 && cur !== null && cur !== undefined && !seen.has(cur); depth++) {
+    if (cur instanceof StoreStatementFaultError) return classifyStoreStatementFault(cur.cause).domain === "infrastructure";
+    seen.add(cur);
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** Is a store mark anywhere on this throw or its causes (the throw and four causes, cycle-safe)? */
+export function isStoreStatementFault(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; depth < 5 && cur !== null && cur !== undefined && !seen.has(cur); depth++) {
+    if (cur instanceof StoreStatementFaultError) return true;
+    seen.add(cur);
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /**
@@ -157,7 +190,30 @@ function classifyStoreFault(err: unknown): IngestFault | null {
   if (store === "range" || store === "mismatch") return { domain: "message", code: "data_exception", deterministic: true };
   // A CHECK, UNIQUE or NOT NULL: class 23's reading, retried before it is written off.
   if (store === "constraint") return { domain: "message", code: "constraint_violation", deterministic: false };
-  return { domain: "message", code: "unclassified", deterministic: false };
+  // `other` (a refusal whose class did not survive to us), `notfound`, `empty`, `format`: the store's.
+  return { domain: "infrastructure" };
+}
+
+/**
+ * The driver answering about the VALUE we bound — node:sqlite's and expo's bind and convert refusals. A
+ * value reaches the bind from the message through our pipeline, so these stay the message's: called
+ * the device's, one such message would hold every folder's cursor on that device for ever.
+ */
+const STORE_BIND_CODES: ReadonlySet<string> = new Set([
+  "ERR_INVALID_ARG_TYPE", "ERR_INVALID_ARG_VALUE", "ERR_INVALID_BIND_PARAMETER", "ERR_INVALID_CONVERTIBLE",
+]);
+
+/** A marked store throw, by its cause's structured fields only; what none of them names is the device's. */
+function classifyStoreStatementFault(cause: unknown): IngestFault {
+  const store = classifyStoreFault(cause);
+  if (store !== null) return store;
+  if (isMessageLimit(cause)) return { domain: "message", code: "data_too_large", deterministic: true };
+  const code = codeOf(cause);
+  const cls = sqlStateClass(code);
+  if (cls === "22") return { domain: "message", code: "data_exception", deterministic: true };
+  if (cls === "23") return { domain: "message", code: "constraint_violation", deterministic: false };
+  if (STORE_BIND_CODES.has(code)) return { domain: "message", code: "unclassified", deterministic: false };
+  return { domain: "infrastructure" };
 }
 
 const sqlStateClass = (code: string): string | null =>
@@ -205,6 +261,8 @@ export function classifyIngestFault(err: unknown): IngestFault {
   // converted a database blip into mail loss, which is the exact failure this file exists to
   // prevent, reintroduced by the fix for a different one. The tag says WHERE the throw came from;
   // the domain question below is unchanged and still answered from what the database said.
+  // The device store's mark FIRST: the parent arm below would unwrap it and lose it.
+  if (err instanceof StoreStatementFaultError) return classifyStoreStatementFault(err.cause);
   if (err instanceof DatabaseFaultError) return classifyIngestFault(err.cause);
 
   // Deterministic in the raw bytes, by the contract on `mime.ts`'s two typed errors: "the same
@@ -429,6 +487,11 @@ export class DeadLetterLedger {
   private thisCycle = 0;
   /** See {@link holdsAtCap}; the instant the hold engaged, or null. */
   private heldSince: Date | null = null;
+  /** See {@link storeFaultSince}. */
+  private storeFaultFirst: Date | null = null;
+  /** The store's write count when the last store fault was noted. */
+  private storeWritesAtFault = 0;
+  private readonly storeWrites: (() => number) | undefined;
   /** Write-offs since the last stored message: as the store said at cycle start, and this cycle's. */
   private runBefore = 0;
   private runThisCycle = 0;
@@ -442,7 +505,12 @@ export class DeadLetterLedger {
    */
   readonly holdsAtCap: boolean;
 
-  constructor(opts: { maxAttempts?: number; perCycleCap?: number; holdAtCap?: boolean } = {}) {
+  constructor(opts: {
+    maxAttempts?: number; perCycleCap?: number; holdAtCap?: boolean;
+    /** The device store's committed-write count, which lowers {@link storeFaultSince}. */
+    storeWrites?: () => number;
+  } = {}) {
+    this.storeWrites = opts.storeWrites;
     this.maxAttempts = Math.max(1, opts.maxAttempts ?? DEFAULT_MAX_MESSAGE_ATTEMPTS);
     this.perCycleCap = Math.max(1, opts.perCycleCap ?? MAX_DEAD_LETTERS_PER_CYCLE);
     this.holdsAtCap = opts.holdAtCap === true;
@@ -450,6 +518,31 @@ export class DeadLetterLedger {
 
   /** Since when write-offs are held ({@link holdsAtCap}), or null when they are not. */
   get writeOffsHeldSince(): Date | null { return this.heldSince; }
+
+  /**
+   * Since when the device store has refused a statement ({@link StoreStatementFaultError}) with no
+   * write committed since: the hold's sentence for a fault that writes nothing off. Lowered by the
+   * next committed store write of any kind, never by a drain that wrote nothing (a full disk still reads).
+   */
+  get storeFaultSince(): Date | null { return this.storeFaultFirst; }
+
+  /** The device store refused a statement: raise the sentence, keeping the first instant. */
+  noteStoreFault(now: Date = new Date()): void {
+    this.storeFaultFirst ??= now;
+    this.storeWritesAtFault = this.storeWrites?.() ?? 0;
+  }
+
+  /**
+   * A drain ended, with what it threw (or nothing). A device store fault anywhere on the throw
+   * ({@link isDeviceStoreFault}) raises the sentence, wherever in the drain it was thrown; otherwise a
+   * write the store committed since the fault lowers it.
+   */
+  settleStoreFault(err: unknown, now: Date = new Date()): void {
+    if (err !== undefined && err !== null && isDeviceStoreFault(err)) { this.noteStoreFault(now); return; }
+    if (this.storeFaultFirst !== null && this.storeWrites !== undefined && this.storeWrites() > this.storeWritesAtFault) {
+      this.storeFaultFirst = null;
+    }
+  }
 
   /**
    * The run as the store answers it at the top of a cycle: write-offs under this build's label since
@@ -467,6 +560,7 @@ export class DeadLetterLedger {
     this.runBefore = 0;
     this.runThisCycle = 0;
     this.heldSince = null;
+    this.storeFaultFirst = null;
   }
 
   /** Called once at the top of every sync cycle, so the per-cycle cap is per cycle. */

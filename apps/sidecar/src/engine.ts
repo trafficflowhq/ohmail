@@ -1561,6 +1561,8 @@ export async function discloseLocalSyncFailures(
       needsCredentialSince?: Date | null;
       /** Write-offs held by the local backstop: the mail is not arriving, and this is ours. */
       writeOffsHeldSince?: Date | null;
+      /** The device store refused a statement and nothing has stored since: the same news. */
+      storeFaultSince?: Date | null;
     };
     /** Absent on a caller that cannot say, which overlays nothing. */
     holderLooked?: boolean;
@@ -1609,7 +1611,7 @@ export async function discloseLocalSyncFailures(
       if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
         failures.set(r.mailboxId, "connect");
       }
-    } else if (r.connection.writeOffsHeldSince instanceof Date) {
+    } else if (r.connection.writeOffsHeldSince instanceof Date || r.connection.storeFaultSince instanceof Date) {
       /* BELOW THE CONNECTION'S FACTS: the server answers and this install's own store or pipeline
          refuses the mail, so the sentence is ours ("could not store this mail"), never the network. */
       failures.set(r.mailboxId, "storage");
@@ -4114,7 +4116,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const closeDialAfterSignOut = async (): Promise<void> => {
         await adapter.close().catch(() => { /* already going away */ });
       };
-      const deadLetters = new DeadLetterLedger({ holdAtCap: true });
+      const deadLetters = new DeadLetterLedger({
+        holdAtCap: true, ...(opened.storeWrites ? { storeWrites: () => opened.storeWrites!() } : {}),
+      });
       const syncDeps = {
         repo,
         /**
@@ -6203,6 +6207,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
         return cycles;
       };
+      /* THE STORE'S SENTENCE, SETTLED AT EVERY DRAIN'S END (both doors drain through here): a store
+         mark anywhere on what the drain threw raises it, a write the store committed since lowers it. */
+      const settledDrain = async (
+        maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean,
+      ): Promise<number> => {
+        try {
+          const cycles = await drain(maxCycles, gen, conn, organizing);
+          deadLetters.settleStoreFault(undefined);
+          return cycles;
+        } catch (err) {
+          deadLetters.settleStoreFault(err);
+          throw err;
+        }
+      };
 
       const drainPass = async (maxCycles = 100): Promise<number> =>
         serialize(async () => {
@@ -6310,7 +6328,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           let cycles = 0;
           drainDeclined = false;
           try {
-            cycles = await drain(maxCycles, gen, conn, organizing);
+            cycles = await settledDrain(maxCycles, gen, conn, organizing);
           } catch (err) {
             // Held: the request drain below runs once, then this is rethrown.
             cycleError = err;
@@ -6584,6 +6602,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
                 };
               }
+              // A store mark thrown outside the drain (the gate's own reads) raises the sentence too.
+              deadLetters.settleStoreFault(err);
               // Which of our ceilings ended it, as the hosted worker's line says; null otherwise.
               const ceiling = isImapBoundExceeded(err) ? err : null;
               log("sync_cycle_failed", {
@@ -6879,7 +6899,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           try {
             // `permitted`, the answer THIS launch's gate gave — the launch is a pass like any
             // other and its drain runs under the role that pass read.
-            await serialize(() => drain(100, gen, conn, permitted));
+            await serialize(() => settledDrain(100, gen, conn, permitted));
           } catch (err) {
             if (fetchRefused(err)) noteFetchRefused(err);
             else if (drainFailureKeepsTheLogin(err)) drainError = err;
@@ -7261,6 +7281,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                own header gives: two reads would be two clocks. */
             firstSync: firstSync.state(),
             writeOffsHeldSince: deadLetters.writeOffsHeldSince,
+            storeFaultSince: deadLetters.storeFaultSince,
           };
         },
         serialize,

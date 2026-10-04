@@ -185,6 +185,11 @@ export interface MailboxConnectionState {
    * elsewhere reads as "not held". The connection stands; the mail is not arriving.
    */
   writeOffsHeldSince?: Date | null;
+  /**
+   * SINCE WHEN A CYCLE HAS FAILED ON THIS DEVICE'S OWN STORE with nothing stored since — a fault that
+   * writes nothing off and holds every folder. `null` while the store answers. Read with the hold.
+   */
+  storeFaultSince?: Date | null;
 }
 
 /** Why this install is not organizing a mailbox, when it is not. One answer per mailbox. */

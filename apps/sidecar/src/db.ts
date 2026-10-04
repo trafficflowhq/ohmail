@@ -24,6 +24,8 @@ import {
 import { LocalStoreFs } from "./pglite-transport.js";
 import { makeStoreInMemory } from "./fresh-store.js";
 import { keepIngestPlans } from "./pglite-plans.js";
+import { markStoreStatement } from "@trafficflow/core/mail";
+import { anyWrite, statementKind, storeWriteGauge } from "./store-writes.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -314,6 +316,80 @@ function installCloseDoor(client: PGlite, log: Diagnostic | undefined): CloseDoo
   };
 }
 
+/** A transaction handle's statement methods: the ingest write runs on these, not on `client`. */
+const MARKED_TX_STATEMENTS = new Set<PropertyKey>(["query", "exec", "sql"]);
+
+/** Run one statement call, marking whatever it throws or rejects with as the store's. */
+function marked(op: string, call: () => unknown): Promise<unknown> {
+  let out: unknown;
+  try {
+    out = call();
+  } catch (err) {
+    return Promise.reject(markStoreStatement(op, err));
+  }
+  return Promise.resolve(out).catch((err: unknown) => { throw markStoreStatement(op, err); });
+}
+
+/**
+ * THE STORE'S STATEMENT DOOR, MARKED, outermost and in place. `query`/`exec` on the client, and in EVERY
+ * transaction (no lane condition) the handle's `query`/`exec`/`sql` and the driver's own begin and
+ * commit: a rejection out of `transaction` that the body did not throw is the driver's. What the BODY
+ * throws passes through unmarked — the pipeline's own errors stay its own, read by a sentinel, not by
+ * class. See `StoreStatementFaultError`.
+ */
+export function markStoreStatements(client: PGlite): { client: PGlite; storeWrites: () => number } {
+  const writes = storeWriteGauge();
+  for (const name of SCHEDULED_STORE_METHODS) {
+    const original = (client as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[name]!;
+    Object.defineProperty(client, name, {
+      configurable: true,
+      writable: true,
+      value: function markedCall(this: PGlite, ...args: unknown[]): Promise<unknown> {
+        if (name !== "transaction" || typeof args[0] !== "function") {
+          const text = typeof args[0] === "string" ? args[0] : "";
+          return marked(`store.${name}`, () => original.apply(this, args))
+            .then((v) => { if (name === "exec" ? anyWrite(text) : statementKind(text) === "write") writes.committed(true); return v; });
+        }
+        const body = args[0] as (tx: object) => Promise<unknown>;
+        let wrote = false;
+        let bodyThrew = false;
+        let bodyErr: unknown;
+        const markedBody = Object.assign(async (tx: object): Promise<unknown> => {
+          try {
+            return await body(new Proxy(tx, {
+              get(target, prop, receiver) {
+                const value = Reflect.get(target, prop, receiver) as unknown;
+                if (!MARKED_TX_STATEMENTS.has(prop) || typeof value !== "function") return value;
+                return (...a: unknown[]) => marked(`store.tx.${String(prop)}`,
+                  () => (value as (...b: unknown[]) => unknown).apply(target, a))
+                  .then((v) => {
+                    const text = typeof a[0] === "string" ? a[0] : "";
+                    if (prop === "exec" ? anyWrite(text) : statementKind(text) === "write") wrote = true;
+                    return v;
+                  });
+              },
+            }));
+          } catch (err) {
+            bodyThrew = true;
+            bodyErr = err;
+            throw err;
+          }
+        }, body);   // keeps `STORE_FLUSH` and any other mark the layers below read off the callback
+        let out: Promise<unknown>;
+        try {
+          out = Promise.resolve(original.call(this, markedBody, ...args.slice(1)));
+        } catch (err) {
+          return Promise.reject(markStoreStatement("store.transaction", err));
+        }
+        return out.then((v) => { writes.committed(wrote); return v; }, (err: unknown) => {
+          throw bodyThrew && err === bodyErr ? err : markStoreStatement("store.transaction", err);
+        });
+      },
+    });
+  }
+  return { client, storeWrites: writes.count };
+}
+
 /** Raised when the relaxed commits, the scheduler and the log flush were put on different clients. */
 export class StoreClientSplitError extends Error {
   constructor(readonly installers: readonly string[]) {
@@ -405,6 +481,11 @@ export interface OpenLocalDb {
    * reads and why it is the insert one.
    */
   foldIfLogGrew(): Promise<StoreFold>;
+  /**
+   * How many writes this store has committed (`store-writes.ts`): what lowers the store's sentence.
+   * Absent on a store that cannot say, which leaves the sentence to a stored message alone.
+   */
+  storeWrites?(): number;
   /**
    * WHICH RUN OF THIS STORE THE ROWS BEHIND IT BELONG TO — see {@link readStoreGeneration}.
    *
@@ -1736,6 +1817,10 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
        redone by every open. Nothing of the person's is in the store before this line. */
     if (fresh) markStoreFinished(dataDir);
     const migrateMs = Date.now() - tMigrate;
+    /* THE STORE'S MARK, OUTERMOST — above the close door, so a call it refuses is the store's — and
+       after the migrator, whose refusal names its own statement. See {@link markStoreStatements}. */
+    const statementMark = markStoreStatements(client);
+    assertOneStoreClient(client, { "statement mark": statementMark.client });
     // AFTER the migrator (the table must exist on a first launch) and BEFORE serving: a rewrite
     // holds an exclusive lock, and the one place that lock collides with nothing is here, where
     // no reader has the handle yet. See {@link reclaimBodyBloat} for the measured pathology and
@@ -1840,6 +1925,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       migrations,
       checkpoint,
       foldIfLogGrew,
+      storeWrites: statementMark.storeWrites,
       storeGeneration,
       storeBytes: () => storeHeapBytes(client),
       laneCensus: () => lanes.census(),

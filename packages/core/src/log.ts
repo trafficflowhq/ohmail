@@ -978,6 +978,35 @@ export function storeFaultOf(err: unknown): StoreFaultName | null {
   return null;
 }
 
+/**
+ * A throw that came out of a LOCAL ENGINE'S DEVICE STORE at a statement — the phone's proxy callbacks,
+ * the desktop's PGlite handle and every transaction handle it gives out, the phone's transaction-wait
+ * refusal. A SIBLING of the worker's `DatabaseFaultError`, never a subclass: that class's arm unwraps
+ * by `instanceof` and would strip the mark. Never wraps a transaction BODY, so what the pipeline
+ * throws stays its own. `message` is our op name; the driver's error is `cause`. The SQLSTATE
+ * identifiers (`code`, `constraint`, `table`, `routine`) are forwarded, so a reader that stops at the
+ * first coded layer — a unique-violation check, the Cloud mirror's integrity facts — sees them.
+ */
+export class StoreStatementFaultError extends Error {
+  readonly op: string;
+
+  constructor(op: string, cause: unknown) {
+    super(`the device store refused a statement at ${op}`, { cause });
+    this.name = "StoreStatementFaultError";
+    this.op = op;
+    const c = cause as Record<string, unknown> | null;
+    if (typeof c?.code === "string" && /^[0-9A-Z]{5}$/.test(c.code)) {
+      for (const key of ["code", "constraint", "constraint_name", "table", "routine"]) {
+        if (c[key] !== undefined) Object.defineProperty(this, key, { value: c[key], enumerable: false });
+      }
+    }
+  }
+}
+
+/** Mark `err` unless it already carries the mark. */
+export const markStoreStatement = (op: string, err: unknown): unknown =>
+  err instanceof StoreStatementFaultError ? err : new StoreStatementFaultError(op, err);
+
 /** Where a rendered line goes. Injected so a test can read what was written. */
 export type LogSink = (line: string) => void;
 

@@ -386,7 +386,7 @@ export function standaloneHere(): StandaloneHere | null {
       /* `every`, like `reachable`: one undialled mailbox is a connection nobody has tried yet. */
       dialled = conn.every((c) => c.dialled !== false);
       /* `some`, like the refusals: one mailbox whose mail has stopped is the news. */
-      writeOffsHeld = conn.some((c) => c.writeOffsHeldSince instanceof Date);
+      writeOffsHeld = conn.some((c) => c.writeOffsHeldSince instanceof Date || c.storeFaultSince instanceof Date);
       const since = conn
         .map((c) => c.unreachableSince)
         .filter((d): d is Date => d instanceof Date)

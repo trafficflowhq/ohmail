@@ -20,7 +20,7 @@ import type { FilingRefusalClass, OrganizerRole } from "@trafficflow/db";
 import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
-  DeadLetterLedger, classifyIngestFault, nextAttemptAfter,
+  DeadLetterLedger, classifyIngestFault, isStoreStatementFault, nextAttemptAfter,
   DETERMINISTIC_MESSAGE_FAILURE_CODES, MAX_DEAD_LETTERS_PER_CYCLE, MAX_MESSAGE_RETRIES_PER_CYCLE,
 } from "./dead-letter.js";
 import { KnownSetCache, watchKnownSet } from "./known-set.js";
@@ -1192,6 +1192,8 @@ async function syncCycleWithin(
         // throw leaves the function and that read is never reached this cycle. Deferring one folder was
         // unobservable — and narrower than the truth, since an infrastructure fault must hold ALL
         // folders' cursors. Do not re-add it: it would suggest the cycle continues past this point.
+        // The device store's own refusal is the hold's news too: the mail is not arriving, and it is ours.
+        if (isStoreStatementFault(err)) deadLetters.noteStoreFault();
         throw err;
       }
       const verdict = deadLetters.record(ch.locator, fault);
