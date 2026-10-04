@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.13] — 2026-10-04
+
 ### The approval page says when a computer asked from another network
 <!-- changes: fix-026-approval-names-a-different-network.md -->
 
@@ -85,11 +92,6 @@ app: on Android its memory class, 50,000 characters per MB of it; on iPhone the 
 It is never more than 8 million characters, and a phone that reports low memory, or does not say,
 draws at most 4 million. A message that would be longer
 with its images is drawn without them and says why, also after Show as text and Show original.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.12] — 2026-10-03
 
@@ -11167,7 +11169,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.12...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.13...HEAD
+[0.25.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.13
 [0.25.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.12
 [0.25.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.11
 [0.25.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.10

@@ -74,6 +74,20 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.13" date="2026-10-04">
+      <description>
+        <ul>
+          <li>The approval page says when a computer asked from another network</li>
+          <li>A reply edited while it waited to send goes out with the edited words</li>
+          <li>A self-hosted server tells its visitors apart</li>
+          <li>Restarting the desktop app waits for its mail engine</li>
+          <li>A Move is sent before the folder check</li>
+          <li>Undo puts a message back where it was in the Ohbox</li>
+          <li>One rule per sender, and a rule change waits for every organizer</li>
+          <li>A phone with less memory keeps a margin when it shows a long message's images</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.12" date="2026-10-03">
       <description>
         <ul>
@@ -147,13 +161,6 @@
           <li>A dropped mail server connection no longer closes the phone app</li>
           <li>A mail server reached over TLS that the machine cannot reach no longer stops the organizer</li>
           <li>The Microsoft sign-in note says where it applies</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.8" date="2026-10-01">
-      <description>
-        <ul>
-          <li>A crafted message body can no longer stall mail sync</li>
         </ul>
       </description>
     </release>
