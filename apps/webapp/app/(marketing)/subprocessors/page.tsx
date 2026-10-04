@@ -143,7 +143,7 @@ export default function SubprocessorsPage() {
                 <th scope="row">Mail, rules, tags, notes</th>
                 <td>
                   As long as your account exists. Removing a mailbox erases its
-                  mail. Past your plan&rsquo;s storage, the bodies of your oldest
+                  mail. As your plan&rsquo;s storage fills, the bodies of your oldest
                   messages are emptied to make room for new mail; the messages stay
                   findable, because their headers, preview and the words search
                   finds them by are kept.

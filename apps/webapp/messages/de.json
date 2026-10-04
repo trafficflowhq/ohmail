@@ -2113,7 +2113,7 @@
     "cloudTerm": "Cloud",
     "cloudTag": "von uns betrieben",
     "cloudRuns": "Unseren EU-Servern — derselbe Server, für dich betrieben, und wach, wenn deine Geräte es nicht sind.",
-    "cloudCopy": "Auf Servern in der Schweiz, verschlüsselt gespeichert, bis zum Speicherplatz deines Tarifs; darüber hinaus werden die Inhalte deiner ältesten Nachrichten geleert, um Platz für neue Post zu schaffen; die Nachrichten bleiben auffindbar, denn ihre Header, ihre Vorschau und die Wörter, über die die Suche sie findet, werden aufbewahrt. Mit deinem Konto aus der laufenden Datenbank gelöscht.",
+    "cloudCopy": "Auf Servern in der Schweiz, verschlüsselt gespeichert, bis zum Speicherplatz deines Tarifs; wenn sich der Speicherplatz deines Tarifs füllt, wird der gespeicherte Text deiner ältesten Nachrichten geleert, um Platz für neue Post zu schaffen; die Nachrichten bleiben auffindbar, denn ihre Header, ihre Vorschau und die Wörter, über die die Suche sie findet, werden aufbewahrt. Mit deinem Konto aus der laufenden Datenbank gelöscht.",
     "cloudAi": "Im Tarif enthalten und gezählt. Sind die Credits aufgebraucht, läuft die Post nur mit Regeln weiter.",
     "cloudCost": "Ab 9 $ im Monat, 14 Tage gratis.",
     "same": "Die Cloud ist Selbst-Hosting, das wir für dich erledigen: derselbe offene Server, derselbe Organizer, dasselbe Postfach als Master. Was sich ändert, ist, wessen Maschine die Kopie hält — und dass wir fürs Betreiben Geld nehmen.",

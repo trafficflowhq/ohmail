@@ -2113,7 +2113,7 @@
     "cloudTerm": "Cloud",
     "cloudTag": "managed",
     "cloudRuns": "Our EU servers — the same server, run for you, and awake when your devices are not.",
-    "cloudCopy": "On servers in Switzerland, encrypted at rest, up to your plan's storage; past it, the bodies of your oldest messages are emptied to make room for new mail; the messages stay findable, because their headers, preview and the words search finds them by are kept. Deleted from the live database with your account.",
+    "cloudCopy": "On servers in Switzerland, encrypted at rest, up to your plan's storage; as your plan's storage fills, the bodies of your oldest messages are emptied to make room for new mail; the messages stay findable, because their headers, preview and the words search finds them by are kept. Deleted from the live database with your account.",
     "cloudAi": "Included in your plan and metered. When the credits run out, mail keeps flowing rules-only.",
     "cloudCost": "From $9 a month, 14 days free.",
     "same": "Cloud is self-hosting, done for you: the same open server, the same organizer, the same mailbox as the master. What changes is whose machine holds the copy — and that we bill for running it.",
