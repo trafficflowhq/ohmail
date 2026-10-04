@@ -1134,7 +1134,7 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
      earlier member too. */
   ["away_responders_piles_closed", "ohmail/News"],
   /* Mail 0143_sync_blocked_reason_meta_undeletable — `meta_undeletable` (the needle MOVED from
-     0142's `meta_folder_full`, 0130's `provider_unavailable`, 0124's `account_closed`, 0105's
+     mail 0142's `meta_folder_full`, 0130's `provider_unavailable`, 0124's `account_closed`, 0105's
      `clock_off` and 0102's `read_limited`: one constraint, one definition, and a database carrying
      the newest member carries every earlier one). Against a 0142 database the worker's write for a
      folder that takes no delete is refused by the old CHECK, and the row keeps what it said before. */
