@@ -9,7 +9,7 @@ import { insertOrganizerRequest, listPressLegs, TERMINAL_REQUEST_STATES } from "
 import { accountWritesHere } from "./organizer-role.js";
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
-import { convergeRuleKey, findRulesByKey, type FoundRule } from "./rule-key.js";
+import { convergeRuleKey, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
 
 /** The one bound, pinned beside the decide's lift in `screener-apply.ts` and re-exported here. */
 export { RULE_PRIORITY_MAX };
@@ -626,13 +626,8 @@ export const RULE_TERM_MAX = 200;
 /** `rules.match` — bounded so a pathological value cannot reach a `WHERE` clause. */
 export const RULE_MATCH_MAX = 512;
 
-/** What identifies one rule on the wire. See the header: four fields, two of them nullable. */
-export interface RuleKey {
-  kind: string;
-  match: string;
-  subjectContains: string | null;
-  bodyContains: string | null;
-}
+/** What identifies one rule on the wire; defined in the leaf `rule-key.ts`, which imports nothing from here. */
+export type { RuleKey } from "./rule-key.js";
 
 /** `rule.create`'s payload, validated. */
 export interface ValidatedRuleCreate {

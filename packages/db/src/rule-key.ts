@@ -3,16 +3,23 @@ import { ACCOUNT_RULE_KEY_LOCK_CLASS, rules as rulesTbl } from "./schema-mail.js
 import { recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
-import type { RuleKey } from "./request-apply.js";
 
 /**
  * ONE RULE PER FOUR-FIELD KEY — the key lookup and the converge every rules writer goes through.
- * A leaf below `request-apply.ts` and `screener-apply.ts` (which imports nothing back from here
- * but types), so the Screener's decision and the organizer's apply share one door without an
- * import cycle between the two modules.
+ * A leaf below `request-apply.ts` and `screener-apply.ts`, importing nothing back from either (the
+ * key's type lives here for that reason), so the Screener's decision and the organizer's apply share
+ * one door without an import cycle between the modules.
  */
 
 const ledger = (tx: Tx): LedgerTx => tx as unknown as LedgerTx;
+
+/** What identifies one rule on the wire: four fields, two of them nullable (`request-apply.ts`'s header). */
+export interface RuleKey {
+  kind: string;
+  match: string;
+  subjectContains: string | null;
+  bodyContains: string | null;
+}
 
 /**
  * What a key lookup reads back: the row's identity, and EVERY column a request could write.
