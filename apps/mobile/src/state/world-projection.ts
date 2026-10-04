@@ -29,6 +29,7 @@ import {
   livePiles,
   liveReads,
   liveReceipts,
+  liveRowOpenTarget,
   liveScheduled,
   liveScreener,
   liveSearch,
@@ -264,7 +265,9 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       message: (id) => liveMessage(engine, id, {
         now, zone, locale, foldersEnabled: foldersOn,
         ownAddresses: inp.ownAddresses, mailboxes, screening: posture, tags,
-      }, base === raw ? presented.world : undefined, { reader: pres, openHeld }),
+      }, base === raw ? presented.world : undefined),
+      /* Over the reader and held row the Ohbox list folds with, so a press and its row agree. */
+      rowOpenTarget: (id) => liveRowOpenTarget(pres, id, openHeld) ?? id,
       filesOf: (id) => liveFiles(engine, id),
       search: liveSearch(engine, base, v),
       store: {

@@ -467,6 +467,12 @@ export interface World {
    */
   autoAct: { on: boolean; suggestOn: boolean; pending: boolean; set(on: boolean): Promise<boolean> } | null;
   message(id: string): WorldMail | undefined;
+  /**
+   * WHAT A PRESS ON AN OHBOX ROW OPENS: the engine's `rowOpenTarget` for the pressed row's message
+   * (the message itself where nothing holds it), asked at the press and nowhere else. The route and
+   * the pane carry the answer as the open's id, so every later mount of that open reads the same id.
+   */
+  rowOpenTarget(id: string): string;
   /** One message's files, where a screen shows a row it holds rather than a reading row. */
   filesOf(id: string): WorldAttachment[] | undefined;
   /**
@@ -681,6 +687,7 @@ function emptyWorld(actions: WorldActions): World {
     face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
     autoAct: null,
     message: () => undefined,
+    rowOpenTarget: (id) => id,
     filesOf: () => undefined,
     store: {
       walker: null,

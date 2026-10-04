@@ -22,7 +22,6 @@ import { useEngineQueuesAsk, useWorld, type World, type WorldMail, type WorldUns
 import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
-import { messageRoute } from "../../src/ui/conversation-mark";
 import { MailList, type ListGroup } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
@@ -51,9 +50,10 @@ function OhboxBody() {
   useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
-     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. A row
-     press here carries the conversation mark; an open that migrated in from elsewhere does not. */
-  const { open, openRow, close, conversation } = useListDetail((id) => messageRoute(id, true), { conversation: true });
+     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. A press
+     opens what the engine's row answers for it (`World.rowOpenTarget`), decided here once: the route
+     and the pane carry that id, and no fold, unfold or rotation asks the row again. */
+  const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
   /* Under a pushed reader this screen is hidden: it keeps what it showed (`held-while-hidden.ts`). */
   const focused = useIsFocused();
   const kept = useRef<{ ohbox: World["ohbox"]; doorbell: World["doorbell"] } | null>(null);
@@ -85,7 +85,7 @@ function OhboxBody() {
       <MailList
         groups={groups}
         rowKey={(m) => m.rowKey ?? m.id}
-        renderRow={(m) => <MailRow m={m} onPress={() => openRow(m.id)} swipe />}
+        renderRow={(m) => <MailRow m={m} onPress={() => openRow(w.rowOpenTarget(m.id))} swipe />}
         rowInset={6}
         refresh={pull}
         head={
@@ -143,9 +143,9 @@ function OhboxBody() {
     <ListDetail
       open={open}
       onClose={close}
-      toRoute={(id) => messageRoute(id, conversation)}
+      toRoute={(id) => `/message/${id}`}
       list={list}
-      renderDetail={(id, ctx) => <MessageReader id={id} asConversation={conversation} inPane={ctx.inPane} onClose={ctx.onClose} />}
+      renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
   );
 }

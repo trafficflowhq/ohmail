@@ -406,8 +406,6 @@ export type WorldEarlier = Held & { attachments?: WorldAttachment[] };
 export type WorldMail = Omit<Mail, "earlier"> & {
   /** The rest of the conversation, oldest → newest, each member with its files. */
   earlier: WorldEarlier[];
-  /** What a row open of this conversation acts on (`rowOpenTarget`), attached by the world projection. */
-  rowOpenTarget?: string;
   attachments?: WorldAttachment[];
   bodyState?: BodyState;
   /** WHICH policy emptied a `withheld` body — the reader owes each marker its own sentence. */
@@ -1739,9 +1737,9 @@ export function historyRow(raw: EntityReader, m: EngineMessage, v: WorldView): W
 }
 
 /**
- * WHAT A ROW OPEN OF `id`'S CONVERSATION ACTS ON — the engine's `rowOpenTarget`, asked over the
- * reader and the held row the Ohbox list itself folds with (`liveOhbox`), so the reader and the row
- * cannot disagree. `undefined` for a message the reader does not hold.
+ * WHAT A PRESS ON `id`'S OHBOX ROW OPENS — the engine's `rowOpenTarget`, asked over the reader and
+ * the held row the Ohbox list itself folds with (`liveOhbox`), so the press and the row cannot
+ * disagree. `undefined` for a message the reader does not hold.
  */
 export function liveRowOpenTarget(rows: EntityReader, id: string, openHeld: string | null): string | undefined {
   const m = rows.get<EngineMessage>("message", id);
@@ -1759,8 +1757,6 @@ export function liveMessage(
   engine: OhmailEngine, id: string, v: WorldView,
   /** The projection of the raw mirror under this same view, when the caller already holds it. */
   presented?: PresentedWorld,
-  /** The reader and held row the Ohbox list folds with: given, the row-open target is attached. */
-  rows?: { reader: EntityReader; openHeld: string | null },
 ): WorldMail | undefined {
   // The view's own folder flag rides into the projection — a folder-filed message opened from
   // the folder screen is otherwise a History drop (`placeOf` null ⇒ `get` answers undefined)
@@ -1813,7 +1809,6 @@ export function liveMessage(
   row.loadedRemoteContent = hydrated.loadedRemoteContent;
   row.inlineImages = engine.inlineImagesOf(id);
   Object.assign(row, filesField(engine, id));
-  if (rows) row.rowOpenTarget = liveRowOpenTarget(rows.reader, id, rows.openHeld);
   return row;
 }
 

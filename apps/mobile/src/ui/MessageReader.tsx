@@ -27,7 +27,6 @@ import { usePosture } from "./posture";
 import { readerVerbMode } from "./reader-verbs";
 import { scaffoldPlan } from "./scaffold/plan";
 import { paneScrollOf, recordPaneScroll } from "./pane-memory";
-import { readerShownId } from "./reader-shown";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -38,15 +37,12 @@ export function MessageReader({
   id,
   inPane = false,
   onClose,
-  asConversation = false,
 }: {
   id: string;
   /** Mounted beside its list — no back bar of its own; the pane or the rail carries Back. */
   inPane?: boolean;
   /** Leaves the reader: `router.back()` on the route, clearing the selection in a pane. */
   onClose?: () => void;
-  /** Opened by an Ohbox row press: the row's own target is shown and acted on (`readerShownId`). */
-  asConversation?: boolean;
 }) {
   const t = useTheme();
   const w = useWorld();
@@ -54,16 +50,7 @@ export function MessageReader({
   const narrowFrom = useWindowDimensions().width < FROM_LINE_SPLIT_DP;
   // The reader draws the body, so it subscribes to it: a body landing redraws this pane alone.
   useBodyStamp();
-  const opened = w.message(id);
-  /* THE MESSAGE SHOWN AND ACTED ON, decided once per open: from an Ohbox row press, the row's own
-     target; anything else, the opened message. The open below still reads `id`. A change to the
-     row while the reader is up does not take the screen from under it. */
-  const pinned = useRef<{ id: string; asConversation: boolean; shown: string } | null>(null);
-  if (opened && (pinned.current?.id !== id || pinned.current.asConversation !== asConversation)) {
-    pinned.current = { id, asConversation, shown: readerShownId(opened, asConversation) };
-  }
-  const shownId = pinned.current?.id === id ? pinned.current.shown : id;
-  const m = (shownId !== id ? w.message(shownId) : undefined) ?? opened;
+  const m = w.message(id);
   /* The rail carries Back where it carries the verbs (the closed Duo, the unfolded landscape):
      a detail bar above it would stand Back twice. */
   const railBack = readerVerbMode(scaffoldPlan(usePosture(), platformName)) === "rail";
@@ -106,19 +93,18 @@ export function MessageReader({
   const shed = m?.bodyState === "snippet" || m?.bodyState === "loading";
   const [refillExpired, setRefillExpired] = useState(false);
   const owedFor = useRef<string | null>(null);
-  const bodyId = m?.id ?? id;
   useEffect(() => {
     setRefillExpired(false);
     if (!leaving) return;
-    owedFor.current = bodyId;
+    owedFor.current = id;
     const timer = setTimeout(() => setRefillExpired(true), JUNK_REFILL_BOUND_MS);
     return () => clearTimeout(timer);
-  }, [bodyId, leaving]);
+  }, [id, leaving]);
   useEffect(() => {
-    if (!shed || owedFor.current !== bodyId) return;
+    if (!shed || owedFor.current !== id) return;
     owedFor.current = null;
-    hydrateMessage(bodyId);
-  }, [bodyId, shed, hydrateMessage]);
+    hydrateMessage(id);
+  }, [id, shed, hydrateMessage]);
 
   if (!m) {
     return (
