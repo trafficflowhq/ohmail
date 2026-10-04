@@ -67,6 +67,20 @@ function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
   );
 }
 
+/**
+ * A STORED PORT AS THE DIAL READS IT, and the one place the three API doors read one. A row written
+ * before the create path validated its body can hold `"993"`, which the organizer has always dialled
+ * (the worker's `toTransport` applies this rule); handed on raw, the port rule refused it with the
+ * host sentence. Digits become the number they spell, nothing stored stays nothing (the caller's
+ * default follows), and anything else is handed on as stored, for the port rule to refuse it as it
+ * always has. The rule's set (`MAIL_DIAL_PORTS`) is not this function's to widen.
+ */
+export function dialPort(stored: unknown): number | undefined {
+  if (stored === undefined || stored === null) return undefined;
+  if (typeof stored === "string" && /^[0-9]{1,5}$/.test(stored)) return Number(stored);
+  return stored as number;
+}
+
 /** One stored leg of a mailbox: where it dials, its TLS mode and its own plaintext consent. */
 interface DialLeg { host: string; port: number; secure: boolean; consent: boolean }
 

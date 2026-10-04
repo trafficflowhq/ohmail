@@ -4,7 +4,7 @@ import {
   buildImapAuth, learnSmtpMaxSize, oauthSmtpEndpoint, verifySmtpLogin,
   type CredMetaAuth, type SmtpSizeCreds, type SmtpSizeDial, type SmtpSizeOutcome,
 } from "@trafficflow/core/adapters/imap";
-import { dialFieldsFor } from "./dial-host-guard.js";
+import { dialFieldsFor, dialPort } from "./dial-host-guard.js";
 import { PROBE_TIMEOUTS } from "./imap-probe.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -128,7 +128,7 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
       creds: {
         // No static auth in the coordinates: a bearer token is not transport state. See
         // `verifySmtpLogin`, which presents it at the AUTH step and nowhere else.
-        ...oauthSmtpEndpoint(imapMeta.smtp),
+        ...oauthSmtpEndpoint(imapMeta.smtp && { ...imapMeta.smtp, port: dialPort(imapMeta.smtp.port) }),
         auth: buildImapAuth(imapMeta, secret, deps.oauth?.forMailbox(mailboxId)),
       },
       credentialsTransport: "imap",
@@ -151,7 +151,7 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
   if (host === "" || user === "") return undefined;
   return {
     creds: {
-      host, port: smtpMeta.port ?? 587, secure: smtpMeta.secure ?? false,
+      host, port: dialPort(smtpMeta.port) ?? 587, secure: smtpMeta.secure ?? false,
       auth: { user, pass: secret },
       // The smtp row's own consent, as `send-adapter.ts` reads it; the fallback borrows none.
       ...(smtpRow && smtpMeta.insecureConsent === true ? { allowInsecure: true } : {}),

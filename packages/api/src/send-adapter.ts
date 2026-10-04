@@ -4,7 +4,7 @@ import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core
 import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
 import { SendConnections, type SendAdapter, type WarmSendAdapter } from "@trafficflow/core/mail";
 import { MailboxSideRefusal } from "@trafficflow/services/mail";
-import { dialFieldsFor } from "./dial-host-guard.js";
+import { dialFieldsFor, dialPort } from "./dial-host-guard.js";
 import { requireImapCredential } from "./attachments-adapter.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -65,7 +65,7 @@ export async function makeSendAdapter(
   return keep.open(mailboxId, async (): Promise<WarmSendAdapter> => {
 
     const imapMeta = (imapRow.meta ?? {}) as CredMeta;
-    const imapPort = imapMeta.port ?? 993;
+    const imapPort = dialPort(imapMeta.port) ?? 993;
     // BEFORE the secret is decrypted, and before any transport exists: a server this deployment
     // will not dial should cost no key material, and a refusal that arrives after the adapter is
     // built is a refusal that arrives after a socket may have opened. See {@link dialFieldsFor}.
@@ -90,7 +90,7 @@ export async function makeSendAdapter(
       const s = imapMeta.smtp ?? {};
       smtpConfig = {
         host: s.host ?? "smtp.office365.com",
-        port: s.port ?? 587,
+        port: dialPort(s.port) ?? 587,
         secure: s.secure ?? false,
       };
     } else {
@@ -122,7 +122,7 @@ export async function makeSendAdapter(
       const smtpUser = smtpMeta.user ?? imapMeta.user ?? "";
       smtpConfig = {
         host: smtpMeta.host ?? imapMeta.host ?? "",
-        port: smtpMeta.port ?? 587,
+        port: dialPort(smtpMeta.port) ?? 587,
         secure: smtpMeta.secure ?? false,
         // GreenMail runs with auth disabled; omit auth when there is no user to bind.
         ...(smtpUser ? { auth: { user: smtpUser, pass: smtpPass } } : {}),

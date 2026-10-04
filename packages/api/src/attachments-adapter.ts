@@ -4,7 +4,7 @@ import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core
 import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
 import { isMessageGone } from "@trafficflow/core/mail";
 import type { ApiDeps } from "./deps.js";
-import { dialFieldsFor } from "./dial-host-guard.js";
+import { dialFieldsFor, dialPort } from "./dial-host-guard.js";
 import { imapAdmission } from "./routes/shared.js";
 import { IMAP_OPERATION_DEADLINE_MS, raced } from "./imap-budget.js";
 
@@ -254,7 +254,7 @@ async function openImapUnderCap(
     const meta = (imapRow.meta ?? {}) as CredMetaAuth & {
       host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;
     };
-    const imapPort = meta.port ?? 993;
+    const imapPort = dialPort(meta.port) ?? 993;
     /* THE HOST GUARD, BEFORE EITHER SLOT. This door dials the same stored hostname the send path
      * does, with the same credential, and the check that cleared it ran once at add time — so it
      * runs here too, and the dial goes to what it cleared ({@link dialFieldsFor}). Ahead of the
