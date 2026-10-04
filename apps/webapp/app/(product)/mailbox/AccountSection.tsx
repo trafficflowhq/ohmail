@@ -219,15 +219,19 @@ export function AccountSection() {
       }
       // Back to the top, the typed address kept. A refusal the SERVER answered rolled its one
       // transaction back and is said in our words, never its "internal error", naming what the
-      // release had already done; one whose outcome it could not confirm says exactly that. A
-      // request that never got an answer keeps the client's own sentence, which claims nothing.
+      // release had already done. An outcome nobody confirmed (the server said so, or a 5xx with no
+      // envelope of ours: the function cut mid-erasure) says exactly that, with the release's known
+      // outcome. A request that never got an answer keeps the client's own sentence.
       const released = releaseOf(err);
       const cancelled = released === "cancelled" || cancelledEarlier;
       if (released === "cancelled") setCancelledEarlier(true);
+      const unconfirmed = err instanceof ApiError
+        && (err.code === "erasure_unconfirmed" || (err.status >= 500 && !err.wire.coded));
       setStage("facts");
       setError(why === "sign-in" ? td("stepUpExpired")
         : !(err instanceof ApiError && err.status >= 400) ? sentence(err)
-          : err.code === "erasure_unconfirmed" ? t("eraseUnconfirmed")
+          : unconfirmed ? (cancelled ? t("eraseUnconfirmedSubCancelled")
+            : released === "cancel_failed" ? t("eraseUnconfirmedSubFailed") : t("eraseUnconfirmed"))
             : cancelled ? t("eraseRefusedSubCancelled")
               : released === "cancel_failed" ? t("eraseRefusedSubFailed") : t("eraseRefused"));
     }

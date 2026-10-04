@@ -2344,6 +2344,8 @@
     "eraseRefusedSubCancelled": "Dein Konto wurde nicht gelöscht. Dein Abo wurde vor dem Fehler gekündigt; sonst wurde nichts entfernt. Beginne die Bestätigung von vorn, um das Konto zu löschen.",
     "eraseRefusedSubFailed": "Dein Konto wurde nicht gelöscht, und es wurde nichts entfernt. Dein Abo kann noch laufen. Beginne die Bestätigung von vorn, um es erneut zu versuchen.",
     "eraseUnconfirmed": "Wir konnten nicht bestätigen, ob dein Konto gelöscht wurde. Lade diese Seite neu: Fragt sie nach einer Anmeldung, wurde das Konto gelöscht.",
+    "eraseUnconfirmedSubCancelled": "Wir konnten nicht bestätigen, ob dein Konto gelöscht wurde. Dein Abo wurde gekündigt. Lade diese Seite neu: Fragt sie nach einer Anmeldung, wurde das Konto gelöscht.",
+    "eraseUnconfirmedSubFailed": "Wir konnten nicht bestätigen, ob dein Konto gelöscht wurde, und dein Abo kann noch laufen. Lade diese Seite neu: Fragt sie nach einer Anmeldung, wurde das Konto gelöscht.",
     "loading": "Diese Sitzung wird geprüft …",
     "mail": "Deine Post liegt auf deinem eigenen Server, in den ohmail-Ordnern, in die sie einsortiert ist. Das hier löscht unsere Kopie; dein Postfach bleibt genau so organisiert, wie es jetzt ist.",
     "goneTitle": "Gelöscht",
