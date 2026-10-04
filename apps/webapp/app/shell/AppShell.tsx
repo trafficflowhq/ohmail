@@ -2053,8 +2053,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        * be a copy of that rule waiting to drift.
        */
       openReply,
-      forward: openForward,
-      forwardTargetOf: forwardTargetFor,
+      forward: openForward, forwardTargetOf: forwardTargetFor,
       /**
        * WHERE THIS LANE'S REPLY HAS GOT TO, WITH THE ROW'S OWN WITNESS IN IT — see
        * `replySendState`. One reading of the hold, two surfaces.
