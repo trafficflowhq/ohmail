@@ -332,26 +332,30 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
 }
 
 /**
- * THE KEY A REPLY OR FORWARD LANE'S SEND IS ALREADY GOING UNDER — queued, on the wire, or on disk
- * for a replay that has not taken its turn. A re-press JOINS it (the engine supersedes the older
- * entry under one key), so a flush or a boot replay carrying the lane never meets a second key.
- * The compose lane is excluded: it names every new message, and its hold is the session latch.
+ * THE KEY THIS LANE'S SEND IS ALREADY GOING UNDER — queued, on the wire, on disk for a replay that
+ * has not taken its turn, or kept past a day. A re-press JOINS it (the engine supersedes the older
+ * entry under one key). A send confirmed and kept only for its echo is not standing. The compose
+ * lane names every new message, so it joins only a kept send of this same message (`fp`).
  */
-export function standingSendKey(engine: OhmailEngine, lane: string): string | null {
-  if (lane === COMPOSE_SEND_KEY) return null;
+export function standingSendKey(engine: OhmailEngine, lane: string, fp: string | null = null): string | null {
   const surface = lane.startsWith("fwd:") ? "inline" : "compose";
   const onLane = (m: { kind?: string } | undefined): boolean =>
     m?.kind === "mail_send" && sendKeyOf(m as unknown as MailSend, surface) === lane;
+  const kept = typeof engine.abandoned === "function" ? engine.abandoned() : [];
+  const expired = kept.filter((a) => a.error.code === SEND_EXPIRED_CODE && onLane(a.mutation));
+  if (lane === COMPOSE_SEND_KEY) {
+    return fp === null ? null : expired.find((a) => sendFingerprint(a.mutation as unknown as MailSend) === fp)?.key ?? null;
+  }
   // A hand-rolled partial engine (a surface test's double) may lack the wire or the reader.
   const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
-  for (const p of [...engine.pendingMutations(), ...wire]) if (onLane(p.mutation)) return p.key;
+  for (const p of [...engine.pendingMutations(), ...wire]) {
+    if (onLane(p.mutation) && (p as { confirmed?: true }).confirmed !== true) return p.key;
+  }
   const disk = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) : [];
   for (const r of disk as ReadonlyArray<OutboxRow & { key?: string }>) {
     if (pendingSendRow(r) && onLane(r.mutation) && typeof r.key === "string") return r.key;
   }
-  // A send kept past a day and refused before it dialled: pressing again goes under its key.
-  const kept = typeof engine.abandoned === "function" ? engine.abandoned() : [];
-  return kept.find((a) => a.error.code === SEND_EXPIRED_CODE && onLane(a.mutation))?.key ?? null;
+  return expired[0]?.key ?? null;
 }
 
 /**
@@ -379,10 +383,10 @@ export function standingSendKey(engine: OhmailEngine, lane: string): string | nu
 const outboxLanesCache = new WeakMap<EntityReader, { at: number; lanes: Set<string> }>();
 
 /** An outbox row as this reader needs it. `withdrawn`: Cancel's mark, kept until the next boot drops the row. */
-type OutboxRow = { mutation?: { kind?: string }; withdrawn?: boolean };
+type OutboxRow = { mutation?: { kind?: string }; withdrawn?: boolean; confirmed?: boolean };
 
 /** A send still on its way: a `mail_send` row that Cancel did not withdraw. */
-const pendingSendRow = (r: OutboxRow): boolean => r.mutation?.kind === "mail_send" && r.withdrawn !== true;
+const pendingSendRow = (r: OutboxRow): boolean => r.mutation?.kind === "mail_send" && r.withdrawn !== true && r.confirmed !== true;
 
 export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): boolean {
   const reader = engine.read();
@@ -1448,7 +1452,8 @@ export function useMailSend(
         // and releasing the lane would delete the record saying an earlier message may already
         // have been delivered — see `releaseSendLock`.
         const fp = sendFingerprint(m);
-        if (next.phase !== "unverified") releaseSendLock(key, fp, owner.current);
+        // A send kept past a day keeps its record standing, unmarked: the next press resumes its key.
+        if (res.error?.code === SEND_EXPIRED_CODE) { /* standing */ } else if (next.phase !== "unverified") releaseSendLock(key, fp, owner.current);
         // DURABLY, because the phase below is component state: reopening the draft, a reload or
         // another tab all start from `idle`, and each of those is a way back to a send that may
         // already have gone. The lock is the only thing that survives them.
@@ -1704,7 +1709,8 @@ export function useMailSend(
          wire is carrying — a second key for a message that may yet be delivered. Nothing
          beyond the release and the sentence: settling is the `confirmed` ending, and the row
          the adapter made for a press that carried none is not adopted here. */
-      releaseSendLock(record.lane, record.fp, owner.current);
+      // A send kept past a day keeps its record standing: the next press resumes its key.
+      if (res.error?.code !== SEND_EXPIRED_CODE) releaseSendLock(record.lane, record.fp, owner.current);
       /* The live path's own failure sentence, on the surface this answer is about: without it
          the composer comes back editable saying nothing, which is a message the person
          pressed Send on and no account of what happened to it. */
@@ -1989,7 +1995,7 @@ export function useMailSend(
       const subject = id.subjects[0];
       /* THROUGH THE IDENTITY, not the fingerprint alone: the session and the subjects scope the resume. */
       const resumed = resumeSendLock(key, id, now, owner.current);
-      const standing = standingSendKey(engine, key);
+      const standing = standingSendKey(engine, key, fp);
       const sendKey = standing ?? resumed ?? crypto.randomUUID();
       if (sendKey !== resumed) {
         claimSendLock({

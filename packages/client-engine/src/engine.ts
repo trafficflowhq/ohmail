@@ -346,6 +346,8 @@ interface PendingMutation {
   andDone?: SendAndDonePlan;
   /** The intent was handed over on a confirmation — see {@link PersistedOutboxEntry.released}. */
   released?: true;
+  /** A send the server confirmed, kept only for its echo — see {@link PersistedOutboxEntry.confirmed}. */
+  confirmed?: true;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
   /** Epoch ms before which no drive may dispatch this verb. */
@@ -496,6 +498,11 @@ interface PersistedOutboxEntry {
    * no intent, so a Done the person undid is not filed a second time. Absent reads as not handed.
    */
   released?: boolean;
+  /**
+   * A SEND THE SERVER CONFIRMED, kept only until its echo is in the mirror. It is no standing send:
+   * a new reply to the same message must not join its key and be answered "already sent".
+   */
+  confirmed?: boolean;
 }
 
 /**
@@ -582,6 +589,7 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...(p.owner !== undefined ? { owner: p.owner } : {}),
     ...andDoneOf(p),
     ...(p.released === true ? { released: true } : {}),
+    ...(p.confirmed === true ? { confirmed: true } : {}),
   };
 }
 
@@ -3312,6 +3320,7 @@ export class OhmailEngine {
       ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
       // A released intent stays on the row as a record and never rides a replay's confirmation.
       ...(e.released === true ? { released: true as const } : andDoneOf(e)),
+      ...(e.confirmed === true ? { confirmed: true as const } : {}),
       /**
        * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
        * 2` shape in place, so records written before it can carry a `nextAt` that came from a `Retry-After` and no
@@ -7773,9 +7782,10 @@ export class OhmailEngine {
       // idempotency machinery answers with the stored response, never a second effect.
       const intent = p.released === true ? undefined : p.andDone;
       if (!echoPending && this.settleConfirmed(p.id, p.mutation, shadow)) await this.dropOutbox(p.id);
-      else if (intent !== undefined) {
-        // KEPT for its echo: the intent is handed over on THIS result, so the row says so.
-        p.released = true;
+      else if (p.mutation.kind === "mail_send") {
+        // KEPT for its echo: the send is confirmed and its intent handed over on THIS result.
+        p.confirmed = true;
+        if (intent !== undefined) p.released = true;
         await this.putOutbox(p);
       }
       // The Sent copy was materialised the instant the server confirmed, above — a rejection
@@ -8195,7 +8205,7 @@ export class OhmailEngine {
   }
 
   /** The verbs on the queue, a running flush's batch included until each one's own turn. */
-  pendingMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan }> {
+  pendingMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan; confirmed?: true }> {
     return [...this.queue];
   }
 
