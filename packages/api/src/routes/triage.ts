@@ -4,7 +4,6 @@ import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { triage, readBody } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
-import { refuseSupersededReplay } from "../superseded-replay.js";
 
 /** The wire body for a triage set. The resurface time is accepted under either the
  * contract's `bubbleUpAt` or the plan's `untilTs` alias (bubbled_up requires it). */
@@ -30,8 +29,6 @@ export const triageRoutes: Route[] = [
     options: { idempotent: true },
     handler: async (req, deps, params) => {
       const body = await readBody<TriageWireBody>(req);
-      const stale = await refuseSupersededReplay(req, deps, [params.id!]);
-      if (stale) return stale;
       const setBody: TriageSetBody = { state: body.state, bubbleUpAt: body.bubbleUpAt ?? body.untilTs };
       const dto = await triage(deps).setState(serviceContext(deps, req), params.id!, setBody, {
         idempotency: deps.idempotency ?? null,

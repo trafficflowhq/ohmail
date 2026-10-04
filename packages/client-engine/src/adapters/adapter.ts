@@ -321,8 +321,6 @@ export interface EngineAdapter {
       createAttempted?: boolean;
       createdRow?: CreatedDraftRow;
       onDraftRow?: (row: CreatedDraftRow) => Promise<void>;
-      /** When the press was made, sent only on a state verb replayed past the server's 24 h record. */
-      decidedAt?: string;
     },
   ): Promise<MutationAnswer>;
   /**

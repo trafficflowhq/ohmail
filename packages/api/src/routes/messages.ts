@@ -11,7 +11,6 @@ import {
   message, drafting, drafter, readBody, spendOf, accessPortOf, refundObligationsOf,
 } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
-import { refuseSupersededReplay } from "../superseded-replay.js";
 
 /**
  * Messages. `GET /messages?view=…` is the view-partitioned list (400 on a missing or unknown
@@ -127,8 +126,6 @@ export const messageRoutes: Route[] = [
     options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<MarkSeenBody>(req);
-      const stale = await refuseSupersededReplay(req, deps, Array.isArray(body?.ids) ? body.ids : []);
-      if (stale) return stale;
       const { items, seq } = await message(deps).markSeen(serviceContext(deps, req), body);
       return jsonResponse({ items }, { status: 200, seq });
     },
@@ -205,8 +202,6 @@ export const messageRoutes: Route[] = [
     options: { idempotent: true },
     handler: async (req, deps, params) => {
       const body = await readBody<MoveBody>(req);
-      const stale = await refuseSupersededReplay(req, deps, [params.id!]);
-      if (stale) return stale;
       const result = await message(deps).move(serviceContext(deps, req), params.id!, body, {
         idempotency: deps.idempotency ?? null,
       });
@@ -252,8 +247,6 @@ export const messageRoutes: Route[] = [
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
-      const stale = await refuseSupersededReplay(req, deps, [params.id!]);
-      if (stale) return stale;
       const result = await message(deps).delete(serviceContext(deps, req), params.id!, {
         idempotency: deps.idempotency ?? null,
       });
