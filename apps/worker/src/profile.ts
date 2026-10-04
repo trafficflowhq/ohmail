@@ -4,7 +4,7 @@ import {
   profileImportWriteReleased, askStands, readImportAsk, resolveImportAsk,
   type ImportAskRefusal,
   mailboxProfileMirror, recordChanges, recordMailboxProfileChange,
-  type LedgerTx, type Tx, auditAction, fencedAccountWrite,} from "@trafficflow/db";
+  type LedgerTx, type Tx, auditAction, fencedAccountWrite, fenceErasedMailbox, lockAccountRuleKeys,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
    `@trafficflow/core`'s index carries `export *` lines that convey the whole AI runtime
@@ -1239,9 +1239,13 @@ export class OrganizerProfileSync {
       return;
     }
     const doc = read.doc;
-    /* FOR UPDATE at the head, mailbox scope: the merge updates the mailbox row, and a share held
-       while waiting on the merge's lock would deadlock against a request's inline merge. */
-    await fencedAccountWrite(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, lock: "update" }, async (tx) => {
+    /* FOR UPDATE, mailbox scope: the merge updates the mailbox row, and a share held while waiting
+       on the merge's lock would deadlock against a request's inline merge. The merge writes rules,
+       so the account's rule-key lock comes between the account and the mailbox row (every rules
+       writer's order), and both appliers then serialize on it before either touches the row. */
+    await fencedAccountWrite(deps.db, { accountId: deps.accountId, lock: "update" }, async (tx) => {
+      await lockAccountRuleKeys(tx as Tx, deps.accountId);
+      await fenceErasedMailbox(tx as Tx, dialect(tx as Tx), deps.mailboxId, "update");
       await applyOrganizerProfile(tx as LedgerTx, {
         accountId: deps.accountId, mailboxId: deps.mailboxId, doc, fingerprint, now,
       });

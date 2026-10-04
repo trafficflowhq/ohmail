@@ -15,6 +15,7 @@ import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
   inverseMutations,
+  oneRowPerKey,
   physicalFolderOf,
   heldReleaseDismissedOf,
   heldReleaseFingerprintOf,
@@ -1792,7 +1793,8 @@ export function useScreenerState(
       // undecided) and an address rule cannot say "undecided": said, never performed.
       const wide = holding.find((r) => r.kind !== "sender");
       if (wide) { ruleStands(row.sender, "spam", ruleMatchKey(wide.match)); return; }
-      const deletions: EngineMutation[] = holding.map((r) => ({ kind: "rule_delete", ruleId: r.id }));
+      // One DELETE per key: the server takes every row under it, so a second would answer 404.
+      const deletions: EngineMutation[] = oneRowPerKey(holding).map((r) => ({ kind: "rule_delete", ruleId: r.id }));
       const back = physicallyHeldIn(raw, row.sender, FOLDER_OF_VIEW.spam);
       if (releaseWithUndo(row.sender, "spam", "screener", deletions, back, t("toastNotSpamWaiting", { sender: senderLabel(row.sender) }))) return;
       void releaseHeld(

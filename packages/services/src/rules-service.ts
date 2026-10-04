@@ -541,6 +541,9 @@ export class RulesService {
       const [before] = await tx.select({
         destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
         bodyContains: rules.bodyContains, match: rules.match, priority: rules.priority,
+        // The key's match as the store itself folds it, so the lookup below compares one
+        // normaliser with itself (SQL `lower` and JS `toLowerCase` differ past ASCII on some stores).
+        matchKey: sql<string>`${ruleMatchKeySql(rules.match)}`,
       }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
 
@@ -638,10 +641,12 @@ export class RulesService {
          runs and the row this press changed are then one row. A PATCH that moves the KEY converges
          the NEW key onto the moved row and leaves the old key's other rows: an edit of one rule
          never removes a rule the person did not name. */
-      const oldKey = keyFields(before);
+      const oldKey: RuleKey = { ...keyFields(before), match: before.matchKey };
       const newKey: RuleKey = {
         kind: (set.kind as string | undefined) ?? before.kind,
-        match: ruleMatchKey((set.match as string | undefined) ?? before.match),
+        // An unchanged match keeps the store's own folding, or the key reads as moved where SQL and
+        // JS lowercase differently.
+        match: set.match === undefined ? oldKey.match : ruleMatchKey(set.match as string),
         subjectContains: set.subjectContains === undefined ? before.subjectContains : (set.subjectContains as string | null),
         bodyContains: set.bodyContains === undefined ? before.bodyContains : (set.bodyContains as string | null),
       };
@@ -737,6 +742,7 @@ export class RulesService {
       const [before] = await tx.select({
         kind: rules.kind, match: rules.match,
         subjectContains: rules.subjectContains, bodyContains: rules.bodyContains,
+        matchKey: sql<string>`${ruleMatchKeySql(rules.match)}`,
       }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
 
@@ -764,7 +770,7 @@ export class RulesService {
       // One statement over the key, no id list: the row's twins are named by what makes them one.
       const deleted = await tx.delete(rules).where(and(
         eq(rules.accountId, ctx.accountId), eq(rules.kind, before.kind),
-        sql`${ruleMatchKeySql(rules.match)} = ${ruleMatchKey(before.match)}`,
+        sql`${ruleMatchKeySql(rules.match)} = ${before.matchKey}`,
         before.subjectContains === null ? isNull(rules.subjectContains) : eq(rules.subjectContains, before.subjectContains),
         before.bodyContains === null ? isNull(rules.bodyContains) : eq(rules.bodyContains, before.bodyContains),
       )).returning({ id: rules.id });

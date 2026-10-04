@@ -50,6 +50,22 @@ export function twinWinner(twins: readonly RuleDTO[]): RuleDTO | null {
   return winner;
 }
 
+/**
+ * ONE ROW PER KEY, for a ladder that writes over a list of a sender's rules: the rows grouped by
+ * their four-field key, the router's winner of each group (on before paused). The server converges
+ * a key onto the row a PATCH names and a DELETE takes every row under its key, so a ladder that
+ * wrote once per ROW would send a second write naming a row the first already removed (404).
+ */
+export function oneRowPerKey(rules: readonly RuleDTO[]): RuleDTO[] {
+  const groups = new Map<string, RuleDTO[]>();
+  for (const r of rules) {
+    const k = JSON.stringify([r.kind, ruleMatchKey(r.match), r.subjectContains ?? null, r.bodyContains ?? null]);
+    const g = groups.get(k);
+    if (g) g.push(r); else groups.set(k, [r]);
+  }
+  return [...groups.values()].map((g) => twinWinner(g.filter((r) => r.enabled)) ?? g[0]!);
+}
+
 export function pressOverTwins(
   rules: readonly RuleDTO[], kind: "sender" | "domain", match: string, wanted: Folder, applyRetro: boolean,
 ): TwinPress {

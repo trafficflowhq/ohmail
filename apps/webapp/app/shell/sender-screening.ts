@@ -17,6 +17,7 @@ import {
   folderLeaf,
   isPersonsOwnFolder,
   mailboxProfiles,
+  oneRowPerKey,
   pressOverTwins,
   retroPassWouldMove,
   ruleTwins,
@@ -779,7 +780,9 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
   const holding = holdingRules(reader, address, from);
   const own = holding.filter((r) => r.kind === "sender");
   if (own.length > 0) {
-    return { kind: "retarget", mutations: own.map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted })) };
+    // ONE WRITE PER KEY: the server converges a key onto the row a PATCH names, so a PATCH per twin
+    // would name a row the first one deleted and read the release as refused.
+    return { kind: "retarget", mutations: oneRowPerKey(own).map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted })) };
   }
   const wide = holding.filter((r) => r.kind !== "sender");
   if (wide.length === 0) return { kind: "none", mutations: [] };
@@ -810,7 +813,8 @@ export function releaseCommit(reader: EntityReader, intent: ReleaseIntent): Engi
   if (intent.dest === "screener") {
     const holding = holdingRules(reader, intent.address, from);
     if (holding.some((r) => r.kind !== "sender")) return [];
-    return holding.map((r) => ({ kind: "rule_delete", ruleId: r.id }));
+    // A DELETE takes every row under its key: one per key, or the second answers 404.
+    return oneRowPerKey(holding).map((r) => ({ kind: "rule_delete", ruleId: r.id }));
   }
   const rules = releaseRules(reader, intent.address, from, FOLDER_OF_VIEW[intent.dest]);
   return rules.kind === "stands" ? [] : rules.mutations;

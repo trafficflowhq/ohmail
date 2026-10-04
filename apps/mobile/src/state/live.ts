@@ -30,6 +30,7 @@ import {
   physicalFolderOf,
   presentationReader,
   presentsUnread,
+  oneRowPerKey,
   pressOverTwins,
   readsPartition,
   receiptsByDay,
@@ -2082,7 +2083,8 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
   const holding = holdingRules(reader, address, from);
   const own = holding.filter((r) => r.kind === "sender");
   if (own.length > 0) {
-    return { kind: "retarget", mutations: own.map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted })) };
+    // One write per key (the web's reason): a PATCH per twin names a row the first one deleted.
+    return { kind: "retarget", mutations: oneRowPerKey(own).map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted })) };
   }
   const wide = holding.filter((r) => r.kind !== "sender");
   if (wide.length === 0) return { kind: "none", mutations: [] };

@@ -21,7 +21,13 @@ export interface KeptDecision {
   ruleId: string;
   /** Where the decision put the promoted rule ({@link placementOf}), whether or not it is still open. */
   ruleWant: string;
-  /** The rules the decision retargeted, which a copy still lagging holds at their old place. */
+  /**
+   * Where the copy held that rule when the decision was kept: the sender's own rule, which the
+   * decision converged onto (one rule per key), sits there in a copy still lagging. `null` for a
+   * rule the copy did not hold (the decision created it).
+   */
+  ruleFrom: string | null;
+  /** The rules the decision retargeted or collapsed, which a copy still lagging holds as they were. */
   twinIds: ReadonlySet<string>;
   /** The queue's ask at the confirm; only the answer to a later ask can reopen the question. */
   ask: number;
@@ -46,13 +52,15 @@ export function keptDecisionOf(
   effects: readonly MutationEffect[], copy: EntityReader, ask: number,
   record: (type: string, id: string) => boolean,
 ): KeptDecision | null {
-  const rules = effects.filter((e) => ruleOf(e) !== null);
-  const promoted = rules[0];
+  // A collapsed twin is a rule effect with no entity: the copy agrees once it holds that row no more.
+  const rules = effects.filter((e) => e.type === "rule");
+  const promoted = rules.find((e) => ruleOf(e) !== null);
   if (promoted === undefined) return null;
   const r = ruleOf(promoted)!;
   if (r.kind !== "sender" && r.kind !== "domain") return null;
   return stillKept({
     kind: r.kind, key: ruleMatchKey(r.match), ruleId: promoted.id, ruleWant: placementOf("rule", r),
+    ruleFrom: copy.get("rule", promoted.id) === undefined ? null : placementOf("rule", copy.get("rule", promoted.id)),
     twinIds: new Set(rules.filter((e) => e !== promoted).map((e) => e.id)), ask, effects: rules,
   }, copy, record);
 }
@@ -72,15 +80,18 @@ export function relistedBy(d: KeptDecision, ask: number, addresses: readonly str
 
 /**
  * What is still kept after the copy moved: `null` retires the decision. It retires when the copy
- * holds the promoted rule in a state the decision did not write (a later word, or a delete). Each
+ * holds the promoted rule in a state the decision did not write (a later word, or a delete) and
+ * did not find it in (a copy still lagging holds the sender's own rule where it was). Each
  * effect goes once the copy agrees with it; the promoted one also goes once the copy holds any
  * bare rule of the subject that is not a twin, which covers a server whose confirm named no id.
  */
 export function stillKept(
   d: KeptDecision, copy: EntityReader, record: (type: string, id: string) => boolean,
 ): KeptDecision | null {
-  if (record("rule", d.ruleId) && placementOf("rule", copy.get("rule", d.ruleId)) !== d.ruleWant) return null;
-  const subjectRuled = ruleTwins(copy.list<RuleDTO>("rule"), d.kind, d.key).some((r) => !d.twinIds.has(r.id));
+  const held = placementOf("rule", copy.get("rule", d.ruleId));
+  if (record("rule", d.ruleId) && held !== d.ruleWant && held !== d.ruleFrom) return null;
+  // Another bare rule of the subject, not the decision's own row: the copy has a decision of its own.
+  const subjectRuled = ruleTwins(copy.list<RuleDTO>("rule"), d.kind, d.key).some((r) => !d.twinIds.has(r.id) && r.id !== d.ruleId);
   const open = d.effects.filter((e) => !copyAgrees(copy, e) && !(e.id === d.ruleId && subjectRuled));
   if (open.length === 0) return null;
   return open.length === d.effects.length ? d : { ...d, effects: open };

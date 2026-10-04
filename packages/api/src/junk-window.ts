@@ -525,8 +525,12 @@ export async function rescueJunk(
 
   /* THE MAILBOX ARM TOO, not the account alone: `junk_rescues` is keyed by mailbox and a mailbox
      erasure leaves the account standing, so an account-only fence would let a command be recorded
-     against a mailbox whose mirror has just been swept. */
+     against a mailbox whose mirror has just been swept. The account is fenced as the transaction
+     opens; the second verb then takes the rule-key lock BEFORE the mailbox row (every rules
+     writer's order, rule-key before any mailbox lock), and only then is the mailbox arm asked. */
   return withAccountTx(ctx, async (tx) => {
+    if (sender !== null) await lockAccountRuleKeys(tx as unknown as Tx, accountId);
+    await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Parameters<typeof dialect>[0]), { accountId, mailboxId: args.mailboxId });
     const allowed = sender !== null
       ? await allowSender(tx, accountId, sender, nowAt)
       : undefined;
@@ -559,7 +563,7 @@ export async function rescueJunk(
     return allowed !== undefined
       ? { status: "queued" as const, rescueId: row!.id, allowed }
       : { status: "queued" as const, rescueId: row!.id };
-  }, { db: deps.db, mailboxId: args.mailboxId });
+  }, { db: deps.db });
 }
 
 /**

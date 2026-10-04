@@ -7,7 +7,7 @@ import {
 } from "./consent-cutline.js";
 import { mutationEffects, type MutationEffect } from "./mutations.js";
 import type { ScreenIntent } from "./routing-intents.js";
-import { pressOverTwins, ruleTwins, twinWinner } from "./rule-twins.js";
+import { oneRowPerKey, pressOverTwins, ruleTwins, twinWinner } from "./rule-twins.js";
 import { rulesList, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import { FOLDER_OF_VIEW, type EngineMessage, type EngineMutation, type Folder, type RuleDTO } from "./types.js";
@@ -282,16 +282,17 @@ function causeOf(input: PressInput, by: RuleDTO): ConflictCause | null {
  * rule that outranks an address press is never written here — its other answer is a domain press.
  */
 function resolutionWrites(groups: readonly ConflictGroup[], input: PressInput): EngineMutation[] {
+  const writable = groups.filter((g) => g.cause !== "domain-outranks");
+  const causeOfRule = new Map(writable.map((g) => [g.rule.id, g.cause] as const));
+  // One write per key: a PATCH converges the key onto its row and a DELETE takes every row under
+  // it, so a write per twin would name a row the first one removed (404).
   const out: EngineMutation[] = [];
-  const seen = new Set<string>();
-  for (const g of groups) {
-    if (g.cause === "domain-outranks" || seen.has(g.rule.id)) continue;
-    seen.add(g.rule.id);
-    const t = ruleTerms(g.rule);
-    if (g.cause === "own-rule-inside" && t.subject === null && t.body === null) {
-      out.push({ kind: "rule_update", ruleId: g.rule.id, destination: input.wanted, applyRetro: input.applyRetro });
+  for (const rule of oneRowPerKey(writable.map((g) => g.rule))) {
+    const t = ruleTerms(rule);
+    if (causeOfRule.get(rule.id) === "own-rule-inside" && t.subject === null && t.body === null) {
+      out.push({ kind: "rule_update", ruleId: rule.id, destination: input.wanted, applyRetro: input.applyRetro });
     } else {
-      out.push({ kind: "rule_delete", ruleId: g.rule.id });
+      out.push({ kind: "rule_delete", ruleId: rule.id });
     }
   }
   return out;
@@ -422,14 +423,17 @@ export function planScreenCommit(
     : [];
   const changed: string[] = [];
   if (intent.resolution === "remove") {
+    const removable: RuleDTO[] = [];
     for (const s of intent.shown) {
       const r = rules.find((x) => x.id === s.id);
       if (!r || ruleFingerprint(r) !== s.fp) { changed.push(s.id); continue; }
       // Only a term rule about this address is the press's to remove; anything else shown stays.
       const t = ruleTerms(r);
       if (r.kind !== "sender" || ruleMatchKey(r.match) !== match || (t.subject === null && t.body === null)) continue;
-      writes.push({ kind: "rule_delete", ruleId: r.id });
+      removable.push(r);
     }
+    // A DELETE takes every row under its key: one per key.
+    for (const r of oneRowPerKey(removable)) writes.push({ kind: "rule_delete", ruleId: r.id });
   }
   return { writes, changed };
 }

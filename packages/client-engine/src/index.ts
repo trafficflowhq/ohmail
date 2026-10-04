@@ -263,6 +263,7 @@ export {
   pressOverTwins,
   ruleTwins,
   twinWinner,
+  oneRowPerKey,
   type TwinPress,
   type TwinPressState,
 } from "./rule-twins.js";

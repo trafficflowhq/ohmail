@@ -2,7 +2,8 @@ import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { replySubject } from "@trafficflow/core/reply-subject";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { domainOfAddress } from "./consent-cutline.js";
-import { twinsElsewhere } from "./rule-twins.js";
+import { twinWinner } from "./rule-twins.js";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { rulesList, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import {
@@ -335,17 +336,30 @@ function derivedScreenerEffects(
   const lifted = scope === "sender"
     ? outrankCoveringDomains(rulesList(reader), { kind: "rule_create", ruleKind: "sender", match: key, destination })
     : null;
-  const rule = {
-    ...promotedRule(rep.from, scope, destination, ctx, lifted?.kind === "rule_create" ? lifted.priority ?? 0 : 0),
-    retro: { requestedAt: m.applyRetro === false ? null : iso, doneAt: null },
-  };
-  effects.push({ type: "rule", id: rule.id, entity: rule });
-  // The server retargets the subject's twins in the decide's own transaction
-  // (`applyScreenerDecision`), so the overlay does too: a deny twin left standing here went on
-  // presenting the admitted sender's mail in Screened.
+  const liftedPriority = lifted?.kind === "rule_create" ? lifted.priority ?? 0 : 0;
   const match = scope === "domain" ? domainOfAddress(key) : key;
-  for (const twin of match ? twinsElsewhere(rulesList(reader), scope, match, destination) : []) {
-    effects.push({ type: "rule", id: twin.id, entity: { ...twin, destination, updatedAt: iso } });
+  /* ONE RULE PER KEY, as the server writes it (`applyScreenerDecision`): the subject's bare key
+     converges onto its ACTING row (on before paused), which takes the decision — the place, on,
+     the higher priority, a manual or migrated provenance kept — and its twins go. A key with no
+     row gets the promoted rule. */
+  const under = match ? rulesList(reader).filter((r) => r.kind === scope && ruleMatchKey(r.match) === match
+    && (r.subjectContains ?? "").trim() === "" && (r.bodyContains ?? "").trim() === "") : [];
+  const acting = twinWinner(under.filter((r) => r.enabled)) ?? under[0];
+  if (acting === undefined) {
+    const rule = {
+      ...promotedRule(rep.from, scope, destination, ctx, liftedPriority),
+      retro: { requestedAt: m.applyRetro === false ? null : iso, doneAt: null },
+    };
+    effects.push({ type: "rule", id: rule.id, entity: rule });
+  } else {
+    const moved = canonicalDestination(acting.destination) !== canonicalDestination(destination) || !acting.enabled;
+    effects.push({ type: "rule", id: acting.id, entity: {
+      ...acting, destination, enabled: true, priority: Math.max(acting.priority, liftedPriority),
+      provenance: acting.provenance === "manual" || acting.provenance === "migrated" ? acting.provenance : "promoted",
+      ...(moved && m.applyRetro !== false ? { retro: { requestedAt: iso, doneAt: null } } : {}),
+      updatedAt: iso,
+    } });
+    for (const twin of under) if (twin.id !== acting.id) effects.push({ type: "rule", id: twin.id, entity: null });
   }
   // The subject leaves the store's queue page too, so the count drops at the press.
   for (const row of reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)) {

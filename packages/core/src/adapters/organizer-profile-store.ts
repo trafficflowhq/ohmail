@@ -2,7 +2,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   awayResponders, contacts, mailboxes as mailboxesTbl, notifyRules as notifyRulesTbl,
   rules as rulesTbl, tags as tagsTbl,
-  recordChanges, recordProfileImportResolution, rerouteOwnHeldBag, resolveImportAsk, ruleDelta,
+  lockAccountRuleKeys, recordChanges, recordProfileImportResolution, rerouteOwnHeldBag, resolveImportAsk, ruleDelta,
   type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -232,7 +232,10 @@ export async function applyOrganizerProfile(
   tx: LedgerTx,
   o: { accountId: string; mailboxId: string; doc: OrganizerProfileDoc; fingerprint: string; now: Date },
 ): Promise<ProfileImportApplied> {
-  // FIRST, before any read the merge will act on — see {@link PROFILE_IMPORT_LOCK_CLASS}.
+  // The merge writes contacts and rules: the account's rule-key lock first, as every rules writer
+  // takes it, so a Screener decision (rule-key, rules, then contacts) never waits crosswise on it.
+  await lockAccountRuleKeys(tx as unknown as Tx, o.accountId);
+  // Then, before any read the merge will act on — see {@link PROFILE_IMPORT_LOCK_CLASS}.
   await dialect(tx).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, o.accountId);
   const changes: ChangeInput[] = [];
   const now = o.now;
