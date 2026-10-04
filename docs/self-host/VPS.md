@@ -549,7 +549,9 @@ header: lock another address out of an account, or have it written into the
 sign-in records. With such a relay, or if you are not sure what yours does,
 set `OHMAIL_TLS_TERMINATOR=0.0.0.0/32`. No connection ever comes from that
 address, so neither the proxy nor the api believes a forwarded address, and
-every visitor shares one address, the way this door worked before.
+every visitor shares one address, the way this door worked before. That is
+its cost: the password lock then counts every visitor as one, so five wrong
+passwords from anyone lock that account for everyone until the lock ends.
 
 This is what the two paragraphs below used to say was impossible; they are
 kept, corrected, because the reasoning in them is still the reason the switch
