@@ -72,13 +72,29 @@ function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
  * before the create path validated its body can hold `"993"`, which the organizer has always dialled
  * (the worker's `toTransport` applies this rule); handed on raw, the port rule refused it with the
  * host sentence. Digits become the number they spell, nothing stored stays nothing (the caller's
- * default follows), and anything else is handed on as stored, for the port rule to refuse it as it
- * always has. The rule's set (`MAIL_DIAL_PORTS`) is not this function's to widen.
+ * default follows), and anything else comes back as it was stored (`PortAsStored`), for the port
+ * rule to refuse as it always has (`portForDial`). The rule's set (`MAIL_DIAL_PORTS`) is not this
+ * function's to widen.
  */
-export function dialPort(stored: unknown): number | undefined {
+export function dialPort(stored: unknown): number | undefined | PortAsStored {
   if (stored === undefined || stored === null) return undefined;
+  if (typeof stored === "number") return stored;
   if (typeof stored === "string" && /^[0-9]{1,5}$/.test(stored)) return Number(stored);
-  return stored as number;
+  return { asStored: stored };
+}
+
+/** A stored port that is not digits, kept as it was stored, for the dial door's port rule to refuse. */
+export interface PortAsStored { readonly asStored: unknown }
+
+/**
+ * THE PORT THE DIAL DOOR IS ASKED ABOUT. A value kept as stored goes to the door as it was: on a
+ * managed deployment the port rule refuses it, on a self-hosted one the socket does, as before
+ * `dialPort` existed. The one place such a value is typed as a port, so no other caller can be.
+ */
+export function portForDial(port: number | PortAsStored): number;
+export function portForDial(port: number | undefined | PortAsStored): number | undefined;
+export function portForDial(port: number | undefined | PortAsStored): number | undefined {
+  return typeof port === "object" ? (port.asStored as number) : port;
 }
 
 /** One stored leg of a mailbox: where it dials, its TLS mode and its own plaintext consent. */
