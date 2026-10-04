@@ -179,9 +179,11 @@ export const FREEZE_ENV = "OHMAIL_FREEZE";
  * remedy is one line and it is in the message. Returns the refusal sentence, or null when this run
  * may proceed.
  */
-export function sharedBoxRefusal(url: string, env: NodeJS.ProcessEnv, worktree = "\"$PWD\""): string | null {
+export function sharedBoxRefusal(
+  url: string, env: NodeJS.ProcessEnv, worktree = "\"$PWD\"", tokenPath: string = BOX_TOKEN_PATH,
+): string | null {
   if (databaseOf(url) !== SHARED_BOX_DB) return null;
-  if (env[FREEZE_ENV] === "1") return boxDoorHeld(env) ? null : boxDoorRefusal();
+  if (env[FREEZE_ENV] === "1") return boxDoorHeld(env, tokenPath) ? null : boxDoorRefusal();
   return (
     `this run resolved to the SHARED box database (${SHARED_BOX_DB}) and no ${FREEZE_ENV}=1 was set. ` +
     "Co-tenants on that database share its advisory keys, so a leader-lock or lease case here reads " +
@@ -192,19 +194,23 @@ export function sharedBoxRefusal(url: string, env: NodeJS.ProcessEnv, worktree =
 
 /** Exported by `box-lock.sh` to the command it runs while it holds the Postgres lock. */
 export const BOX_TOKEN_ENV = "OHMAIL_BOX_TOKEN";
+/** Where `box-lock.sh` writes that token for the REAL pg lock. A test hands a fixture path in as a
+ *  parameter; nothing in the environment moves it, so a fixture lock directory cannot admit the box. */
+export const BOX_TOKEN_PATH = "/tmp/ohmail-pg.token";
 
 /**
  * OHMAIL_FREEZE=1 IS A CLAIM, AND THE DOOR VOUCHES FOR IT. A run once set it beside a bare
  * `flock` while another run held the box's priority claim, which only `box-lock.sh` honours, and
- * this harness admitted it on the flag alone. The door writes a random
- * token to `<BOX_LOCK_DIR or /tmp>/ohmail-pg.token` inside the lock and exports it; the shared box
- * is admitted only when the two agree, so a run that did not come through the door is refused.
+ * this harness admitted it on the flag alone. The door writes a random token to
+ * {@link BOX_TOKEN_PATH} inside the real lock and exports it; the shared box is admitted only when
+ * the two agree, so a run that did not come through the door — or came through a fixture door
+ * under BOX_LOCK_DIR — is refused.
  */
-export function boxDoorHeld(env: NodeJS.ProcessEnv): boolean {
+export function boxDoorHeld(env: NodeJS.ProcessEnv, tokenPath: string = BOX_TOKEN_PATH): boolean {
   const token = env[BOX_TOKEN_ENV];
   if (!token || !/^[0-9a-f]{32}$/.test(token)) return false;
   try {
-    return readFileSync(join(env.BOX_LOCK_DIR || "/tmp", "ohmail-pg.token"), "utf8").trim() === token;
+    return readFileSync(tokenPath, "utf8").trim() === token;
   } catch { return false; }
 }
 
@@ -224,9 +230,11 @@ function boxDoorRefusal(): string {
  * file at collection — naming it and the remedy — before any client exists, instead of running it
  * on the box unlocked. A lane database and any other URL are returned as they are.
  */
-export function pgTestUrl(file: string, url: string = PG_TEST_URL, env: NodeJS.ProcessEnv = process.env): string {
+export function pgTestUrl(
+  file: string, url: string = PG_TEST_URL, env: NodeJS.ProcessEnv = process.env, tokenPath: string = BOX_TOKEN_PATH,
+): string {
   const root = workspaceRoot();
-  const refusal = sharedBoxRefusal(url, env, root ?? undefined);
+  const refusal = sharedBoxRefusal(url, env, root ?? undefined, tokenPath);
   if (refusal === null) return url;
   let name = file;
   try { name = file.startsWith("file:") ? fileURLToPath(file) : file; } catch { /* keep it as given */ }
@@ -305,10 +313,10 @@ export async function journalDrift(url: string): Promise<string | null> {
  * journalDrift}). Not ours to drop, so the policy is REFUSAL: the sentence goes to stderr and
  * this answers false. The repair is resetting the database to this tree's journals.
  */
-export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolean> {
+export async function realPgAvailable(url: string = PG_TEST_URL, tokenPath: string = BOX_TOKEN_PATH): Promise<boolean> {
   /* Asked BEFORE anything dials: a refusal that arrived after the connection would already have
    * taken the shared box's advisory namespace for the length of the probe. */
-  const refusal = sharedBoxRefusal(url, process.env, workspaceRoot() ?? undefined);
+  const refusal = sharedBoxRefusal(url, process.env, workspaceRoot() ?? undefined, tokenPath);
   if (refusal !== null) throw new Error(`[pg] ${refusal}`);
   const c = postgres(url, { max: 1, connect_timeout: 3, onnotice: () => {} });
   let up = false;
