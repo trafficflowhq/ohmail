@@ -4,6 +4,9 @@ import { dialect } from "@trafficflow/db/dialect";
 import type { ApiDeps } from "./deps.js";
 import { errorResponse } from "./responses.js";
 
+/** The batch read route's own ceiling (`MARK_SEEN_MAX_IDS`): a longer list is the service's 413 to give. */
+const SUPERSEDED_REPLAY_MAX_IDS = 200;
+
 // A leaf-free check: the services barrel would carry its whole graph into the phone's engine.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -22,7 +25,7 @@ export async function refuseSupersededReplay(
   const raw = req.headers.get(DECIDED_AT_HEADER);
   const accountId = deps.session?.accountId;
   const ids = messageIds.filter((id) => UUID.test(id));
-  if (raw === null || !accountId || ids.length === 0) return null;
+  if (raw === null || !accountId || ids.length === 0 || ids.length > SUPERSEDED_REPLAY_MAX_IDS) return null;
   const decidedAt = new Date(raw);
   if (Number.isNaN(decidedAt.getTime())) return null;
   const newer = await deps.db.select({ id: changeLog.entityId }).from(changeLog).where(and(
