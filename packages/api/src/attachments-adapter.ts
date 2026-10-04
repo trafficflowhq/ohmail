@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
+import { isMessageGone } from "@trafficflow/core/mail";
 import type { ApiDeps } from "./deps.js";
 import { dialFieldsFor } from "./dial-host-guard.js";
 import { imapAdmission } from "./routes/shared.js";
@@ -212,41 +213,33 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
      * caller's later `close()` is a no-op, not that queued LOGOUT.
      */
     let dead = false;
+    /* A GONE MESSAGE IS AN ANSWER, NOT A DEAD SOCKET. The adapter refuses with `MessageGoneError`
+     * before any command or after the server answered an empty FETCH, the lock released either way,
+     * so the socket is idle and clean: the caller's one re-resolved retry (the forward's read, the
+     * repair's tree read, the next part of a walk) runs on it. Every other throw latches and
+     * destroys, as a breach always has. `isMessageGone` is the predicate the retry keys on. */
+    const guarded = async <T>(read: () => Promise<T>): Promise<T> => {
+      try {
+        return await raced(read(), operationMs);
+      } catch (err) {
+        if (!isMessageGone(err)) {
+          dead = true;
+          await opened.forceClose().catch(() => { /* already down; the slots are released */ });
+        }
+        throw err;
+      }
+    };
     return {
       // FORWARD `opts` — the ceiling is decided by the service and enforced inside the stream, so
       // dropping it here would leave `ATTACHMENT_MAX_FETCH_BYTES` looking enforced at every layer
       // that reads like it while the only code that can actually stop a 90 MB download never hears
       // the number. The pre-flight would still fire on honest metadata, which is precisely what
       // makes the omission invisible in a test that uses honest metadata.
-      fetchPart: async (locator, partId, o) => {
-        try {
-          return await raced(opened.adapter.fetchPart(locator, partId, o), operationMs);
-        } catch (err) {
-          dead = true;
-          await opened.forceClose().catch(() => { /* already down; the slots are released */ });
-          throw err;
-        }
-      },
+      fetchPart: (locator, partId, o) => guarded(() => opened.adapter.fetchPart(locator, partId, o)),
       // The same clock and the same teardown; `o` carries the service's ceiling to the stream.
-      fetchRaw: async (locator, o) => {
-        try {
-          return await raced(opened.adapter.fetchRaw(locator, o), operationMs);
-        } catch (err) {
-          dead = true;
-          await opened.forceClose().catch(() => { /* already down; the slots are released */ });
-          throw err;
-        }
-      },
+      fetchRaw: (locator, o) => guarded(() => opened.adapter.fetchRaw(locator, o)),
       // The repair's one tree read: the same clock, and a breach destroys the socket the same way.
-      fetchStructure: async (locator) => {
-        try {
-          return await raced(opened.adapter.fetchStructure(locator), operationMs);
-        } catch (err) {
-          dead = true;
-          await opened.forceClose().catch(() => { /* already down; the slots are released */ });
-          throw err;
-        }
-      },
+      fetchStructure: (locator) => guarded(() => opened.adapter.fetchStructure(locator)),
       close: async () => { if (!dead) await opened.close(); },
     };
   };
