@@ -1549,7 +1549,8 @@ export function useMailSend(
       const m = inFlight.current.get(res.key);
       // A queued mutation that is not one of ours (a move that failed offline, say) is
       // drained by the same call and is none of this state machine's business.
-      if (!key || !m) continue;
+      // A restored send is read through its record; any other verb is none of this machine's business.
+      if (!key || !m) { adoptForeign.current(res); continue; }
       absorb(key, m, res);
       if (res.status === "queued") stillQueued = true;
     }
@@ -1577,6 +1578,142 @@ export function useMailSend(
     absorb(key, m, res);
     if (res.status === "queued") arm();
     return true;
+  };
+
+  /**
+   * AN ANSWER NO PRESS ON THIS MOUNT OWNS — a restored send's — read through its record. Both
+   * destructive pulls reach it: the restore collector, and `flush`, which consumed it too and used
+   * to skip it, losing a restored Send + Done's release and its settlement.
+   */
+  const adoptForeign = useRef<(res: MutationResult) => void>(() => {});
+  adoptForeign.current = (res: MutationResult): void => {
+    if (res.status === "superseded") return;
+    const record = recordForSendKey(res.key, Date.now(), owner.current);
+    if (record === null) return;
+    /* WHICH SURFACE THIS ANSWER MAY SPEAK TO, asked ONCE because both endings below need it
+       and for the same reason. The full argument is in the confirmed arm, where this test was
+       written; the short form is that the record names the message it was minted for and the
+       surface names what it holds now, so "different" means this answer is about a message
+       this compose no longer holds and the screen must be left alone. A record with NO
+       session is not a mismatch — a build or a lane that never had one is not evidence of a
+       different message. */
+    const speaksForScreen = !(
+      record.lane === COMPOSE_SEND_KEY
+      && record.session !== undefined
+      && record.session !== composeSessionId(owner.current)
+    );
+    if (res.status === "confirmed") {
+      /* THE INTENT IT WAS PRESSED WITH, from the send's own row: the door reads the release now,
+         whichever surface is on screen, because the release is about the source, not the composer. */
+      if (res.andDone) {
+        outcomeRef.current?.(
+          record.lane, { kind: "mail_send" } as unknown as MailSend, true, undefined, { andDone: res.andDone },
+        );
+      }
+      /**
+       * THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is told, with the row
+       * the send was delivered from, so it can end the way a live confirmation ends it. AND THE RECORD IS LEFT
+       * STANDING, which is the opposite of what `flush` does on the same status — measured, not chosen. Releasing
+       * here made "a reload inside the queued window cannot deliver the same mail twice" deliver twice: the
+       * replay had already put the mail out under key K, the release freed K, and the press that followed minted
+       * a SECOND key for a message the server had no way left to recognise. Two mails to a real person, from the
+       * fix meant to stop the spare draft row. The asymmetry is the difference between the two paths, not an
+       * oversight.
+       */
+
+      /**
+       * `flush` releases because the surface that pressed is right there and clears itself in the same beat, so
+       * the key can go. This pass speaks for a surface it cannot see: settling is a message it sends, never a
+       * fact it can check. So the only durable evidence that this message has ALREADY GONE stays in the jar, and
+       * a press of the same message resumes K and is replayed rather than re-sent. A different message is
+       * unaffected — it has a different fingerprint, and the next press sweeps this record as spent.
+       */
+
+      /**
+       * WHICH COMPOSE THIS ANSWER IS FOR, AND THE ONE IT IS NOT: `settleCompose`'s `sentByMirror` arm CLEARS the
+       * form unconditionally — right on the live path, where the surface being cleared is the one that pressed.
+       * Here it is not: a contact's Write or a mail link re-mints the compose session and puts a DIFFERENT
+       * message on the same lane while the replay is still out there, and settling then wipes words nobody has
+       * sent. Measured — the case in the trace file read `expected '' to be 'Wann kommt der Ofen?'` before this
+       * guard, which is a data loss the person cannot undo and cannot see the cause of. This pass opened that
+       * route; it closes it. The record names the message it was minted for; the surface names what it holds now.
+       * Equal means the answer is about what is on screen.
+       */
+
+      /**
+       * Different means it is about a message this surface no longer holds, and the only correct action is to
+       * leave the screen alone — the record stays, so the message it names is still recognised if it comes back,
+       * and the diagnostic says so rather than the seam going quiet. A record with NO session is not a mismatch;
+       * it is a build or a lane that never had one (a reply and a forward are named by the message they answer,
+       * which no re-mint can change). Those settle as before: a rule that fails closed needs the state it fails
+       * closed ON to be distinguishable from "this shell has no such thing".
+       */
+      if (!speaksForScreen) {
+        console.warn(
+          "ohmail: send_settled_unbound — a send settled for a compose this surface no longer "
+          + `holds (lane "${record.lane}"); the message on screen is a different one and was `
+          + "left alone",
+        );
+        return;
+      }
+      settledRef.current(record.lane, {
+        kind: "mail_send", draftId: res.entityId ?? record.draftId ?? null,
+      } as unknown as MailSend,
+      /* THIS PASS'S OWN VERDICT, WHICH IS THE SAME QUESTION — `speaksForScreen` above is
+         `composeStillHolds` read off the record instead of off a press, and a settlement
+         that failed it never reaches this line. The record's `draftId` is deliberately not
+         consulted: it is a diagnostic (`attachSendLockDraft`) that can name the row the
+         ADAPTER made for a press carrying none, which this surface never adopted. */
+      true);
+      return;
+    }
+    if (res.error?.code === "send_unverified") {
+      /* NOBODY KNOWS, and that is the one outcome the record must outlive — see
+         `SendLock.unverified`. The row the send made for itself is bound to it here for the
+         same reason `absorb` binds it: the drafts list must be able to name the message. */
+      markSendLockUnverified(record.lane, record.fp, owner.current);
+      if (res.entityId) {
+        const names: string[] = [];
+        if (record.subject !== undefined) names.push(record.subject);
+        if (record.session !== undefined) names.push(`compose:${record.session}`);
+        attachSendLockDraft(record.lane, names, res.entityId, owner.current);
+      }
+    } else if (res.status !== "queued") {
+      /**
+       * Everything else releases and reports. A settled late result ends the record it names as the live press
+       * ending does: `confirmed` settles, `unverified` parks, everything else releases and reports. The key is
+       * spent and nothing was delivered: a replayed `mail_send` refused non-retryably (`send_failed`, or a typed
+       * 409 such as `mailbox_disabled`) is abandoned by the engine and handed back `rolled_back` — an answer that
+       * MIGHT have delivered is `send_unverified`, the arm above. So nothing is left for this record to protect,
+       * and leaving it standing was the whole defect: `restoredPending` reads it for seven days, and the shell
+       * renders every field, Send AND Cancel inert under "still being sent from your last session" — for a send
+       * that is over and did not go.
+       */
+
+      /**
+       * `releaseSendLock` filters by `(lane, fp)`, so an unresolved record for a DIFFERENT message on the same
+       * lane is untouched.
+       */
+
+      /* `queued` is NOT one of these, for the reason the live path branches on it first: a
+         queued result is the ABSENCE of an answer — the verb is back on the outbox and the
+         hold is still true. Such a result reaches this loop only through the timed-out
+         dispatch's own recorder, and releasing on it would free a key a request still on the
+         wire is carrying — a second key for a message that may yet be delivered. Nothing
+         beyond the release and the sentence: settling is the `confirmed` ending, and the row
+         the adapter made for a press that carried none is not adopted here. */
+      releaseSendLock(record.lane, record.fp, owner.current);
+      /* The live path's own failure sentence, on the surface this answer is about: without it
+         the composer comes back editable saying nothing, which is a message the person
+         pressed Send on and no account of what happened to it. */
+      if (speaksForScreen) setPhase(record.lane, phaseFor(res));
+      // And the lane's owner hears it as the live path's owner does: this send is over, not sent.
+      outcomeRef.current?.(
+        record.lane, { kind: "mail_send" } as unknown as MailSend, false, phaseFor(res).phase,
+        // The replay's own row, for the surface this answer speaks to and no other.
+        speaksForScreen && refusedRowOf(res, true) ? { left: refusedRowOf(res, true)! } : undefined,
+      );
+    }
   };
 
   /**
@@ -1642,132 +1779,7 @@ export function useMailSend(
           absorbOwn.current(res);
           continue;
         }
-        const record = recordForSendKey(res.key, Date.now(), owner.current);
-        if (record === null) continue;
-        /* WHICH SURFACE THIS ANSWER MAY SPEAK TO, asked ONCE because both endings below need it
-           and for the same reason. The full argument is in the confirmed arm, where this test was
-           written; the short form is that the record names the message it was minted for and the
-           surface names what it holds now, so "different" means this answer is about a message
-           this compose no longer holds and the screen must be left alone. A record with NO
-           session is not a mismatch — a build or a lane that never had one is not evidence of a
-           different message. */
-        const speaksForScreen = !(
-          record.lane === COMPOSE_SEND_KEY
-          && record.session !== undefined
-          && record.session !== composeSessionId(owner.current)
-        );
-        if (res.status === "confirmed") {
-          /* THE INTENT IT WAS PRESSED WITH, from the send's own row: the door reads the release now,
-             whichever surface is on screen, because the release is about the source, not the composer. */
-          if (res.andDone) {
-            outcomeRef.current?.(
-              record.lane, { kind: "mail_send" } as unknown as MailSend, true, undefined, { andDone: res.andDone },
-            );
-          }
-          /**
-           * THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is told, with the row
-           * the send was delivered from, so it can end the way a live confirmation ends it. AND THE RECORD IS LEFT
-           * STANDING, which is the opposite of what `flush` does on the same status — measured, not chosen. Releasing
-           * here made "a reload inside the queued window cannot deliver the same mail twice" deliver twice: the
-           * replay had already put the mail out under key K, the release freed K, and the press that followed minted
-           * a SECOND key for a message the server had no way left to recognise. Two mails to a real person, from the
-           * fix meant to stop the spare draft row. The asymmetry is the difference between the two paths, not an
-           * oversight.
-           */
-
-          /**
-           * `flush` releases because the surface that pressed is right there and clears itself in the same beat, so
-           * the key can go. This pass speaks for a surface it cannot see: settling is a message it sends, never a
-           * fact it can check. So the only durable evidence that this message has ALREADY GONE stays in the jar, and
-           * a press of the same message resumes K and is replayed rather than re-sent. A different message is
-           * unaffected — it has a different fingerprint, and the next press sweeps this record as spent.
-           */
-
-          /**
-           * WHICH COMPOSE THIS ANSWER IS FOR, AND THE ONE IT IS NOT: `settleCompose`'s `sentByMirror` arm CLEARS the
-           * form unconditionally — right on the live path, where the surface being cleared is the one that pressed.
-           * Here it is not: a contact's Write or a mail link re-mints the compose session and puts a DIFFERENT
-           * message on the same lane while the replay is still out there, and settling then wipes words nobody has
-           * sent. Measured — the case in the trace file read `expected '' to be 'Wann kommt der Ofen?'` before this
-           * guard, which is a data loss the person cannot undo and cannot see the cause of. This pass opened that
-           * route; it closes it. The record names the message it was minted for; the surface names what it holds now.
-           * Equal means the answer is about what is on screen.
-           */
-
-          /**
-           * Different means it is about a message this surface no longer holds, and the only correct action is to
-           * leave the screen alone — the record stays, so the message it names is still recognised if it comes back,
-           * and the diagnostic says so rather than the seam going quiet. A record with NO session is not a mismatch;
-           * it is a build or a lane that never had one (a reply and a forward are named by the message they answer,
-           * which no re-mint can change). Those settle as before: a rule that fails closed needs the state it fails
-           * closed ON to be distinguishable from "this shell has no such thing".
-           */
-          if (!speaksForScreen) {
-            console.warn(
-              "ohmail: send_settled_unbound — a send settled for a compose this surface no longer "
-              + `holds (lane "${record.lane}"); the message on screen is a different one and was `
-              + "left alone",
-            );
-            continue;
-          }
-          settledRef.current(record.lane, {
-            kind: "mail_send", draftId: res.entityId ?? record.draftId ?? null,
-          } as unknown as MailSend,
-          /* THIS PASS'S OWN VERDICT, WHICH IS THE SAME QUESTION — `speaksForScreen` above is
-             `composeStillHolds` read off the record instead of off a press, and a settlement
-             that failed it never reaches this line. The record's `draftId` is deliberately not
-             consulted: it is a diagnostic (`attachSendLockDraft`) that can name the row the
-             ADAPTER made for a press carrying none, which this surface never adopted. */
-          true);
-          continue;
-        }
-        if (res.error?.code === "send_unverified") {
-          /* NOBODY KNOWS, and that is the one outcome the record must outlive — see
-             `SendLock.unverified`. The row the send made for itself is bound to it here for the
-             same reason `absorb` binds it: the drafts list must be able to name the message. */
-          markSendLockUnverified(record.lane, record.fp, owner.current);
-          if (res.entityId) {
-            const names: string[] = [];
-            if (record.subject !== undefined) names.push(record.subject);
-            if (record.session !== undefined) names.push(`compose:${record.session}`);
-            attachSendLockDraft(record.lane, names, res.entityId, owner.current);
-          }
-        } else if (res.status !== "queued") {
-          /**
-           * Everything else releases and reports. A settled late result ends the record it names as the live press
-           * ending does: `confirmed` settles, `unverified` parks, everything else releases and reports. The key is
-           * spent and nothing was delivered: a replayed `mail_send` refused non-retryably (`send_failed`, or a typed
-           * 409 such as `mailbox_disabled`) is abandoned by the engine and handed back `rolled_back` — an answer that
-           * MIGHT have delivered is `send_unverified`, the arm above. So nothing is left for this record to protect,
-           * and leaving it standing was the whole defect: `restoredPending` reads it for seven days, and the shell
-           * renders every field, Send AND Cancel inert under "still being sent from your last session" — for a send
-           * that is over and did not go.
-           */
-
-          /**
-           * `releaseSendLock` filters by `(lane, fp)`, so an unresolved record for a DIFFERENT message on the same
-           * lane is untouched.
-           */
-
-          /* `queued` is NOT one of these, for the reason the live path branches on it first: a
-             queued result is the ABSENCE of an answer — the verb is back on the outbox and the
-             hold is still true. Such a result reaches this loop only through the timed-out
-             dispatch's own recorder, and releasing on it would free a key a request still on the
-             wire is carrying — a second key for a message that may yet be delivered. Nothing
-             beyond the release and the sentence: settling is the `confirmed` ending, and the row
-             the adapter made for a press that carried none is not adopted here. */
-          releaseSendLock(record.lane, record.fp, owner.current);
-          /* The live path's own failure sentence, on the surface this answer is about: without it
-             the composer comes back editable saying nothing, which is a message the person
-             pressed Send on and no account of what happened to it. */
-          if (speaksForScreen) setPhase(record.lane, phaseFor(res));
-          // And the lane's owner hears it as the live path's owner does: this send is over, not sent.
-          outcomeRef.current?.(
-            record.lane, { kind: "mail_send" } as unknown as MailSend, false, phaseFor(res).phase,
-            // The replay's own row, for the surface this answer speaks to and no other.
-            speaksForScreen && refusedRowOf(res, true) ? { left: refusedRowOf(res, true)! } : undefined,
-          );
-        }
+        adoptForeign.current(res);
       }
     };
     /**
