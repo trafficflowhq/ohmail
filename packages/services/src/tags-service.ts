@@ -1,8 +1,8 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
-import { assertOrganizerRole, assertAccountOrganizes, tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, assertAccountOrganizes, readIdempotencyKey, tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
 import { bridgeTx, claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
-import { ServiceError } from "./errors.js";
+import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeTag, tagRowToDTO } from "./dto/materialize.js";
 import type { TagDTO } from "./dto/types.js";
 
@@ -123,7 +123,14 @@ export class TagsService {
         .onConflictDoNothing()
         .returning();
       const row = inserted[0];
-      if (!row) throw new ServiceError("conflict", 409, "a tag with that name already exists");
+      if (!row) {
+        // The name is held by a request under THIS key that committed first: replay its answer.
+        const claim = opts.idempotency;
+        if (claim && await readIdempotencyKey(bridgeTx(tx) as unknown as Tx, ctx.accountId, claim.key, now)) {
+          throw new IdempotencyRaceLost(ctx.accountId, claim.key);
+        }
+        throw new ServiceError("conflict", 409, "a tag with that name already exists");
+      }
       const s = await recordChange(tx, {
         accountId: ctx.accountId, entityType: "tag", entityId: row.id, op: "create", meta: null,
       });
