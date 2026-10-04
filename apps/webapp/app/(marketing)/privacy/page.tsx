@@ -56,7 +56,7 @@ export default function PrivacyPage() {
         <h2>Signing up</h2>
         <p>
           Creating an ohmail Cloud account sends us the email address, name and
-          password you type, and we store them on EU servers to operate the
+          password you type, and we store them on servers in Switzerland to operate the
           account. Passwords are stored only as a scrypt hash — never in a form
           we can read. We also record the connection details every sign-in and
           sign-up attempt arrives with (IP address, browser user agent) to
@@ -66,7 +66,7 @@ export default function PrivacyPage() {
         </p>
         <p>
           The &ldquo;keep me posted&rdquo; form stores the address and the
-          interest you pick, on the same EU servers, so we can write to you when
+          interest you pick, on the same servers, so we can write to you when
           there is something to tell you. It is used for nothing else, and asking
           us to remove it removes it.
         </p>
@@ -109,7 +109,7 @@ export default function PrivacyPage() {
         </p>
         <p>
           That copy is a full one — bodies, headers, subjects and senders, not
-          only metadata — on EU servers, solely to provide sync, push and
+          only metadata — on servers in Switzerland, solely to provide sync, push and
           search. It is encrypted at rest and your
           mailbox credentials are additionally encrypted at the application
           level, but the mail itself is not: it is <strong>not</strong>{" "}
@@ -120,7 +120,7 @@ export default function PrivacyPage() {
           Attachments you send from the web app are handled separately, and the
           size of the file decides how. A small one travels inside the send
           request and is never written down. A larger one is uploaded first to
-          private storage on the same EU infrastructure, and the send then
+          private storage on the same infrastructure in Switzerland, and the send then
           fetches it from there — so those bytes exist at rest for a short
           window. They are encrypted at rest, no public or anonymous access is
           granted to that storage, and they are deleted within 24 hours whether
