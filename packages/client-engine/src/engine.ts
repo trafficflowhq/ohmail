@@ -6369,7 +6369,8 @@ export class OhmailEngine {
      */
     // An expired send pressed again under its key sends the row it made, never a second one.
     const expired = enriched.kind === "mail_send" && opts.key !== undefined ? this.expiredSendsUnder(key) : [];
-    const expiredRow = expired.find((e) => isCreatedRow(e.createdRow))?.createdRow;
+    const expiredRow = expired.find((e) => isCreatedRow(e.createdRow))?.createdRow
+      ?? (enriched.kind === "mail_send" && opts.key !== undefined ? this.confirmedRows.get(key) : undefined);
     const pending: PendingMutation = {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
@@ -7565,6 +7566,11 @@ export class OhmailEngine {
     opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
   ): Promise<MutationResult> {
     const r = await this.dispatchOnce(p, opts);
+    if (p.mutation.kind === "mail_send" && r.status === "confirmed" && p.createdRow !== undefined) {
+      this.confirmedRows.delete(p.key);
+      this.confirmedRows.set(p.key, p.createdRow);
+      if (this.confirmedRows.size > 64) this.confirmedRows.delete(this.confirmedRows.keys().next().value!);
+    }
     return p.mutation.kind === "mail_send" ? await this.oneSpeaker(p, r) : r;
   }
 
@@ -7573,6 +7579,14 @@ export class OhmailEngine {
    * only: a kill loses it, and the newer press then says only its own sentence (a gap row).
    */
   private readonly silencedConfirms = new Map<string, { result: MutationResult; mutation: EngineMutation }>();
+
+  /**
+   * THE ROW EACH RECENTLY CONFIRMED SEND MADE, by key. A press resumed under a key whose send
+   * confirmed between the press and its dispatch has nothing standing to carry the row from, and a
+   * create under that key with newer words is the middleware's `idempotency_replay`: the press would
+   * end refused, unsaid. Bounded; the oldest goes first.
+   */
+  private readonly confirmedRows = new Map<string, CreatedDraftRow>();
 
   /**
    * ONE KEY, ONE SPEAKER — the newest press. A send confirmed while a newer press under its key
