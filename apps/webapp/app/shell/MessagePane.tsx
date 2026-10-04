@@ -1457,37 +1457,11 @@ export function MessagePane({
   }, [siblingKey, hydrateThread]);
 
   /**
-   * Open a thread at its latest message — instant, no animation. A conversation renders oldest→newest
-   * (`ConversationPanels`), so a fresh render sits at the TOP on the oldest mail; this puts the newest on screen the
-   * moment the pane paints. The FOCUS is not remapped — `message` stays the opened id (ActionBar, reply, read-state
-   * and selection key on it); the anchor is purely a scroll position, the last `[data-conv-id]` element in the stack.
-   * `scrollTop` is assigned directly rather than via `scrollIntoView`: it moves ONE scroller instead of every
-   * scrollable ancestor, and it is instant regardless of `scroll-behavior`. The walk to the nearest scrollable
-   * ancestor is inlined (copied from `MessageBody.tsx`'s `scrollAncestors`) to keep this pane off the sanitizer
-   * module.
-   */
-
-  /**
-   * `useLayoutEffect` so the position is set before first paint; keyed on `[message.id, showConversation]` ONLY — a
-   * dependency on body-state would re-anchor on every hydration delta and yank a reader who had scrolled up.
-   */
-
-  /**
-   * One pass is not enough any more. This ran once and stopped, on the premise "the conversation list is complete at
-   * first render" — true when a sibling rendered its snippet at final height, false once siblings started hydrating:
-   * `Conversation` asks for every sibling's body in a mount effect, each answer replaces two lines of snippet with a
-   * whole message, and the newest message walks back off the bottom as its older siblings grow above it — a thread
-   * opening at its OLDEST message, the exact defect this anchor prevents, restored through a door that did not exist
-   * when it was written.
-   */
-
-  /**
-   * Sharper second arm: the walk requires an ancestor ALREADY overflowing — before the bodies land there may be
-   * nothing to scroll, the walk falls off the top, and no later event brings it back. So the anchor is re-applied
-   * while the conversation's box keeps changing size, and handed to the reader the moment they touch it (wheel, drag,
-   * key, press) — bounded by that handover and a timeout, so a thread that never settles cannot hold the scroller.
-   * `ResizeObserver`, not a hydration dependency: it fires on what actually invalidates the position (the stack got
-   * taller), so a body arriving without changing height costs nothing; guarded for environments without one.
+   * OPEN THE THREAD AT THE OPENED PANEL — the `aria-current` one, which is the message the bar acts on; never the
+   * newest. No fallback to the last panel: an absent focused panel scrolls nothing. `scrollTop` moves ONE scroller,
+   * instantly (the ancestor walk is `MessageBody.tsx`'s `scrollAncestors`, inlined). A layout effect keyed on the id
+   * only, re-applied by a `ResizeObserver` while sibling bodies land and grow the stack above the panel, and released
+   * for good at the reader's first gesture (`HANDOVER`) or after 6 s.
    */
   useLayoutEffect(() => {
     if (!showConversation) return;
@@ -1497,8 +1471,9 @@ export function MessagePane({
     const anchor = (): void => {
       const entries = conv.querySelectorAll<HTMLElement>("[data-conv-id]");
       const last = entries[entries.length - 1];
-      if (!last) return;
-      let scroller: HTMLElement | null = last.parentElement;
+      const opened = conv.querySelector<HTMLElement>('[data-conv-id][aria-current="true"]');
+      if (!last || !opened) return;
+      let scroller: HTMLElement | null = opened.parentElement;
       while (scroller) {
         const oy = getComputedStyle(scroller).overflowY;
         if (
@@ -1529,7 +1504,7 @@ export function MessagePane({
         last.style.paddingBottom = `${pad.toFixed(3)}px`;
       }
       scroller.scrollTop =
-        last.getBoundingClientRect().top -
+        opened.getBoundingClientRect().top -
         scroller.getBoundingClientRect().top +
         scroller.scrollTop -
         14;
@@ -1888,9 +1863,8 @@ export function MessagePane({
    * single message parks in `ReadingPane`'s actions slot and the bar at the foot of the thread
    * wrapper cannot drift apart. `test/pill-snapshot.test.ts` pins its rendered markup to the bytes
    * captured before the viewer redesign: the wrapper around the bar changed, the bar did not.
-   * It is bound to `message` — the OPENED id — on every surface; opening an older message via
-   * search keeps the verbs on that message, never on the newest panel. Forward asks the shell what a
-   * row open took (`forwardTarget`), which is the message the conversation was opened at.
+   * It is bound to `message` — the OPENED id, the panel the anchor puts on screen — on every surface,
+   * never the newest panel. Forward asks the shell what a row open took (`forwardTarget`), the same id.
    */
   const actionBar = (
     <ActionBar
