@@ -21,6 +21,7 @@ import { useBarDensity } from "./bar-density";
 import { InlineReply } from "./InlineReply";
 import { ForwardAskStrip } from "./ForwardAsk";
 import { inlineForwardKey } from "./mail-send";
+import { barForwardTarget } from "./forward-target";
 import { ariaShortcut, chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
 import { useBodyStalled, useMessageChrome, useWithheldSentence, type MessageBarPanel } from "./message-chrome";
 import { useDrawnBody } from "./body-slice";
@@ -267,8 +268,15 @@ function ActionBar({
   onScreen,
   onTag,
   trash,
+  forwardTarget,
 }: {
   message: EngineMessage;
+  /**
+   * WHAT THIS BAR'S FORWARD TAKES when it is not `message` — the newest message of a conversation
+   * opened from its Ohbox row (`barForwardTarget`). It goes through the chrome's Forward, the door
+   * each panel's own Forward uses; absent, Forward is this bar's verb on `message` like every other.
+   */
+  forwardTarget?: EngineMessage;
   /**
    * THE BAR OVER A MESSAGE THAT IS IN TRASH — one primary verb and the read switch, nothing else, decided by an EARLY
    * RETURN below rather than by gating each of the eleven groups. Every other verb here is wrong over a trashed row
@@ -421,6 +429,8 @@ function ActionBar({
    * flagged; a row the mirror does not hold has its body fetched through the reader's door.
    */
   const canForward = forwardOffered(message);
+  /** The press's message: the conversation's newest when the pane opened it as one (`forwardTarget`). */
+  const forwardOf = forwardTarget ?? message;
   /** Is the disclosure menu open? A boolean, because the menu is anchored by CSS, not by a point. */
   const [menuOpen, setMenuOpen] = useState(false);
   /**
@@ -1106,7 +1116,9 @@ function ActionBar({
               className="abar-b abar-solo"
               aria-label={tm("menuForward")}
               title={iconFwd ? tm("menuForward") : undefined}
-              onClick={() => onAction("forward")}
+              onClick={() => (forwardOf.id !== message.id && chrome.forward
+                ? chrome.forward(forwardOf.id, forwardOf)
+                : onAction("forward"))}
             >
               <Icon name="fwd" size={14} className="abar-ico" />
               <span className="abar-fwd-lab">{tm("menuForward")}</span>
@@ -1347,8 +1359,15 @@ export function MessagePane({
   onAction,
   onAddTag,
   trash,
+  asConversation,
 }: {
   message: EngineMessage;
+  /**
+   * OPENED AS ITS CONVERSATION — from an Ohbox row, whose open the engine chose (`openTarget`). The
+   * reader shows the newest message on top, so the bar's Forward takes that one. Absent everywhere a
+   * message is opened on its own, where the opened message stays the target.
+   */
+  asConversation?: boolean;
   tags: TagDTO[];
   now: Date;
   onEnterReader?: () => void;
@@ -1382,6 +1401,8 @@ export function MessagePane({
    * the first time a delta landed.
    */
   const conversation = chrome.conversationOf(message.id);
+  /** The bar's Forward: the newest panel when opened as a conversation, else the opened message. */
+  const forwardTarget = barForwardTarget(message, conversation, asConversation === true);
   /**
    * THE MESSAGE THE OPEN EDITOR ANSWERS (or forwards) — resolved against the WHOLE conversation, not the focused id
    * alone. Every panel's ⋯ menu dispatches its OWN id (`MessageHeader`), and `chrome.replyTo` faithfully held it —
@@ -1876,7 +1897,8 @@ export function MessagePane({
    * wrapper cannot drift apart. `test/pill-snapshot.test.ts` pins its rendered markup to the bytes
    * captured before the viewer redesign: the wrapper around the bar changed, the bar did not.
    * It is bound to `message` — the OPENED id — on every surface; opening an older message via
-   * search keeps the verbs on that message, never on the newest panel.
+   * search keeps the verbs on that message, never on the newest panel. Forward is the one verb that
+   * follows the screen: opened as a conversation, it takes the newest panel (`forwardTarget`).
    */
   const actionBar = (
     <ActionBar
@@ -1888,6 +1910,7 @@ export function MessagePane({
       onScreen={(anchor) => chrome.openSenderMenu(message.id, anchor)}
       onTag={(anchor) => onAddTag(message.id, anchor)}
       trash={trash}
+      forwardTarget={forwardTarget}
     />
   );
 

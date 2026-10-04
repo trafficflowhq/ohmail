@@ -3438,6 +3438,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             now={now}
             onAction={(a) => onMessageAction(a, sheetMessage)}
             onAddTag={openTagPicker}
+            /* Over the Ohbox the sheet reads a conversation its row opened: Forward takes the newest. */
+            asConversation={route.view === "ohbox"}
           />
         ) : readerGone ? (
           <MessageGone openTrash={openTrashWindow} />

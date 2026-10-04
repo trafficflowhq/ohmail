@@ -2512,6 +2512,8 @@ export function OhboxView({
               onAction(a, selected);
             }}
             onAddTag={onAddTag}
+            /* Every Ohbox row is a conversation, opened where the row chose: Forward takes its newest. */
+            asConversation
           />
         ) : gone ? (
           /* BEFORE the resting panel, and that order is the whole arm: "nothing open" and "the

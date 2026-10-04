@@ -16,6 +16,7 @@ import {
   countWhen,
   forwardOffered,
   sendAndDonePlanFor,
+  threadOf,
   type EngineMessage,
   type EntityReader,
   type OhmailEngine,
@@ -29,6 +30,7 @@ import {
   useTheme,
 } from "@ohmail/ui";
 import { replyAllRecipients } from "./compose-from";
+import { barForwardTarget } from "./forward-target";
 import type { ConsentState } from "./consent-state";
 import { deleteKeyBindings } from "./delete-undo";
 import { FoldersRailGroup, type FolderVerbs } from "./FoldersRailGroup";
@@ -587,7 +589,11 @@ export function useShellKeys({
       ...noCursor,
       run: () => {
         if (!focused) return;
-        if (readerMessage != null || route.view === "ohbox") openForward(focused.id, focused);
+        if (readerMessage != null || route.view === "ohbox") {
+          // The bar's own target (`barForwardTarget`): over the Ohbox, the conversation's newest.
+          const target = barForwardTarget(focused, threadOf(engine.read(), focused.id), route.view === "ohbox");
+          openForward(target.id, target);
+        }
         else onStreamAction("forward", focused);
       },
     },
