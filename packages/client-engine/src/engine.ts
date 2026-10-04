@@ -721,6 +721,18 @@ const OUTBOX_EXPIRED_MESSAGE = "This change is too old to send safely — it wou
  * since it spent a whole ceiling getting into that list. The membership test mirrors `restoreOutbox`'s exactly rather
  * than widening it: a create that carries a key of its own is safe at any age, and only these two arrive without one.
  */
+/**
+ * A STATE VERB OLDER THAN THE SERVER'S 24 h IDEMPOTENCY RECORD carries its press's moment, and the
+ * route refuses it `superseded` when the message changed since (`superseded-replay.ts`): the press
+ * itself having landed, or another device. Past the record a replay is otherwise a second effect.
+ */
+const DECIDED_AT_VERBS: ReadonlySet<EngineMutation["kind"]> = new Set([
+  "move", "message_delete", "triage_set", "tag_assign", "mark_seen",
+]);
+function pastIdempotencyRecord(p: { mutation: EngineMutation; at: number }, now: number): boolean {
+  return DECIDED_AT_VERBS.has(p.mutation.kind) && now - p.at > OUTBOX_UNKEYED_CREATE_TTL_MS;
+}
+
 function pastCreateDedupe(e: PersistedOutboxEntry, now: number): boolean {
   const unkeyedCreate = e.mutation.kind === "rule_create"
     || (e.mutation.kind === "draft_save" && e.mutation.draftId === null);
@@ -7579,6 +7591,7 @@ export class OhmailEngine {
     try {
       const outcome = await this.adapter.mutate(p.mutation, {
         idempotencyKey: p.key,
+        ...(pastIdempotencyRecord(p, this.now().getTime()) ? { decidedAt: new Date(p.at).toISOString() } : {}),
         ...(p.createAttempted === true ? { createAttempted: true } : {}),
         ...(p.mutation.kind === "mail_send" ? {
           ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),

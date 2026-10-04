@@ -1,9 +1,9 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, assertAccountOrganizes, tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
-import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import { materializeTag } from "./dto/materialize.js";
+import { materializeTag, tagRowToDTO } from "./dto/materialize.js";
 import type { TagDTO } from "./dto/types.js";
 
 /** Same shim every write service here uses (`approval-service.ts:43`): a `ServiceContext.db`
@@ -104,7 +104,9 @@ export class TagsService {
    * "invoices" collide, and the user needs to know which survived rather than discovering later
    * that their new tag went nowhere.
    */
-  async create(ctx: ServiceContext, body: TagBody): Promise<{ dto: TagDTO; seq: number | null }> {
+  async create(
+    ctx: ServiceContext, body: TagBody, opts: { idempotency?: IdempotencyClaim | null } = {},
+  ): Promise<{ dto: TagDTO; seq: number | null }> {
     const name = this.validName(body?.name);
     const hue = this.validHue(body?.hue);
     const now = ctx.now();
@@ -119,12 +121,15 @@ export class TagsService {
       const inserted = await tx.insert(tags)
         .values({ accountId: ctx.accountId, name, hue, createdAt: now, updatedAt: now })
         .onConflictDoNothing()
-        .returning({ id: tags.id });
+        .returning();
       const row = inserted[0];
       if (!row) throw new ServiceError("conflict", 409, "a tag with that name already exists");
       const s = await recordChange(tx, {
         accountId: ctx.accountId, entityType: "tag", entityId: row.id, op: "create", meta: null,
       });
+      // The key commits WITH the tag, so a retry whose answer was lost is answered, never refused
+      // by the name rule over the tag it made itself.
+      await claimOrLose(tx, ctx, opts.idempotency, { status: 201, json: tagRowToDTO(row), seq: Number(s) });
       return { id: row.id, seq: s };
     });
 

@@ -463,7 +463,7 @@ export class HttpAdapter implements EngineAdapter {
    * Exactly one caller passes a signal today: {@link HttpAdapter.listAttachments}, via {@link
    * HttpAdapter.withDeadline}.
    */
-  private async request(method: string, path: string, init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<Response> {
+  private async request(method: string, path: string, init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; decidedAt?: string } = {}): Promise<Response> {
     /*
      * THE GATE, AHEAD OF EVERY DOOR AND AHEAD OF EVERY HEADER. A client whose session is
      * confirmed over answers itself with the 401 the server would have sent (`sessionEndedResponse`,
@@ -476,6 +476,7 @@ export class HttpAdapter implements EngineAdapter {
     const headers: Record<string, string> = { ...this.extraHeaders() };
     if (init.body !== undefined) headers["content-type"] = "application/json";
     if (init.idempotencyKey) headers["idempotency-key"] = init.idempotencyKey;
+    if (init.decidedAt) headers["x-decided-at"] = init.decidedAt;
     if (method !== "GET") {
       const csrf = this.getCookie(this.csrfCookieName);
       if (csrf) headers["x-csrf-token"] = csrf;
@@ -1379,6 +1380,7 @@ export class HttpAdapter implements EngineAdapter {
     opts: {
       idempotencyKey: string; createAttempted?: boolean;
       createdRow?: CreatedDraftRow; onDraftRow?: (row: CreatedDraftRow) => Promise<void>;
+      decidedAt?: string;
     },
   ): Promise<MutationAnswer> {
     switch (m.kind) {
@@ -1386,6 +1388,7 @@ export class HttpAdapter implements EngineAdapter {
         const res = await this.request("POST", `/messages/${m.messageId}/move`, {
           body: { folder: m.folder },
           idempotencyKey: opts.idempotencyKey,
+          ...(opts.decidedAt ? { decidedAt: opts.decidedAt } : {}),
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1405,6 +1408,7 @@ export class HttpAdapter implements EngineAdapter {
       case "message_delete": {
         const res = await this.request("DELETE", `/messages/${m.messageId}`, {
           idempotencyKey: opts.idempotencyKey,
+          ...(opts.decidedAt ? { decidedAt: opts.decidedAt } : {}),
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1427,6 +1431,7 @@ export class HttpAdapter implements EngineAdapter {
         const res = await this.request("POST", `/messages/${m.messageId}/triage`, {
           body: { state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}) },
           idempotencyKey: opts.idempotencyKey,
+          ...(opts.decidedAt ? { decidedAt: opts.decidedAt } : {}),
         });
         if (!res.ok) throw await this.rejectionOf(res);
         // The triage endpoint returns the MessageStateDTO without an X-Sync-Seq
@@ -1540,6 +1545,7 @@ export class HttpAdapter implements EngineAdapter {
         const res = await this.request("PATCH", "/messages", {
           body: { ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}) },
           idempotencyKey: opts.idempotencyKey,
+          ...(opts.decidedAt ? { decidedAt: opts.decidedAt } : {}),
         });
         if (!res.ok) throw await this.rejectionOf(res);
         return { changes: [], seq: this.noteSeq(res) };
@@ -1573,6 +1579,7 @@ export class HttpAdapter implements EngineAdapter {
             // optimistic paint and the stored row agree. An existing name wins over the id.
             : { tagId: m.tagId, name: m.createName, assigned: m.assigned },
           idempotencyKey: opts.idempotencyKey,
+          ...(opts.decidedAt ? { decidedAt: opts.decidedAt } : {}),
         });
         if (!res.ok) throw await this.rejectionOf(res);
         return { changes: [], seq: this.noteSeq(res) };

@@ -3,6 +3,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { tags, readBody } from "./shared.js";
+import { refuseSupersededReplay } from "../superseded-replay.js";
 
 /**
  * /tags — the account's own labels, keyed by message. A tag is a row in our database and never an
@@ -29,10 +30,13 @@ export const tagsRoutes: Route[] = [
     pattern: "/tags",
     relay: true,
     cost: "work",
-    replay: "guarded",
+    // Keyed: a retry whose answer was lost replays the creation instead of meeting the name rule.
+    options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<TagBody>(req);
-      const { dto, seq } = await tags(deps).create(serviceContext(deps, req), body);
+      const { dto, seq } = await tags(deps).create(serviceContext(deps, req), body, {
+        idempotency: deps.idempotency ?? null,
+      });
       return jsonResponse(dto, { status: 201, seq });
     },
   },
@@ -70,6 +74,8 @@ export const tagsRoutes: Route[] = [
     replay: "guarded",
     handler: async (req, deps, params) => {
       const body = await readBody<{ tagId: string; assigned: boolean; name?: string }>(req);
+      const stale = await refuseSupersededReplay(req, deps, [params.id!]);
+      if (stale) return stale;
       const { labels, tagId, seq } = await tags(deps).assign(
         serviceContext(deps, req), params.id!, body?.tagId, body?.assigned, body?.name,
       );
