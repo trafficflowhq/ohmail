@@ -196,8 +196,7 @@ export {
   AWAY_PILES,
   validateProfileUpdatePayload, applyProfileUpdate,
   RULE_TERM_MAX, RULE_MATCH_MAX, RULE_PRIORITY_MAX, validateRulePayload, ruleCreatePayload, applyRuleRequest, settleReaderRuleRows,
-  reconcileRuleCreate, convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance, pressSettled, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
-  type ConvergedKey, type FoundRule, type KeyWriteResult, type RuleRowWrite,
+  reconcileRuleCreate, pressSettled, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
   type ValidatedProfileUpdate, type ProfileAwayUpdate, type ProfileScreeningUpdate,
@@ -207,6 +206,10 @@ export {
   type ApplyRuleRequestInput, type ApplyRuleRequestResult,
   RESTORABLE_PROVENANCE, restoredProvenanceSql,
 } from "./request-apply.js";
+export {
+  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance,
+  type ConvergedKey, type FoundRule, type KeyWriteResult, type RuleRowWrite,
+} from "./rule-key.js";
 
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, recordRuleDelta, ruleDelta, minRetainedSeq, prunedThroughSeq, seqBounds,

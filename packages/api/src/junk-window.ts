@@ -3,7 +3,8 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, fenceErased,
   contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages,
-  recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, type LedgerTx, type Tx,
+  keptProvenance, lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl,
+  writeRuleUnderKey, type LedgerTx, type RuleRowWrite, type Tx,
 } from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, epochOf, sameEpoch,
@@ -399,7 +400,7 @@ const ALLOW_SIDE = CONSENTING_DESTINATIONS;
 export interface AllowSenderOutcome {
   /** Rule ids this press DISABLED — the sender's own spam-promoting rules. */
   disabledRuleIds: string[];
-  /** The allow rule minted, or null when an enabled sender allow already stood. */
+  /** The one rule under the sender's key the press wrote (minted, or converged onto); null when it already allowed them. */
   createdRuleId: string | null;
 }
 
@@ -417,14 +418,15 @@ function normalizeAllowAddress(address: string): string {
 }
 
 /**
- * "ALWAYS ALLOW THIS SENDER" — the rule half of the second verb: the promoted allow rule, the
+ * "ALWAYS ALLOW THIS SENDER" — the rule half of the second verb: the sender's one allow rule, the
  * `contacts` row, the change rows, and the one thing it cannot assume — that the sender's spam
  * rule is switched off first, since deny outranks allow at equal priority and specificity.
  *
  * IT TAKES THE CALLER'S TRANSACTION. It used to open its own, and the rescue then ran two
  * sequenced transactions, so an interruption left a rule standing with no move behind it. It
  * fences at the top of its own body anyway — `contacts` and `rules` hang off the account alone
- * and `accounts` survives erasure — which the caller already asked, so this takes no lock.
+ * and `accounts` survives erasure — which the caller already asked; the one lock it takes is the
+ * account's rule-key lock, before its first `rules` statement.
  */
 async function allowSender(
   tx: LedgerTx, accountId: string, address: string, nowAt: Date,
@@ -433,6 +435,8 @@ async function allowSender(
   // reading it from the tx is what keeps this true on a device store as well as a server.
   await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Parameters<typeof dialect>[0]), { accountId });
   const addr = normalizeAllowAddress(address);
+  // The rule-key lock before the first `rules` statement, every rules writer's order.
+  await lockAccountRuleKeys(tx as unknown as Tx, accountId);
   // 1. The spam-promoting rules for THIS address, switched off. `.returning()` so the change
   //    rows describe exactly the rows that flipped — an already-disabled rule is not re-announced.
   const disabled = await tx.update(rulesTbl)
@@ -451,38 +455,30 @@ async function allowSender(
   await tx.insert(contacts).values({ accountId, address: addr })
     .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
 
-  // 3. The allow rule, unless one already stands. Any allow-side destination counts: their
-  //    admission is given, and a second sender allow at the same rank would leave the pile to
-  //    a UUID tie-break (`compareRules`' last clause) rather than to a decision.
-  const [standing] = await tx.select({ id: rulesTbl.id }).from(rulesTbl)
-    .where(and(
-      eq(rulesTbl.accountId, accountId),
-      eq(rulesTbl.kind, "sender"),
-      sql`${ruleMatchKeySql(rulesTbl.match)} = ${addr}`,
-      eq(rulesTbl.enabled, true),
-      inArray(rulesTbl.destination, [...ALLOW_SIDE]),
-      isNull(rulesTbl.subjectContains),
-      isNull(rulesTbl.bodyContains),
-    ))
-    .limit(1);
-  if (standing !== undefined) {
-    return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: null };
-  }
-  const [rule] = await tx.insert(rulesTbl).values({
-    accountId,
-    kind: "sender",
-    match: addr,
-    destination: ALLOW_RULE_DESTINATION,
-    provenance: "promoted",
-    enabled: true,
-    /* The backlog comes with the rescue. "Not junk" says this sender's mail belongs
-       in the Ohbox, and the message being rescued is rarely their only one — without the stamp
-       the rest stays wherever the spam verdict put it and nothing ever revisits it, because
-       NULL is read everywhere as "nobody asked". Stamped in the rescue's own transaction. */
-    retroRequestedAt: nowAt,
-  }).returning({ id: rulesTbl.id });
-  await recordRuleDelta(tx, accountId, [rule!.id], "create");
-  return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: rule!.id };
+  /* 3. ONE RULE PER KEY: the sender's bare key converges onto its ACTING row. An enabled row on
+     the allow side already admits them and keeps its place (both News spellings count); anything
+     else — a screen-out, the spam rule just switched off — becomes the allow into the Ohbox. Its
+     provenance is the decision's rule (manual and migrated kept, never made manual), and the
+     backlog is asked for when the routing moved. A key with no row gets the promoted allow. */
+  const retro: RuleRowWrite = { retroRequestedAt: nowAt, retroDoneAt: null, retroCursor: null, retroMoved: 0 };
+  const wrote = await writeRuleUnderKey(tx as unknown as Tx, {
+    accountId, now: nowAt, overExisting: "converge",
+    key: { kind: "sender", match: addr, subjectContains: null, bodyContains: null },
+    diff: (row) => {
+      const admits = row.enabled && ALLOW_SIDE.includes(row.destination);
+      const d: RuleRowWrite = {};
+      if (!admits && row.destination !== ALLOW_RULE_DESTINATION) d.destination = ALLOW_RULE_DESTINATION;
+      if (!row.enabled) d.enabled = true;
+      const provenance = keptProvenance(row.provenance, "promoted");
+      if (provenance !== row.provenance) d.provenance = provenance;
+      return d.destination !== undefined || d.enabled === true ? { ...d, ...retro } : d;
+    },
+    /* The backlog comes with the rescue. "Not junk" says this sender's mail belongs in the Ohbox,
+       and the message being rescued is rarely their only one — without the stamp the rest stays
+       wherever the spam verdict put it, because NULL is read everywhere as "nobody asked". */
+    insert: { destination: ALLOW_RULE_DESTINATION, provenance: "promoted", enabled: true, retroRequestedAt: nowAt },
+  });
+  return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: wrote.op === "unchanged" ? null : wrote.ruleId };
 }
 
 /** What a press leaves behind: the command's id, and the allow half when the second verb ran. */

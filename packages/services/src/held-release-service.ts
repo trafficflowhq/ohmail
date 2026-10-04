@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   AccountErasedError, accountSettings, applyScreenerDecision, auditAction, auditLog, changeLog,
-  contactOnlyHeldWhere, destinationIsDecisionSql, folderState, mailboxes, messages, recordRuleDelta,
+  contactOnlyHeldWhere, destinationIsDecisionSql, folderState, lockAccountRuleKeys, mailboxes, messages, recordRuleDelta,
   ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -453,6 +453,9 @@ export async function releaseHeld(
      rule and an audit row, and a transaction opened straight on the handle can commit them AFTER
      an erasure sweep has finished — a row belonging to an account that no longer exists. */
   return withAccountTx(ctx, async (t) => {
+    // The rule-key lock first after the fence: this press writes rules by id and then decides
+    // senders, whose held bags lock mailboxes it cannot name up front (every writer's order).
+    await lockAccountRuleKeys(bridgeTx(t), ctx.accountId);
     // Read the groups INSIDE the transaction that acts on them: the count written to the audit row
     // is then the count the press released, not one measured before somebody else's decision landed.
     const groups = await heldReleaseGroups(bridgeTx(t), ctx.accountId);
@@ -511,7 +514,7 @@ export async function releaseHeld(
         await applyScreenerDecision(bridgeTx(t), {
           accountId: ctx.accountId, scope: "sender", address: g.sender, appliedFolder: "INBOX", decision: "yes",
           triggeringActionId: `held-release:${g.sender}`, now, stampBaseline: false, applyRetro: true,
-          decidedBy: "person",
+          decidedBy: "person", overExisting: "converge",
         });
       } catch (err) {
         if (err instanceof AccountErasedError) {

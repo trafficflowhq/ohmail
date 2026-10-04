@@ -1209,11 +1209,12 @@ export class ScreenerReadService {
     },
     fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
-  ): Promise<{ result: ScreenDecisionResult; seq: number }> {
+  ): Promise<{ result: ScreenDecisionResult; seq: number | null }> {
     const { scope, decision, address, domain, appliedFolder, target, applyRetro } = v;
     let rerouted: AppliedScreenerRow[] = [];
     let filed: string[] = [];
-    let lastSeq = 0n;
+    // `null` when the decision wrote no change: the key already held it and nothing moved.
+    let lastSeq: bigint | null = null;
 
     const result = await asTx(ctx).transaction(async (tx) => {
       // THE ERASURE FENCE FIRST — `applyScreenerDecision` takes `accounts FOR SHARE` first and
@@ -1233,8 +1234,9 @@ export class ScreenerReadService {
         applied = await applyScreenerDecision(carryDialect(ctx.db, tx) as typeof tx, {
           accountId: ctx.accountId, scope, address, appliedFolder, decision,
           triggeringActionId: `screener:${id}`, now: ctx.now(), applyRetro,
-          // A press: the decision is the person's, so a `no` licenses the unsubscribe pass.
-          decidedBy: "person",
+          // A press: the decision is the person's, so a `no` licenses the unsubscribe pass, and it
+          // converges the sender's existing rule rather than adding one beside it.
+          decidedBy: "person", overExisting: "converge",
         });
       } catch (err) {
         // `applyScreenerDecision` fences the account itself, first — see its own header. Its
@@ -1301,12 +1303,15 @@ export class ScreenerReadService {
       }
 
       // Read INSIDE the tx, so the stored replay and the live answer carry the rows as written.
+      // A press converges, never skips: the id is the one rule under the sender's key afterwards.
+      const ruleId = applied.createdRuleId;
+      if (ruleId === null) throw new ServiceError("internal", 500, "the decision wrote no rule");
       const written = await materializeRules(
-        bridgeDb(tx), ctx.accountId, [applied.createdRuleId, ...applied.retargetedRuleIds],
+        bridgeDb(tx), ctx.accountId, [ruleId, ...applied.retargetedRuleIds],
       );
       const dto: ScreenDecisionResult = {
-        messageId: id, appliedFolder, createdRuleId: applied.createdRuleId,
-        createdRule: written.get(applied.createdRuleId) ?? null,
+        messageId: id, appliedFolder, createdRuleId: ruleId,
+        createdRule: written.get(ruleId) ?? null,
         retargetedRules: applied.retargetedRuleIds.flatMap((r) => written.get(r) ?? []),
         mailboxes: { filed, requested, ...(awaiting.length > 0 ? { awaiting } : {}) },
       };
@@ -1322,7 +1327,7 @@ export class ScreenerReadService {
           requestHash: opts.idempotency.requestHash,
           responseStatus: 200,
           responseJson: dto,
-          seq: Number(applied.lastSeq),
+          seq: applied.lastSeq === null ? null : Number(applied.lastSeq),
           now: ctx.now(),
         });
         // A LOST claim = a concurrent same-key request committed first. Throwing rolls THIS
@@ -1414,7 +1419,7 @@ export class ScreenerReadService {
       }
     }
 
-    return { result, seq: Number(lastSeq) };
+    return { result, seq: lastSeq === null ? null : Number(lastSeq) };
   }
 
   /**

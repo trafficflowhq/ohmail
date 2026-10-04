@@ -282,15 +282,16 @@ export async function screenerAutoActPass(
           // The press's own default: the promoted rule reaches this sender's mail that already
           // left the gate. One decision, one meaning, whoever carried it.
           applyRetro: true,
-          // A pass never rewrites the person's own rules: a rule written after the page was read
-          // keeps deciding, as the selection's decided-sender filter would have had it. Nor does it
-          // lift over their domain rule — that lift is a person's answer about one address.
-          retargetTwins: false,
+          // A pass never writes over a sender who has a rule, enabled or paused: a rule written
+          // after the page was read keeps deciding, as the selection's decided-sender filter would
+          // have had it, and a paused one is the person's or the demotion's word. Nor does it lift
+          // over their domain rule — that lift is a person's answer about one address.
+          overExisting: "skip",
           liftOverDomain: false,
           // NOT A PRESS: a filing this pass makes never licenses an unsubscribe.
           decidedBy: "pass",
         });
-        if (plan.refused) await clearActRefusal(tx as unknown as Tx, accountId, plan.suggestionId, now());
+        if (plan.refused && applied.skipped === undefined) await clearActRefusal(tx as unknown as Tx, accountId, plan.suggestionId, now());
         return applied;
       });
       if (applied === null) {
@@ -301,6 +302,8 @@ export async function screenerAutoActPass(
         });
         break;
       }
+      // A sender who has a rule under their key is not this pass's: nothing was written or filed.
+      if (applied.skipped === "ruled") { result.kept++; continue; }
       result.filed++;
       result.destinations[plan.appliedFolder] = (result.destinations[plan.appliedFolder] ?? 0) + 1;
     } catch (err) {

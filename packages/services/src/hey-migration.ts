@@ -1,14 +1,14 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
-  rules as rulesTbl, messages, folderState, auditLog, recordRuleDelta, auditAction, ruleMatchKeySql, type Tx,
+  rules as rulesTbl, messages, folderState, auditLog, auditAction, lockAccountRuleKeys, recordRuleDelta, writeRuleUnderKey, type Tx,
 } from "@trafficflow/db";
 import type {
   AdapterPort, Destination, MigrationObservation, FolderScanner, NativeLocator, ScanOptions,
 } from "@trafficflow/core";
 import { applyReconcileAction, scanFoldersForMigration, reconcile } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { bridgeTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import {
   moveDestinationWord, planBulkMoveOnReader, writeReaderRequestSet,
 } from "./reader-request.js";
@@ -60,9 +60,10 @@ export interface MigrateSummary {
 
 /**
  * HeyMigrationService — seeds the deterministic ruleset from a HEY / existing-mailbox export or
- * folder-scan. Idempotent and reversible (spec §16): `migrateFromObservations` upserts one
- * `provenance:'migrated'` rule per observation keyed on `(accountId, kind, match)` — a re-run
- * creates ZERO duplicates, returned `unchanged`. Each new rule emits a `change_log` create; the
+ * folder-scan. Idempotent and reversible (spec §16): `migrateFromObservations` converges each
+ * observation's bare sender or domain key onto its one rule — a `provenance:'migrated'` rule where
+ * the key has none, never a second rule beside one made here — so a re-run creates ZERO
+ * duplicates, returned `unchanged`. Each new rule emits a `change_log` create; the
  * run writes an `audit_log` entry whose inverse is the undo. `undoMigration` removes ONLY
  * migrated rules. Rules-only by default: migration creates rules, it does not move live mail; an
  * opt-in `reroute` pass routes backfill placements through the reconciler write-path OUTSIDE the
@@ -102,57 +103,35 @@ export class HeyMigrationService {
     let created = 0;
     let unchanged = 0;
     const createdIds: string[] = [];
+    /** The observations whose key this migration's own rule decides — the only ones it may re-route. */
+    const owned: MigrationObservation[] = [];
 
     // ── ONE short tx: upsert migrated rules + change_log for creates + audit_log (no network) ──
-    await asTx(ctx).transaction(async (tx) => {
+    await withAccountTx(ctx, async (tx) => {
+      // Fence, then the rule-key lock before the first `rules` statement — every writer's order.
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
       for (const o of deduped) {
-        const [existing] = await tx
-          .select({ id: rulesTbl.id, destination: rulesTbl.destination })
-          .from(rulesTbl)
-          .where(and(
-            eq(rulesTbl.accountId, ctx.accountId),
-            eq(rulesTbl.kind, o.kind),
-            sql`${ruleMatchKeySql(rulesTbl.match)} = ${o.senderOrDomain}`,
-            eq(rulesTbl.provenance, "migrated"),
-          ))
-          .limit(1);
-
-        if (existing) {
-          // Already migrated for this key → idempotent no-op (refresh destination if the
-          // observation now maps elsewhere; still counts as unchanged — no new row).
-          if (existing.destination !== o.destination) {
-            // scoped-by: existing.id comes from the account-scoped rules read above
-            await tx.update(rulesTbl)
-              .set({ destination: o.destination, updatedAt: ctx.now() })
-              .where(eq(rulesTbl.id, existing.id));
-            // WHERE THE RULE GOES IS ON THE WIRE. Re-running the migration after the observed
-            // destination moved rewrites a rule every client is already showing; without the
-            // delta they keep showing the old folder for ever. Counted `unchanged` all the same
-            // — that word is about rules CREATED, and the row did move.
-            await recordRuleDelta(tx, ctx.accountId, [existing.id], "update");
-          }
-          ruleIds.push(existing.id);
+        /* ONE RULE PER KEY: the observation's bare key converges onto its ACTING row. A row this
+           migration wrote takes the observation's destination (a re-run after the mapping moved);
+           any other row is a decision made HERE and is left as it is (counted `unchanged`): an
+           import carries decisions made in another product and never overrides one made in this
+           one. No row: the migrated rule, with NO retro request — `profile-import-service`'s rule,
+           since walking a whole imported mailbox on arrival is a press this flow never offered. */
+        const wrote = await writeRuleUnderKey(bridgeTx(tx), {
+          accountId: ctx.accountId, now: ctx.now(), overExisting: "converge",
+          key: { kind: o.kind, match: o.senderOrDomain, subjectContains: null, bodyContains: null },
+          diff: (row) => (row.provenance === "migrated" && row.destination !== o.destination
+            ? { destination: o.destination } : {}),
+          insert: { destination: o.destination, provenance: "migrated", enabled: true, retroRequestedAt: null },
+        });
+        ruleIds.push(wrote.ruleId!);
+        if (wrote.op === "create" || wrote.acting?.provenance === "migrated") owned.push(o);
+        if (wrote.op === "create") {
+          createdIds.push(wrote.ruleId!);
+          created++;
+        } else {
           unchanged++;
-          continue;
         }
-
-        /* NO RETRO REQUEST, deliberately — `profile-import-service`'s rule, stated here too since
-           the 2026-09-16 ruling made every other omission a defect: an import carries decisions
-           somebody made in ANOTHER product, so "nobody asked for the backlog" is the honest state,
-           and walking a whole imported mailbox on arrival is a press this flow never offered. */
-        const [row] = await tx.insert(rulesTbl).values({
-          accountId: ctx.accountId,
-          kind: o.kind,
-          match: o.senderOrDomain,
-          destination: o.destination,
-          provenance: "migrated",
-          enabled: true,
-          retroRequestedAt: null,
-        }).returning({ id: rulesTbl.id });
-        await recordRuleDelta(tx, ctx.accountId, [row!.id], "create");
-        ruleIds.push(row!.id);
-        createdIds.push(row!.id);
-        created++;
       }
 
       if (createdIds.length > 0) {
@@ -171,7 +150,8 @@ export class HeyMigrationService {
     let deferred = 0;
     let superseded = 0;
     if (opts.reroute) {
-      ({ moved: rerouted, deferred, superseded } = await this.rerouteToMatchRules(ctx, deduped));
+      // Only where the migrated rule is the rule: a key decided here keeps its mail where it is.
+      ({ moved: rerouted, deferred, superseded } = await this.rerouteToMatchRules(ctx, owned));
     }
 
     return { created, unchanged, ruleIds, rerouted, deferred, superseded };

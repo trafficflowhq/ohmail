@@ -1,12 +1,13 @@
-import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
-import { recordChanges, recordRuleDelta, type ChangeInput, type LedgerTx, type Tx } from "./change-log.js";
+import { recordChanges, type ChangeInput, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeenMany } from "./flag-intent.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
 
 /**
  * `@trafficflow/core/rule-order#RULE_PRIORITY_MAX`, copied: this package does not import core.
@@ -426,11 +427,12 @@ export interface ApplyScreenerDecisionInput {
    */
   applyRetro?: boolean;
   /**
-   * Retarget the subject's rule twins to {@link appliedFolder}. Defaults `true`: a decision is the
-   * person's answer, and a deny written while the mail waited would otherwise outrank the promoted
-   * rule. A caller that is not a press (the auto-act pass) passes `false` and leaves their rules.
+   * What the decision does over a subject whose bare key already has a rule. `converge`: the ACTING
+   * row takes the decision and its twins go (a press). `skip`: a key with any row, enabled or
+   * paused, is not this caller's, and NOTHING is written or filed (the auto-act pass). No default:
+   * the branch is named at every caller.
    */
-  retargetTwins?: boolean;
+  overExisting: "converge" | "skip";
   /**
    * Write an address decision's promoted rule at the priority its domain's rules filing elsewhere
    * hold ({@link addressPriorityOver}), so the person's answer about this address outranks them.
@@ -470,13 +472,16 @@ export interface HeldElsewhereMailbox {
 }
 
 export interface ApplyScreenerDecisionResult {
-  createdRuleId: string;
-  /** The twins this decision retargeted (`retargetTwins`), so a caller can answer with their rows. */
+  /** The one rule under the subject's key afterwards — inserted, or the acting row converged onto; `null` when skipped. */
+  createdRuleId: string | null;
+  /** Always empty since the decision converges the key: kept for the wire shape callers answer with. */
   retargetedRuleIds: string[];
+  /** `ruled`: `overExisting: "skip"` met a key with a rule, and nothing was written or filed. */
+  skipped?: "ruled";
   /** The subset of the held bag this decision ACTUALLY re-routed — see `decide`'s own `desired=Screener` guard. */
   rerouted: AppliedScreenerRow[];
-  /** The LAST `change_log` seq this call emitted — an HTTP caller re-emits it as `X-Sync-Seq` on an idempotent replay. */
-  lastSeq: bigint;
+  /** The LAST `change_log` seq this call emitted — an HTTP caller re-emits it as `X-Sync-Seq` on an idempotent replay. `null` when it emitted none. */
+  lastSeq: bigint | null;
   /**
    * Mailboxes holding this sender's mail that this install does NOT organize (role read under
    * lock, per mailbox). Nothing was written there. The HTTP door turns each into an
@@ -487,31 +492,28 @@ export interface ApplyScreenerDecisionResult {
 }
 
 /**
- * THE ONE IMPLEMENTATION. Contacts, the screening baseline, the promoted rule, the held-bag
+ * THE ONE IMPLEMENTATION. The screening baseline, the subject's ONE rule (the key converged onto
+ * its acting row, or the promoted rule where it has none), contacts, the held-bag
  * re-route (guarded on `desired_folder = 'ohmail/Screener'`: a row that has already moved on
  * keeps where it went — user always wins), mark-read-on-decide, `change_log` for every write, and
  * the learning signal. The bag is read ACCOUNT-WIDE (a decision is about the SENDER) and written
  * per mailbox behind a `FOR SHARE` role lock — only mailboxes this install organizes move;
  * the rest return as `heldElsewhere`. FENCES FIRST, as the first statement of whatever
  * transaction the caller opened: this writes `account_settings` (the baseline stamp), and every
- * such writer fences before touching anything else (`erasure-fence.ts`'s rule).
+ * such writer fences before touching anything else (`erasure-fence.ts`'s rule). Then the
+ * account's rule-key lock, before the first `rules` statement and the bag's mailbox locks.
  */
 export async function applyScreenerDecision(
   tx: Tx, input: ApplyScreenerDecisionInput,
 ): Promise<ApplyScreenerDecisionResult> {
   const {
     accountId, scope, address, appliedFolder, decision, triggeringActionId, now,
-    stampBaseline = true, applyRetro = true, retargetTwins = true, liftOverDomain = true, decidedBy,
+    stampBaseline = true, applyRetro = true, overExisting, liftOverDomain = true, decidedBy,
   } = input;
   const domain = domainOf(address);
 
   const erasedAt = await readAccountErasedAt(tx, dialect(tx), accountId);
   if (erasedAt != null) throw new AccountErasedError(accountId);
-
-  if (decision === "yes") {
-    await tx.insert(contacts).values({ accountId, address })
-      .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
-  }
 
   // The screening baseline, stamped on the first decide and never again — see `decide`'s own
   // header  for the full argument; `setWhere: isNull(...)` is what makes a later decide
@@ -527,6 +529,11 @@ export async function applyScreenerDecision(
     });
   }
 
+  /* THE RULE-KEY LOCK, after the settings row and before the first `rules` statement and every
+     mailbox lock the held bag takes below: every rules writer keeps that order. The contact row
+     follows it, as on "Not junk, always allow", so the two never wait on each other crosswise. */
+  await lockAccountRuleKeys(tx, accountId);
+
   // Read inside the decide's own transaction, so the priority answers the rules this write sees.
   const priority = scope === "sender" && liftOverDomain && domain !== ""
     ? addressPriorityOver(
@@ -538,47 +545,47 @@ export async function applyScreenerDecision(
         canonicalNewsSpelling(appliedFolder), 0,
       ) ?? 0
     : 0;
-  const [rule] = await tx.insert(rulesTbl).values({
-    accountId,
-    kind: scope === "domain" ? "domain" : "sender",
-    match: scope === "domain" ? domain : address,
-    destination: appliedFolder,
-    provenance: "promoted",
-    enabled: true,
-    priority,
-    // The backlog this decision does NOT reach: the held bag is re-routed below, and everything of
-    // this sender's that was filed before the gate held them is `rule-retro.ts`'s, on the press the
-    // surface just carried. NULL when declined — "nobody asked" is a different fact from "asked
-    // and finished", and the worker's owed predicate reads exactly that difference.
-    retroRequestedAt: applyRetro ? now : null,
-    personDecidedAt: decidedBy === "person" ? now : null,
-  }).returning({ id: rulesTbl.id });
+  /* ONE RULE PER KEY: the subject's bare key converges onto its ACTING row, which takes the
+     decision (the place, on, the higher priority, the person's stamp); a Screener decision keeps a
+     manual or migrated row's provenance and makes anything else `promoted`, never `manual`. A key
+     with no row gets the promoted rule. The backlog this decision does NOT reach is re-asked when
+     the routing moved: the held bag is re-routed below, everything filed before is `rule-retro.ts`'s. */
+  const kind = scope === "domain" ? "domain" : "sender";
+  const match = scope === "domain" ? domain : address;
+  const retro: RuleRowWrite = { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 };
+  const wrote = await writeRuleUnderKey(tx, {
+    accountId, now, overExisting,
+    key: { kind, match: ruleMatchKey(match), subjectContains: null, bodyContains: null },
+    match,
+    diff: (row) => {
+      const d: RuleRowWrite = {};
+      if (canonicalNewsSpelling(row.destination) !== canonicalNewsSpelling(appliedFolder)) d.destination = appliedFolder;
+      if (!row.enabled) d.enabled = true;
+      if (priority > row.priority) d.priority = priority;
+      const provenance = keptProvenance(row.provenance, "promoted");
+      if (provenance !== row.provenance) d.provenance = provenance;
+      if (decidedBy === "person" && row.personDecidedAt === null) d.personDecidedAt = now;
+      return applyRetro && (d.destination !== undefined || d.enabled === true) ? { ...d, ...retro } : d;
+    },
+    insert: {
+      destination: appliedFolder, provenance: "promoted", enabled: true, priority,
+      // NULL when declined — "nobody asked" is a different fact from "asked and finished", and the
+      // worker's owed predicate reads exactly that difference.
+      retroRequestedAt: applyRetro ? now : null,
+      personDecidedAt: decidedBy === "person" ? now : null,
+    },
+  });
+  if (wrote.op === "skipped") {
+    return { createdRuleId: null, retargetedRuleIds: [], rerouted: [], lastSeq: null, heldElsewhere: [], skipped: "ruled" };
+  }
   // Tracked and returned so an HTTP caller can re-emit it as `X-Sync-Seq` on an idempotent
   // replay — `claimIdempotencyKey`'s own `seq` field. The drain has no such replay contract and
   // simply discards it.
-  let lastSeq = (await recordRuleDelta(ledger(tx), accountId, [rule!.id], "create"))[0]!;
+  let lastSeq = wrote.lastSeq;
 
-  // THE SUBJECT'S TWINS — the client's `pressOverTwins`, for this verb: every enabled, term-free
-  // rule of the same kind naming the subject and filing elsewhere now files where the person
-  // decided, so no twin outranks the promoted rule. `RulesService.update`'s retarget: the
-  // destination moves (the effect follows it) and the backlog is re-asked when the answer is yes.
-  let retargetedRuleIds: string[] = [];
-  if (retargetTwins) {
-    const retargeted = await tx.update(rulesTbl).set({
-      destination: appliedFolder, updatedAt: now,
-      ...(applyRetro ? { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 } : {}),
-    }).where(and(
-      eq(rulesTbl.accountId, accountId),
-      eq(rulesTbl.enabled, true),
-      eq(rulesTbl.kind, scope === "domain" ? "domain" : "sender"),
-      sql`${ruleMatchKeySql(rulesTbl.match)} = ${scope === "domain" ? domain : address}`,
-      isNull(rulesTbl.subjectContains),
-      isNull(rulesTbl.bodyContains),
-      ne(rulesTbl.destination, appliedFolder),
-    )).returning({ id: rulesTbl.id });
-    retargetedRuleIds = retargeted.map((r) => r.id);
-    const seqs = await recordRuleDelta(ledger(tx), accountId, retargetedRuleIds, "update");
-    if (seqs.length > 0) lastSeq = seqs[seqs.length - 1]!;
+  if (decision === "yes") {
+    await tx.insert(contacts).values({ accountId, address })
+      .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
   }
 
   const held = { skipPutBack: decidedBy === "pass" };
@@ -599,5 +606,5 @@ export async function applyScreenerDecision(
     label: "positive",
   });
 
-  return { createdRuleId: rule!.id, retargetedRuleIds, rerouted, lastSeq, heldElsewhere };
+  return { createdRuleId: wrote.ruleId, retargetedRuleIds: [], rerouted, lastSeq, heldElsewhere };
 }
