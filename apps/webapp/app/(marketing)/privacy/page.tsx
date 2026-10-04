@@ -13,7 +13,7 @@ export const metadata: Metadata = {
  * Swiss operator and changes only deliberately. SCOPE: this policy covers the ohmail.app WEBSITE;
  * the product's per-tier data model carries its own policy at launch. The sign-up section was false
  * and is fixed: it said the waitlist form saved "in your own browser only", which stopped being
- * true when the waitlist began writing a `waitlist` row on EU infrastructure — the note-to-self
+ * true when the waitlist began writing a `waitlist` row to our database — the note-to-self
  * that sat here asked for exactly this update and nobody did it. It now describes the waitlist row
  * and the account data open registration collects. The lesson: a note-to-self in a comment is not a
  * mechanism, and this page is the one surface where a stale sentence is a legal claim.
@@ -68,7 +68,9 @@ export default function PrivacyPage() {
           The &ldquo;keep me posted&rdquo; form stores the address and the
           interest you pick, on the same servers, so we can write to you when
           there is something to tell you. It is used for nothing else, and asking
-          us to remove it removes it.
+          us to remove it removes it from our live database. An address given
+          before 3 August 2026 also stays in our former database, frozen, until
+          that database is deleted.
         </p>
 
         <h2>Hosting and server logs</h2>
@@ -123,8 +125,9 @@ export default function PrivacyPage() {
           private storage on the same infrastructure in Switzerland, and the send then
           fetches it from there — so those bytes exist at rest for a short
           window. They are encrypted at rest, no public or anonymous access is
-          granted to that storage, and they are deleted within 24 hours whether
-          the message was sent or not. Nothing on your account records them
+          granted to that storage, and they are kept for 24 hours whether the
+          message was sent or not, then deleted by the hourly pass that follows.
+          Nothing on your account records them
           afterwards. On ohmail Desktop in its default local mode this does not
           apply at all: attachments go from your machine to your own mail server
           and touch no ohmail server.

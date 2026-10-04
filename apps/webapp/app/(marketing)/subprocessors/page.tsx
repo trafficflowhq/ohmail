@@ -76,7 +76,10 @@ export default function SubprocessorsPage() {
                   The former database, frozen since the move to Supabase on 3
                   August 2026; to be deleted
                 </td>
-                <td>A copy of mail, rules, tags, notes and accounts as of the move</td>
+                <td>
+                  A copy of mail, rules, tags, notes and accounts, and of waitlist and
+                  invitation addresses, as of the move
+                </td>
                 <td>EU (Frankfurt)</td>
               </tr>
               <tr>
@@ -138,31 +141,42 @@ export default function SubprocessorsPage() {
             <tbody>
               <tr>
                 <th scope="row">Mail, rules, tags, notes</th>
-                <td>As long as your account exists, then 30 days in backups</td>
+                <td>
+                  As long as your account exists. Removing a mailbox erases its
+                  mail. Past your plan&rsquo;s storage, the contents of your oldest
+                  messages are emptied to make room for new mail; their sender,
+                  subject and preview stay.
+                </td>
               </tr>
               <tr>
                 <th scope="row">The copy in the former database</th>
                 <td>Frozen on 3 August 2026; kept until that database is deleted</td>
               </tr>
               <tr>
-                {/* The tracker blocker is not switched on in the reading path, so nothing
-                    writes this table today. Saying "until you delete your account" implied a
-                    record that does not exist. State the truth until the blocker ships, then restore
-                    the retention line in the same change that starts producing rows. */}
-                <th scope="row">Blocked-tracker records</th>
-                <td>None — the tracker blocker is not switched on yet</td>
+                <th scope="row">
+                  Blocked-tracker records: the tracker&rsquo;s host and the image
+                  address taken from your mail
+                </th>
+                <td>Until you remove the mailbox or delete your account</td>
               </tr>
               <tr>
                 <th scope="row">Sign-in links and challenges</th>
-                <td>5 minutes</td>
+                <td>
+                  Each works for 5 minutes at most, an email-verification link for
+                  24 hours. A passkey challenge&rsquo;s record is deleted from an
+                  hour after it expires, at the next passkey sign-in; the other
+                  records have no expiry of their own and go when you delete your
+                  account, and a desktop sign-in request nobody confirmed is never
+                  deleted.
+                </td>
               </tr>
               <tr>
                 <th scope="row">Sign-in sessions</th>
                 <td>
                   A session refreshes while you use it, so using ohmail keeps you
-                  signed in. In a browser it stops after 90 days without use; the
-                  desktop app renews on every launch and stops after 400 days
-                  without use. Signing out, or removing a device, ends it
+                  signed in. In a browser it stops after 90 days without use at the
+                  latest; the desktop app renews on every launch and stops after
+                  400 days without use. Signing out, or removing a device, ends it
                   immediately. The rows go when you delete your account — no
                   automatic expiry yet
                 </td>
@@ -170,7 +184,50 @@ export default function SubprocessorsPage() {
               <tr>
                 <th scope="row">Sync change log</th>
                 <td>
-                  Until you delete your account — no automatic expiry yet
+                  Entries for deleted items and superseded changes are deleted once
+                  they are 30 days behind your least recently synced device or
+                  browser (one unseen for 90 days no longer holds them back). The
+                  first entry for each item you still have, your own moves back to
+                  the inbox and the newest entry stay until you delete your account.
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">
+                  Sign-in history: sign-ins, failed attempts and sign-outs, with the
+                  IP address and device
+                </th>
+                <td>180 days</td>
+              </tr>
+              <tr>
+                <th scope="row">
+                  Limits on sign-in attempts: keyed hashes of the address typed and
+                  of the IP address
+                </th>
+                <td>48 hours; for a device that has signed in, 90 days after it last did</td>
+              </tr>
+              <tr>
+                <th scope="row">Action history: what an action changed, so it can be undone</th>
+                <td>365 days</td>
+              </tr>
+              <tr>
+                <th scope="row">Attachments uploaded ahead of a send</th>
+                <td>
+                  24 hours, whether the message was sent or not, then deleted by the
+                  next hourly pass
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">
+                  Stored answers to retried requests, and the guard against sending
+                  a message twice
+                </th>
+                <td>24 hours, then deleted by the next hourly pass</td>
+              </tr>
+              <tr>
+                <th scope="row">After you delete your account: hashes of its sign-in tokens</th>
+                <td>
+                  Up to 400 days after each token expires, so an app still signed in
+                  is told the account is gone
                 </td>
               </tr>
               <tr>
@@ -179,34 +236,40 @@ export default function SubprocessorsPage() {
               </tr>
               <tr>
                 <th scope="row">Backups</th>
-                <td>30 days maximum, then they expire on their own</td>
+                <td>
+                  The database provider&rsquo;s, expiring on its own schedule; we have
+                  not confirmed how long that is, so no number is published here
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
         <p>
-          &ldquo;No automatic expiry yet&rdquo; means exactly that, and we would
-          rather write it than publish a period no job enforces. Today the only
-          time-based deletion that actually runs is the sweep of expired
-          idempotency keys; everything else is removed when you delete your
-          account, which erases it in one transaction. Shortening those three to
-          real, enforced windows is queued work, and this table changes the day
-          each sweep ships — not before.
+          A pass runs every hour and deletes what the table says has expired:
+          stored answers to retried requests and the double-send guard, sign-in
+          attempt limits, staged attachments and the token hashes of deleted
+          accounts. It also ages out sign-in and action history and compacts the
+          sync change log. Where a row says a record stays until you delete your
+          account, there is no automatic expiry yet, and we would
+          rather write it than publish a period no job enforces.
         </p>
 
         <h2>Deleting your account</h2>
         <p>
           Deleting your account removes every user, mailbox, message, body,
           credential, rule, tag and note from live systems immediately, and from
-          backups when those backups expire — within 30 days. What survives is the
-          billing record, under a random account id with no name attached: Swiss
-          law requires a business to keep its books, and a money trail that can be
-          deleted on request is not a money trail.
+          backups when those backups expire. What survives is the billing record,
+          under a random account id with no name attached: Swiss law requires a
+          business to keep its books, and a money trail that can be deleted on
+          request is not a money trail. For up to 400 days after they expire,
+          hashes of the account&rsquo;s sign-in tokens survive too, so an app
+          still signed in is told the account is gone.
         </p>
         <p>
           One copy is not covered yet: the former database (Neon, in the table
           above) still holds every account that existed on 3 August 2026,
-          including ones deleted since, until that database is deleted.
+          including ones deleted since, and the waitlist and invitation addresses
+          it held then, until that database is deleted.
         </p>
         <p>
           <strong>The copy we hold is what goes.</strong> The originals were never
