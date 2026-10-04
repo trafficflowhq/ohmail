@@ -126,7 +126,7 @@ export class TagsService {
       if (!row) {
         // The name is held by a request under THIS key that committed first: replay its answer.
         const claim = opts.idempotency;
-        if (claim && await readIdempotencyKey(bridgeTx(tx) as unknown as Tx, ctx.accountId, claim.key, now)) {
+        if (claim && await readIdempotencyKey(bridgeTx(tx), ctx.accountId, claim.key, now)) {
           throw new IdempotencyRaceLost(ctx.accountId, claim.key);
         }
         throw new ServiceError("conflict", 409, "a tag with that name already exists");
