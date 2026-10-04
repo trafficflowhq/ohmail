@@ -1911,6 +1911,7 @@ const TABLE = {
   replyUnreachable: "Not sent. Your mail server couldn't be reached.",
   replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
   replyForwardOriginalUnavailable: "Not sent. The original could not be loaded, so it was not forwarded.",
+  replySendExpired: "Not sent. This message waited more than a day — press Send again to send it.",
   /* The refused send while this phone cannot reach its mail server — said in the composer. */
   composeNotSentOffline: "Not sent. This phone can't reach your mail server. It's kept in Drafts — send it again once you're back online.",
   /* Send pressed again over an unconfirmed send: a second copy could reach them twice. */
@@ -2351,6 +2352,7 @@ const TABLE = {
   unsavedDiscard: "Discard",
   unsavedDismiss: "Dismiss",
   unsavedNoReason: "The server refused it and did not say why.",
+  unsavedSendExpired: "Not sent. It waited more than a day — Try again sends it now.",
   unsavedSuperseded: "A newer change to the same thing has since been saved, so this one cannot be retried.",
   unsavedKindOther: "A change to your mailbox",
   unsavedKindMove: "Filing a message",

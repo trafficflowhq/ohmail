@@ -58,6 +58,7 @@ export function describeKind(m: Pick<AbandonedMutation, "mutation">): string {
  * explaining itself; saying what is actually known is shorter and true.
  */
 export function reason(m: AbandonedMutation): string {
+  if (m.error.code === "send_expired") return Copy.unsavedSendExpired;
   const opaque = m.error.code === null
     || m.error.code === "internal"
     || m.error.message.trim() === "";

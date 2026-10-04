@@ -34,7 +34,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { OUTBOX_TYPE, pressVerdict } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, SEND_EXPIRED_CODE, pressVerdict } from "@ohmail/client-engine";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
@@ -349,7 +349,9 @@ export function standingSendKey(engine: OhmailEngine, lane: string): string | nu
   for (const r of disk as ReadonlyArray<OutboxRow & { key?: string }>) {
     if (pendingSendRow(r) && onLane(r.mutation) && typeof r.key === "string") return r.key;
   }
-  return null;
+  // A send kept past a day and refused before it dialled: pressing again goes under its key.
+  const kept = typeof engine.abandoned === "function" ? engine.abandoned() : [];
+  return kept.find((a) => a.error.code === SEND_EXPIRED_CODE && onLane(a.mutation))?.key ?? null;
 }
 
 /**

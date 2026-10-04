@@ -306,6 +306,7 @@ function describe(m: AbandonedMutation, t: Translate): string {
  * not say why. Anything the server DID phrase for a human is passed through untouched.
  */
 function reason(m: AbandonedMutation, t: Translate): string {
+  if (m.error.code === "send_expired") return t("unsavedSendExpired");
   const opaque = m.error.code === null
     || m.error.code === "internal"
     || m.error.message.trim() === "";

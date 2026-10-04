@@ -116,6 +116,7 @@ import {
   NOT_DERIVED_FROM,
   beginDerive,
   takeClientEngineVitals,
+  SEND_EXPIRED_CODE,
   type MessageBody,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
@@ -2421,7 +2422,7 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  * because asking again cannot help; every other failure keeps the plain one.
  */
 export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyNotSignedIn"
-  | "replyForwardOriginalUnavailable" | "replyFailed";
+  | "replyForwardOriginalUnavailable" | "replySendExpired" | "replyFailed";
 
 export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   const code = r?.error?.code;
@@ -2430,7 +2431,8 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
       : code === "send_unreachable" ? "replyUnreachable"
         : code === "mailbox_not_signed_in" ? "replyNotSignedIn"
           : code === "forward_original_unavailable" ? "replyForwardOriginalUnavailable"
-            : "replyFailed";
+            : code === SEND_EXPIRED_CODE ? "replySendExpired"
+              : "replyFailed";
 }
 
 /** The refused send's sentence as a refusal, each key spelled out so the refusal census reads it. */
@@ -2440,7 +2442,8 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
       : kind === "replyUnreachable" ? refuse("replyUnreachable")
         : kind === "replyNotSignedIn" ? refuse("replyNotSignedIn")
           : kind === "replyForwardOriginalUnavailable" ? refuse("replyForwardOriginalUnavailable")
-            : refuse("replyFailed");
+            : kind === "replySendExpired" ? refuse("replySendExpired")
+              : refuse("replyFailed");
 }
 
 /**
@@ -4408,7 +4411,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const intent = sendIntentOf(m);
     const standing = intent === null
       ? undefined
-      : [...engine.pendingMutations(), ...engine.inFlightMutations()].find((p) => sendIntentOf(p.mutation) === intent);
+      : [...engine.pendingMutations(), ...engine.inFlightMutations()].find((p) => sendIntentOf(p.mutation) === intent)
+        // A send kept past a day and refused: pressing again goes under its key, never a second one.
+        ?? engine.abandoned().find((a) => a.error.code === SEND_EXPIRED_CODE && sendIntentOf(a.mutation) === intent);
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
        the key would be replayed on the return after the first had gone, and each replay writes a
        draft of its own (`send-waits.ts`). Different words, or Send + Done pressed over a plain
