@@ -13,13 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.25.14] — 2026-10-05
-
 ### Deleting your account no longer fails when a device renews its sign-in or signs out at the same time
 <!-- changes: fix-026-erasure-lock-order.md -->
 
@@ -53,86 +46,10 @@ shows that mail could not be saved on this device.
 - The privacy page and the landing page say your account and mail are stored in Switzerland, where
   they said EU servers.
 
-### A message with a long run of text inside a table no longer stalls the phone's reader
-<!-- changes: fix-026-one-html-tree-budget.md -->
+### Still to come
 
-Before the phone draws an html message it counts the elements the message would build, a little at a
-time so the app stays responsive. Text placed directly inside a table was counted all at once, so
-one such message could hold the phone for about a tenth of a second in one go. That text is now
-counted in the same small steps as the rest of the message.
-
-### A mailbox whose ohmail/_meta folder is full says so
-<!-- changes: fix-026-meta-folder-full.md -->
-
-When the `ohmail/_meta` folder on your mail server holds more messages than ohmail can read, the
-mailbox now says so on the web and on the desktop, instead of "ohmail cannot read its own folder".
-Move mail that was filed into that folder to another folder and leave the messages ohmail wrote;
-ohmail starts again on its own. On the desktop, a computer clock too far from the mail server's is
-now named as the clock, as it already was on the web.
-
-### ohmail stops filling an ohmail/_meta it cannot clean, and shrinks a full one
-<!-- changes: fix-026-meta-renew-and-shrink.md -->
-
-On a mail server that will not let ohmail remove its own messages from the `ohmail/_meta` folder,
-ohmail now stops writing new ones after three tries instead of filling the folder, and on the web
-and the desktop the mailbox says so: give that folder delete permission, or ask your provider. ohmail starts again on its own
-once a delete goes through. When the folder is too full to read, ohmail now removes its own records
-older than a day from it by itself and starts again with no press. On the desktop, these states and
-a wrong computer clock no longer read as a lost connection.
-
-### Forwarding a message that just moved goes out on the first press
-<!-- changes: fix-026-forward.md -->
-
-A forward whose original had just been moved to another folder could fail with "This was not sent —
-your mail server could not be reached" and go out when sent again. It now goes out on the first
-press when ohmail can find where the message went.
-
-### A server port saved as digits works
-<!-- changes: fix-026-forward.md -->
-
-A mailbox whose server port had been saved as text, such as "993", could not send or open
-attachments through the server. The port is now read as the number it spells.
-
-### A conversation opens at the message its buttons act on
-<!-- changes: fix-026-web-reader-anchor.md -->
-
-On the web and in the desktop apps, a conversation now opens at the message it was opened at, the
-one Delete, Later and the other buttons on the bar act on, instead of scrolling to its newest
-message. That holds wherever a conversation opens: the Ohbox, a folder, Sent, a link or a search
-result.
-
-### Requests no longer race the web app's session renewal
-<!-- changes: triage-026-ux-boot.md -->
-
-When the web app renewed its session while other requests were leaving, those requests could be
-refused once and the session renewed a second time. They now wait for the renewal under way, and a
-request a renewal overtakes in flight is sent once more on the renewed session without renewing
-again.
-
-### Pressing Send again while ohmail reconnects no longer sends the message twice
-<!-- changes: fix-026-one-key-per-send.md -->
-
-A reply, forward or new message pressed again while ohmail was still sending it after
-reconnecting or restarting could reach the recipient twice. The second press now joins the send
-already under way. A reply edited and pressed again while its earlier version was already being
-sent now says so, instead of saying the newer words would go.
-
-### A message that waited without a connection goes out once when ohmail reconnects
-<!-- changes: fix-026-kept-send-releases-the-composer.md -->
-
-On the web and the desktop app, a message sent without a connection goes out once when ohmail
-reconnects, however long it waited.
-
-### The privacy pages say what is kept and what reaches the AI model
-<!-- changes: fix-026-retention-prunes-and-the-kept-list.md -->
-
-- The subprocessors page names the mail the AI model reads without a press, and says it happens
-  only while your AI switch is on.
-- It says what a deleted message leaves behind, how long device names, their IP addresses and
-  invitation addresses stay, and that a code adding a device can work for up to 15 minutes.
-- The privacy page says what a sign-in records and for how long; the account page's Kept list
-  names the sign-in token hashes and the staff record an account deletion keeps.
-- A message whose text is not stored says its headers, preview and search words are kept.
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
 
 ## [0.25.13] — 2026-10-04
 
@@ -11285,8 +11202,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.14...HEAD
-[0.25.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.14
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.13...HEAD
 [0.25.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.13
 [0.25.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.12
 [0.25.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.11
