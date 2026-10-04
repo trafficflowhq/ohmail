@@ -14,6 +14,7 @@ import {
   REFRESH_ENDPOINT, isRecoverable, mayRefreshFor, refreshInFlight, refreshSettled, resumeSession, retryAfterMsOf,
   sessionMints, withSessionCookieLock,
 } from "./session-refresh";
+import { sessionEndedResponse } from "@ohmail/client-engine";
 import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
 import type { TravelledChangeWire } from "./shell/travelled-change";
 import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
@@ -466,8 +467,9 @@ let writesSent = 0;
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   // A renewal of this tab in flight is waited for first (bounded, never throws): a request beside it
-  // carries the access token the rotation replaces. Not on a cookie-writing ceremony (the lock orders
-  // those) nor on a path that never renews.
+  // carries the access token the rotation replaces. Not on any `ceremony` request (the session read,
+  // the OAuth authorize calls; one overtaken is recovered below), a cookie-writing one (the lock
+  // orders those), nor a path that never renews. Everything after the wait reads the settled jar.
   if (refreshInFlight() && opts.ceremony !== true && mayRefreshFor(path) && !writesSessionCookies(path)) {
     await refreshSettled();
   }
@@ -617,7 +619,15 @@ async function sessionTransport(url: string, init?: RequestInit): Promise<Respon
   const renews = path !== null && mayRefreshFor(path) && !writesSessionCookies(path);
   // `api()`'s wait for a renewal in flight; a request that waited carries the renewed jar's token.
   const waited = renews && refreshInFlight();
-  if (waited) await refreshSettled();
+  if (waited && path !== null) {
+    await refreshSettled();
+    // A WAIT NEVER CHANGES WHICH ACCOUNT A REQUEST REACHES. Asked again after it, as `api()` asks
+    // (`mustHold`): another tab may have signed in as somebody else meanwhile, and a press built for
+    // A sent on B's jar was applied on B and then, retried, on A. A moved jar is answered retryable
+    // (the press is kept for its own account), a refused renewal as the closed door; nothing is sent.
+    if (!sessionMayAsk() && !healablePath(path, false)) return sessionEndedResponse();
+    if (!apiOwnerHolds(path)) return renewalUnavailableResponse();
+  }
   const mintsAtSend = sessionMints();
   const first = await fetch(url, waited ? withFreshCsrf(init) : init);
   if (!renews || path === null) return first;

@@ -262,13 +262,6 @@ async function withCrossTabLock(fn: () => Promise<ResumeAnswer>): Promise<Resume
 export const SETTLE_DEADLINE_MS = 15_000;
 
 /**
- * Wait for any refresh already in flight. A refresh rewrites the whole cookie jar when its answer lands, and one
- * carrying the OLD account's cookie can land after a sign-in as somebody else. The ceremony WAITS first, because the
- * refresh is shared and its callers await it; the wait gives up at {@link SETTLE_DEADLINE_MS}, never the refresh, so a
- * hung holder cannot stop a submit. Past it, the mint revokes the jar's previous session on the server and aborts the
- * request here (outcome `superseded`), so neither half of the late answer can sign the browser back in.
- */
-/**
  * Is a refresh of this tab in flight now? `api()` and the engine's transport ask before a request
  * leaves and wait for it (`refreshSettled`): a rotation replaces the access token, so a request that
  * leaves beside one carries the token being replaced and is refused once (cold boot, and every
@@ -278,6 +271,13 @@ export function refreshInFlight(): boolean {
   return inFlight !== null;
 }
 
+/**
+ * Wait for any refresh already in flight. A refresh rewrites the whole cookie jar when its answer lands, and one
+ * carrying the OLD account's cookie can land after a sign-in as somebody else. The ceremony WAITS first, because the
+ * refresh is shared and its callers await it; the wait gives up at {@link SETTLE_DEADLINE_MS}, never the refresh, so a
+ * hung holder cannot stop a submit. Past it, the mint revokes the jar's previous session on the server and aborts the
+ * request here (outcome `superseded`), so neither half of the late answer can sign the browser back in.
+ */
 export async function refreshSettled(): Promise<void> {
   // Read once: `inFlight` is nulled by the callback's own `finally`, so re-reading after the
   // await could see a LATER refresh and wait for that one too — an unbounded wait dressed as a
