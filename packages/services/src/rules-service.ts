@@ -1,11 +1,11 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
-  ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys,
+  ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys, endGraduationOfRule,
   type FoundRule, type OrganizedBy, type RuleKey, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
-import { canonicalDestination } from "@trafficflow/core/mail";
+import { LEGACY_NEWS_FOLDER, NEWS_FOLDER, canonicalDestination } from "@trafficflow/core/mail";
 import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, ruleMatchKey } from "@trafficflow/core/rule-order";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
@@ -269,6 +269,24 @@ function keyFields(r: { kind: string; match: string; subjectContains: string | n
 
 function sameRuleKey(a: RuleKey, b: RuleKey): boolean {
   return a.kind === b.kind && a.match === b.match && a.subjectContains === b.subjectContains && a.bodyContains === b.bodyContains;
+}
+
+/**
+ * A PERSON'S PAUSE OR REMOVAL OF A LEARNED RULE IS THE UNDO (graduation is undoable): the
+ * graduation behind every promoted row the press pauses or removes ends, from zero, in each
+ * spelling of the row's place a signal may have recorded. Called after the press's own delta:
+ * every other writer of a graduation's row (an approval, a move that overrides a route, the
+ * decision) takes the change-log counter before it.
+ */
+async function endLearnedRoutes(
+  tx: Tx, accountId: string, key: { kind: string; match: string },
+  rows: readonly { provenance: string; destination: string }[],
+): Promise<void> {
+  for (const row of rows) {
+    if (row.provenance !== "promoted") continue;
+    const news = canonicalDestination(row.destination) === NEWS_FOLDER;
+    await endGraduationOfRule(tx, accountId, key, news ? [NEWS_FOLDER, LEGACY_NEWS_FOLDER] : [row.destination]);
+  }
 }
 
 /**
@@ -542,6 +560,7 @@ export class RulesService {
       const [before] = await tx.select({
         destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
         bodyContains: rules.bodyContains, match: rules.match, priority: rules.priority,
+        provenance: rules.provenance, personDecidedAt: rules.personDecidedAt,
         // The key's match as the store itself folds it, so the lookup below compares one
         // normaliser with itself (SQL `lower` and JS `toLowerCase` differ past ASCII on some stores).
         matchKey: sql<string>`${ruleMatchKeySql(rules.match)}`,
@@ -653,21 +672,28 @@ export class RulesService {
       };
       const keyMoved = !sameRuleKey(oldKey, newKey);
       let acting: Pick<FoundRule, "destination"> = before;
+      // The rows this press removes from under a key, for the pause's end of what was learned.
+      let collapsed: { key: RuleKey; rows: readonly FoundRule[] } = { key: oldKey, rows: [] };
       if (!keyMoved) {
         const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: oldKey, survivor: id });
         if (!c.survivor) throw new ServiceError("not_found", 404, "rule not found");
         acting = c.acting ?? before;
         liftPriority(set, c.survivor, c.collapsed);
+        collapsed = { key: oldKey, rows: c.collapsed };
       } else {
         // The new key's rows go before the moved row arrives there; it keeps the highest priority.
         const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: newKey, incoming: id });
         liftPriority(set, before, c.collapsed);
+        collapsed = { key: newKey, rows: c.collapsed };
       }
       // Where the sender's mail has actually been going is the ACTING row's place, not the pressed
       // row's: a PATCH naming the pressed row's own destination over a twin acting elsewhere moves
       // the routing, and the backlog it claims is re-asked.
       rearm(set.destination !== undefined
         && canonicalDestination(set.destination as string) !== canonicalDestination(acting.destination));
+      // A person's pause makes a learned row theirs: no later graduation switches it back on.
+      const paused = set.enabled === false;
+      if (paused && before.provenance === "promoted" && before.personDecidedAt === null) set.personDecidedAt = at;
 
       // Scope the UPDATE to the account: a cross-account id matches 0 rows.
       const updated = await tx.update(rules).set(set)
@@ -675,6 +701,10 @@ export class RulesService {
         .returning({ id: rules.id });
       if (updated.length === 0) throw new ServiceError("not_found", 404, "rule not found");
       const seq = (await recordRuleDelta(tx, ctx.accountId, [id], "update"))[0]!;
+      if (paused) {
+        await endLearnedRoutes(bridgeTx(tx), ctx.accountId, oldKey, [before]);
+        await endLearnedRoutes(bridgeTx(tx), ctx.accountId, collapsed.key, collapsed.rows);
+      }
 
       // Materialize INSIDE the tx (reads the uncommitted update), so the DTO stored below is
       // byte-for-byte the one the route returns. This used to run AFTER the commit, which was
@@ -774,10 +804,11 @@ export class RulesService {
         sql`${ruleMatchKeySql(rules.match)} = ${before.matchKey}`,
         before.subjectContains === null ? isNull(rules.subjectContains) : eq(rules.subjectContains, before.subjectContains),
         before.bodyContains === null ? isNull(rules.bodyContains) : eq(rules.bodyContains, before.bodyContains),
-      )).returning({ id: rules.id });
+      )).returning({ id: rules.id, destination: rules.destination, provenance: rules.provenance });
       if (deleted.length === 0) throw new ServiceError("not_found", 404, "rule not found");
       const seqs = await recordRuleDelta(tx, ctx.accountId, deleted.map((d) => d.id), "delete");
       const emitted = seqs[seqs.length - 1]!;
+      await endLearnedRoutes(bridgeTx(tx), ctx.accountId, { kind: before.kind, match: before.matchKey }, deleted);
 
       // Status 204 with `{}` for a body that is never read: `routes/rules.ts` replays this
       // ITSELF rather than through `withIdempotency`, because the shared replay path is

@@ -7,7 +7,8 @@ import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, listPressLegs, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
 import { accountWritesHere } from "./organizer-role.js";
-import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
+import { LEGACY_NEWS_FOLDER, NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
+import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 import { convergeRuleKey, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
 
@@ -1007,11 +1008,24 @@ export async function applyRuleRequest(
      "done" from "never happened". */
   if (!found) return { applied: false, refusal: "no_such_rule" };
 
+  /* A person's pause or removal of a learned rule, travelled here: the graduation behind every
+     promoted row under the key ends, from zero, as on the install it was pressed on
+     (`RulesService`). After the delta: the other writers of a graduation's row take the counter first. */
+  const endsLearning = async (): Promise<void> => {
+    for (const row of [found, ...twins]) {
+      if (row.provenance !== "promoted") continue;
+      const news = canonicalNewsSpelling(row.destination) === NEWS_FOLDER;
+      const places = news ? [NEWS_FOLDER, LEGACY_NEWS_FOLDER] : [row.destination];
+      await endGraduationOfRule(tx, accountId, { kind: key.kind, match: ruleMatchKey(key.match) }, places);
+    }
+  };
+
   if (payload.op === "delete") {
     // The sender's rule goes, not one byte-shape of it: every twin, one `delete` delta per row.
     const ids = [found.id, ...twins.map((t) => t.id)];
     await tx.delete(rulesTbl).where(and(eq(rulesTbl.accountId, accountId), inArray(rulesTbl.id, ids)));
     const seqs = await recordRuleDelta(ledger(tx), accountId, ids, "delete");
+    await endsLearning();
     return { applied: true, op: "delete", ruleId: found.id, lastSeq: seqs[seqs.length - 1]! };
   }
 
@@ -1022,6 +1036,9 @@ export async function applyRuleRequest(
   }
   if (payload.set.priority !== undefined) set.priority = payload.set.priority;
   if (payload.set.enabled !== undefined) set.enabled = payload.set.enabled;
+  // A person's pause makes a learned row theirs: no later graduation switches it back on.
+  const paused = payload.set.enabled === false;
+  if (paused && found.provenance === "promoted" && found.personDecidedAt === null) set.personDecidedAt = now;
   // A person naming where the rule files makes it theirs: `people_only` refiles an inference's mail.
   // An undo (`keepProvenance`) names the old place without being a press, so it keeps the row's.
   if (payload.set.destination !== undefined && payload.keepProvenance !== true) set.provenance = "manual";
@@ -1051,6 +1068,7 @@ export async function applyRuleRequest(
   await tx.update(rulesTbl).set(set)
     .where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId)));
   const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [found.id], "update"))[0]!;
+  if (paused) await endsLearning();
   return { applied: true, op: "update", ruleId: found.id, lastSeq };
 }
 

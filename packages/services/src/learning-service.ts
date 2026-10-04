@@ -145,7 +145,8 @@ export class LearningService {
         const w: RuleRowWrite = {};
         if (canonicalDestination(row.destination) !== canonicalDestination(p.destination)) w.destination = p.destination;
         if (!row.enabled) w.enabled = true;
-        return Object.keys(w).length === 0 ? w : { ...w, ...retro };
+        // The backlog walk is asked for only where this promotion switched the rule on.
+        return w.enabled === true ? { ...w, ...retro } : w;
       },
       insert: { destination: p.destination, provenance: "promoted", enabled: true, retroRequestedAt: now },
     });

@@ -210,15 +210,47 @@ export async function demoteGraduatedRoute(
       eq(rules.enabled, true),
     ))
     .returning({ id: rules.id });
+  await clearGraduation(tx, accountId, patternKey, "kept");
+  return { demoted: true, ruleIds: disabled.map((r) => r.id) };
+}
+
+/**
+ * THE GRADUATION'S CLEAR, one door for the demotion and for a person's pause or removal of the
+ * rule a graduation made (graduation is undoable): the route stops applying itself. `kept` leaves
+ * the counts to the evidence, so an override demotion's negatives cost one confirmation each to
+ * re-graduate; `from zero` restarts them for a person's undo, which recorded no evidence and would
+ * otherwise re-graduate on the very next approval.
+ */
+export async function clearGraduation(
+  tx: Tx, accountId: string, patternKey: string, counts: "kept" | "from zero",
+): Promise<void> {
+  const d = dialect(tx);
   await tx
     .update(graduations)
-    .set({ graduated: false, updatedAt: d.now() })
+    .set({
+      graduated: false, updatedAt: d.now(),
+      ...(counts === "from zero" ? { positives: 0, negatives: 0, graduatedAt: null } : {}),
+    })
     .where(and(
       eq(graduations.accountId, accountId),
       eq(graduations.patternKey, patternKey),
       eq(graduations.action, "route"),
     ));
-  return { demoted: true, ruleIds: disabled.map((r) => r.id) };
+}
+
+/**
+ * A PERSON PAUSED OR REMOVED A PROMOTED RULE: the graduation of its pattern ends, from zero, in
+ * every spelling of its place a signal may have recorded (`places`; the caller owns the alias
+ * table, which this leaf may not import).
+ */
+export async function endGraduationOfRule(
+  tx: Tx, accountId: string, rule: { kind: string; match: string }, places: readonly string[],
+): Promise<void> {
+  for (const destination of new Set(places)) {
+    const key = rule.kind === "sender" ? patternKeyFor({ senderAddress: rule.match, destination })
+      : rule.kind === "domain" ? patternKeyFor({ senderDomain: rule.match, destination }) : null;
+    if (key) await clearGraduation(tx, accountId, key, "from zero");
+  }
 }
 
 /** Is this exact (account, pattern) route auto-applying today? */

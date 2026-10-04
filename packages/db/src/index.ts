@@ -62,6 +62,8 @@ export {
   // The override: one predicate, one effect, one action-id shape. See the module header.
   recordRouteOverride, demoteGraduatedRoute, routeOverrideActionId, senderPatternFromAddress,
   OVERRIDE_DEMOTION_THRESHOLD, OVERRIDE_WINDOW_MS,
+  // A person's pause or removal of a promoted rule ends its graduation through the same clear.
+  clearGraduation, endGraduationOfRule,
   type LearningKind, type LearningLabel, type LearningSignalInput,
   type ParsedPattern, type RouteOverrideInput, type RouteOverrideOutcome,
   type SenderPattern,
