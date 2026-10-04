@@ -46,6 +46,62 @@ shows that mail could not be saved on this device.
 - The privacy page and the landing page say your account and mail are stored in Switzerland, where
   they said EU servers.
 
+### A message with a long run of text inside a table no longer stalls the phone's reader
+<!-- changes: fix-026-one-html-tree-budget.md -->
+
+Before the phone draws an html message it counts the elements the message would build, a little at a
+time so the app stays responsive. Text placed directly inside a table was counted all at once, so
+one such message could hold the phone for about a tenth of a second in one go. That text is now
+counted in the same small steps as the rest of the message.
+
+### A mailbox whose ohmail/_meta folder is full says so
+<!-- changes: fix-026-meta-folder-full.md -->
+
+When the `ohmail/_meta` folder on your mail server holds more messages than ohmail can read, the
+mailbox now says so on the web and on the desktop, instead of "ohmail cannot read its own folder".
+Move mail that was filed into that folder to another folder and leave the messages ohmail wrote;
+ohmail starts again on its own. On the desktop, a computer clock too far from the mail server's is
+now named as the clock, as it already was on the web.
+
+### ohmail stops filling an ohmail/_meta it cannot clean, and shrinks a full one
+<!-- changes: fix-026-meta-renew-and-shrink.md -->
+
+On a mail server that will not let ohmail remove its own messages from the `ohmail/_meta` folder,
+ohmail now stops writing new ones after three tries instead of filling the folder, and the mailbox
+says so: give that folder delete permission, or ask your provider. ohmail starts again on its own
+once a delete goes through. When the folder is too full to read, ohmail now removes its own records
+older than a day from it by itself and starts again with no press. On the desktop, these states and
+a wrong computer clock no longer read as a lost connection.
+
+### Forwarding a message that just moved goes out on the first press
+<!-- changes: fix-026-forward.md -->
+
+A forward whose original had just been moved to another folder could fail with "This was not sent —
+your mail server could not be reached" and go out when sent again. It now goes out on the first
+press when ohmail can find where the message went.
+
+### A server port saved as digits works
+<!-- changes: fix-026-forward.md -->
+
+A mailbox whose server port had been saved as text, such as "993", could not send or open
+attachments through the server. The port is now read as the number it spells.
+
+### A conversation opens at the message its buttons act on
+<!-- changes: fix-026-web-reader-anchor.md -->
+
+On the web and in the desktop apps, a conversation now opens at the message it was opened at, the
+one Delete, Later and the other buttons on the bar act on, instead of scrolling to its newest
+message. That holds wherever a conversation opens: the Ohbox, a folder, Sent, a link or a search
+result.
+
+### Requests no longer race the web app's session renewal
+<!-- changes: triage-026-ux-boot.md -->
+
+When the web app renewed its session while other requests were leaving, those requests could be
+refused once and the session renewed a second time. They now wait for the renewal under way, and a
+request a renewal overtakes in flight is sent once more on the renewed session without renewing
+again.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
