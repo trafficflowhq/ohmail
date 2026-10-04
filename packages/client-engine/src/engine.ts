@@ -727,7 +727,16 @@ const OUTBOX_EXPIRED_MESSAGE = "This change is too old to send safely — it wou
  * retires this record), so a send that did leave earlier is answered from its reservation.
  */
 export const SEND_EXPIRED_CODE = "send_expired";
-const SEND_EXPIRED_MESSAGE = "Not sent. This message waited more than a day — press Send again to send it.";
+const SEND_EXPIRED_MESSAGE = "Not sent. This message waited more than a day — press Send to send it.";
+
+/**
+ * IS THIS QUEUED OR WIRE ENTRY A SEND A NEW PRESS MAY JOIN? Not one the server confirmed and the
+ * engine keeps only for its echo (`confirmed`): a press joining it is answered from that delivery
+ * and never goes. The one reading both surfaces' standing-send lookups share.
+ */
+export function joinableStandingSend(p: { mutation: { kind: string }; confirmed?: true }): boolean {
+  return p.mutation.kind === "mail_send" && p.confirmed !== true;
+}
 
 /**
  * IS THIS AN UNKEYED CREATE TOO OLD TO REPLAY? — one predicate, so the boot replay and the manual Try again cannot
@@ -8229,7 +8238,7 @@ export class OhmailEngine {
    * the queue changes meaning: a re-press asks both, queue first, to resume the key of a send still
    * in the air instead of minting a second one.
    */
-  inFlightMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan }> {
+  inFlightMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan; confirmed?: true }> {
     return [...this.inFlight.values()];
   }
 

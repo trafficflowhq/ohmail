@@ -34,7 +34,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { OUTBOX_TYPE, SEND_EXPIRED_CODE, pressVerdict } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, SEND_EXPIRED_CODE, joinableStandingSend, pressVerdict } from "@ohmail/client-engine";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
@@ -349,7 +349,7 @@ export function standingSendKey(engine: OhmailEngine, lane: string, fp: string |
   // A hand-rolled partial engine (a surface test's double) may lack the wire or the reader.
   const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
   for (const p of [...engine.pendingMutations(), ...wire]) {
-    if (onLane(p.mutation) && (p as { confirmed?: true }).confirmed !== true) return p.key;
+    if (onLane(p.mutation) && joinableStandingSend(p)) return p.key;
   }
   const disk = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) : [];
   for (const r of disk as ReadonlyArray<OutboxRow & { key?: string }>) {
@@ -1460,7 +1460,8 @@ export function useMailSend(
         // have been delivered — see `releaseSendLock`.
         const fp = sendFingerprint(m);
         // A send kept past a day keeps its record standing, unmarked: the next press resumes its key.
-        if (res.error?.code === SEND_EXPIRED_CODE) { /* standing */ } else if (next.phase !== "unverified") releaseSendLock(key, fp, owner.current);
+        if (res.error?.code === SEND_EXPIRED_CODE) standKeptLock(res.key);
+        else if (next.phase !== "unverified") releaseSendLock(key, fp, owner.current);
         // DURABLY, because the phase below is component state: reopening the draft, a reload or
         // another tab all start from `idle`, and each of those is a way back to a send that may
         // already have gone. The lock is the only thing that survives them.
@@ -1595,6 +1596,19 @@ export function useMailSend(
   };
 
   /**
+   * A SEND KEPT PAST A DAY KEEPS ITS LOCK RECORD STANDING AT ANY AGE: the record is re-stamped now,
+   * found past the age limit by naming its lane, so a press after Try again still resumes its key.
+   */
+  const standKeptLock = (key: string): void => {
+    const kept = (typeof engine.abandoned === "function" ? engine.abandoned() : []).find((a) => a.key === key);
+    if (kept === undefined || kept.mutation.kind !== "mail_send") return;
+    const m = kept.mutation as unknown as MailSend;
+    const lanes = new Set([sendKeyOf(m, "compose"), sendKeyOf(m, "inline")]);
+    const record = allSendLocks(Date.now(), owner.current, lanes).find((r) => r.key === key);
+    if (record !== undefined) claimSendLock({ ...record, at: Date.now() }, owner.current);
+  };
+
+  /**
    * AN ANSWER NO PRESS ON THIS MOUNT OWNS — a restored send's — read through its record. Both
    * destructive pulls reach it: the restore collector, and `flush`, which consumed it too and used
    * to skip it, losing a restored Send + Done's release and its settlement.
@@ -1602,6 +1616,7 @@ export function useMailSend(
   const adoptForeign = useRef<(res: MutationResult) => void>(() => {});
   adoptForeign.current = (res: MutationResult): void => {
     if (res.status === "superseded") return;
+    if (res.error?.code === SEND_EXPIRED_CODE) standKeptLock(res.key);
     const record = recordForSendKey(res.key, Date.now(), owner.current);
     if (record === null) return;
     /* WHICH SURFACE THIS ANSWER MAY SPEAK TO, asked ONCE because both endings below need it

@@ -117,6 +117,7 @@ import {
   beginDerive,
   takeClientEngineVitals,
   SEND_EXPIRED_CODE,
+  joinableStandingSend,
   type MessageBody,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
@@ -4430,10 +4431,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null): Promise<MutationResult> => {
     const intent = sendIntentOf(m);
-    // Queued or on the wire.
+    // Queued or on the wire, and not a send already confirmed and kept for its echo.
     const live = intent === null
       ? undefined
-      : [...engine.pendingMutations(), ...engine.inFlightMutations()].find((p) => sendIntentOf(p.mutation) === intent);
+      : [...engine.pendingMutations(), ...engine.inFlightMutations()]
+        .find((p) => joinableStandingSend(p) && sendIntentOf(p.mutation) === intent);
     // A send kept past a day and refused: pressing again goes under its key, never a second one.
     const standing = live ?? expiredSendFor(m, intent);
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS — a send that IS waiting:
