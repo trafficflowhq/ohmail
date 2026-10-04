@@ -1,7 +1,8 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
-  ruleCreatePayload, reconcileRuleCreate, type OrganizedBy, type Tx,
+  ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys,
+  type FoundRule, type OrganizedBy, type RuleKey, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
@@ -15,7 +16,6 @@ import {
 } from "./reader-request.js";
 import type { Folder, RuleDTO } from "./dto/types.js";
 
-const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
 const asDb = (tx: Tx): Db => bridgeDb(tx);
 
@@ -262,6 +262,26 @@ function ruleRequestPayload(
  */
 const RULE_KEY_FIELDS = ["kind", "match", "subjectContains", "bodyContains"] as const;
 
+/** The four-field key as `findRulesByKey` compares it. */
+function keyFields(r: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): RuleKey {
+  return { kind: r.kind, match: ruleMatchKey(r.match), subjectContains: r.subjectContains, bodyContains: r.bodyContains };
+}
+
+function sameRuleKey(a: RuleKey, b: RuleKey): boolean {
+  return a.kind === b.kind && a.match === b.match && a.subjectContains === b.subjectContains && a.bodyContains === b.bodyContains;
+}
+
+/**
+ * A row that absorbs its twins keeps the highest priority among them unless the PATCH names one:
+ * the Screener's lift over a domain rule may live on a collapsed twin, and a pause or a retarget
+ * must not drop the sender's rule back under its domain's.
+ */
+function liftPriority(set: Record<string, unknown>, survivor: FoundRule, collapsed: readonly FoundRule[]): void {
+  if (set.priority !== undefined) return;
+  const top = Math.max(survivor.priority, ...collapsed.map((t) => t.priority));
+  if (top > survivor.priority) set.priority = top;
+}
+
 function assertSetIsNotAKeyChange(set: Record<string, unknown>): void {
   const named = RULE_KEY_FIELDS.filter((f) => f in set);
   if (named.length > 0) {
@@ -492,7 +512,10 @@ export class RulesService {
      */
     const retroAsked = patch.applyRetro === true;
 
-    return asTx(ctx).transaction(async (tx) => {
+    return withAccountTx(ctx, async (tx) => {
+      // Fence, then the rule-key lock before the first `rules` statement: this door reads the key's
+      // rows to decide which of them go, and the create door reconciles them under the same lock.
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
       /**
        * A READER'S ACCOUNT WRITES NO RULES (mail 0083). A rule is not a note: `evaluateRules`
        * routes and `rule-retro.ts` re-files, both on the organizer's authority — a rule written
@@ -551,24 +574,24 @@ export class RulesService {
       // Either half of "which mail does this rule claim, and where does it send it" moving is a
       // retroactive event. Compared against the STORED value, so a PATCH that re-sends the term it
       // already has costs nothing — the habit-click argument above, applied to the second term.
-      const destinationMoved = set.destination !== undefined
-        && set.destination !== before?.destination;
+      // The destination is compared on the local path below, against the row that ACTED.
       const subjectMoved = set.subjectContains !== undefined
         && (set.subjectContains ?? null) !== (before?.subjectContains ?? null);
       // …and to the third (mail 0052): a body-term edit re-opens the backlog in both directions,
       // on the subject term's reasoning verbatim.
       const bodyMoved = set.bodyContains !== undefined
         && (set.bodyContains ?? null) !== (before?.bodyContains ?? null);
-      const retargeted = before !== undefined && (destinationMoved || subjectMoved || bodyMoved);
       // `release_held_at` is deliberately NOT written: equal timestamps are how `rule-retro.ts`
       // recognizes the held-release press and narrows the walk to mail settled at the gate. This
       // is the ordinary, unnarrowed retro — the whole backlog the rule claims.
-      if (before !== undefined && ((retargeted && applyRetro) || retroAsked)) {
-        set.retroRequestedAt = ctx.now();
-        set.retroDoneAt = null;
-        set.retroCursor = null;
-        set.retroMoved = 0;
-      }
+      const rearm = (destinationMoved: boolean): void => {
+        if (((destinationMoved || subjectMoved || bodyMoved) && applyRetro) || retroAsked) {
+          set.retroRequestedAt = ctx.now();
+          set.retroDoneAt = null;
+          set.retroCursor = null;
+          set.retroMoved = 0;
+        }
+      };
 
       /* ── THE REQUEST'S KEY AND ITS `set`, COMPOSED FROM THE ROW AS IT STANDS ──────────────
        *
@@ -609,11 +632,48 @@ export class RulesService {
         });
       }
 
+      if (!before) throw new ServiceError("not_found", 404, "rule not found");
+      /* ONE RULE PER KEY: the pressed row is the rule, and every other row under its key goes (one
+         `delete` delta each, before this row's own) — the row the page showed, the row the router
+         runs and the row this press changed are then one row. A PATCH that moves the KEY converges
+         the NEW key onto the moved row and leaves the old key's other rows: an edit of one rule
+         never removes a rule the person did not name. */
+      const oldKey = keyFields(before);
+      const newKey: RuleKey = {
+        kind: (set.kind as string | undefined) ?? before.kind,
+        match: ruleMatchKey((set.match as string | undefined) ?? before.match),
+        subjectContains: set.subjectContains === undefined ? before.subjectContains : (set.subjectContains as string | null),
+        bodyContains: set.bodyContains === undefined ? before.bodyContains : (set.bodyContains as string | null),
+      };
+      const keyMoved = !sameRuleKey(oldKey, newKey);
+      let acting: Pick<FoundRule, "destination"> = before;
+      if (!keyMoved) {
+        const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: oldKey, survivor: id });
+        if (!c.survivor) throw new ServiceError("not_found", 404, "rule not found");
+        acting = c.acting ?? before;
+        liftPriority(set, c.survivor, c.collapsed);
+      }
+      // Where the sender's mail has actually been going is the ACTING row's place, not the pressed
+      // row's: a PATCH naming the pressed row's own destination over a twin acting elsewhere moves
+      // the routing, and the backlog it claims is re-asked.
+      rearm(set.destination !== undefined
+        && canonicalDestination(set.destination as string) !== canonicalDestination(acting.destination));
+
       // Scope the UPDATE to the account: a cross-account id matches 0 rows.
       const updated = await tx.update(rules).set(set)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
         .returning({ id: rules.id });
       if (updated.length === 0) throw new ServiceError("not_found", 404, "rule not found");
+      if (keyMoved) {
+        const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: newKey, survivor: id });
+        if (!c.survivor) throw new ServiceError("internal", 500, "rule vanished after write");
+        const lifted: Record<string, unknown> = {};
+        liftPriority(lifted, c.survivor, c.collapsed);
+        if (patch.priority === undefined && lifted.priority !== undefined) {
+          await tx.update(rules).set({ priority: lifted.priority as number })
+            .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)));
+        }
+      }
       const seq = (await recordRuleDelta(tx, ctx.accountId, [id], "update"))[0]!;
 
       // Materialize INSIDE the tx (reads the uncommitted update), so the DTO stored below is
@@ -664,7 +724,9 @@ export class RulesService {
     opts: { idempotency?: RuleIdempotency | null } = {},
   ): Promise<RuleRemoval | RuleRequestResult> {
     const at = ctx.now();
-    const out = await asTx(ctx).transaction(async (tx): Promise<RuleRemoval | RuleRequestResult> => {
+    const out = await withAccountTx(ctx, async (tx): Promise<RuleRemoval | RuleRequestResult> => {
+      // Fence, then the rule-key lock before the first `rules` statement — every writer's order.
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
       /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (0083, then 0094) -----
        *
        * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog

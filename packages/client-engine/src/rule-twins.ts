@@ -8,14 +8,14 @@ import type { EngineMutation, Folder, RuleDTO } from "./types.js";
  * one function for the web sheet and the phone's. The twins are the enabled, term-free rules of
  * one kind naming one match; a term rule is a slice, never a twin. `already` is asked of the
  * WINNER under the router's order ({@link outranks}): a losing twin at the pressed place files
- * nothing there. The write leaves every twin at that place — each one elsewhere retargeted, each
- * one there re-armed when the backlog answer is yes — so the Rules page shows what was pressed.
+ * nothing there. The press is ONE write over the winner: the server converges the key onto the
+ * row a PATCH names and deletes the others, so a second write would name a row already gone.
  */
 export type TwinPressState = "created" | "retargeted" | "already";
 
 export interface TwinPress {
   state: TwinPressState;
-  /** In dispatch order: the retargets, then the re-arms (or claims), or the one create. */
+  /** At most one: the create, or the one PATCH over the winner (a retarget, a re-arm or a claim). */
   writes: EngineMutation[];
   /**
    * `already`, over a winner ohmail inferred: the press makes it the person's, so their automated
@@ -57,22 +57,22 @@ export function pressOverTwins(
   if (twins.length === 0) {
     return { state: "created", writes: [{ kind: "rule_create", ruleKind: kind, match, destination: wanted, applyRetro }], claimed: false };
   }
-  const retargets: EngineMutation[] = twinsElsewhere(twins, kind, match, wanted)
-    .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro }));
   // An explicit `applyRetro: true` on a PATCH that does not move the rule is the server's re-arm,
   // in the STORED spelling: a re-arm moves nothing, so it never rewrites a pre-0.22 News rule.
   // With the backlog declined, the WINNER at the place is still CLAIMED when ohmail inferred it:
-  // the same PATCH with `applyRetro: false` makes it the person's and moves nothing. A manual
-  // winner, or a losing twin the router does not file by, is left alone.
+  // the same PATCH with `applyRetro: false` makes it the person's and moves nothing. Over twins the
+  // PATCH is written even then, because it is what collapses them; a lone manual winner at the
+  // place with the backlog declined is left alone.
   const winner = twinWinner(twins)!;
   const already = winner.destination === wanted;
   const claimed = already && winner.provenance !== "manual";
-  const there = applyRetro ? twins.filter((r) => r.destination === wanted) : claimed ? [winner] : [];
-  const rearms: EngineMutation[] = there
-    .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: storedRuleDestination(r), applyRetro }));
+  const write = !already || applyRetro || claimed || twins.length > 1;
+  const writes: EngineMutation[] = write
+    ? [{ kind: "rule_update", ruleId: winner.id, destination: already ? storedRuleDestination(winner) : wanted, applyRetro }]
+    : [];
   return {
     state: already ? "already" : "retargeted",
-    writes: [...retargets, ...rearms],
+    writes,
     claimed,
   };
 }

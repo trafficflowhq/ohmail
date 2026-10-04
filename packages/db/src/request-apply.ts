@@ -860,7 +860,7 @@ export type ApplyRuleRequestResult =
  * {@link RULE_CREATE_STATE} and missing from the select would compare against `undefined`, decide
  * "differs" on every replay and rewrite the row for ever — the census refuses that pairing.
  */
-interface FoundRule {
+export interface FoundRule {
   id: string;
   destination: string;
   priority: number;
@@ -961,6 +961,48 @@ function samePlace(a: string, b: string): boolean {
   return canonicalNewsSpelling(a) === canonicalNewsSpelling(b);
 }
 
+/**
+ * THE ACCOUNT'S RULE-KEY LOCK, the one statement every rules writer opens with: after the account
+ * fence and any `account_settings` row, before the first `rules` statement and before any mailbox
+ * row lock. A transaction-scoped advisory lock, so a second take in one transaction is free.
+ */
+export async function lockAccountRuleKeys(tx: Tx, accountId: string): Promise<void> {
+  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
+}
+
+/** What {@link convergeRuleKey} left under a key: the one row, the rows it deleted, their deltas. */
+export interface ConvergedKey {
+  /** The row that stays: the one asked for, else the acting row; `null` when the key has none or the asked-for id is not under it. */
+  survivor: FoundRule | null;
+  /** The row the router ran BEFORE the converge (the first under `findRulesByKey`'s order). */
+  acting: FoundRule | null;
+  /** Every other row under the key, deleted here, in the key's order. */
+  collapsed: FoundRule[];
+  /** One `delete` seq per collapsed row, in order; empty when none went. */
+  twinSeqs: bigint[];
+  lastSeq: bigint | null;
+}
+
+/**
+ * ONE ROW PER FOUR-FIELD KEY, the primitive every rules writer converges through. Takes the
+ * account's rule-key lock first (re-entrant per transaction), reads every row under the key,
+ * acting first, and deletes all but the survivor with one `delete` delta each. `survivor` absent
+ * keeps the ACTING row; given, that id, and nothing is deleted when it is not under the key.
+ */
+export async function convergeRuleKey(
+  tx: Tx, input: { accountId: string; key: RuleKey; survivor?: string },
+): Promise<ConvergedKey> {
+  const { accountId, key } = input;
+  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
+  const rows = await findRulesByKey(tx, accountId, key);
+  const acting = rows[0] ?? null;
+  const survivor = input.survivor === undefined ? acting : rows.find((r) => r.id === input.survivor) ?? null;
+  if (survivor === null) return { survivor: null, acting, collapsed: [], twinSeqs: [], lastSeq: null };
+  const collapsed = rows.filter((r) => r.id !== survivor.id);
+  const twinSeqs = await deleteTwins(tx, accountId, collapsed);
+  return { survivor, acting, collapsed, twinSeqs, lastSeq: twinSeqs[twinSeqs.length - 1] ?? null };
+}
+
 /** What one create under a key did. `lastSeq` is `null` only when nothing at all was written. */
 export type RuleCreateOutcome =
   | { created: true; ruleId: string; lastSeq: bigint; collapsed: string[] }
@@ -984,15 +1026,15 @@ export async function reconcileRuleCreate(
 ): Promise<RuleCreateOutcome> {
   const { accountId, create, now } = input;
   const { key } = create;
-  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
   /* A ROW UNDER THIS KEY IS NOT THE ANSWER ON ITS OWN. The key names WHICH rule; it says nothing
      about where that rule files, how it ranks or whether it is on, and a reader working from a
      stale profile creates over the organizer's rule with a destination of their own. So the
      difference is applied here, before anything is acked or answered. */
-  const [existing, ...twins] = await findRulesByKey(tx, accountId, key);
+  const converged = await convergeRuleKey(tx, { accountId, key });
+  const existing = converged.survivor;
   if (existing) {
-    const collapsed = twins.map((t) => t.id);
-    const twinSeqs = await deleteTwins(tx, accountId, twins);
+    const collapsed = converged.collapsed.map((t) => t.id);
+    const twinSeqs = converged.twinSeqs;
     const diff = ruleCreateDiff(existing, create);
     // Nothing differs: no write and no delta, so no client is woken for a change that is not one.
     if (Object.keys(diff).length === 0) {
@@ -1029,6 +1071,74 @@ export async function reconcileRuleCreate(
   return { created: true, ruleId: row!.id, lastSeq, collapsed: [] };
 }
 
+/** A `rules` write under a key, minus the key columns {@link writeRuleUnderKey} owns. */
+export type RuleRowWrite = Omit<Partial<typeof rulesTbl.$inferInsert>, "id" | "accountId" | "kind" | "match" | "subjectContains" | "bodyContains">;
+
+/** What {@link writeRuleUnderKey} did under the key. `lastSeq` is the last delta it recorded, if any. */
+export interface KeyWriteResult {
+  op: "create" | "update" | "unchanged" | "skipped";
+  /** The one row under the key afterwards; `null` only when skipped over an empty key (never) or nothing was inserted. */
+  ruleId: string | null;
+  lastSeq: bigint | null;
+  /** The row the router ran before the write, and the rows collapsed into the survivor. */
+  acting: FoundRule | null;
+  collapsed: FoundRule[];
+}
+
+/**
+ * THE ONE WRITER FOR A DOOR THAT NAMES A SENDER, NOT A ROW (the Screener's decision, "Not junk,
+ * always allow", the HEY import): converge the key onto its ACTING row, then write that row's
+ * difference (`diff`, empty = unchanged, no delta) or insert `insert` where the key has none.
+ * `skip` writes nothing at all over a key that has any row. Deltas: the twin deletes, then the
+ * row's own, so the last seq names the row.
+ */
+export async function writeRuleUnderKey(tx: Tx, input: {
+  accountId: string; key: RuleKey; now: Date;
+  /** The stored spelling of `match` for an insert; the lookup always compares `key.match`. */
+  match?: string;
+  overExisting: "converge" | "skip";
+  diff: (survivor: FoundRule) => RuleRowWrite;
+  insert: RuleRowWrite & { destination: string };
+}): Promise<KeyWriteResult> {
+  const { accountId, key, now } = input;
+  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
+  if (input.overExisting === "skip") {
+    const [any] = await findRulesByKey(tx, accountId, key);
+    if (any) return { op: "skipped", ruleId: null, lastSeq: null, acting: any, collapsed: [] };
+  }
+  const c = await convergeRuleKey(tx, { accountId, key });
+  if (c.survivor) {
+    const diff = input.diff(c.survivor);
+    if (Object.keys(diff).length === 0) {
+      return { op: "unchanged", ruleId: c.survivor.id, lastSeq: c.lastSeq, acting: c.acting, collapsed: c.collapsed };
+    }
+    await tx.update(rulesTbl).set({ ...diff, updatedAt: now })
+      .where(and(eq(rulesTbl.id, c.survivor.id), eq(rulesTbl.accountId, accountId)));
+    const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [c.survivor.id], "update"))[0]!;
+    return { op: "update", ruleId: c.survivor.id, lastSeq, acting: c.acting, collapsed: c.collapsed };
+  }
+  const [row] = await tx.insert(rulesTbl).values({
+    updatedAt: now, ...input.insert,
+    accountId, kind: key.kind, match: input.match ?? key.match,
+    subjectContains: key.subjectContains, bodyContains: key.bodyContains,
+  }).returning({ id: rulesTbl.id });
+  const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [row!.id], "create"))[0]!;
+  return { op: "create", ruleId: row!.id, lastSeq, acting: null, collapsed: [] };
+}
+
+/** The Rules order's provenance rank (`rule-order.ts` PROVENANCE_RANK): lower ranks first. */
+const PROVENANCE_ORDER: readonly string[] = ["manual", "migrated", "promoted", "seeded-from-sent"];
+
+/**
+ * A door's inferred write over an existing row keeps the better-ranked provenance: `manual` and
+ * `migrated` stay, `seeded-from-sent` becomes `inferred`. Never makes a row `manual`.
+ */
+export function keptProvenance(own: string, inferred: "promoted"): string {
+  const a = PROVENANCE_ORDER.indexOf(own);
+  const b = PROVENANCE_ORDER.indexOf(inferred);
+  return a !== -1 && a < b ? own : inferred;
+}
+
 /**
  * Apply one rule request. RETRO is the default: creating a rule applies it to mail already on
  * disk (mail 0034), so `retro_requested_at` is stamped on create unless the request says
@@ -1056,6 +1166,9 @@ export async function applyRuleRequest(
     return { applied: true, op: "update", ruleId: out.ruleId, lastSeq: out.lastSeq };
   }
 
+  // The rule-key lock before the first `rules` statement, as on every writer; the update arm's
+  // converge re-takes it (re-entrant per transaction).
+  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
   const [found, ...twins] = await findRulesByKey(tx, accountId, key);
   /* NOT FOUND IS AN OUTCOME, NOT A FAULT. The reader is editing a rule this organizer's store does
      not have — deleted here since, or never travelled. Named back so the person is told, on the
@@ -1101,8 +1214,9 @@ export async function applyRuleRequest(
     set.retroMoved = 0;
   }
 
-  // The person edited the one row they could see; its hidden twins collapse into it.
-  await deleteTwins(tx, accountId, twins);
+  // The person edited the one row they could see; its hidden twins collapse into it (the acting
+  // row survives: `found` is the first under the key, which is `convergeRuleKey`'s default).
+  await convergeRuleKey(tx, { accountId, key, survivor: found.id });
   await tx.update(rulesTbl).set(set)
     .where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId)));
   const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [found.id], "update"))[0]!;
