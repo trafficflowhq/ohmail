@@ -92,6 +92,7 @@ import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native"
 import { usePrefs } from "../state/store";
 import { afterWithdraw, cancelAct } from "./send-cancel";
 import { keepAct, worthKeeping } from "./compose-keep";
+import { editWhileIdle } from "./compose-edit";
 import { Segmented } from "./Segmented";
 import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
 import { SurfaceBoundary } from "./ErrorBoundary";
@@ -1492,7 +1493,7 @@ export function ComposeSheet({
               </Txt>
               <TextInput
                 value={to}
-                onChangeText={(v) => { if (phase === "idle") setTo(v); }}
+                onChangeText={editWhileIdle(phase, setTo)}
                 editable={phase === "idle"}
                 /* THE FIELD A NEW MAIL OPENS ON — a composer whose first keystroke lands in
                    the body is a composer that asks for the message before the audience. */
@@ -1524,7 +1525,7 @@ export function ComposeSheet({
               </Txt>
               <TextInput
                 value={subject}
-                onChangeText={(v) => { if (phase === "idle") setSubject(v); }}
+                onChangeText={editWhileIdle(phase, setSubject)}
                 editable={phase === "idle"}
                 placeholder={Copy.composeSubjectPlaceholder}
                 placeholderTextColor={t.c.ink3}
@@ -1546,12 +1547,9 @@ export function ComposeSheet({
           {/* Frozen the moment Send is pressed: the dispatch captured the fields at the
               press, and an editable field over a sending/queued/unverified state would
               display words the wire will not carry. */}
-          {/* `editable` alone does not stop an input method still attached to the field from
-              committing text (measured on an APK): the change is refused here too, so the screen
-              never shows words the send under way will not carry. */}
           <TextInput
             value={body}
-            onChangeText={(v) => { if (phase === "idle") setBody(v); }}
+            onChangeText={editWhileIdle(phase, setBody)}
             editable={phase === "idle"}
             placeholder={bodyPlaceholder}
             placeholderTextColor={t.c.ink3}
@@ -1617,7 +1615,7 @@ export function ComposeSheet({
                   block — the webapp's own 8-row ceiling, in points. */}
               <TextInput
                 value={sigText}
-                onChangeText={(text) => setSig({ kind: "edited", text })}
+                onChangeText={editWhileIdle(phase, (text: string) => setSig({ kind: "edited", text }))}
                 editable={phase === "idle"}
                 multiline
                 accessibilityLabel={Copy.sigAria}
