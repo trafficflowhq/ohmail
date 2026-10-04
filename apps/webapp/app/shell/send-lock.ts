@@ -252,23 +252,7 @@ function save(rows: SendLock[], owner: string | null = storageOwner()): DurableW
  * Shared rather than repeated because it WAS repeated, and the two copies disagreed: one exempted
  * unverified locks and the other did not, and the one that did not also persisted its own answer.
  */
-function isLive(r: SendLock, nowMs: number, pendingLanes?: ReadonlySet<string>): boolean {
-  /**
-   * A LANE WHOSE SEND IS STILL IN THE OUTBOX IS NOT AGED OUT, WHATEVER THE CLOCK SAYS: The age limit and the durable
-   * outbox disagree about how long a send can be unresolved, and the outbox is right. It replays INDEFINITELY — an
-   * entry survives every reload until the server answers — while this record expires after seven days. Leave the tab
-   * shut for a week, come back, and the replay carries the mail out under its original key while the record naming
-   * that key has just been pruned: the composer still holds the text, nothing recognises it, and the next press mints
-   * a fresh key. The recipient gets it twice, a week apart. So the verb, not the clock, decides when this record has
-   * done its job. The exemption is exactly as wide as the evidence: only lanes with a pending `mail_send` right now,
-   * and it lapses the moment the outbox drains. IT ALSO STOPS A READ FROM DESTROYING ITS OWN ANSWER.
-   */
-
-  /**
-   * `allSendLocks` PERSISTS the filtered list, so without this the first read after eight days deletes the record and
-   * every read after it — including the one about to ask this question — sees nothing.
-   */
-  if (pendingLanes?.has(r.lane) === true) return true;
+function isLive(r: SendLock, nowMs: number): boolean {
   /**
    * A RECORD FROM A LATER FORMAT IS NOT AGED OUT, and this arm is why the answer is not simply the two below it. `at`
    * is the only field of a newer shape this build may read, and the age limit acts on the FILTERED list: both readers
@@ -282,10 +266,49 @@ function isLive(r: SendLock, nowMs: number, pendingLanes?: ReadonlySet<string>):
   return r.unverified === true || nowMs - r.at <= SEND_LOCK_TTL_MS;
 }
 
+/**
+ * A SEND RECORD IS NEVER DELETED WHILE ITS KEY IS OWED: the outbox has not been read yet, or the key is
+ * on the outbox, the queue, the wire, or an uncollected late answer. Only that send's ending can still
+ * reach its surface, and the record is what turns the ending back into a message. An owed record
+ * outlives every sweep. One that is not owed may go when its send ENDED, when a newer record on its
+ * lane REPLACES it, or when it AGED past {@link SEND_LOCK_TTL_MS}. Age keeps one other job: whether a
+ * new press may resume, join or be held. {@link dropSendLocks} is the only save that shrinks the jar.
+ */
+export type SendLockOwed = (key: string) => boolean;
+
+/** Why a caller asks a record to go — see {@link SendLockOwed}. */
+export type SendLockDrop = "ended" | "replaced" | "aged";
+
+function mayDrop(r: SendLock, why: SendLockDrop, owed: SendLockOwed, nowMs: number): boolean {
+  // A later format's record is carried, never deleted: this build cannot read what it means.
+  if (r.v > SEND_LOCK_FORMAT || owed(r.key)) return false;
+  return why === "aged" ? !isLive(r, nowMs) : true;
+}
+
+/**
+ * THE DOOR: reads the jar itself, so no caller can hand it a list it already shortened. `doomed`
+ * names why a record should go (or `null`); `add` is a claim written in the same save. Returns
+ * what the jar holds afterwards.
+ */
+function dropSendLocks(
+  doomed: (r: SendLock) => SendLockDrop | null, owed: SendLockOwed, nowMs: number,
+  owner: string | null, add: SendLock | null = null,
+): SendLock[] {
+  const rows = loadOrEmpty(owner);
+  const kept = rows.filter((r) => {
+    const why = doomed(r);
+    return why === null || !mayDrop(r, why, owed, nowMs);
+  });
+  if (add !== null) kept.push(add);
+  if (add !== null || kept.length !== rows.length) save(kept, owner);
+  return kept;
+}
+
 export function resumeSendLock(
   lane: string,
   id: SendIdentity,
   nowMs: number,
+  owed: SendLockOwed,
   owner: string | null = storageOwner(),
 ): string | null {
   const rows = load(owner);
@@ -334,11 +357,9 @@ export function resumeSendLock(
   // reopening a draft and editing it turned into a fresh key for a message that may already have
   // been delivered. A record from a LATER format is exempt too: this build cannot read what its
   // fingerprint means, and a downgrade must not delete a newer install's evidence.
-  const kept = live.filter((r) => !(
-    r.lane === lane && r.fp !== id.fp && r.unverified !== true
-    && r.v <= SEND_LOCK_FORMAT
-  ));
-  if (kept.length !== rows.length) save(kept, owner);
+  dropSendLocks((r) => (
+    r.lane === lane && r.fp !== id.fp && r.unverified !== true ? "replaced" : "aged"
+  ), owed, nowMs, owner);
   return found?.key ?? null;
 }
 
@@ -378,10 +399,12 @@ export function sendIdentity(m: MailSend, session: string | null = null): SendId
  * THE KEY FOR A FINGERPRINT ALONE — the door for a caller that has no message. Every production press
  * goes through {@link resumeSendLock} with a real identity.
  */
-export function readSendLock(lane: string, fp: string, nowMs: number, owner: string | null = storageOwner()): string | null {
+export function readSendLock(
+  lane: string, fp: string, nowMs: number, owed: SendLockOwed, owner: string | null = storageOwner(),
+): string | null {
   return resumeSendLock(lane, {
     fp, subjects: [], session: null, draftId: null,
-  }, nowMs, owner);
+  }, nowMs, owed, owner);
 }
 
 /**
@@ -391,7 +414,7 @@ export function readSendLock(lane: string, fp: string, nowMs: number, owner: str
  * exact window this file exists to close: a process killed between the POST and the write comes
  * back with the mail possibly sent and no record of the key it went under.
  */
-export function claimSendLock(lock: SendLock, owner: string | null = storageOwner()): void {
+export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: string | null = storageOwner()): void {
   /**
    * IT EVICTS THE LANE'S ORDINARY CLAIM AND NOTHING ELSE.
    *
@@ -405,10 +428,9 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
   // refuses the write leaves the claim as durable as the tab — exactly what it was before this
   // file existed. What has changed is that the refusal is no longer silent: `save` answers, and
   // the shell says once that this browser is not keeping decisions between reloads.
-  const rows = loadOrEmpty(owner).filter((r) => r.lane !== lock.lane
-    ? true
-    // A record from a LATER format is not this build's to evict, ordinary or not.
-    : (r.unverified === true && r.fp !== lock.fp) || r.v > SEND_LOCK_FORMAT);
+  // A record from a LATER format is not this build's to evict: the door keeps it.
+  const replaced = (r: SendLock): SendLockDrop | null => (
+    r.lane === lock.lane && !(r.unverified === true && r.fp !== lock.fp) ? "replaced" : null);
   /**
    * THE VERSION IS STAMPED HERE, not taken from the caller.
    *
@@ -417,8 +439,7 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
    * build wrote. Leaving the number in the caller's hands made it a literal at the one call site that
    * had to be remembered on every format change, and 0.14.1 forgot it.
    */
-  rows.push({ ...lock, v: SEND_LOCK_FORMAT });
-  save(rows, owner);
+  dropSendLocks(replaced, owed, lock.at, owner, { ...lock, v: SEND_LOCK_FORMAT });
 }
 
 /**
@@ -430,12 +451,12 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
  * message named here releases that message's record — including its unresolved one, because an outcome the session
  * has now observed is no longer unknown — and leaves every other record on the lane alone.
  */
-export function releaseSendLock(lane: string, fp: string, owner: string | null = storageOwner()): void {
+export function releaseSendLock(
+  lane: string, fp: string, owed: SendLockOwed, owner: string | null = storageOwner(),
+): void {
   // Nothing read, nothing to release — and nothing written, so an unreadable jar cannot lose a
   // record it never handed over.
-  const rows = loadOrEmpty(owner);
-  const kept = rows.filter((r) => !(r.lane === lane && r.fp === fp));
-  if (kept.length !== rows.length) save(kept, owner);
+  dropSendLocks((r) => (r.lane === lane && r.fp === fp ? "ended" : null), owed, Date.now(), owner);
 }
 
 /**
@@ -449,18 +470,11 @@ export function releaseSendLock(lane: string, fp: string, owner: string | null =
  */
 export function allSendLocks(
   nowMs: number,
+  /** Which keys may still produce an ending — see {@link SendLockOwed}. An owed record is kept and returned. */
+  owed: SendLockOwed,
   owner: string | null = storageOwner(),
-  /**
-   * Lanes whose send is still in the durable outbox — exempt from the age limit, and exempt from
-   * this function's own pruning. See {@link isLive}. Omitted by every caller that is not asking
-   * about an unresolved send, so the ordinary read is unchanged.
-   */
-  pendingLanes?: ReadonlySet<string>,
 ): SendLock[] {
-  const rows = loadOrEmpty(owner);
-  if (rows.length === 0) return [];
-  const live = rows.filter((r) => isLive(r, nowMs, pendingLanes));
-  if (live.length !== rows.length) save(live, owner);
+  const live = dropSendLocks(() => "aged", owed, nowMs, owner);
   // RETURNED, not stored: a record from a later format stays in the jar and stays out of this
   // list, because a caller reading fields off it would be reading a shape this build never wrote.
   return live.filter((r) => r.v <= SEND_LOCK_FORMAT).sort((a, b) => a.at - b.at);
@@ -810,21 +824,18 @@ export function holdOf(
  * ROW, which is the only name this path has.
  */
 export function releaseSendLockForRow(
-  lane: string, draftId: string, session: string | null = null,
+  lane: string, draftId: string, session: string | null, owed: SendLockOwed,
   owner: string | null = storageOwner(),
 ): void {
-  const rows = loadOrEmpty(owner);
   // BOTH NAMES, for the reason everything else in this file reads both: the record was written at
   // one moment in the message's life and is settled at another. A press before the first autosave
   // recorded `compose:<session>` and NO row — matching on the row alone would leave exactly that
   // record behind, which is the one this path exists for.
   const names = new Set<string>([`draft:${draftId}`]);
   if (session !== null) names.add(`compose:${session}`);
-  const kept = rows.filter((r) => !(
-    r.lane === lane && r.v <= SEND_LOCK_FORMAT
-    && (r.draftId === draftId || lockSubjects(r).some((n) => names.has(n)))
-  ));
-  if (kept.length !== rows.length) save(kept, owner);
+  dropSendLocks((r) => (
+    r.lane === lane && (r.draftId === draftId || lockSubjects(r).some((n) => names.has(n))) ? "ended" : null
+  ), owed, Date.now(), owner);
 }
 
 /**

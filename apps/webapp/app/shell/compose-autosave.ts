@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
-import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
+import { COMPOSE_SEND_KEY, sendLockOwed, writeReplyMeta } from "./mail-send";
 import { holdOf, releaseSendLockForRow, type Hold } from "./send-lock";
 import {
   clearComposeDraft, composeSessionId, parseRecipients, readComposeRow, whenComposerReady,
@@ -553,7 +553,7 @@ export function useComposeAutosave(opts: {
        the delivered text in the form. Idempotent where the live path already did it. */
     settledRef.current(fate.rowId);
     if (fate.rowId !== null) {
-      releaseSendLockForRow(COMPOSE_SEND_KEY, fate.rowId, composeSessionId());
+      releaseSendLockForRow(COMPOSE_SEND_KEY, fate.rowId, composeSessionId(), sendLockOwed(engine));
     }
     writeComposeRow(null);
     clearComposeDraft();

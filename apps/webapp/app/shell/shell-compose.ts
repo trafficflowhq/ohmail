@@ -85,6 +85,7 @@ import {
   readReplyMeta,
   REPLY_DRAFT_PREFIX,
   SEND_IN_FLIGHT_PHASES,
+  sendLockOwed,
   sendPendingInDurableOutbox,
   sendPendingInOutbox,
   useMailSend,
@@ -1658,6 +1659,7 @@ export function useShellCompose({
         releaseSendLockForRow(
           COMPOSE_SEND_KEY, draftId,
           heldRow !== null && heldRow === draftId ? composeSessionId() : null,
+          sendLockOwed(engine),
         );
       });
     },
@@ -1683,6 +1685,7 @@ export function useShellCompose({
         releaseSendLockForRow(
           COMPOSE_SEND_KEY, d.id,
           heldRow !== null && heldRow === d.id ? composeSessionId() : null,
+          sendLockOwed(engine),
         );
       }
       openDraft({ ...d, status: "draft", sendError: null, sendAt: null });
@@ -1797,6 +1800,7 @@ export function useShellCompose({
           releaseSendLockForRow(
             COMPOSE_SEND_KEY, draftId,
             heldRow !== null && heldRow === draftId ? composeSessionId() : null,
+            sendLockOwed(engine),
           );
         }
         writeReplyMeta(`draft:${draftId}`, {});

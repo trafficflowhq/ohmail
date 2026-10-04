@@ -48,7 +48,7 @@ import { durableRemove, durableSet } from "./durable";
 import {
   allSendLocks, attachSendLockDraft, claimSendLock, holdOf, markSendLockUnverified, recordForEndedSend,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
-  sendSubjects, unverifiedSendIntents, type Hold, type SendIntent,
+  sendSubjects, unverifiedSendIntents, type Hold, type SendIntent, type SendLockOwed,
 } from "./send-lock";
 import { storageOwner } from "./storage-owner";
 import { scheduleLabel } from "./format";
@@ -258,8 +258,8 @@ export function sendUnsettledFromLastSession(
   /** `sendPendingInOutbox(engine, lane)` — the verb, which two of the arms below turn on. */
   pendingOnLane: boolean,
   owner: string | null = null,
-  /** {@link sendSettledIn}: which keys the engine knows are not pending; `outboxKnown` its restore. */
-  standing: { settled?: (key: string) => boolean; outboxKnown?: boolean } = {},
+  /** {@link standingOf}: which keys the engine knows are not pending, and which records it still owes an ending. */
+  standing: { settled?: (key: string) => boolean; owed?: SendLockOwed } = {},
 ): boolean {
   /**
    * THE COMPOSE ON SCREEN IS THE MESSAGE A SEND IS STILL CARRYING: KEYED ON IDENTITY, NOT ON THE LANE, and the
@@ -293,13 +293,10 @@ export function sendUnsettledFromLastSession(
    */
   if (unverifiedSendIntents(lane, owner).some((i) => intentNamesLatched(i, latch))) return false;
 
-  /* The lane's records, with the outbox exempting a pending one from the age limit — and from
-     this read's own pruning, which would otherwise delete the answer before anybody read it. An
-     outbox not yet read cannot say the send is not pending, so until then this lane is exempt too:
-     the shell renders before it hydrates, and a sweep here deleted an eight-day send's record
-     before its replay confirmed. Other lanes are swept as ever. */
-  const unread = standing.outboxKnown === false;
-  const rows = allSendLocks(Date.now(), owner, pendingOnLane || unread ? new Set([lane]) : undefined)
+  /* The lane's records. This read sweeps aged records on EVERY lane, so it keeps whatever is still
+     owed an ending (see `SendLockOwed`): before the outbox is read, that is every record. */
+  const settled = standing.settled ?? (() => false);
+  const rows = allSendLocks(Date.now(), standing.owed ?? ((k) => !settled(k)), owner)
     // THIS MOUNT'S OWN PRESSES ARE NOT "FROM THE LAST SESSION", and leaving them in was the whole
     // of a measured regression: every record is written by a press, so a rule that reads them all
     // refuses the very resume the record exists for — 23 cases went red saying so, four of them
@@ -331,7 +328,6 @@ export function sendUnsettledFromLastSession(
         session comparison would have refused every hold for the life of the mount. */
   /* A record whose send the engine knows is not pending (confirmed, refused, withdrawn) holds
      nothing: the hold reads the outbox, and a record is only its key. */
-  const settled = standing.settled ?? (() => false);
   return latch.fp !== null && rows.some((r) => r.bfp === latch.fp && !settled(r.key));
 }
 
@@ -439,12 +435,21 @@ export function sendSettledIn(engine: OhmailEngine): (key: string) => boolean {
   return (key) => !pending.has(key);
 }
 
-/** What the composer's hold reads off the engine: which keys are settled, and whether it can say yet. */
-export function standingOf(engine: OhmailEngine): { settled: (key: string) => boolean; outboxKnown?: boolean } {
-  return {
-    settled: sendSettledIn(engine),
-    ...(typeof engine.outboxKnown === "function" ? { outboxKnown: engine.outboxKnown() } : {}),
-  };
+/**
+ * WHICH SEND RECORDS ARE STILL OWED AN ENDING — the one reading every deletion in `send-lock.ts` is
+ * handed. A key not settled (the outbox unread, or the key queued, on the wire or on the durable
+ * outbox) is owed, and while any late answer waits uncollected every key is: that answer names a
+ * mutation, not a key, and it is the record that turns it back into a message.
+ */
+export function sendLockOwed(engine: OhmailEngine): SendLockOwed {
+  const settled = sendSettledIn(engine);
+  const late = typeof engine.hasLateResults === "function" && engine.hasLateResults();
+  return (key) => late || !settled(key);
+}
+
+/** What the composer's hold reads off the engine: which keys are settled, and which are owed. */
+export function standingOf(engine: OhmailEngine): { settled: (key: string) => boolean; owed: SendLockOwed } {
+  return { settled: sendSettledIn(engine), owed: sendLockOwed(engine) };
 }
 
 /**
@@ -1506,7 +1511,7 @@ export function useMailSend(
         // and releasing the lane would delete the record saying an earlier message may already
         // have been delivered — see `releaseSendLock`.
         const fp = sendFingerprint(m);
-        if (next.phase !== "unverified") releaseSendLock(key, fp, owner.current);
+        if (next.phase !== "unverified") releaseSendLock(key, fp, sendLockOwed(engine), owner.current);
         // DURABLY, because the phase below is component state: reopening the draft, a reload or
         // another tab all start from `idle`, and each of those is a way back to a send that may
         // already have gone. The lock is the only thing that survives them.
@@ -1717,6 +1722,13 @@ export function useMailSend(
         );
         return;
       }
+      /* A REPLY'S OR AN INLINE FORWARD'S SCRATCH GOES AS THE LIVE PATH'S DOES (`settle`): the send
+         it held has gone, and words left in the dock are one press from a second copy. */
+      if (record.lane !== COMPOSE_SEND_KEY) {
+        clearLaneScratch(record.lane, {
+          kind: "mail_send", inReplyTo: record.lane.startsWith("fwd:") ? null : record.lane,
+        } as unknown as MailSend, owner.current, true);
+      }
       settledRef.current(record.lane, {
         kind: "mail_send", draftId: res.entityId ?? record.draftId ?? null,
       } as unknown as MailSend,
@@ -1763,7 +1775,7 @@ export function useMailSend(
          wire is carrying — a second key for a message that may yet be delivered. Nothing
          beyond the release and the sentence: settling is the `confirmed` ending, and the row
          the adapter made for a press that carried none is not adopted here. */
-      releaseSendLock(record.lane, record.fp, owner.current);
+      releaseSendLock(record.lane, record.fp, sendLockOwed(engine), owner.current);
       /* The live path's own failure sentence, on the surface this answer is about: without it
          the composer comes back editable saying nothing, which is a message the person
          pressed Send on and no account of what happened to it. */
@@ -2047,7 +2059,8 @@ export function useMailSend(
       const bufferFp = key === COMPOSE_SEND_KEY ? composeBufferFingerprint() : null;
       const subject = id.subjects[0];
       /* THROUGH THE IDENTITY, not the fingerprint alone: the session and the subjects scope the resume. */
-      const resumed = resumeSendLock(key, id, now, owner.current);
+      const owed = sendLockOwed(engine);
+      const resumed = resumeSendLock(key, id, now, owed, owner.current);
       const standing = standingSendKey(engine, key);
       const sendKey = standing ?? resumed ?? crypto.randomUUID();
       if (sendKey !== resumed) {
@@ -2064,7 +2077,7 @@ export function useMailSend(
           // AND THE BUFFER'S OWN FINGERPRINT for the compose lane — the identity a mount after a
           // reload can recompute. See `SendLock.bfp`; `fp` above is not recomputable there.
           ...(key === COMPOSE_SEND_KEY && bufferFp !== null ? { bfp: bufferFp } : {}),
-        }, owner.current);
+        }, owed, owner.current);
       }
 
       ownKeys.current.add(sendKey);
@@ -2132,7 +2145,7 @@ export function useMailSend(
     locked.current.delete(lane);
     accepted.current.delete(lane);
     sentFor.current.delete(lane);
-    if (m !== undefined) releaseSendLock(lane, sendFingerprint(m), owner.current);
+    if (m !== undefined) releaseSendLock(lane, sendFingerprint(m), sendLockOwed(engine), owner.current);
     setPhase(lane, IDLE);
     return "close";
   }, [engine, setPhase]);
