@@ -26,7 +26,8 @@ export interface HeapReaders {
 const MIB = 1024 * 1024;
 /** MB of the process's memory limit per class MB, on iOS. */
 export const IOS_LIMIT_MB_PER_CLASS_MB = 16;
-/** A device with less physical memory than this (the 2 GB iPhones) is iOS's low-memory device. */
+/** Less physical memory than this reads as iOS's low-memory device: the 2 GB iPhones, and probably the 3 GB
+ *  ones too, which report a little under 3 GiB and are then held to the floor (the safe side; unmeasured). */
 export const IOS_LOW_MEMORY_PHYSICAL_BYTES = 3 * 1024 * MIB;
 /** The smallest class whose ceiling is the floor: an iPhone that is not low-memory never draws less. */
 export const IOS_FLOOR_CLASS_MB = Math.ceil(PHONE_FRAME_FLOOR_CHARS / PHONE_FRAME_CHARS_PER_HEAP_MB);
