@@ -702,14 +702,6 @@ export class HttpAdapter implements EngineAdapter {
     return narrowBody((await res.json()) as Partial<MessageBodyWire>);
   }
 
-  /**
-   * `GET /drafts/:id` — the draft's text, for a mirror row that arrived without one.
-   *
-   * The same route the AI-draft purchase reads back, and the same `cost: "read"`. Under the body
-   * fetch's deadline, because compose is waiting on it before it will show the editor; a refusal
-   * throws through `rejectionOf` so "the server said no" cannot be mistaken for "the draft is
-   * empty". A body the server omits is `null` — the one answer that means "no text of record".
-   */
   /** `GET /drafts/:id`'s `status`, or `null` when the server did not answer it readably. */
   private async draftStatusOf(draftId: string): Promise<string | null> {
     try {
@@ -720,6 +712,14 @@ export class HttpAdapter implements EngineAdapter {
     } catch { return null; }
   }
 
+  /**
+   * `GET /drafts/:id` — the draft's text, for a mirror row that arrived without one.
+   *
+   * The same route the AI-draft purchase reads back, and the same `cost: "read"`. Under the body
+   * fetch's deadline, because compose is waiting on it before it will show the editor; a refusal
+   * throws through `rejectionOf` so "the server said no" cannot be mistaken for "the draft is
+   * empty". A body the server omits is `null` — the one answer that means "no text of record".
+   */
   async fetchDraftBody(draftId: string): Promise<string | null> {
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
       const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`, { signal });
