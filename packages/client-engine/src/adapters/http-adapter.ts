@@ -1806,11 +1806,11 @@ export class HttpAdapter implements EngineAdapter {
        * `POST /rules` — mounted since §5.6 and called by nothing: only the Screener's own endpoint ever created a
        * rule. This case makes "rule this sender" reachable from the Ohbox, Reads and Receipts, where `POST
        * /screener/:id` answers 404 because the mail has left the gate. The body is three fields, and `priority` is
-       * deliberately not one: `validPriority` defaults to 0 and `enabled` to true — what the optimistic row claims —
-       * and a client asserting a ranking would be choosing precedence (`compareRules` ranks priority FIRST) from a
-       * sheet that offers no such control. The echo is safe here: 201 returns the created `RuleDTO` with `X-Sync-Seq`
-       * — one entity at one seq, so echoing cannot move the cursor past deltas the mirror never applied (the
-       * objection that stops `mark_seen`); a missing header degrades to `changes: []` and `dispatch` pulls the drain.
+       * deliberately not one: unstated, it starts a new row at 0 and leaves an existing one's alone (`enabled`
+       * defaults to true), and a client asserting a ranking would choose precedence from a sheet with no such control.
+       * The echo is safe: 201 returns the created `RuleDTO` with `X-Sync-Seq` — one entity at one seq, so it cannot
+       * move the cursor past deltas the mirror never applied (the objection that stops `mark_seen`); a missing header
+       * degrades to `changes: []` and `dispatch` pulls the drain.
        */
 
       /**

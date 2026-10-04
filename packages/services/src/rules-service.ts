@@ -347,7 +347,8 @@ export class RulesService {
     const kind = this.validKind(body.kind);
     const destination = this.validDestination(body.destination);
     const match = this.validMatch(body.match, kind);
-    const priority = this.validPriority(body.priority);
+    // ABSENT IS UNSTATED, never 0: a create over a raised rule keeps its priority; a new row starts at 0.
+    const priority = body.priority === undefined ? undefined : this.validPriority(body.priority);
     const applyRetro = this.validApplyRetro(body.applyRetro);
     const subjectContains = this.validSubjectContains(body.subjectContains, kind);
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
@@ -840,7 +841,6 @@ export class RulesService {
     return key;
   }
   private validPriority(v: unknown): number {
-    if (v === undefined) return 0;
     if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > RULE_PRIORITY_MAX) {
       throw new ServiceError("validation_failed", 400, `priority must be an integer from 0 to ${RULE_PRIORITY_MAX}`);
     }

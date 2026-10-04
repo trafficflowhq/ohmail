@@ -635,7 +635,8 @@ export interface ValidatedRuleCreate {
   key: RuleKey;
   /** A {@link MOVE_DESTINATIONS} word, already refused for `trash` — see the validator. */
   destination: string;
-  priority: number;
+  /** Absent when the request named none: an existing row keeps its own, a new one starts at 0. */
+  priority?: number;
   enabled: boolean;
   applyRetro: boolean;
 }
@@ -662,12 +663,15 @@ function ruleCreateFields(o: Record<string, unknown>): Record<string, unknown> |
 
 /** The flat `rule.create` payload every door sends. `destination` is a {@link MOVE_DESTINATIONS} word. */
 export function ruleCreatePayload(input: {
-  key: RuleKey; destination: string; priority: number; enabled: boolean; applyRetro?: boolean;
+  key: RuleKey; destination: string; priority?: number; enabled: boolean; applyRetro?: boolean;
 }): Record<string, unknown> {
   const { key } = input;
   return {
     key: { kind: key.kind, match: key.match, subjectContains: key.subjectContains, bodyContains: key.bodyContains },
-    destination: input.destination, priority: input.priority, enabled: input.enabled,
+    destination: input.destination,
+    // Unstated stays unstated on the wire: a 0 here would lower the organizer's raised rule.
+    ...(input.priority === undefined ? {} : { priority: input.priority }),
+    enabled: input.enabled,
     ...(input.applyRetro === undefined ? {} : { applyRetro: input.applyRetro }),
   };
 }
@@ -784,11 +788,13 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
     if (f === null) return null;
     const destination = asRuleDestination(f.destination);
     if (destination === null) return null;
-    const priority = f.priority === undefined ? 0 : f.priority;
-    if (typeof priority !== "number" || !Number.isInteger(priority) || priority < 0 || priority > RULE_PRIORITY_MAX) return null;
+    // ABSENT IS UNSTATED, never 0: a create over a raised rule must not lower it.
+    const priority = f.priority;
+    if (priority !== undefined
+      && (typeof priority !== "number" || !Number.isInteger(priority) || priority < 0 || priority > RULE_PRIORITY_MAX)) return null;
     const enabled = f.enabled === undefined ? true : f.enabled;
     if (typeof enabled !== "boolean") return null;
-    return { op: "create", key, destination, priority, enabled, applyRetro };
+    return { op: "create", key, destination, ...(priority === undefined ? {} : { priority }), enabled, applyRetro };
   }
 
   if (kind === "rule.update") {
@@ -875,6 +881,8 @@ function ruleCreateDiff(found: FoundRule, want: ValidatedRuleCreate): Partial<ty
   const diff: Record<string, unknown> = {};
   for (const field of Object.keys(RULE_CREATE_STATE) as RuleCreateStateField[]) {
     const column = RULE_CREATE_STATE[field];
+    // A field the request did not state asks nothing of the row (a create naming no priority).
+    if (want[field] === undefined) continue;
     const same = field === "destination"
       ? samePlace(found.destination, want.destination)
       : found[column] === want[field];
@@ -948,7 +956,7 @@ export async function reconcileRuleCreate(
     accountId,
     kind: key.kind, match: input.match ?? key.match,
     destination: create.destination,
-    priority: create.priority,
+    priority: create.priority ?? 0,
     enabled: create.enabled,
     // A create is a person's own press, never an inference.
     provenance: "manual",

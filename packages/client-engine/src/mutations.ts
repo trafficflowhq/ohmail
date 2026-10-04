@@ -992,8 +992,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
      * composes its own `move`s for the mail it can see, from the same scope, so the relocated mail and the written
      * rule can never disagree about whose mail this is. `provenance: "manual"` is not a guess — `RulesService.create`
      * inserts exactly that, and an optimistic `promoted` would flip under the echo. `priority` is the one sent, else 0 and
-     * not sent (`validPriority(undefined)` answers 0). The id is a client uuid; the server's row arrives under its
-     * own, and the overlay drops when the echo carries the real row.
+     * not sent (a new row starts at 0; a row already under the key keeps its own). The id is a client uuid; the
+     * server's row arrives under its own, and the overlay drops when the echo carries the real row.
      */
 
     /**
