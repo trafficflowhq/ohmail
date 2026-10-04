@@ -56,11 +56,13 @@ export interface ShellDispatchInput {
  * THE VIEW DECIDES WHAT AN UNDO PUTS BACK (`OhboxView` registers it). `ask` runs before the
  * reversal is sent: it answers the row it re-held, or `null` when the person has moved on since
  * the verb. `settle` follows with whether THAT row's reversal took: the cursor comes back on yes,
- * the hold goes on no.
+ * the hold goes on no. `left` answers whether one of these rows was moved on from, so the toast
+ * does not say it is back where it was.
  */
 export interface UndoLink {
   ask: (ids: readonly string[]) => string | null;
   settle: (id: string, applied: boolean) => void;
+  left: (ids: readonly string[]) => boolean;
 }
 
 /** The messages a mutation names — what an Undo of it brings back. */
@@ -111,10 +113,12 @@ export function useShellDispatch({
   const door = useMemo(() => createUndoDoor(showLatest), [showLatest]);
   const toast = door.toast;
   const undoLink = useRef<UndoLink | null>(null);
-  /* A held window's Undo sends nothing, so it has taken back everything it names. */
-  const rowsUndone = useStableCallback((ids: readonly string[]) => {
+  /* A held window's Undo sends nothing, so it has taken back everything it names. Answers
+     whether the person had moved on from one of them (the toast's sentence follows it). */
+  const rowsUndone = useStableCallback((ids: readonly string[]): boolean => {
     const mine = undoLink.current?.ask(ids) ?? null;
     if (mine !== null) undoLink.current?.settle(mine, true);
+    return mine === null && (undoLink.current?.left(ids) ?? false);
   });
   /**
    * Every filing dispatch goes through here. A filing decision writes `folder_state`; the strip
@@ -173,6 +177,8 @@ export function useShellDispatch({
       deletedMany: (count) => t("ohbox.toastDeletedMany", { count }),
       undoneMany: (count) => t("ohbox.deleteUndoneMany", { count }),
       failedMany: (count) => t("ohbox.deleteFailedMany", { count }),
+      undoneLeft: t("ohbox.deleteUndoneLeft"),
+      undoneLeftMany: (count) => t("ohbox.deleteUndoneLeftMany", { count }),
     },
     /* EVERY mailbox the press touches, asked once. A nullish id becomes `""`, which the predicate
        refuses as an id no roster row carries — the same answer, reached without a second branch

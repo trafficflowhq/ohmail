@@ -556,6 +556,8 @@
     "deleteUndone": "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
     "toastDeletedMany": "{count, plural, one {In den Papierkorb verschoben.} other {# Nachrichten in den Papierkorb verschoben.}}",
     "deleteUndoneMany": "{count, plural, one {Nicht gelöscht — die Nachricht ist noch an ihrem Platz.} other {Nicht gelöscht — # Nachrichten sind noch an ihrem Platz.}}",
+    "deleteUndoneLeft": "Nicht gelöscht.",
+    "deleteUndoneLeftMany": "{count, plural, one {Nicht gelöscht.} other {# Nachrichten nicht gelöscht.}}",
     "deleteFailedMany": "{count, plural, one {Das Löschen konnte nicht gespeichert werden — die Nachricht ist noch an ihrem Platz.} other {# dieser Löschvorgänge konnten nicht gespeichert werden — die Nachrichten sind noch an ihrem Platz.}}",
     "deleteQueuedMany": "{count, plural, one {1 Nachricht ist} other {# Nachrichten sind}} für den Organizer vorgemerkt — gelöscht werden sie beim nächsten Durchgang.",
     "deleteReplayRetrying": "{count, plural, one {Das Löschen dieser Nachricht wurde nicht abgeschlossen. Neuer Versuch…} other {Das Löschen von # Nachrichten wurde nicht abgeschlossen. Neuer Versuch…}}",

@@ -938,10 +938,10 @@ export function OhboxView({
    * this: it used to arrive through two implicit fallbacks meaning "the newest unread message",
    * silently re-resolving on every re-partition — and since the list is partitioned BY `unread`, a
    * commit fed the next arm: two seconds per message, straight through the Ohbox, onto a real IMAP
-   * server. Both fallbacks are gone, and the dwell still keys on this rather than `selected`:
-   * `selected` also moves when a message leaves the pile, which is not a cursor move. Structural
-   * guarantee: `dwellOn` is written in exactly two places — `selectByUser` (j, k, click) and `open`
-   * (clears it). Nothing derived from the list can produce it.
+   * server. Both fallbacks are gone; the dwell keys on this, not `selected`, which also moves when a
+   * message leaves the pile. Only `selectByUser` (j, k, click) and an Undo's `settle` (the dwell the
+   * verb took) SET it; `open`, `engage`, a selection taken away and a verb's `suspend` clear it.
+   * Nothing derived from the list can produce it.
    */
   const [dwellOn, setDwellOn] = useState<string | null>(null);
 
@@ -1052,6 +1052,9 @@ export function OhboxView({
     suspended.current = null;
     if (s && heldRead.current === s.id) leaveRead();
   }
+  /* THE ROW MOVED ON FROM, kept past its record: an Undo of it says it was not deleted, never
+     that it is where it was — it files under Earlier, as any row read and left does. */
+  const leftFrom = useRef<string | null>(null);
   useEffect(() => {
     const s = suspended.current;
     if (!s || (selectedId === s.sel && readerId === s.reader0 && armedRead === s.armed0)) return;
@@ -1061,6 +1064,7 @@ export function OhboxView({
       verbAdvance.current = null;
       return;
     }
+    leftFrom.current = s.id;
     spendSuspended();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, readerId, armedRead]);
@@ -1089,6 +1093,12 @@ export function OhboxView({
         onSelectRef.current(s.id);
         if (s.dwelling) setDwellOn(s.id);
         if (s.reader) onEnterReaderRef.current(s.id);
+      },
+      left: (ids) => {
+        const id = leftFrom.current;
+        if (id === null || !ids.includes(id)) return false;
+        leftFrom.current = null;
+        return true;
       },
     };
     undoLink.current = link;

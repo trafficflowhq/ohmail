@@ -108,6 +108,9 @@ export interface DeleteUndoCopy {
   deletedMany?: (count: number) => string;
   undoneMany?: (count: number) => string;
   failedMany?: (count: number) => string;
+  /** Undo of a row the person had moved on from: not deleted, and not back in its place. */
+  undoneLeft?: string;
+  undoneLeftMany?: (count: number) => string;
 }
 
 /**
@@ -162,8 +165,9 @@ export interface DeleteUndoDeps {
   /**
    * Undo took these back inside the window. The list puts them where they stood at the press —
    * their place, the cursor and the open reader (`OhboxView`) — never where a re-filing would.
+   * `true` when the person had moved on from one of them, which then files as a read row does.
    */
-  onUndone?: (ids: readonly string[]) => void;
+  onUndone?: (ids: readonly string[]) => boolean | void;
   /**
    * May these mailboxes be written to — the sentence to say, or `null` for yes. Takes EVERY mailbox
    * the press touches and is asked once for the whole press: a selection spanning a mailbox this
@@ -291,9 +295,11 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
     const count = press.ids.length;
     const ids = forget(pressId);
     disarmDeleteIntent(pressId);
-    deps.onUndone?.(ids);
+    const left = deps.onUndone?.(ids) === true;
     publish();
-    deps.toast(say(deps.copy.undone, deps.copy.undoneMany, count));
+    deps.toast(left && deps.copy.undoneLeft !== undefined
+      ? say(deps.copy.undoneLeft, deps.copy.undoneLeftMany, count)
+      : say(deps.copy.undone, deps.copy.undoneMany, count));
     return true;
   };
 
