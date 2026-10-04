@@ -2067,12 +2067,16 @@ jobs:
           # refuses with "the app wrote no log" — the rig's failure wearing the
           # app's clothes, which is the one shape this step exists to avoid.
           [ -f build/ohmail-linux-x86_64.AppImage ] || { echo "perf smoke: no artifact at build/ohmail-linux-x86_64.AppImage"; exit 1; }
-          # THE BINARY, for the check to read the frame vocabulary out of: the
-          # AppImage's payload is compressed, so none of its strings are there,
-          # and every started run would read its own frame lines as impossible.
-          (cd perf-smoke && ../build/ohmail-linux-x86_64.AppImage --appimage-extract usr/bin/ohmail > /dev/null) \
+          # THE WHOLE APPIMAGE: the binary carries the frame vocabulary (the payload
+          # is compressed), and the store-open arm derives the engine dir from
+          # --bundle and reads pglite's manifest and the engine bundle there. A
+          # binary-only extract left that dir absent and the arm read the store as
+          # unread, which is a refusal by design. The identity read is the control.
+          (cd perf-smoke && ../build/ohmail-linux-x86_64.AppImage --appimage-extract > /dev/null) \
             && [ -f perf-smoke/squashfs-root/usr/bin/ohmail ] \
-            || { echo "perf smoke: the AppImage did not extract usr/bin/ohmail"; exit 1; }
+            && [ -f perf-smoke/squashfs-root/usr/lib/ohmail/engine/bin/node_modules/@electric-sql/pglite/package.json ] \
+            || { echo "perf smoke: the AppImage did not extract the binary and the engine's store"; exit 1; }
+          node --input-type=module -e 'import { readStoreIdentity } from "./scripts/perf-smoke-check.mjs"; const s = readStoreIdentity("perf-smoke/squashfs-root/usr/lib/ohmail/engine/bin"); console.log("perf smoke: the extracted store reads " + JSON.stringify(s)); if (s.unread) process.exit(1);'
           HOME_DIR="$PWD/perf-smoke/home"
           APP_DATA="$HOME_DIR/.local/share/io.ohmail.desktop"
           mkdir -p "$APP_DATA"
