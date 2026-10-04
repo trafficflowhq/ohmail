@@ -1897,6 +1897,7 @@ const TABLE = {
      copies, and never a confirmation that names words nobody sent. Said only when the server
      states it AND this press carried different words; either alone is an ordinary send. */
   replyEarlierWent: "This reply had already been sent. Your newer text was not sent as a second copy.",
+  earlierGoing: "An earlier version of this message is already being sent. Your newer text will not be sent as a second copy.",
   replyQueued: "Not sent yet. ohmail is still trying.",
   /* The server accepted the send and its submission is still running (the web's `statusSendingLong`). */
   replySendingLong: "Still sending.",

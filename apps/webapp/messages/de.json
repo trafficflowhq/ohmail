@@ -3377,6 +3377,7 @@
     "toastForwarded": "Weitergeleitet.",
     "toastEarlierWent": "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
     "toastForwardEarlierWent": "Diese Weiterleitung wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
+    "toastEarlierGoing": "Eine frühere Fassung dieser Nachricht wird bereits gesendet. Dein neuerer Text wird nicht als zweite Kopie gesendet.",
     "forwardHead": "Weiterleiten — du wählst, wer sie bekommt",
     "forwardAsk": {
       "otp": "ohmail hat in dieser Nachricht einen Einmalcode erkannt.",

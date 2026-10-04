@@ -1265,6 +1265,7 @@ export const DE: Deck = {
   replySending: "Wird gesendet …",
   replySent: "Antwort gesendet.",
   replyEarlierWent: "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
+  earlierGoing: "Eine frühere Fassung dieser Nachricht wird bereits gesendet. Dein neuerer Text wird nicht als zweite Kopie gesendet.",
   replyQueued: "Noch nicht gesendet. ohmail versucht es weiter.",
   replySendingLong: "Sendet noch.",
   replyQueuedOffline: "Noch nicht gesendet. Dieses Telefon hat kein Netz; die Nachricht geht raus, sobald es wieder da ist.",

@@ -1165,6 +1165,8 @@ export function useMailSend(
 ): MailSendApi {
   const t = useTranslations();
   const [states, setStates] = useState<Record<string, SendState>>({});
+  /** Keys whose kept-back words were already said — see `absorb`. */
+  const saidGoing = useRef(new Set<string>());
   /** `Idempotency-Key → send key` for everything currently queued, so a flush can settle it. */
   const queued = useRef(new Map<string, string>());
   /** `Idempotency-Key → the frozen mutation`, so a late confirmation knows what it delivered. */
@@ -1395,6 +1397,11 @@ export function useMailSend(
       if (res.status === "superseded") return;
       let next = phaseFor(res);
       if (res.status === "queued") {
+        // A waiting send whose newer words were kept back carries the earlier ones: said once.
+        if ((res.error?.details as { earlierWordsKept?: boolean } | undefined)?.earlierWordsKept === true && !saidGoing.current.has(res.key)) {
+          saidGoing.current.add(res.key);
+          toast(t("reply.toastEarlierGoing"));
+        }
         // Remember the server's 202 the one time it is said, and re-apply it to every later
         // `in_flight` answer for this lane — see {@link accepted}.
         if (next.accepted === true) accepted.current.add(key);
@@ -1526,7 +1533,7 @@ export function useMailSend(
        * claimed, because the intent is out there under it and a second press would be a second delivery.
        */
     },
-    [settle, setPhase, sessionOf],
+    [settle, setPhase, sessionOf, toast, t],
   );
 
   /**

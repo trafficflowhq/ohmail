@@ -3377,6 +3377,7 @@
     "toastForwarded": "Forwarded.",
     "toastEarlierWent": "This reply had already been sent. Your newer text was not sent as a second copy.",
     "toastForwardEarlierWent": "This forward had already been sent. Your newer text was not sent as a second copy.",
+    "toastEarlierGoing": "An earlier version of this message is already being sent. Your newer text will not be sent as a second copy.",
     "forwardHead": "Forward — you pick who receives it",
     "forwardAsk": {
       "otp": "ohmail flagged this message as containing a one-time code.",

@@ -2522,6 +2522,14 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.request("POST", `/drafts/${draftId}/send`, {
       idempotencyKey,
       ...(Object.keys(sendBody).length ? { body: sendBody } : {}),
+    }).catch((err: unknown) => {
+      // A send step that did not reach the server still carries what the save learned: the
+      // newer words were kept back, and the send already holding the row carries the earlier ones.
+      if (!earlierWordsKept || !(err instanceof MutationRejectedError)) throw err;
+      throw new MutationRejectedError(err.message, {
+        status: err.status, code: err.code, retryable: err.retryable, retryAfterMs: err.retryAfterMs,
+        details: { earlierWordsKept: true },
+      });
     });
     // BEFORE any throw: the route echoes X-Sync-Seq on the unverified answer too, and a
     // rejection is no reason to let `lastSyncSeq` fall behind the log.
@@ -2606,6 +2614,8 @@ export class HttpAdapter implements EngineAdapter {
         wire.message ?? "This send was accepted and is still being handed to your mail server.",
         {
           status: res.status, code: "send_queued", retryable: true,
+          // This press's newer words were kept back: the send already under way carries the earlier ones.
+          ...(earlierWordsKept ? { details: { earlierWordsKept: true } } : {}),
           // A server that names an interval is obeyed even here: this arm is a WAIT, and the
           // client's own cadence is not better information than the server's.
           retryAfterMs: retryAfterMsOf(res),
@@ -2625,6 +2635,7 @@ export class HttpAdapter implements EngineAdapter {
         wire.message ?? "A send for this draft is already in progress.",
         {
           status: res.status, code: "send_in_flight", retryable: true,
+          ...(earlierWordsKept ? { details: { earlierWordsKept: true } } : {}),
           retryAfterMs: retryAfterMsOf(res),
         },
       );

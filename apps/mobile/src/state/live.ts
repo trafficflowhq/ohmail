@@ -2514,6 +2514,11 @@ export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutatio
  * the resume's save refused over a row a send holds). One without the other is an ordinary send —
  * a plain retry of the same words, or a resume whose newer words landed first.
  */
+/** A send still waiting whose newer words were kept back: the send under way carries the earlier ones. */
+export function earlierVersionGoing(r: MutationResult | null): boolean {
+  return r !== null && r.status === "queued" && (r.error?.details as { earlierWordsKept?: boolean } | undefined)?.earlierWordsKept === true;
+}
+
 export function earlierVersionWent(r: MutationResult | null): boolean {
   return r !== null && r.status === "confirmed" && r.earlierWordsKept === true && r.firstSend !== undefined;
 }
@@ -2639,6 +2644,8 @@ export async function flushQueued(
   release: ReleaseConfirmed,
   /** A send the server says it has (`send_queued`): not terminal, but the composer says so. */
   onAccepted?: (key: string) => void,
+  /** A waiting send whose newer words were kept back: the send under way carries the earlier ones. */
+  onEarlierGoing?: (key: string) => void,
 ): Promise<Map<string, FlushedOutcome>> {
   const kinds = new Map(engine.pendingMutations().map((p) => [p.key, queuedMetaOf(p.mutation)]));
   const offQueue = queuedSendsOf(engine);
@@ -2654,6 +2661,7 @@ export async function flushQueued(
   for (const r of results) {
     if (r.status === "queued") {
       if (sendAccepted(r)) onAccepted?.(r.key);
+      if (earlierVersionGoing(r)) onEarlierGoing?.(r.key);
       continue;
     }
     // The newer press under this key owns its one sentence.
@@ -4373,6 +4381,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const earlierWent = outcome !== "queued" && earlierVersionWent(settled);
     const said = first ? done.get(first.key) : undefined;
     if (said) toast(said.say, said.opts);
+    // A waiting send that will not carry these words says so, never "goes when it is back".
+    else if (outcome === "queued" && earlierVersionGoing(settled)) toast(refuse("earlierGoing"));
     else if (outcome === "sent" || sayRefusals) {
       toast(
         outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)

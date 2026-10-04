@@ -1379,6 +1379,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    *  again (a persistent 500 or a ten-minute `send_in_flight` would loop hot); the next
    *  drain's start clears the latch, because a fresh drain is the next connectivity proof. */
   const tried = useRef(new Set<string>());
+  /** Keys whose kept-back words were already said — see `flushQueued`'s `onEarlierGoing`. */
+  const saidGoing = useRef(new Set<string>());
   useEffect(() => {
     if (conn.syncing) tried.current.clear();
   }, [conn.syncing]);
@@ -1401,6 +1403,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       if (backendEngineRef.current !== flushed) return;
       settlements.current.set(key, { ...(settlements.current.get(key) ?? NO_SETTLEMENT), accepted: true });
       acceptedNow = true;
+    }, (key) => {
+      // Said once per key: a waiting send that carries the earlier words, never the newer ones.
+      if (backendEngineRef.current !== flushed || saidGoing.current.has(key)) return;
+      saidGoing.current.add(key);
+      showToast(refuse("earlierGoing"));
     })
       .then((settled) => {
         // A flush that outlived its session says nothing: the ledger and the toasts belong
