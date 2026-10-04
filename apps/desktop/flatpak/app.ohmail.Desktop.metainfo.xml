@@ -78,7 +78,7 @@
       <description>
         <ul>
           <li>The approval page says when a computer asked from another network</li>
-          <li>A reply edited while it waited to send goes out with the edited words</li>
+          <li>A reply that has gone keeps the words that went</li>
           <li>A self-hosted server tells its visitors apart</li>
           <li>Restarting the desktop app waits for its mail engine</li>
           <li>A Move is sent before the folder check</li>

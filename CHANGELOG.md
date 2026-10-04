@@ -28,12 +28,12 @@ that computer asked from a different network than the one your browser is on, wh
 two networks apart. A self-hosted server no longer takes these browser approvals: the desktop app
 asks only the hosted service for one, and the server's approval page says so.
 
-### A reply edited while it waited to send goes out with the edited words
+### A reply that has gone keeps the words that went
 <!-- changes: fix-026-repress-edited.md -->
 
-If a reply was waiting to send and you changed it and pressed Send again, the earlier words could
-go out while the app said "Reply sent.". The edited words are now saved first and sent. If the
-earlier words had already gone, the app says that instead, once.
+If a reply was waiting to send and you changed it and pressed Send again, the server could record
+the newer words for a reply that had gone with the earlier ones. A sent reply's record now keeps
+the words that were sent.
 
 ### A self-hosted server tells its visitors apart
 <!-- changes: fix-026-selfhost-client-ip.md -->
