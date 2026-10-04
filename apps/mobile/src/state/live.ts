@@ -4407,13 +4407,19 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * defect. Standing means queued OR on the wire: a send in the air resumes its key too, the queue
    * read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
    */
+  /** A send kept past a day for this intent, as the standing send a re-press joins. */
+  const expiredSendFor = (intent: string): { id: string; key: string; mutation: EngineMutation } | undefined => {
+    const a = engine.abandoned().find((x) => x.error.code === SEND_EXPIRED_CODE && sendIntentOf(x.mutation) === intent);
+    return a === undefined ? undefined : { id: a.id, key: a.key, mutation: a.mutation };
+  };
+
   const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null): Promise<MutationResult> => {
     const intent = sendIntentOf(m);
     const standing = intent === null
       ? undefined
       : [...engine.pendingMutations(), ...engine.inFlightMutations()].find((p) => sendIntentOf(p.mutation) === intent)
         // A send kept past a day and refused: pressing again goes under its key, never a second one.
-        ?? engine.abandoned().find((a) => a.error.code === SEND_EXPIRED_CODE && sendIntentOf(a.mutation) === intent);
+        ?? expiredSendFor(intent);
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
        the key would be replayed on the return after the first had gone, and each replay writes a
        draft of its own (`send-waits.ts`). Different words, or Send + Done pressed over a plain

@@ -1,9 +1,11 @@
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { changeLog } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import { isUuid } from "@trafficflow/services";
 import type { ApiDeps } from "./deps.js";
 import { errorResponse } from "./responses.js";
+
+// A leaf-free check: the services barrel would carry its whole graph into the phone's engine.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The header a client sends on a state verb replayed past the server's 24 h idempotency record. */
 export const DECIDED_AT_HEADER = "x-decided-at";
@@ -19,7 +21,7 @@ export async function refuseSupersededReplay(
 ): Promise<Response | null> {
   const raw = req.headers.get(DECIDED_AT_HEADER);
   const accountId = deps.session?.accountId;
-  const ids = messageIds.filter((id) => isUuid(id));
+  const ids = messageIds.filter((id) => UUID.test(id));
   if (raw === null || !accountId || ids.length === 0) return null;
   const decidedAt = new Date(raw);
   if (Number.isNaN(decidedAt.getTime())) return null;
