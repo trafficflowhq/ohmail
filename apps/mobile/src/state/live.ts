@@ -405,6 +405,8 @@ export type WorldEarlier = Held & { attachments?: WorldAttachment[] };
 export type WorldMail = Omit<Mail, "earlier"> & {
   /** The rest of the conversation, oldest → newest, each member with its files. */
   earlier: WorldEarlier[];
+  /** The conversation's newest member, on the reading view of one that has more than one. */
+  newestInConversation?: string;
   attachments?: WorldAttachment[];
   bodyState?: BodyState;
   /** WHICH policy emptied a `withheld` body — the reader owes each marker its own sentence. */
@@ -1770,7 +1772,10 @@ export function liveMessage(
   // The place the reader arrived through, on the row that carries no other honest one: the
   // message screen titles itself History off this, where `place` would say Ohbox.
   if (retired) row.historyPlace = physicalFolderOf(m);
-  row.earlier = threadOf(pres, id)
+  const thread = threadOf(pres, id);
+  // What a conversation opened from its Ohbox row shows on top (`ui/reader-shown.ts`).
+  if (thread.length > 1) row.newestInConversation = thread[thread.length - 1]!.id;
+  row.earlier = thread
     .filter((member) => member.id !== id)
     .map((member) => {
       // The account's own forward wears where it went, not the account's name — the same face

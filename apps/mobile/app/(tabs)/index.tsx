@@ -50,8 +50,9 @@ function OhboxBody() {
   useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
-     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
-  const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
+     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. Every
+     row here is a conversation, so its reader opens as one (`reader-shown.ts`). */
+  const { open, openRow, close } = useListDetail((id) => `/message/${id}?as=conversation`);
   /* Under a pushed reader this screen is hidden: it keeps what it showed (`held-while-hidden.ts`). */
   const focused = useIsFocused();
   const kept = useRef<{ ohbox: World["ohbox"]; doorbell: World["doorbell"] } | null>(null);
@@ -141,9 +142,9 @@ function OhboxBody() {
     <ListDetail
       open={open}
       onClose={close}
-      toRoute={(id) => `/message/${id}`}
+      toRoute={(id) => `/message/${id}?as=conversation`}
       list={list}
-      renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
+      renderDetail={(id, ctx) => <MessageReader id={id} asConversation inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
   );
 }

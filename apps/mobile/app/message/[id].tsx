@@ -41,7 +41,8 @@ export default function MessageScreen() {
 }
 
 function MessageRoute() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  /* `as=conversation` only from an Ohbox row: the reader then shows the conversation's newest. */
+  const { id, as } = useLocalSearchParams<{ id: string; as?: string }>();
   const w = useWorld();
   // The reader draws the body, so it subscribes to it: a body landing redraws this screen alone.
   useBodyStamp();
@@ -64,7 +65,7 @@ function MessageRoute() {
 
   return (
     <>
-      <MessageReader id={id ?? ""} onClose={() => router.back()} />
+      <MessageReader id={id ?? ""} asConversation={as === "conversation"} onClose={() => router.back()} />
       {/* Gate-held and folder mail keep the full-screen reader on the unfolded-landscape Duo
           (`paneRouteFor` answers null there) — the rail's claim still needs a renderer. */}
       <ReaderRailHost />
