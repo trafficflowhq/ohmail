@@ -4408,7 +4408,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
    */
   /** A send kept past a day for this intent, as the standing send a re-press joins. */
-  const expiredSendFor = (intent: string): { id: string; key: string; mutation: EngineMutation } | undefined => {
+  const expiredSendFor = (intent: string): { id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan } | undefined => {
     const a = engine.abandoned().find((x) => x.error.code === SEND_EXPIRED_CODE && sendIntentOf(x.mutation) === intent);
     return a === undefined ? undefined : { id: a.id, key: a.key, mutation: a.mutation };
   };
