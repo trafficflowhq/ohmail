@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, fenceErased,
   contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages,
-  keptProvenance, lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl,
+  lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl,
   writeRuleUnderKey, type LedgerTx, type RuleRowWrite, type Tx,
 } from "@trafficflow/db";
 import {
@@ -456,9 +456,10 @@ async function allowSender(
 
   /* 3. ONE RULE PER KEY: the sender's bare key converges onto its ACTING row. An enabled row on
      the allow side already admits them and keeps its place (both News spellings count); anything
-     else — a screen-out, the spam rule just switched off — becomes the allow into the Ohbox. Its
-     provenance is the decision's rule (manual and migrated kept, never made manual), and the
-     backlog is asked for when the routing moved. A key with no row gets the promoted allow. */
+     else — a screen-out, the spam rule just switched off — becomes the allow into the Ohbox. It is
+     THE PERSON'S OWN RULE: a row this press writes carries their stamp and, unless it is already
+     theirs (manual or migrated), becomes `manual`, so a graduation for the sender never retargets
+     it. The backlog is asked for when the routing moved. A key with no row gets the person's allow. */
   const retro: RuleRowWrite = { retroRequestedAt: nowAt, retroDoneAt: null, retroCursor: null, retroMoved: 0 };
   const wrote = await writeRuleUnderKey(tx as unknown as Tx, {
     accountId, now: nowAt, overExisting: "converge",
@@ -468,14 +469,15 @@ async function allowSender(
       const d: RuleRowWrite = {};
       if (!admits && row.destination !== ALLOW_RULE_DESTINATION) d.destination = ALLOW_RULE_DESTINATION;
       if (!row.enabled) d.enabled = true;
-      const provenance = keptProvenance(row.provenance, "promoted");
-      if (provenance !== row.provenance) d.provenance = provenance;
+      // Manual and migrated rows are already the person's; a learned or seeded one becomes theirs.
+      if (row.provenance !== "manual" && row.provenance !== "migrated") d.provenance = "manual";
+      if (Object.keys(d).length > 0 && row.personDecidedAt === null) d.personDecidedAt = nowAt;
       return d.destination !== undefined || d.enabled === true ? { ...d, ...retro } : d;
     },
     /* The backlog comes with the rescue. "Not junk" says this sender's mail belongs in the Ohbox,
        and the message being rescued is rarely their only one — without the stamp the rest stays
        wherever the spam verdict put it, because NULL is read everywhere as "nobody asked". */
-    insert: { destination: ALLOW_RULE_DESTINATION, provenance: "promoted", enabled: true, retroRequestedAt: nowAt },
+    insert: { destination: ALLOW_RULE_DESTINATION, provenance: "manual", enabled: true, retroRequestedAt: nowAt, personDecidedAt: nowAt },
   });
   return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: wrote.op === "unchanged" ? null : wrote.ruleId };
 }
@@ -529,13 +531,15 @@ export async function rescueJunk(
      doorbell below updates that row, and two presses holding it shared would each wait on the
      other's share at their UPDATE. Taken exclusively here, the second press queues at the fence. */
   return withAccountTx(ctx, async (tx) => {
-    if (sender !== null) await lockAccountRuleKeys(tx as unknown as Tx, accountId);
-    await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Parameters<typeof dialect>[0]), {
-      accountId, mailboxId: args.mailboxId, mailboxLock: "update",
-    });
-    const allowed = sender !== null
-      ? await allowSender(tx, accountId, sender, nowAt)
-      : undefined;
+    const d = dialect(tx as unknown as Parameters<typeof dialect>[0]);
+    let allowed: AllowSenderOutcome | undefined;
+    if (sender !== null) {
+      await lockAccountRuleKeys(tx as unknown as Tx, accountId);
+      await fenceErased(tx as unknown as Tx, d, { accountId, mailboxId: args.mailboxId, mailboxLock: "update" });
+      allowed = await allowSender(tx, accountId, sender, nowAt);
+    } else {
+      await fenceErased(tx as unknown as Tx, d, { accountId, mailboxId: args.mailboxId, mailboxLock: "update" });
+    }
     const [row] = await tx.insert(junkRescues).values({
       accountId,
       mailboxId: args.mailboxId,
