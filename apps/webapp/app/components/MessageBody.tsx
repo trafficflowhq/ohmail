@@ -32,7 +32,7 @@ import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
 import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
-import { treeWithin } from "./html-tree-budget";
+import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
 
 /**
  * The English sentences — the FALLBACK, not the source: every string comes

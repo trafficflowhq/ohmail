@@ -70,6 +70,7 @@
          entries to each other so there is no fourth. */
       "@ohmail/client-engine/durable": ["../../packages/client-engine/src/durable.ts"],
       "@ohmail/client-engine/send-fingerprint": ["../../packages/client-engine/src/send-fingerprint.ts"],
+      "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
       /* The calendar reader — one of the two `@trafficflow/*` specifiers the desktop program

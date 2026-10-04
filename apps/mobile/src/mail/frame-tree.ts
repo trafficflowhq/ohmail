@@ -8,7 +8,7 @@
  * this phone's ceiling (`frame-ceiling.ts`, at most `PHONE_FRAME_MAX_CHARS`) is refused without a
  * count, and one the pictures would make that long is refused before it is built (`frame-length.ts`).
  */
-import { treeStepper, type TreeReading } from "./html-tree-budget";
+import { treeStepper, type TreeReading } from "@ohmail/client-engine/html-tree-budget";
 import { FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK } from "./frame-budget";
 import { engineLogSink, type EngineLogSink } from "../engine/engine-log";
 
