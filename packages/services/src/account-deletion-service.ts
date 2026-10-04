@@ -472,8 +472,9 @@ export async function deleteAccount(
     // that writes a row this erasure deletes opens on the account row (the fence), so it commits
     // before this transaction's first statement or waits behind it; the hot-path renewal needs no
     // fence, it meets the session lock. Not ordered: a write made OUTSIDE any transaction (a sign-in
-    // that supersedes nothing, a pairing token, an authorization code, a verification link) can
-    // still land a row between its table's delete below and `DELETE users`, which then refuses.
+    // that supersedes nothing, a pairing token, an authorization code, a verification link, a hosted
+    // audit row such as a failed sign-in, read and inserted as two statements) can still land a row
+    // between its table's delete below and `DELETE users`, which then refuses.
     await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions)
       .where(eq(sessions.accountId, accountId))
       .orderBy(asc(sessions.id)));
