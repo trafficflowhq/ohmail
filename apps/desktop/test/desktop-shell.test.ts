@@ -54,17 +54,37 @@ const rustCode = (rs: string): string =>
 /**
  * EVERY SPELLING OF A RESTART a census must count: the method (`app.restart()`,
  * `request_restart()`), Tauri's public process function (`tauri::process::restart(&env)`, or
- * `process::restart` after a `use`), and the method named as a path (`AppHandle::restart(&app)`,
- * `AppHandle::<R>::request_restart`) — called or handed on as a value.
+ * `process::restart` after a `use`, or a bare `restart(` once a `use` brings it in by name or by
+ * glob), and the method named as a path (`AppHandle::restart(&app)`, `AppHandle::<R>::request_restart`,
+ * `<AppHandle<R>>::restart`) — called or handed on as a value.
  */
 const RESTART_SPELLINGS: readonly RegExp[] = [
   /\.(?:request_)?restart\(\)/g,
   /\bprocess::restart\b/g,
   /\bAppHandle(?:::<[^>]*>)?::(?:request_)?restart\b/g,
+  /<\s*(?:tauri::)?AppHandle(?:<[^<>]*>)?\s*>::(?:request_)?restart\b/g,
 ];
-const restartsIn = (code: string): string[] => RESTART_SPELLINGS.flatMap((re) => code.match(re) ?? []);
-/** Every install CALL: on Windows an install is a restart too, so each one is counted. */
-const installsIn = (code: string): string[] => code.match(/\.install\(/g) ?? [];
+/** A `use` that brings `name` from `process` into scope, by name, in a group, or by glob. */
+const usesFromProcess = (code: string, name: string): boolean =>
+  new RegExp(`\\buse\\s+[\\w:]*\\bprocess::(?:\\*|${name}\\b|\\{[^}]*(?:\\*|\\b${name}\\b)[^}]*\\})`).test(code);
+/** `name(` called bare: not a method, not a path's last segment, not part of a longer word. */
+const bareCalls = (code: string, name: string): string[] => code.match(new RegExp(`(?<![\\w.:])${name}\\(`, "g")) ?? [];
+/** A `use` line names a function and calls nothing, so the spellings are read with the uses out. */
+const withoutUses = (code: string): string => code.replace(/\buse\s+[^;]*;/g, "");
+const restartsIn = (code: string): string[] => [
+  ...RESTART_SPELLINGS.flatMap((re) => withoutUses(code).match(re) ?? []),
+  ...(usesFromProcess(code, "restart") ? bareCalls(code, "restart") : []),
+];
+/** Every install CALL: on Windows an install is a restart too, so each one is counted, as a method
+ *  or as the path `Update::install`. */
+const installsIn = (code: string): string[] => code.match(/\.install\(|\bUpdate(?:::<[^>]*>)?::install\b/g) ?? [];
+/** Every exit the app asks for: the method, or `AppHandle::exit` named as a path. */
+const exitsIn = (code: string): string[] => code.match(/\.exit\(|\bAppHandle(?:::<[^>]*>)?::exit\b|<\s*(?:tauri::)?AppHandle(?:<[^<>]*>)?\s*>::exit\b/g) ?? [];
+/** Every process exit: `process::exit(`, or a bare `exit(` once a `use` brings it in. */
+const processExitsIn = (code: string): string[] => [
+  ...(code.match(/\bprocess::exit\(/g) ?? []),
+  ...(usesFromProcess(code, "exit") ? bareCalls(code, "exit") : []),
+];
 /** Every non-test `.rs` under `root` as code, subdirectories included, keyed by relative path. */
 const rustSources = (root: string): Record<string, string> =>
   Object.fromEntries(
@@ -2240,6 +2260,9 @@ describe("the auto-updater", () => {
       "updater.rs",
       "updater.rs",
     ]);
+    // The fused download-and-install is refused in every module, not only in updater.rs.
+    const fused = Object.entries(sources).filter(([, src]) => /\bdownload_and_install\b/.test(src)).map(([f]) => f);
+    expect(fused, "download_and_install, an install outside the fence").toEqual([]);
   });
 
   /**
@@ -2256,10 +2279,26 @@ describe("the auto-updater", () => {
       "AppHandle::restart(&app);",
       "tauri::AppHandle::<R>::request_restart(&app);",
       "let go = AppHandle::restart;",
+      "<AppHandle<R>>::restart(&app);",
+      "<tauri::AppHandle<R>>::request_restart(&app);",
     ];
     for (const line of planted) {
       expect(restartsIn(rustCode(`fn f() {\n    ${line}\n}\n`)), line).toHaveLength(1);
     }
+    // A `use` that brings the process function in, by name, in a group or by glob, makes a bare call one.
+    for (const use of ["use tauri::process::restart;", "use tauri::process::{restart, current_binary};", "use tauri::process::*;"]) {
+      expect(restartsIn(rustCode(`${use}\nfn f(env: &Env) {\n    restart(env);\n}\n`)), use).toHaveLength(1);
+    }
+    expect(restartsIn(rustCode("fn f() {\n    restart(env);\n    shell.try_restart(x);\n}\n")), "a bare restart( with no use").toEqual([]);
+    // Installs as a path, exits as a path, and process exits under a `use`.
+    expect(installsIn(rustCode("fn f() {\n    Update::install(&update, &bytes);\n}\n"))).toHaveLength(1);
+    for (const line of ["app.exit(0);", "AppHandle::exit(&app, 0);", "tauri::AppHandle::<R>::exit(&app, 0);", "<AppHandle<R>>::exit(&app, 0);"]) {
+      expect(exitsIn(rustCode(`fn f() {\n    ${line}\n}\n`)), line).toHaveLength(1);
+    }
+    for (const use of ["use std::process::exit;", "use std::process::{exit, Command};", "use std::process::*;"]) {
+      expect(processExitsIn(rustCode(`${use}\nfn f() {\n    exit(0);\n}\n`)), use).toHaveLength(1);
+    }
+    expect(processExitsIn(rustCode("use std::process::Command;\nfn f() {\n    exit(0);\n    std::process::exit(1);\n}\n"))).toEqual(["process::exit("]);
     expect(restartsIn(rustCode("// app.restart()\n/* tauri::process::restart(&env) */\nfn f() {}\n"))).toEqual([]);
     expect(installsIn(rustCode("fn f() {\n    payload.update.install(&payload.bytes);\n}\n"))).toHaveLength(1);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ohmail-restart-census-"));
@@ -2282,7 +2321,7 @@ describe("the auto-updater", () => {
    */
   it("asks for every exit through the install fence", () => {
     const sources = rustSources(path.join(APP, "src-tauri/src"));
-    const exits = Object.entries(sources).flatMap(([f, src]) => (src.match(/\.exit\(/g) ?? []).map(() => f));
+    const exits = Object.entries(sources).flatMap(([f, src]) => exitsIn(src).map(() => f));
     expect(exits, "an exit asked for outside updater::quit").toEqual(["updater.rs"]);
     expect(updater).toMatch(
       /pub fn quit<R: Runtime>\(app: &AppHandle<R>, code: i32\) \{\s*let leaving = app\.clone\(\);\s*quit_with\(&FENCE, \|\| say_a_quit_waits\(app\), move \|\| leaving\.exit\(code\)\);/,
@@ -2314,8 +2353,13 @@ describe("the auto-updater", () => {
     const handler = /let on_event = move[\s\S]*?#\[cfg\(feature = "local-engine"\)\]/.exec(main)?.[0] ?? "";
     expect(handler).toMatch(/tauri::RunEvent::ExitRequested \{ code, api, \.\. \} => \{\s*updater::on_exit_requested\(_app, \*code, api\)/);
     expect(handler).toMatch(/tauri::RunEvent::Exit => updater::at_exit\(\),/);
+    /* The handler and the last event as `updater_tests.rs` drives them: the handler is `hold_the_exit`
+       on the app's fence with Tauri's own prevent, and outside a test the last event closes that fence. */
+    expect(updater).toMatch(/pub fn on_exit_requested<R: Runtime>\(app: &AppHandle<R>, code: Option<i32>, api: &tauri::ExitRequestApi\) \{\s*hold_the_exit\(&FENCE, code, api, \|code\| quit\(app, code\)\);\s*\}/);
+    expect(updater).toMatch(/impl PreventsExit for tauri::ExitRequestApi \{\s*fn prevent_exit\(&self\) \{\s*tauri::ExitRequestApi::prevent_exit\(self\);\s*\}\s*\}/);
+    expect(updater).toMatch(/fn exit_fence\(\) -> &'static InstallFence \{\s*#\[cfg\(test\)\]\s*\{[^}]*\{[^}]*\}\s*\}\s*&FENCE\s*\}/);
     // After the loop, one exit: `leave_the_process`, which the last event's close came before.
-    const processExits = Object.entries(sources).flatMap(([f, src]) => (src.match(/process::exit\(/g) ?? []).map(() => f));
+    const processExits = Object.entries(sources).flatMap(([f, src]) => processExitsIn(src).map(() => f));
     expect(processExits).toEqual(["engine.rs"]);
   });
 

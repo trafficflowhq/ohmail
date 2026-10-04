@@ -1553,9 +1553,26 @@ pub(crate) fn quit_with(
 /// install writes and asked again by [`quit`]. A restart cannot be held here (Tauri ignores the
 /// prevent for its code), which is why every restart waits before it asks ([`after_the_engine`]).
 pub fn on_exit_requested<R: Runtime>(app: &AppHandle<R>, code: Option<i32>, api: &tauri::ExitRequestApi) {
-    if holds_the_exit(&FENCE, code) {
+    hold_the_exit(&FENCE, code, api, |code| quit(app, code));
+}
+
+/// The one act `ExitRequested` lets its handler take on the exit, so a test can hand in its own.
+pub(crate) trait PreventsExit {
+    fn prevent_exit(&self);
+}
+
+impl PreventsExit for tauri::ExitRequestApi {
+    fn prevent_exit(&self) {
+        tauri::ExitRequestApi::prevent_exit(self);
+    }
+}
+
+/// [`on_exit_requested`] with its fence and its quit handed in: an exit held for an install is
+/// prevented and asked again by the quit, which waits for the install.
+pub(crate) fn hold_the_exit(fence: &InstallFence, code: Option<i32>, api: &impl PreventsExit, quit: impl FnOnce(i32)) {
+    if holds_the_exit(fence, code) {
         api.prevent_exit();
-        quit(app, code.unwrap_or(0));
+        quit(code.unwrap_or(0));
     }
 }
 
@@ -1566,7 +1583,25 @@ pub(crate) fn holds_the_exit(fence: &InstallFence, code: Option<i32>) -> bool {
 
 /// The loop's last event: wait for an install still writing, then let none start.
 pub fn at_exit() {
-    FENCE.close_for_exit();
+    exit_fence().close_for_exit();
+}
+
+/// The fence [`at_exit`] closes: the app's, or in a test a fence of the test's own, so the backstop
+/// is driven as it runs rather than as a copy of its one line.
+fn exit_fence() -> &'static InstallFence {
+    #[cfg(test)]
+    {
+        if let Some(fence) = TEST_EXIT_FENCE.with(std::cell::Cell::get) {
+            return fence;
+        }
+    }
+    &FENCE
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The fence [`at_exit`] closes on this thread, set by a test; `None` is the app's.
+    pub(crate) static TEST_EXIT_FENCE: std::cell::Cell<Option<&'static InstallFence>> = const { std::cell::Cell::new(None) };
 }
 
 /// The window, told that a quit waits for the install: shown again if it was hidden, and sent the

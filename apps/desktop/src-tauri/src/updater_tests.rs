@@ -1855,9 +1855,10 @@ fn the_logged_endpoint_is_the_configs_and_never_a_second_copy_of_it() {
  * engine's restart against the same stub. */
 
 use super::{
-    after_install, fenced, holds_the_exit, outlived_the_bound, quit_with, told, InstallFence, FENCE,
-    QUIT_WAITS_FOR_INSTALL,
+    after_install, at_exit, fenced, hold_the_exit, holds_the_exit, outlived_the_bound, quit_with, told,
+    InstallFence, PreventsExit, FENCE, QUIT_WAITS_FOR_INSTALL, TEST_EXIT_FENCE,
 };
+use std::cell::Cell;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
@@ -2069,6 +2070,55 @@ fn an_exit_the_app_did_not_ask_for_is_held_while_an_install_writes_and_a_restart
     for code in codes {
         assert!(!holds_the_exit(fence, code), "{code:?} still held after the install returned");
     }
+}
+
+/// The handler's own act, recorded: how many times the exit was prevented.
+struct Prevented(Cell<u32>);
+impl PreventsExit for Prevented {
+    fn prevent_exit(&self) {
+        self.0.set(self.0.get() + 1);
+    }
+}
+
+/// THE HANDLER ITSELF, not its predicate: an exit Tauri raises while an install writes is prevented
+/// and asked again by the quit with its own code; with nothing writing, and for a restart, nothing
+/// is prevented and nothing quits.
+#[test]
+fn an_exit_raised_while_an_install_writes_is_prevented_and_asked_again_by_the_quit() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let run = |code: Option<i32>| {
+        let (api, mut quits) = (Prevented(Cell::new(0)), Vec::new());
+        hold_the_exit(fence, code, &api, |c| quits.push(c));
+        (api.0.get(), quits)
+    };
+    for code in [None, Some(0), Some(tauri::RESTART_EXIT_CODE)] {
+        assert_eq!(run(code), (0, vec![]), "{code:?} touched with nothing installing");
+    }
+    let writing = fence.begin_install().expect("the fence is open");
+    assert_eq!(run(Some(3)), (1, vec![3]), "an exit raised with a code was not prevented and asked again");
+    assert_eq!(run(None), (1, vec![0]), "the last window's exit was not prevented and asked again");
+    assert_eq!(run(Some(tauri::RESTART_EXIT_CODE)), (0, vec![]), "a restart's exit was held");
+    drop(writing);
+    assert_eq!(run(None), (0, vec![]), "an exit was held after the install returned");
+}
+
+/// THE LOOP'S LAST EVENT AS IT RUNS: `at_exit` itself, on a fence of this test's own, waits for the
+/// install and then lets none start.
+#[test]
+fn at_exit_itself_waits_for_the_install_and_then_lets_none_start() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let mut stub = StubInstall::parked(fence, "at-exit-itself");
+    let (exited, exit) = exit_probe(stub.image());
+    let last_event = thread::spawn(move || {
+        TEST_EXIT_FENCE.with(|c| c.set(Some(fence)));
+        at_exit();
+        exit();
+    });
+    assert!(exited.recv_timeout(HELD_FOR).is_err(), "at_exit went while the install was writing");
+    stub.finish();
+    assert!(exited.recv_timeout(Duration::from_secs(10)).expect("at_exit never went"));
+    last_event.join().unwrap();
+    assert!(fence.begin_install().is_none(), "an install started after at_exit");
 }
 
 /// The loop's last event, the backstop for any exit that slipped past the doors: it waits for the
