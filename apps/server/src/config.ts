@@ -8,7 +8,7 @@ import { pgTransportReason } from "@trafficflow/db/cloud";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
 import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
-import { parseTrustedProxyEntry, splitTrustedProxyList } from "./http.js";
+import { parseTlsTerminatorList, parseTrustedProxyEntry, splitTrustedProxyList, type TlsTerminatorRefusal } from "./http.js";
 
 /**
  * Deployment configuration for the STANDALONE SELF-HOST SERVER — one long-running process an
@@ -209,6 +209,8 @@ export interface ServerConfig {
   pushAllowPrivate: boolean;
   /** `TF_TRUSTED_PROXIES` — see {@link loadTrustedProxies}. Empty means no peer's header is believed. */
   trustedProxies: readonly string[];
+  /** Which front door the proxy runs, and its terminator list — see {@link loadTlsTerminator}. */
+  externalDoor: ExternalDoor;
   environment: string;
   bodyMaxBytes: number;
   headersTimeoutMs: number;
@@ -344,6 +346,47 @@ function loadTrustedProxies(env: NodeJS.ProcessEnv): string[] {
     if ("problem" in parsed) throw new Error(`TF_TRUSTED_PROXIES entry ${i + 1} is not usable: ${parsed.problem}`);
   });
   return entries;
+}
+
+/** The header the bundled proxy writes its own socket peer into (`deploy/selfhost/routes.caddy`). */
+export const PROXY_PEER_HEADER = "x-ohmail-proxy-peer";
+
+/** `forwarded_address_collapsed`: true for an untrusted peer, a terminator that sent no header, and 0.0.0.0/32. */
+export const COLLAPSED_SENTENCE =
+  "the proxy took no forwarded address from this peer, so every visitor arriving through it shares this one address; " +
+  "if it is your terminator, name it in OHMAIL_TLS_TERMINATOR and have it set X-Forwarded-For";
+
+/**
+ * The proxy's front door. `tls`: the proxy terminates TLS and `OHMAIL_TLS_TERMINATOR` means nothing.
+ * `external`: `OHMAIL_EXTERNAL_TLS` is non-empty (compose's `:+` test), and `raw` is the terminator
+ * list the proxy trusts; empty means the proxy's entrypoint takes its network's gateway.
+ */
+export type ExternalDoor = { door: "tls" } | { door: "external"; raw: string; entries: readonly string[] };
+
+/** What to write instead, per refused shape. The value itself is never echoed. */
+const TLS_TERMINATOR_FIX: Record<TlsTerminatorRefusal, string> = {
+  comma: "separates entries with a comma: separate them with spaces — a comma stops the proxy",
+  line: "spans more than one line: put the entries on one line, separated by spaces",
+  mapped: "is an IPv4 address written in IPv6 form: the proxy reads it as IPv6 and the api as IPv4 — write the IPv4 form",
+  word: "is a word, not an address: a Caddy keyword such as private_ranges means something to the proxy and nothing to the api, and the proxy takes no host names — write addresses or CIDRs",
+  malformed: "is not an address or a CIDR — write addresses or CIDRs separated by spaces, or 0.0.0.0/32 to trust no terminator",
+};
+
+/**
+ * `OHMAIL_EXTERNAL_TLS` and `OHMAIL_TLS_TERMINATOR`, the two values compose hands the proxy and
+ * this server alike. The proxy decides whose `X-Forwarded-For` to believe; this server only refuses
+ * to start on a list the proxy would read differently ({@link parseTlsTerminatorList}), so the
+ * stack never serves on two readings of one value. On the TLS door the list is ignored.
+ */
+function loadTlsTerminator(env: NodeJS.ProcessEnv): ExternalDoor {
+  if ((env.OHMAIL_EXTERNAL_TLS ?? "") === "") return { door: "tls" };
+  const raw = trimmed(env, "OHMAIL_TLS_TERMINATOR");
+  const parsed = parseTlsTerminatorList(raw);
+  if (!parsed.ok) {
+    const which = parsed.position > 0 ? `OHMAIL_TLS_TERMINATOR entry ${parsed.position}` : "OHMAIL_TLS_TERMINATOR";
+    throw new Error(`${which} ${TLS_TERMINATOR_FIX[parsed.refusal]}`);
+  }
+  return { door: "external", raw, entries: parsed.entries };
 }
 
 /** Both, or neither. Half an SMTP block is a mailer that looks configured and sends nothing. */
@@ -582,6 +625,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
      */
     pushAllowPrivate: trimmed(env, "TF_PUSH_ALLOW_PRIVATE") === "1",
     trustedProxies: loadTrustedProxies(env),
+    externalDoor: loadTlsTerminator(env),
     /**
      * This install's VAPID **public** key, served by `GET /push/vapid-key` so a phone can register
      * its distributor with it. Empty means no keypair — an honest `null` on that route, not an

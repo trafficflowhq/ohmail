@@ -367,6 +367,21 @@ and replaces whatever the visitor sent, and name the proxy itself rather than
 a network where you can: any peer inside a named range may choose its own
 address.
 
+**One-time, if you keep your own compose file and run behind your own
+terminator (`OHMAIL_EXTERNAL_TLS`):** take the proxy's `entrypoint:` line and
+its `proxy-entrypoint.sh` mount from the bundled file, give both the `proxy`
+and the `api` service these two lines, and leave nothing after the `:-`, since
+a default there is a range the proxy trusts for every visitor:
+
+```yaml
+      OHMAIL_EXTERNAL_TLS: ${OHMAIL_EXTERNAL_TLS:-}
+      OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-}
+```
+
+`TF_TRUSTED_PROXIES` names the proxy alone on this door too. Without the
+entrypoint the proxy trusts no terminator: every visitor shares one address,
+and the api log says so once as `forwarded_address_collapsed`.
+
 ## Private self-hosting, and ohmail over Tailscale
 
 Everything above assumes a public domain. It does not have to be. ohmail has
@@ -531,27 +546,37 @@ everything on the box, a load balancer — set `OHMAIL_EXTERNAL_TLS=1` in
 orders none, while `OHMAIL_ORIGIN` goes on naming the https address your
 terminator presents. Point the terminator at port 80 on `OHMAIL_BIND`
 (`127.0.0.1:80` with the default, which is what a same-box terminator wants).
-`X-Forwarded-For` and `X-Forwarded-Proto` are honoured only from
-`OHMAIL_TLS_TERMINATOR`, by the proxy and, for the visitor's address, by the
-api behind it. Under Docker a same-box terminator reaches the proxy from the
-compose network's gateway, never from loopback, so the default is Docker's
-address pool, `172.16.0.0/12`. Set `OHMAIL_TLS_TERMINATOR` to your terminator's
-address when it is on another host, or when this box's Docker networks are
-outside that range.
 
-**Your terminator must set or replace `X-Forwarded-For` with the visitor's
-address**, because the stack believes what arrives from that range. A
-terminator that speaks HTTP can: Caddy does on its own, and nginx does with
+The proxy believes `X-Forwarded-For` only from `OHMAIL_TLS_TERMINATOR` and
+hands the api the one address it settled on; the api believes the proxy and
+nobody else. Under Docker a terminator on the same box reaches the proxy from
+the stack's network gateway, never from loopback, so with
+`OHMAIL_TLS_TERMINATOR` left empty the proxy trusts that gateway: it reads it
+when it starts and says which address in `docker compose logs proxy`. Set the
+variable to your terminator's address when it is on another host or is itself
+a container on the stack's network; until you do, the api log names that
+terminator once as `forwarded_address_collapsed` and every visitor through it
+shares one address. Separate several addresses with spaces. A comma, an IPv4
+address written in IPv6 form or a word such as `private_ranges` reads
+differently to the proxy and the api, so the api refuses to start on one and
+says what to write instead.
+
+**Your terminator must set or append `X-Forwarded-For` with the visitor's
+address**, because the stack believes what arrives from it. The proxy reads
+that header from the right and takes the first address not in
+`OHMAIL_TLS_TERMINATOR`, the one your terminator added, so an address a
+visitor wrote into the header itself is never believed. A terminator that
+speaks HTTP does this: Caddy on its own, and nginx with
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. A relay that
 only passes the connection through — socat, stunnel, a TCP (layer-4) load
 balancer — adds nothing, and a visitor could then put any address in that
-header: lock another address out of an account, or have it written into the
+header: lock that address out of an account, or have it written into the
 sign-in records. With such a relay, or if you are not sure what yours does,
 set `OHMAIL_TLS_TERMINATOR=0.0.0.0/32`. No connection ever comes from that
-address, so neither the proxy nor the api believes a forwarded address, and
-every visitor shares one address, the way this door worked before. That is
-its cost: the password lock then counts every visitor as one, so five wrong
-passwords from anyone lock that account for everyone until the lock ends.
+address, so no forwarded address is believed and every visitor shares one
+address. That is its cost: the password lock then counts every visitor as one,
+so five wrong passwords from anyone lock that account for everyone until the
+lock ends.
 
 This is what the two paragraphs below used to say was impossible; they are
 kept, corrected, because the reasoning in them is still the reason the switch

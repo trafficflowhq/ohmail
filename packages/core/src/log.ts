@@ -588,6 +588,11 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // repair and the ingest matcher add `tried`, a count of downloads; `section`, `reason` and `uid`
   // are admitted above.
   "partRowId", "partId", "storedSha", "servedSha", "tried",
+  // THE SELF-HOST EXTERNAL DOOR (`external_door_configured`, `forwarded_address_collapsed`), added
+  // WITH their call sites. `effective` is the terminator list the config validated as addresses and
+  // CIDRs only, or the fixed "unset" sentence; `proxyPeerFrom` is a compile-time header NAME. Named
+  // so because a generic `value` stays refused by design and `header` is a secret-name fragment.
+  "effective", "proxyPeerFrom",
 ] as const;
 
 /**

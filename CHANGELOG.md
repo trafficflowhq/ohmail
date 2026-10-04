@@ -163,8 +163,7 @@ sets to its own proxy, and from nobody else. If you keep your own compose file, 
 log names the variable once.
 
 Behind a TLS terminator of your own (`OHMAIL_EXTERNAL_TLS`), the proxy and the server take a
-forwarded address only from `OHMAIL_TLS_TERMINATOR`, which now defaults to Docker's address pool,
-`172.16.0.0/12`, because a terminator on the same box arrives from there and never from loopback.
+forwarded address only from `OHMAIL_TLS_TERMINATOR`.
 The terminator must set or replace `X-Forwarded-For` with the visitor's address; Caddy does on its
 own, nginx with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. A relay that only
 passes the connection through, such as socat, stunnel or a TCP load balancer, adds nothing: set

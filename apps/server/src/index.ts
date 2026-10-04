@@ -7,7 +7,7 @@ import {
   runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   type AuthService,
 } from "@trafficflow/services";
-import { loadServerConfig } from "./config.js";
+import { COLLAPSED_SENTENCE, PROXY_PEER_HEADER, loadServerConfig } from "./config.js";
 import { buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
 import { handleServerRequest } from "./handler.js";
 import { makeHttpServer, makeTrustedProxies, systemLookup } from "./http.js";
@@ -110,15 +110,33 @@ async function main(): Promise<void> {
     },
   });
   logger.info("trusted_proxies_configured", { configVar: "TF_TRUSTED_PROXIES", count: cfg.trustedProxies.length });
+  // THE EXTERNAL DOOR: the proxy decides whose X-Forwarded-For it believes and writes its own peer
+  // into PROXY_PEER_HEADER, so a client equal to that peer is one the proxy took nobody's word
+  // for. This process states only its own facts: the list it validated, never a gateway it did
+  // not resolve (the proxy's log names that).
+  const door = cfg.externalDoor;
+  const effective = door.door === "external" ? door.raw || "unset: the proxy takes its network gateway" : "";
+  if (door.door === "external") {
+    logger.info("external_door_configured", { configVar: "OHMAIL_TLS_TERMINATOR", effective, proxyPeerFrom: PROXY_PEER_HEADER });
+  }
   const server = makeHttpServer((req) => handleServerRequest(req, rt), {
     bodyMaxBytes: cfg.bodyMaxBytes,
     headersTimeoutMs: cfg.headersTimeoutMs,
     requestTimeoutMs: cfg.requestTimeoutMs,
     trustedProxies,
-    onForwardingNote: (n) => logger.warn(
-      n.kind === "untrusted_forwarder" ? "forwarded_header_from_untrusted_peer" : "trusted_proxy_sent_no_client_address",
-      { host: n.peer, configVar: "TF_TRUSTED_PROXIES" },
-    ),
+    ...(door.door === "external" ? { proxyPeerHeader: PROXY_PEER_HEADER } : {}),
+    onForwardingNote: (n) => {
+      if (n.kind === "proxy_peer_is_client") {
+        logger.warn("forwarded_address_collapsed", {
+          host: n.peer, configVar: "OHMAIL_TLS_TERMINATOR", effective, reason: COLLAPSED_SENTENCE,
+        });
+        return;
+      }
+      logger.warn(
+        n.kind === "untrusted_forwarder" ? "forwarded_header_from_untrusted_peer" : "trusted_proxy_sent_no_client_address",
+        { host: n.peer, configVar: "TF_TRUSTED_PROXIES" },
+      );
+    },
   });
 
   server.listen(cfg.port, () => {

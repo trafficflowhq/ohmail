@@ -13,14 +13,24 @@
 # 250ms for up to 10s and only then answered 502. Every other method has no window and fails fast:
 # a held POST finds its body spent by the failed first attempt (measured: held 3.5 s, then 502), and
 # nothing that reached the container is ever sent twice.
+#
+# THE VISITOR'S ADDRESS IS THIS PROXY'S DECISION. Both api blocks replace X-Forwarded-For with the
+# one address Caddy settled on ({client_ip}: its peer, or what a trusted terminator named) and name
+# that peer in X-Ohmail-Proxy-Peer, so the api, which believes this proxy alone, can say when the
+# two are one. Spelled in both blocks: a snippet cannot be defined inside an imported file.
 @replayable method GET HEAD OPTIONS
 @api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/* /internal /internal/*
 handle @api {
 	reverse_proxy @replayable api:8080 {
 		lb_try_duration 10s
 		lb_try_interval 250ms
+		header_up X-Forwarded-For {client_ip}
+		header_up X-Ohmail-Proxy-Peer {http.request.remote.host}
 	}
-	reverse_proxy api:8080
+	reverse_proxy api:8080 {
+		header_up X-Forwarded-For {client_ip}
+		header_up X-Ohmail-Proxy-Peer {http.request.remote.host}
+	}
 }
 
 # The staging bucket's browser door. Uploads are presigned against THIS origin, so the path carries

@@ -6,8 +6,9 @@ import { pipeline } from "node:stream/promises";
 import { canonicalIp, type TrustedProxies } from "./trusted-proxies.js";
 
 export {
-  canonicalIp, makeTrustedProxies, parseTrustedProxyEntry, splitTrustedProxyList, systemLookup,
+  canonicalIp, makeTrustedProxies, parseTlsTerminatorList, parseTrustedProxyEntry, splitTrustedProxyList, systemLookup,
   TRUSTED_PROXY_LOOKUP_MIN_MS, TRUSTED_PROXY_LOOKUP_TIMEOUT_MS, TRUSTED_PROXY_TTL_MS,
+  type TlsTerminatorList, type TlsTerminatorRefusal,
   type TrustedProxies, type TrustedProxyEntry, type TrustedProxyNote, type TrustedProxyOptions,
 } from "./trusted-proxies.js";
 
@@ -63,6 +64,13 @@ export interface AdapterOptions {
    * peer is appended, in its canonical spelling.
    */
   trustedProxies?: TrustedProxies;
+  /**
+   * The header a trusted proxy writes its own socket peer into (the self-host external door's
+   * `x-ohmail-proxy-peer`). Present, the header never reaches a handler: from an untrusted peer it
+   * is dropped unread, from a trusted one it is read, and a client equal to it means the proxy took
+   * nobody's word, said once per address as `proxy_peer_is_client`. Absent, nothing changes.
+   */
+  proxyPeerHeader?: string;
   /** One fact about a forwarding header, said once per (kind, peer) and bounded; the caller logs it. */
   onForwardingNote?: (note: ForwardingNote) => void;
 }
@@ -72,11 +80,13 @@ export type SocketRefusal = "bound" | "header_timeout";
 
 /**
  * `untrusted_forwarder`: a peer outside the set sent `x-forwarded-for`, which usually means a proxy
- * nobody named. `no_client_address`: a trusted peer sent no usable client address. Only the peer's
- * own address is carried, never the header.
+ * nobody named. `no_client_address`: a trusted peer sent no usable client address.
+ * `proxy_peer_is_client`: the client a trusted proxy named is its own socket peer, so it believed
+ * nobody's header and every visitor arriving that way shares that address; `peer` is that address.
+ * Only an address is carried, never a header's contents.
  */
 export interface ForwardingNote {
-  kind: "untrusted_forwarder" | "no_client_address";
+  kind: "untrusted_forwarder" | "no_client_address" | "proxy_peer_is_client";
   peer: string;
 }
 
@@ -153,15 +163,16 @@ function hasBody(req: IncomingMessage): boolean {
  * untrusted peer nothing in the header is believed: the peer is appended. From a trusted peer its
  * trusted hops are stripped from the right; the hop left standing is the client, in canonical
  * spelling. No hop, or one that is not an address, leaves no header at all: an unknown client,
- * which the throttles never share a bucket on.
+ * which the throttles never share a bucket on. Returns the client a TRUSTED peer named ("" for
+ * none, and for an untrusted peer, whose own address is not a client anybody named).
  */
-function forwardFor(headers: Headers, peer: string, trust: ForwardingTrust): void {
+function forwardFor(headers: Headers, peer: string, trust: ForwardingTrust): string {
   const inbound = headers.get("x-forwarded-for");
   if (!trust.peerTrusted) {
     if (inbound !== null && peer !== "") trust.onNote?.({ kind: "untrusted_forwarder", peer });
     if (peer !== "") headers.append("x-forwarded-for", peer);
     else headers.delete("x-forwarded-for");
-    return;
+    return "";
   }
   const hops = (inbound ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
   let i = hops.length - 1;
@@ -174,15 +185,16 @@ function forwardFor(headers: Headers, peer: string, trust: ForwardingTrust): voi
   if (client === "") {
     headers.delete("x-forwarded-for");
     trust.onNote?.({ kind: "no_client_address", peer });
-    return;
+    return "";
   }
   headers.set("x-forwarded-for", [...hops.slice(0, i), client].join(", "));
+  return client;
 }
 
 /** Build the fetch Request for one inbound message. Exported for the adapter's own tests. */
 export function toWebRequest(
   req: IncomingMessage,
-  opts: { bodyMaxBytes: number; onTooLarge: () => void; trust?: ForwardingTrust },
+  opts: { bodyMaxBytes: number; onTooLarge: () => void; trust?: ForwardingTrust; proxyPeerHeader?: string },
 ): Request {
   // The scheme is nominal — this process sits behind the operator's proxy and nothing downstream
   // reads it; the HOST half is real and feeds the cookie-auth decision (every asserted host must
@@ -216,9 +228,17 @@ export function toWebRequest(
   // THE CLIENT ADDRESS: `clientIp()` reads the LAST `x-forwarded-for` hop. Without `trust` the
   // socket peer is appended, so a typed header buys nothing; but behind a proxy that last hop is
   // the PROXY, and every client then shares one throttle bucket and one audit address. With
-  // `trust` a trusted peer's word is taken instead (see {@link forwardFor}).
+  // `trust` a trusted peer's word is taken instead (see {@link forwardFor}). The proxy's own peer
+  // ({@link AdapterOptions.proxyPeerHeader}) is read only from a trusted peer and never reaches a
+  // handler: a client equal to it is a visitor the proxy believed nobody about.
+  let proxyPeer = "";
+  if (opts.proxyPeerHeader !== undefined) {
+    if (opts.trust?.peerTrusted) proxyPeer = canonicalIp(headers.get(opts.proxyPeerHeader) ?? "");
+    headers.delete(opts.proxyPeerHeader);
+  }
   if (opts.trust) {
-    forwardFor(headers, canonicalIp(req.socket?.remoteAddress ?? ""), opts.trust);
+    const client = forwardFor(headers, canonicalIp(req.socket?.remoteAddress ?? ""), opts.trust);
+    if (proxyPeer !== "" && client === proxyPeer) opts.trust.onNote?.({ kind: "proxy_peer_is_client", peer: client });
   } else {
     const peer = req.socket?.remoteAddress ?? "";
     if (peer) headers.append("x-forwarded-for", peer);
@@ -404,6 +424,7 @@ async function serve(
   let tooLarge = false;
   const webReq = toWebRequest(req, {
     ...(trust ? { trust } : {}),
+    ...(opts.proxyPeerHeader !== undefined ? { proxyPeerHeader: opts.proxyPeerHeader } : {}),
     bodyMaxBytes: opts.bodyMaxBytes,
     onTooLarge: () => {
       tooLarge = true;

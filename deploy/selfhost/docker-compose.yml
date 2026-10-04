@@ -48,6 +48,9 @@ services:
   proxy:
     image: ghcr.io/trafficflowhq/mirror-caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
     restart: unless-stopped
+    # proxy-entrypoint.sh: on the external-TLS door with OHMAIL_TLS_TERMINATOR unset it trusts this
+    # network's gateway and says so in one line; on either door it then runs the image's own command.
+    entrypoint: ["/bin/sh", "/etc/caddy/entrypoint.sh"]
     depends_on:
       web:
         condition: service_started
@@ -68,13 +71,13 @@ services:
       # the local CA would lock out every machine that has not installed that CA's root — the
       # step .env.example asks for, and one people do late. Same `:+` containment as above.
       OHMAIL_HSTS_DIRECTIVE: ${OHMAIL_TLS_INTERNAL:+header -Strict-Transport-Security}
-      # Read only by the external-TLS door: the addresses whose `X-Forwarded-*` Caddy honours,
-      # and the api's terminator range below. A same-box terminator reaches the proxy from the
-      # compose network's gateway, never from loopback, so the default is Docker's address pool,
-      # and the terminator must set or replace X-Forwarded-For. `0.0.0.0/32` trusts no terminator
-      # (no connection comes from it): the one setting for a relay that adds nothing. No code
-      # here reads `X-Forwarded-Proto`; the cookies carry `Secure`.
-      OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-172.16.0.0/12}
+      # The external-TLS door's two inputs, handed to `api` by the identical expressions. The proxy
+      # alone decides whose X-Forwarded-For it believes; the api refuses to start on a terminator
+      # list the two would read differently. Unset, the entrypoint takes this network's gateway, where
+      # a same-box terminator arrives from. `0.0.0.0/32` trusts no terminator: the one setting for a
+      # relay that adds nothing. No code reads `X-Forwarded-Proto`; the cookies carry `Secure`.
+      OHMAIL_EXTERNAL_TLS: ${OHMAIL_EXTERNAL_TLS:-}
+      OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-}
       # The staging bucket's name, because the Caddyfile's browser-upload route matches the
       # path `/<bucket>/*` — path-style object addressing puts the bucket in the URL. Must
       # stay the same value the api and organizer read, which the shared default guarantees.
@@ -96,6 +99,7 @@ services:
       # this decision and nothing else about Caddy. Both doors import routes.caddy.
       - ./Caddyfile${OHMAIL_EXTERNAL_TLS:+.external-tls}:/etc/caddy/Caddyfile:ro
       - ./routes.caddy:/etc/caddy/routes.caddy:ro
+      - ./proxy-entrypoint.sh:/etc/caddy/entrypoint.sh:ro
       - caddy_data:/data
       - caddy_config:/config
 
@@ -183,14 +187,15 @@ services:
       TF_VAPID_PUBLIC_KEY: ${TF_VAPID_PUBLIC_KEY:-}
       TF_ALERT_SECRET: ${TF_ALERT_SECRET:-}
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
-      # WHO MAY TELL THE api WHO THE CLIENT IS. Every request reaches the api from `proxy`, so the
-      # api believes the client address `proxy` writes into X-Forwarded-For and nobody else's. The
-      # name is resolved inside the api when the proxy first calls, so start order does not matter.
-      # Without this line every visitor shares the proxy's address: one wrong-password lockout and
-      # one signup limit for the whole server, and an audit trail that names nobody. On the
-      # external-TLS door the terminator's hop sits in front of the proxy's, so its range (the
-      # proxy's OHMAIL_TLS_TERMINATOR) is trusted here too and the api walks back past it.
-      TF_TRUSTED_PROXIES: ${TF_TRUSTED_PROXIES:-proxy${OHMAIL_EXTERNAL_TLS:+,${OHMAIL_TLS_TERMINATOR:-172.16.0.0/12}}}
+      # WHO MAY TELL THE api WHO THE CLIENT IS: `proxy`, on both doors, and nobody else. The name is
+      # resolved inside the api when the proxy first calls, so start order does not matter. Without
+      # it every visitor shares the proxy's address: one wrong-password lockout and one signup limit
+      # for the whole server, and an audit trail that names nobody. Behind your own terminator the
+      # proxy settles the visitor's address itself; the api gets the door's two inputs only to refuse
+      # a terminator list the proxy would read differently, by the proxy's identical expressions.
+      OHMAIL_EXTERNAL_TLS: ${OHMAIL_EXTERNAL_TLS:-}
+      OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-}
+      TF_TRUSTED_PROXIES: ${TF_TRUSTED_PROXIES:-proxy}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
       MS_OAUTH_TENANT: ${MS_OAUTH_TENANT:-}

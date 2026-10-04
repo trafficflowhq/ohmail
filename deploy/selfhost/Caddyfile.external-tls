@@ -12,15 +12,16 @@
 # stored HSTS for a host will not let anyone click past a certificate warning on it. Set the
 # header at the terminator, which is the half that knows: max-age=63072000.
 #
-# X-Forwarded-For and X-Forwarded-Proto are honoured from OHMAIL_TLS_TERMINATOR and nowhere else,
-# by this proxy and, for the visitor's address, by the api behind it (compose hands it the same
-# range). Under Docker a same-box terminator arrives from the compose network's gateway, never
-# from loopback, so the default is Docker's own address pool; the terminator must then set or
-# replace X-Forwarded-For, or a visitor names its own address. For a relay that adds nothing
-# (socat, stunnel, a TCP balancer) set OHMAIL_TLS_TERMINATOR=0.0.0.0/32, which no peer can be.
+# X-Forwarded-For is believed from OHMAIL_TLS_TERMINATOR and nowhere else, and this proxy alone
+# decides it: routes.caddy hands the api the one address it settled on. There is no default below.
+# Unset, the entrypoint sets this network's gateway, where a same-box terminator arrives from;
+# without the entrypoint nothing is trusted. Strict: the client is the rightmost address not in the
+# list, the one the terminator added, so a header a visitor wrote to its left is never believed. The
+# terminator must set or append X-Forwarded-For; for a relay that adds nothing set 0.0.0.0/32.
 {
 	servers {
-		trusted_proxies static {$OHMAIL_TLS_TERMINATOR:172.16.0.0/12}
+		trusted_proxies static {$OHMAIL_TLS_TERMINATOR}
+		trusted_proxies_strict
 	}
 }
 

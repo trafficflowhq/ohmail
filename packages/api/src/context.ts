@@ -16,14 +16,13 @@ const hopsOf = (raw: string | null): string[] =>
   (raw ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 
 /**
- * The client IP, from a header the client cannot choose. The first hop of `X-Forwarded-For` is
- * whatever the caller invented (proxies append to the right), so a per-IP limit built on it is
- * bypassable one header at a time. Order: (1) `x-vercel-forwarded-for` (TRUSTED_IP_HEADERS); (2)
- * the last hop of `x-forwarded-for` — the only entry a client cannot prepend to; an unusual proxy
- * chain can key the limit to a proxy, which errs over-restrictive, never open. `""` means unknown
- * and is not an identity: keying a limiter on it once put every signup in one bucket. An unknown
- * client is limited by what needs no identity — the email-bound invite row, the per-recipient
- * mail limiter. Exported for the spoofing tests.
+ * The client IP, from a header the client cannot choose: (1) `x-vercel-forwarded-for`
+ * (TRUSTED_IP_HEADERS), else (2) the LAST hop of `x-forwarded-for`, the only entry a client cannot
+ * prepend to. A chain that leaves a proxy as that hop keys every visitor to ONE address — one
+ * lockout, one signup limit, one audit address for the deployment, which is an outage, never a safe
+ * direction; the self-host adapter's walk (`forwardFor`, `http-host.ts`) strips that hop and logs
+ * when it could not. `""` means unknown, never an identity: an unknown client is limited by what needs
+ * none (the email-bound invite row, the per-recipient mail limiter). Exported for the spoofing tests.
  */
 export function clientIp(req: Request): string {
   for (const name of TRUSTED_IP_HEADERS) {

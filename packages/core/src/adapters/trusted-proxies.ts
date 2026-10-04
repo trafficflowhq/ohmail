@@ -120,6 +120,40 @@ export function splitTrustedProxyList(raw: string): string[] {
   return raw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
+/** Why an `OHMAIL_TLS_TERMINATOR` value is refused: a shape the proxy and the api read differently. */
+export type TlsTerminatorRefusal = "comma" | "line" | "mapped" | "word" | "malformed";
+
+export type TlsTerminatorList =
+  | { ok: true; entries: string[] }
+  | { ok: false; refusal: TlsTerminatorRefusal; position: number };
+
+/**
+ * `OHMAIL_TLS_TERMINATOR`, which the proxy reads as Caddy's `trusted_proxies static` list: only the
+ * shapes both read alike. Spaces or tabs on one line separate entries; each is an IPv4 or IPv6
+ * address or CIDR as written. Refused: a comma (the proxy will not start), a line break (a new
+ * proxy directive), an IPv4 address in IPv6 form (IPv6 to the proxy, IPv4 here), a word (a Caddy
+ * keyword such as `private_ranges`, or a name the proxy never looks up) and anything else that is
+ * not a plain address. Empty is unset. `position` is 1-based, 0 for the whole value.
+ */
+export function parseTlsTerminatorList(raw: string): TlsTerminatorList {
+  if (raw.includes(",")) return { ok: false, refusal: "comma", position: 0 };
+  if (/[\r\n\v\f]/.test(raw)) return { ok: false, refusal: "line", position: 0 };
+  const entries = raw.split(/[ \t]+/).filter((s) => s.length > 0);
+  for (const [i, entry] of entries.entries()) {
+    const slash = entry.indexOf("/");
+    const address = slash >= 0 ? entry.slice(0, slash) : entry;
+    const family = address.includes("%") ? 0 : isIP(address);
+    const refuse = (refusal: TlsTerminatorRefusal): TlsTerminatorList => ({ ok: false, refusal, position: i + 1 });
+    if (family === 0) return refuse(/^[\d.]+$/.test(address) || /[:[\]%]/.test(address) ? "malformed" : "word");
+    if (family === 6 && isIP(canonicalIp(address)) === 4) return refuse("mapped");
+    if (slash >= 0) {
+      const bits = entry.slice(slash + 1);
+      if (!/^(?:0|[1-9]\d{0,2})$/.test(bits) || Number(bits) > (family === 4 ? 32 : 128)) return refuse("malformed");
+    }
+  }
+  return { ok: true, entries };
+}
+
 /** The production lookup: every address the system resolver gives, `/etc/hosts` and Docker's included. */
 export async function systemLookup(name: string): Promise<readonly string[]> {
   const answers = await dnsLookup(name, { all: true, verbatim: true });
