@@ -455,17 +455,17 @@ const pressedHere = new WeakMap<object, Set<string>>();
 /**
  * WHICH SEND RECORDS ARE STILL OWED AN ENDING — the one reading every deletion in `send-lock.ts` is
  * handed. Owed: a key not settled (the outbox unread, or queued, on the wire, on the durable outbox);
- * every key while a late answer waits uncollected (it names a mutation, not a key); and a record
- * written after this engine's outbox view by a press this engine did not make: another window's
- * send, whose outbox row this view cannot see, so "settled" here is not a fact.
+ * every key while a late answer waits uncollected (it names a mutation, not a key); and, for a sweep
+ * that only guesses (not an `ended` the server answered), a record written after this engine's
+ * outbox view by a press this engine did not make: another window's, whose row this view cannot see.
  */
 export function sendLockOwed(engine: OhmailEngine): SendLockOwed {
   const settled = sendSettledIn(engine);
   const late = typeof engine.hasLateResults === "function" && engine.hasLateResults();
   const since = typeof engine.outboxViewSince === "function" ? engine.outboxViewSince() : null;
   const mine = pressedHere.get(engine);
-  return (r) => late || !settled(r.key)
-    || (mine?.has(r.key) !== true && (since === null || r.at > since));
+  return (r, why) => late || !settled(r.key)
+    || (why !== "ended" && mine?.has(r.key) !== true && (since === null || r.at > since));
 }
 
 /** What the composer's hold reads off the engine: which keys are settled, and which are owed. */
@@ -2147,9 +2147,23 @@ export function useMailSend(
     for (const [k, l] of queued.current) {
       if (l === lane) { key = k; break; }
     }
-    // Nothing queued on this lane: there is nothing to withdraw and the caller carries on. Not a
-    // refusal — a compose with no send out is the ordinary case for Cancel.
-    if (key === null) return "close";
+    /* A SEND THIS MOUNT NEVER PRESSED IS WITHDRAWN TOO: a reply or forward restored after a restart
+       sits on the engine's queue (or its wire) from the boot replay, and its dock is held as queued
+       (`replyDockState`), so Cancel means what it means on the live path. The engine's withdrawal
+       marks the key and the durable row, so neither this session nor a later boot delivers it. */
+    if (key === null) {
+      const restored = standingSendKey(engine, lane);
+      // Nothing out on this lane: the ordinary case for Cancel, not a refusal.
+      if (restored === null) return "close";
+      const outcome = await engine.withdrawQueued(restored);
+      if (outcome === "on_the_wire") return "already_sent";
+      const record = recordForEndedSend(restored, owner.current);
+      if (record !== null && record.lane === lane) {
+        releaseSendLock(record.lane, record.fp, sendLockOwed(engine), owner.current);
+      }
+      setPhase(lane, IDLE);
+      return "close";
+    }
     const outcome = await engine.withdrawQueued(key);
     /* THE REQUEST HAS LEFT AND THIS DEVICE CANNOT UN-SEND IT. Nothing is released: the send is
        still owed an answer and the lane must stay locked until it has one. */
