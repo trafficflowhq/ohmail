@@ -162,8 +162,9 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // provider's clock or ours is wrong was in no line anybody could read. `bound` is a string and
   // still belongs here: a two-member union this file's own code writes (`"ahead"`/`"behind"`).
   // `swept` is how many stale acknowledgements left `ohmail/_meta`, and the sweep is the only
-  // thing that ever makes that folder smaller — its one line reported nothing.
-  "skewMs", "bound", "boundMs", "swept",
+  // thing that ever makes that folder smaller — its one line reported nothing. `ran` says whether
+  // the refused arm's `meta_shrink` had a sweep to run at all, a boolean the call site computes.
+  "skewMs", "bound", "boundMs", "swept", "ran",
   // `detectedBy` is HOW a dead connection was noticed, and it is on the census for `op`'s reason
   // one line up: a compile-time literal from a two-member union the CALL SITE holds, not a fact
   // derived from a thrown value. Its two members are `"event"` (the adapter's own `close`/`error`

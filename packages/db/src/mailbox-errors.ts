@@ -130,6 +130,12 @@ export const MAILBOX_SYNC_BLOCK_REASONS = [
    * separate member because the cure is in the person's own mailbox, and waiting does not heal it.
    */
   "meta_folder_full",
+  /**
+   * `ohmail/_meta` takes no delete of ohmail's own records (mail 0143): renewals stopped after
+   * repeated proven refusals rather than growing the folder. Same exempt class; the cure is a
+   * delete permission on that folder, never a deletion of the person's mail.
+   */
+  "meta_undeletable",
 ] as const;
 
 export type MailboxSyncBlockReason = (typeof MAILBOX_SYNC_BLOCK_REASONS)[number];

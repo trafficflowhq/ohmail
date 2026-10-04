@@ -1133,12 +1133,12 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
      on a settings pane somebody is using. A database carrying `ohmail/News` carries every
      earlier member too. */
   ["away_responders_piles_closed", "ohmail/News"],
-  /* Mail 0142_sync_blocked_reason_meta_folder_full — `meta_folder_full` (the needle MOVED from
-     0130's `provider_unavailable`, 0124's `account_closed`, 0105's `clock_off` and 0102's
-     `read_limited`: one constraint, one definition, and a database carrying the newest member
-     carries every earlier one). Against a 0141 database the worker's write for a full meta folder
-     is refused by the old CHECK, and the row keeps whatever it said before. */
-  ["mailboxes_sync_blocked_reason_closed", "meta_folder_full"],
+  /* Mail 0143_sync_blocked_reason_meta_undeletable — `meta_undeletable` (the needle MOVED from
+     0142's `meta_folder_full`, 0130's `provider_unavailable`, 0124's `account_closed`, 0105's
+     `clock_off` and 0102's `read_limited`: one constraint, one definition, and a database carrying
+     the newest member carries every earlier one). Against a 0142 database the worker's write for a
+     folder that takes no delete is refused by the old CHECK, and the row keeps what it said before. */
+  ["mailboxes_sync_blocked_reason_closed", "meta_undeletable"],
   /* Mail 0103 — `mobile` joins the organizer kinds. TWO entries, because the kind reaches this
      table twice and the migration replaces BOTH constraints under their existing names, so a
      name-presence probe cannot tell an 0102 database from an 0103 one. What a missing entry costs
@@ -1202,7 +1202,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0142_sync_blocked_reason_meta_folder_full";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0143_sync_blocked_reason_meta_undeletable";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

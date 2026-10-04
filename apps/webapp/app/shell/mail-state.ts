@@ -41,6 +41,7 @@ export const SYNC_BLOCK_REASONS = [
   "account_closed",
   "provider_unavailable",
   "meta_folder_full",
+  "meta_undeletable",
 ] as const;
 export type SyncBlockReason = (typeof SYNC_BLOCK_REASONS)[number];
 

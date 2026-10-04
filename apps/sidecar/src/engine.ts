@@ -153,7 +153,7 @@ import { startTailProgress } from "./drain-tail-progress.js";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, LeaseUnavailableError,
   OrganizerStandDownError,
-  leaseStoodDown, writeDoorOf, cycleWriteAuthority, DEFAULT_STALE_AFTER_MS, leaseBlockReason,
+  leaseStoodDown, writeDoorOf, cycleWriteAuthority, DEFAULT_STALE_AFTER_MS, leaseBlockReason, leaseRefusalIsNamed,
   type OrganizerWriteAuthority,
 } from "@trafficflow/worker/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
@@ -175,7 +175,7 @@ import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 // "carry this install's own decisions to the mailbox", not a second one that could disagree with
 // what the hosted worker does.
 import {
-  applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
+  applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests, shrinkMetaOnRefusal,
 } from "@trafficflow/worker/request-drain";
 // The SCHEDULED-RESURFACE FLIP, from the same package and for the third instance of the same
 // argument. "Resurfaces Friday at 9" is a dated promise the product makes to the user, and the
@@ -1487,7 +1487,10 @@ const IMAP_FETCH_SENT = /^\S+ (?:UID )?FETCH\b/i;
 export function isConnectionFailure(err: unknown): boolean {
   if (err instanceof ConnectionReplacedError) return false;
   for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
-    if (e instanceof LeaseUnavailableError || e instanceof ImapConnectionClosedError) return true;
+    /* A NAMED lease block (a full or undeletable `_meta`, a wrong clock) is the server answering: counted,
+       the bound turned its sentence into "connection lost" after eight polls. */
+    if (e instanceof LeaseUnavailableError) return !leaseRefusalIsNamed(e);
+    if (e instanceof ImapConnectionClosedError) return true;
     const code = (e as { code?: unknown }).code;
     /* imapflow's own vocabulary for a socket that is gone, plus the adapter's `EIMAPCLOSED` and
        the node-level resets. Matched as a closed set of literals rather than by message text:
@@ -6253,7 +6256,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * measured an empty mirror). Now `mayOrganize()` runs for its decision AND side effects;
            * only the removed-mailbox arm, which sets `stopped`, stops the drain. The stand-down arm
            * sets neither, which is the distinction. */
-          const organizing = await mayOrganize();
+          let organizing: boolean;
+          try {
+            organizing = await mayOrganize();
+          } catch (err) {
+            /* A `_meta` too full to read is swept here, on the connection the gate asked, before
+               the refusal travels on; every other refusal runs nothing (`shrinkMetaOnRefusal`). */
+            await shrinkMetaOnRefusal(err, {
+              mailboxId: mb.id, accountId: world.accountId, installId, adapter: conn,
+            }, now(), (event, detail) => {
+              const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+              if (event === "meta_shrink") {
+                log("meta_shrink", {
+                  mailboxId: mb.id, phase: "lease_refused", ran: detail.ran === true,
+                  swept: num(detail.swept), moved: num(detail.moved),
+                });
+              } else {
+                log("organizer_requests_note", { mailboxId: mb.id, outcome: event });
+              }
+            });
+            throw err;
+          }
           if (stopped) return 0;
           /* Create the `ohmail/*` tree at the moment this install becomes the organizer. `start()`
            * calls `ensureFolders` behind its own `permitted` gate, which was the ONLY call; a

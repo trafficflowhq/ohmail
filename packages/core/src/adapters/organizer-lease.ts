@@ -10,7 +10,7 @@ import {
 } from "./imap-bounds.js";
 import { epochOf, epochVerdict, uidRefsAtEpoch } from "../epoch.js";
 import {
-  assertMetaIdentity, readMemo, writeMemo, forgetMemo,
+  assertMetaIdentity, readMemo, writeMemo, forgetMemo, peekMemo,
   type MetaIdentity, type Generation,
 } from "./meta-memo.js";
 
@@ -2109,6 +2109,10 @@ export type LeaseOp =
    * exclusions are all by class, so a new class would fall into `maxSyncFailures` and quarantine a
    * customer's mailbox over a folder that is not its fault. */
   | "meta_folder_full"
+  /* The folder takes no delete of this install's own records: {@link META_CLEANUP_REFUSALS_MAX}
+   * renew cleanups in a row were proved not carried out, and the probe of one own claim found it
+   * still standing. No claim is written while it holds. Same class, for the reason above. */
+  | "meta_undeletable"
   /** STORE `\Deleted` + EXPUNGE the acknowledgements past their life — see {@link RequestOp}. */
   | "sweep_acks"
   /** COPY + EXPUNGE the records deeper than {@link SEARCH_WALK_SPAN} — see {@link RequestOp}. */
@@ -2261,6 +2265,18 @@ export interface LeaseIo {
    * that anything changed and must never become a stand-down on its own.
    */
   stampMeta?(): Promise<MetaFolderStamp | null>;
+
+  /** The renew cleanups proved refused in a row, and the own claim to probe — this memory's. */
+  cleanupStreak?(): { refusals: number; uid: number | null };
+  /** Record one renew cleanup's PROVEN outcome: landed resets, refused counts (with the probe uid). */
+  noteCleanup?(outcome: { landed: true } | { landed: false; uid: number | null }): void;
+  /**
+   * Delete the remembered claim under the numbering it was read in, and say what became of it.
+   * `forgotten`: nothing to probe, renumbered, or already gone (the memory is cleared).
+   */
+  probeUndeletable?(): Promise<
+    { kind: "landed" } | { kind: "standing"; uid: number; code: "still_present" | "expunge_refused" }
+    | { kind: "unproven" } | { kind: "forgotten" }>;
 }
 
 /**
@@ -2861,27 +2877,42 @@ async function proveGone(
   what: string,
   op: LeaseOp,
 ): Promise<void> {
-  if (typeof client.fetch !== "function") return;
+  const read = await custodyOf(client, uids);
+  if (read.kind === "unreadable") {
+    throw new LeaseUnavailableError(goneUnverified(uids.length, what, read.err), { op });
+  }
+  if (read.kind === "standing") throw new LeaseUnavailableError(goneSurvived(read.uids.length, what), { op });
+}
+
+/** Which of `uids` the folder still holds, or that the read-back could not run. No FETCH: gone. */
+async function custodyOf(
+  client: Pick<LeaseImapClient, "fetch">, uids: readonly number[],
+): Promise<{ kind: "gone" } | { kind: "standing"; uids: number[] } | { kind: "unreadable"; err: unknown }> {
+  if (typeof client.fetch !== "function") return { kind: "gone" };
   const still: number[] = [];
   try {
     for await (const m of client.fetch(uids.join(","), { uid: true }, { uid: true })) {
       if (typeof m.uid === "number") still.push(m.uid);
     }
   } catch (err) {
-    throw new LeaseUnavailableError(
-      `the expunge of ${uids.length} ${what} from ${META_FOLDER} could not be verified: `
-      + `${err instanceof Error ? err.message : String(err)}`,
-      { op },
-    );
+    return { kind: "unreadable", err };
   }
-  if (still.length > 0) {
-    throw new LeaseUnavailableError(
-      `${still.length} ${what} survived the expunge in ${META_FOLDER} — the server accepted the `
-      + "command and removed nothing",
-      { op },
-    );
-  }
+  return still.length > 0 ? { kind: "standing", uids: still } : { kind: "gone" };
 }
+
+const goneUnverified = (n: number, what: string, err: unknown): string =>
+  `the expunge of ${n} ${what} from ${META_FOLDER} could not be verified: `
+  + `${err instanceof Error ? err.message : String(err)}`;
+const goneSurvived = (n: number, what: string): string =>
+  `${n} ${what} survived the expunge in ${META_FOLDER} — the server accepted the command and removed nothing`;
+
+/**
+ * HOW MANY RENEW CLEANUPS IN A ROW MAY BE PROVED NOT CARRIED OUT before the gate stops appending.
+ * Only `still_present` and `expunge_refused` count; an unverifiable read-back, a renumbering or a
+ * transport throw neither count nor reset, and a cleanup that lands resets. In-process, so a
+ * restart costs at most k+1 appends per install (META-RENEW-WITHOUT-EXPUNGE, ruled).
+ */
+export const META_CLEANUP_REFUSALS_MAX = 3;
 
 /** The most uids one compaction window's SEARCH may carry; a window names at most 500. */
 const SEARCH_UIDS_MAX = 501;
@@ -2960,6 +2991,8 @@ const OWN_RECORDS_MAX = 5_000;
  */
 export type ClaimReleaseFailureCode =
   "search_refused" | "over_ceiling" | "unreadable" | "renumbered" | "still_present"
+  /** The server answered the EXPUNGE with a refusal (`messageDelete` resolved `false`). */
+  | "expunge_refused"
   /**
    * THIS INSTALL CANNOT NAME THE CLAIM IT HOLDS, so it may not delete one by identity alone.
    *
@@ -3302,14 +3335,79 @@ export function makeLeaseIo(
            `messageDelete` RESOLVES `false` on a refused STORE/EXPUNGE, which is a failure here; and
            a `true` proves only that an expunge RAN, so custody is read back ({@link proveGone}).
            A failing batch throws with the earlier ones removed: the folder is smaller either way. */
+        /* Typed, because the gate counts two of these (META-RENEW-WITHOUT-EXPUNGE): a refusal and
+           a survivor are proof the server will not delete; an unverifiable read-back is not. */
         for (let i = 0; i < uids.length; i += SWEEP_DELETE_BATCH) {
           const batch = uids.slice(i, i + SWEEP_DELETE_BATCH);
           const done = await client.messageDelete(batch, { uid: true });
           if (done === false) {
-            throw new Error(`the server refused to expunge ${batch.length} claim message(s) from ${META_FOLDER}`);
+            throw new ClaimReleaseError(
+              "expunge_refused",
+              `the server refused to expunge ${batch.length} claim message(s) from ${META_FOLDER}`,
+            );
           }
-          await proveGone(client, batch, "claim message(s)", "remove_claims");
+          const read = await custodyOf(client, batch);
+          if (read.kind === "unreadable") {
+            throw new ClaimReleaseError("unreadable", goneUnverified(batch.length, "claim message(s)", read.err), {
+              cause: read.err,
+            });
+          }
+          if (read.kind === "standing") {
+            throw new ClaimReleaseError("still_present", goneSurvived(read.uids.length, "claim message(s)"));
+          }
         }
+      } finally {
+        lock.release();
+      }
+    },
+
+    cleanupStreak(): { refusals: number; uid: number | null } {
+      const held = peekMemo(identity)?.memo;
+      return { refusals: held?.cleanupRefusals ?? 0, uid: held?.undeletableUid ?? null };
+    },
+
+    noteCleanup(outcome: { landed: true } | { landed: false; uid: number | null }): void {
+      if (outcome.landed) {
+        forgetMemo(identity, "cleanupRefusals");
+        forgetMemo(identity, "undeletableUid");
+        return;
+      }
+      /* Under the generation the refs were read in; with none known nothing is kept, and the
+         other positions in this memory are left alone rather than cleared by `writeMemo`. */
+      if (!epochOf(generationAtLastRead).known) return;
+      const held = readMemo(identity, generationAtLastRead);
+      const memo = held.kind === "memo" ? held.memo : {};
+      writeMemo(identity, generationAtLastRead, {
+        cleanupRefusals: (memo.cleanupRefusals ?? 0) + 1,
+        ...(outcome.uid !== null ? { undeletableUid: outcome.uid } : {}),
+      });
+    },
+
+    async probeUndeletable() {
+      const held = peekMemo(identity);
+      const uid = held?.memo.undeletableUid;
+      if (held === null || typeof uid !== "number") return { kind: "forgotten" as const };
+      const forget = (): { kind: "forgotten" } => {
+        forgetMemo(identity, "cleanupRefusals");
+        forgetMemo(identity, "undeletableUid");
+        return { kind: "forgotten" };
+      };
+      const lock = await client.getMailboxLock(await meta.path());
+      try {
+        /* A uid is a fact only under its numbering: a renumbered folder voids the probe. */
+        if (uidRefsAtEpoch([{ epoch: epochOf(held.generation), uid }], epochOf(currentGeneration())) === "stale") {
+          return forget();
+        }
+        const present = await custodyOf(client, [uid]);
+        if (present.kind === "unreadable") return { kind: "unproven" as const };
+        if (present.kind === "gone") return forget();
+        const done = await client.messageDelete([uid], { uid: true });
+        if (done === false) return { kind: "standing" as const, uid, code: "expunge_refused" as const };
+        const after = await custodyOf(client, [uid]);
+        if (after.kind === "unreadable") return { kind: "unproven" as const };
+        if (after.kind === "standing") return { kind: "standing" as const, uid, code: "still_present" as const };
+        forget();
+        return { kind: "landed" as const };
       } finally {
         lock.release();
       }
@@ -3431,6 +3529,25 @@ interface GateRead {
  */
 const clockSkewReported = new WeakSet<object>();
 
+/**
+ * THE OWN CLAIM A BLOCKED GATE PROBES: the one already remembered while it still stands, else the
+ * oldest own claim this process wrote or one older than the stale window by the server's clock.
+ * Never a younger claim under our id that this process did not write — a shared-id sibling's.
+ */
+function probeCandidate(
+  claims: readonly ClaimRecord[], after: readonly ClaimRecord[], self: LeaseSelf,
+  streak: { uid: number | null } | null, staleWindowMs: number,
+): number | null {
+  const own = claims.filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId
+    && typeof c.ref === "number");
+  if (streak?.uid != null && own.some((c) => c.ref === streak.uid)) return streak.uid;
+  const serverNow = after.reduce((n, c) => Math.max(n, isMalformed(c) ? -Infinity : c.serverStamp?.getTime() ?? -Infinity), -Infinity);
+  const eligible = own.filter((c) => writtenByThisProcess(self, c.nonce)
+    || (c.serverStamp !== null && Number.isFinite(serverNow) && serverNow - c.serverStamp.getTime() >= staleWindowMs));
+  const uids = eligible.map((c) => c.ref as number).sort((a, b) => a - b);
+  return uids[0] ?? null;
+}
+
 export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResult> {
   const { io, self, now } = input;
   const log = input.log ?? ((): void => undefined);
@@ -3460,6 +3577,27 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       `organized safely`,
       { op: "ensure_meta", cause: err },
     );
+  }
+  /**
+   * PROBE FIRST, ON A FOLDER THAT HAS REFUSED OUR DELETES (META-RENEW-WITHOUT-EXPUNGE). After
+   * {@link META_CLEANUP_REFUSALS_MAX} proven refusals the gate deletes ONE own claim before it
+   * reads; still standing, it refuses `meta_undeletable` with nothing appended and nothing read.
+   * Before the read, so this outranks `meta_folder_full` when both hold: a person told to move
+   * mail out of a folder that takes no delete cannot. Landed or unprovable, the ordinary gate runs.
+   */
+  const streak = io.cleanupStreak?.() ?? null;
+  if (streak !== null && streak.uid !== null && streak.refusals >= META_CLEANUP_REFUSALS_MAX
+    && io.probeUndeletable !== undefined) {
+    const probe = await io.probeUndeletable().catch(() => ({ kind: "unproven" as const }));
+    if (probe.kind === "standing") {
+      log("lease_meta_undeletable", { uid: probe.uid, code: probe.code, count: streak.refusals });
+      throw new LeaseUnavailableError(
+        `${META_FOLDER} does not let this install remove its own records (${streak.refusals} cleanups `
+        + "in a row were refused and the oldest claim still stands), so no claim is written",
+        { op: "meta_undeletable" },
+      );
+    }
+    log("lease_meta_probe", { uid: streak.uid, state: probe.kind });
   }
   /**
    * EVERY READ OF THE GATE IS COMPLETE, OR IT REFUSES AND WRITES NOTHING. The io reads the whole
@@ -3713,6 +3851,8 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
       .filter((c): c is ClaimRecord => c !== null);
   } catch (err) {
+    /* A refusal that names itself keeps its words: our own append can be what crossed the ceiling. */
+    if (err instanceof LeaseUnavailableError) throw err;
     throw new LeaseUnavailableError(
       `the organizer lease in ${META_FOLDER} could not be re-read after the claim was renewed, so ` +
       `this mailbox cannot be organized safely`,
@@ -3854,7 +3994,13 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     try {
       await io.removeClaims(toRemove);
       cleanupLanded = true;
+      io.noteCleanup?.({ landed: true });
     } catch (err) {
+      /* PROVEN not carried out counts toward the probe; an unverifiable read-back, a renumbering
+         or a transport fault says nothing about the server's will and neither counts nor resets. */
+      if (err instanceof ClaimReleaseError && (err.code === "still_present" || err.code === "expunge_refused")) {
+        io.noteCleanup?.({ landed: false, uid: probeCandidate(claims, verifyClaims, self, streak, staleWindowMs) });
+      }
       if (verdict.displace.length === 0) {
         // An ORDINARY renew's failed cleanup is harmless: the folder holds our new claim plus
         // our own older copies, and readers coalesce by newest heartbeat. The next renew tries
@@ -3887,6 +4033,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       try {
         read = await readClaims();
       } catch (err) {
+        if (err instanceof LeaseUnavailableError) throw err;
         throw new LeaseUnavailableError(
           `the organizer lease in ${META_FOLDER} could not be re-read after the handover was ` +
           `recorded, so the takeover cannot be confirmed this cycle`,
@@ -4989,8 +5136,8 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
    * refuses a folder over the ceiling — so a folder that crossed the ceiling BY ACKS could never
    * come back down: the read refuses, the sweep never runs, every drain refuses for ever. So it
    * reads uid windows by FETCH (header and INTERNALDATE, never SEARCH), bounded per window and per
-   * pass; INTERNALDATE of an ack this organizer appended is its `ackedAt` to the day. Returns how
-   * many were removed.
+   * pass; INTERNALDATE of an ack this organizer appended is its `ackedAt` to the day. This
+   * install's own claims older than `before` go in the same walk. Returns how many were removed.
    */
   sweepStaleAcks?(before: Date): Promise<number>;
   /**
@@ -5180,9 +5327,12 @@ export function makeRequestReaderIo(
  * on the ack header carrying `1` and a server stamp below a cutoff already floored to midnight.
  * Never a SEARCH: a server whose header search answers nothing (or refuses it, iCloud's compound
  * term) would otherwise report "none stale" and the one thing that shrinks this folder would stop.
+ * The same walk takes THIS install's own well-formed claims below the same cutoff: a claim of ours
+ * a day old is residue whoever wrote it (a live sibling under a shared id renews every cycle).
+ * Never another install's claim, a request, the settings document, or mail with no discriminator.
  */
 async function staleAckUidsInWindow(
-  client: Pick<LeaseImapClient, "fetch">, lo: number, hi: number, before: Date,
+  client: Pick<LeaseImapClient, "fetch">, lo: number, hi: number, before: Date, installId: string,
 ): Promise<number[]> {
   const read = await boundedFetch(
     client.fetch(`${lo}:${hi}`, { uid: true, headers: true, internalDate: true }, { uid: true }),
@@ -5196,7 +5346,10 @@ async function staleAckUidsInWindow(
          * safe direction for something that expunges is to leave it. */
         if (!(m.internalDate instanceof Date)) return null;
         if (m.internalDate.getTime() >= before.getTime()) return null;
-        return hasAckHeader(m.headers.toString("utf8")) ? m.uid : null;
+        const h = m.headers.toString("utf8");
+        if (hasAckHeader(h)) return m.uid;
+        const c = parseClaim(h);
+        return c !== null && !isMalformed(c) && c.installId === installId ? m.uid : null;
       },
     },
   );
@@ -5228,9 +5381,9 @@ export function makeRequestOrganizerIo(
     },
 
     /**
-     * See {@link RequestOrganizerIo.sweepStaleAcks}. Only acks match — a request carries
-     * `X-Ohmail-Request` and a claim `X-Ohmail-Lease` — so nothing else can be caught by it, and
-     * `before` is compared against the server's INTERNALDATE, never a header.
+     * See {@link RequestOrganizerIo.sweepStaleAcks}. Acks match, and this install's own claims —
+     * never a request, another install's claim or the settings document — and `before` is
+     * compared against the server's INTERNALDATE, never a header.
      */
     async sweepStaleAcks(before: Date): Promise<number> {
       const metaPath = await meta.path();
@@ -5272,7 +5425,7 @@ export function makeRequestOrganizerIo(
         let hi = resumeAt !== undefined && resumeAt < top ? resumeAt : top;
         for (let w = 0; w < SWEEP_SEARCH_WINDOW_BUDGET; w++) {
           const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
-          found.push(...await staleAckUidsInWindow(client, lo, hi, floored));
+          found.push(...await staleAckUidsInWindow(client, lo, hi, floored, identity.installId));
           /* ── WHERE THIS PASS WOULD RESUME, DECIDED NOW AND WRITTEN LATER ────────────────
            *
            * Moving the mark here — before a single record has been removed — claims the stretch

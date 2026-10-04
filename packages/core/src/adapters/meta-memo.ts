@@ -55,6 +55,10 @@ export interface MetaMemo {
   readonly profileUid?: number;
   /** Where the acknowledgement sweep stopped looking. */
   readonly sweepCursor?: number;
+  /** Renew cleanups in a row the server PROVABLY did not carry out (still there, or refused). */
+  readonly cleanupRefusals?: number;
+  /** The own claim the gate probes before renewing once that count reaches its bound. */
+  readonly undeletableUid?: number;
 }
 
 interface Entry {

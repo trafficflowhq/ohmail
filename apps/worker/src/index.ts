@@ -64,7 +64,7 @@ import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } f
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, refusalIsRemoval, type SyncDeps } from "./sync.js";
 import {
-  applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
+  applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests, shrinkMetaOnRefusal,
 } from "./request-drain.js";
 import {
   adoptSweepWindow, junkSweepPass, sweepStateForPress, SWEEP_SCAN_START,
@@ -2792,6 +2792,13 @@ export async function startWorkerWithLock(
         // connected. Writing it here now would mean "the login worked" — strictly weaker.
       } catch (err) {
         if (unwatch) { try { await unwatch(); } catch { /* ignore */ } }
+        /* A `_meta` too full to read is swept on the login that met it, before it closes: the
+           attach refuses every pass otherwise, and nothing else would ever make it smaller. */
+        if (adapter) {
+          await shrinkMetaOnRefusal(err, {
+            mailboxId: mb.mailboxId, accountId: mb.accountId, installId: organizerInstallId, adapter,
+          }, new Date(), (event, detail) => { log.info(event, detail); });
+        }
         if (adapter) { try { await adapter.close(); } catch { /* ignore */ } }  // never leak a half-open login
         runtimes.delete(mb.mailboxId);
         // A shared-service fault is not this mailbox's fault. The credential read moved inside this
@@ -4055,6 +4062,11 @@ export async function startWorkerWithLock(
           // CLOCKS, and past `leaseUnavailableDetachMs` DETACHES; `releaseOrganizerClaim` is never called here.
           if (err instanceof LeaseUnavailableError) {
             noteBlock(leaseBlocked, rt.mailboxId, leaseBlockReason(err));
+            /* The gate refused before the request channel, so a folder too full to read is swept
+               here, keyless; every other refusal runs nothing (`shrinkMetaOnRefusal`). */
+            await shrinkMetaOnRefusal(err, {
+              mailboxId: rt.mailboxId, accountId: rt.accountId, installId: organizerInstallId, adapter: rt.adapter,
+            }, new Date(), (event, detail) => { log.info(event, detail); });
             rt.leaseUnavailableSince ??= Date.now();
             const unavailableMs = Date.now() - rt.leaseUnavailableSince;
             const due = unavailableMs >= leaseUnavailableDetachMs;

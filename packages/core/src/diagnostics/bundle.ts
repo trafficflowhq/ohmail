@@ -183,6 +183,7 @@ function leaseOutcome(m: DiagnosticMailboxInput): DiagnosticLeaseOutcome {
   if (m.syncBlockedReason === "lease_unreadable") return "unreadable";
   if (m.syncBlockedReason === "clock_off") return "clock_off";
   if (m.syncBlockedReason === "meta_folder_full") return "meta_folder_full";
+  if (m.syncBlockedReason === "meta_undeletable") return "meta_undeletable";
   if (m.releaseRefusal === "sibling_lapse") return "sibling_lapse";
   if (m.organizerChecked === false) return "unchecked";
   if (m.organizerState === "held") return "held";

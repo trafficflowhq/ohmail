@@ -16,7 +16,7 @@ import {
   REQUEST_PROTOCOL, requestAppendHeadroom,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
-  type RequestRefusalReason, isRequestRefusalReason,
+  type RequestRefusalReason, isRequestRefusalReason, LeaseUnavailableError,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
@@ -380,6 +380,90 @@ function refusalFields(err: unknown): { err: unknown; op?: string } {
 }
 
 /**
+ * KEEP `ohmail/_meta` SMALL ENOUGH TO READ: the stale-record sweep, then the compaction. Moved
+ * verbatim out of {@link applyMetaRequests} so it runs with no request key and on the lease-refused
+ * arm ({@link shrinkMetaOnRefusal}). Neither reads the folder whole, so a folder past the read
+ * ceiling still shrinks; the compaction stays the holder's and refuses without a live claim.
+ */
+export async function shrinkMeta(
+  io: RequestOrganizerIo, now: Date, log: (event: string, detail: Record<string, unknown>) => void,
+): Promise<{ ran: boolean; swept: number; moved: number }> {
+  let swept = 0;
+  let moved = 0;
+
+  /* The sweep runs before the read, because the read is what it unblocks. The organizer's ack sweep is
+   * the only thing that ever makes `ohmail/_meta` SMALLER, and it used to sit after the bounded read,
+   * which refuses a folder over the ceiling — so a folder that crossed the ceiling BY ACKS could never
+   * come back down: the read refused, the sweep never ran, and every drain refused from then on, with
+   * nothing self-healing. Asked of the server by header and date where the server takes that form,
+   * and by a uid-range fetch of the same window where it does not — iCloud refuses the compound term
+   * outright. Failure is logged and swallowed: a sweep that could not run is where this was before,
+   * and must not stop a drain that might still succeed. */
+  const sweep = async (): Promise<void> => {
+    if (typeof io.sweepStaleAcks !== "function") return;
+    try {
+      swept = await io.sweepStaleAcks(new Date(now.getTime() - REQUEST_STALE_AFTER_MS));
+      if (swept > 0) {
+        log("meta_ack_sweep", { swept });
+      }
+    } catch (err) {
+      log("meta_ack_sweep_failed", {
+        ...refusalFields(err),
+      });
+    }
+  };
+  await sweep();
+
+  /* And the other half of keeping the folder readable, immediately after it and for the same
+   * reason. The sweep makes `ohmail/_meta` smaller; nothing made it SHALLOWER, and a uid is spent
+   * per renewal and never returned — so a folder holding a handful of records ends up with its
+   * records ten thousand uids below the top of its space, where no bounded read reaches them.
+   * Every gate then refuses and the mailbox is organized by nobody. The organizer moves them back
+   * up; the ordinary answer is 0 and costs one probe. Failure is logged and swallowed exactly as
+   * the sweep's is: a compaction that could not run leaves the folder as it was, and must not stop
+   * a drain that might still succeed. */
+  if (typeof io.compactMeta === "function") {
+    try {
+      moved = await io.compactMeta(now);
+      if (moved > 0) {
+        log("meta_compacted", { moved });
+      }
+    } catch (err) {
+      log("meta_compact_failed", {
+        ...refusalFields(err),
+      });
+    }
+  }
+
+  return { ran: typeof io.sweepStaleAcks === "function", swept, moved };
+}
+
+/**
+ * THE LEASE-REFUSED ARM'S SHRINK — only for a folder too full to read (`meta_folder_full`). A dead
+ * socket, a wrong clock or a folder that takes no delete is not cured by sweeping, so those run
+ * nothing. Keyless, and it reads no request. Never throws; says `meta_shrink` when it ran.
+ */
+export async function shrinkMetaOnRefusal(
+  refusal: unknown,
+  rt: { mailboxId: string; accountId: string; installId: string; adapter: MailboxAdapter },
+  now: Date,
+  log: (event: string, detail: Record<string, unknown>) => void,
+): Promise<boolean> {
+  if (!(refusal instanceof LeaseUnavailableError) || refusal.op !== "meta_folder_full") return false;
+  if (!hasRequestOrganizerIo(rt.adapter)) return false;
+  let io: RequestOrganizerIo;
+  try {
+    io = rt.adapter.requestOrganizerIo({ installId: rt.installId, mailboxId: rt.mailboxId });
+  } catch {
+    return false;
+  }
+  const ids = { mailboxId: rt.mailboxId, accountId: rt.accountId };
+  const done = await shrinkMeta(io, now, (event, detail) => { log(event, { ...ids, ...detail }); });
+  log("meta_shrink", { ...ids, phase: "lease_refused", ...done });
+  return true;
+}
+
+/**
  * DRAIN `ohmail/_meta` OF EVERY REQUEST THIS ORGANIZER CAN VERIFY, applying each in `decided_at`
  * then id order — two doors deciding one sender in one cycle land in the order the human made them.
  *
@@ -406,60 +490,20 @@ export async function applyMetaRequests(
     return EMPTY_RESULT;
   }
 
+  /* THE FOLDER IS KEPT SMALL WHETHER OR NOT THIS ACCOUNT HAS A REQUEST CHANNEL — ahead of the key,
+   * which gates only the request read below. Keyless organizers are most of them, and their own
+   * claims and acks pile up the same (META-SHRINK-AHEAD-OF-THE-GATE). */
+  await shrinkMeta(io, now, (event, detail) => {
+    log(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail });
+  });
+
   // ── NO KEY, NO CHANNEL ──────────────────────────────────────────────────────────────────────
   //
-  // Read BEFORE the folder is listed, so an organizer with no request channel costs no IMAP round
-  // trip at all. A NULL key is the resting state of every account that has never used a second
-  // install, and it is silent by design — logging it per mailbox per cycle would be a line about
-  // nothing, forever.
+  // Read BEFORE the folder is listed, so an organizer with no request channel reads no request.
+  // A NULL key is the resting state of every account that has never used a second install, and
+  // it is silent by design — logging it per mailbox per cycle would be a line about nothing.
   const key = rt.requestKey;
   if (key === null) return EMPTY_RESULT;
-
-  /* The sweep runs before the read, because the read is what it unblocks. The organizer's ack sweep is
-   * the only thing that ever makes `ohmail/_meta` SMALLER, and it used to sit after the bounded read,
-   * which refuses a folder over the ceiling — so a folder that crossed the ceiling BY ACKS could never
-   * come back down: the read refused, the sweep never ran, and every drain refused from then on, with
-   * nothing self-healing. Asked of the server by header and date where the server takes that form,
-   * and by a uid-range fetch of the same window where it does not — iCloud refuses the compound term
-   * outright. Failure is logged and swallowed: a sweep that could not run is where this was before,
-   * and must not stop a drain that might still succeed. */
-  const sweep = async (): Promise<void> => {
-    if (typeof io.sweepStaleAcks !== "function") return;
-    try {
-      const swept = await io.sweepStaleAcks(new Date(now.getTime() - REQUEST_STALE_AFTER_MS));
-      if (swept > 0) {
-        log("meta_ack_sweep", { mailboxId: rt.mailboxId, accountId: rt.accountId, swept });
-      }
-    } catch (err) {
-      log("meta_ack_sweep_failed", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId,
-        ...refusalFields(err),
-      });
-    }
-  };
-  await sweep();
-
-  /* And the other half of keeping the folder readable, immediately after it and for the same
-   * reason. The sweep makes `ohmail/_meta` smaller; nothing made it SHALLOWER, and a uid is spent
-   * per renewal and never returned — so a folder holding a handful of records ends up with its
-   * records ten thousand uids below the top of its space, where no bounded read reaches them.
-   * Every gate then refuses and the mailbox is organized by nobody. The organizer moves them back
-   * up; the ordinary answer is 0 and costs one probe. Failure is logged and swallowed exactly as
-   * the sweep's is: a compaction that could not run leaves the folder as it was, and must not stop
-   * a drain that might still succeed. */
-  if (typeof io.compactMeta === "function") {
-    try {
-      const moved = await io.compactMeta(now);
-      if (moved > 0) {
-        log("meta_compacted", { mailboxId: rt.mailboxId, accountId: rt.accountId, moved });
-      }
-    } catch (err) {
-      log("meta_compact_failed", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId,
-        ...refusalFields(err),
-      });
-    }
-  }
 
   /* THE WHOLE FOLDER, through the one door: complete past the 500-record window, or refused by name
    * (past the enumeration's ceiling, `over_ceiling` or `bytes`). A refusal is a look that failed:
