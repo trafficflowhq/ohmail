@@ -9,6 +9,7 @@ import type { AbandonedMutation, MutationResult, OhmailEngine, QueuedChange } fr
 type RetryOutcome = MutationResult;
 import { useEngine, useAbandoned } from "./engine";
 import { useSendRelease } from "./send-release";
+import { discardUnsavedChange } from "./mail-send";
 
 const NO_QUEUED: readonly QueuedChange[] = [];
 
@@ -51,7 +52,8 @@ export function UnsavedChanges({ variant }: { variant: "shell" | "rail" }) {
       // retried send answering `send_unverified` invisible: no warning, no record (it is deleted
       // before dispatch), and a person free to press send again on mail that may already have left.
       onRetry={(id) => engine.retryAbandoned(id)}
-      onDiscard={(id) => engine.discardAbandoned(id)}
+      // A kept send's lock record goes with it, or its composer's next press replays that key.
+      onDiscard={(id) => discardUnsavedChange(engine, id)}
     />
   );
 }

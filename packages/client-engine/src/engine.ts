@@ -3209,6 +3209,15 @@ export class OhmailEngine {
   }
 
   /**
+   * TRUE ONCE THE PREVIOUS SESSION'S OUTBOX IS ON THE QUEUE. From then on a send key that is not
+   * queued, on the wire or on the durable outbox is not pending; before it nobody can say, and a
+   * surface holding a composer for such a send keeps holding it.
+   */
+  outboxKnown(): boolean {
+    return this.outboxRestored;
+  }
+
+  /**
    * THE DRIVE'S DOOR: a no-op that does NOT latch until the store is known to be loaded. `drive()` is reachable from
    * `mutate → dispatch → syncFresh` before `hydrate()` resolves. It used to call the latching version, so a mutation
    * made in the first moments of a session could latch the restore over an unloaded store — and every verb the
