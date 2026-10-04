@@ -309,8 +309,17 @@ export async function screenerAutoActPass(
       result.filed++;
       result.destinations[plan.appliedFolder] = (result.destinations[plan.appliedFolder] ?? 0) + 1;
     } catch (err) {
-      // The sender stays waiting with their Apply button. Named by class so an operator can tell an
-      // erased account from a demoted organizer from a store fault.
+      /* AN ERASED ACCOUNT IS ONE FACT ABOUT THE ACCOUNT, not a failure per sender: the fence refused
+         before anything was written, and there is no suggestion row left to record a refusal on. */
+      if (err instanceof AccountErasedError) {
+        log.info("screener_auto_act_account_erased", {
+          accountId, code: "account_erased", examined: result.examined, applied: result.filed,
+          reason: "the account was erased during this page, so nothing more is filed or recorded",
+        });
+        break;
+      }
+      // The sender stays waiting with their Apply button. Named by class so an operator can tell a
+      // demoted organizer from a removed mailbox from a store fault.
       result.failed++;
       log.error("screener_auto_act_failed", {
         // `err` is a logger-owned slot and the class is derived there; a thrown STRING loses its
