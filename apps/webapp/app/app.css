@@ -5189,8 +5189,8 @@ input.set-tag-input {
    end on; mid-scroll the panels run past those lines to the viewport's own edges, the way the
    reading stream's cards do. The sub-pixel remainder engines would leave at
    the maximum scroll offset is absorbed as ≤1px of padding inside the LAST panel, by the same
-   anchor effect that opens the thread at its newest message (`MessagePane`). Flush, sticky and
-   scroll-to-latest are LIVE-ONLY facts — jsdom applies no layout, so the live pass is the
+   anchor effect that opens the thread at its opened message (`MessagePane`). Flush, sticky and
+   the opening scroll are LIVE-ONLY facts — jsdom applies no layout, so the live pass is the
    acceptance for this block, not the unit suite. */
 .conv {
   display: flex;

@@ -1376,7 +1376,7 @@ export function MessagePane({
   const tc = useTranslations("reply");
   /** Hydration state copy, shared with the Reads/Receipts cards and the Screener preview. */
   const tb = useTranslations("body");
-  /** The conversation stack, so the pane can open at the LATEST message — see below. */
+  /** The conversation stack, so the pane can open at the opened message — see below. */
   const convRef = useRef<HTMLDivElement>(null);
   const mine = tagsOfMessage(message, tags);
   // Shared with every other mount of this message's bar; clears when the message changes.
