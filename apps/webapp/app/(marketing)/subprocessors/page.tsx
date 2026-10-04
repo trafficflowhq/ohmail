@@ -143,9 +143,10 @@ export default function SubprocessorsPage() {
                 <th scope="row">Mail, rules, tags, notes</th>
                 <td>
                   As long as your account exists. Removing a mailbox erases its
-                  mail. Past your plan&rsquo;s storage, the contents of your oldest
-                  messages are emptied to make room for new mail; their sender,
-                  subject and preview stay.
+                  mail. Past your plan&rsquo;s storage, the bodies of your oldest
+                  messages are emptied to make room for new mail; the messages stay
+                  findable, because their headers, preview and the words search
+                  finds them by are kept.
                 </td>
               </tr>
               <tr>
@@ -164,7 +165,7 @@ export default function SubprocessorsPage() {
                 <td>
                   Each works for 5 minutes at most, an email-verification link for
                   24 hours. A passkey challenge&rsquo;s record is deleted from an
-                  hour after it expires, at the next passkey sign-in; the other
+                  hour after it expires, at a later passkey prompt; the other
                   records have no expiry of their own and go when you delete your
                   account, and a desktop sign-in request nobody confirmed is never
                   deleted.
