@@ -276,7 +276,7 @@ function sameRuleKey(a: RuleKey, b: RuleKey): boolean {
  * the Screener's lift over a domain rule may live on a collapsed twin, and a pause or a retarget
  * must not drop the sender's rule back under its domain's.
  */
-function liftPriority(set: Record<string, unknown>, survivor: FoundRule, collapsed: readonly FoundRule[]): void {
+function liftPriority(set: Record<string, unknown>, survivor: { priority: number }, collapsed: readonly FoundRule[]): void {
   if (set.priority !== undefined) return;
   const top = Math.max(survivor.priority, ...collapsed.map((t) => t.priority));
   if (top > survivor.priority) set.priority = top;
@@ -469,8 +469,8 @@ export class RulesService {
    */
   /**
    * A RETARGET IS A RETROACTIVE REQUEST TOO, AND IT IS THE COMMON PATH. The sender sheet does not
-   * create a second rule when one covers the subject — duplicates tie down to an arbitrary id
-   * (`core/src/rules.ts#compareRules`); it PATCHes the destination. Without a retro re-request
+   * create a second rule when one covers the subject; it PATCHes the row that acts, and the key
+   * converges onto that row (one rule per key). Without a retro re-request
    * the retarget would apply to future mail only. So the retro state RESETS — cursor and marker
    * cleared: mail moved to the OLD destination is a candidate again. Only when the destination
    * changes; `enabled`/`priority` re-apply nothing. A SUBJECT TERM CHANGE IS THE SAME EVENT (mail
@@ -540,7 +540,7 @@ export class RulesService {
       // rule that does not exist there yet.
       const [before] = await tx.select({
         destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
-        bodyContains: rules.bodyContains, match: rules.match,
+        bodyContains: rules.bodyContains, match: rules.match, priority: rules.priority,
       }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
 
@@ -652,6 +652,10 @@ export class RulesService {
         if (!c.survivor) throw new ServiceError("not_found", 404, "rule not found");
         acting = c.acting ?? before;
         liftPriority(set, c.survivor, c.collapsed);
+      } else {
+        // The new key's rows go before the moved row arrives there; it keeps the highest priority.
+        const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: newKey, incoming: id });
+        liftPriority(set, before, c.collapsed);
       }
       // Where the sender's mail has actually been going is the ACTING row's place, not the pressed
       // row's: a PATCH naming the pressed row's own destination over a twin acting elsewhere moves
@@ -664,16 +668,6 @@ export class RulesService {
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
         .returning({ id: rules.id });
       if (updated.length === 0) throw new ServiceError("not_found", 404, "rule not found");
-      if (keyMoved) {
-        const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: newKey, survivor: id });
-        if (!c.survivor) throw new ServiceError("internal", 500, "rule vanished after write");
-        const lifted: Record<string, unknown> = {};
-        liftPriority(lifted, c.survivor, c.collapsed);
-        if (patch.priority === undefined && lifted.priority !== undefined) {
-          await tx.update(rules).set({ priority: lifted.priority as number })
-            .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)));
-        }
-      }
       const seq = (await recordRuleDelta(tx, ctx.accountId, [id], "update"))[0]!;
 
       // Materialize INSIDE the tx (reads the uncommitted update), so the DTO stored below is

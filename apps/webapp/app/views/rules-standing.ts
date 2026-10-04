@@ -21,7 +21,8 @@ const ordered = (r: RuleDTO) => ({ ...r, effect: effectForDestination(canonicalD
  * ONE ROW PER KEY: the twin the router runs (`compareTwins` — on before paused, then the router's
  * order, the same function the organizer's key lookup is held to), and the twins behind it.
  * `copies` counts them; `others` names them, so a twin filing elsewhere is said as a rule of its
- * own. A Remove of that row removes them all; nothing else collapses them.
+ * own. Rows that arrived as twins collapse on the next press under their key: a Remove takes them
+ * all, a change or a Screener decision converges them onto the one row it writes.
  */
 export function actingRules(rules: readonly RuleDTO[]): {
   shown: RuleDTO[]; copies: ReadonlyMap<string, number>; others: ReadonlyMap<string, RuleDTO[]>;

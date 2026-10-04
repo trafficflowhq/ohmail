@@ -61,13 +61,11 @@ export interface MigrateSummary {
 /**
  * HeyMigrationService — seeds the deterministic ruleset from a HEY / existing-mailbox export or
  * folder-scan. Idempotent and reversible (spec §16): `migrateFromObservations` converges each
- * observation's bare sender or domain key onto its one rule — a `provenance:'migrated'` rule where
- * the key has none, never a second rule beside one made here — so a re-run creates ZERO
- * duplicates, returned `unchanged`. Each new rule emits a `change_log` create; the
- * run writes an `audit_log` entry whose inverse is the undo. `undoMigration` removes ONLY
- * migrated rules. Rules-only by default: migration creates rules, it does not move live mail; an
- * opt-in `reroute` pass routes backfill placements through the reconciler write-path OUTSIDE the
- * tx, idempotently.
+ * observation's bare key onto its one rule — a `provenance:'migrated'` rule where the key has
+ * none, never a second rule beside one made here — so a re-run creates ZERO duplicates. Each new
+ * rule emits a `change_log` create and the run an `audit_log` entry whose inverse is the undo;
+ * `undoMigration` removes ONLY migrated rules. Rules-only by default; an opt-in `reroute` pass
+ * routes backfill placements through the reconciler write-path OUTSIDE the tx, idempotently.
  */
 export class HeyMigrationService {
   constructor(private readonly deps: { adapter?: AdapterPort } = {}) {}

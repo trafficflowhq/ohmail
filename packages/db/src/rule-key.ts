@@ -106,14 +106,20 @@ export interface ConvergedKey {
  * account's rule-key lock first (re-entrant per transaction), reads every row under the key,
  * acting first, and deletes all but the survivor with one `delete` delta each. `survivor` absent
  * keeps the ACTING row; given, that id, and nothing is deleted when it is not under the key.
+ * `incoming` names a row about to MOVE into the key: every row there goes, and none survives.
  */
 export async function convergeRuleKey(
-  tx: Tx, input: { accountId: string; key: RuleKey; survivor?: string },
+  tx: Tx, input: { accountId: string; key: RuleKey; survivor?: string; incoming?: string },
 ): Promise<ConvergedKey> {
   const { accountId, key } = input;
-  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
+  await lockAccountRuleKeys(tx, accountId);
   const rows = await findRulesByKey(tx, accountId, key);
   const acting = rows[0] ?? null;
+  if (input.incoming !== undefined) {
+    const collapsed = rows.filter((r) => r.id !== input.incoming);
+    const twinSeqs = await deleteTwins(tx, accountId, collapsed);
+    return { survivor: null, acting, collapsed, twinSeqs, lastSeq: twinSeqs[twinSeqs.length - 1] ?? null };
+  }
   const survivor = input.survivor === undefined ? acting : rows.find((r) => r.id === input.survivor) ?? null;
   if (survivor === null) return { survivor: null, acting, collapsed: [], twinSeqs: [], lastSeq: null };
   const collapsed = rows.filter((r) => r.id !== survivor.id);
@@ -127,7 +133,7 @@ export type RuleRowWrite = Omit<Partial<typeof rulesTbl.$inferInsert>, "id" | "a
 /** What {@link writeRuleUnderKey} did under the key. `lastSeq` is the last delta it recorded, if any. */
 export interface KeyWriteResult {
   op: "create" | "update" | "unchanged" | "skipped";
-  /** The one row under the key afterwards; `null` only when skipped over an empty key (never) or nothing was inserted. */
+  /** The one row under the key afterwards; `null` only when `skip` met a key that has a row. */
   ruleId: string | null;
   lastSeq: bigint | null;
   /** The row the router ran before the write, and the rows collapsed into the survivor. */
@@ -148,10 +154,11 @@ export async function writeRuleUnderKey(tx: Tx, input: {
   match?: string;
   overExisting: "converge" | "skip";
   diff: (survivor: FoundRule) => RuleRowWrite;
-  insert: RuleRowWrite & { destination: string };
+  /** `retroRequestedAt` is required: every door states whether the backlog was asked for. */
+  insert: RuleRowWrite & { destination: string; retroRequestedAt: Date | null };
 }): Promise<KeyWriteResult> {
   const { accountId, key, now } = input;
-  await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
+  await lockAccountRuleKeys(tx, accountId);
   if (input.overExisting === "skip") {
     const [any] = await findRulesByKey(tx, accountId, key);
     if (any) return { op: "skipped", ruleId: null, lastSeq: null, acting: any, collapsed: [] };
@@ -168,7 +175,7 @@ export async function writeRuleUnderKey(tx: Tx, input: {
     return { op: "update", ruleId: c.survivor.id, lastSeq, acting: c.acting, collapsed: c.collapsed };
   }
   const [row] = await tx.insert(rulesTbl).values({
-    updatedAt: now, ...input.insert,
+    updatedAt: now, ...input.insert, retroRequestedAt: input.insert.retroRequestedAt,
     accountId, kind: key.kind, match: input.match ?? key.match,
     subjectContains: key.subjectContains, bodyContains: key.bodyContains,
   }).returning({ id: rulesTbl.id });
@@ -181,7 +188,7 @@ const PROVENANCE_ORDER: readonly string[] = ["manual", "migrated", "promoted", "
 
 /**
  * A door's inferred write over an existing row keeps the better-ranked provenance: `manual` and
- * `migrated` stay, `seeded-from-sent` becomes `inferred`. Never makes a row `manual`.
+ * `migrated` stay, `seeded-from-sent` (or an unknown value) becomes `inferred`. Never `manual`.
  */
 export function keptProvenance(own: string, inferred: "promoted"): string {
   const a = PROVENANCE_ORDER.indexOf(own);

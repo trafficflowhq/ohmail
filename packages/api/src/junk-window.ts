@@ -422,11 +422,10 @@ function normalizeAllowAddress(address: string): string {
  * `contacts` row, the change rows, and the one thing it cannot assume — that the sender's spam
  * rule is switched off first, since deny outranks allow at equal priority and specificity.
  *
- * IT TAKES THE CALLER'S TRANSACTION. It used to open its own, and the rescue then ran two
- * sequenced transactions, so an interruption left a rule standing with no move behind it. It
- * fences at the top of its own body anyway — `contacts` and `rules` hang off the account alone
- * and `accounts` survives erasure — which the caller already asked; the one lock it takes is the
- * account's rule-key lock, before its first `rules` statement.
+ * IT TAKES THE CALLER'S TRANSACTION: two sequenced ones left a rule standing with no move behind
+ * it. It fences at the top anyway (`contacts` and `rules` hang off the account alone and
+ * `accounts` survives erasure), then takes the account's rule-key lock before its first `rules`
+ * statement.
  */
 async function allowSender(
   tx: LedgerTx, accountId: string, address: string, nowAt: Date,

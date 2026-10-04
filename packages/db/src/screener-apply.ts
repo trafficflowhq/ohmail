@@ -493,15 +493,13 @@ export interface ApplyScreenerDecisionResult {
 
 /**
  * THE ONE IMPLEMENTATION. The screening baseline, the subject's ONE rule (the key converged onto
- * its acting row, or the promoted rule where it has none), contacts, the held-bag
- * re-route (guarded on `desired_folder = 'ohmail/Screener'`: a row that has already moved on
- * keeps where it went — user always wins), mark-read-on-decide, `change_log` for every write, and
- * the learning signal. The bag is read ACCOUNT-WIDE (a decision is about the SENDER) and written
- * per mailbox behind a `FOR SHARE` role lock — only mailboxes this install organizes move;
- * the rest return as `heldElsewhere`. FENCES FIRST, as the first statement of whatever
- * transaction the caller opened: this writes `account_settings` (the baseline stamp), and every
- * such writer fences before touching anything else (`erasure-fence.ts`'s rule). Then the
- * account's rule-key lock, before the first `rules` statement and the bag's mailbox locks.
+ * its acting row, or the promoted rule where it has none), contacts, the held-bag re-route
+ * (guarded on `desired_folder = 'ohmail/Screener'`: a row that moved on keeps where it went),
+ * mark-read-on-decide, `change_log` for every write, and the learning signal. The bag is read
+ * ACCOUNT-WIDE and written per mailbox behind a `FOR SHARE` role lock — only mailboxes this
+ * install organizes move; the rest return as `heldElsewhere`. FENCES FIRST (it writes
+ * `account_settings`, `erasure-fence.ts`'s rule), then the account's rule-key lock, before the
+ * first `rules` statement and the bag's mailbox locks.
  */
 export async function applyScreenerDecision(
   tx: Tx, input: ApplyScreenerDecisionInput,
