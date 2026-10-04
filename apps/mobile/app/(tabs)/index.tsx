@@ -22,6 +22,7 @@ import { useEngineQueuesAsk, useWorld, type World, type WorldMail, type WorldUns
 import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { messageRoute } from "../../src/ui/conversation-mark";
 import { MailList, type ListGroup } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
@@ -50,9 +51,9 @@ function OhboxBody() {
   useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
-     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. Every
-     row here is a conversation, so its reader opens as one (`reader-shown.ts`). */
-  const { open, openRow, close } = useListDetail((id) => `/message/${id}?as=conversation`);
+     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. A row
+     press here carries the conversation mark; an open that migrated in from elsewhere does not. */
+  const { open, openRow, close, conversation } = useListDetail((id) => messageRoute(id, true), { conversation: true });
   /* Under a pushed reader this screen is hidden: it keeps what it showed (`held-while-hidden.ts`). */
   const focused = useIsFocused();
   const kept = useRef<{ ohbox: World["ohbox"]; doorbell: World["doorbell"] } | null>(null);
@@ -142,9 +143,9 @@ function OhboxBody() {
     <ListDetail
       open={open}
       onClose={close}
-      toRoute={(id) => `/message/${id}?as=conversation`}
+      toRoute={(id) => messageRoute(id, conversation)}
       list={list}
-      renderDetail={(id, ctx) => <MessageReader id={id} asConversation inPane={ctx.inPane} onClose={ctx.onClose} />}
+      renderDetail={(id, ctx) => <MessageReader id={id} asConversation={conversation} inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
   );
 }

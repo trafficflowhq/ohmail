@@ -1681,7 +1681,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -1918,7 +1918,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
     ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
     trashPage,
-    barPanel, focused, fr, frValues, mirrorHolds, picker, railOpen, readerFor, readerMessage, readerGone,
+    barPanel, focused, forwardTargetFor, fr, frValues, mirrorHolds, picker, railOpen, readerFor, readerMessage, readerGone,
     selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
     setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
     shortcutsOpen, startFR, subjectRule,
@@ -2054,6 +2054,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        */
       openReply,
       forward: openForward,
+      forwardTargetOf: forwardTargetFor,
       /**
        * WHERE THIS LANE'S REPLY HAS GOT TO, WITH THE ROW'S OWN WITNESS IN IT — see
        * `replySendState`. One reading of the hold, two surfaces.
@@ -2112,8 +2113,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       onReplySig, onReplySubject,
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
       sendSurfaceMaxTotalBytes, replyBook,
-      openSenderMenu, senderMenu?.messageId, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, openSubjectRule,
-      conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
+      openSenderMenu, senderMenu?.messageId, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, forwardTargetFor,
+      openSubjectRule, conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
       consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel, nowAt],
   );
 
@@ -3438,8 +3439,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             now={now}
             onAction={(a) => onMessageAction(a, sheetMessage)}
             onAddTag={openTagPicker}
-            /* Over the Ohbox the sheet reads a conversation its row opened: Forward takes the newest. */
-            asConversation={route.view === "ohbox"}
           />
         ) : readerGone ? (
           <MessageGone openTrash={openTrashWindow} />

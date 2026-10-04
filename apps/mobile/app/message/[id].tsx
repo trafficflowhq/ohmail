@@ -21,6 +21,7 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
 import { DevRenderErrorTrigger } from "../../src/dev/render-error-trigger-door";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 import { readerHeldNow, subscribeReaderHeld } from "../../src/ui/reader-held";
+import { isConversationOpen, paneParams } from "../../src/ui/conversation-mark";
 
 /**
  * Gated like the tabs: a deep link (`ohmail://message/<id>`) can mount this route with the
@@ -41,7 +42,7 @@ export default function MessageScreen() {
 }
 
 function MessageRoute() {
-  /* `as=conversation` only from an Ohbox row: the reader then shows the conversation's newest. */
+  /* The conversation mark only from an Ohbox row press (`conversation-mark.ts`), passed on below. */
   const { id, as } = useLocalSearchParams<{ id: string; as?: string }>();
   const w = useWorld();
   // The reader draws the body, so it subscribes to it: a body landing redraws this screen alone.
@@ -58,14 +59,17 @@ function MessageRoute() {
   const held = useSyncExternalStore(subscribeReaderHeld, readerHeldNow);
   useEffect(() => {
     if (targetPath !== null && target !== null && !held) {
-      router.replace({ pathname: targetPath, params: target.params });
+      router.replace({
+        pathname: targetPath,
+        params: targetPath === "/" ? paneParams(target.params.open, isConversationOpen(as)) : target.params,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetPath, target?.params.open, held]);
 
   return (
     <>
-      <MessageReader id={id ?? ""} asConversation={as === "conversation"} onClose={() => router.back()} />
+      <MessageReader id={id ?? ""} asConversation={isConversationOpen(as)} onClose={() => router.back()} />
       {/* Gate-held and folder mail keep the full-screen reader on the unfolded-landscape Duo
           (`paneRouteFor` answers null there) — the rail's claim still needs a renderer. */}
       <ReaderRailHost />

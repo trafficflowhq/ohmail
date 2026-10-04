@@ -16,7 +16,6 @@ import {
   countWhen,
   forwardOffered,
   sendAndDonePlanFor,
-  threadOf,
   type EngineMessage,
   type EntityReader,
   type OhmailEngine,
@@ -30,7 +29,6 @@ import {
   useTheme,
 } from "@ohmail/ui";
 import { replyAllRecipients } from "./compose-from";
-import { barForwardTarget } from "./forward-target";
 import type { ConsentState } from "./consent-state";
 import { deleteKeyBindings } from "./delete-undo";
 import { FoldersRailGroup, type FolderVerbs } from "./FoldersRailGroup";
@@ -208,6 +206,8 @@ export interface ShellKeysInput {
   subjectRule: ShellOpenState["subjectRule"];
   mailSend: ShellCompose["mailSend"];
   openForward: ShellCompose["openForward"];
+  /** What Forward takes for a message: a row-opened conversation's target, else the message (`shell-open-state.ts`). */
+  forwardTargetFor: ShellOpenState["forwardTargetFor"];
   sendReply: ShellCompose["sendReply"];
   toggleReply: ShellCompose["toggleReply"];
   createTagAlone: ShellVerbs["createTagAlone"];
@@ -237,7 +237,7 @@ export function useShellKeys({
   selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
   setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
   shortcutsOpen, startFR, subjectRule,
-  mailSend, openForward, sendReply, toggleReply,
+  mailSend, openForward, forwardTargetFor, sendReply, toggleReply,
   createTagAlone, onMessageAction, onStreamAction, openSenderMenu, toggleTag,
   replyTo, setReplyTo,
 }: ShellKeysInput) {
@@ -590,8 +590,8 @@ export function useShellKeys({
       run: () => {
         if (!focused) return;
         if (readerMessage != null || route.view === "ohbox") {
-          // The bar's own target (`barForwardTarget`): over the Ohbox, the conversation's newest.
-          const target = barForwardTarget(focused, threadOf(engine.read(), focused.id), route.view === "ohbox");
+          // The bar's own target (`forwardTargetFor`): a row-opened conversation's, else the message.
+          const target = forwardTargetFor(focused);
           openForward(target.id, target);
         }
         else onStreamAction("forward", focused);

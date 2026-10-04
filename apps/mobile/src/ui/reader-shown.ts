@@ -1,13 +1,12 @@
 /**
- * WHICH MESSAGE THE READER PUTS ON TOP. An Ohbox row opens its conversation at the member it chose
- * (its latest unread, which the open reads); the reader showed that member first, so a conversation
- * whose newest reply carried the file opened at its first message and Forward took that one. Opened
- * from its Ohbox row, the reader shows the conversation's newest message, as the web's reader puts
- * the newest on top, and its verbs act on what it shows. A message opened on its own (search, a
- * folder, a link) shows itself. `newestInConversation` is `liveMessage`'s, from the engine's thread.
+ * WHICH MESSAGE THE READER SHOWS AND ACTS ON. Opened from its Ohbox row (the conversation mark,
+ * `conversation-mark.ts`), the row's own target as the engine answers it (`rowOpenTarget`, attached
+ * by the world projection): the message the row opened, never our own automatic answer, a calendar
+ * acknowledgement or mail held or filed elsewhere. Any other open — a search hit, a link, a draft's
+ * parent — shows the message it opened. The reader takes this once per open.
  */
 export function readerShownId(
-  opened: { id: string; newestInConversation?: string }, asConversation: boolean,
+  opened: { id: string; rowOpenTarget?: string }, asConversation: boolean,
 ): string {
-  return asConversation && opened.newestInConversation !== undefined ? opened.newestInConversation : opened.id;
+  return asConversation && opened.rowOpenTarget !== undefined ? opened.rowOpenTarget : opened.id;
 }

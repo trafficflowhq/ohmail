@@ -25,6 +25,7 @@ import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
 import { readerHeldNow, subscribeReaderHeld } from "./reader-held";
 import { paneFootSearch, paneSplit, railHome, scaffoldPlan, RAIL_W } from "./scaffold/plan";
+import { isConversationOpen, paneParams } from "./conversation-mark";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -32,23 +33,28 @@ const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as co
  * The screen half of the pair: the `open` param as selection, and one press verb that
  * SELECTS beside a second pane and PUSHES without one — the same row, both postures.
  */
-export function useListDetail(toRoute: (id: string) => string): {
+export function useListDetail(toRoute: (id: string) => string, opts: { conversation?: boolean } = {}): {
   open: string | null;
   openRow: (id: string) => void;
   close: () => void;
   twoPane: boolean;
+  /** The open came from this list's own row press and carries the mark (`conversation-mark.ts`). */
+  conversation: boolean;
 } {
   const posture = usePosture();
   const plan = scaffoldPlan(posture, platformName);
-  const params = useLocalSearchParams<{ open?: string }>();
+  const params: { open?: string; as?: string } = useLocalSearchParams<{ open?: string }>();
   const open = typeof params.open === "string" && params.open !== "" ? params.open : null;
+  const marks = opts.conversation === true;
   return {
     open,
     openRow: (id: string) => {
-      if (plan.panes === 2) router.setParams({ open: id });
+      if (plan.panes === 2 && marks) router.setParams(paneParams(id, true));
+      else if (plan.panes === 2) router.setParams({ open: id });
       else router.push(toRoute(id));
     },
-    close: () => router.setParams({ open: "" }),
+    close: () => router.setParams(marks ? paneParams("", false) : { open: "" }),
+    conversation: marks && open !== null && isConversationOpen(params.as),
     twoPane: plan.panes === 2,
   };
 }

@@ -133,6 +133,26 @@ export function foldOhboxRows(
   return out;
 }
 
+/**
+ * WHAT A CONVERSATION OPENED FROM ITS OHBOX ROW IS ACTED ON — Forward, the Forward key and the phone
+ * reader's verbs: the row's own answer, read off the rows the Ohbox draws and never recomputed over
+ * the whole thread, so a member the row would not open at cannot become it. The opened message while
+ * it is a member of its row (the open reads it, and the row's own target would then move to an older
+ * unread member); the row's target when it is not; the opened message when no row holds its
+ * conversation. Callers take it once, at the open, so a later change to the row cannot move it.
+ */
+export function rowOpenTarget(
+  reader: EntityReader, opened: EngineMessage, openHeld: string | null = null,
+): EngineMessage {
+  const key = conversationKeyOf(opened);
+  const rows = ohboxRows(reader, openHeld);
+  for (const section of SECTIONS) {
+    const row = rows[section].find((r) => r.key === key);
+    if (row) return row.members.some((m) => m.id === opened.id) ? opened : row.openTarget;
+  }
+  return opened;
+}
+
 const rowsCache = new WeakMap<
   EntityReader, { v: number; openHeld: string | null; rows: Record<OhboxRowSection, OhboxRow[]> }
 >();

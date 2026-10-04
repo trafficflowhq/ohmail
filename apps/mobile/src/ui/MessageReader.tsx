@@ -45,7 +45,7 @@ export function MessageReader({
   inPane?: boolean;
   /** Leaves the reader: `router.back()` on the route, clearing the selection in a pane. */
   onClose?: () => void;
-  /** Opened from an Ohbox row: the conversation's newest message is on top (`readerShownId`). */
+  /** Opened by an Ohbox row press: the row's own target is shown and acted on (`readerShownId`). */
   asConversation?: boolean;
 }) {
   const t = useTheme();
@@ -55,9 +55,9 @@ export function MessageReader({
   // The reader draws the body, so it subscribes to it: a body landing redraws this pane alone.
   useBodyStamp();
   const opened = w.message(id);
-  /* THE MESSAGE ON TOP, decided once per open: from an Ohbox row, the conversation's newest, and the
-     verbs act on it; the open below still reads `id`, the member the row chose. A member arriving
-     while the reader is up does not take the screen from under it. */
+  /* THE MESSAGE SHOWN AND ACTED ON, decided once per open: from an Ohbox row press, the row's own
+     target; anything else, the opened message. The open below still reads `id`. A change to the
+     row while the reader is up does not take the screen from under it. */
   const pinned = useRef<{ id: string; asConversation: boolean; shown: string } | null>(null);
   if (opened && (pinned.current?.id !== id || pinned.current.asConversation !== asConversation)) {
     pinned.current = { id, asConversation, shown: readerShownId(opened, asConversation) };

@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import type { useTranslations } from "next-intl";
 import {
   isResurfaced,
+  rowOpenTarget,
   senderKey,
   VIEW_OF_FOLDER,
   waterlineIdOf,
@@ -570,6 +571,17 @@ export function useShellOpenState({
    */
 
   /**
+   * THE ROW OPEN, AND WHAT IT IS ACTED ON — Forward on the bar (column and sheet) and ⇧F. Only
+   * `enterReader` below records it, and only `OhboxView.open` calls that: a cursor, a search landing,
+   * a link or a hit opened in the sheet records nothing, so each forwards the message it opened.
+   * Taken at the open from the rows the Ohbox draws (`rowOpenTarget`), so a later change to the row
+   * cannot move it.
+   */
+  const [rowOpen, setRowOpen] = useState<{ id: string; target: EngineMessage } | null>(null);
+  const forwardTargetFor = useStableCallback((m: EngineMessage): EngineMessage =>
+    route.view === "ohbox" && rowOpen !== null && rowOpen.id === m.id ? rowOpen.target : m);
+
+  /**
    * Opening the reader — the one gate. A live walk at 1440 found the message painted twice: the
    * split's reading column AND a modal over it. `readColumnHidden` is what "opened" means at a
    * width whose reading column is `display:none`; `openReply` and `openMessage` already ask it,
@@ -579,6 +591,8 @@ export function useShellOpenState({
    * still travels — this narrows WHETHER, never WHAT.
    */
   const enterReader = useStableCallback((messageId: string) => {
+    const opened = presented.get<EngineMessage>("message", messageId);
+    setRowOpen(opened ? { id: messageId, target: rowOpenTarget(presented, opened, engine.openRowHeld()) } : null);
     if (readColumnHidden()) setReaderFor(messageId);
   });
 
@@ -638,6 +652,7 @@ export function useShellOpenState({
       if (route.view === "search" && prev.view !== "search") searchFrom.current = prev;
       screener.flush();
       setReaderFor(null);
+      setRowOpen(null);
       setPicker(null);
       setPickerIds(null);
       setFr(null);
@@ -1218,6 +1233,7 @@ export function useShellOpenState({
   useCursorPlacer(placeCursor, "global");
 
   return {
+    forwardTargetFor,
     absoluteTime,
     barPanel,
     chipState,

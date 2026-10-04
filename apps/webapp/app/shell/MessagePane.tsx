@@ -21,7 +21,6 @@ import { useBarDensity } from "./bar-density";
 import { InlineReply } from "./InlineReply";
 import { ForwardAskStrip } from "./ForwardAsk";
 import { inlineForwardKey } from "./mail-send";
-import { barForwardTarget } from "./forward-target";
 import { ariaShortcut, chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
 import { useBodyStalled, useMessageChrome, useWithheldSentence, type MessageBarPanel } from "./message-chrome";
 import { useDrawnBody } from "./body-slice";
@@ -272,9 +271,9 @@ function ActionBar({
 }: {
   message: EngineMessage;
   /**
-   * WHAT THIS BAR'S FORWARD TAKES when it is not `message` — the newest message of a conversation
-   * opened from its Ohbox row (`barForwardTarget`). It goes through the chrome's Forward, the door
-   * each panel's own Forward uses; absent, Forward is this bar's verb on `message` like every other.
+   * WHAT THIS BAR'S FORWARD TAKES when it is not `message` — a row-opened conversation's target as the
+   * shell took it at the open (`chrome.forwardTargetOf`). It goes through the chrome's Forward, the
+   * door each panel's own Forward uses; absent, Forward is this bar's verb on `message` like the rest.
    */
   forwardTarget?: EngineMessage;
   /**
@@ -429,7 +428,7 @@ function ActionBar({
    * flagged; a row the mirror does not hold has its body fetched through the reader's door.
    */
   const canForward = forwardOffered(message);
-  /** The press's message: the conversation's newest when the pane opened it as one (`forwardTarget`). */
+  /** The press's message: a row-opened conversation's target (`forwardTarget`), else this message. */
   const forwardOf = forwardTarget ?? message;
   /** Is the disclosure menu open? A boolean, because the menu is anchored by CSS, not by a point. */
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1359,15 +1358,8 @@ export function MessagePane({
   onAction,
   onAddTag,
   trash,
-  asConversation,
 }: {
   message: EngineMessage;
-  /**
-   * OPENED AS ITS CONVERSATION — from an Ohbox row, whose open the engine chose (`openTarget`). The
-   * reader shows the newest message on top, so the bar's Forward takes that one. Absent everywhere a
-   * message is opened on its own, where the opened message stays the target.
-   */
-  asConversation?: boolean;
   tags: TagDTO[];
   now: Date;
   onEnterReader?: () => void;
@@ -1401,8 +1393,8 @@ export function MessagePane({
    * the first time a delta landed.
    */
   const conversation = chrome.conversationOf(message.id);
-  /** The bar's Forward: the newest panel when opened as a conversation, else the opened message. */
-  const forwardTarget = barForwardTarget(message, conversation, asConversation === true);
+  /** The bar's Forward: what the shell took at a row open (`forwardTargetOf`), else the opened message. */
+  const forwardTarget = chrome.forwardTargetOf?.(message) ?? message;
   /**
    * THE MESSAGE THE OPEN EDITOR ANSWERS (or forwards) — resolved against the WHOLE conversation, not the focused id
    * alone. Every panel's ⋯ menu dispatches its OWN id (`MessageHeader`), and `chrome.replyTo` faithfully held it —
@@ -1897,8 +1889,8 @@ export function MessagePane({
    * wrapper cannot drift apart. `test/pill-snapshot.test.ts` pins its rendered markup to the bytes
    * captured before the viewer redesign: the wrapper around the bar changed, the bar did not.
    * It is bound to `message` — the OPENED id — on every surface; opening an older message via
-   * search keeps the verbs on that message, never on the newest panel. Forward is the one verb that
-   * follows the screen: opened as a conversation, it takes the newest panel (`forwardTarget`).
+   * search keeps the verbs on that message, never on the newest panel. Forward asks the shell what a
+   * row open took (`forwardTarget`), which is the message the conversation was opened at.
    */
   const actionBar = (
     <ActionBar

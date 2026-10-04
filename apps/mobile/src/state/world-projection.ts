@@ -264,7 +264,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       message: (id) => liveMessage(engine, id, {
         now, zone, locale, foldersEnabled: foldersOn,
         ownAddresses: inp.ownAddresses, mailboxes, screening: posture, tags,
-      }, base === raw ? presented.world : undefined),
+      }, base === raw ? presented.world : undefined, { reader: pres, openHeld }),
       filesOf: (id) => liveFiles(engine, id),
       search: liveSearch(engine, base, v),
       store: {

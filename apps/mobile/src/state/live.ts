@@ -101,6 +101,7 @@ import {
   type ZonedComposition,
   resurfacedThreads,
   ohboxRows,
+  rowOpenTarget,
   threadSubject,
   type OhboxRow,
   conversationSize,
@@ -405,8 +406,8 @@ export type WorldEarlier = Held & { attachments?: WorldAttachment[] };
 export type WorldMail = Omit<Mail, "earlier"> & {
   /** The rest of the conversation, oldest → newest, each member with its files. */
   earlier: WorldEarlier[];
-  /** The conversation's newest member, on the reading view of one that has more than one. */
-  newestInConversation?: string;
+  /** What a row open of this conversation acts on (`rowOpenTarget`), attached by the world projection. */
+  rowOpenTarget?: string;
   attachments?: WorldAttachment[];
   bodyState?: BodyState;
   /** WHICH policy emptied a `withheld` body — the reader owes each marker its own sentence. */
@@ -1738,6 +1739,16 @@ export function historyRow(raw: EntityReader, m: EngineMessage, v: WorldView): W
 }
 
 /**
+ * WHAT A ROW OPEN OF `id`'S CONVERSATION ACTS ON — the engine's `rowOpenTarget`, asked over the
+ * reader and the held row the Ohbox list itself folds with (`liveOhbox`), so the reader and the row
+ * cannot disagree. `undefined` for a message the reader does not hold.
+ */
+export function liveRowOpenTarget(rows: EntityReader, id: string, openHeld: string | null): string | undefined {
+  const m = rows.get<EngineMessage>("message", id);
+  return m ? rowOpenTarget(rows, m, openHeld).id : undefined;
+}
+
+/**
  * The reading view's row: the mirror's message with its body resolved (`bodyOf` — hydrated
  * text once `hydrateBody` lands, honest `bodyState` until then), its conversation as the
  * `earlier` shape (`threadOf`, every member rendered in full), and the attachment
@@ -1748,6 +1759,8 @@ export function liveMessage(
   engine: OhmailEngine, id: string, v: WorldView,
   /** The projection of the raw mirror under this same view, when the caller already holds it. */
   presented?: PresentedWorld,
+  /** The reader and held row the Ohbox list folds with: given, the row-open target is attached. */
+  rows?: { reader: EntityReader; openHeld: string | null },
 ): WorldMail | undefined {
   // The view's own folder flag rides into the projection — a folder-filed message opened from
   // the folder screen is otherwise a History drop (`placeOf` null ⇒ `get` answers undefined)
@@ -1772,10 +1785,7 @@ export function liveMessage(
   // The place the reader arrived through, on the row that carries no other honest one: the
   // message screen titles itself History off this, where `place` would say Ohbox.
   if (retired) row.historyPlace = physicalFolderOf(m);
-  const thread = threadOf(pres, id);
-  // What a conversation opened from its Ohbox row shows on top (`ui/reader-shown.ts`).
-  if (thread.length > 1) row.newestInConversation = thread[thread.length - 1]!.id;
-  row.earlier = thread
+  row.earlier = threadOf(pres, id)
     .filter((member) => member.id !== id)
     .map((member) => {
       // The account's own forward wears where it went, not the account's name — the same face
@@ -1803,6 +1813,7 @@ export function liveMessage(
   row.loadedRemoteContent = hydrated.loadedRemoteContent;
   row.inlineImages = engine.inlineImagesOf(id);
   Object.assign(row, filesField(engine, id));
+  if (rows) row.rowOpenTarget = liveRowOpenTarget(rows.reader, id, rows.openHeld);
   return row;
 }
 

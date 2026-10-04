@@ -138,6 +138,12 @@ export interface MessageChrome {
    */
   forward?: (messageId: string, seed?: EngineMessage) => void;
   /**
+   * WHAT THE BAR'S FORWARD TAKES for the opened message: a conversation the Ohbox row opened is
+   * acted on at the row's own target, decided at the open; anything else, the message itself
+   * (`shell-open-state.ts` `forwardTargetFor`). Absent, the opened message.
+   */
+  forwardTargetOf?: (message: EngineMessage) => EngineMessage;
+  /**
    * THE FORWARD ASK — set while the dock is open in forward mode on a `no_forward` message the
    * person has not confirmed (`forwardPress`). The pane renders the one-sentence ask in place of
    * the editor; `confirmForward` answers it. Absent means no ask.
