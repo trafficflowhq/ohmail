@@ -1,11 +1,11 @@
 import {
   Parser,
+  Token,
   Tokenizer,
   defaultTreeAdapter,
   type DefaultTreeAdapterMap,
   type DefaultTreeAdapterTypes,
   type ParserOptions,
-  type Token,
   type TokenHandler,
   type TokenizerOptions,
   type TreeAdapter,
@@ -90,8 +90,29 @@ class BudgetTokenizer extends Tokenizer {
   }
 }
 
-/** parse5's own parser with the charged tokenizer, and the stack's `contains` charged per step. */
+/** parse5 7.3.0's "in body" and "in table text" insertion modes; its enum is not exported, so the pin test reads them. */
+const IN_BODY = 6 as Parser<Map>["insertionMode"];
+const IN_TABLE_TEXT = 9 as Parser<Map>["insertionMode"];
+
+/**
+ * parse5's own parser with the charged tokenizer, and the stack's `contains` charged per step.
+ *
+ * TEXT DIRECTLY INSIDE A TABLE IS FLUSHED HERE, A TOKEN AT A TIME. parse5 holds such text and processes all
+ * of it inside the token that ends it, which no pause between characters can split: 65,500 held tokens
+ * under 240 open elements were one step of 3.9 million units. This is parse5's own flush (each held token
+ * through the body's rules with foster parenting on, or all whitespace inserted as it is, then the ending
+ * token reprocessed in the table's mode), asking `yieldNow` before each token and before the ending one;
+ * a stopped flush resumes on {@link drainHeld}. Nothing new is charged, so every reading is unchanged.
+ */
 class BudgetParser extends Parser<Map> {
+  /** Whether a step must stop before the next held token. A one-shot count never stops. */
+  yieldNow: () => boolean = () => false;
+  /** Called when a held flush stops, to pause the tokenizer. */
+  onHold: () => void = () => {};
+  /** Characters of held text flushed since the stepper last cleared it. */
+  heldChars = 0;
+  private held: { at: number; inBody: boolean; ending: Token.Token } | null = null;
+
   constructor(options: ParserOptions<Map>, meter: Meter) {
     super(options);
     this.tokenizer = new BudgetTokenizer(this.options, this, meter);
@@ -101,6 +122,77 @@ class BudgetParser extends Parser<Map> {
       meter.scan(stack.stackTop - at);
       return at > -1;
     };
+  }
+
+  override _startTagOutsideForeignContent(token: Token.TagToken): void {
+    if (!this.holds(token)) super._startTagOutsideForeignContent(token);
+  }
+
+  override _endTagOutsideForeignContent(token: Token.TagToken): void {
+    if (!this.holds(token)) super._endTagOutsideForeignContent(token);
+  }
+
+  override onComment(token: Token.CommentToken): void {
+    if (this.currentNotInHTML || !this.holds(token)) super.onComment(token);
+  }
+
+  override onDoctype(token: Token.DoctypeToken): void {
+    if (!this.holds(token)) super.onDoctype(token);
+  }
+
+  override onEof(token: Token.EOFToken): void {
+    if (!this.holds(token)) super.onEof(token);
+  }
+
+  /** Whether a flush is held mid-way. */
+  holding(): boolean {
+    return this.held !== null;
+  }
+
+  /** Takes over the flush `ending` starts, in the one mode parse5 flushes from. */
+  private holds(ending: Token.Token): boolean {
+    if (this.insertionMode !== IN_TABLE_TEXT) return false;
+    this.held = { at: 0, inBody: this.hasNonWhitespacePendingCharacterToken, ending };
+    this.drainHeld();
+    return true;
+  }
+
+  /** Continues the held flush; true once it and the token that ended it are processed. */
+  drainHeld(): boolean {
+    const h = this.held;
+    if (h === null) return true;
+    const pending = this.pendingCharacterTokens;
+    while (h.at < pending.length) {
+      if (this.yieldNow()) return this.stop();
+      const token = pending[h.at++];
+      this.heldChars += token.chars.length;
+      if (h.inBody) this.inBodyFostered(token);
+      else this._insertCharacters(token);
+    }
+    if (this.yieldNow()) return this.stop();
+    this.held = null;
+    this.insertionMode = this.originalInsertionMode;
+    this._processToken(h.ending);
+    return true;
+  }
+
+  private stop(): boolean {
+    this.onHold();
+    return false;
+  }
+
+  /** parse5's `tokenInTable` for a character token: the body's rules with foster parenting on. */
+  private inBodyFostered(token: Token.CharacterToken): void {
+    const fostering = this.fosterParentingEnabled;
+    this.fosterParentingEnabled = true;
+    this.insertionMode = IN_BODY;
+    try {
+      if (token.type === Token.TokenType.WHITESPACE_CHARACTER) this.onWhitespaceCharacter(token);
+      else this.onCharacter(token);
+    } finally {
+      this.insertionMode = IN_TABLE_TEXT;
+      this.fosterParentingEnabled = fostering;
+    }
   }
 }
 
@@ -159,11 +251,11 @@ export function treeWithin(html: string, budget: { elements: number; textChars?:
 /**
  * The same reading, a step at a time, for a caller that must not hold its thread for the whole parse.
  * Each call reads at most `charsPerStep` more characters; past `workPerStep` of the parse's work the
- * tokenizer pauses at its next character and resumes on the next call. The token in hand finishes
- * first, and text that sits directly inside a `<table>` is held by parse5 and processed whole inside the
- * tag that ends it, so such a run can carry one step far past `workPerStep`. It answers null until the
- * reading is known, then that reading again; one meter keeps the counts, so the reading equals
- * {@link treeWithin}'s at every step size.
+ * tokenizer pauses at its next character and resumes on the next call. Text that sits directly inside a
+ * `<table>` is held by parse5 and flushed by the tag that ends it; that flush stops at the work share or
+ * at `charsPerStep` characters of held text, whichever comes first, and goes on in the next call. So no
+ * call does more than its share and one token. It answers null until the reading is known, then that
+ * reading again; one meter keeps the counts, so the reading equals {@link treeWithin}'s at every step size.
  */
 export function treeStepper(
   html: string,
@@ -174,27 +266,36 @@ export function treeStepper(
   const meter = new StepMeter(budget);
   const parser = new BudgetParser({ scriptingEnabled: false, treeAdapter: countingAdapter(meter) }, meter);
   const tokenizer = parser.tokenizer;
-  // The meter is the only thing that pauses this tokenizer, so whether it is paused is known here.
+  // The meter and a held flush are the only things that pause this tokenizer, so whether it is paused is known here.
   let paused = false;
-  meter.onLimit = () => {
+  const pause = (): void => {
     if (paused) return;
     paused = true;
     tokenizer.pause();
   };
+  meter.onLimit = pause;
+  parser.onHold = pause;
   const size = Math.max(1, Math.floor(charsPerStep));
   const share = Math.max(1, workPerStep);
+  parser.yieldNow = () => meter.spent() || parser.heldChars >= size;
   let at = 0;
   let ended = false;
   let reading: TreeReading | null = null;
   return () => {
     if (reading !== null) return reading;
     meter.allow(share);
+    parser.heldChars = 0;
     try {
       if (paused) {
+        // A held flush goes on alone: the tokenizer resumes in the call after it ends.
+        const flushing = parser.holding();
+        if (!parser.drainHeld() || flushing || meter.spent()) return null;
         paused = false;
         tokenizer.resume();
       } else if (at < html.length) {
         const end = Math.min(html.length, at + size);
+        // The characters this call reads count against the held text it may flush.
+        parser.heldChars = end - at;
         tokenizer.write(html.slice(at, end), false);
         at = end;
       }
@@ -220,6 +321,11 @@ class StepMeter extends Meter {
 
   allow(units: number): void {
     this.limit = this.work + units;
+  }
+
+  /** Whether this step's share is spent. */
+  spent(): boolean {
+    return this.work >= this.limit;
   }
 
   override charge(units: number): void {
