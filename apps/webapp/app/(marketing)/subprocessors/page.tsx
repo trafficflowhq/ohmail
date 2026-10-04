@@ -64,9 +64,19 @@ export default function SubprocessorsPage() {
             </thead>
             <tbody>
               <tr>
-                <th scope="row">Neon</th>
-                <td>The database</td>
+                <th scope="row">Supabase</th>
+                <td>The database, and storage for large attachments you send</td>
                 <td>Your mail, rules, tags, notes, account</td>
+                <td>Switzerland (Zurich)</td>
+              </tr>
+              <tr>
+                {/* Listed while it still holds the copy; the row goes in the change that deletes it. */}
+                <th scope="row">Neon</th>
+                <td>
+                  The former database, frozen since the move to Supabase on 3
+                  August 2026; to be deleted
+                </td>
+                <td>A copy of mail, rules, tags, notes and accounts as of the move</td>
                 <td>EU (Frankfurt)</td>
               </tr>
               <tr>
@@ -131,6 +141,10 @@ export default function SubprocessorsPage() {
                 <td>As long as your account exists, then 30 days in backups</td>
               </tr>
               <tr>
+                <th scope="row">The copy in the former database</th>
+                <td>Frozen on 3 August 2026; kept until that database is deleted</td>
+              </tr>
+              <tr>
                 {/* The tracker blocker is not switched on in the reading path, so nothing
                     writes this table today. Saying "until you delete your account" implied a
                     record that does not exist. State the truth until the blocker ships, then restore
@@ -188,6 +202,11 @@ export default function SubprocessorsPage() {
           billing record, under a random account id with no name attached: Swiss
           law requires a business to keep its books, and a money trail that can be
           deleted on request is not a money trail.
+        </p>
+        <p>
+          One copy is not covered yet: the former database (Neon, in the table
+          above) still holds every account that existed on 3 August 2026,
+          including ones deleted since, until that database is deleted.
         </p>
         <p>
           <strong>The copy we hold is what goes.</strong> The originals were never
