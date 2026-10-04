@@ -1257,6 +1257,7 @@
     "statusDuplicate": "Not sent again. An identical message was already sent from this address. Change it to send another copy.",
     "reasonUnknown": "the server refused it.",
     "toastSent": "Message sent.",
+    "toastEarlierWent": "This message had already been sent. Your newer text was not sent as a second copy.",
     "toastUseDraft": "Draft moved to the editor.",
     "toastDiscard": "Draft discarded.",
     "cancel": "Cancel",
@@ -3369,6 +3370,8 @@
     "toastSent": "Reply sent.",
     "toastSentAndDone": "Sent · marked done",
     "toastForwarded": "Forwarded.",
+    "toastEarlierWent": "This reply had already been sent. Your newer text was not sent as a second copy.",
+    "toastForwardEarlierWent": "This forward had already been sent. Your newer text was not sent as a second copy.",
     "forwardHead": "Forward — you pick who receives it",
     "forwardAsk": {
       "otp": "ohmail flagged this message as containing a one-time code.",

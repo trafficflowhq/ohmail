@@ -332,6 +332,27 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
 }
 
 /**
+ * THE KEY A REPLY OR FORWARD LANE'S SEND IS ALREADY GOING UNDER — queued, on the wire, or on disk
+ * for a replay that has not taken its turn. A re-press JOINS it (the engine supersedes the older
+ * entry under one key), so a flush or a boot replay carrying the lane never meets a second key.
+ * The compose lane is excluded: it names every new message, and its hold is the session latch.
+ */
+export function standingSendKey(engine: OhmailEngine, lane: string): string | null {
+  if (lane === COMPOSE_SEND_KEY) return null;
+  const surface = lane.startsWith("fwd:") ? "inline" : "compose";
+  const onLane = (m: { kind?: string } | undefined): boolean =>
+    m?.kind === "mail_send" && sendKeyOf(m as unknown as MailSend, surface) === lane;
+  // A hand-rolled partial engine (a surface test's double) may lack the wire or the reader.
+  const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
+  for (const p of [...engine.pendingMutations(), ...wire]) if (onLane(p.mutation)) return p.key;
+  const disk = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) : [];
+  for (const r of disk as ReadonlyArray<OutboxRow & { key?: string }>) {
+    if (pendingSendRow(r) && onLane(r.mutation) && typeof r.key === "string") return r.key;
+  }
+  return null;
+}
+
+/**
  * IS A SEND OF THIS LANE STILL IN THE **DURABLE** OUTBOX — the question the QUEUE cannot answer. {@link
  * sendPendingInOutbox} reads `engine.pendingMutations()`, which is the in-memory queue, and for a lone RESTORED send
  * that list is empty at every moment a surface could look at it (the replay takes its turn at once). Measured, at five points on a restored engine — before
@@ -1229,7 +1250,7 @@ export function useMailSend(
    * closes if it is still the one on screen.
    */
   const settle = useCallback(
-    (key: string, m: MailSend, andDone?: SendAndDonePlan) => {
+    (key: string, m: MailSend, andDone?: SendAndDonePlan, earlierWent = false) => {
       /* THE IDENTITY THE PRESS RECORDED — see {@link sentFor}. The fallback is the mutation's own
          row and no session, which is the most this can know about a settlement no press on this
          mount produced; an unnameable one admits, which is the rule everywhere else here. */
@@ -1305,6 +1326,11 @@ export function useMailSend(
       /* SEND + DONE TAKES THE SENTENCE: one press, one toast, rather than "Reply sent." replaced a
          beat later by "Sent · marked done". */
       if (released) return;
+      /* A re-press that joined a send already delivered: the earlier words went, the newer did not. */
+      if (earlierWent) {
+        toast(t(key === COMPOSE_SEND_KEY ? "compose.toastEarlierWent" : key.startsWith("fwd:") ? "reply.toastForwardEarlierWent" : "reply.toastEarlierWent"));
+        return;
+      }
       toast(
         key === COMPOSE_SEND_KEY
           ? (m.sendAt
@@ -1458,7 +1484,7 @@ export function useMailSend(
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the
       // draft and discharges the debt exactly as the first press would have.
-      if (res.status === "confirmed") settle(key, m, res.andDone);
+      if (res.status === "confirmed") settle(key, m, res.andDone, res.earlierWordsKept === true && res.firstSend !== undefined);
       else {
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
@@ -1949,8 +1975,9 @@ export function useMailSend(
       const subject = id.subjects[0];
       /* THROUGH THE IDENTITY, not the fingerprint alone: the session and the subjects scope the resume. */
       const resumed = resumeSendLock(key, id, now, owner.current);
-      const sendKey = resumed ?? crypto.randomUUID();
-      if (!resumed) {
+      const standing = standingSendKey(engine, key);
+      const sendKey = standing ?? resumed ?? crypto.randomUUID();
+      if (sendKey !== resumed) {
         claimSendLock({
           v: SEND_LOCK_FORMAT, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp,
           // Recorded at the press, from the mutation AS SENT — the same value `canSend` compares

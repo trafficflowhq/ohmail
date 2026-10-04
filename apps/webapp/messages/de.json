@@ -1257,6 +1257,7 @@
     "statusDuplicate": "Nicht nochmal gesendet. Eine identische Nachricht wurde von dieser Adresse schon gesendet. Ändere sie, um eine weitere Kopie zu senden.",
     "reasonUnknown": "der Server hat es abgelehnt.",
     "toastSent": "Nachricht gesendet.",
+    "toastEarlierWent": "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
     "toastUseDraft": "Entwurf steht im Editor.",
     "toastDiscard": "Entwurf verworfen.",
     "cancel": "Abbrechen",
@@ -3369,6 +3370,8 @@
     "toastSent": "Antwort gesendet.",
     "toastSentAndDone": "Gesendet · erledigt",
     "toastForwarded": "Weitergeleitet.",
+    "toastEarlierWent": "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
+    "toastForwardEarlierWent": "Diese Weiterleitung wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
     "forwardHead": "Weiterleiten — du wählst, wer sie bekommt",
     "forwardAsk": {
       "otp": "ohmail hat in dieser Nachricht einen Einmalcode erkannt.",
