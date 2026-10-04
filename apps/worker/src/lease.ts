@@ -1,6 +1,6 @@
 import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, deriveRequestKey,
-  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, LeaseClockSkewError, META_FOLDER, clockSkewBoundMs,
+  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, clockSkewBoundMs,
   ClaimReleaseError,
   isMalformed, parseClaim, peekLease, runLeaseGate, sameMetaStamp,
   type ClaimRecord, type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type MetaBaselineReading,
@@ -311,16 +311,17 @@ function standDownReason(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>
 }
 
 /**
- * What an unreadable lease is CALLED on the mailbox row.
- *
- * ONE derivation for both arms of the sync loop — the attach and the cycle — because the two used
- * to spell `"lease_unreadable"` as a literal each. A wrong clock is not a folder that could not be
- * read: `lease_unreadable`'s sentence says ohmail cannot read its own folder on that server, which
- * is false here and names nothing anybody can act on, while the one thing a person can do about a
- * wrong clock is set it. Every other `LeaseUnavailableError` keeps the answer it had.
+ * What an unreadable lease is CALLED on the mailbox row — ONE derivation for the worker's attach
+ * and cycle arms and the desktop's runtime, so no host spells a reason of its own. A wrong clock is
+ * `clock_off` (the one thing anybody can do is set it); a folder too full to read is
+ * `meta_folder_full` (the cure is in the person's mailbox); every other `LeaseUnavailableError` is
+ * `lease_unreadable`. All three stay the one exempt class.
  */
-export function leaseBlockReason(err: LeaseUnavailableError): MailboxSyncBlockReason {
-  return err instanceof LeaseClockSkewError ? "clock_off" : "lease_unreadable";
+export function leaseBlockReason(err: Pick<LeaseUnavailableError, "op">): MailboxSyncBlockReason {
+  /* By `op`, which every `LeaseUnavailableError` carries and `LeaseClockSkewError` fixes at
+     `clock_skew`: a caller holding only the op (the desktop's peek answer) derives the same. */
+  return err.op === "clock_skew" ? "clock_off"
+    : err.op === "meta_folder_full" ? "meta_folder_full" : "lease_unreadable";
 }
 
 function byOf(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>): OrganizerClaim | null {

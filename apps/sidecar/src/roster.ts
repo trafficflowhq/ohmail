@@ -13,7 +13,7 @@ import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap
 import type { LeasePeekAnswer } from "@trafficflow/core/adapters/organizer-lease";
 import type { SyncDeps } from "@trafficflow/worker/sync";
 import type { OrganizerProfileSync, SettingsLeft } from "@trafficflow/worker/profile";
-import type { MailboxDisabledReason } from "@trafficflow/db";
+import type { MailboxDisabledReason, MailboxSyncBlockReason } from "@trafficflow/db";
 /* The name only — see {@link FirstSyncState}'s own header for why it is declared over there. */
 import type { FirstSyncState } from "./first-sync.js";
 
@@ -209,6 +209,12 @@ export interface OrganizerState {
    * Set where the lease read throws, cleared when it resolves; the shell renders `blocked_lease_unreadable`.
    */
   unreadableSince: string | null;
+  /**
+   * WHAT {@link unreadableSince} IS CALLED on the row — `leaseBlockReason` of the latest refusal
+   * (a full `ohmail/_meta` is `meta_folder_full`, a wrong clock `clock_off`). Non-null exactly
+   * while `unreadableSince` is; set and cleared beside it.
+   */
+  unreadableReason: MailboxSyncBlockReason | null;
   /**
    * THE PERSON'S STOP, STILL STANDING ON THE ROW — ISO 8601, or `null` where none is. The gate
    * already re-reads `release_requested_at` every pass; this is that read projected so a caller

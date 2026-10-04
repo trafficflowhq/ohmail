@@ -124,6 +124,12 @@ export const MAILBOX_SYNC_BLOCK_REASONS = [
    * cannot be told from an outage, and stays the `connect` error.
    */
   "provider_unavailable",
+  /**
+   * `ohmail/_meta` holds more than the lease read takes (records or bytes, mail 0142), so the
+   * lease cannot be decided. Same exempt class as `lease_unreadable` (`op` tells them apart); a
+   * separate member because the cure is in the person's own mailbox, and waiting does not heal it.
+   */
+  "meta_folder_full",
 ] as const;
 
 export type MailboxSyncBlockReason = (typeof MAILBOX_SYNC_BLOCK_REASONS)[number];
