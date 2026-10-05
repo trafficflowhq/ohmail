@@ -392,7 +392,14 @@ export function FolderView({
       </ListPane>
       {/* The reading column — the Ohbox's own; no `onEnterReader`, TagView's reason. */}
       {/* THE PANE AGREES WITH THE ROW IT WAS OPENED FROM — `presentsUnread`, TagView's reason. */}
-      <ListReadColumn list={list} regionLabel={tReader("pane")}>
+      <ListReadColumn
+        list={list}
+        regionLabel={tReader("pane")}
+        /* The column's own way out under a thumb in the two-pane band (DESIGN-FOLD-WIDTHS §1): only
+           while a row is picked — the column's first-row fallback has nothing to close. */
+        onClose={selectedId !== null ? () => { setSelectedId(null); onPick?.(null); } : undefined}
+        closeLabel={tReader("closeColumn")}
+      >
         {(m) => (
           <MessagePane
             message={m.unread === presentsUnread(m) ? m : { ...m, unread: presentsUnread(m) }}

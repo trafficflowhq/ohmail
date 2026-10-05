@@ -236,6 +236,9 @@ export function AddressView({
       <div className="vhead">
         <h1>{name ?? shownAddress}</h1>
         {name ? <span className="meta">{shownAddress}</span> : null}
+        {/* Below 1024 the topbar carries the address and this heading is hidden (`app.css`); the
+            person's name then stands here, once, in the meta register. */}
+        {name ? <span className="meta meta-name">{name}</span> : null}
       </div>
       <div className="scroller">
         {/* The same 740px column as Search: this view is what a search row's address opens into,

@@ -381,7 +381,14 @@ export function HistoryView({
           )}
         </ListRows>
       </ListPane>
-      <ListReadColumn list={list} regionLabel={tReader("pane")}>
+      <ListReadColumn
+        list={list}
+        regionLabel={tReader("pane")}
+        /* The column's own way out under a thumb in the two-pane band (DESIGN-FOLD-WIDTHS §1): only
+           while a row is picked — the column's first-row fallback has nothing to close. */
+        onClose={picked !== null ? () => { selectId(null); onPick?.(null); } : undefined}
+        closeLabel={tReader("closeColumn")}
+      >
         {(m) => (
           <MessagePane
             message={m}

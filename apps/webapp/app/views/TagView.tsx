@@ -282,7 +282,14 @@ export function TagView({
           length — worse, the fallback verb WRITES `unread: true`, when what a pinned row needs
           is the deliberate read that releases it. The projection is presentation only;
           `onAction` still carries the real message. */}
-      <ListReadColumn list={list} regionLabel={tReader("pane")}>
+      <ListReadColumn
+        list={list}
+        regionLabel={tReader("pane")}
+        /* The column's own way out under a thumb in the two-pane band (DESIGN-FOLD-WIDTHS §1): only
+           while a row is picked — the column's first-row fallback has nothing to close. */
+        onClose={selectedId !== null ? () => { setSelectedId(null); onPick?.(null); } : undefined}
+        closeLabel={tReader("closeColumn")}
+      >
         {(m) => (
           <MessagePane
             message={m.unread === presentsUnread(m) ? m : { ...m, unread: presentsUnread(m) }}

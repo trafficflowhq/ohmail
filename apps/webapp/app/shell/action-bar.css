@@ -533,6 +533,12 @@
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
 }
+/* THE FLIPPED FORM (DESIGN-FOLD-WIDTHS §7): a menu whose top would leave the viewport opens downward from the bar
+   when the room below holds it (`MoreMenu.tsx` measures and sets the class). */
+.mmenu.mmenu-down {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
 
 .mm-item {
   display: flex;
@@ -674,6 +680,12 @@
    folded in the copy, which would zero the very widths that decide the fold. */
 .abar-measure .abar-v { display: flex !important; }
 .abar-measure .abar-read-lab { display: inline !important; }
+/* AND THE READ SWITCH ITSELF: the measure row IS an `.abar-row`, so the `read-folded` pair below
+   would hide the switch in the COPY too, the next measurement would read it at zero width and
+   withdraw the fold, the switch would return, and the bar would oscillate — measured on the
+   phone overlay at 360/390/412 the hour the fold shipped (a press on More landed on the switch's
+   label mid-swap). A fold must never zero the width that decides the fold. */
+.abar-measure .abar-read { display: flex !important; }
 /* The answer verbs' words likewise, and their icon faces never: the copy measures the WORDS, the
    floor's concession for each is its word less the icon (`bar-density.ts`). */
 .abar-measure .abar-fwd-lab,
@@ -706,6 +718,14 @@
 .msg-actions .abar[data-admit~="screen"] .mmenu .mm-screen { display: none; }
 .msg-actions .abar[data-admit~="move"] .abar-row .abar-move { display: flex; }
 .msg-actions .abar[data-admit~="move"] .mmenu .mm-move { display: none; }
+
+/* THE READ SWITCH'S OWN PAIR (DESIGN-FOLD-WIDTHS §7): the row form is the floor's default and the menu twin is
+   hidden at rest — the inverse polarity of the verbs above, same rule: never both, never neither.
+   `bar-density.ts` writes `read-folded` under 400px of room, and under a coarse pointer wherever
+   the compact concession would have left the switch a dot with no word and no keycap. */
+.mm-read { display: none; }
+.msg-actions .abar[data-admit~="read-folded"] .abar-row .abar-read { display: none; }
+.msg-actions .abar[data-admit~="read-folded"] .mmenu .mm-read { display: flex; }
 
 /* THE SEGMENT WRAPPERS FOLLOW THEIR FIRST MEMBER, and that is exact rather than approximate:
    admission is a greedy prefix, so a segment has a visible member precisely when its first one

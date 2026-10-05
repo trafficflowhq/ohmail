@@ -214,10 +214,15 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
  * pane that no longer holds the control, which is the failure this line exists to prevent.
  */
 function openAwaySettings(): void {
+  /* THE ROUTER'S OWN `history.state` IS KEPT, as every writer under this app keeps it, and the
+     navigation goes first. A state without the app router's marker makes it adopt the URL it was
+     given and restore it over the next hash change — written `null` before `go`, that URL still
+     carried `#/ohbox` and this link opened nothing (the built page at 390 and 1440, at base too).
+     `SettingsView` reads the query at its mount, which the hash change schedules after this frame. */
+  go("settings");
   const url = new URL(window.location.href);
   url.searchParams.set("settings", "away");
-  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-  go("settings");
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 /**

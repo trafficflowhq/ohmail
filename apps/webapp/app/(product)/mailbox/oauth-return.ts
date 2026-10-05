@@ -111,7 +111,10 @@ function landOnMailboxesPane(): void {
   url.searchParams.set("settings", "mailboxes");
   for (const k of ["oauth", "state", "code", "reason"]) url.searchParams.delete(k);
   const changed = url.hash !== "#/settings";
-  window.history.replaceState(null, "", `${url.pathname}${url.search}#/settings`);
+  /* The router's own `history.state` is kept, as every writer under this app keeps it: a state
+     without the app router's marker makes it adopt the URL it was given and restore it over the
+     next hash change (the away notice's link opened nothing that way). */
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}#/settings`);
   if (changed) window.dispatchEvent(new Event("hashchange"));
 }
 

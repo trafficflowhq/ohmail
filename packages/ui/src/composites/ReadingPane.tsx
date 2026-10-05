@@ -174,18 +174,13 @@ export function ReadingPane({
 
 /**
  * The lift-1 reading column that hosts a ReadingPane in split views.
- *
  * `regionLabel` makes the column a FOCUSABLE, NAMED REGION — the third zone of the arrow-key
- * spatial model (rail ← list → open message; the webapp's `zone-nav.tsx`). `tabIndex={-1}`
- * so → can land real focus on it (never Tab: the message's own controls keep the tab order),
- * `role="region"` with the label so the landing is announced, and the global
- * `:focus-visible` ring (base.css) marks the focused zone in both themes. Optional and
- * default-absent: a column nobody navigates by keyboard renders exactly as before.
- *
- * `onClose` renders the column's own way out — a 38px ✕ the webapp's stylesheet shows ONLY in
- * the two-pane band under a coarse pointer (700–1023px, where there is no Esc; DESIGN-FOLD-WIDTHS
- * §1) and hides everywhere else. It is the first child, so the stylesheet can keep it sticky
- * at the column's top-right over the message head. Absent prop, absent button.
+ * spatial model (rail ← list → open message; the webapp's `zone-nav.tsx`): `tabIndex={-1}` so →
+ * can land real focus on it (never Tab), `role="region"` with the label so the landing is
+ * announced, the global `:focus-visible` ring marking it. Absent, the column renders as before.
+ * `onClose` renders the column's own way out — a 38px ✕ the webapp's stylesheet shows only in the
+ * two-pane band under a coarse pointer (700–1023px, no Esc; DESIGN-FOLD-WIDTHS §1), first child so
+ * it can stay sticky at the column's top-right. Absent prop, absent button.
  */
 export function ReadColumn({
   children,

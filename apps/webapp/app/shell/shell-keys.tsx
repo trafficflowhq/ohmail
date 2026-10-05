@@ -1363,7 +1363,21 @@ export function useShellKeys({
         // The missing-folder fallback renders the Ohbox, so the title says Ohbox — the same
         // one-answer rule the rail highlight follows.
         ? (openFolder?.name ?? t("rail.ohbox"))
-        : (viewTitles[route.view] ?? t("rail.ohbox"));
+        : route.view === "address"
+          // The address IS the view's identity (as a tag's name is the tag view's); the view's
+          // own head keeps the person's name under it (`app.css`, the drawer band).
+          ? (route.address ?? t("rail.ohbox"))
+          : route.view === "settings" && route.settingsPane != null && narrowNow
+            // A settings SECTION on a phone is its own page under the topbar (DESIGN-FOLD-WIDTHS §5): the bar
+            // names the section and carries the way back to the list (`AppShell`). From 700
+            // the tab row names the section and the bar says Settings, as before.
+            ? (settingsPanes(settingsWired, (key) => t(`settings.${key}`)).find(([id]) => id === route.settingsPane)?.[1]
+              ?? t("rail.settings"))
+            : (viewTitles[route.view] ?? t("rail.ohbox"));
+  /** A settings section THIS SURFACE OFFERS is open by route — the topbar's ≡ yields to a back control
+   *  below 700. An unknown `#/settings/<x>` is the list (`SettingsView`): no back chip, the page's name. */
+  const settingsSection = route.view === "settings" && route.settingsPane != null
+    && settingsPanes(settingsWired, (key) => t(`settings.${key}`)).some(([id]) => id === route.settingsPane);
 
   /* ── views ── */
   const tagGroup =
@@ -1430,6 +1444,7 @@ export function useShellKeys({
     narrowNow,
     paletteRef,
     pushTier,
+    settingsSection,
     railGroupsWithHints,
     railNow,
     railRef,

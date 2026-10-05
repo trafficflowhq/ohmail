@@ -4200,18 +4200,22 @@ input.set-tag-input {
   font-weight: 600;
 }
 
+/* The address view's name, in the meta register: drawn only where the topbar carries the address
+   (the drawer band below), hidden at the desktop head, whose h1 is the name. */
+.vhead .meta-name {
+  display: none;
+}
+
 /* ================= mobile =================
-   THE WIDTH LADDER (DESIGN-FOLD-WIDTHS §0; the numbers live in `@ohmail/tokens` `layout` and
+   THE WIDTH LADDER (DESIGN-FOLD-WIDTHS §0; the numbers live in `@ohmail/tokens` `layout`, and
    `shell/narrow.ts` asks the same two in JS). Three bands, two thresholds, ONE query pair per
    threshold — `(max-width: 1023.98px)` / `(min-width: 1024px)` and `(max-width: 699.98px)` /
    `(min-width: 700px)` — so no fractional width matches both halves or neither:
      < 700       the phone: topbar over ONE column; a message opens the floating reader.
      700–1023    topbar over TWO panes (list + inline reader); the rail is still a drawer.
      ≥ 1024      three panes with the standing rail — the shipped desktop, unchanged.
-   The first block below is the DRAWER band (everything about the rail being a drawer under a
-   topbar); the second is the PHONE band (everything about there being one column); the third is
-   the two-pane band's own split. An unfolded foldable (700–830 CSS px) lands in the middle band,
-   which is where Android's own two-pane floor (700 dp) puts it too. */
+   Below: the DRAWER band, then the PHONE band, then the two-pane band's own split. An unfolded
+   foldable (700–830 CSS px) is in the middle band, where Android's 700 dp floor puts it too. */
 .topbar {
   display: none;
 }
@@ -4237,11 +4241,45 @@ input.set-tag-input {
     padding: 12px 16px 8px;
     flex: none;
   }
-  .topbar b {
+  /* The page's one title below 1024 (DESIGN-FOLD-WIDTHS §5): the topbar's register, never the pile title's 20px —
+     `list-title-size.test.ts` keeps the two registers apart. A long folder or tag name
+     ellipsises rather than pushing the ↻ and ⌘K capsules off the bar. */
+  .topbar .tb-title {
     font-size:calc(13.5px + var(--type-up));
     font-weight: 650;
     letter-spacing: -0.01em;
-    margin-right: auto;
+    margin: 0 auto 0 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* ONE TITLE, SO THE VIEW'S OWN HEADING GOES: the name stood twice, in this bar and as the
+     page heading directly under it ("Settings / Settings", "Compose / Compose"). The head row
+     keeps its meta and action where the heading stood (top padding 10 instead of 22); a head
+     that was only its heading goes whole, so a card (Compose) starts at the top. */
+  .view .vhead h1 {
+    display: none;
+  }
+  .view .vhead {
+    padding-top: 10px;
+  }
+  .view .vhead:not(:has(> :not(h1))) {
+    display: none;
+  }
+  /* THE READING STREAMS' OWN HEAD (`.stream-top`, News and Receipts on one column) carries the
+     pile's name too: hidden here, its meta count stays. */
+  .stream-top h1 {
+    display: none;
+  }
+  /* The address view: the topbar carries the address (the view's identity) and the head keeps
+     the PERSON — the name in the meta register (`.meta-name`, drawn at this width only) under the
+     hidden heading; the address meta goes, or the same text would stand twice. */
+  .view-address .vhead .meta {
+    display: none;
+  }
+  .view-address .vhead .meta-name {
+    display: block;
   }
   .tb-btn {
     display: inline-flex;
@@ -4258,9 +4296,13 @@ input.set-tag-input {
     grid-template-columns: 1fr;
     padding: 0 10px 10px;
   }
+  /* THE DRAWER HAS A WIDTH OF ITS OWN (DESIGN-FOLD-WIDTHS §4): `min(320px, 100vw − 48px)` — 312 at 360, 320 from
+     368 up — never 76vw, which at an unfolded 821 was a 624px drawer carrying 224px of rail.
+     The rows fill it; a depth-0 label starts 37px into the row (`rail.css`'s template). */
   .deck > .rail {
     position: fixed;
-    inset: 0 24% 0 0;
+    inset: 0 auto 0 0;
+    width: min(320px, calc(100vw - 48px));
     z-index: var(--z-drawer);
     background: var(--float);
     box-shadow: var(--lift-3);
@@ -4305,10 +4347,86 @@ input.set-tag-input {
   .set-nav button {
     width: auto;
   }
+  /* THE WAY BACK FROM A SETTINGS SECTION (DESIGN-FOLD-WIDTHS §5): the topbar's ≡ yields to "‹ Settings" while a
+     section is open on a phone (`AppShell`). The chevron is the rail's own glyph, turned. */
+  .tb-back {
+    gap: 4px;
+    padding-left: 8px;
+  }
+  .tb-back .chev {
+    width: 12px;
+    height: 12px;
+    transform: rotate(180deg);
+  }
+}
+
+/* THE PHONE'S SETTINGS LIST (DESIGN-FOLD-WIDTHS §5), styled wherever the view draws it: the view
+   decides by `readColumnHidden()` — 699.98 under classic, 721 under Zero — so these rules carry no
+   width of their own (a 699.98 query under them left Zero's list at 700–721 unstyled). The
+   server-rendered tab row is hidden in the phone band below. */
+.set-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 14px calc(28px + env(safe-area-inset-bottom, 0px));
+}
+.set-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.set-group .grouplabel {
+  padding: 2px 8px 4px;
+}
+.set-rows {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-radius: var(--r-card);
+  box-shadow: var(--lift-1);
+  overflow: hidden;
+}
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 12px 6px 14px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: calc(14px + var(--type-up));
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: inset 0 -1px 0 var(--hair-soft);
+}
+.set-row:last-child {
+  box-shadow: none;
+}
+.set-row:active {
+  background: var(--tint);
+}
+.set-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.set-row .chev {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--ink3);
 }
 
 /* ═══ THE PHONE BAND, < 700: one column; the floating reader is the open ═══════════════════ */
 @media (max-width: 699.98px) {
+  /* SETTINGS IS A LIST OF SECTIONS, NOT A CLOUD OF PILLS (DESIGN-FOLD-WIDTHS §5). The view
+     renders the list itself (`SettingsView`, `.set-list`) once it knows the width; this hides
+     the server-rendered tab row until then, so no pill is ever painted on a phone. */
+  .set-nav {
+    display: none;
+  }
   /* EVERY SPLIT VIEW ON A PHONE IS ITS LIST: the reading column is hidden and a tap opens the
      reader sheet (Trash's live rows, its own sheet). ONE rule for every split view, because
      `readColumnHidden()` asks the SAME 700px question before a click selects or opens, and a
@@ -4382,10 +4500,11 @@ input.set-tag-input {
     display: none;
   }
   .view .vhead {
-    padding: 14px 20px 10px;
+    padding: 10px 20px 10px;
   }
   /* No `.view .vhead h1` size here. The title is one size at every width and `list-pane.css`
-     declares it; a per-breakpoint override is what made it two. The padding above still narrows,
+     declares it; a per-breakpoint override is what made it two (and below 1024 the heading is
+     hidden anyway — the topbar carries the name, drawer band above). The padding still narrows,
      because the PANE tightens on a phone — the label does not. */
   .view .grouplabel,
   .view .rows {

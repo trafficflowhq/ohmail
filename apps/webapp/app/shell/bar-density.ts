@@ -91,6 +91,29 @@ export const BAR_SEGMENTS: ReadonlyArray<{ seg: BarSeg; first: BarVerb }> = [
 export const COMPACT = "compact";
 
 /**
+ * THE READ SWITCH'S OWN FOLD (DESIGN-FOLD-WIDTHS §7). Under {@link READ_FOLD_ROOM_PX} of
+ * room IN THE NARROW SHELL (below 1024, where the rail is a drawer) the switch leaves the row
+ * for the menu WHOLE, so a phone's bar reads Reply · Forward · [Later] · ⌄ and nothing on it is
+ * a mark without a word. The same fold stands in for the compact concession under a COARSE
+ * pointer at any width, wherever that concession would have taken the switch's words: there the
+ * keycap is hidden too (`action-bar.css`), and a lone orange dot is a mark, not a control — the
+ * 360px frame of 2026-10-05. The desktop at 1024 and up with a fine pointer is as before — the
+ * compact form, dot + keycap — whatever its column's width (the fold reached 1024 by room alone once).
+ */
+export const READ_FOLD_ROOM_PX = 400;
+/** The `data-admit` token: the read switch is in the menu (`.mm-read`), not the row. */
+export const READ_FOLDED = "read-folded";
+
+/**
+ * Does the read switch leave the row? `wordsWouldGo`: the compact concession would have fallen
+ * on the switch's label (it was the widest word the floor could give up and the floor did not fit).
+ */
+export function foldReadSwitch(roomPx: number, coarse: boolean, wordsWouldGo: boolean, narrowShell: boolean): boolean {
+  if (coarse && wordsWouldGo) return true;
+  return narrowShell && roomPx < READ_FOLD_ROOM_PX;
+}
+
+/**
  * THE WORDS THE FLOOR MAY GIVE UP, each as the label span and the button that closes a gap
  * when it goes. Exported so the stylesheet pin and the two bars' tests read one list rather
  * than three copies of it; the ORDER is immaterial, because the widest is taken, not the first.
@@ -299,9 +322,13 @@ export function useBarDensity(): {
      */
     const tokens: string[] = [];
     let floor = base;
-    if (base > avail) {
+    /* The compact candidates, measured once: the widest word and WHICH button it belongs to,
+       because the read switch's fold below is decided on whether that word was the switch's. */
+    const compactSaving = (skipRead: boolean): { widest: number; isRead: boolean } => {
       let widest = 0;
+      let isRead = false;
       for (const sel of COMPACT_LABELS) {
+        if (skipRead && sel.button === ".abar-read") continue;
         const lab = row.querySelector<HTMLElement>(sel.label);
         if (!lab) continue;
         const btn = lab.closest<HTMLElement>(sel.button);
@@ -315,10 +342,34 @@ export function useBarDensity(): {
         const btnW = btn ? btn.getBoundingClientRect().width : 0;
         const minW = bs ? parseFloat(bs.minWidth) || 0 : 0;
         const saves = btn && minW > 0 ? Math.min(labW + inner, Math.max(0, btnW - minW)) : labW + inner;
-        widest = Math.max(widest, saves);
+        if (saves > widest) { widest = saves; isRead = sel.button === ".abar-read"; }
       }
+      return { widest, isRead };
+    };
+    /* THE READ SWITCH'S FOLD comes first: whole, into the menu, under 400px of room or
+       wherever a coarse pointer would otherwise be left the dot alone. It saves the button and
+       the gap its group closes. A mount with no read switch (a stream card's bar) folds nothing. */
+    const readBtn = row.querySelector<HTMLElement>(".abar-read");
+    const readW = readBtn ? readBtn.getBoundingClientRect().width : 0;
+    const first = base > avail ? compactSaving(false) : { widest: 0, isRead: false };
+    const coarse = window.matchMedia?.("(pointer: coarse)").matches === true;
+    /* The narrow shell — the drawer band, the number `shell/narrow.ts` asks. A client with no
+       `matchMedia` (jsdom, where every arm of the fold lives) reads as narrow; a browser answers. */
+    const narrowShell = typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 1023.98px)").matches
+      : true;
+    let readFolded = false;
+    if (readW > 0 && foldReadSwitch(room, coarse, base > avail && first.isRead, narrowShell)) {
+      const group = readBtn!.parentElement;
+      const groupGap = group ? parseFloat(getComputedStyle(group).columnGap) || 0 : 0;
+      floor = base - readW - groupGap;
+      tokens.push(READ_FOLDED);
+      readFolded = true;
+    }
+    if (floor > avail) {
+      const { widest } = readFolded ? compactSaving(true) : first;
       if (widest > 0) {
-        floor = base - widest;
+        floor -= widest;
         tokens.push(COMPACT);
       }
     }

@@ -1034,6 +1034,21 @@ function ActionBar({
       : []),
     { id: "screen", group: "screen", label: tr("action"), run: () => { setMenuOpen(false); onScreen(moreRef.current); } },
     { id: "move", group: "move", label: t("actionMove"), run: () => { closeMenu(); openPanel("move", "more"); } },
+    /* THE READ SWITCH'S MENU TWIN (DESIGN-FOLD-WIDTHS §7): on screen only while `read-folded` admits it — under
+       400px of room, or under a thumb where the floor would have left the switch a lone dot —
+       so the row's switch and this item are never both there (the pair rule every verb keeps).
+       Its face follows the row's: Done on a resurfaced message, else the read direction. */
+    {
+      id: "read",
+      group: "read",
+      label: isResurfaced(message) ? t("actionDone") : read ? t("actionMarkUnread") : t("actionMarkRead"),
+      run: () => {
+        closeMenu();
+        if (isResurfaced(message)) onAction("resurface_done");
+        else if (read) markUnread();
+        else markRead();
+      },
+    },
     {
       id: "draft",
       label: t("actionDraftReply"),

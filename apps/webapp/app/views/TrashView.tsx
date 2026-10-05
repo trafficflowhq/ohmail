@@ -365,6 +365,10 @@ export function TrashView({
       <ListReadColumn
         list={list}
         regionLabel={tReader("pane")}
+        /* The column's own way out under a thumb in the two-pane band (DESIGN-FOLD-WIDTHS §1): only
+           while a mirrored row is picked — a live row's read and the first-row fallback have nothing to close. */
+        onClose={liveKey === null && selectedId !== null ? () => { setSelectedId(null); onPick?.(null); } : undefined}
+        closeLabel={tReader("closeColumn")}
         instead={trashReadVerbs({ live: openLive !== null }).verbs === "restore_and_read" || openLive === null || !live
           ? null
           : <TrashLiveRead item={openLive} live={live} now={now} />}

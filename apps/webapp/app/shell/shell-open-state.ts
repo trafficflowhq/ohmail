@@ -33,7 +33,7 @@ import type { UndoToastFn } from "./undo-door";
 import { placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } from "./cursor-placer";
 import { useCursorPlacer } from "./keymap";
 import type { MessageBarPanel } from "./message-chrome";
-import { readColumnHidden } from "./narrow";
+import { readColumnHidden, watchNarrow } from "./narrow";
 import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import type { RichValue } from "./rich-text";
 import { canonicalHash, go, goScreener, goSettings, reflectMessage, type Route, type ScreenerSegmentId } from "./routing";
@@ -345,6 +345,38 @@ export function useShellOpenState({
       return cur?.place === place && cur.id === id ? cur : { place, id };
     });
   });
+  /* THE WIDTH LADDER'S CROSSING WITH A MESSAGE OPEN (DESIGN-FOLD-WIDTHS §1; a foldable unfolds
+     with the phone reader up). Upward past 700 the column stands: the overlay's message becomes
+     the column's pick and the overlay goes — it used to stand over the two panes with its close
+     hidden and the page behind at 5%. Downward, the column's pick becomes the overlay.
+     A view with no column (a stream) keeps the overlay at every width. The reply dock is keyed by
+     message id, so what is typed moves with the message. */
+  const crossNarrow = useStableCallback((narrow: boolean) => {
+    if (!narrow) {
+      if (readerFor === null) return;
+      if (route.view === "ohbox") setOhboxSel(readerFor);
+      else if (COLUMN_VIEWS.has(route.view)) setViewPick({ place: placeOf(route), id: readerFor });
+      else return;
+      /* A REPLY BEING TYPED KEEPS THE KEYBOARD. The overlay's close hands focus back to the
+         list's row (`focus-follows`), and any key typed through the unfold would then be a
+         list command; so when the overlay's editor had focus, the column's editor takes it once
+         it stands — after the row landing, which runs in the close's own effect. */
+      const typing = document.activeElement?.closest(".reply-editor") != null;
+      setReaderFor(null);
+      if (typing) {
+        window.setTimeout(() => {
+          const surface = document.querySelector<HTMLElement>(".read-col .reply-editor .rte-surface");
+          if (surface !== null && !surface.contains(document.activeElement)) surface.focus();
+        }, 0);
+      }
+      return;
+    }
+    if (readerFor !== null) return;
+    const id = route.view === "ohbox" ? ohboxSel
+      : COLUMN_VIEWS.has(route.view) && viewPick?.place === placeOf(route) ? viewPick.id : null;
+    if (id !== null) setReaderFor(id);
+  });
+  useEffect(() => watchNarrow(crossNarrow), [crossNarrow]);
   const [railOpen, setRailOpen] = useState(false);
   /**
    * THE QUICK-LOOK PREVIEW — a message id and the attachment on screen, or `null`.

@@ -10,25 +10,47 @@
  * outside the bar would need a second JavaScript copy of that decision (`action-bar.css`). It answers
  * no questions: Resurface and Move keep their sub-row — their items close the menu and open the panel.
  */
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { BarVerb } from "./bar-density";
 import { useFocusFollows } from "./focus-follows";
+import { OVERLAY_EDGE, OVERLAY_GAP } from "./overlay-clamp";
+
+/**
+ * THE MENU STAYS INSIDE THE VIEWPORT (DESIGN-FOLD-WIDTHS §7). The bar's menu opens UPWARD
+ * (`action-bar.css`: `bottom: calc(100% + 8px)`), and a short message on a phone parks the bar
+ * high enough that a 318–362px menu overshot y = 0 — "Later" unreachable at 390 and 412, the
+ * top edge cut at 360. Measured after the first paint: when the menu's top is above the edge, it
+ * opens DOWNWARD if the room below the bar holds it (`.mmenu-down`), else it keeps its place and
+ * takes the room above as a cap with its own scroll — flip, cap, scroll, never clip (the same
+ * ladder `overlay-clamp.ts` gives the popovers). The in-flow and header-anchored forms
+ * (`.cpop .mmenu`, `.msg-menu .mmenu`) are not `bottom`-anchored and are left alone.
+ */
+export function fitUpwardMenu(el: HTMLElement, anchor: HTMLElement | null): { down: boolean; maxHeight: number | null } {
+  const s = getComputedStyle(el);
+  if (s.position !== "absolute" || s.bottom === "auto") return { down: false, maxHeight: null };
+  const r = el.getBoundingClientRect();
+  if (r.top >= OVERLAY_EDGE) return { down: false, maxHeight: null };
+  const bar = (anchor?.closest(".abar") ?? el.parentElement)?.getBoundingClientRect();
+  if (!bar) return { down: false, maxHeight: null };
+  const below = window.innerHeight - OVERLAY_EDGE - (bar.bottom + OVERLAY_GAP);
+  if (el.scrollHeight <= below) return { down: true, maxHeight: null };
+  const above = bar.top - OVERLAY_GAP - OVERLAY_EDGE;
+  return { down: false, maxHeight: Math.max(120, above) };
+}
 
 export interface MoreMenuItem {
   /** Stable key, and the value a test selects on. */
   id: string;
   label: ReactNode;
   /**
-   * WHICH ADMISSIBLE VERB THIS ITEM IS, or absent for one that is only ever in the menu.
-   *
-   * Rendered as a class the admission rule switches off when the same verb is standing in the
-   * row. Absent means "no row position at all" — Draft reply and Delete have never had one.
-   *
-   * The type is `BarVerb`, read from the module that owns the order, not a second copy of the
-   * list: it used to name the five density GROUPS, and a group's members are admitted one by
-   * one now, so a menu item and a row button that had drifted apart would type-check.
+   * WHICH ADMISSIBLE VERB THIS ITEM IS, or absent for one that is only ever in the menu (Draft
+   * reply, Delete). Rendered as a class the admission rule switches off when the same verb is
+   * standing in the row. The type is `BarVerb`, read from the module that owns the order, not a
+   * second copy of the list, so a menu item and a row button that drift apart fail to type-check.
+   * `"read"` is the read switch's own fold (DESIGN-FOLD-WIDTHS §7): its row half is the floor's
+   * default, its menu half shows only under `read-folded` (`bar-density.ts`).
    */
-  group?: BarVerb;
+  group?: BarVerb | "read";
   /** Leading glyph, for the one item that carries one. */
   icon?: ReactNode;
   run: () => void;
@@ -62,6 +84,21 @@ export function MoreMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   // A surface of the shell's focus rule: a sheet opened from an item returns to this menu's trigger.
   useFocusFollows(rootRef, { enter: false });
+
+  const [fit, setFit] = useState<{ down: boolean; maxHeight: number | null }>({ down: false, maxHeight: null });
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (el == null || typeof window === "undefined") return;
+    const measure = (): void => {
+      const next = fitUpwardMenu(el, anchor);
+      setFit((prev) => (prev.down === next.down && prev.maxHeight === next.maxHeight ? prev : next));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [anchor, items.length]);
+  const fitStyle: CSSProperties | undefined =
+    fit.maxHeight != null ? { maxHeight: fit.maxHeight, overflowY: "auto" } : undefined;
 
   /**
    * The items that are actually on screen, in order.
@@ -235,7 +272,8 @@ export function MoreMenu({
   return (
     <div
       ref={rootRef}
-      className="mmenu"
+      className={fit.down ? "mmenu mmenu-down" : "mmenu"}
+      style={fitStyle}
       role="menu"
       aria-label={ariaLabel}
       aria-orientation="vertical"

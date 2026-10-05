@@ -40,12 +40,14 @@ import {
   type TagHueName,
   type ThemePreference,
 } from "@ohmail/ui";
+import { Icon } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
 import { FaceRow, type ApplyFaceAllDevices } from "../shell/FaceRow";
 import { ImageQualityRow } from "../shell/ImageQualityRow";
 import { AfterVerbRow } from "../shell/AfterVerbRow";
 import { PANE_IDS, type PaneId } from "../shell/routing";
+import { readColumnHidden, watchNarrow } from "../shell/narrow";
 import {
   browserNotificationHost,
   readChannels,
@@ -371,6 +373,25 @@ export function initialPaneFromUrl(): PaneId {
   const asked = new URLSearchParams(window.location.search).get("settings");
   return PANE_IDS.includes(asked as PaneId) ? (asked as PaneId) : "general";
 }
+
+/** Did the URL ask for a pane at all? The phone's section list stands only when nobody did. */
+export function paneAskedByUrl(): boolean {
+  if (typeof window === "undefined") return false;
+  const asked = new URLSearchParams(window.location.search).get("settings");
+  return PANE_IDS.includes(asked as PaneId);
+}
+
+/**
+ * THE PHONE'S SECTION LIST (DESIGN-FOLD-WIDTHS §5): below 700px Settings is a list of
+ * sections in three groups, not sixteen tab pills in a cloud. The groups are membership over the
+ * wired pane list — a pane this surface does not offer is simply not listed — and the order
+ * inside a group is `settingsPanes`' own.
+ */
+export const SETTINGS_GROUPS: ReadonlyArray<{ key: "groupMail" | "groupAccount" | "groupAbout"; panes: readonly PaneId[] }> = [
+  { key: "groupMail", panes: ["general", "notifications", "mailboxes", "screener", "ai", "away", "rules", "tags", "folders", "signatures", "desktop"] },
+  { key: "groupAccount", panes: ["devices", "billing", "invites", "security", "account"] },
+  { key: "groupAbout", panes: ["about"] },
+];
 
 export function SettingsView({
   notifications,
@@ -716,6 +737,21 @@ export function SettingsView({
   // The ROUTE outranks both — but only when it actually names a pane (see the `pane` prop).
   const [localPane, setPane] = useState<PaneId>(() => initialPane ?? initialPaneFromUrl());
   const pane = routePane ?? localPane;
+  /* THE PHONE BAND, subscribed (`narrow.ts`): below 700 the bare route shows the section list
+     and a routed section stands alone under the topbar's back; a resize crossing 700 with the
+     view open must re-decide, so the width is watched, never sampled. */
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    setPhone(readColumnHidden());
+    return watchNarrow(setPhone);
+  }, []);
+  /* A `?settings=<pane>` deep link, read once: the away notice's link and the consent return keep
+     it in the URL on purpose, so from 700 the tab row stands beside the pane as before. ON A PHONE
+     the query (and a caller's `initialPane`) becomes the ROUTED form below, which is what brings
+     the section's way back — read once, it left one pane standing with no list, no tab row and
+     no back control, and Drawer → Settings could not leave it. */
+  const [askedByUrl, setAskedByUrl] = useState(() => paneAskedByUrl());
+  const urlPane: PaneId | null = askedByUrl ? initialPaneFromUrl() : null;
   const [channels, setChannels] = useState(NOTIFICATION_CHANNELS);
 
   /* THE REAL SWITCHES. `channels` above is the DEMO's prototype list and drives nothing; these
@@ -892,6 +928,28 @@ export function SettingsView({
      appears once `/hello` answers), and a state clamp would strand a deep link that was about to
      become valid. */
   const shown: PaneId = panes.some(([id]) => id === pane) ? pane : "general";
+  /* THE PHONE'S ROUTE for a pane somebody asked for by query or by caller: `onSelectPane` writes
+     `#/settings/<pane>`, the shell's topbar then carries "‹ Settings", and the query leaves the
+     URL so Back and the bare route are the list again. A pane this surface does not offer is not
+     routed, and an unknown `#/settings/<x>` is the list (no back chip; the shell names it so). */
+  const asked: PaneId | null = initialPane ?? urlPane;
+  const askedOffered = asked != null && panes.some(([p]) => p === asked);
+  useEffect(() => {
+    if (!phone || routePane != null || !onSelectPane || asked == null || !askedOffered) return;
+    /* NAVIGATE FIRST, then drop the query — with the ROUTER'S OWN `history.state` kept, as every
+       writer in `routing.ts` does: a `replaceState(null, …)` wiped the app router's state, and on
+       the hash change that followed it repaired the URL to its last known one, the bare
+       `#/settings`, which left the person on the list (measured on the built page). */
+    onSelectPane(asked);
+    if (urlPane != null) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("settings");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      setAskedByUrl(false);
+    }
+  }, [phone, routePane, onSelectPane, asked, askedOffered, urlPane]);
+  const routedUnknown = routePane != null && !panes.some(([p]) => p === routePane);
+  const listMode = phone && ((routePane == null && initialPane == null && !askedByUrl) || routedUnknown);
 
   /**
    * "ONE COULD EVEN DIVE INTO THE SETTINGS LIKE THIS" — the zone model, inside Settings
@@ -902,7 +960,7 @@ export function SettingsView({
    * labelled, focusable region; ↓/↑ scroll the view's one scroller.
    */
   const navButtons = (): HTMLElement[] =>
-    [...document.querySelectorAll<HTMLElement>(".view-settings .set-nav button")];
+    [...document.querySelectorAll<HTMLElement>(".view-settings .set-nav button, .view-settings .set-list button")];
   const roveNav = (dir: 1 | -1): void => {
     const items = navButtons();
     const cur = document.activeElement;
@@ -924,8 +982,45 @@ export function SettingsView({
       scrollSelector: ".view-settings .scroller",
       disabled: false,
     },
-    listFocusSelector: ".view-settings .set-nav button.on",
+    listFocusSelector: ".view-settings .set-nav button.on, .view-settings .set-list button",
   });
+
+  /* Route-controlled, a click WRITES THE HASH (`goSettings` behind `onSelectPane`) and the pane
+     follows the route back down — one source, and each section lands in history so Back walks
+     them. Uncontrolled, the local state it always was. */
+  const select = (id: PaneId): void => (onSelectPane ? onSelectPane(id) : setPane(id));
+
+  if (listMode) {
+    const labelOf = new Map(panes);
+    return (
+      <section className="view col view-settings">
+        <div className="vhead">
+          <h1>{t("title")}</h1>
+        </div>
+        <div className="scroller">
+          <nav className="set-list" aria-label={t("navAria")}>
+            {SETTINGS_GROUPS.map((g) => {
+              const rows = g.panes.filter((id) => labelOf.has(id));
+              if (rows.length === 0) return null;
+              return (
+                <div className="set-group" key={g.key}>
+                  <div className="grouplabel">{t(g.key)}</div>
+                  <div className="set-rows">
+                    {rows.map((id) => (
+                      <button key={id} type="button" className="set-row" data-pane={id} onClick={() => select(id)}>
+                        <span className="set-row-label">{labelOf.get(id)}</span>
+                        <Icon name="chev" className="chev" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </nav>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="view col view-settings">
@@ -934,21 +1029,22 @@ export function SettingsView({
       </div>
       <div className="scroller">
         <div className="set-layout">
+          {/* On a phone the section stands alone: the way back is the topbar's (`AppShell`),
+              and the tab row is the list it came from. */}
+          {phone ? null : (
           <nav className="set-nav" aria-label={t("navAria")}>
             {panes.map(([id, label]) => (
               <button
                 key={id}
                 type="button"
                 className={shown === id ? "on" : undefined}
-                /* Route-controlled, a click WRITES THE HASH (`goSettings` behind `onSelectPane`)
-                   and the pane follows the route back down — one source, and each section lands
-                   in history so Back walks them. Uncontrolled, the local state it always was. */
-                onClick={() => (onSelectPane ? onSelectPane(id) : setPane(id))}
+                onClick={() => select(id)}
               >
                 {label}
               </button>
             ))}
           </nav>
+          )}
 
           {/*
               One grid item for the whole content column, and the Account pane is why. `.set-layout` is nav | content;

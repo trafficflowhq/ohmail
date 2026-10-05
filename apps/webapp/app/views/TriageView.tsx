@@ -452,7 +452,14 @@ export function TriageView({
       {/* THE READING COLUMN — the Ohbox's own. No `onEnterReader` on the pane, for the reason
           the Ohbox and Tag omit it: the "open reading mode" button would sit at exactly the
           widths where the sheet duplicates this column. */}
-      <ListReadColumn list={list} regionLabel={tReader("pane")}>
+      <ListReadColumn
+        list={list}
+        regionLabel={tReader("pane")}
+        /* The column's own way out under a thumb in the two-pane band (DESIGN-FOLD-WIDTHS §1): only
+           while a row is picked — the column's first-row fallback has nothing to close. */
+        onClose={selectedId !== null ? () => { setSelectedId(null); onPick?.(null); } : undefined}
+        closeLabel={tReader("closeColumn")}
+      >
         {(m) => (
           <MessagePane
             message={m}

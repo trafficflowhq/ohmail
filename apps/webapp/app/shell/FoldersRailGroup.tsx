@@ -308,7 +308,7 @@ export function FoldersRailGroup({
     onCancel: () => void;
   }) => (
     <div key={opts.key}>
-      <div className="frow" style={opts.depth > 0 ? { paddingLeft: opts.depth * 14 } : undefined}>
+      <div className="frow" style={opts.depth > 0 ? { paddingLeft: Math.min(opts.depth, 2) * 14 } : undefined}>
         <span className="ftw" />
         <div className="ritem ritem-new" style={{ flex: "1 1 auto" }}>
           <Icon name="folder" className="fglyph" />
@@ -404,7 +404,9 @@ export function FoldersRailGroup({
       <div key={f.id}>
         <div
           className={menuFor === f.id ? "frow menu-on" : "frow"}
-          style={r.depth > 0 ? { paddingLeft: r.depth * 14 } : undefined}
+          /* The indent stops at depth 2 (DESIGN-FOLD-WIDTHS §4): a deeper folder keeps a readable label and names
+             its full path in the row's `title` (`sentence ?? f.name` below carries it). */
+          style={r.depth > 0 ? { paddingLeft: Math.min(r.depth, 2) * 14 } : undefined}
         >
           {kids ? (
             <button

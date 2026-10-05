@@ -1342,6 +1342,10 @@
   "settings": {
     "title": "Settings",
     "navAria": "Settings sections",
+    "groupMail": "Mail",
+    "groupAccount": "Account",
+    "groupAbout": "About",
+    "back": "Back to Settings",
     "general": "General",
     "notifications": "Notifications",
     "mailboxes": "Mailboxes",

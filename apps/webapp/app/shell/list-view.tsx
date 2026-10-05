@@ -7,7 +7,7 @@
  * took away is GONE, said, never swapped for the first row. The views keep their own rows, pages,
  * verbs, body hydration and meta; this renders only the empty pane and the column.
  */
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { listSurface, saysEmpty, type ListSurface } from "@ohmail/client-engine";
 import { ReadColumn, Spinner } from "@ohmail/ui";
 import { MessageGone } from "./MessagePane";
@@ -77,6 +77,8 @@ export interface ListView<M> {
   standsFor: string | null;
   /** Is the reading column off screen at this width — the one place a list view asks it. */
   columnHidden: () => boolean;
+  /** The column's ✕: the column rests until the next pick, rather than showing its first-row fallback. */
+  dismiss: () => void;
 }
 
 export function useListView<M extends { id: string }>(o: ListViewInput<M>): ListView<M> {
@@ -85,14 +87,25 @@ export function useListView<M extends { id: string }>(o: ListViewInput<M>): List
   const { rows, count, settled, pending, picked, resolve, first } = o;
   const surface = listSurface({ settled, count: count ?? rows.length, pending });
   const held = picked === null ? undefined : rows.find((m) => m.id === picked) ?? resolve?.(picked) ?? undefined;
+  /* DISMISSED — the column's ✕ was pressed. A cleared pick falls back to the first row, which is
+     the right resting state on arrival and the wrong answer to a close: the ✕ then opened another
+     message (measured on Triage and History). Dismissed, the column rests; the next pick clears it. */
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    if (picked !== null) setDismissed(false);
+  }, [picked]);
+  // A plain function, never useCallback: this file is handed the shell's memoized `actedIds`, and
+  // a memoized closure here would pin that frame (the render-scope census refuses one).
+  const dismiss = (): void => setDismissed(true);
   const column: ListColumn<M> = useMemo(() => {
     if (held) return { kind: "message", message: held };
     // GONE iff the pick is a tombstone; any other departure (filed out of the tag, outside the
     // window) keeps the first-row fallback, because that is not a message somebody lost.
     if (picked !== null && facts.isGone(picked)) return { kind: "gone" };
+    if (dismissed) return { kind: "rest" };
     const fallback = first === undefined ? rows[0] : first;
     return fallback ? { kind: "message", message: fallback } : { kind: "rest" };
-  }, [held, picked, facts, first, rows]);
+  }, [held, picked, facts, first, rows, dismissed]);
   return {
     surface,
     empty: saysEmpty(surface),
@@ -100,6 +113,7 @@ export function useListView<M extends { id: string }>(o: ListViewInput<M>): List
     shown: column.kind === "message" ? column.message : null,
     standsFor: column.kind === "message" ? column.message.id : column.kind === "gone" ? picked : null,
     columnHidden: readColumnHidden,
+    dismiss,
   };
 }
 
@@ -145,7 +159,7 @@ export function ListSentence({ glyph, title, status, children }: {
 
 /** The reading column: the shown row, the gone notice, or nothing; `instead` is a view's own population (Trash's live rows). */
 export function ListReadColumn<M>({ list, regionLabel, instead, onClose, closeLabel, children }: {
-  list: Pick<ListView<M>, "column">;
+  list: Pick<ListView<M>, "column" | "dismiss">;
   regionLabel: string;
   instead?: ReactNode;
   /** The column's own way out under a thumb in the two-pane band (`ReadColumn`); absent, no ✕. */
@@ -156,7 +170,7 @@ export function ListReadColumn<M>({ list, regionLabel, instead, onClose, closeLa
   const facts = useContext(ListGone);
   const c = list.column;
   return (
-    <ReadColumn regionLabel={regionLabel} onClose={onClose} closeLabel={closeLabel}>
+    <ReadColumn regionLabel={regionLabel} onClose={onClose ? () => { list.dismiss(); onClose(); } : undefined} closeLabel={closeLabel}>
       {instead != null
         ? instead
         : c.kind === "message"

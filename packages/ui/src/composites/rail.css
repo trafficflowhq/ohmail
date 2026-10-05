@@ -3,6 +3,12 @@
   padding:18px 12px 18px 16px;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:1px;
   background:var(--panel);border-radius:var(--r-overlay);box-shadow:var(--lift-1);
 }
+/* THE LABEL ROOM AT A 200px TRACK (DESIGN-FOLD-WIDTHS §4): below 1366 the rail's right padding
+   gives 4px to the folder label, which at the three-pane floor (`--rail-track` 200, touch) is the
+   difference between "Invoices 2026" and "Invoic…". Wider windows keep the shipped 12. */
+@media (max-width: 1365.98px){
+  .rail{padding-right:8px}
+}
 .rail > *{flex:none}
 .wordmark{font-size:15px;letter-spacing:-.02em;padding:2px 8px 14px;user-select:none}
 .wordmark b{font-weight:650}
@@ -212,15 +218,19 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
 .rail-host a:hover{color:var(--ink);text-decoration-color:var(--ink2)}
 
 /* ── FOLDER TREE ROWS — the rail's Folders group (FOLDERS-SPEC.md §14/§15) ─────────────────
- *
- * Transcribed from the feature's clickable prototype, which is the interaction reference.
- * A folder row is a `.frow` FLEX line: a 14px twisty
- * column (`.ftw` — a button on a branch, an empty spacer on a leaf, so labels align), then the
- * ordinary `.ritem` the rest of the rail uses. The glyph sits exactly where a tag's dot does,
- * so the two groups read as siblings.
+ * A `.frow` FLEX line: a 14px twisty column (`.ftw` — a button on a branch, an empty spacer on a
+ * leaf, so labels align), then the ordinary `.ritem`; the glyph sits where a tag's dot does.
+ * ONE ROW TEMPLATE AT EVERY WIDTH (DESIGN-FOLD-WIDTHS §4), left to right:
+ *   [indent 14 × min(depth, 2)] [twisty 14] [4] [glyph 12] [7] [label 1fr, ellipsis] [6] [⋯]
+ * The ⋯ is a 24px column only where hover does not exist; on a pointer device it is absolute at
+ * the row's right edge, revealed on hover/focus/menu-on over the row's tail, which reserves the
+ * room only while the ⋯ is shown. The indent stops at depth 2; deeper folders keep the twisty and
+ * a readable label, the full path being the row's `title` (the 1024 rail read "F…" before this).
  */
-.frow{display:flex;align-items:center;min-width:0;position:relative}
-.frow .ritem{flex:1 1 auto;min-width:0}
+.frow{display:flex;align-items:center;min-width:0;position:relative;min-height:28px}
+.frow .ritem{flex:1 1 auto;min-width:0;padding:5px 6px 5px 4px;gap:7px}
+/* the tail makes room for the hover-revealed ⋯ only while it is shown */
+.frow:hover .ritem,.frow:focus-within .ritem,.frow.menu-on .ritem{padding-right:30px}
 .ftw{flex:0 0 14px;width:14px;display:inline-flex;align-items:center;justify-content:center;
   align-self:stretch;color:var(--ink3);border-radius:calc(var(--r-ctl) * 6 / 8);padding:0;background:none;border:0}
 button.ftw{cursor:pointer}
@@ -228,7 +238,7 @@ button.ftw:hover{color:var(--ink)}
 .ftw .chev{width:10px;height:10px;transition:transform .25s var(--spring)}
 .ftw.open .chev{transform:rotate(90deg)}
 /* the folder glyph sits exactly where a tag's dot does, so the two groups stay aligned */
-.fglyph{width:11px;height:11px;flex:none;color:var(--ink3);stroke:currentColor;fill:none;stroke-width:1.4;
+.fglyph{width:12px;height:12px;flex:none;color:var(--ink3);stroke:currentColor;fill:none;stroke-width:1.4;
   stroke-linecap:round;stroke-linejoin:round}
 .ritem.on .fglyph{color:var(--accent-ink)}
 /* .flabel ellipsizes so a full path fits a 224px rail; .fpath is the muted parent-path prefix a
@@ -246,11 +256,17 @@ button.ftw:hover{color:var(--ink)}
  * ask-first delete confirm. The menu reuses `.scn-act-menu`/`.scn-act-dest` (app.css) for its
  * surface; `.fmenu` only anchors it to the row. `.fmore` is hover/focus-revealed on pointer
  * devices and always visible where hover does not exist (the prototype's rule). */
-.fmore{flex:0 0 auto;padding:2px 7px;border-radius:var(--r-ctl);color:var(--ink3);font-weight:700;
+.fmore{position:absolute;right:4px;top:50%;translate:0 -50%;flex:0 0 auto;padding:2px 7px;border-radius:var(--r-ctl);color:var(--ink3);font-weight:700;
   background:none;border:0;cursor:pointer;opacity:0;transition:opacity .15s ease}
 .frow:hover .fmore,.frow:focus-within .fmore,.frow.menu-on .fmore{opacity:1}
 .fmore:hover{color:var(--ink);background:var(--tint)}
-@media (hover:none){.fmore{opacity:1}}
+/* no hover: the ⋯ is a standing 24px column, always visible, the row's own height tall */
+@media (hover:none){
+  .fmore{position:static;translate:none;opacity:1;flex:0 0 24px;width:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;align-self:stretch}
+  .frow:hover .ritem,.frow:focus-within .ritem,.frow.menu-on .ritem{padding-right:6px}
+}
+/* a thumb's row is 44 tall wherever the pointer is coarse, not only on a phone */
+@media (pointer:coarse){.frow{min-height:44px}}
 .fmenu{top:calc(100% + 2px);right:4px;left:auto}
 /* a command in flight: dimmed, the sentence in the title — pending, never pretended done */
 .ritem.fpend{opacity:.55}
@@ -304,11 +320,14 @@ button.ftw:hover{color:var(--ink)}
      44 by way of the flex line's cross size, which is a property of a sibling — so this is the
      same number written where the twisty's own guard can read it, and it moves no pixel. */
   .frow{min-height:44px}
-  /* The folder row's ⋯ keeps its 2px/7px box and takes the strip. It is the last item on a
-     row that is 44 tall by the rule above, so its 44px strip is exactly the row's height —
-     it reaches past neither end — and `.ritem`, the only control beside it, ends where
-     `.fmore` begins. */
-  .fmore{position:relative}
+  /* The folder row's ⋯ keeps its box and takes the strip. It is the last item on a row that
+     is 44 tall by the rule above, so its 44px strip is exactly the row's height — it reaches
+     past neither end — and `.ritem`, the only control beside it, ends where `.fmore` begins.
+     RELATIVE here, by name: the strip's containing block must be the ⋯ itself, not the row
+     (a row-wide strip would lie over `.ritem`). The base rule's absolute offsets are reset,
+     because a relative box would be SHIFTED by them. Later in the file than the hover rules
+     at equal specificity, so source order makes this the phone's answer for either pointer. */
+  .fmore{position:relative;top:auto;right:auto;translate:none}
   .fmore::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
 }
 

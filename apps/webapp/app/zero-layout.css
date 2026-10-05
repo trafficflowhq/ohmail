@@ -70,6 +70,25 @@
   :root[data-layout="zero"] .topbar {
     display: none;
   }
+  /* classic's drawer band hides every view's own heading under the topbar it draws (app.css);
+     this tier draws no topbar, so the heading is the one title here, at the desktop head's
+     padding. The phone Settings list's way back is the ribbon's own Settings row. */
+  :root[data-layout="zero"] .view .vhead h1,
+  :root[data-layout="zero"] .stream-top h1 {
+    display: block;
+  }
+  :root[data-layout="zero"] .view .vhead {
+    padding-top: 22px;
+  }
+  :root[data-layout="zero"] .view .vhead:not(:has(> :not(h1))) {
+    display: flex;
+  }
+  :root[data-layout="zero"] .view-address .vhead .meta {
+    display: block;
+  }
+  :root[data-layout="zero"] .view-address .vhead .meta-name {
+    display: none;
+  }
   :root[data-layout="zero"] .deck {
     grid-template-columns: 52px 1fr;
     gap: 0 var(--gap-tile);

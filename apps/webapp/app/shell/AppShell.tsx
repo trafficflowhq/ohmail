@@ -1914,7 +1914,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * keep the order, the phase and the scope they have here.
    */
   const {
-    activeRailId, commands, effectiveView, mobileTitle, narrowNow, paletteRef, pushTier, railGroupsWithHints,
+    activeRailId, commands, effectiveView, mobileTitle, narrowNow, paletteRef, pushTier, railGroupsWithHints, settingsSection,
     railNow, railRef, readerRef, tagGroup,
   } = useShellKeys({
     engine, reader, demo, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
@@ -2272,6 +2272,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         {accountNotice}
 
         <div className="topbar">
+          {settingsSection && narrowNow ? (
+            /* A settings SECTION on a phone (DESIGN-FOLD-WIDTHS §5): the way back is to the section list, where
+               the ≡ would otherwise stand — the list itself keeps the ≡. */
+            <button
+              type="button"
+              className="tb-btn tb-back"
+              aria-label={t("settings.back")}
+              onClick={() => go("settings")}
+            >
+              <Icon name="chev" className="chev" />
+              {t("rail.settings")}
+            </button>
+          ) : (
           <button
             type="button"
             className="tb-btn"
@@ -2282,7 +2295,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           >
             <Icon name="menu" />
           </button>
-          <b>{mobileTitle}</b>
+          )}
+          {/* ONE TITLE BELOW 1024 (DESIGN-FOLD-WIDTHS §5): the topbar owns the page's name,
+              as a real heading — `app.css` hides every view's own `.vhead h1` wherever this bar
+              stands, so the name is on screen once and the h1 outline keeps one entry. */}
+          <h1 className="tb-title">{mobileTitle}</h1>
           {/* The worker doorbell, under 1024px — the rail (whose foot carries the wide-width
               copy of this button) is a closed drawer here, and a refresh affordance inside a
               closed drawer is one nobody is told about. See `PullNewMail.tsx`. */}
@@ -2300,7 +2317,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             navRef={railRef}
             /* The default mark plus the Zero ribbon's ≡ — one hidden button, revealed ONLY
                by zero-layout.css at ribbon widths (`app.css` hides it everywhere at rest, so
-               classic renders exactly what it rendered). At 722–899 and 392–721 the rail is
+               classic renders exactly what it rendered). At 722–1023 and 392–721 the rail is
                a docked 52px ribbon and this is its drawer summon (`h`'s pointer twin); in
                the open drawer the same button reads as the way back. */
             wordmark={
