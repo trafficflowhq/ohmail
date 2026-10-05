@@ -29,7 +29,6 @@ import {
   inverseMutations,
   mirrorSuggestionIdOf,
   sendAndDonePlanFor,
-  threadOf,
   type ComposeAttachment,
   draftBodyKnown,
   type EngineDraft,
@@ -80,6 +79,7 @@ import { MessageGone, MessagePane, type BulkAction, type MessageAction } from ".
 import { ListGoneProvider, useListGoneFacts } from "./list-view";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
+import { conversationOnScreen } from "./conversation-on-screen";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState, type ConsentTransport } from "./consent-state";
 import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
@@ -1739,6 +1739,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     return olderBodyFor(m);
   });
 
+  /**
+   * THE CONVERSATION, for whichever message a pane is rendering — the PRESENTED mirror's
+   * (`conversation-on-screen.ts`). A stable callback reading the latest render's readers, so the
+   * chrome context below does not churn for every consumer on every delta.
+   */
+  const conversationOf = useStableCallback((messageId: string) => conversationOnScreen(presented, engine.read(), messageId));
+
   /*
    * Attachments for the OPEN message only, and released when it changes.
    *
@@ -1746,6 +1753,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * outlives the message that owned it for the life of the tab.
    */
   const attachments = useMessageAttachments(engine, selectedOhbox?.id ?? null, {
+    // The conversation the panels show, so the lists asked are the panels' own.
+    conversationOf,
     onDownloadAllFailed: () => toast(t("ohbox.toastDownloadAllFailed")),
     /* THE DESKTOP'S ONE SENTENCE ABOUT A DOWNLOAD. A browser announces its own downloads and this
        app cannot see that folder, so the seam speaks only for files the SHELL said it wrote — the
@@ -1974,17 +1983,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frPhase, frCode]);
 
-  /**
-   * THE CONVERSATION, for whichever message a pane is rendering.
-   *
-   * `engine.read()` is called at INVOCATION time, not closed over, so the callback is
-   * stable across version bumps — the chrome context below would otherwise churn for every
-   * consumer on every delta — while what it returns is always the current mirror, including
-   * the optimistic overlay. A `useMemo` keyed on `derived` would give the same freshness and
-   * a new identity every bump; a `useMemo` that forgot it would go stale, which is
-   * exactly the bug `senderMenuFor` carries a `derived` dep to avoid.
-   */
-  const conversationOf = useStableCallback((messageId: string) => threadOf(engine.read(), messageId));
 
   const chrome = useMemo(
     () => ({

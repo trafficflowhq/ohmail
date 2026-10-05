@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { REASK_MAX, threadOf, wireFailed, type OhmailEngine } from "@ohmail/client-engine";
+import { REASK_MAX, wireFailed, type EngineMessage, type OhmailEngine } from "@ohmail/client-engine";
 import {
   fileRetryIsOffered, isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
 } from "../components/AttachmentStrip";
@@ -327,6 +327,11 @@ export function useMessageAttachments(
   engine: OhmailEngine,
   messageId: string | null,
   opts: {
+    /**
+     * The conversation the panels SHOW (`conversation-on-screen.ts` in the shell) — required, so a
+     * caller cannot ask lists over the raw mirror for members no panel draws.
+     */
+    conversationOf: (messageId: string) => EngineMessage[];
     onDownloadAllFailed: () => void;
     /**
      * N FILES REACHED THE PERSON'S DOWNLOADS FOLDER — the desktop's one sentence, and it is only
@@ -463,11 +468,11 @@ export function useMessageAttachments(
    * mount would revoke URLs the other is showing. One owner, this hook, mounted once in `AppShell`.
    * Keyed on `messageId` AND the conversation's id list: the list alone skips the re-ask after a
    * within-thread move, `messageId` alone misses a sibling arriving mid-read; the `loaded` guard and
-   * the engine's single-flight make the overlap one request. `threadOf` joins to a primitive.
+   * the engine's single-flight make the overlap one request. The conversation joins to a primitive.
    */
   const conversationKey =
     available && messageId
-      ? threadOf(engine.read(), messageId)
+      ? opts.conversationOf(messageId)
           .map((m) => m.id)
           .join(",")
       : "";
