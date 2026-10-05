@@ -199,6 +199,18 @@ export function logBackupExclusion(state: BackupExclusion, platform: string): vo
 }
 
 /**
+ * ONE LINE PER POSTURE THE PROVIDER DERIVES: the window's size in dp, how many fold features the
+ * platform reported and the fold state the app took from them. A device run reads the app's own
+ * claim here beside `dumpsys device_state`, never infers it from the layout. Numbers and a closed word.
+ */
+export function logPostureDerived(p: { width: number; height: number; folds: number; state: string }): void {
+  engineLogSink()(JSON.stringify({
+    service: "app", event: "posture_derived",
+    width: Math.round(p.width), height: Math.round(p.height), folds: p.folds, state: p.state,
+  }));
+}
+
+/**
  * THE WORLD'S COST, ONCE A MINUTE — how many list derivations the phone ran, the worst one and the
  * p95 of the last hundred, and how many engine notifications there were. Numbers only, nothing to
  * redact; a device run reads its own cost here instead of inferring it.

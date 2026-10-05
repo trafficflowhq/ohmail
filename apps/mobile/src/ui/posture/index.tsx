@@ -22,6 +22,7 @@ import {
   type WindowFrame,
 } from "./derive";
 import { nativePosture } from "./posture-native";
+import { logPostureDerived } from "../../engine/engine-log";
 
 export * from "./derive";
 
@@ -102,6 +103,10 @@ export function PostureProvider({
       windowBounds,
     });
   }, [override, dims.width, dims.height, folds, hasFold, frame]);
+
+  useEffect(() => {
+    logPostureDerived({ width: dims.width, height: dims.height, folds: folds?.length ?? 0, state: value.fold });
+  }, [value]);
 
   return <PostureContext.Provider value={value}>{children}</PostureContext.Provider>;
 }

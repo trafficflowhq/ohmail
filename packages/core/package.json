@@ -23,6 +23,7 @@
     "./reply-subject": "./src/reply-subject.ts",
     "./search-rank": "./src/search-rank.ts",
     "./pair-link": "./src/pair-link.ts",
+    "./mailto": "./src/mailto.ts",
     "./sender-headers": "./src/sender-headers.ts",
     "./rule-order": "./src/rule-order.ts",
     "./conversation-fold": "./src/conversation-fold.ts",
