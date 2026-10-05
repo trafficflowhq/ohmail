@@ -62,7 +62,8 @@ function TagBody() {
 
   const list = (
     <Screen>
-      <DetailBar title={tag.name} />
+      {/* The page carries its own heading, so the bar carries only the way back. */}
+      <DetailBar />
       <MailList
         groups={[{ key: "tagged", rows }]}
         rowKey={(m) => m.id}

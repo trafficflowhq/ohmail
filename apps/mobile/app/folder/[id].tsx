@@ -73,7 +73,8 @@ function FolderBody() {
 
   const list = (
     <Screen>
-      <DetailBar title={leaf} />
+      {/* The page carries its own heading, so the bar carries only the way back. */}
+      <DetailBar />
       <MailList
         groups={[
           { key: "fresh", title: Copy.groupNew, rows: fresh },
