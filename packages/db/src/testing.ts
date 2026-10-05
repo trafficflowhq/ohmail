@@ -272,9 +272,11 @@ export function flockHoldersIn(locks: string, dev: bigint, ino: bigint): number[
   return out;
 }
 
+/* "SHARED box database" is the phrase the landing's box-collection classifier reads as NOT RUN: a
+ * refusal at collection ran no case, and is never the range's red. */
 function boxDoorRefusal(why: string): string {
   return (
-    `${FREEZE_ENV}=1 was set, but this run did not come through the box door (${why}): no ${BOX_TOKEN_ENV} matching ` +
+    `${FREEZE_ENV}=1 was set for the SHARED box database, but this run did not come through the box door (${why}): no ${BOX_TOKEN_ENV} matching ` +
     "the token box-lock.sh writes while it holds the Postgres lock. A bare flock jumps the landing's and the " +
     "freeze's priority claim, which only the door honours — use box-lock.sh " +
     "(box-lock.sh pg <LANE> -- <command>), or give this checkout its own database with scripts/lane-db.sh."
