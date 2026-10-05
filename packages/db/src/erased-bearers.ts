@@ -1,4 +1,5 @@
-import { and, desc, eq, gt, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lte, sql, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accounts, refreshTokens, sessions } from "./schema-mail.js";
 import { erasedBearers } from "./schema-cloud.js";
 import type { Tx } from "./change-log.js";
@@ -18,6 +19,26 @@ import type { Tx } from "./change-log.js";
  */
 export const ERASED_REFRESH_KEEP_DAYS = 400;
 
+/** An expiry plus {@link ERASED_REFRESH_KEEP_DAYS}, as SQL: how long the erasure names a token. */
+export const erasureKeepsUntil = (expiry: AnyPgColumn): SQL<Date> =>
+  sql<Date>`${expiry} + interval '1 day' * ${ERASED_REFRESH_KEEP_DAYS}::int`;
+
+/**
+ * WHAT THE ERASURE STILL NAMES, as the predicates {@link recordErasedBearers} selects by: a session's
+ * live access token, and a refresh token not revoked whose keep is still open at `at`. Every other
+ * site that deletes those rows (the hourly sign-in retention pass) deletes no session matching
+ * {@link erasureStillNamesSession}, so a device silent past its window is still told its account
+ * is gone. A revoked token is in neither: the erasure skips it, so a signed-out session's rows may
+ * go on the pass's own horizon.
+ */
+export const erasureNamesAccess = (at: SQL): SQL =>
+  sql`(${sessions.revokedAt} is null and ${sessions.accessTokenHash} is not null and ${sessions.accessExpiresAt} > ${at})`;
+export const erasureNamesRefresh = (at: SQL): SQL =>
+  sql`(${refreshTokens.revokedAt} is null and ${erasureKeepsUntil(refreshTokens.expiresAt)} > ${at})`;
+/** A session the erasure would still copy a token of: the row in scope must be `sessions` itself. */
+export const erasureStillNamesSession = (at: SQL): SQL =>
+  sql`(${erasureNamesAccess(at)} or exists (select 1 from ${refreshTokens} where ${refreshTokens.sessionId} = ${sessions.id} and ${erasureNamesRefresh(at)}))`;
+
 /**
  * Copy the account's access and refresh token hashes BEFORE the erasure deletes them — call it
  * inside that transaction. `ON CONFLICT DO NOTHING` keeps a retried erasure idempotent. An access
@@ -28,7 +49,7 @@ export const ERASED_REFRESH_KEEP_DAYS = 400;
  */
 export async function recordErasedBearers(tx: Tx, accountId: string, now: Date): Promise<number> {
   const at = sql`${now.toISOString()}::timestamptz`;
-  const keptUntil = sql<Date>`${refreshTokens.expiresAt} + interval '1 day' * ${ERASED_REFRESH_KEEP_DAYS}::int`;
+  const keptUntil = erasureKeepsUntil(refreshTokens.expiresAt);
   // INSERT … SELECT, never a materialised list: the rows are the account's own and the erasure
   // deletes the same set next, so the statement's size is the database's problem, not a bind list.
   const access = await tx.insert(erasedBearers)
@@ -36,10 +57,7 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
       tokenHash: sql<string>`${sessions.accessTokenHash}`.as("token_hash"),
       accountId: sessions.accountId,
       expiresAt: sessions.accessExpiresAt,
-    }).from(sessions).where(and(
-      eq(sessions.accountId, accountId), isNull(sessions.revokedAt),
-      isNotNull(sessions.accessTokenHash), gt(sessions.accessExpiresAt, at),
-    )))
+    }).from(sessions).where(and(eq(sessions.accountId, accountId), erasureNamesAccess(at))))
     .onConflictDoNothing()
     .returning({ tokenHash: erasedBearers.tokenHash });
   const refresh = await tx.insert(erasedBearers)
@@ -48,8 +66,7 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
       accountId: refreshTokens.accountId,
       expiresAt: keptUntil.as("expires_at"),
     }).from(refreshTokens).where(and(
-      eq(refreshTokens.accountId, accountId), isNull(refreshTokens.revokedAt),
-      isNull(refreshTokens.consumedAt), sql`${keptUntil} > ${at}`,
+      eq(refreshTokens.accountId, accountId), erasureNamesRefresh(at), isNull(refreshTokens.consumedAt),
     )))
     .onConflictDoNothing()
     .returning({ tokenHash: erasedBearers.tokenHash });
@@ -59,8 +76,7 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
       accountId: refreshTokens.accountId,
       expiresAt: keptUntil.as("expires_at"),
     }).from(refreshTokens).where(and(
-      eq(refreshTokens.accountId, accountId), isNull(refreshTokens.revokedAt),
-      isNotNull(refreshTokens.consumedAt), sql`${keptUntil} > ${at}`,
+      eq(refreshTokens.accountId, accountId), erasureNamesRefresh(at), isNotNull(refreshTokens.consumedAt),
       // A claim-killed row (`expires_at = consumed_at`) was never spendable after the kill.
       gt(refreshTokens.expiresAt, refreshTokens.consumedAt),
     )).orderBy(refreshTokens.familyId, desc(refreshTokens.consumedAt)))

@@ -32,7 +32,7 @@ export const SIGN_IN_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /* The deletes, beside it: `sign-in-retention.ts` takes the horizon as an argument, so it never
    imports this file back. */
 export {
-  pruneSignInRecords, SIGN_IN_SESSION_BATCH, SIGN_IN_RETENTION_DEADLINE_MS,
+  pruneSignInRecords, emptySignInRetention, SIGN_IN_SESSION_BATCH, SIGN_IN_RETENTION_DEADLINE_MS,
   type SignInRetentionResult, type SignInRetentionOptions,
 } from "./sign-in-retention.js";
 

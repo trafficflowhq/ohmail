@@ -25,7 +25,8 @@ export const WEBAUTHN_CHALLENGE_RETENTION_MS = 60 * 60_000;
 export const WEBAUTHN_CHALLENGE_PRUNE_LIMIT = 200;
 
 /**
- * Delete expired challenges, at most {@link WEBAUTHN_CHALLENGE_PRUNE_LIMIT} per call.
+ * Delete expired challenges, at most {@link WEBAUTHN_CHALLENGE_PRUNE_LIMIT} per call, and answer how
+ * many rows went — a concurrent ceremony may have taken some of the ids first.
  *
  * Called by the ceremony START doors and by the worker's hourly sign-in retention pass, so an
  * expired challenge does not wait for the next ceremony. Keyed by `webauthn_challenges_expires_idx`,
@@ -48,7 +49,8 @@ export async function pruneWebauthnChallenges(
     .orderBy(asc(webauthnChallenges.expiresAt))
     .limit(limit);
   if (due.length === 0) return 0;
-  await tx.delete(webauthnChallenges)
-    .where(inArray(webauthnChallenges.id, due.map((r) => r.id)));
-  return due.length;
+  const gone = await tx.delete(webauthnChallenges)
+    .where(inArray(webauthnChallenges.id, due.map((r) => r.id)))
+    .returning({ id: webauthnChallenges.id });
+  return gone.length;
 }

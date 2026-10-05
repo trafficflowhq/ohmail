@@ -159,7 +159,7 @@ export {
  * module names `auth_events`, which a local install does not have. */
 export {
   changeLogHorizon, pruneChangeLogForAccount, retentionAccountsAfter,
-  pruneAuditLog, pruneAuthEvents, pruneSignInRecords,
+  pruneAuditLog, pruneAuthEvents, pruneSignInRecords, emptySignInRetention,
   CHANGE_LOG_RETENTION_GRACE_MS, CHANGE_LOG_HOLDBACK_LIVE_MS,
   AUDIT_LOG_RETENTION_MS, AUTH_EVENTS_RETENTION_MS, SIGN_IN_RECORD_RETENTION_MS,
   SIGN_IN_SESSION_BATCH, SIGN_IN_RETENTION_DEADLINE_MS,

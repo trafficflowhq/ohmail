@@ -62,7 +62,8 @@ export default function PrivacyPage() {
           each sign-in, failed sign-in, sign-out and other security event on an
           account, and of each new account, and keep them for 180 days to keep accounts secure; the IP
           address each desktop or phone app was added from is kept until 30 days
-          after its last session ends, to show you your own devices. Other attempts leave
+          after the app is signed out or removed, or until 400 days after its
+          sign-in ran out if it never was, to show you your own devices. Other attempts leave
           only counters under hashes of the address typed and of the IP address,
           to rate-limit abuse. Legal basis: performance of the contract, and our
           legitimate interest in keeping accounts secure.

@@ -1,7 +1,7 @@
 import {
   pruneChangeLogForAccount, retentionAccountsAfter, pruneAuditLog, pruneAuthEvents, pruneSignInRecords,
   RETENTION_ACCOUNTS_PER_TICK, RETENTION_DELETE_BATCH, RETENTION_BATCHES_PER_ACCOUNT, SIGN_IN_RECORD_RETENTION_MS,
-  type SignInRetentionOptions,
+  emptySignInRetention, type SignInRetentionOptions, type SignInRetentionResult,
 } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import type { Logger } from "@trafficflow/core/mail";
@@ -67,16 +67,17 @@ export async function retentionPrunePass(db: Tx, now: Date, log: Logger): Promis
 /**
  * SIGN-IN RETENTION — the cadence of `pruneSignInRecords`: once per maintenance tick, after the
  * fixed-age prunes, under the leader lock. NEVER THROWS, for `retentionPrunePass`'s reason. Counts
- * only in the log, one line per table that lost rows and one summary; every shard leader runs the
- * section, so with several shards a tick's counts are split across their logs, never doubled (a row
- * is deleted once). The horizon is `SIGN_IN_RECORD_RETENTION_MS`, from `retention.ts`.
+ * only in the log, one line per table that lost rows and one summary — a failed run's summary too,
+ * with what its committed batches took; every shard leader runs the section, so with several shards
+ * a tick's counts are split across their logs, never doubled (a row is deleted once). The horizon
+ * is `SIGN_IN_RECORD_RETENTION_MS`, from `retention.ts`.
  */
 export async function signInRetentionPass(
-  db: Tx, now: Date, log: Logger, opts: Omit<SignInRetentionOptions, "retentionMs"> = {},
+  db: Tx, now: Date, log: Logger, opts: Omit<SignInRetentionOptions, "retentionMs" | "progress"> = {},
 ): Promise<void> {
   const startedAt = Date.now();
-  try {
-    const r = await pruneSignInRecords(db, now, { ...opts, retentionMs: SIGN_IN_RECORD_RETENTION_MS });
+  const progress = emptySignInRetention();
+  const counted = (r: SignInRetentionResult): number => {
     const tables: Array<[string, number]> = [
       ["login_tokens", r.loginTokens], ["oauth_auth_codes", r.oauthCodes], ["pairing_tokens", r.pairingTokens],
       ["staff_sessions", r.staffSessions], ["invites", r.invites], ["sessions", r.sessions],
@@ -87,12 +88,18 @@ export async function signInRetentionPass(
       pruned += n;
       if (n > 0) log.info("sign_in_retention_table", { table, pruned: n });
     }
+    return pruned;
+  };
+  try {
+    const r = await pruneSignInRecords(db, now, { ...opts, retentionMs: SIGN_IN_RECORD_RETENTION_MS, progress });
+    const pruned = counted(r);
     if (pruned > 0 || r.deviceAddresses > 0 || r.stoppedBy !== "dry") {
       log.info("sign_in_retention_pruned", {
         pruned, cleared: r.deviceAddresses, stoppedBy: r.stoppedBy, elapsedMs: Date.now() - startedAt,
       });
     }
   } catch (err) {
-    log.warn("sign_in_retention_failed", { err });
+    const pruned = counted(progress);
+    log.warn("sign_in_retention_failed", { err, pruned, cleared: progress.deviceAddresses, elapsedMs: Date.now() - startedAt });
   }
 }

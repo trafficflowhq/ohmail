@@ -187,10 +187,12 @@ export default function SubprocessorsPage() {
                   signed in. In a browser it stops after 90 days without use at the
                   latest; the desktop and phone apps renew while you use them and stop
                   after 400 days without use. Signing out, or removing a device, ends it
-                  immediately. The hourly pass deletes a session&rsquo;s record 30
-                  days after it ends, and clears the IP address a desktop or phone app
-                  was added from once its last session&rsquo;s record is gone; the name
-                  it is listed under stays until you delete your account.
+                  immediately. The hourly pass deletes a session&rsquo;s record 30 days
+                  after it is signed out or its device removed, and 400 days after it
+                  ran out otherwise, so an app that was offline can still be told the
+                  account is gone; it clears the IP address a desktop or phone app was
+                  added from once its last session&rsquo;s record is gone. The name it
+                  is listed under stays until you delete your account.
                 </td>
               </tr>
               <tr>
@@ -269,7 +271,8 @@ export default function SubprocessorsPage() {
         <p>
           A pass runs every hour and deletes what the table says has expired:
           stored answers to retried requests and the double-send guard, sign-in
-          records and sessions 30 days after they end, expired passkey challenges,
+          records 30 days after they expire, sessions 30 days after they are signed
+          out or 400 days after they ran out, expired passkey challenges,
           unused invitations, sign-in attempt limits, staged attachments and the
           token hashes of deleted accounts. It also ages out sign-in and action history and compacts the
           sync change log. Where a row says a record stays until you delete your
