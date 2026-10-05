@@ -12,13 +12,13 @@
  */
 
 /**
- * Invariant S. A message-in-progress is named by its compose session while unsaved and by its row id
- * once saved; the record carries every name it has acquired. (1) The account holds at most one `drafts`
- * row with its content. (2) A row past `draft`, or one carrying a send record, is never PUT to, never
- * DELETEd by this client, never recovered into a fresh key. (3) An unconfirmed send is parked under the
- * message's names: a press resumes the same Idempotency-Key or is refused; unchanged content never
- * mints a second key while a record exists. (4) One predicate answers the hold — {@link holdOf}; every
- * write site calls it and a census pins the per-file call-site count, so a route a review finds is a
+ * Invariant S. A message-in-progress is named by its compose session while unsaved and by its row id once
+ * saved; the record carries every name it has acquired. (1) The account holds at most one `drafts` row with
+ * its content. (2) A row past `draft`, or one carrying a send record, is never PUT to, never DELETEd by this
+ * client, never recovered into a fresh key. (3) An unconfirmed send is parked under the message's names: a
+ * press resumes the same Idempotency-Key or is refused; unchanged content never mints a second key while an
+ * UNSETTLED record exists, and a settled key is spent. (4) One predicate answers the hold — {@link holdOf};
+ * every write site calls it and a census pins the per-file call-site count, so a route a review finds is a
  * missing call, never a second predicate. An unreadable jar answers unknown; an empty jar admits.
  */
 
@@ -349,16 +349,20 @@ export function resumeSendLock(
   const sessionAdmits = (r: SendLock): boolean =>
     r.unverified === true || r.session === undefined || id.session === null
     || r.session === id.session;
+  // A SETTLED KEY IS SPENT: offered only while its send is owed an ending, or unverified. An
+  // identical second reply after a confirmed first is a new key, and the server judges it.
   const found = live.find(
-    (r) => r.lane === lane && r.fp === id.fp && sessionAdmits(r),
+    (r) => r.lane === lane && r.fp === id.fp && sessionAdmits(r) && (r.unverified === true || owed(r.key)),
   );
   // A different fingerprint means the key does not name THIS content, so it cannot be resumed and
   // the record is spent — EXCEPT an unverified one, which is kept regardless. Deleting it is how
   // reopening a draft and editing it turned into a fresh key for a message that may already have
   // been delivered. A record from a LATER format is exempt too: this build cannot read what its
-  // fingerprint means, and a downgrade must not delete a newer install's evidence.
+  // fingerprint means, and a downgrade must not delete a newer install's evidence. A settled key
+  // that no longer owes an ending goes as `ended`, whichever lane it is on.
   dropSendLocks((r) => (
-    r.lane === lane && r.fp !== id.fp && r.unverified !== true ? "replaced" : "aged"
+    r.unverified !== true && !owed(r.key) ? "ended"
+      : r.lane === lane && r.fp !== id.fp && r.unverified !== true ? "replaced" : "aged"
   ), owed, nowMs, owner);
   return found?.key ?? null;
 }
@@ -452,11 +456,14 @@ export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: string 
  * has now observed is no longer unknown — and leaves every other record on the lane alone.
  */
 export function releaseSendLock(
-  lane: string, fp: string, owed: SendLockOwed, owner: string | null = storageOwner(),
-): void {
+  lane: string, fp: string, owed: SendLockOwed, owner: string | null = storageOwner(), key?: string,
+): boolean {
   // Nothing read, nothing to release — and nothing written, so an unreadable jar cannot lose a
-  // record it never handed over.
-  dropSendLocks((r) => (r.lane === lane && r.fp === fp ? "ended" : null), owed, Date.now(), owner);
+  // record it never handed over. `false`: a record for this message stayed (its key still owed), and
+  // a caller that names the `key` that ended asks again until the drop takes — never a later press's.
+  const mine = (r: SendLock): boolean => r.lane === lane && r.fp === fp && (key === undefined || r.key === key);
+  const kept = dropSendLocks((r) => (mine(r) ? "ended" : null), owed, Date.now(), owner);
+  return !kept.some((r) => mine(r) && r.v <= SEND_LOCK_FORMAT);
 }
 
 /**

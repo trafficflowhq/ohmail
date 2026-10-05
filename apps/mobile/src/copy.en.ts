@@ -1916,7 +1916,10 @@ const TABLE = {
   /* A send pressed with no network waits in the outbox and goes once it is back (`send-waits.ts`). */
   replyQueuedOffline: "Not sent yet. This phone has no network; the message goes when it is back.",
   replyUnverified: "We couldn't confirm this send. Check your Sent folder before sending it again.",
-  replyAlreadySent: "Too late to cancel. This message has already been sent.",
+  /* The server holds the send: sent, or still being handed to the mail server. Never "withdrawn". */
+  replyAlreadySent: "Too late to cancel. This message is already on its way.",
+  /* The server could not be asked about a send that may have left; the Cancel is asked again. */
+  replyCancelUnreachable: "Couldn't reach the server to cancel. ohmail will keep asking and will not send this again.",
   replyFailed: "Sending didn't work. Try again.",
   /* A send that never got past securing the connection or signing in: nothing left, and why. */
   replyNotSecured: "Not sent. The connection to your mail server couldn't be secured.",

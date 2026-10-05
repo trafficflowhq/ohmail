@@ -49,3 +49,10 @@ export function classifyRefusal(
     retryable: envelope?.retryable ?? (kind === "read" || serverDefault),
   };
 }
+
+/**
+ * The `code` on the refusal a withdrawn verb settles with — a Cancel here or in another window, or
+ * the send route's 409 `send_withdrawn` for a key the server tombstoned. A surface reads it to say
+ * NOTHING: a verb the person cancelled owes no sentence, and "it failed" would be the wrong one.
+ */
+export const OUTBOX_WITHDRAWN_CODE = "withdrawn";

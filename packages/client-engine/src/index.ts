@@ -281,7 +281,7 @@ export {
 // Apply core (the convergence oracle) + stores.
 export { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 export {
-  BaseMirrorStore, MemoryMirrorStore, MirrorGenerationChanged, OUTBOX_PROTOCOL, decideOutboxRow, isOutboxKey,
+  BaseMirrorStore, MemoryMirrorStore, MirrorGenerationChanged, OUTBOX_PROTOCOL, carriedOutboxMarks, decideOutboxRow, isOutboxKey,
   type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "./store.js";
 export {
@@ -532,6 +532,7 @@ export {
 export type {
   CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
   ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire,
+  WithdrawSendAnswer, WithdrawSendOutcome,
 } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
 export {

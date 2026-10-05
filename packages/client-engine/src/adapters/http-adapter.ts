@@ -33,9 +33,10 @@ import type {
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
   UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
+  MutationAnswer, MutationOutcome, MutationQueued, SyncParams, WithdrawSendAnswer,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
+import { OUTBOX_WITHDRAWN_CODE } from "./refusal-shape.js";
 import type { WindowSyncFailure } from "../window-sync-failure.js";
 import type { WindowSearchPhases } from "../search-phases.js";
 import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
@@ -2680,6 +2681,13 @@ export class HttpAdapter implements EngineAdapter {
     }
 
     this.forgetSendKey(idempotencyKey);
+    // A KEY A CANCEL TOMBSTONED: nothing left under it and nothing will. The withdrawn ending,
+    // terminal, so no surface says "failed" over a send the person cancelled.
+    if ((wire as WireError).error?.code === "send_withdrawn") {
+      throw new MutationRejectedError((wire as WireError).error?.message ?? "This send was cancelled before it left.", {
+        status: res.status, code: OUTBOX_WITHDRAWN_CODE, retryable: false,
+      });
+    }
     /* A TERMINAL REFUSAL NAMES THE ROW IT LEFT. The send never went and the row is an ordinary
        draft again, so the surface may bind it: the next press PUTs and sends THAT row instead of
        creating a second copy of one letter (measured on a phone with the network cut: one row per
@@ -2758,6 +2766,36 @@ export class HttpAdapter implements EngineAdapter {
    * true` skips the upload, and skipping is safe exactly then: the reservation exists, so the
    * send is answered from it rather than delivering a message without its files.
    */
+  /**
+   * `POST /sends/withdraw` — {@link EngineAdapter.withdrawSend}, on the door the send went to. The key
+   * rides the header, never the path. A 404 is a server without the route (`unsupported`); any other
+   * non-2xx, a transport failure or an answer outside the closed set is `unreachable` — never a word
+   * the server did not say.
+   */
+  async withdrawSend(key: string, draftId: string | null): Promise<WithdrawSendAnswer> {
+    let res: Response;
+    try {
+      res = await this.request("POST", "/sends/withdraw", { idempotencyKey: key, body: { draftId } });
+    } catch {
+      return { outcome: "unreachable" };
+    }
+    if (res.status === 404) return { outcome: "unsupported" };
+    if (!res.ok) return { outcome: "unreachable" };
+    let wire: { outcome?: unknown; firstSend?: { status?: unknown; at?: unknown } } | null;
+    try {
+      wire = (await res.json()) as typeof wire;
+    } catch {
+      return { outcome: "unreachable" };
+    }
+    const outcome = wire?.outcome;
+    if (outcome !== "withdrawn" && outcome !== "already_sent" && outcome !== "unverified"
+      && outcome !== "in_flight" && outcome !== "failed") return { outcome: "unreachable" };
+    const first = wire?.firstSend;
+    return typeof first?.status === "string" && typeof first.at === "string"
+      ? { outcome, firstSend: { status: first.status, at: first.at } }
+      : { outcome };
+  }
+
   private async keyWasPresented(draftId: string, sendKey: string): Promise<boolean> {
     let res: Response;
     try {

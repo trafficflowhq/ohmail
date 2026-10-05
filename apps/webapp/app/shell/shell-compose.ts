@@ -477,6 +477,11 @@ export function useShellCompose({
         toast(t("compose.cancelUnknown"));
         return;
       }
+      // The server could not be asked about a send that may have left: held, and the Cancel stays owed.
+      if (said === "unreachable") {
+        toast(t("compose.cancelUnreachable"));
+        return;
+      }
       setReplyTo(null);
     })();
   });
@@ -1941,6 +1946,11 @@ export function useShellCompose({
       // Nothing was cancelled: the compose stays as it is, and pressing again asks again.
       if (said === "unknown") {
         toast(t("compose.cancelUnknown"));
+        return;
+      }
+      // The server could not be asked about a send that may have left: held, and the Cancel stays owed.
+      if (said === "unreachable") {
+        toast(t("compose.cancelUnreachable"));
         return;
       }
       /* A HELD ROW IS KEPT, AND THE PRESS SAYS SO — `discard` releases it rather than deleting it,

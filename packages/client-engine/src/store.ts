@@ -6,12 +6,13 @@ import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js
 /**
  * WHAT THE WINDOWS OVER ONE SHARED DISK SAY TO EACH OTHER about its outbox. `changed`: a write or
  * delete of an outbox row committed; every other window re-reads the outbox's key range. `withdraw`:
- * a window marked a row it does not own withdrawn (already decided on disk); its owner closes its
- * own surface. `ended`: the owning engine says how a send it dropped ended, first. Nothing persisted.
+ * a window's Cancel of a row it does not own, posted after the SERVER answered and carrying that
+ * answer (an older build's notice carries none, and the owning engine then asks the server itself).
+ * `ended`: the owning engine says how a send it dropped ended, first. Nothing persisted.
  */
 export type OutboxNotice =
   | { t: "changed" }
-  | { t: "withdraw"; key: string }
+  | { t: "withdraw"; key: string; outcome?: "withdrawn" }
   | { t: "ended"; key: string; how: "confirmed" | "refused" | "withdrawn" };
 
 /**
@@ -24,26 +25,58 @@ export const OUTBOX_PROTOCOL = 1;
 /**
  * WHO WINS A WAITING SEND, decided on the disk row inside one write transaction: the owning engine's claim
  * before the wire, or another window's Cancel. Each side's answer is what its own transaction saw.
- * `claimed` (stamped `sending`), `withdrawn` (the claim met a mark, or the mark was there already),
- * `marked` (the Cancel won), `sending` (a claim was there first), `sent` (the row is confirmed),
- * `gone` (no such row), `unstamped` (an older build's row: no Cancel from here).
+ * `claimed` (stamped `sending`, and `wired` unless the claim was taken offline: this disk may have put it
+ * on the wire), `withdrawn` (the claim met a
+ * mark, or the mark was there already), `owed` (marked, and the server not yet answered the Cancel),
+ * `marked` (the Cancel won, or a settle act wrote), `sending` (a claim was there first), `sent` (the row
+ * is confirmed), `gone` (no such row), `unstamped` (an older build's row: no Cancel from here).
  */
-export type OutboxRowVerdict = "claimed" | "withdrawn" | "marked" | "sending" | "sent" | "gone" | "unstamped";
-export type OutboxRowAct = { kind: "claim"; me: string } | { kind: "withdraw" };
+export type OutboxRowVerdict = "claimed" | "withdrawn" | "owed" | "marked" | "sending" | "sent" | "gone" | "unstamped";
+/**
+ * `withdraw` marks the row withdrawn AND owed: the mark stops every window's send at once, and the
+ * debt keeps the row until the server has answered the Cancel. `answered`: the server said
+ * withdrawn, so nothing is owed. `unmark`: the server holds the send; the owning engine asks under its key.
+ */
+export type OutboxRowAct =
+  | { kind: "claim"; me: string; wire: boolean } | { kind: "withdraw" } | { kind: "answered" } | { kind: "unmark" };
 
 /** The decision itself, the same in every store: the verdict and the entity to write, if any. */
 export function decideOutboxRow(entity: unknown, act: OutboxRowAct): { verdict: OutboxRowVerdict; next: Record<string, unknown> | null } {
   if (typeof entity !== "object" || entity === null) return { verdict: "gone", next: null };
   const e = entity as Record<string, unknown>;
   if (act.kind === "claim") {
-    if (e.withdrawn === true) return { verdict: "withdrawn", next: null };
-    return { verdict: "claimed", next: { ...e, sending: act.me } };
+    if (e.withdrawn === true) return { verdict: e.withdrawOwed === true ? "owed" : "withdrawn", next: null };
+    return { verdict: "claimed", next: { ...e, sending: act.me, ...(act.wire ? { wired: true } : {}) } };
+  }
+  if (act.kind === "answered" || act.kind === "unmark") {
+    if (e.withdrawn !== true) return { verdict: e.confirmed === true ? "sent" : "sending", next: null };
+    const { withdrawOwed: _owed, ...rest } = e;
+    if (act.kind === "answered") return { verdict: "marked", next: rest };
+    const { withdrawn: _mark, ...open } = rest;
+    return { verdict: "marked", next: open };
   }
   if (e.confirmed === true) return { verdict: "sent", next: null };
-  if (e.withdrawn === true) return { verdict: "withdrawn", next: null };
+  if (e.withdrawn === true) return { verdict: e.withdrawOwed === true ? "owed" : "withdrawn", next: null };
   if (typeof e.sending === "string") return { verdict: "sending", next: null };
   if (e.protocol !== OUTBOX_PROTOCOL) return { verdict: "unstamped", next: null };
-  return { verdict: "marked", next: { ...e, withdrawn: true } };
+  return { verdict: "marked", next: { ...e, withdrawn: true, withdrawOwed: true } };
+}
+
+/**
+ * WHAT A WRITE OF AN OUTBOX ROW MAY NOT TAKE BACK, read off the row on disk inside the write's own
+ * transaction: another window's withdrawn mark with its debt, and the fact this disk put the send on
+ * the wire. No later put of the row, the owning engine's included, removes either; only the settle
+ * acts above and a delete do. `null` when nothing is carried.
+ */
+export function carriedOutboxMarks(next: Record<string, unknown>, prior: unknown): Record<string, unknown> | null {
+  const was = (typeof prior === "object" && prior !== null ? prior : {}) as Record<string, unknown>;
+  const carried: Record<string, unknown> = {};
+  if (was.withdrawn === true && next.withdrawn !== true) {
+    carried.withdrawn = true;
+    if (was.withdrawOwed === true) carried.withdrawOwed = true;
+  }
+  if (was.wired === true && next.wired !== true) carried.wired = true;
+  return Object.keys(carried).length > 0 ? { ...next, ...carried } : null;
 }
 
 /** One channel per shared disk: a post reaches every OTHER window's listeners, never its own. */

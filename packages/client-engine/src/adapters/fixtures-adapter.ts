@@ -23,7 +23,8 @@ import {
   type SyncResponse,
   type TriageItemDTO,
 } from "../types.js";
-import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
+import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams, WithdrawSendAnswer } from "./adapter.js";
+import { OUTBOX_WITHDRAWN_CODE } from "./refusal-shape.js";
 
 /** The demo world's fixed "now" — a Wednesday; "Tue" fixtures land the day before. */
 export const DEMO_NOW = new Date("2026-07-29T12:00:00.000Z");
@@ -87,6 +88,8 @@ export class FixturesAdapter implements EngineAdapter {
   private readonly world = new Map<string, MirrorRecord>();
   private readonly log: SyncChange[] = [];
   private readonly replays = new Map<string, MutationOutcome>();
+  /** Send keys a Cancel tombstoned — the demo's half of the server's `withdrawn` row. */
+  private readonly withdrawnKeys = new Set<string>();
   private readonly now: () => Date;
   private readonly uuid: () => string;
   private seq = 0;
@@ -423,11 +426,26 @@ export class FixturesAdapter implements EngineAdapter {
     return new Blob([held.content], { type: held.contentType });
   }
 
+  /**
+   * THE DEMO'S CANCEL, over the same ledger the send replays from: a key that already went answers
+   * `already_sent`, any other is tombstoned and its send refused, as the server does. No network.
+   */
+  async withdrawSend(key: string, _draftId: string | null): Promise<WithdrawSendAnswer> {
+    if (this.replays.has(key)) return { outcome: "already_sent", firstSend: { status: "sent", at: this.now().toISOString() } };
+    this.withdrawnKeys.add(key);
+    return { outcome: "withdrawn" };
+  }
+
   async mutate(m: EngineMutation, opts: { idempotencyKey: string }): Promise<MutationOutcome> {
     // Contract §1.6: same key ⇒ the stored outcome is replayed verbatim, never
     // re-executed — a retry after a lost response cannot double-apply.
     const replay = this.replays.get(opts.idempotencyKey);
     if (replay) return replay;
+    if (m.kind === "mail_send" && this.withdrawnKeys.has(opts.idempotencyKey)) {
+      throw new MutationRejectedError("This send was cancelled before it left.", {
+        status: 409, code: OUTBOX_WITHDRAWN_CODE, retryable: false,
+      });
+    }
 
     const effects = mutationEffects(this.reader(), m, { now: this.now, uuid: this.uuid });
     if (effects.length === 0) {

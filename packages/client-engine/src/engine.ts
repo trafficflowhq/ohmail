@@ -14,6 +14,7 @@
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy,
+  WithdrawSendAnswer, WithdrawSendOutcome,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -44,12 +45,12 @@ import type { WindowSearchPhases } from "./search-phases.js";
 import { asSendAndDoneIntent, type SendAndDonePlan } from "./send-and-done.js";
 import { countNotify } from "./client-vitals.js";
 import { sendFingerprint } from "./send-fingerprint.js";
-import { UNJUDGED_WRITE_CODES, type UnjudgedWriteCode } from "./adapters/refusal-shape.js";
+import { OUTBOX_WITHDRAWN_CODE, UNJUDGED_WRITE_CODES, type UnjudgedWriteCode } from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
 import {
   MemoryMirrorStore, OUTBOX_PROTOCOL, type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices,
-  type OutboxRowVerdict,
+  type OutboxRowAct, type OutboxRowVerdict,
 } from "./store.js";
 // THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
 // derivations over the drain stamp, held in one module with the desktop sidecar's mirror
@@ -144,11 +145,8 @@ export type MutationStatus = "confirmed" | "queued" | "awaiting_organizer" | "ro
  */
 export type WithdrawOutcome = "withdrawn" | "on_the_wire" | "gone" | "unknown";
 
-/**
- * The `code` on the refusal a withdrawn verb settles with. A surface reads it to say NOTHING: a
- * verb the person cancelled owes no sentence, and "it failed" would be the wrong one.
- */
-export const OUTBOX_WITHDRAWN_CODE = "withdrawn";
+/** The withdrawn ending's code — see `adapters/refusal-shape.ts`, where the adapter reads it too. */
+export { OUTBOX_WITHDRAWN_CODE };
 
 export interface MutationResult {
   id: string;
@@ -355,6 +353,10 @@ interface PendingMutation {
   released?: true;
   /** A send the server confirmed, kept only for its echo — see {@link PersistedOutboxEntry.confirmed}. */
   confirmed?: true;
+  /** This disk may have put the send on the wire — see {@link PersistedOutboxEntry.wired}. Never cleared. */
+  wired?: true;
+  /** A Cancel the server has not answered yet — see {@link PersistedOutboxEntry.withdrawOwed}. */
+  withdrawOwed?: true;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
   /** Epoch ms before which no drive may dispatch this verb. */
@@ -514,6 +516,19 @@ interface PersistedOutboxEntry {
    * a new reply to the same message must not join its key and be answered "already sent".
    */
   confirmed?: boolean;
+  /**
+   * THIS DISK MAY HAVE PUT THE SEND ON THE WIRE: the owning engine's claim writes it unless the browser said
+   * it was offline (and an offline claim sends nothing), and with no ownership the dispatch writes it
+   * before the request. Never cleared. A Cancel the server could not answer says `unknown` over a
+   * wired row and `withdrawn` only over one that never left. In place on `v: 3`.
+   */
+  wired?: boolean;
+  /**
+   * A CANCEL THE SERVER HAS NOT ANSWERED: the row is marked withdrawn, so no window sends it, and is
+   * kept until `POST /sends/withdraw` answers. Restored or adopted, it is asked again — never sent,
+   * never dropped unanswered. In place on `v: 3`.
+   */
+  withdrawOwed?: boolean;
 }
 
 /**
@@ -595,6 +610,16 @@ function withdrawnResult(p: PendingMutation): MutationResult {
   };
 }
 
+/** What an owed Cancel past its ceiling says in the abandoned strip: neither outcome is known. */
+const WITHDRAW_UNCONFIRMED_SENTENCE =
+  "We couldn't confirm whether this send was cancelled. Check your Sent folder before sending it again.";
+
+/** The more cautious of two Cancel answers: `unknown` over `on_the_wire` over `withdrawn`. */
+function worseWithdraw(a: WithdrawOutcome, b: WithdrawOutcome): WithdrawOutcome {
+  const rank = (w: WithdrawOutcome): number => (w === "unknown" ? 3 : w === "on_the_wire" ? 2 : w === "withdrawn" ? 1 : 0);
+  return rank(b) > rank(a) ? b : a;
+}
+
 /** One pending verb as the row that is persisted for it. */
 function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
   return {
@@ -610,6 +635,8 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...andDoneOf(p),
     ...(p.released === true ? { released: true } : {}),
     ...(p.confirmed === true ? { confirmed: true } : {}),
+    ...(p.wired === true ? { wired: true } : {}),
+    ...(p.withdrawOwed === true ? { withdrawn: true, withdrawOwed: true } : {}),
   };
 }
 
@@ -2545,6 +2572,15 @@ export class OhmailEngine {
    * fresh expression of intent under a reused key is not withdrawn.
    */
   private readonly withdrawnKeys = new Set<string>();
+  /**
+   * SENDS WHOSE CANCEL THE SERVER HAS NOT ANSWERED, by entry id: off the queue (they are never sent)
+   * and on disk marked withdrawn and owed. Every drive and every flush asks again, on the backoff.
+   */
+  private readonly owedWithdraws = new Map<string, PendingMutation>();
+  /** Ids an ask is out for, so a drive and a flush never ask about one send twice at once. */
+  private readonly askingWithdraw = new Set<string>();
+  /** The server's last answer to a Cancel, by key — {@link OhmailEngine.withdrawAnswerOf}. Bounded. */
+  private readonly withdrawAnswers = new Map<string, WithdrawSendOutcome>();
   /** The shared disk's notice channel, once this engine listens to it — see {@link listenToDisk}. */
   private notices: OutboxNotices | null = null;
   /** How the sends other windows dropped ended, by key, as their owners said it (bounded). */
@@ -3092,7 +3128,16 @@ export class OhmailEngine {
     this.restoreOutboxIfLoaded();
     await this.adoptOrphanedOutbox();
     await this.replayOutbox();
+    await this.askOwedOnDrive();
     await this.drainPublishing();
+  }
+
+  /** The owed Cancels a drive asks, where the drive owns the replay; their answers wait as late ones. */
+  private async askOwedOnDrive(): Promise<void> {
+    if (!this.autoReplayOn || this.owedWithdraws.size === 0) return;
+    const settled = await this.askOwedWithdraws();
+    for (const r of settled) this.lateResults.set(r.id, r);
+    if (settled.length > 0) this.notify();
   }
 
   /** Replay every queued verb, oldest first, under its original Idempotency-Key. */
@@ -3334,6 +3379,18 @@ export class OhmailEngine {
      * person cancelled that send, so no later session may deliver it.
      */
     if (e.withdrawn === true) {
+      // A CANCEL THE SERVER NEVER ANSWERED is asked again, never sent and never dropped unanswered.
+      if (e.withdrawOwed === true && e.mutation.kind === "mail_send") {
+        this.withdrawnKeys.add(e.key);
+        this.owedWithdraws.set(e.id, {
+          id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n, restored: true, withdrawOwed: true,
+          attempts: e.attempts ?? 0, ...(e.nextAt !== undefined ? { nextAt: e.nextAt } : {}),
+          ...(e.wired === true ? { wired: true as const } : {}),
+          ...(isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
+          ...(this.ownerName !== null ? { owner: this.ownerName } : {}),
+        });
+        return false;
+      }
       this.sayEnded(e, "withdrawn");
       void this.dropOutbox(e.id);
       return false;
@@ -3384,6 +3441,7 @@ export class OhmailEngine {
       // A released intent stays on the row as a record and never rides a replay's confirmation.
       ...(e.released === true ? { released: true as const } : andDoneOf(e)),
       ...(e.confirmed === true ? { confirmed: true as const } : {}),
+      ...(e.wired === true ? { wired: true as const } : {}),
       /**
        * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
        * 2` shape in place, so records written before it can carry a `nextAt` that came from a `Retry-After` and no
@@ -3463,12 +3521,17 @@ export class OhmailEngine {
     }
     /* `withdraw`: another window's mark already won on disk. A row this engine holds queued is ended
        here at once, so its surface closes; one on its way meets the mark at its claim. */
-    if (this.queue.some((p) => p.key === n.key)) await this.withdrawQueued(n.key, { askedElsewhere: true });
+    if (this.queue.some((p) => p.key === n.key)) {
+      // The viewer posts only after the server answered; a notice with no answer is an older build's.
+      await this.withdrawQueued(n.key, { askedElsewhere: true, ...(n.outcome === "withdrawn" ? { answered: "withdrawn" as const } : {}) });
+    }
   }
 
   /** The ids whose memory is newer than the disk: this engine's queue, wire and overlays. */
   private heldIds(): ReadonlySet<string> {
-    return new Set<string>([...this.overlays.keys(), ...this.queue.map((q) => q.id), ...this.inFlight.keys()]);
+    return new Set<string>([
+      ...this.overlays.keys(), ...this.queue.map((q) => q.id), ...this.inFlight.keys(), ...this.owedWithdraws.keys(),
+    ]);
   }
 
   /** One re-read at a time; a notice heard during one asks for one more after it. */
@@ -7205,6 +7268,9 @@ export class OhmailEngine {
       ...(e.mutation.kind === "mail_send" && isCreatedRow(e.createdRow) ? { createdRow: e.createdRow } : {}),
       // A Send + Done given up on and tried again still files its source once it is confirmed.
       ...andDoneOf(e),
+      // An owed Cancel tried again asks the withdraw, never the send.
+      ...(e.mutation.kind === "mail_send" && e.withdrawOwed === true ? { withdrawOwed: true as const } : {}),
+      ...(e.wired === true ? { wired: true as const } : {}),
     };
 
     /**
@@ -7771,8 +7837,14 @@ export class OhmailEngine {
      * reaches the wire unless it is stopped here. Terminal: the overlay and the durable row go, and the refusal names itself so the
      * ledger above says nothing about mail nobody sent.
      */
+    /* A CANCEL THE SERVER HAS NOT ANSWERED is asked again here; its send never goes. */
+    if (p.mutation.kind === "mail_send" && p.withdrawOwed === true) return this.askOwed(p);
     /* AND ANOTHER WINDOW'S CANCEL, decided on the disk row: see {@link claimForSend}. */
     const claim = this.withdrawnKeys.has(p.key) ? "claimed" : await this.claimForSend(p);
+    if (claim === "owed") {
+      p.withdrawOwed = true;
+      return this.askOwed(p);
+    }
     if (claim === "withdrawn") this.withdrawnKeys.add(p.key);
     if (this.withdrawnKeys.has(p.key)) {
       this.overlays.delete(p.id);
@@ -7791,6 +7863,15 @@ export class OhmailEngine {
       // A claim the disk could not answer sends nothing this round: the row may carry a Cancel.
       if (claim === "failed") {
         throw new MutationRejectedError("the outbox row could not be read before sending", { code: "network", retryable: true });
+      }
+      // A claim taken while the browser is offline sends nothing, so a row with no wire fact never left.
+      if (claim === "offline") {
+        throw new MutationRejectedError("network failure: this device is offline", { code: "network", retryable: true });
+      }
+      // With no claim (no disk shared with another window) the wire fact is written here, first.
+      if (claim === "unclaimed" && p.mutation.kind === "mail_send" && p.wired !== true) {
+        p.wired = true;
+        await this.putOutbox(p);
       }
       const outcome = await this.adapter.mutate(p.mutation, {
         idempotencyKey: p.key,
@@ -8073,6 +8154,15 @@ export class OhmailEngine {
       // the surface to say.
       this.overlays.delete(p.id);
       this.awaitingEcho.delete(p.id);
+      // THE SERVER TOMBSTONED THIS KEY (a Cancel, here or in another window): the withdrawn ending,
+      // never a refusal record — nothing was sent and nothing will be.
+      if (p.mutation.kind === "mail_send" && rejection.code === OUTBOX_WITHDRAWN_CODE) {
+        this.sayEnded(p, "withdrawn");
+        await this.dropOutbox(p.id);
+        this.overlayRev++;
+        this.notify();
+        return withdrawnResult(p);
+      }
       /**
        * WHERE THE REFUSAL GOES WHEN NOBODY IS WAITING FOR IT: The result carries the server's sentence, and for a
        * verb the user is watching that is enough: the composer is open, the strip is on screen, someone reads it. A
@@ -8408,15 +8498,19 @@ export class OhmailEngine {
    * can deliver it. `on_the_wire` is the one answer that withdraws nothing: the request has gone
    * and this device cannot un-send it — the caller says so rather than promising a cancellation.
    */
-  async withdrawQueued(key: string, opts: { askedElsewhere?: boolean } = {}): Promise<WithdrawOutcome> {
+  async withdrawQueued(key: string, opts: { askedElsewhere?: boolean; answered?: "withdrawn" } = {}): Promise<WithdrawOutcome> {
     for (const p of this.inFlight.values()) if (p.key === key) return "on_the_wire";
     const rows = this.queue.filter((p) => p.key === key);
+    // A CANCEL ALREADY OWED is asked again: the press is a request for the server's answer.
+    const owed = [...this.owedWithdraws.values()].filter((p) => p.key === key);
+    if (rows.length === 0 && owed.length > 0) return this.reaskOwed(owed, opts);
     if (rows.length === 0 && !opts.askedElsewhere) {
       const foreign = await this.withdrawForeign(key);
       if (foreign !== null) return foreign;
     }
     this.withdrawnKeys.add(key);
     let unrecorded = false;
+    const marked: PendingMutation[] = [];
     for (const p of rows) {
       const at = this.queue.indexOf(p);
       if (at >= 0) this.queue.splice(at, 1);
@@ -8424,27 +8518,72 @@ export class OhmailEngine {
       this.overlays.delete(p.id);
       /* A CANCEL THE DISK DID NOT TAKE IS NOT A CANCEL where another window can adopt the row: it
          goes back on the queue as it was, and the answer is `unknown`. */
-      if (!await this.markWithdrawn(p) && this.ownershipOn()) {
+      const owe = p.mutation.kind === "mail_send" && opts.answered !== "withdrawn";
+      if (!await this.markWithdrawn(p, owe) && this.ownershipOn()) {
         this.queue.push(p);
         this.queue.sort(byAtN);
         if (paint !== undefined) this.overlays.set(p.id, paint);
         unrecorded = true;
         continue;
       }
-      // Cancelled from another window: the surface here hears the ending as a late answer.
-      if (opts.askedElsewhere) this.lateResults.set(p.id, withdrawnResult(p));
-      // An earlier press under this key was delivered and waited for this one to speak: it speaks now.
-      const waiting = this.silencedConfirms.get(p.id);
-      if (waiting !== undefined) {
-        this.silencedConfirms.delete(p.id);
-        this.lateResults.set(p.id, this.spokenFor(waiting, p.mutation));
-      }
+      marked.push(p);
     }
     if (rows.length === 0) return "gone";
     if (unrecorded) this.withdrawnKeys.delete(key);
+    let said: WithdrawOutcome = unrecorded ? "unknown" : "withdrawn";
+    for (const p of marked) {
+      /* A SEND IS DECIDED BY THE SERVER'S ANSWER, asked after the mark has stopped every window's
+         send; another verb, or a send another window's Cancel already had answered, by the mark. */
+      if (p.mutation.kind !== "mail_send" || opts.answered === "withdrawn") {
+        if (p.mutation.kind === "mail_send") this.sayEnded(p, "withdrawn");
+        this.hearEnding(p, opts.askedElsewhere === true ? withdrawnResult(p) : null);
+        continue;
+      }
+      const settled = await this.settleWithdrawn(p, await this.askWithdraw(p));
+      said = worseWithdraw(said, settled.said);
+      // The press answers `withdrawn` itself; every other ending reaches the waiting surface late.
+      if (settled.result !== null) {
+        this.hearEnding(p, opts.askedElsewhere === true || settled.said !== "withdrawn" ? settled.result : null);
+      }
+    }
     this.overlayRev++;
     this.notify();
-    return unrecorded ? "unknown" : "withdrawn";
+    return said;
+  }
+
+  /**
+   * A CANCELLED SEND'S ENDING, for the surface waiting on it: an earlier press under its key that was
+   * delivered and waited for this one speaks now; otherwise `result`, when there is one to hear.
+   */
+  private hearEnding(p: PendingMutation, result: MutationResult | null): void {
+    const waiting = this.silencedConfirms.get(p.id);
+    if (waiting !== undefined && (result === null || result.status !== "rolled_back" || result.error?.code === OUTBOX_WITHDRAWN_CODE)) {
+      this.silencedConfirms.delete(p.id);
+      this.lateResults.set(p.id, this.spokenFor(waiting, p.mutation));
+      return;
+    }
+    if (result !== null) this.lateResults.set(p.id, result);
+  }
+
+  /** A Cancel pressed again over sends whose Cancel is owed: each is asked now. */
+  private async reaskOwed(owed: PendingMutation[], opts: { askedElsewhere?: boolean }): Promise<WithdrawOutcome> {
+    let said: WithdrawOutcome = "withdrawn";
+    for (const p of owed) {
+      if (this.askingWithdraw.has(p.id)) { said = worseWithdraw(said, "unknown"); continue; }
+      this.askingWithdraw.add(p.id);
+      try {
+        const settled = await this.settleWithdrawn(p, await this.askWithdraw(p));
+        said = worseWithdraw(said, settled.said);
+        if (settled.result !== null) {
+          this.hearEnding(p, opts.askedElsewhere === true || settled.said !== "withdrawn" ? settled.result : null);
+        }
+      } finally {
+        this.askingWithdraw.delete(p.id);
+      }
+    }
+    this.overlayRev++;
+    this.notify();
+    return said;
   }
 
   /**
@@ -8463,11 +8602,13 @@ export class OhmailEngine {
     const seen = new Set<OutboxRowVerdict | "failed">();
     for (const e of rows) seen.add(await this.store.decideOutboxRow(e.id, { kind: "withdraw" }).catch(() => "failed" as const));
     this.notify();
-    if (seen.has("marked")) this.notices?.post({ t: "withdraw", key });
     if (seen.has("sending") || seen.has("sent")) return "on_the_wire";
     // A mark the disk did not take, or an older build's row (see foreignCancelRefused): nothing cancelled.
     if (seen.has("failed") || seen.has("unstamped")) return "unknown";
-    if (seen.has("marked") || seen.has("withdrawn")) return "withdrawn";
+    // Marked here, or by a Cancel still owed its answer: the server decides, then the owning engine is told.
+    if (seen.has("marked") || seen.has("owed")) return this.settleForeignWithdraw(key, rows);
+    // Marked by a Cancel the server already answered `withdrawn`.
+    if (seen.has("withdrawn")) return "withdrawn";
     /* Gone: answered only by the ending its owner said before the drop. That notice can arrive after
        this transaction's answer, so the disk is re-read once (a store read, not a clock) first; with no
        ending heard, nothing is known. */
@@ -8482,20 +8623,25 @@ export class OhmailEngine {
    * a mark won first. Only for a send, where windows share the disk and this engine owns the row.
    * `failed`: the disk did not answer, and nothing is sent this round.
    */
-  private async claimForSend(p: PendingMutation): Promise<"claimed" | "withdrawn" | "unclaimed" | "failed"> {
+  private async claimForSend(p: PendingMutation): Promise<"claimed" | "offline" | "withdrawn" | "owed" | "unclaimed" | "failed"> {
     const me = this.ownerName;
     if (p.mutation.kind !== "mail_send" || me === null || !this.ownershipOn() || typeof this.store.decideOutboxRow !== "function") {
       return "unclaimed";
     }
+    // THE WIRE FACT rides the claim, unless the browser says it is offline: that claim sends nothing.
+    const wire = !OhmailEngine.knownOffline();
     let verdict: OutboxRowVerdict;
     try {
-      verdict = await this.store.decideOutboxRow(p.id, { kind: "claim", me });
+      verdict = await this.store.decideOutboxRow(p.id, { kind: "claim", me, wire });
     } catch {
       return "failed";
     }
-    if (verdict === "withdrawn") return "withdrawn";
-    if (verdict === "claimed") p.sending = me;
-    return verdict === "claimed" ? "claimed" : "unclaimed";
+    if (verdict === "withdrawn" || verdict === "owed") return verdict;
+    if (verdict !== "claimed") return "unclaimed";
+    p.sending = me;
+    if (!wire) return "offline";
+    p.wired = true;
+    return "claimed";
   }
 
   /**
@@ -8527,17 +8673,244 @@ export class OhmailEngine {
    * A refused mark falls back to the hard delete: either one keeps a restart from replaying the
    * row, and the in-memory key already keeps this session from sending it.
    */
-  private async markWithdrawn(p: PendingMutation): Promise<boolean> {
+  private async markWithdrawn(p: PendingMutation, owe: boolean): Promise<boolean> {
     try {
       await this.store.commitLocal(
-        [{ type: OUTBOX_TYPE, id: p.id, entity: { ...outboxEntryOf(p), withdrawn: true } }], [],
+        [{ type: OUTBOX_TYPE, id: p.id, entity: { ...outboxEntryOf(p), withdrawn: true, ...(owe ? { withdrawOwed: true } : {}) } }], [],
       );
       return true;
     } catch {
-      this.sayEnded(p, "withdrawn");
+      // No ending is said here: a send's is said once the server has answered, never ahead of it.
       // `true` only when the delete reached the disk: a row neither marked nor deleted can still be sent.
       return this.dropOutbox(p.id);
     }
+  }
+
+  /**
+   * WHAT THE SERVER LAST SAID TO A CANCEL OF THIS KEY, or `undefined` when it was never asked. After an
+   * `unknown`, `unreachable` or `unsupported` means the server could not answer for a send this disk
+   * may have put on the wire; nothing means the disk refused the Cancel itself.
+   */
+  withdrawAnswerOf(key: string): WithdrawSendOutcome | undefined {
+    return this.withdrawAnswers.get(key);
+  }
+
+  /** The key of every answer waiting to be collected: a send record is owed per KEY, never globally. */
+  lateResultKeys(): ReadonlySet<string> {
+    const out = new Set<string>();
+    for (const r of this.lateResults.values()) out.add(r.key);
+    return out;
+  }
+
+  /** The browser says it has no network, so a request made now cannot leave this device. */
+  private static knownOffline(): boolean {
+    return (globalThis as { navigator?: { onLine?: unknown } }).navigator?.onLine === false;
+  }
+
+  /** Ask the server about one Cancel. A throw is an answer nobody could read: `unreachable`. */
+  private async askWithdrawFor(key: string, draftId: string | null): Promise<WithdrawSendAnswer> {
+    let answer: WithdrawSendAnswer;
+    try {
+      answer = await this.adapter.withdrawSend(key, draftId);
+    } catch {
+      answer = { outcome: "unreachable" };
+    }
+    this.withdrawAnswers.delete(key);
+    this.withdrawAnswers.set(key, answer.outcome);
+    if (this.withdrawAnswers.size > 256) this.withdrawAnswers.delete(this.withdrawAnswers.keys().next().value!);
+    return answer;
+  }
+
+  private askWithdraw(p: PendingMutation): Promise<WithdrawSendAnswer> {
+    const draftId = p.createdRow?.id ?? (p.mutation as { draftId?: string | null }).draftId ?? null;
+    return this.askWithdrawFor(p.key, draftId);
+  }
+
+  /** Was this send's row written with the wire fact, on this engine's copy of the disk. */
+  private rowWired(id: string): boolean {
+    const row = this.store.get<unknown>(OUTBOX_TYPE, id);
+    return isPersistedOutboxEntry(row) && row.wired === true;
+  }
+
+  /**
+   * ONE OWN SEND'S CANCEL, SETTLED BY THE SERVER'S ANSWER — its row is already marked withdrawn.
+   * `said` is the Cancel's word; `result` what a surface waiting on the send hears, `null` while the
+   * answer is owed. "Withdrawn" only on the server's word, or for a row that never left this disk
+   * when the server could not answer; a wired row the server could not answer for is `unknown`.
+   */
+  private async settleWithdrawn(
+    p: PendingMutation, answer: WithdrawSendAnswer,
+  ): Promise<{ said: WithdrawOutcome; result: MutationResult | null }> {
+    const wired = p.wired === true || this.rowWired(p.id);
+    const o = answer.outcome;
+    if (o === "withdrawn" || o === "failed" || (o === "unsupported" && !wired)) {
+      this.owedWithdraws.delete(p.id);
+      this.sayEnded(p, "withdrawn");
+      await this.answeredWithdrawn(p);
+      return { said: "withdrawn", result: withdrawnResult(p) };
+    }
+    if (o === "already_sent") {
+      this.owedWithdraws.delete(p.id);
+      this.withdrawnKeys.delete(p.key);
+      this.sayEnded(p, "confirmed");
+      await this.dropOutbox(p.id);
+      return {
+        said: "on_the_wire",
+        result: {
+          id: p.id, key: p.key, status: "confirmed", seq: null,
+          firstSend: answer.firstSend ?? { status: "sent", at: this.now().toISOString() },
+          ...(p.createdRow !== undefined ? { entityId: p.createdRow.id } : {}),
+        },
+      };
+    }
+    if (o === "unverified") {
+      this.owedWithdraws.delete(p.id);
+      return { said: "on_the_wire", result: await this.parkUnverified(p) };
+    }
+    // `in_flight`, `unreachable`, or `unsupported` over a wired row: the Cancel stays owed.
+    const result = await this.oweWithdraw(p, o === "in_flight");
+    return { said: o === "in_flight" ? "on_the_wire" : wired ? "unknown" : "withdrawn", result };
+  }
+
+  /** The server said withdrawn: the row stays marked (a later boot drops it) and nothing is owed. */
+  private async answeredWithdrawn(p: PendingMutation): Promise<void> {
+    delete p.withdrawOwed;
+    try {
+      await this.store.commitLocal([{ type: OUTBOX_TYPE, id: p.id, entity: { ...outboxEntryOf(p), withdrawn: true } }], []);
+    } catch {
+      await this.dropOutbox(p.id);
+    }
+  }
+
+  /**
+   * THE CANCEL STAYS OWED: off the queue, marked on disk, asked again by every drive and flush.
+   * `counts` is the server answering `in_flight`, which spends the ceiling on the backoff; past it
+   * the row ends in the abandoned strip as unconfirmed, and Try again asks the withdraw, never the send.
+   */
+  private async oweWithdraw(p: PendingMutation, counts: boolean): Promise<MutationResult | null> {
+    if (p.withdrawOwed !== true) {
+      // The send's own failures say nothing about the Cancel: the debt starts with a clean count.
+      p.attempts = 0;
+      delete p.nextAt;
+    }
+    p.withdrawOwed = true;
+    delete p.sending;
+    this.withdrawnKeys.add(p.key);
+    if (counts) {
+      const attempts = (p.attempts ?? 0) + 1;
+      p.attempts = attempts;
+      if (attempts >= OUTBOX_MAX_SERVER_FAILURES) {
+        this.owedWithdraws.delete(p.id);
+        return this.abandonOwedWithdraw(p);
+      }
+      p.nextAt = this.now().getTime() + Math.min(OUTBOX_BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1), OUTBOX_BACKOFF_CAP_MS);
+    }
+    this.owedWithdraws.set(p.id, p);
+    await this.putOutbox(p);
+    return null;
+  }
+
+  /** An owed Cancel past its ceiling, kept for the person: unconfirmed, and Try again asks again. */
+  private async abandonOwedWithdraw(p: PendingMutation): Promise<MutationResult | null> {
+    const reported = new MutationRejectedError(WITHDRAW_UNCONFIRMED_SENTENCE, {
+      code: "send_unverified", retryable: false, ...(p.createdRow !== undefined ? { entityId: p.createdRow.id } : {}),
+    });
+    const record: PersistedOutboxEntry = {
+      ...outboxEntryOf(p), attempts: p.attempts ?? 0,
+      lastError: { message: reported.message, code: reported.code, status: null },
+    };
+    try {
+      await this.store.commitLocal([{ type: OUTBOX_ABANDONED_TYPE, id: p.id, entity: record }], [{ type: OUTBOX_TYPE, id: p.id }]);
+    } catch {
+      // Nothing moved: the debt stays and waits out a full cap, as `abandon` waits.
+      p.nextAt = this.now().getTime() + OUTBOX_BACKOFF_CAP_MS;
+      this.owedWithdraws.set(p.id, p);
+      return null;
+    }
+    this.sayEnded(p, "refused");
+    return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: reported };
+  }
+
+  /**
+   * THE SERVER COULD NOT CONFIRM THE SEND THIS CANCEL ASKED ABOUT: the send's own unverified ending,
+   * parked in the abandoned strip as an unverified send is (Try again asks under the same key).
+   */
+  private async parkUnverified(p: PendingMutation): Promise<MutationResult> {
+    delete p.withdrawOwed;
+    this.withdrawnKeys.delete(p.key);
+    const reported = new MutationRejectedError(
+      "We couldn't confirm this send. Check your Sent folder before retrying.",
+      { code: "send_unverified", retryable: false, ...(p.createdRow !== undefined ? { entityId: p.createdRow.id } : {}) },
+    );
+    const record: PersistedOutboxEntry = {
+      ...outboxEntryOf(p), attempts: 0,
+      lastError: { message: reported.message, code: reported.code, status: null },
+    };
+    this.sayEnded(p, "refused");
+    try {
+      await this.store.commitLocal([{ type: OUTBOX_ABANDONED_TYPE, id: p.id, entity: record }], [{ type: OUTBOX_TYPE, id: p.id }]);
+    } catch {
+      this.abandonedLocally.set(p.id, record);
+      this.localRefusalRev++;
+    }
+    return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: reported };
+  }
+
+  /** ONE OWED CANCEL, ASKED AGAIN — from a drive, a flush, a claim that met the debt, or Try again. */
+  private async askOwed(p: PendingMutation): Promise<MutationResult> {
+    this.overlays.delete(p.id);
+    this.withdrawnKeys.add(p.key);
+    const waiting: MutationResult = { id: p.id, key: p.key, status: "queued", seq: null };
+    if (this.askingWithdraw.has(p.id)) return waiting;
+    this.askingWithdraw.add(p.id);
+    try {
+      const settled = await this.settleWithdrawn(p, await this.askWithdraw(p));
+      this.overlayRev++;
+      this.notify();
+      return settled.result ?? waiting;
+    } finally {
+      this.askingWithdraw.delete(p.id);
+    }
+  }
+
+  /** Every owed Cancel whose wait is over, asked once; the answers that settled one. */
+  private async askOwedWithdraws(): Promise<MutationResult[]> {
+    const ready = this.now().getTime();
+    const out: MutationResult[] = [];
+    for (const p of [...this.owedWithdraws.values()]) {
+      if ((p.nextAt ?? 0) > ready || this.askingWithdraw.has(p.id)) continue;
+      const r = await this.askOwed(p);
+      if (r.status !== "queued") out.push(r);
+    }
+    return out;
+  }
+
+  /**
+   * ANOTHER WINDOW'S SEND, MARKED HERE: the server decides, the disk carries the answer to the owning
+   * engine, and the notice goes only after it. Withdrawn: the debt clears and the owning engine is told.
+   * The server holds the send: the mark comes off and the owning engine asks under its own key. Anything
+   * else leaves the row marked and owed, and whichever engine dispatches it asks again.
+   */
+  private async settleForeignWithdraw(key: string, rows: PersistedOutboxEntry[]): Promise<WithdrawOutcome> {
+    const e = rows[0]!;
+    const draftId = (isCreatedRow(e.createdRow) ? e.createdRow.id : null)
+      ?? (e.mutation as { draftId?: string | null }).draftId ?? null;
+    const answer = await this.askWithdrawFor(key, draftId);
+    const wired = rows.some((r) => r.wired === true);
+    const o = answer.outcome;
+    const settle = async (act: OutboxRowAct): Promise<void> => {
+      for (const r of rows) await this.store.decideOutboxRow!(r.id, act).catch(() => undefined);
+    };
+    if (o === "withdrawn" || o === "failed" || (o === "unsupported" && !wired)) {
+      await settle({ kind: "answered" });
+      this.notices?.post({ t: "withdraw", key, outcome: "withdrawn" });
+      return "withdrawn";
+    }
+    if (o === "already_sent" || o === "unverified") {
+      await settle({ kind: "unmark" });
+      return "on_the_wire";
+    }
+    return o === "in_flight" ? "on_the_wire" : wired ? "unknown" : "withdrawn";
   }
 
   /**
@@ -8596,6 +8969,8 @@ export class OhmailEngine {
       // THE SAME SINGLE-FLIGHT every other outbox road takes — see {@link outboxGate}. Without it
       // two surfaces could flush concurrently and, for the null-key read verbs, land newer-then-older.
       const results = await this.outboxGate(() => this.flushPendingInner());
+      // AND EVERY OWED CANCEL: the flush is the phone's only road, and a waiting surface's on the web.
+      results.push(...await this.askOwedWithdraws());
       // OFF THE LANE. One drain covers the whole batch: they all finished before this line, so a
       // single drive that starts now began after every one of their POSTs returned and carries
       // every echo — the same happens-before the boot replay relies on.

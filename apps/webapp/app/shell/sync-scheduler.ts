@@ -7,6 +7,7 @@ import {
   type StoreTimeline,
   type MessageBodyWire,
   type MutationAnswer,
+  type WithdrawSendAnswer,
   type OhmailEngine,
   type RestoreFromTrashFn,
   type SnapshotFn,
@@ -650,6 +651,16 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
            */
           if (identity() !== "holds") refuse();
           return outcome;
+        },
+        /**
+         * CANCEL ASKS THE SERVER on `mutate`'s identity rule: under another session it would decide
+         * the wrong account's key. Refused here it is `unreachable`, never a word the server did not
+         * say, and the engine keeps the Cancel owed until the gate opens and it is asked again.
+         */
+        withdrawSend: async (key: string, draftId: string | null): Promise<WithdrawSendAnswer> => {
+          if (identity() !== "holds") return { outcome: "unreachable" };
+          const answer = await adapter.withdrawSend(key, draftId);
+          return identity() === "holds" ? answer : { outcome: "unreachable" };
         },
         /**
          * Forwarded, not gated on cadence, refused when contradicted. A body fetch happens because somebody selected

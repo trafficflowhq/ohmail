@@ -93,6 +93,22 @@ export interface MutationOutcome {
 }
 
 /**
+ * WHAT THE SERVER SAID ABOUT A CANCEL — `POST /sends/withdraw` — or why it could not be asked.
+ * The first five are the server's words: `withdrawn` (nothing left under the key and nothing
+ * will), `already_sent`, `unverified`, `in_flight`, `failed` (nothing left, the key spent).
+ * `unsupported`: a server without the route (a 404). `unreachable`: no answer to read — the
+ * network, a 5xx, a body that does not parse, a door that refused to ask. Never a throw.
+ */
+export type WithdrawSendOutcome =
+  | "withdrawn" | "already_sent" | "unverified" | "in_flight" | "failed" | "unsupported" | "unreachable";
+
+export interface WithdrawSendAnswer {
+  outcome: WithdrawSendOutcome;
+  /** The send this key already holds, on `already_sent`/`unverified` — shape-checked by the adapter. */
+  firstSend?: { status: string; at: string };
+}
+
+/**
  * THE 202 ARM — the server RECORDED the mutation for the install that organizes the mailbox and
  * did nothing else: nothing moved, no `change_log` row exists, and this answer is the only
  * evidence the press happened. A SEPARATE ARM rather than a flag on {@link MutationOutcome},
@@ -334,6 +350,13 @@ export interface EngineAdapter {
    * resolving `{text: ""}` on a 500 would render an empty message as mail.
    */
   fetchBody(messageId: string): Promise<MessageBodyWire | null>;
+
+  /**
+   * CANCEL ASKS THE SERVER the send under `key` went to — {@link WithdrawSendAnswer}. REQUIRED, not
+   * a capability: an adapter that could omit it would answer every Cancel from the disk alone, the
+   * defect this exists to close. `draftId` is the row the send names, or `null`. Never throws.
+   */
+  withdrawSend(key: string, draftId: string | null): Promise<WithdrawSendAnswer>;
 
   /**
    * `GET /drafts/:id` — THE DRAFT'S TEXT, when the mirror row arrived without it.

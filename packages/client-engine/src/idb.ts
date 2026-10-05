@@ -6,7 +6,7 @@ import {
   type DurableWrite,
 } from "./durable.js";
 import {
-  BaseMirrorStore, MirrorGenerationChanged, decideOutboxRow, keyMayCarry, wipeKeepUnion,
+  BaseMirrorStore, MirrorGenerationChanged, carriedOutboxMarks, decideOutboxRow, keyMayCarry, wipeKeepUnion,
   type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "./store.js";
 import { OutboxNoticeBus, outboxNoticeChannel, type NoticeChannel } from "./outbox-notices.js";
@@ -903,15 +903,15 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       try { tx.abort(); } catch { /* already settled */ }
       throw new MirrorGenerationChanged(expected, found);
     }
-    /* A WITHDRAWN MARK IS NEVER WRITTEN OVER: another window's Cancel won its compare-and-set, and no
-       later put of the row, the owning engine's included, takes it back. */
+    /* A WITHDRAWN MARK, ITS DEBT AND THE WIRE FACT ARE NEVER WRITTEN OVER: another window's Cancel won
+       its compare-and-set, and no later put of the row, the owning engine's included, takes them back
+       (`carriedOutboxMarks`, the rule the paired page's store applies too). */
     for (const rec of puts) {
       const entity = rec.entity as Record<string, unknown> | null;
-      if (rec.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object" || entity.withdrawn === true) continue;
+      if (rec.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object") continue;
       const prior = await requestDone(entities.get(`${rec.type}:${rec.id}`)) as MirrorRecord | undefined;
-      if ((prior?.entity as { withdrawn?: unknown } | null | undefined)?.withdrawn === true) {
-        rec.entity = { ...entity, withdrawn: true };
-      }
+      const carried = carriedOutboxMarks(entity, prior?.entity ?? null);
+      if (carried !== null) rec.entity = carried;
     }
     for (const rec of puts) entities.put(rec, `${rec.type}:${rec.id}`);
     for (const key of deletes) entities.delete(key);

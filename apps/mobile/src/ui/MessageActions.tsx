@@ -1140,6 +1140,8 @@ export function ComposeSheet({
    * un-send it. The sentence stands in place and the next press dismisses — see `closeComposer`.
    */
   const [alreadySent, setAlreadySent] = useState(false);
+  /** The Cancel could not reach the server about a send that may have left; it is asked again. */
+  const [cancelUnreachable, setCancelUnreachable] = useState(false);
   /** TRUE after Send was pressed over an unconfirmed send — the press says why nothing went. */
   const [againNote, setAgainNote] = useState(false);
   /**
@@ -1299,6 +1301,7 @@ export function ComposeSheet({
       // …and the send did NOT go after all, so the too-late sentence may not stand over a
       // re-armed Send. Cleared with the phase that raised it.
       setAlreadySent(false);
+      setCancelUnreachable(false);
       // The refusal left a row: the next press sends THAT row, never a second copy of one letter.
       if (said.draftId !== null) setDraftId(said.draftId);
       // The re-armed Send says why it is back, in the words the refusal earned.
@@ -1434,6 +1437,7 @@ export function ComposeSheet({
       const said = afterWithdraw(await w.actions.withdrawSend(key), w.sendOutcome(key));
       if (said === "close") leave();
       else if (said === "already_sent") setAlreadySent(true);
+      else setCancelUnreachable(true);
     })();
   };
 
@@ -1496,6 +1500,11 @@ export function ComposeSheet({
     alreadySent ? (
       <Txt key="alreadySent" variant="caption" tone="ink2" accessibilityRole="alert">
         {Copy.replyAlreadySent}
+      </Txt>
+    ) : null,
+    cancelUnreachable && !alreadySent ? (
+      <Txt key="cancelUnreachable" variant="caption" tone="ink2" accessibilityRole="alert">
+        {Copy.replyCancelUnreachable}
       </Txt>
     ) : null,
     /* The told refusal: a Send lacking only content earned a sentence, gone once content arrives. */

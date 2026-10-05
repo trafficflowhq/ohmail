@@ -430,6 +430,9 @@ function accountGuarded(
     // webapp's gate draws the same line). Forwarded BY HAND because this literal is the whole
     // surface the engine sees: a capability missing here is missing on the live path only.
     mutate: (m, opts) => adapter.mutate(m, opts),
+    // Cancel asks the server, on `mutate`'s rule. Left out of this literal, every phone Cancel would
+    // be answered by the disk alone — the type makes the omission a compile error.
+    withdrawSend: (key, draftId) => adapter.withdrawSend(key, draftId),
     fetchBody: (id) => adapter.fetchBody(id),
     fetchBodies: (ids: string[]) => adapter.fetchBodies(ids),
     searchServer: (query, opts) => adapter.searchServer(query, opts),

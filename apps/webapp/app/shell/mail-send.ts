@@ -208,8 +208,28 @@ export function refusedRowOf(res: MutationResult, aboutThisCompose: boolean): Re
   return { rowId: res.entityId, aboutThisCompose };
 }
 
-/** What Cancel does with the engine's answer — see {@link MailSendApi.withdraw}. */
-export type CancelSaid = "close" | "already_sent" | "elsewhere" | "unknown";
+/**
+ * What Cancel does with the engine's answer — see {@link MailSendApi.withdraw}. `unreachable`: the
+ * server could not be asked about a send that may have left; the dock stays held, the Cancel owed.
+ */
+export type CancelSaid = "close" | "already_sent" | "elsewhere" | "unknown" | "unreachable";
+
+/** Said once per session: a server that predates the withdraw route answered a Cancel. */
+let unsupportedSaid = false;
+
+/**
+ * THE CANCEL'S WORD, with the server's reason behind an `unknown`: a server that could not be asked
+ * about a send that may have left is `unreachable`; a disk that refused the Cancel stays `unknown`.
+ */
+function cancelSaidOf(engine: OhmailEngine, key: string, outcome: "on_the_wire" | "unknown"): CancelSaid {
+  const asked = typeof engine.withdrawAnswerOf === "function" ? engine.withdrawAnswerOf(key) : undefined;
+  if (asked === "unsupported" && !unsupportedSaid) {
+    unsupportedSaid = true;
+    console.warn("ohmail: send_withdraw_unsupported — this server has no withdraw; Cancel answered from this device");
+  }
+  if (outcome === "on_the_wire") return "already_sent";
+  return asked === "unreachable" || asked === "unsupported" ? "unreachable" : "unknown";
+}
 
 const IDLE: SendState = { phase: "idle" };
 
@@ -383,11 +403,20 @@ export function standingSendKey(engine: OhmailEngine, lane: string): string | nu
  */
 const outboxLanesCache = new WeakMap<EntityReader, { at: number } & DurableSends>();
 
-/** An outbox row as this reader needs it. `withdrawn`: Cancel's mark, kept until the next boot drops the row. */
-type OutboxRow = { mutation?: { kind?: string }; withdrawn?: boolean; confirmed?: boolean; key?: string };
+/**
+ * An outbox row as this reader needs it. `withdrawn`: Cancel's mark; with `withdrawOwed` the server has
+ * not answered the Cancel yet, and `wired` says the send may have left this disk.
+ */
+type OutboxRow = {
+  mutation?: { kind?: string }; withdrawn?: boolean; withdrawOwed?: boolean; wired?: boolean; confirmed?: boolean; key?: string;
+};
 
-/** A send still on its way: a `mail_send` row that Cancel did not withdraw. */
-const pendingSendRow = (r: OutboxRow): boolean => r.mutation?.kind === "mail_send" && r.withdrawn !== true && r.confirmed !== true;
+/**
+ * A send still on its way: a `mail_send` row Cancel did not withdraw — or one whose Cancel the server
+ * has not answered while the send may have left, which holds its lane until the answer comes.
+ */
+const pendingSendRow = (r: OutboxRow): boolean => r.mutation?.kind === "mail_send" && r.confirmed !== true
+  && (r.withdrawn !== true || (r.withdrawOwed === true && r.wired === true));
 
 /** The durable outbox's pending sends: their lanes as the press derives them, and their keys. */
 type DurableSends = { lanes: Set<string>; keys: Set<string> };
@@ -478,14 +507,14 @@ export function sendSettledIn(engine: OhmailEngine): (key: string) => boolean {
 
 /**
  * WHICH SEND RECORDS ARE STILL OWED AN ENDING — the one reading every deletion in `send-lock.ts` is
- * handed. Owed: a key not settled (the outbox unread, or queued, on the wire, on the durable outbox),
- * and every key while a late answer waits uncollected (it names a mutation, not a key). The durable
- * outbox is every window's: the store follows the disk, so another window's waiting send is here too.
+ * handed. Owed, PER KEY: a key not settled (the outbox unread, or queued, on the wire, on the durable
+ * outbox), or one whose late answer waits uncollected. Another key's late answer keeps nothing. The
+ * durable outbox is every window's: the store follows the disk, so another window's send is here too.
  */
 export function sendLockOwed(engine: OhmailEngine): SendLockOwed {
   const settled = sendSettledIn(engine);
-  const late = typeof engine.hasLateResults === "function" && engine.hasLateResults();
-  return (key) => late || !settled(key);
+  const late = typeof engine.lateResultKeys === "function" ? engine.lateResultKeys() : new Set<string>();
+  return (key) => late.has(key) || !settled(key);
 }
 
 /** What the composer's hold reads off the engine: which keys are settled, and which are owed. */
@@ -1475,6 +1504,22 @@ export function useMailSend(
   const owner = useRef<string | null>(storageOwner());
 
   /**
+   * AN ENDED SEND'S RECORD GOES, OR IS ASKED AGAIN: the jar keeps a record while its key is owed (a
+   * late answer for that key not yet collected), so a refused drop is retried on every engine notify
+   * until it takes. Scoped to the key that ended, so a later press of the same words keeps its own.
+   */
+  const pendingRelease = useRef(new Map<string, { lane: string; fp: string }>());
+  const releaseEnded = useCallback((lane: string, fp: string, key: string): void => {
+    if (releaseSendLock(lane, fp, sendLockOwed(engine), owner.current, key)) pendingRelease.current.delete(key);
+    else pendingRelease.current.set(key, { lane, fp });
+  }, [engine]);
+  useEffect(() => engine.subscribe(() => {
+    for (const [key, r] of [...pendingRelease.current]) {
+      if (releaseSendLock(r.lane, r.fp, sendLockOwed(engine), owner.current, key)) pendingRelease.current.delete(key);
+    }
+  }), [engine]);
+
+  /**
    * THE COMPOSE SESSION ID FOR A LANE — the compose surface's, and `null` for every other lane. IT USED TO BE READ
    * ONLY FOR A MESSAGE WITH NO NAME OF ITS OWN, AND THAT WAS THE DEFECT: The old rule was `sendSubject(m, null) ===
    * undefined ? composeSessionId() : null`: a draft-backed compose never touched storage for it, on the reasoning
@@ -1564,7 +1609,7 @@ export function useMailSend(
         // and releasing the lane would delete the record saying an earlier message may already
         // have been delivered — see `releaseSendLock`.
         const fp = sendFingerprint(m);
-        if (next.phase !== "unverified") releaseSendLock(key, fp, sendLockOwed(engine), owner.current);
+        if (next.phase !== "unverified") releaseEnded(key, fp, res.key);
         // DURABLY, because the phase below is component state: reopening the draft, a reload or
         // another tab all start from `idle`, and each of those is a way back to a send that may
         // already have gone. The lock is the only thing that survives them.
@@ -1638,7 +1683,7 @@ export function useMailSend(
        * claimed, because the intent is out there under it and a second press would be a second delivery.
        */
     },
-    [settle, setPhase, sessionOf, toast, t],
+    [settle, setPhase, sessionOf, toast, t, releaseEnded],
   );
 
   /**
@@ -1829,7 +1874,7 @@ export function useMailSend(
          wire is carrying — a second key for a message that may yet be delivered. Nothing
          beyond the release and the sentence: settling is the `confirmed` ending, and the row
          the adapter made for a press that carried none is not adopted here. */
-      releaseSendLock(record.lane, record.fp, sendLockOwed(engine), owner.current);
+      releaseEnded(record.lane, record.fp, res.key);
       /* The live path's own failure sentence, on the surface this answer is about: without it
          the composer comes back editable saying nothing, which is a message the person
          pressed Send on and no account of what happened to it. A Cancel says nothing. */
@@ -2235,9 +2280,9 @@ export function useMailSend(
       // Another window's send from an older build: no Cancel from here, said rather than faked.
       if (typeof engine.foreignCancelRefused === "function" && engine.foreignCancelRefused(restored)) return "elsewhere";
       const outcome = await engine.withdrawQueued(restored);
-      if (outcome === "on_the_wire") return "already_sent";
-      // The disk did not take the Cancel: nothing was cancelled, so nothing is released or closed.
-      if (outcome === "unknown") return "unknown";
+      // On its way, or nothing cancelled (the disk refused, or the server could not be asked about a
+      // send that may have left): nothing is released or closed.
+      if (outcome === "on_the_wire" || outcome === "unknown") return cancelSaidOf(engine, restored, outcome);
       const record = outcome === "gone" ? null : recordForEndedSend(restored, owner.current);
       if (record !== null && record.lane === lane) {
         releaseSendLock(record.lane, record.fp, sendLockOwed(engine), owner.current);
@@ -2246,11 +2291,10 @@ export function useMailSend(
       return "close";
     }
     const outcome = await engine.withdrawQueued(key);
-    /* THE REQUEST HAS LEFT AND THIS DEVICE CANNOT UN-SEND IT. Nothing is released: the send is
-       still owed an answer and the lane must stay locked until it has one. */
-    if (outcome === "on_the_wire") return "already_sent";
-    // Nor when the disk did not take the Cancel: the send stands, and pressing again asks again.
-    if (outcome === "unknown") return "unknown";
+    /* THE SERVER HOLDS THE SEND, OR COULD NOT ANSWER FOR ONE THAT MAY HAVE LEFT. Nothing is released:
+       the send is still owed an ending and the lane stays locked until it has one. A disk that did
+       not take the Cancel is the same: the send stands, and pressing again asks again. */
+    if (outcome === "on_the_wire" || outcome === "unknown") return cancelSaidOf(engine, key, outcome);
     /* `withdrawn` is the cancellation; `gone` is a key the queue no longer holds, which the
        engine has already settled elsewhere — either way nothing will be delivered under it, and
        the withdrawal mark refuses it at the wire if a flush is mid-lift. */

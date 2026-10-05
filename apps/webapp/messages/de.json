@@ -1273,6 +1273,7 @@
     "cancelAlreadySent": "Schon unterwegs. Zu spät zum Abbrechen.",
     "cancelUnknown": "Das Senden konnte nicht abgebrochen werden. Versuche es noch einmal.",
     "cancelElsewhere": "Das wird aus einem anderen Fenster gesendet. Lade jenes Fenster neu, um es hier abzubrechen.",
+    "cancelUnreachable": "Der Server war zum Abbrechen nicht erreichbar. ohmail fragt weiter nach und sendet das nicht noch einmal.",
     "discardHeld": "Nicht gelöscht: Ihr Versand ist nicht bestätigt, darum bleibt die Nachricht in den Entwürfen.",
     "discardUnknown": "Nicht gelöscht: Dieser Browser kann nicht erkennen, ob ihr Versand noch läuft, darum bleibt die Nachricht in den Entwürfen.",
     "resumedNote": "Das ist die Nachricht, die du nicht fertig geschrieben hast. Verwirf sie, um eine neue zu beginnen.",

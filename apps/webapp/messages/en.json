@@ -1273,6 +1273,7 @@
     "cancelAlreadySent": "Already on its way. Too late to cancel.",
     "cancelUnknown": "Couldn't cancel this send. Try again.",
     "cancelElsewhere": "This is being sent from another window. Reload that window to cancel it here.",
+    "cancelUnreachable": "Couldn't reach the server to cancel. ohmail will keep asking and will not send this again.",
     "discardHeld": "Not deleted: its send is not confirmed, so the message stays in Drafts.",
     "discardUnknown": "Not deleted: this browser cannot tell whether its send is still going out, so the message stays in Drafts.",
     "resumedNote": "This is the message you left unfinished. Discard it to start a new one.",

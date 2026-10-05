@@ -8,7 +8,7 @@
  * Several tabs of one pairing share these rows: each row has one owner, as on the web's mirror.
  */
 import {
-  BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OutboxNoticeBus, decideOutboxRow, outboxNoticeChannel, recordKey,
+  BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OutboxNoticeBus, carriedOutboxMarks, decideOutboxRow, outboxNoticeChannel, recordKey,
   type MirrorRecord, type NoticeChannel, type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "@ohmail/client-engine";
 
@@ -269,12 +269,13 @@ export class HostOutboxStore extends BaseMirrorStore {
       if (!this.usable()) return;
       const tx = db.transaction(ROWS, "readwrite");
       const rows = tx.objectStore(ROWS);
-      // Another tab's Cancel is never written over, as in `idb.ts`.
+      // Another tab's Cancel, its debt and the wire fact are never written over, as in `idb.ts`.
       for (const r of puts) {
         const entity = r.entity as Record<string, unknown> | null;
-        if (r.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object" || entity.withdrawn === true) continue;
+        if (r.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object") continue;
         const prior = storedRow(await request(rows.get([this.scope!, r.type, r.id])));
-        if ((prior?.entity as { withdrawn?: unknown } | undefined)?.withdrawn === true) r.entity = { ...entity, withdrawn: true };
+        const carried = carriedOutboxMarks(entity, prior?.entity ?? null);
+        if (carried !== null) r.entity = carried;
       }
       for (const r of puts) rows.put({ type: r.type, id: r.id, entity: r.entity }, [this.scope!, r.type, r.id]);
       for (const k of deletes) rows.delete([this.scope!, k.type, k.id]);

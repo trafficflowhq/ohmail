@@ -57,8 +57,8 @@ export type SendVerdict = "pending" | "confirmed" | "rolled_back" | "unverified"
  */
 export function afterWithdraw(outcome: WithdrawAnswer, settled: SendVerdict = "unknown"): CancelSaid {
   if (outcome === "on_the_wire") return "already_sent";
-  // A Cancel the disk did not take cancelled nothing: the sheet stays. The phone's store shares no
-  // disk with another window, so its engine does not give this answer today.
+  // Nothing cancelled: the sheet stays and says so. The phone's store shares no disk with another
+  // window, so on the phone this is the server not answering for a send that may have left.
   if (outcome === "unknown") return "unknown";
   return outcome === "gone" && settled === "confirmed" ? "already_sent" : "close";
 }
