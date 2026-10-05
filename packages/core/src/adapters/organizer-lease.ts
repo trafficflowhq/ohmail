@@ -10,7 +10,7 @@ import {
 } from "./imap-bounds.js";
 import { epochOf, epochVerdict, uidRefsAtEpoch } from "../epoch.js";
 import {
-  assertMetaIdentity, readMemo, writeMemo, forgetMemo, peekMemo,
+  assertMetaIdentity, readMemo, writeMemo, forgetMemo, peekMemo, noteMetaNearCeiling,
   type MetaIdentity, type Generation,
 } from "./meta-memo.js";
 
@@ -18,7 +18,7 @@ import {
  * from a second path — the drain keeps a position here too, and a second import path is how two
  * callers come to disagree about which store they are writing to. */
 export {
-  readMemo, writeMemo, forgetMemo, peekMemo, assertMetaIdentity,
+  readMemo, writeMemo, forgetMemo, peekMemo, assertMetaIdentity, metaShrinkDue, noteMetaShrinkRan,
   type MetaIdentity, type Generation, type MetaMemo, type MemoRead, MetaIdentityError,
 } from "./meta-memo.js";
 
@@ -291,8 +291,10 @@ export interface MetaFolderRef {
 export function makeMetaFolderRef(
   client: MetaFolderClient,
   toServerPath: (canonical: string) => string,
+  /** A path this LOGIN already resolved, and where to keep one it resolves — see {@link MetaPathSeed}. */
+  seed?: MetaPathSeed,
 ): MetaFolderRef {
-  let known: string | null = null;
+  let known: string | null = seed?.known ?? null;
 
   const locate = async (budget?: ImapDeadline): Promise<MetaFolderLocation> => {
     const listed = await (budget === undefined
@@ -314,6 +316,7 @@ export function makeMetaFolderRef(
       namespaces: personalNamespacesOf(client),
     });
     known = at.path;
+    seed?.learned(at.path);
     return at;
   };
 
@@ -324,8 +327,18 @@ export function makeMetaFolderRef(
     },
     adopt(path: string): void {
       known = path;
+      seed?.learned(path);
     },
   };
+}
+
+/**
+ * A RESOLVED `_meta` PATH KEPT ACROSS PASSES ON ONE LOGIN — the organizer io's, so a shrink pass
+ * costs no LIST of its own (REVIEW-02514 LOW 1). The adapter forgets it at every dial.
+ */
+export interface MetaPathSeed {
+  readonly known: string | null;
+  learned(path: string): void;
 }
 
 /**
@@ -3184,6 +3197,7 @@ export function makeLeaseIo(
     if (read.probe === "absent") forgetMemo(identity, "claimUid");
     generationAtLastRead = read.generation;
     lastEnumeration = read.enumerated;
+    noteMetaNearCeiling(identity, metaNearCeiling(read));
     return read.records;
   };
 
@@ -3384,21 +3398,8 @@ export function makeLeaseIo(
       return { refusals: held?.cleanupRefusals ?? 0, uid: held?.undeletableUid ?? null };
     },
 
-    noteCleanup(outcome: { landed: true } | { landed: false; uid: number | null; generation: number | bigint | null }): void {
-      if (outcome.landed) {
-        forgetMemo(identity, "cleanupRefusals");
-        forgetMemo(identity, "undeletableUid");
-        return;
-      }
-      /* Under the generation the refs were read in; with none known nothing is kept, and the
-         other positions in this memory are left alone rather than cleared by `writeMemo`. */
-      if (!epochOf(outcome.generation).known) return;
-      const held = readMemo(identity, outcome.generation);
-      const memo = held.kind === "memo" ? held.memo : {};
-      writeMemo(identity, outcome.generation, {
-        cleanupRefusals: (memo.cleanupRefusals ?? 0) + 1,
-        ...(outcome.uid !== null ? { undeletableUid: outcome.uid } : {}),
-      });
+    noteCleanup(outcome: CleanupOutcome): void {
+      noteCleanupOutcome(identity, outcome);
     },
 
     async probeUndeletable() {
@@ -3432,6 +3433,31 @@ export function makeLeaseIo(
       }
     },
   };
+}
+
+/** One cleanup's proof: landed, or provably refused by the server (the uid the probe may aim at). */
+type CleanupOutcome = { landed: true } | { landed: false; uid: number | null; generation: number | bigint | null };
+
+/**
+ * THE CLEANUP STREAK, written by the renew's cleanup and the sweep alike: a proven refusal counts
+ * toward {@link META_CLEANUP_REFUSALS_MAX}, a landed one resets. The sweep's count is what lets a
+ * folder already too full to read reach `meta_undeletable` (META-FULL-AND-UNDELETABLE-READS-FULL).
+ */
+function noteCleanupOutcome(identity: MetaIdentity, outcome: CleanupOutcome): void {
+  if (outcome.landed) {
+    forgetMemo(identity, "cleanupRefusals");
+    forgetMemo(identity, "undeletableUid");
+    return;
+  }
+  /* Under the generation the refs were read in; with none known nothing is kept, and the
+     other positions in this memory are left alone rather than cleared by `writeMemo`. */
+  if (!epochOf(outcome.generation).known) return;
+  const held = readMemo(identity, outcome.generation);
+  const memo = held.kind === "memo" ? held.memo : {};
+  writeMemo(identity, outcome.generation, {
+    cleanupRefusals: (memo.cleanupRefusals ?? 0) + 1,
+    ...(outcome.uid !== null ? { undeletableUid: outcome.uid } : {}),
+  });
 }
 
 export interface LeaseGateInput {
@@ -5097,24 +5123,46 @@ for (const [key, ceiling] of [["TF_IMAP_META_MAX_BYTES", IMAP_META_BYTES_MAX], [
 }
 
 /**
+ * WHAT A READER LEAVES THE HOLDER INSIDE THE WINDOW, in records and at the per-record byte bound:
+ * a renewal is appended before the old claim goes, so a folder filled to exactly the window was
+ * crossed by the holder's own next renewal (META-WINDOW-HOLDS-NOTHING-BACK-FOR-THE-HOLDER). It
+ * replaces the whole window of bytes the reserve used to charge on top of every append
+ * (META-WINDOW-BYTE-RESERVE-CHARGED-TWICE).
+ */
+export const META_HOLDER_RESERVE_RECORDS = 16;
+
+/**
  * HOW MANY REQUESTS A READER MAY APPEND THIS CYCLE, and which ceiling bound it. THE MIXED-FLEET
  * RULE is the invariant: at or under the window, this install's appends never take the folder past
  * {@link META_RECORDS_MAX_PER_FETCH} records or the window's byte ceiling, which is what builds up to
- * 0.25.4 read claims by; past the window those builds are blind already and the bound is the
- * enumeration's, less one window kept for the holder's own acks and renewals.
+ * 0.25.4 read claims by, less {@link META_HOLDER_RESERVE_RECORDS} for the holder; past the window
+ * those builds are blind already and the bound is the enumeration's, less one window kept for the
+ * holder's own acks and renewals.
  */
 export function requestAppendHeadroom(read: { count: number; bytes: number }): {
   headroom: number; boundBy: "records" | "bytes" | null; recordCeiling: number; byteCeiling: number;
 } {
   const window = META_RECORDS_MAX_PER_FETCH;
   const inWindow = read.count <= window;
-  const recordCeiling = inWindow ? window : META_ENUM_RECORDS_MAX - window;
-  const byteCeiling = (inWindow ? IMAP_META_BYTES_MAX : META_ENUM_BYTES_MAX) - REQUEST_APPEND_BYTE_RESERVE;
+  const recordCeiling = inWindow ? window - META_HOLDER_RESERVE_RECORDS : META_ENUM_RECORDS_MAX - window;
+  const byteCeiling = inWindow
+    ? IMAP_META_BYTES_MAX - META_HOLDER_RESERVE_RECORDS * REQUEST_RECORD_MAX_BYTES
+    : META_ENUM_BYTES_MAX - REQUEST_APPEND_BYTE_RESERVE;
   const byRecords = Math.max(0, recordCeiling - read.count);
   const byBytes = Math.max(0, Math.floor((byteCeiling - read.bytes) / REQUEST_RECORD_MAX_BYTES));
   const headroom = Math.min(window, byRecords, byBytes);
   const boundBy = headroom >= window ? null : byBytes < byRecords ? "bytes" : "records";
   return { headroom, boundBy, recordCeiling, byteCeiling };
+}
+
+/**
+ * DID THE GATE'S READ SEE THE FOLDER WHERE A KEYLESS ORGANIZER MUST SHRINK IT: past the window, or
+ * inside the holder's reserve below it in records or bytes. A reader's appends stop there too.
+ */
+export function metaNearCeiling(read: { count: number; bytes: number; enumerated: unknown }): boolean {
+  if (read.enumerated !== null) return true;
+  return read.count >= META_RECORDS_MAX_PER_FETCH - META_HOLDER_RESERVE_RECORDS
+    || read.bytes >= IMAP_META_BYTES_MAX - META_HOLDER_RESERVE_RECORDS * REQUEST_RECORD_MAX_BYTES;
 }
 
 /** One complete read of the folder: the request and ack records, and the folder's size. */
@@ -5160,8 +5208,10 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
    * reads uid windows by FETCH (header and INTERNALDATE, never SEARCH), bounded per window and per
    * pass; INTERNALDATE of an ack this organizer appended is its `ackedAt` to the day. This
    * install's own claims older than `before` go in the same walk. Returns how many were removed.
+   * Given `{ staleAfterMs }` the cutoff is the folder's newest INTERNALDATE less that window, the
+   * server's clock alone (SWEEP-CUTOFF-READS-THE-HOST-CLOCK); hosts pass that form.
    */
-  sweepStaleAcks?(before: Date): Promise<number>;
+  sweepStaleAcks?(before: Date | { staleAfterMs: number }): Promise<number>;
   /**
    * MOVE THE FOLDER'S RECORDS BACK INSIDE THE WALK — what the sweep cannot do. The sweep makes
    * `ohmail/_meta` SMALLER; nothing made it SHALLOWER, so the span between its lowest record and
@@ -5355,36 +5405,66 @@ export function makeRequestReaderIo(
  */
 async function staleAckUidsInWindow(
   client: Pick<LeaseImapClient, "fetch">, lo: number, hi: number, before: Date, installId: string,
-): Promise<number[]> {
+): Promise<Array<{ uid: number; claim: boolean }>> {
   const read = await boundedFetch(
     client.fetch(`${lo}:${hi}`, { uid: true, headers: true, internalDate: true }, { uid: true }),
     {
       max: META_RECORDS_MAX_PER_FETCH,
       bytes: { max: IMAP_META_BYTES_MAX, of: (m) => m.headers?.byteLength ?? 0 },
       bound: "page_rows",
-      map: (m): number | null => {
+      map: (m): { uid: number; claim: boolean } | null => {
         if (typeof m.uid !== "number" || m.headers === undefined) return null;
         /* A record the server stamped no date on cannot be shown to be past the cutoff, and the
          * safe direction for something that expunges is to leave it. */
         if (!(m.internalDate instanceof Date)) return null;
         if (m.internalDate.getTime() >= before.getTime()) return null;
         const h = m.headers.toString("utf8");
-        if (hasAckHeader(h)) return m.uid;
+        if (hasAckHeader(h)) return { uid: m.uid, claim: false };
         const c = parseClaim(h);
-        return c !== null && !isMalformed(c) && c.installId === installId ? m.uid : null;
+        return c !== null && !isMalformed(c) && c.installId === installId ? { uid: m.uid, claim: true } : null;
       },
     },
   );
-  return read.items.filter((u): u is number => u !== null);
+  return read.items.filter((u): u is { uid: number; claim: boolean } => u !== null);
+}
+
+/**
+ * THE SERVER'S CLOCK, AS THE FOLDER SHOWS IT: the INTERNALDATE of its newest message, by sequence.
+ * `null` for an empty folder (nothing to sweep); a reply with no stamp refuses, because a cutoff
+ * nobody can read must not fall back to this host's clock.
+ */
+async function newestInternalDate(client: LeaseImapClient, path: string): Promise<Date | null> {
+  const count = await lastSequence(client, path);
+  if (count === 0) return null;
+  if (count === undefined || typeof client.fetch !== "function") {
+    throw new RequestUnavailableError(
+      `${META_FOLDER} gave no count, so its newest record could not be dated and nothing was swept`,
+      { op: "sweep_acks", code: "sweep_no_clock" },
+    );
+  }
+  const page = await boundedFetch(client.fetch(String(count), { uid: true, internalDate: true }, { uid: false }), {
+    max: 1, onOverflow: "stop", bound: "page_rows",
+    map: (m): Date | null => (m.internalDate instanceof Date ? m.internalDate : null),
+  });
+  const at = page.items.find((d): d is Date => d !== null);
+  if (at === undefined) {
+    throw new RequestUnavailableError(
+      `${META_FOLDER}'s newest record carried no server date, so nothing was swept`,
+      { op: "sweep_acks", code: "sweep_no_clock" },
+    );
+  }
+  return at;
 }
 
 export function makeRequestOrganizerIo(
   client: LeaseImapClient,
   toServerPath: (canonical: string) => string,
   identity: MetaIdentity,
+  /** The path this login already resolved — see {@link MetaPathSeed}. */
+  seed?: MetaPathSeed,
 ): RequestOrganizerIo {
   assertMetaIdentity("makeRequestOrganizerIo", identity);
-  const meta = makeMetaFolderRef(client, toServerPath);
+  const meta = makeMetaFolderRef(client, toServerPath, seed);
   let metaGeneration: Generation = null;
   return {
     listMetaRecords: makeMetaRecordsList(client, meta, "list_requests", (g) => { metaGeneration = g; }),
@@ -5407,10 +5487,18 @@ export function makeRequestOrganizerIo(
      * never a request, another install's claim or the settings document — and `before` is
      * compared against the server's INTERNALDATE, never a header.
      */
-    async sweepStaleAcks(before: Date): Promise<number> {
+    async sweepStaleAcks(cutoff: Date | { staleAfterMs: number }): Promise<number> {
       const metaPath = await meta.path();
       const lock = await client.getMailboxLock(metaPath);
       try {
+        let before: Date;
+        if (cutoff instanceof Date) {
+          before = cutoff;
+        } else {
+          const newest = await newestInternalDate(client, metaPath);
+          if (newest === null) return 0;
+          before = new Date(newest.getTime() - cutoff.staleAfterMs);
+        }
         if (typeof client.fetch !== "function") {
           throw new RequestUnavailableError(
             `${META_FOLDER} cannot be fetched by this connection, so stale acknowledgements cannot `
@@ -5436,7 +5524,7 @@ export function makeRequestOrganizerIo(
         /* Enough uids to fill this cycle's expunges and no more: looking further down costs
          * round trips for records the budget below cannot delete this time round anyway. */
         const wanted = SWEEP_DELETE_BATCH * SWEEP_BATCHES_MAX_PER_CYCLE;
-        const found: number[] = [];
+        const found: Array<{ uid: number; claim: boolean }> = [];
         let reachedBottom = false;
         let resumeBelow: number | null = null;
         /* Resume beneath the last pass's stopping point. A cursor above the current ceiling is
@@ -5495,9 +5583,19 @@ export function makeRequestOrganizerIo(
          */
         let swept = 0;
         const budget = Math.min(found.length, SWEEP_DELETE_BATCH * SWEEP_BATCHES_MAX_PER_CYCLE);
+        /* A PROVEN refusal counts toward the cleanup streak, aimed at one of our own claims where
+           the batch holds one; a landed batch resets it; a dead socket or an unreadable read-back
+           does neither (the renew's rule, {@link noteCleanupOutcome}). */
+        const refused = (batch: ReadonlyArray<{ uid: number; claim: boolean }>): void => {
+          noteCleanupOutcome(identity, {
+            landed: false, uid: (batch.find((f) => f.claim) ?? batch[0])?.uid ?? null, generation: sweepGeneration,
+          });
+        };
         for (let i = 0; i < budget; i += SWEEP_DELETE_BATCH) {
-          const batch = found.slice(i, Math.min(i + SWEEP_DELETE_BATCH, budget));
+          const picked = found.slice(i, Math.min(i + SWEEP_DELETE_BATCH, budget));
+          const batch = picked.map((f) => f.uid);
           const done = await client.messageDelete(batch, { uid: true });
+          if (done === false && !connectionGone(client)) refused(picked);
           if (done === false) {
             throw new RequestUnavailableError(
               `the server refused to expunge ${batch.length} stale acknowledgement(s) from `
@@ -5508,7 +5606,15 @@ export function makeRequestOrganizerIo(
           /* And a `true` proves only that a command ran — the claim path's rule, for the same
            * reason. Reporting a sweep that removed nothing is how a permanently full folder gets
            * mistaken for one that is being kept in trim. */
-          await proveGone(client, batch, "stale acknowledgement(s)", "sweep_acks");
+          const after = await custodyOf(client, batch);
+          if (after.kind === "unreadable") {
+            throw new LeaseUnavailableError(goneUnverified(batch.length, "stale acknowledgement(s)", after.err), { op: "sweep_acks" });
+          }
+          if (after.kind === "standing") {
+            refused(picked);
+            throw new LeaseUnavailableError(goneSurvived(after.uids.length, "stale acknowledgement(s)"), { op: "sweep_acks" });
+          }
+          noteCleanupOutcome(identity, { landed: true });
           swept += batch.length;
         }
         /* ── ONLY NOW, AND ONLY OVER WHAT WAS ACTUALLY REMOVED ──────────────────────────────

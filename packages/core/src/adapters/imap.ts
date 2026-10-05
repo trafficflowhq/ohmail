@@ -1202,6 +1202,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   private closing = false;
 
+  /** The organizer io's resolved `ohmail/_meta` path on THIS login, so a pass costs no LIST; cleared at every dial. */
+  private organizerMetaPath: string | null = null;
+
   /* ══ THE SERVER-VALUE CEILINGS ═══════════════════════════════════════════════════════════════
    *
    * Ceilings on what an arbitrary mail server may make this process do.
@@ -1412,6 +1415,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // swallow the new connection's death. See {@link established} and {@link closing}.
     this.established = false;
     this.closing = false;
+    this.organizerMetaPath = null;
     // FIRST, before any option is assembled: resolve the auth. For a password config this is a
     // no-op; for an OAuth config it awaits `fetchAccessToken()` into a literal token. Doing it here
     // — above the injected-client branch too — is what makes "connect() fetches a token, and a
@@ -2461,7 +2465,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   requestOrganizerIo(identity: MetaIdentity): RequestOrganizerIo {
     this.assertUsable();
     this.learnedDelimiter();
-    return makeRequestOrganizerIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c), identity);
+    return makeRequestOrganizerIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c), identity, {
+      known: this.organizerMetaPath,
+      learned: (path) => { this.organizerMetaPath = path; },
+    });
   }
 
   /**

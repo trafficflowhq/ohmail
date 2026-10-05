@@ -13,7 +13,7 @@ import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest, isRequestKind,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
-  REQUEST_PROTOCOL, requestAppendHeadroom,
+  REQUEST_PROTOCOL, requestAppendHeadroom, metaShrinkDue, noteMetaShrinkRan,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
   type RequestRefusalReason, isRequestRefusalReason, LeaseUnavailableError,
@@ -241,6 +241,9 @@ function assertIdentity(rt: RequestRuntime): void {
 /** How long a decision may sit before both sides give up on it. ONE window, read by both roles. */
 export const REQUEST_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
+/** How often a keyless organizer shrinks a folder its gate read as nowhere near the ceiling. */
+export const META_SHRINK_KEYLESS_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 /**
  * The stale window must bite no later than the idempotency key expires — a real safety property, not a
  * coincidence (`request-drain.test.ts` asserts it). The key at `meta-request:<id>` is what stops a
@@ -402,7 +405,9 @@ export async function shrinkMeta(
   const sweep = async (): Promise<void> => {
     if (typeof io.sweepStaleAcks !== "function") return;
     try {
-      swept = await io.sweepStaleAcks(new Date(now.getTime() - REQUEST_STALE_AFTER_MS));
+      /* The window only: the cutoff is the folder's newest INTERNALDATE less it, the server's clock
+         and never this host's (SWEEP-CUTOFF-READS-THE-HOST-CLOCK). */
+      swept = await io.sweepStaleAcks({ staleAfterMs: REQUEST_STALE_AFTER_MS });
       if (swept > 0) {
         log("meta_ack_sweep", { swept });
       }
@@ -459,6 +464,7 @@ export async function shrinkMetaOnRefusal(
   }
   const ids = { mailboxId: rt.mailboxId, accountId: rt.accountId };
   const done = await shrinkMeta(io, now, (event, detail) => { log(event, { ...ids, ...detail }); });
+  noteMetaShrinkRan({ installId: rt.installId, mailboxId: rt.mailboxId }, now.getTime());
   log("meta_shrink", { ...ids, phase: "lease_refused", ...done });
   return true;
 }
@@ -491,18 +497,24 @@ export async function applyMetaRequests(
   }
 
   /* THE FOLDER IS KEPT SMALL WHETHER OR NOT THIS ACCOUNT HAS A REQUEST CHANNEL — ahead of the key,
-   * which gates only the request read below. Keyless organizers are most of them, and their own
-   * claims and acks pile up the same (META-SHRINK-AHEAD-OF-THE-GATE). */
-  await shrinkMeta(io, now, (event, detail) => {
-    log(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail });
-  });
+   * which gates only the request read below (META-SHRINK-AHEAD-OF-THE-GATE). A keyless pass shrinks
+   * only when the gate's own read saw the folder near its ceiling, or once per
+   * META_SHRINK_KEYLESS_INTERVAL_MS: an idle keyless pass sends nothing, as 0.25.13 did (REVIEW-02514
+   * LOW 1). A keyed pass shrinks every time, as it always did. */
+  const key = rt.requestKey;
+  const memoKey = { installId: rt.installId, mailboxId: rt.mailboxId };
+  if (key !== null || metaShrinkDue(memoKey, now.getTime(), META_SHRINK_KEYLESS_INTERVAL_MS)) {
+    await shrinkMeta(io, now, (event, detail) => {
+      log(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail });
+    });
+    noteMetaShrinkRan(memoKey, now.getTime());
+  }
 
   // ── NO KEY, NO CHANNEL ──────────────────────────────────────────────────────────────────────
   //
   // Read BEFORE the folder is listed, so an organizer with no request channel reads no request.
   // A NULL key is the resting state of every account that has never used a second install, and
   // it is silent by design — logging it per mailbox per cycle would be a line about nothing.
-  const key = rt.requestKey;
   if (key === null) return EMPTY_RESULT;
 
   /* THE WHOLE FOLDER, through the one door: complete past the 500-record window, or refused by name

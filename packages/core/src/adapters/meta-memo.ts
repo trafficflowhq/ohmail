@@ -171,7 +171,37 @@ export function forgetMemo(id: MetaIdentity, field: keyof MetaMemo): void {
   store.set(keyOf(id), { generation: entry.generation, memo: next });
 }
 
+/**
+ * WHEN THIS INSTALL SHRINKS THE FOLDER WITHOUT A REQUEST KEY — not a position, so not under a
+ * generation: what the gate's last read saw of the folder's size, and when the shrink last ran.
+ * A keyless pass shrinks only when that read reached the holder's reserve below the window, or
+ * once per `intervalMs` (REVIEW-02514 LOW 1). Losing it costs one shrink pass, never a record.
+ */
+const shrinkClock = new Map<string, { nearCeiling: boolean; lastRanMs: number | null }>();
+
+/** The gate's read saw the folder at or past the point a keyless organizer must shrink it. */
+export function noteMetaNearCeiling(id: MetaIdentity, nearCeiling: boolean): void {
+  assertMetaIdentity("the meta memory", id);
+  const held = shrinkClock.get(keyOf(id));
+  shrinkClock.set(keyOf(id), { nearCeiling, lastRanMs: held?.lastRanMs ?? null });
+}
+
+/** Is a keyless shrink owed now? Never run in this process counts as owed. */
+export function metaShrinkDue(id: MetaIdentity, nowMs: number, intervalMs: number): boolean {
+  assertMetaIdentity("the meta memory", id);
+  const held = shrinkClock.get(keyOf(id));
+  if (held === undefined || held.lastRanMs === null || held.nearCeiling) return true;
+  return nowMs - held.lastRanMs >= intervalMs || nowMs < held.lastRanMs;
+}
+
+/** The shrink ran; the size reading it answered is spent until the gate reads again. */
+export function noteMetaShrinkRan(id: MetaIdentity, nowMs: number): void {
+  assertMetaIdentity("the meta memory", id);
+  shrinkClock.set(keyOf(id), { nearCeiling: false, lastRanMs: nowMs });
+}
+
 /** Test seam: drop everything. Never called by product code. */
 export function resetMetaMemos(): void {
   store.clear();
+  shrinkClock.clear();
 }
