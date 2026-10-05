@@ -209,7 +209,7 @@ export function refusedRowOf(res: MutationResult, aboutThisCompose: boolean): Re
 }
 
 /** What Cancel does with the engine's answer — see {@link MailSendApi.withdraw}. */
-export type CancelSaid = "close" | "already_sent" | "elsewhere";
+export type CancelSaid = "close" | "already_sent" | "elsewhere" | "unknown";
 
 const IDLE: SendState = { phase: "idle" };
 
@@ -2236,6 +2236,8 @@ export function useMailSend(
       if (typeof engine.foreignCancelRefused === "function" && engine.foreignCancelRefused(restored)) return "elsewhere";
       const outcome = await engine.withdrawQueued(restored);
       if (outcome === "on_the_wire") return "already_sent";
+      // The disk did not take the Cancel: nothing was cancelled, so nothing is released or closed.
+      if (outcome === "unknown") return "unknown";
       const record = outcome === "gone" ? null : recordForEndedSend(restored, owner.current);
       if (record !== null && record.lane === lane) {
         releaseSendLock(record.lane, record.fp, sendLockOwed(engine), owner.current);
@@ -2247,6 +2249,8 @@ export function useMailSend(
     /* THE REQUEST HAS LEFT AND THIS DEVICE CANNOT UN-SEND IT. Nothing is released: the send is
        still owed an answer and the lane must stay locked until it has one. */
     if (outcome === "on_the_wire") return "already_sent";
+    // Nor when the disk did not take the Cancel: the send stands, and pressing again asks again.
+    if (outcome === "unknown") return "unknown";
     /* `withdrawn` is the cancellation; `gone` is a key the queue no longer holds, which the
        engine has already settled elsewhere — either way nothing will be delivered under it, and
        the withdrawal mark refuses it at the wire if a flush is mid-lift. */

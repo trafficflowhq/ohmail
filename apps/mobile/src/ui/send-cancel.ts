@@ -13,7 +13,7 @@
  * confinement for a three-word union is the wrong trade, so the two are pinned mutually assignable
  * in `test/send-once-through-cancel.test.ts` instead, where a drift is a compile error.
  */
-export type WithdrawAnswer = "withdrawn" | "on_the_wire" | "gone";
+export type WithdrawAnswer = "withdrawn" | "on_the_wire" | "gone" | "unknown";
 
 /** The compose sheet's send phase — `MessageActions.tsx`'s own union. */
 export type ComposerPhase = "idle" | "sending" | "queued" | "unverified";
@@ -37,7 +37,7 @@ export function cancelAct(o: {
 }
 
 /** What the sheet does with the engine's answer. */
-export type CancelSaid = "close" | "already_sent";
+export type CancelSaid = "close" | "already_sent" | "unknown";
 
 /**
  * What the flush ledger says became of this key — `World.sendOutcome`'s answer, restated here for
@@ -57,5 +57,8 @@ export type SendVerdict = "pending" | "confirmed" | "rolled_back" | "unverified"
  */
 export function afterWithdraw(outcome: WithdrawAnswer, settled: SendVerdict = "unknown"): CancelSaid {
   if (outcome === "on_the_wire") return "already_sent";
+  // A Cancel the disk did not take cancelled nothing: the sheet stays. The phone's store shares no
+  // disk with another window, so its engine does not give this answer today.
+  if (outcome === "unknown") return "unknown";
   return outcome === "gone" && settled === "confirmed" ? "already_sent" : "close";
 }

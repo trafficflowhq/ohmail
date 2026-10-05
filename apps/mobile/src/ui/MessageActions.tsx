@@ -1404,7 +1404,7 @@ export function ComposeSheet({
       // under the await, and the fresher reading is the one this press is owed.
       const said = afterWithdraw(await w.actions.withdrawSend(key), w.sendOutcome(key));
       if (said === "close") onClose();
-      else setAlreadySent(true);
+      else if (said === "already_sent") setAlreadySent(true);
     })();
   };
 

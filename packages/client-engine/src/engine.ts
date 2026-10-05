@@ -139,8 +139,10 @@ export type MutationStatus = "confirmed" | "queued" | "awaiting_organizer" | "ro
  * cancellation: nothing was on the wire and nothing will be. `on_the_wire` withdraws nothing —
  * the request has gone and only the server knows what it did with it. `gone` is neither: the
  * queue no longer holds the key, so whatever became of it has already been settled elsewhere.
+ * `unknown`: the disk did not take or did not answer the Cancel, so nothing was cancelled and
+ * nothing is released; pressing again asks again. Only where windows share the disk.
  */
-export type WithdrawOutcome = "withdrawn" | "on_the_wire" | "gone";
+export type WithdrawOutcome = "withdrawn" | "on_the_wire" | "gone" | "unknown";
 
 /**
  * The `code` on the refusal a withdrawn verb settles with. A surface reads it to say NOTHING: a
@@ -8411,11 +8413,21 @@ export class OhmailEngine {
       if (foreign !== null) return foreign;
     }
     this.withdrawnKeys.add(key);
+    let unrecorded = false;
     for (const p of rows) {
       const at = this.queue.indexOf(p);
       if (at >= 0) this.queue.splice(at, 1);
+      const paint = this.overlays.get(p.id);
       this.overlays.delete(p.id);
-      await this.markWithdrawn(p);
+      /* A CANCEL THE DISK DID NOT TAKE IS NOT A CANCEL where another window can adopt the row: it
+         goes back on the queue as it was, and the answer is `unknown`. */
+      if (!await this.markWithdrawn(p) && this.ownershipOn()) {
+        this.queue.push(p);
+        this.queue.sort(byAtN);
+        if (paint !== undefined) this.overlays.set(p.id, paint);
+        unrecorded = true;
+        continue;
+      }
       // Cancelled from another window: the surface here hears the ending as a late answer.
       if (opts.askedElsewhere) this.lateResults.set(p.id, withdrawnResult(p));
       // An earlier press under this key was delivered and waited for this one to speak: it speaks now.
@@ -8426,9 +8438,10 @@ export class OhmailEngine {
       }
     }
     if (rows.length === 0) return "gone";
+    if (unrecorded) this.withdrawnKeys.delete(key);
     this.overlayRev++;
     this.notify();
-    return "withdrawn";
+    return unrecorded ? "unknown" : "withdrawn";
   }
 
   /**
@@ -8444,18 +8457,20 @@ export class OhmailEngine {
       .filter((e) => e.key === key && typeof e.owner === "string" && e.owner !== this.ownerName);
     // Already gone from this window's copy: a send another window said it delivered is not "gone".
     if (rows.length === 0) return this.foreignEndings.get(key) === "confirmed" ? "on_the_wire" : null;
-    const seen = new Set<OutboxRowVerdict>();
-    for (const e of rows) seen.add(await this.store.decideOutboxRow(e.id, { kind: "withdraw" }).catch(() => "gone" as const));
+    const seen = new Set<OutboxRowVerdict | "failed">();
+    for (const e of rows) seen.add(await this.store.decideOutboxRow(e.id, { kind: "withdraw" }).catch(() => "failed" as const));
     this.notify();
-    if (seen.has("sending") || seen.has("sent")) return "on_the_wire";
     if (seen.has("marked")) this.notices?.post({ t: "withdraw", key });
+    if (seen.has("sending") || seen.has("sent")) return "on_the_wire";
+    // A mark the disk did not take, or an older build's row (see foreignCancelRefused): nothing cancelled.
+    if (seen.has("failed") || seen.has("unstamped")) return "unknown";
     if (seen.has("marked") || seen.has("withdrawn")) return "withdrawn";
-    /* Gone: its owner said how it ended before the drop, and that notice can arrive after this
-       transaction's answer, so the disk is re-read once (a store read, not a clock) before asking.
-       An older build's row (`unstamped`) is not this window's to cancel: see foreignCancelRefused. */
-    if (seen.has("gone")) await this.followDisk();
+    /* Gone: answered only by the ending its owner said before the drop. That notice can arrive after
+       this transaction's answer, so the disk is re-read once (a store read, not a clock) first; with no
+       ending heard, nothing is known. */
+    await this.followDisk();
     const said = this.foreignEndings.get(key);
-    return said === "confirmed" ? "on_the_wire" : said === "withdrawn" ? "withdrawn" : "gone";
+    return said === "confirmed" ? "on_the_wire" : said === "withdrawn" ? "withdrawn" : said === "refused" ? "gone" : "unknown";
   }
 
   /**
@@ -8509,14 +8524,21 @@ export class OhmailEngine {
    * A refused mark falls back to the hard delete: either one keeps a restart from replaying the
    * row, and the in-memory key already keeps this session from sending it.
    */
-  private async markWithdrawn(p: PendingMutation): Promise<void> {
+  private async markWithdrawn(p: PendingMutation): Promise<boolean> {
     try {
       await this.store.commitLocal(
         [{ type: OUTBOX_TYPE, id: p.id, entity: { ...outboxEntryOf(p), withdrawn: true } }], [],
       );
+      return true;
     } catch {
       this.sayEnded(p, "withdrawn");
-      await this.dropOutbox(p.id);
+      // `true` only when the delete reached the disk: a row neither marked nor deleted can still be sent.
+      try {
+        await this.store.pruneSerialized([{ type: OUTBOX_TYPE, id: p.id }]);
+        return true;
+      } catch {
+        return false;
+      }
     }
   }
 

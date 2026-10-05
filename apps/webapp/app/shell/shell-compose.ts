@@ -472,6 +472,11 @@ export function useShellCompose({
         toast(t("compose.cancelElsewhere"));
         return;
       }
+      // The disk did not take the Cancel: the dock and its words stay, and pressing again asks again.
+      if (said === "unknown") {
+        toast(t("compose.cancelUnknown"));
+        return;
+      }
       setReplyTo(null);
     })();
   });
@@ -1928,8 +1933,14 @@ export function useShellCompose({
        * stays as it is and the reader is told. Emptying the form over a delivery nobody can take
        * back would be the product claiming to have cancelled something it did not.
        */
-      if (await mailSend.withdraw(COMPOSE_SEND_KEY) === "already_sent") {
+      const said = await mailSend.withdraw(COMPOSE_SEND_KEY);
+      if (said === "already_sent") {
         toast(t("compose.cancelAlreadySent"));
+        return;
+      }
+      // Nothing was cancelled: the compose stays as it is, and pressing again asks again.
+      if (said === "unknown") {
+        toast(t("compose.cancelUnknown"));
         return;
       }
       /* A HELD ROW IS KEPT, AND THE PRESS SAYS SO — `discard` releases it rather than deleting it,
