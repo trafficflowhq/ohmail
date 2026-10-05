@@ -1006,6 +1006,9 @@ struct Shared {
     /// what the loopback listener said (the tailnet publication gates on THAT). Same per-run
     /// lifetime as `host_signal`.
     lan_signal: Option<crate::host::LanSignal>,
+    /// The data directory whose witness this run was handed at its spawn ([`witness`]), so the
+    /// record it writes is remembered once it serves. Per run, like `ready`.
+    witness: Option<PathBuf>,
     stop: bool,
     /// How many of this run's two pipe readers are still reading.
     ///
@@ -1064,6 +1067,7 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         latest_error: None,
         host_signal: None,
         lan_signal: None,
+        witness: None,
         stop: false,
         readers: 0,
         deadline: None,
@@ -1729,8 +1733,8 @@ impl Shell {
     /// cannot read (a torn file after a power cut) or a live process it cannot tell apart from a
     /// second engine. The press waits for the shell to GIVE UP on its own engine, and that says
     /// nothing about the holder: after a restart it is the previous copy's engine, still running
-    /// with no window. So a running pid keeps its lock ([`remove_unheld_lock`]) and only a torn
-    /// record or a dead pid is removed. The path comes from the shell's own plan.
+    /// with no window. So the engine's witness decides first ([`remove_unheld_lock`]), a record it
+    /// never vouched for keeps the pid's rule, and the path comes from the shell's own plan.
     pub fn unlock_retry(&self) -> Result<serde_json::Value, String> {
         if !matches!(self.engine().state(), EngineState::Failed { .. }) {
             return Err(
@@ -1749,10 +1753,13 @@ impl Shell {
         // The sidecar's own lock file name — `LOCK_FILE` in `apps/sidecar/src/db.ts`; a desktop
         // test holds the two literals together.
         let lock = dir.join("sidecar.lock");
-        remove_unheld_lock(&lock, process_is_running).map_err(|refused| {
+        let witness = witness::read(&dir);
+        remove_unheld_lock(&lock, process_is_running, &witness).map_err(|refused| {
             log_line(format_args!("unlock and retry: {refused}"));
             refused
         })?;
+        // A free witness is held by its reading until here; the next engine takes it at its spawn.
+        drop(witness);
         *self.pending_door.lock().expect("pending door") = None;
         self.replace(plan);
         Ok(self.status())
@@ -2982,6 +2989,11 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         // this process does not. Capping it here was measured to be a redistribution rather than a
         // saving in the WEBVIEW's process, which is why that half does not exist.
         crate::allocator_arenas::apply_to_engine(&mut command);
+        // THE WITNESS, taken for this spawn and handed to this engine alone ([`witness`]).
+        let held = plan_data_dir(&launch).and_then(|dir| witness::take(&dir).map(|file| (dir, file)));
+        if let Some((_, file)) = &held {
+            witness::hand_to(&mut command, file);
+        }
 
         let mut child = match command.spawn() {
             Ok(child) => child,
@@ -3010,6 +3022,12 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             }
         };
 
+        // The engine holds the witness now, and this process must not: a descriptor kept here
+        // would hold the lock past the engine's death.
+        let witness_dir = held.map(|(dir, file)| {
+            drop(file);
+            dir
+        });
         let stdout = child.stdout.take().expect("stdout was piped");
         let stderr = child.stderr.take().expect("stderr was piped");
         let stdin = child.stdin.take().expect("stdin was piped");
@@ -3031,6 +3049,7 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             // line: the give-up message must quote the attempt that actually just failed.
             s.host_signal = None;
             s.lan_signal = None;
+            s.witness = witness_dir;
             s.first_error = None;
             s.latest_error = None;
             // BOTH READERS, COUNTED IN BEFORE EITHER IS SPAWNED. They are what tells the
@@ -3534,7 +3553,7 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
     };
 
     let mailbox_id = ready.mailbox_id.clone();
-    {
+    let witness = {
         let mut s = inner.shared.lock().expect("engine state");
         if s.ready.is_some() {
             return Err("the engine announced itself twice; a launch serves once".to_string());
@@ -3544,6 +3563,11 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
         // `restarting` would name a wait that is not the one happening.
         s.boot_phase = None;
         s.boot_progress = None;
+        s.witness.clone()
+    };
+    // The record this engine wrote is remembered before anything can read it as serving.
+    if let Some(dir) = witness {
+        witness::record_served(&dir);
     }
     // The mailbox id, and nothing else. Not the token, and not the data directory: a directory
     // under the user's home carries their account name, and the shell that set it already knows.
@@ -5008,19 +5032,29 @@ fn lock_pid(bytes: &[u8]) -> Option<u32> {
     u32::try_from(pid).ok().filter(|&pid| pid > 0)
 }
 
-/// Remove the lock at `lock` unless a running process holds it, and only while it is still the
-/// file that was judged: a record a starting engine put back meanwhile is that engine's. `Ok`
-/// when nothing is left for the next start to trip on. `running` is [`process_is_running`]
+/// Remove the lock at `lock` unless the engine that wrote it may still run, and only while it is
+/// still the file that was judged: a record a starting engine put back meanwhile is that engine's.
+/// The witness decides first ([`witness`]); a record it never vouched for keeps the pid's rule.
+/// `Ok` when nothing is left for the next start to trip on. `running` is [`process_is_running`]
 /// outside the tests, which use it to change the file between the two reads.
-fn remove_unheld_lock(lock: &Path, running: impl Fn(u32) -> bool) -> Result<(), String> {
+fn remove_unheld_lock(lock: &Path, running: impl Fn(u32) -> bool, witness: &witness::Reading) -> Result<(), String> {
     let unreadable = |err: io::Error| format!("the lock could not be read ({err}); nothing was removed");
     let Some(judged) = read_lock(lock).map_err(unreadable)? else { return Ok(()) };
-    if let Some(pid) = lock_pid(&judged.bytes) {
-        if running(pid) {
-            return Err(format!(
-                "{UNLOCK_HELD}the lock belongs to process {pid}, which is still running, so it was \
-                 kept and the engine was not restarted"
-            ));
+    match witness {
+        // An engine handed the witness still runs, whatever the record's pid reads as now.
+        witness::Reading::Held => return Err(format!("{UNLOCK_HELD}{HELD_BY_ITS_WITNESS}")),
+        // Its writer served holding the witness, which is free: that engine has gone, whatever
+        // runs under its pid today.
+        witness::Reading::Free { served, .. } if served.contains(&witness::record_hash(&judged.bytes)) => {}
+        _ => {
+            if let Some(pid) = lock_pid(&judged.bytes) {
+                if running(pid) {
+                    return Err(format!(
+                        "{UNLOCK_HELD}the lock belongs to process {pid}, which is still running, so it was \
+                         kept and the engine was not restarted"
+                    ));
+                }
+            }
         }
     }
     match read_lock(lock).map_err(unreadable)? {
@@ -5032,6 +5066,203 @@ fn remove_unheld_lock(lock: &Path, running: impl Fn(u32) -> bool) -> Result<(), 
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(format!("the lock could not be removed ({err}); the engine was not restarted")),
+    }
+}
+
+/// The refusal for a record whose witness is still held.
+const HELD_BY_ITS_WITNESS: &str = "the engine that holds this copy of your mail is still running, \
+                                   so its lock was kept and the engine was not restarted";
+
+/// THE ENGINE'S WITNESS, which the unlock press asks before it trusts a pid. `sidecar.lock` is a
+/// record nothing holds and its pid can be issued again to a stranger, so the press kept a dead
+/// engine's lock for whatever ran under that number, and the card blamed another copy. The shell
+/// flocks `engine.hold` beside it and hands the descriptor to that engine alone, so the kernel lets
+/// go exactly when the engine has gone, and keeps the hash of the record it wrote once it serves.
+/// Unix only: elsewhere every reading is `Unread`, which is the pid's rule.
+mod witness {
+    use super::*;
+
+    /// The witness's name, beside `sidecar.lock` in the engine's data directory.
+    pub(super) const FILE: &str = "engine.hold";
+    /// The served records it remembers: the newest few engines'.
+    const KEPT: usize = 8;
+
+    /// The witness as the press finds it.
+    pub(super) enum Reading {
+        /// An engine handed the witness is still running.
+        Held,
+        /// Nothing holds it, and these records were written by engines that held it while they
+        /// served. The reading keeps the lock until it is dropped.
+        Free { served: Vec<String>, _hold: Hold },
+        /// Never taken here, or it could not be read.
+        Unread,
+    }
+
+    /// A witness this process locked to read it, let go the moment it is dropped: UNLOCKED, not
+    /// only closed, because a fork elsewhere in this process holds a copy of every descriptor
+    /// until its exec, and the lock would outlive the close by that long.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(super) struct Hold(pub(super) File);
+
+    impl Drop for Hold {
+        fn drop(&mut self) {
+            #[cfg(unix)]
+            os::unlock(&self.0);
+        }
+    }
+
+    /// What a record is remembered by: the hash of its bytes, which carry a nonce per claim.
+    pub(super) fn record_hash(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    /// The witness for one spawn, or `None`: somebody holds it, the directory is not there yet, or
+    /// the platform has no such lock. Kept by the caller only until the child has it.
+    pub(super) fn take(dir: &Path) -> Option<File> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let path = dir.join(FILE);
+            let file = OpenOptions::new().read(true).write(true).create(true).mode(0o600).open(path).ok()?;
+            matches!(os::try_lock(&file), Ok(true)).then_some(file)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = dir;
+            None
+        }
+    }
+
+    /// Let the child about to be spawned keep the witness across its exec, and nothing else does.
+    pub(super) fn hand_to(command: &mut Command, held: &File) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            os::inherit_in_child(command, held.as_raw_fd());
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (command, held);
+        }
+    }
+
+    /// Remember the record the engine wrote, once it serves, and only while the witness is still
+    /// held: an engine that let it go is never vouched for by it.
+    pub(super) fn record_served(dir: &Path) {
+        #[cfg(unix)]
+        {
+            use std::io::{Seek, SeekFrom};
+            let Ok(Some(record)) = read_lock(&dir.join("sidecar.lock")) else { return };
+            let Ok(mut file) = OpenOptions::new().read(true).write(true).open(dir.join(FILE)) else { return };
+            // `Ok(true)` is this process taking a lock nobody held: the engine has let it go.
+            match os::try_lock(&file) {
+                Ok(false) => {}
+                Ok(true) => {
+                    drop(Hold(file));
+                    return;
+                }
+                Err(_) => return,
+            }
+            let mut text = String::new();
+            if file.read_to_string(&mut text).is_err() {
+                return;
+            }
+            let hash = record_hash(&record.bytes);
+            let mut served: Vec<&str> = text.lines().filter(|line| !line.is_empty() && *line != hash).collect();
+            served.push(&hash);
+            let kept = format!("{}\n", served[served.len().saturating_sub(KEPT)..].join("\n"));
+            let _ = file
+                .set_len(0)
+                .and_then(|_| file.seek(SeekFrom::Start(0)))
+                .and_then(|_| file.write_all(kept.as_bytes()));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = dir;
+        }
+    }
+
+    /// The witness as the press finds it. A free one stays locked by the reading until it is
+    /// dropped, so nothing takes it between the judgement and the removal.
+    pub(super) fn read(dir: &Path) -> Reading {
+        #[cfg(unix)]
+        {
+            let Ok(mut file) = OpenOptions::new().read(true).open(dir.join(FILE)) else { return Reading::Unread };
+            match os::try_lock(&file) {
+                Ok(false) => Reading::Held,
+                Ok(true) => {
+                    let mut text = String::new();
+                    let read = file.read_to_string(&mut text);
+                    let hold = Hold(file);
+                    match read {
+                        Ok(_) => Reading::Free {
+                            served: text.lines().filter(|line| !line.is_empty()).map(str::to_string).collect(),
+                            _hold: hold,
+                        },
+                        Err(_) => Reading::Unread,
+                    }
+                }
+                Err(_) => Reading::Unread,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = dir;
+            Reading::Unread
+        }
+    }
+
+    #[cfg(unix)]
+    mod os {
+        use super::File;
+        use std::os::unix::io::AsRawFd;
+
+        extern "C" {
+            fn flock(fd: i32, operation: i32) -> i32;
+            fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+        }
+        // The same values on Linux and macOS.
+        const LOCK_EX: i32 = 2;
+        const LOCK_NB: i32 = 4;
+        const LOCK_UN: i32 = 8;
+        const F_SETFD: i32 = 2;
+
+        /// Let go of a lock this process took, on every copy of its descriptor at once.
+        pub(super) fn unlock(file: &File) {
+            // SAFETY: a plain call on a descriptor `file` owns for the length of the call.
+            unsafe { flock(file.as_raw_fd(), LOCK_UN) };
+        }
+
+        /// Take the lock without waiting: `Ok(false)` when another descriptor holds it.
+        pub(super) fn try_lock(file: &File) -> std::io::Result<bool> {
+            // SAFETY: a plain call on a descriptor `file` owns for the length of the call.
+            if unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) } == 0 {
+                return Ok(true);
+            }
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::WouldBlock {
+                Ok(false)
+            } else {
+                Err(err)
+            }
+        }
+
+        /// Clear close-on-exec on `fd` in the child, between its fork and its exec.
+        pub(super) fn inherit_in_child(command: &mut std::process::Command, fd: i32) {
+            use std::os::unix::process::CommandExt;
+            // SAFETY: `fcntl` is async-signal-safe, the one kind of call allowed between fork and
+            // exec. A failure fails the spawn rather than start an engine the witness would vouch
+            // for without it holding the lock.
+            unsafe {
+                command.pre_exec(move || {
+                    if fcntl(fd, F_SETFD, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
     }
 }
 

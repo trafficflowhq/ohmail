@@ -1603,12 +1603,32 @@ describe("the Rust side", () => {
     expect(engine.match(/fs::read_dir/g)).toHaveLength(1);
     expect(engine.match(/fs::remove_file/g)).toHaveLength(2);
     expect(engine.match(/fs::remove_dir_all/g)).toHaveLength(2);
-    expect(engine).toMatch(/let lock = dir\.join\("sidecar\.lock"\);\s*remove_unheld_lock\(&lock, process_is_running\)/);
-    expect(engine.match(/remove_unheld_lock\(&lock, process_is_running\)/g)).toHaveLength(1);
-    expect(engine.match(/fs::remove_file\(lock\)/g)).toHaveLength(1);
     expect(engine).toMatch(
-      /fn remove_unheld_lock\(lock: &Path, running: impl Fn\(u32\) -> bool\) -> Result<\(\), String> \{[\s\S]*?if running\(pid\) \{[\s\S]*?Some\(now\) if now == judged => \{\}[\s\S]*?fs::remove_file\(lock\)/,
+      /let lock = dir\.join\("sidecar\.lock"\);\s*let witness = witness::read\(&dir\);\s*remove_unheld_lock\(&lock, process_is_running, &witness\)/,
     );
+    expect(engine.match(/remove_unheld_lock\(&lock, process_is_running, &witness\)/g)).toHaveLength(1);
+    expect(engine.match(/fs::remove_file\(lock\)/g)).toHaveLength(1);
+    /* THE WITNESS DECIDES FIRST, and the pid's rule is what is left: a held witness keeps the lock,
+     * a free one removes a record its engine wrote while holding it, and any other record is
+     * judged by its pid as before. */
+    expect(engine).toMatch(
+      /fn remove_unheld_lock\(lock: &Path, running: impl Fn\(u32\) -> bool, witness: &witness::Reading\) -> Result<\(\), String> \{[\s\S]*?witness::Reading::Held => return Err\(format!\("\{UNLOCK_HELD\}\{HELD_BY_ITS_WITNESS\}"\)\),[\s\S]*?witness::Reading::Free \{ served, \.\. \} if served\.contains\(&witness::record_hash\(&judged\.bytes\)\) => \{\}[\s\S]*?if running\(pid\) \{[\s\S]*?Some\(now\) if now == judged => \{\}[\s\S]*?fs::remove_file\(lock\)/,
+    );
+    /* THE WITNESS'S OWN REACH: one file, beside the lock, in the plan's data directory. Its three
+     * opens name that file only, its one read of the lock record is the plan's `sidecar.lock`, its
+     * one write is the served list into its own file, and it removes and renames nothing. */
+    const witnessModule = /\nmod witness \{([\s\S]*?)\n\}\n/.exec(engine)?.[1] ?? "";
+    expect(witnessModule, "the witness module was not found").toContain('pub(super) const FILE: &str = "engine.hold";');
+    expect(witnessModule.match(/\.open\(/g)).toHaveLength(3);
+    expect(witnessModule.match(/\.open\((?:path|dir\.join\(FILE\))\)/g)).toHaveLength(3);
+    expect(witnessModule).toMatch(/let path = dir\.join\(FILE\);/);
+    expect(witnessModule.match(/read_lock\(/g)).toEqual(['read_lock(']);
+    expect(witnessModule).toMatch(/read_lock\(&dir\.join\("sidecar\.lock"\)\)/);
+    expect(witnessModule.match(/write_all\(/g)).toEqual(["write_all("]);
+    expect(witnessModule).toMatch(/file\.write_all\(kept\.as_bytes\(\)\)/);
+    expect(witnessModule).not.toMatch(/\bfs::(?!OpenOptionsExt\b)|remove|rename/);
+    // The witness is taken where the engine is spawned, and its directory is the plan's.
+    expect(engine).toMatch(/let held = plan_data_dir\(&launch\)\.and_then\(\|dir\| witness::take\(&dir\)/);
     expect(engine).toMatch(/if !matches!\(self\.engine\(\)\.state\(\), EngineState::Failed \{ \.\. \}\) \{/);
     expect(engine).toMatch(/let dir = config::candidate_data_dir\(root\);/);
     expect(engine.match(/fs::remove_dir_all\(&dir\)/g)).toHaveLength(1);

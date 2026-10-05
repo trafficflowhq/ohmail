@@ -130,6 +130,21 @@ if (mode === "loud-once") {
 // frames strictly before `ready`. One malformed on purpose — the shell's reader must refuse it —
 // then a real one, then a beat before `ready` so a test can read the status of an engine that is
 // still starting.
+// THE DATA DIRECTORY'S LOCK, taken before the engine announces itself as the real one takes it:
+// one record with a nonce in `$OHMAIL_DATA_DIR/sidecar.lock`. `serve-locked-drops-witness` then
+// closes the witness descriptor it was handed (found through /proc, so Linux only) and serves.
+if (mode === "serve-locked" || mode === "serve-locked-drops-witness") {
+  const dir = process.env.OHMAIL_DATA_DIR;
+  fs.writeFileSync(dir + "/sidecar.lock", JSON.stringify({ pid: process.pid, nonce: String(Math.random()) }) + "\n");
+  if (mode === "serve-locked-drops-witness") {
+    for (const fd of fs.readdirSync("/proc/self/fd")) {
+      try {
+        if (fs.readlinkSync("/proc/self/fd/" + fd).endsWith("/engine.hold")) fs.closeSync(Number(fd));
+      } catch {}
+    }
+  }
+}
+
 if (mode === "phased") {
   frame({ v: 1, t: "phase", phase: "NOT_A_PHASE!" });
   frame({ v: 1, t: "phase", phase: "replaying_wal" });
@@ -235,6 +250,13 @@ impl Fixture {
             env: vec![(OsString::from("FAKE_LOG"), self.log.clone().into_os_string())],
             unset: Vec::new(),
         }
+    }
+
+    /// [`Fixture::launch`] with a data directory, as every real engine plan names one.
+    fn launch_in(&self, data: &Path, mode: &str) -> Launch {
+        let mut launch = self.launch(mode);
+        launch.env.push((OsString::from(DATA_DIR_VAR), data.as_os_str().to_os_string()));
+        launch
     }
 
     fn lines(&self) -> Vec<String> {
@@ -4739,19 +4761,19 @@ fn the_judge_removes_a_torn_or_dead_lock_and_keeps_a_running_one() {
     let lock = dir.join("sidecar.lock");
 
     fs::write(&lock, br#"{"pid":4242,"start"#).expect("torn");
-    assert_eq!(remove_unheld_lock(&lock, |_| panic!("a torn record names nobody to ask about")), Ok(()));
+    assert_eq!(remove_unheld_lock(&lock, |_| panic!("a torn record names nobody to ask about"), &witness::Reading::Unread), Ok(()));
     assert!(!lock.exists(), "a torn record survived");
 
     fs::write(&lock, br#"{"pid":4242}"#).expect("dead");
-    assert_eq!(remove_unheld_lock(&lock, |pid| pid != 4242), Ok(()));
+    assert_eq!(remove_unheld_lock(&lock, |pid| pid != 4242, &witness::Reading::Unread), Ok(()));
     assert!(!lock.exists(), "a dead pid's lock survived");
 
     fs::write(&lock, br#"{"pid":4242}"#).expect("running");
-    assert!(remove_unheld_lock(&lock, |pid| pid == 4242).is_err(), "a running pid's lock was removed");
+    assert!(remove_unheld_lock(&lock, |pid| pid == 4242, &witness::Reading::Unread).is_err(), "a running pid's lock was removed");
     assert!(lock.exists(), "a running pid's lock was removed");
 
     fs::remove_file(&lock).expect("gone");
-    assert_eq!(remove_unheld_lock(&lock, |_| false), Ok(()), "an absent lock is nothing to refuse");
+    assert_eq!(remove_unheld_lock(&lock, |_| false, &witness::Reading::Unread), Ok(()), "an absent lock is nothing to refuse");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -4768,9 +4790,166 @@ fn a_lock_replaced_while_it_was_judged_is_kept() {
     let refused = remove_unheld_lock(&lock, |_| {
         fs::write(&lock, replacement).expect("a starting engine takes the lock");
         false
-    });
+    }, &witness::Reading::Unread);
     assert!(refused.is_err(), "the replacement was removed");
     assert_eq!(fs::read(&lock).expect("still there"), replacement.to_vec());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// ── The witness: what the unlock press asks before it trusts a pid ──────────────────────────
+
+/// An engine planned into a data directory of the fixture's own, serving.
+#[cfg(unix)]
+fn witnessed(fixture: &Fixture, mode: &str) -> (PathBuf, Engine) {
+    let data = fixture.dir.join("data");
+    fs::create_dir_all(&data).expect("data dir");
+    let engine = Engine::spawn_with(fixture.launch_in(&data, mode), quick());
+    wait_for(
+        || matches!(engine.state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    (data, engine)
+}
+
+/// THE WITNESS IS HELD FOR EXACTLY THE LIFE OF THE ENGINE IT WAS HANDED TO, and remembers the record
+/// that engine wrote. Held while the engine serves, which this process keeps no copy of; free once
+/// the engine has gone, naming the record.
+#[cfg(unix)]
+#[test]
+fn the_witness_is_held_for_exactly_the_life_of_the_engine_it_was_handed_to() {
+    let _live = live_process();
+    let fixture = Fixture::new("witness-life");
+    let (data, engine) = witnessed(&fixture, "serve-locked");
+    let record = fs::read(data.join("sidecar.lock")).expect("the engine wrote its record");
+    assert!(matches!(witness::read(&data), witness::Reading::Held), "the witness was free while its engine served");
+    engine.stop();
+    assert_eq!(engine.state(), EngineState::Stopped);
+    match witness::read(&data) {
+        witness::Reading::Free { served, .. } => {
+            assert_eq!(served, vec![witness::record_hash(&record)], "the served record was not remembered")
+        }
+        witness::Reading::Held => panic!("the witness outlived the engine it was handed to"),
+        witness::Reading::Unread => panic!("the witness could not be read"),
+    }
+}
+
+/// A RECORD WHOSE WRITER SERVED UNDER A FREE WITNESS IS REMOVED, WHATEVER ITS PID NAMES NOW. The
+/// press kept it for any running process under that number, and the card then said another copy
+/// held the mail; here every pid reads as running, as a recycled one does.
+#[cfg(unix)]
+#[test]
+fn a_record_whose_writer_served_under_a_free_witness_is_removed_whatever_its_pid_names_now() {
+    let _live = live_process();
+    let fixture = Fixture::new("witness-free");
+    let (data, engine) = witnessed(&fixture, "serve-locked");
+    engine.stop();
+    let lock = data.join("sidecar.lock");
+    assert!(lock.exists(), "the gone engine's record is the case under test");
+    let reading = witness::read(&data);
+    assert_eq!(
+        remove_unheld_lock(&lock, |_| true, &reading),
+        Ok(()),
+        "a gone engine's record was kept for whatever runs under its pid"
+    );
+    assert!(!lock.exists());
+}
+
+/// A RECORD WHOSE WITNESS IS STILL HELD IS KEPT, even when its pid reads as gone: an engine handed
+/// the witness still runs.
+#[cfg(unix)]
+#[test]
+fn a_record_whose_witness_is_still_held_is_kept() {
+    let _live = live_process();
+    let fixture = Fixture::new("witness-held");
+    let (data, engine) = witnessed(&fixture, "serve-locked");
+    let lock = data.join("sidecar.lock");
+    let before = fs::read(&lock).expect("the record");
+    let reading = witness::read(&data);
+    let refused = remove_unheld_lock(&lock, |_| false, &reading);
+    assert!(
+        refused.as_ref().is_err_and(|why| why.starts_with(UNLOCK_HELD)),
+        "a live engine's lock was not refused as held: {refused:?}"
+    );
+    assert_eq!(fs::read(&lock).expect("still there"), before);
+    drop(reading);
+    engine.stop();
+}
+
+/// A RECORD THE WITNESS NEVER VOUCHED FOR KEEPS THE PID'S RULE: an older build's engine, or one
+/// started before its directory existed. Kept while its pid runs, removed once it does not; and the
+/// same with no witness at all, which is every platform but Unix.
+#[cfg(unix)]
+#[test]
+fn a_record_the_witness_never_vouched_for_keeps_the_pids_rule() {
+    let dir = candidate_root("witness-unvouched");
+    fs::create_dir_all(&dir).expect("dir");
+    let lock = dir.join("sidecar.lock");
+    fs::write(dir.join(witness::FILE), format!("{}\n", witness::record_hash(b"another record"))).expect("witness");
+    fs::write(&lock, br#"{"pid":4242}"#).expect("record");
+    {
+        let reading = witness::read(&dir);
+        assert!(matches!(reading, witness::Reading::Free { .. }), "a witness nobody holds did not read free");
+        assert!(remove_unheld_lock(&lock, |pid| pid == 4242, &reading).is_err(), "a running pid's record was removed");
+    }
+    assert!(lock.exists());
+    {
+        let reading = witness::read(&dir);
+        assert_eq!(remove_unheld_lock(&lock, |_| false, &reading), Ok(()), "a dead pid's record survived");
+    }
+    assert!(!lock.exists());
+    fs::remove_file(dir.join(witness::FILE)).expect("no witness");
+    fs::write(&lock, br#"{"pid":4242}"#).expect("record");
+    let unread = witness::read(&dir);
+    assert!(matches!(unread, witness::Reading::Unread), "an absent witness did not read as unread");
+    assert!(remove_unheld_lock(&lock, |pid| pid == 4242, &unread).is_err(), "with no witness a running pid's record was removed");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// AN ENGINE THAT LET ITS WITNESS GO IS NEVER VOUCHED FOR BY IT: its record is not remembered, so
+/// the press keeps the pid's rule, and a running pid keeps its lock.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_engine_that_let_its_witness_go_is_never_vouched_for() {
+    let _live = live_process();
+    let fixture = Fixture::new("witness-dropped");
+    let (data, engine) = witnessed(&fixture, "serve-locked-drops-witness");
+    let lock = data.join("sidecar.lock");
+    let reading = witness::read(&data);
+    match &reading {
+        witness::Reading::Free { served, .. } => {
+            assert!(served.is_empty(), "a witness its engine let go vouched for it: {served:?}")
+        }
+        _ => panic!("the engine closed its witness and it still reads held"),
+    }
+    assert!(remove_unheld_lock(&lock, |_| true, &reading).is_err(), "a live engine's lock went on a witness it let go");
+    assert!(lock.exists());
+    drop(reading);
+    engine.stop();
+}
+
+/// A WITNESS THE PRESS READ IS LET GO THE MOMENT THE READING IS DROPPED, even while a fork elsewhere
+/// in this process still holds a copy of its descriptor, so the next engine's spawn finds it free.
+/// The fork is played by a child handed that descriptor, which keeps it for as long as it runs.
+#[cfg(unix)]
+#[test]
+fn a_witness_reading_is_let_go_when_it_is_dropped_whatever_forks_hold_a_copy() {
+    let _live = live_process();
+    let dir = candidate_root("witness-let-go");
+    fs::write(dir.join(witness::FILE), "").expect("witness");
+    let reading = witness::read(&dir);
+    let witness::Reading::Free { _hold, .. } = &reading else { panic!("a witness nobody holds did not read free") };
+    let mut fork = Command::new("sleep");
+    fork.arg("30");
+    witness::hand_to(&mut fork, &_hold.0);
+    let mut copy = fork.spawn().expect("a child holding a copy");
+    drop(reading);
+    let after = witness::read(&dir);
+    let free = matches!(after, witness::Reading::Free { .. });
+    drop(after);
+    let _ = copy.kill();
+    let _ = copy.wait();
+    assert!(free, "a dropped reading still held the witness through a fork's copy of its descriptor");
     let _ = fs::remove_dir_all(&dir);
 }
 
