@@ -1032,9 +1032,9 @@ export async function applyRuleRequest(
   }
   if (payload.set.priority !== undefined) set.priority = payload.set.priority;
   if (payload.set.enabled !== undefined) set.enabled = payload.set.enabled;
-  // A person's pause makes a learned row theirs: no later graduation switches it back on.
+  // A person's pause makes the row theirs whatever wrote it (`RulesService.update`'s rule).
   const paused = payload.set.enabled === false;
-  if (paused && found.provenance === "promoted" && found.personDecidedAt === null) set.personDecidedAt = now;
+  if (paused && found.personDecidedAt === null) set.personDecidedAt = now;
   // A person naming where the rule files makes it theirs: `people_only` refiles an inference's mail.
   // An undo (`keepProvenance`) names the old place without being a press, so it keeps the row's.
   if (payload.set.destination !== undefined && payload.keepProvenance !== true) set.provenance = "manual";

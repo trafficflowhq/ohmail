@@ -680,9 +680,10 @@ export class RulesService {
       // the routing, and the backlog it claims is re-asked.
       rearm(set.destination !== undefined
         && canonicalDestination(set.destination as string) !== canonicalDestination(acting.destination));
-      // A person's pause makes a learned row theirs: no later graduation switches it back on.
+      // A person's pause makes the row theirs whatever wrote it: no graduation switches it back on,
+      // and a HEY import no longer counts it as its own to retarget or undo.
       const paused = set.enabled === false;
-      if (paused && before.provenance === "promoted" && before.personDecidedAt === null) set.personDecidedAt = at;
+      if (paused && before.personDecidedAt === null) set.personDecidedAt = at;
 
       // Scope the UPDATE to the account: a cross-account id matches 0 rows.
       const updated = await tx.update(rules).set(set)
