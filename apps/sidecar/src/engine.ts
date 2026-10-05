@@ -6258,7 +6258,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             swept: num(detail.swept), moved: num(detail.moved),
           });
         } else {
-          log("organizer_requests_note", { mailboxId: mb.id, outcome: event, ...(detail.err === undefined ? {} : { err: detail.err }) });
+          log("organizer_requests_note", { mailboxId: mb.id, outcome: event, err: detail.err });
         }
       });
 
