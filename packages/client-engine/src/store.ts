@@ -5,15 +5,46 @@ import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js
 
 /**
  * WHAT THE WINDOWS OVER ONE SHARED DISK SAY TO EACH OTHER about its outbox. `changed`: a write or
- * delete of an outbox row committed; every other window re-reads the outbox's key range. `withdraw`
- * and `withdraw-answer`: a window that does not own a row asks its owner to cancel it, after marking
- * it on disk. `ended`: the owning engine says how a send it dropped ended, first. Nothing persisted.
+ * delete of an outbox row committed; every other window re-reads the outbox's key range. `withdraw`:
+ * a window marked a row it does not own withdrawn (already decided on disk); its owner closes its
+ * own surface. `ended`: the owning engine says how a send it dropped ended, first. Nothing persisted.
  */
 export type OutboxNotice =
   | { t: "changed" }
-  | { t: "withdraw"; key: string; ask: string }
-  | { t: "withdraw-answer"; ask: string; outcome: "withdrawn" | "on_the_wire" | "gone" }
+  | { t: "withdraw"; key: string }
   | { t: "ended"; key: string; how: "confirmed" | "refused" | "withdrawn" };
+
+/**
+ * THE ROW'S PROTOCOL: a row stamped with it is written by an engine that claims the row on disk
+ * before every send, so another window's Cancel can be decided by the row alone. A row without
+ * it (an older build's) is never marked from another window.
+ */
+export const OUTBOX_PROTOCOL = 1;
+
+/**
+ * WHO WINS A WAITING SEND, decided on the disk row inside one write transaction: the owning engine's claim
+ * before the wire, or another window's Cancel. Each side's answer is what its own transaction saw.
+ * `claimed` (stamped `sending`), `withdrawn` (the claim met a mark, or the mark was there already),
+ * `marked` (the Cancel won), `sending` (a claim was there first), `sent` (the row is confirmed),
+ * `gone` (no such row), `unstamped` (an older build's row: no Cancel from here).
+ */
+export type OutboxRowVerdict = "claimed" | "withdrawn" | "marked" | "sending" | "sent" | "gone" | "unstamped";
+export type OutboxRowAct = { kind: "claim"; me: string } | { kind: "withdraw" };
+
+/** The decision itself, the same in every store: the verdict and the entity to write, if any. */
+export function decideOutboxRow(entity: unknown, act: OutboxRowAct): { verdict: OutboxRowVerdict; next: Record<string, unknown> | null } {
+  if (typeof entity !== "object" || entity === null) return { verdict: "gone", next: null };
+  const e = entity as Record<string, unknown>;
+  if (act.kind === "claim") {
+    if (e.withdrawn === true) return { verdict: "withdrawn", next: null };
+    return { verdict: "claimed", next: { ...e, sending: act.me } };
+  }
+  if (e.confirmed === true) return { verdict: "sent", next: null };
+  if (e.withdrawn === true) return { verdict: "withdrawn", next: null };
+  if (typeof e.sending === "string") return { verdict: "sending", next: null };
+  if (e.protocol !== OUTBOX_PROTOCOL) return { verdict: "unstamped", next: null };
+  return { verdict: "marked", next: { ...e, withdrawn: true } };
+}
 
 /** One channel per shared disk: a post reaches every OTHER window's listeners, never its own. */
 export interface OutboxNotices {
@@ -226,13 +257,8 @@ export interface MirrorStore extends EntityReader {
    * when memory moved. On the write lane, so it never reads behind this store's own writes.
    */
   refreshOutbox?(exclude: () => ReadonlySet<string>): Promise<boolean>;
-  /** The disk's own copy of one outbox row, read now; `undefined` when there is none. */
-  readOutboxRow?(id: string): Promise<unknown>;
-  /**
-   * Set one outbox row's `withdrawn` on disk, inside one transaction; `gone` when the row is not
-   * there. `true` is another window's Cancel; `false` is the owning engine: its request had left.
-   */
-  markOutboxWithdrawn?(id: string, withdrawn?: boolean): Promise<"marked" | "gone">;
+  /** {@link decideOutboxRow} over the disk row, inside one write transaction. */
+  decideOutboxRow?(id: string, act: OutboxRowAct): Promise<OutboxRowVerdict>;
   /**
    * HARD-DELETE EVERY RECORD CARRYING EXACTLY `seq` — the abandoned-snapshot-prefix sweep. A snapshot stamps every
    * row it emits with the SAME `seq` (its `asOfSeq`), so one seq value names one snapshot's output exactly. That
@@ -932,7 +958,8 @@ export abstract class BaseMirrorStore implements MirrorStore {
       const held = exclude();
       const keep = (rec: { type: string; id: string }): boolean => !(rec.type === OUTBOX_TYPE && held.has(rec.id));
       const onDisk = new Map<string, MirrorRecord>();
-      for (const rec of disk) if (keep(rec)) onDisk.set(recordKey(rec.type, rec.id), rec);
+      // A row this store has evicted and not yet purged is not read back: its delete is queued behind this.
+      for (const rec of disk) if (keep(rec) && !this.outboxEvicting.has(recordKey(rec.type, rec.id))) onDisk.set(recordKey(rec.type, rec.id), rec);
       let moved = false;
       for (const [key, rec] of [...this.records]) {
         if (!isOutboxKey(key) || !keep(rec) || onDisk.has(key)) continue;
@@ -958,42 +985,33 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return null;
   }
 
-  /** See {@link MirrorStore.readOutboxRow}: on the write lane, so it reads after this store's own writes. */
-  async readOutboxRow(id: string): Promise<unknown> {
-    return this.serializeWrite(() => this.readOutboxRowOnDisk(id));
-  }
-
-  /** The disk's half of {@link readOutboxRow}; a store with no disk answers from nothing. */
-  protected async readOutboxRowOnDisk(_id: string): Promise<unknown> {
-    return undefined;
-  }
-
   /**
-   * See {@link MirrorStore.markOutboxWithdrawn}. Serialized with every other local write, under the
+   * See {@link MirrorStore.decideOutboxRow}. Serialized with every other local write, under the
    * generation fence, and memory learns only what the disk's own transaction wrote.
    */
-  async markOutboxWithdrawn(id: string, withdrawn = true): Promise<"marked" | "gone"> {
+  async decideOutboxRow(id: string, act: OutboxRowAct): Promise<OutboxRowVerdict> {
     return this.serializeWrite(async () => {
       await this.settleWipe();
-      let rec: MirrorRecord | null;
+      let out: { verdict: OutboxRowVerdict; rec: MirrorRecord | null };
       try {
-        rec = await this.markWithdrawnOnDisk(id, withdrawn);
+        out = await this.decideOnDisk(id, act);
       } catch (err) {
         if (!(err instanceof MirrorGenerationChanged)) throw err;
         await this.adoptWipedBaseline();
-        rec = await this.markWithdrawnOnDisk(id, withdrawn);
+        out = await this.decideOnDisk(id, act);
       }
-      if (rec === null) return "gone";
-      this.records.set(recordKey(rec.type, rec.id), rec);
-      this.ver++;
-      this.stampTypes([OUTBOX_TYPE]);
-      return "marked";
+      if (out.rec !== null) {
+        this.records.set(recordKey(out.rec.type, out.rec.id), out.rec);
+        this.ver++;
+        this.stampTypes([OUTBOX_TYPE]);
+      }
+      return out.verdict;
     });
   }
 
-  /** The disk's half of {@link markOutboxWithdrawn}: the row as written, or `null` when absent. */
-  protected async markWithdrawnOnDisk(_id: string, _withdrawn: boolean): Promise<MirrorRecord | null> {
-    return null;
+  /** The disk's half of {@link decideOutboxRow}: the verdict and the record written, if any. */
+  protected async decideOnDisk(_id: string, _act: OutboxRowAct): Promise<{ verdict: OutboxRowVerdict; rec: MirrorRecord | null }> {
+    return { verdict: "gone", rec: null };
   }
 
   /** See {@link MirrorStore.putLocal} — seq 0, latest wins, never through the seq guard. */
@@ -1060,9 +1078,15 @@ export abstract class BaseMirrorStore implements MirrorStore {
     if (gone.keys.length === 0) return;
     this.ver++;
     this.stampTypes(gone.types);
-    // Only the DURABLE half takes its turn.
-    return this.serializeWrite(() => this.purge(gone.keys));
+    // Only the DURABLE half takes its turn; until it has, a re-read of the disk must not put the row back.
+    const outbox = gone.keys.filter(isOutboxKey);
+    for (const k of outbox) this.outboxEvicting.add(k);
+    return this.serializeWrite(() => this.purge(gone.keys))
+      .finally(() => { for (const k of outbox) this.outboxEvicting.delete(k); });
   }
+
+  /** Outbox rows evicted from memory whose durable delete is still queued — see {@link refreshOutbox}. */
+  private readonly outboxEvicting = new Set<string>();
 
   /** See {@link MirrorStore.prune} — hard delete, body cascade, cursor and maxSeq untouched. */
   async prune(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void> {

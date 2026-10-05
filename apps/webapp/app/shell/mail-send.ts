@@ -209,7 +209,7 @@ export function refusedRowOf(res: MutationResult, aboutThisCompose: boolean): Re
 }
 
 /** What Cancel does with the engine's answer — see {@link MailSendApi.withdraw}. */
-export type CancelSaid = "close" | "already_sent";
+export type CancelSaid = "close" | "already_sent" | "elsewhere";
 
 const IDLE: SendState = { phase: "idle" };
 
@@ -435,15 +435,15 @@ function pendingSendLanes(reader: EntityReader): Map<string, string> {
 }
 
 /**
- * DID ANOTHER WINDOW'S SEND GO — read once its row has left this window's durable outbox. Not when
- * the row is still there marked withdrawn, nor when its owner said it was refused or withdrawn;
- * otherwise yes (dropped after its answer, or kept marked `confirmed` for its echo).
+ * DID ANOTHER WINDOW'S SEND GO — read once its row has left this window's pending outbox. Only on
+ * evidence: the row kept marked `confirmed` (and not withdrawn), or its owner said `confirmed` before
+ * dropping it. A row that left with no ending heard is not a delivery: it clears and settles nothing.
  */
 function endedAsSent(engine: OhmailEngine, key: string): boolean {
-  const said = typeof engine.foreignSendEnding === "function" ? engine.foreignSendEnding(key) : undefined;
-  if (said === "refused" || said === "withdrawn") return false;
   const rows = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow> : [];
-  return !rows.some((r) => r.key === key && r.withdrawn === true);
+  const row = rows.find((r) => r.key === key);
+  if (row !== undefined) return row.confirmed === true && row.withdrawn !== true;
+  return typeof engine.foreignSendEnding === "function" && engine.foreignSendEnding(key) === "confirmed";
 }
 
 export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): boolean {
@@ -2232,6 +2232,8 @@ export function useMailSend(
       const restored = standingSendKey(engine, lane);
       // Nothing out on this lane: the ordinary case for Cancel, not a refusal.
       if (restored === null) return "close";
+      // Another window's send from an older build: no Cancel from here, said rather than faked.
+      if (typeof engine.foreignCancelRefused === "function" && engine.foreignCancelRefused(restored)) return "elsewhere";
       const outcome = await engine.withdrawQueued(restored);
       if (outcome === "on_the_wire") return "already_sent";
       const record = outcome === "gone" ? null : recordForEndedSend(restored, owner.current);

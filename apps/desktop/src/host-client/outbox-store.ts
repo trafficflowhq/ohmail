@@ -8,8 +8,8 @@
  * Several tabs of one pairing share these rows: each row has one owner, as on the web's mirror.
  */
 import {
-  BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OutboxNoticeBus, outboxNoticeChannel, recordKey,
-  type MirrorRecord, type NoticeChannel, type OutboxNotices,
+  BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OutboxNoticeBus, decideOutboxRow, outboxNoticeChannel, recordKey,
+  type MirrorRecord, type NoticeChannel, type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "@ohmail/client-engine";
 
 export const HOST_OUTBOX_DB = "ohmail-host-outbox";
@@ -162,28 +162,19 @@ export class HostOutboxStore extends BaseMirrorStore {
     return out;
   }
 
-  protected async readOutboxRowOnDisk(id: string): Promise<unknown> {
-    if (!this.usable()) return undefined;
-    const db = await this.database();
-    const tx = db.transaction(ROWS, "readonly");
-    return storedRow(await request(tx.objectStore(ROWS).get([this.scope!, OUTBOX_TYPE, id])))?.entity;
-  }
-
-  protected async markWithdrawnOnDisk(id: string, withdrawn: boolean): Promise<MirrorRecord | null> {
-    if (!this.usable()) return null;
+  /** The compare-and-set behind `decideOutboxRow`: the row read and, when the verdict writes, written in one transaction. */
+  protected async decideOnDisk(id: string, act: OutboxRowAct): Promise<{ verdict: OutboxRowVerdict; rec: MirrorRecord | null }> {
+    if (!this.usable()) return { verdict: "gone", rec: null };
     const db = await this.database();
     const tx = db.transaction(ROWS, "readwrite");
     const rows = tx.objectStore(ROWS);
     const rec = storedRow(await request(rows.get([this.scope!, OUTBOX_TYPE, id])));
-    if (rec === null) {
-      await committed(tx);
-      return null;
-    }
-    const next: MirrorRecord = { ...rec, entity: { ...(rec.entity as object), withdrawn } };
-    rows.put({ type: next.type, id: next.id, entity: next.entity }, [this.scope!, next.type, next.id]);
+    const { verdict, next } = decideOutboxRow(rec?.entity ?? null, act);
+    const written: MirrorRecord | null = next === null || rec === null ? null : { ...rec, entity: next };
+    if (written !== null) rows.put({ type: written.type, id: written.id, entity: written.entity }, [this.scope!, written.type, written.id]);
     await committed(tx);
-    this.bus?.changed([recordKey(next.type, next.id)]);
-    return next;
+    if (written !== null) this.bus?.changed([recordKey(written.type, written.id)]);
+    return { verdict, rec: written };
   }
 
   private database(): Promise<IDBDatabase> {
@@ -278,10 +269,10 @@ export class HostOutboxStore extends BaseMirrorStore {
       if (!this.usable()) return;
       const tx = db.transaction(ROWS, "readwrite");
       const rows = tx.objectStore(ROWS);
-      // Another tab's Cancel is never written over by a put that does not speak to it (`idb.ts`).
+      // Another tab's Cancel is never written over, as in `idb.ts`.
       for (const r of puts) {
         const entity = r.entity as Record<string, unknown> | null;
-        if (r.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object" || "withdrawn" in entity) continue;
+        if (r.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object" || entity.withdrawn === true) continue;
         const prior = storedRow(await request(rows.get([this.scope!, r.type, r.id])));
         if ((prior?.entity as { withdrawn?: unknown } | undefined)?.withdrawn === true) r.entity = { ...entity, withdrawn: true };
       }

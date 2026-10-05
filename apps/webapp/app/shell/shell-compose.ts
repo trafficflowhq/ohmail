@@ -462,8 +462,14 @@ export function useShellCompose({
     if (target === null) { setReplyTo(null); return; }
     const lane = replyModeRef.current === "forward" ? inlineForwardKey(target) : target;
     void (async () => {
-      if (await mailSend.withdraw(lane) === "already_sent") {
+      const said = await mailSend.withdraw(lane);
+      if (said === "already_sent") {
         toast(t("compose.cancelAlreadySent"));
+        return;
+      }
+      // Sent from another window on an older version: nothing cancelled, the dock stays and says so.
+      if (said === "elsewhere") {
+        toast(t("compose.cancelElsewhere"));
         return;
       }
       setReplyTo(null);

@@ -1269,6 +1269,7 @@
     "cancelConfirm": "Nachricht verwerfen",
     "cancelKeep": "Weiterschreiben",
     "cancelAlreadySent": "Schon gesendet. Zu spät zum Abbrechen.",
+    "cancelElsewhere": "Das wird aus einem anderen Fenster gesendet. Lade jenes Fenster neu, um es hier abzubrechen.",
     "discardHeld": "Nicht gelöscht: Ihr Versand ist nicht bestätigt, darum bleibt die Nachricht in den Entwürfen.",
     "discardUnknown": "Nicht gelöscht: Dieser Browser kann nicht erkennen, ob ihr Versand noch läuft, darum bleibt die Nachricht in den Entwürfen.",
     "resumedNote": "Das ist die Nachricht, die du nicht fertig geschrieben hast. Verwirf sie, um eine neue zu beginnen.",

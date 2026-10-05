@@ -47,7 +47,10 @@ import { sendFingerprint } from "./send-fingerprint.js";
 import { UNJUDGED_WRITE_CODES, type UnjudgedWriteCode } from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
-import { MemoryMirrorStore, type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices } from "./store.js";
+import {
+  MemoryMirrorStore, OUTBOX_PROTOCOL, type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices,
+  type OutboxRowVerdict,
+} from "./store.js";
 // THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
 // derivations over the drain stamp, held in one module with the desktop sidecar's mirror
 // (INSTANT-ARCH §6.7). A dependency-free core subpath, like `./ics` above; imported for local
@@ -144,12 +147,6 @@ export type WithdrawOutcome = "withdrawn" | "on_the_wire" | "gone";
  * verb the person cancelled owes no sentence, and "it failed" would be the wrong one.
  */
 export const OUTBOX_WITHDRAWN_CODE = "withdrawn";
-
-/**
- * HOW LONG A WINDOW THAT DOES NOT OWN A SEND WAITS FOR ITS OWNER'S ANSWER to a Cancel. The mark is
- * already on disk when it asks, so silence still cancels: the owning engine reads it before the wire.
- */
-export const WITHDRAW_ASK_MS = 1_000;
 
 export interface MutationResult {
   id: string;
@@ -300,6 +297,8 @@ interface PendingMutation {
   id: string;
   key: string;
   mutation: EngineMutation;
+  /** This engine's claim on the row for the attempt in flight — see {@link OhmailEngine.claimForSend}. */
+  sending?: string;
   /**
    * The durable entry's order stamp — minted ONCE, at `mutate()`, and carried through every
    * re-persist so a retry can never re-order the queue: replay order is user order, which is
@@ -492,6 +491,10 @@ interface PersistedOutboxEntry {
    * place, so an older record without it reads as not withdrawn, which is what it was.
    */
   withdrawn?: boolean;
+  /** {@link OUTBOX_PROTOCOL}: this row's owner claims it on disk before every send. Absent on an older build's row. */
+  protocol?: number;
+  /** The owning engine's claim for an attempt in flight, written by the claim's own transaction. */
+  sending?: string;
   /**
    * THE SEND + DONE INTENT, kept with the send it was pressed with — see
    * {@link MutationResult.andDone}. Added in place: absent reads as a plain Send. Written by pick
@@ -600,7 +603,8 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
     ...(p.createAttempted === true ? { createAttempted: true } : {}),
     ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
-    ...(p.owner !== undefined ? { owner: p.owner } : {}),
+    ...(p.owner !== undefined ? { owner: p.owner, protocol: OUTBOX_PROTOCOL } : {}),
+    ...(p.sending !== undefined ? { sending: p.sending } : {}),
     ...andDoneOf(p),
     ...(p.released === true ? { released: true } : {}),
     ...(p.confirmed === true ? { confirmed: true } : {}),
@@ -1804,8 +1808,6 @@ export interface EngineOptions {
    * (memory, the phone's database) never uses it either way.
    */
   locks?: EngineLocks | null;
-  /** {@link WITHDRAW_ASK_MS}, for a test that drives a silent owner. */
-  withdrawAskMs?: number;
   /**
    * Override the archive transport. The shipped path takes it from the adapter (see
    * {@link ServerSearchCapableAdapter}); this exists so a test can drive the whole seam
@@ -2545,11 +2547,12 @@ export class OhmailEngine {
   private notices: OutboxNotices | null = null;
   /** How the sends other windows dropped ended, by key, as their owners said it (bounded). */
   private readonly foreignEndings = new Map<string, "confirmed" | "refused" | "withdrawn">();
-  /** Cancels this engine asked another window's owner about, by ask id. */
-  private readonly asks = new Map<string, (outcome: WithdrawOutcome) => void>();
+  /** Releases this engine's owner lock — see {@link OhmailEngine.dispose}. */
+  private releaseOwnerLock: (() => void) | null = null;
+  private disposed = false;
+  private unlistenDisk: (() => void) | null = null;
   private following: Promise<void> | null = null;
   private followAgain = false;
-  private readonly withdrawAskMs: number;
   private readonly listeners = new Set<() => void>();
   /** See {@link OhmailEngine.onMessagesRemoved} — told BEFORE the page is written. */
   private readonly removalListeners = new Set<(ids: readonly string[]) => void>();
@@ -2889,7 +2892,6 @@ export class OhmailEngine {
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
     this.locks = opts.locks === undefined ? defaultEngineLocks() : opts.locks;
-    this.withdrawAskMs = opts.withdrawAskMs ?? WITHDRAW_ASK_MS;
     this.holdOwnerLock();
     this.listenToDisk();
     this.readerView = new OverlayReader(this.store, this.overlays, () => this.overlayRev, this.kept);
@@ -3330,6 +3332,7 @@ export class OhmailEngine {
      * person cancelled that send, so no later session may deliver it.
      */
     if (e.withdrawn === true) {
+      this.sayEnded(e, "withdrawn");
       void this.dropOutbox(e.id);
       return false;
     }
@@ -3406,9 +3409,25 @@ export class OhmailEngine {
     if (!this.ownershipOn() || this.locks === null) return;
     const name = `ohmail.engine.${this.store.sharedDiskName!()}.${this.uuid()}`;
     void this.locks.request(name, { mode: "exclusive" }, () => {
+      if (this.disposed) return Promise.resolve();
       this.ownerName = name;
-      return new Promise<never>(() => { /* held until the tab goes */ });
+      // Held until the tab goes, or until this engine is disposed inside a live page.
+      return new Promise<void>((release) => { this.releaseOwnerLock = release; });
     }).catch(() => { this.ownerName = null; });
+  }
+
+  /**
+   * AN ENGINE A LIVE PAGE REPLACES LETS GO OF ITS ROWS: its owner lock is released, so another engine
+   * adopts what this one left, and this one stops following the disk. Idempotent; nothing else stops.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.unlistenDisk?.();
+    this.unlistenDisk = null;
+    this.notices = null;
+    this.releaseOwnerLock?.();
+    this.releaseOwnerLock = null;
   }
 
   /**
@@ -3422,38 +3441,27 @@ export class OhmailEngine {
 
   /**
    * THE OTHER WINDOWS' WRITES REACH THIS ONE: a `changed` notice re-reads the outbox from disk, a
-   * `withdraw` asks this engine to cancel a row it owns, and the answers come back the same way.
+   * `withdraw` says another window's Cancel won a row this engine owns, `ended` how a send ended.
    */
   private listenToDisk(): void {
     if (!this.ownershipOn()) return;
     const bus = this.store.outboxNotices?.() ?? null;
     if (bus === null) return;
     this.notices = bus;
-    bus.listen((n) => { void this.heard(n); });
+    this.unlistenDisk = bus.listen((n) => { void this.heard(n); });
   }
 
   private async heard(n: OutboxNotice): Promise<void> {
     if (n.t === "changed") return this.followDisk();
-    if (n.t === "withdraw-answer") {
-      this.asks.get(n.ask)?.(n.outcome);
-      return;
-    }
     if (n.t === "ended") {
       this.foreignEndings.delete(n.key);
       this.foreignEndings.set(n.key, n.how);
       if (this.foreignEndings.size > 256) this.foreignEndings.delete(this.foreignEndings.keys().next().value!);
       return;
     }
-    // `withdraw`: answered only by the engine holding the key; any other stays silent.
-    const onWire = [...this.inFlight.values()].filter((p) => p.key === n.key);
-    if (onWire.length === 0 && !this.queue.some((p) => p.key === n.key)) return;
-    const outcome = await this.withdrawQueued(n.key, { askedElsewhere: true });
-    /* THE REQUEST HAD LEFT: the asker's mark is taken back on disk before the answer goes, so every
-       window reads the send as still on its way and this engine's own next write keeps it so. */
-    if (outcome === "on_the_wire") {
-      for (const p of onWire) await this.store.markOutboxWithdrawn?.(p.id, false).catch(() => "gone");
-    }
-    this.notices?.post({ t: "withdraw-answer", ask: n.ask, outcome });
+    /* `withdraw`: another window's mark already won on disk. A row this engine holds queued is ended
+       here at once, so its surface closes; one on its way meets the mark at its claim. */
+    if (this.queue.some((p) => p.key === n.key)) await this.withdrawQueued(n.key, { askedElsewhere: true });
   }
 
   /** The ids whose memory is newer than the disk: this engine's queue, wire and overlays. */
@@ -3484,9 +3492,29 @@ export class OhmailEngine {
     return this.foreignEndings.get(key);
   }
 
-  /** Say how a send this engine owns ended, before its row is dropped, so the order holds. */
-  private sayEnded(p: PendingMutation, how: "confirmed" | "refused" | "withdrawn"): void {
+  /**
+   * Say how a send this engine owns ended, before its row is dropped, so the order holds: a window
+   * that never hears an ending takes the row's leaving as nothing, never as a delivery.
+   */
+  private sayEnded(p: { key: string; mutation: { kind: string } }, how: "confirmed" | "refused" | "withdrawn"): void {
     if (p.mutation.kind === "mail_send") this.notices?.post({ t: "ended", key: p.key, how });
+  }
+
+  /** {@link sayEnded} for a row known by id only: a confirmed verb the drain retires. */
+  private sayEndedRow(id: string, how: "confirmed" | "refused" | "withdrawn"): void {
+    const row = this.store.get<unknown>(OUTBOX_TYPE, id);
+    if (isPersistedOutboxEntry(row)) this.sayEnded(row, how);
+  }
+
+  /**
+   * ANOTHER WINDOW'S WAITING SEND THAT THIS WINDOW MAY NOT CANCEL: its row comes from an older build,
+   * whose owner does not claim the row before the wire, so a mark here could not stop it.
+   */
+  foreignCancelRefused(key: string): boolean {
+    if (!this.ownershipOn()) return false;
+    return this.store.entries<unknown>(OUTBOX_TYPE).map((e) => e.entity).filter(isPersistedOutboxEntry)
+      .some((e) => e.key === key && typeof e.owner === "string" && e.owner !== this.ownerName
+        && e.withdrawn !== true && e.confirmed !== true && e.protocol !== OUTBOX_PROTOCOL);
   }
 
   /**
@@ -3787,7 +3815,10 @@ export class OhmailEngine {
       // never in this mirror) settles at once. The durable entry goes with the overlay; one that
       // survives a refused delete replays idempotently, the safe direction.
       const had = this.overlays.has(overlayId);
-      if (this.settleConfirmed(overlayId, registered.m, registered.shadow)) void this.dropOutbox(overlayId);
+      if (this.settleConfirmed(overlayId, registered.m, registered.shadow)) {
+        this.sayEndedRow(overlayId, "confirmed");
+        void this.dropOutbox(overlayId);
+      }
       swept = had || swept;
     }
     swept = this.sweepShadows(epoch) || swept;
@@ -3834,6 +3865,7 @@ export class OhmailEngine {
       if (!shadowAgrees(s.keys, this.shadowTruth) && s.drains < SHADOW_DRAIN_BOUND) continue;
       this.shadows.delete(id);
       this.overlays.delete(id);
+      this.sayEndedRow(id, "confirmed");
       void this.dropOutbox(id);
       retired = true;
     }
@@ -3850,6 +3882,7 @@ export class OhmailEngine {
       if (!s.keys.some((k) => effects.some((e) => e.type === k.type && e.id === k.id))) continue;
       this.shadows.delete(id);
       this.overlays.delete(id);
+      this.sayEndedRow(id, "confirmed");
       void this.dropOutbox(id);
     }
     for (const [id, d] of this.kept) if (supersededBy(d, effects)) this.kept.delete(id);
@@ -7733,13 +7766,9 @@ export class OhmailEngine {
      * reaches the wire unless it is stopped here. Terminal: the overlay and the durable row go, and the refusal names itself so the
      * ledger above says nothing about mail nobody sent.
      */
-    /* AND ANOTHER WINDOW'S CANCEL, read off the disk row: one read per send, and only where
-       windows share the disk. */
-    if (!this.withdrawnKeys.has(p.key) && p.mutation.kind === "mail_send" && this.ownershipOn()
-        && typeof this.store.readOutboxRow === "function") {
-      const onDisk = await this.store.readOutboxRow(p.id).catch(() => undefined);
-      if ((onDisk as { withdrawn?: unknown } | undefined)?.withdrawn === true) this.withdrawnKeys.add(p.key);
-    }
+    /* AND ANOTHER WINDOW'S CANCEL, decided on the disk row: see {@link claimForSend}. */
+    const claim = this.withdrawnKeys.has(p.key) ? "claimed" : await this.claimForSend(p);
+    if (claim === "withdrawn") this.withdrawnKeys.add(p.key);
     if (this.withdrawnKeys.has(p.key)) {
       this.overlays.delete(p.id);
       this.overlayRev++;
@@ -7754,6 +7783,10 @@ export class OhmailEngine {
       };
     }
     try {
+      // A claim the disk could not answer sends nothing this round: the row may carry a Cancel.
+      if (claim === "failed") {
+        throw new MutationRejectedError("the outbox row could not be read before sending", { code: "network", retryable: true });
+      }
       const outcome = await this.adapter.mutate(p.mutation, {
         idempotencyKey: p.key,
         ...(p.createAttempted === true ? { createAttempted: true } : {}),
@@ -7989,6 +8022,8 @@ export class OhmailEngine {
         // Keep the overlay (the user's intent stands) + queue for a retry with
         // the SAME Idempotency-Key — the server dedupes a half-landed attempt.
         p.attempts = attempts;
+        // The attempt answered: the claim ends with it, and a Cancel may win the row again.
+        delete p.sending;
         if (wait !== null) {
           p.nextAt = this.now().getTime() + wait;
           p.waitIsServerNamed = rejection.retryAfterMs !== null;
@@ -8371,11 +8406,11 @@ export class OhmailEngine {
   async withdrawQueued(key: string, opts: { askedElsewhere?: boolean } = {}): Promise<WithdrawOutcome> {
     for (const p of this.inFlight.values()) if (p.key === key) return "on_the_wire";
     const rows = this.queue.filter((p) => p.key === key);
-    this.withdrawnKeys.add(key);
     if (rows.length === 0 && !opts.askedElsewhere) {
       const foreign = await this.withdrawForeign(key);
       if (foreign !== null) return foreign;
     }
+    this.withdrawnKeys.add(key);
     for (const p of rows) {
       const at = this.queue.indexOf(p);
       if (at >= 0) this.queue.splice(at, 1);
@@ -8397,40 +8432,52 @@ export class OhmailEngine {
   }
 
   /**
-   * CANCEL IN A WINDOW THAT DOES NOT OWN THE SEND: the row is marked `withdrawn` on disk first (so
-   * a silent owner still reads it before the wire), then its owner is asked and its answer taken
-   * within {@link WITHDRAW_ASK_MS}. `null` when no other live engine's pending row carries the key.
+   * CANCEL IN A WINDOW THAT DOES NOT OWN THE SEND, decided by the disk row alone (see
+   * {@link decideOutboxRow}): the mark wins only a row nobody has claimed for the wire, and the
+   * owning engine's claim reads it, so `withdrawn` is true. A claimed or confirmed row answers
+   * `on_the_wire`; a row already gone answers by the ending its owning engine said. That engine is
+   * told after, so its surface closes. `null` when no other engine's row carries the key.
    */
   private async withdrawForeign(key: string): Promise<WithdrawOutcome | null> {
-    if (!this.ownershipOn() || typeof this.store.markOutboxWithdrawn !== "function") return null;
+    if (!this.ownershipOn() || typeof this.store.decideOutboxRow !== "function") return null;
     const rows = this.store.entries<unknown>(OUTBOX_TYPE).map((e) => e.entity).filter(isPersistedOutboxEntry)
-      .filter((e) => e.key === key && e.withdrawn !== true && e.confirmed !== true
-        && typeof e.owner === "string" && e.owner !== this.ownerName);
-    if (rows.length === 0) return null;
-    let marked = false;
-    for (const e of rows) {
-      if (await this.store.markOutboxWithdrawn(e.id).catch(() => "gone" as const) === "marked") marked = true;
-    }
-    if (!marked) return "gone";
+      .filter((e) => e.key === key && typeof e.owner === "string" && e.owner !== this.ownerName);
+    // Already gone from this window's copy: a send another window said it delivered is not "gone".
+    if (rows.length === 0) return this.foreignEndings.get(key) === "confirmed" ? "on_the_wire" : null;
+    const seen = new Set<OutboxRowVerdict>();
+    for (const e of rows) seen.add(await this.store.decideOutboxRow(e.id, { kind: "withdraw" }).catch(() => "gone" as const));
     this.notify();
-    const owners = new Set(rows.map((e) => e.owner!));
-    let live = false;
-    try {
-      live = ((await this.locks!.query()).held ?? []).some((h) => typeof h.name === "string" && owners.has(h.name));
-    } catch { /* unaskable: the mark stands */ }
-    if (!live || this.notices === null) return "withdrawn";
-    const said = await this.askOwner(key);
-    if (said === "on_the_wire") this.withdrawnKeys.delete(key);
-    return said ?? "withdrawn";
+    if (seen.has("sending") || seen.has("sent")) return "on_the_wire";
+    if (seen.has("marked")) this.notices?.post({ t: "withdraw", key });
+    if (seen.has("marked") || seen.has("withdrawn")) return "withdrawn";
+    /* Gone: its owner said how it ended before the drop, and that notice can arrive after this
+       transaction's answer, so the disk is re-read once (a store read, not a clock) before asking.
+       An older build's row (`unstamped`) is not this window's to cancel: see foreignCancelRefused. */
+    if (seen.has("gone")) await this.followDisk();
+    const said = this.foreignEndings.get(key);
+    return said === "confirmed" ? "on_the_wire" : said === "withdrawn" ? "withdrawn" : "gone";
   }
 
-  private askOwner(key: string): Promise<WithdrawOutcome | null> {
-    const ask = this.uuid();
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => { this.asks.delete(ask); resolve(null); }, this.withdrawAskMs);
-      this.asks.set(ask, (outcome) => { clearTimeout(timer); this.asks.delete(ask); resolve(outcome); });
-      this.notices!.post({ t: "withdraw", key, ask });
-    });
+  /**
+   * THE OWNING ENGINE'S CLAIM ON ITS ROW BEFORE THE WIRE, in the same transaction that reads another
+   * window's mark: `claimed` stamps the row `sending`, so a later mark is refused; `withdrawn` means
+   * a mark won first. Only for a send, where windows share the disk and this engine owns the row.
+   * `failed`: the disk did not answer, and nothing is sent this round.
+   */
+  private async claimForSend(p: PendingMutation): Promise<"claimed" | "withdrawn" | "unclaimed" | "failed"> {
+    const me = this.ownerName;
+    if (p.mutation.kind !== "mail_send" || me === null || !this.ownershipOn() || typeof this.store.decideOutboxRow !== "function") {
+      return "unclaimed";
+    }
+    let verdict: OutboxRowVerdict;
+    try {
+      verdict = await this.store.decideOutboxRow(p.id, { kind: "claim", me });
+    } catch {
+      return "failed";
+    }
+    if (verdict === "withdrawn") return "withdrawn";
+    if (verdict === "claimed") p.sending = me;
+    return verdict === "claimed" ? "claimed" : "unclaimed";
   }
 
   /**
@@ -8467,7 +8514,10 @@ export class OhmailEngine {
       await this.store.commitLocal(
         [{ type: OUTBOX_TYPE, id: p.id, entity: { ...outboxEntryOf(p), withdrawn: true } }], [],
       );
-    } catch { await this.dropOutbox(p.id); }
+    } catch {
+      this.sayEnded(p, "withdrawn");
+      await this.dropOutbox(p.id);
+    }
   }
 
   /**

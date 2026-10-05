@@ -5,7 +5,10 @@ import {
   durableSet,
   type DurableWrite,
 } from "./durable.js";
-import { BaseMirrorStore, MirrorGenerationChanged, keyMayCarry, wipeKeepUnion, type OutboxNotices } from "./store.js";
+import {
+  BaseMirrorStore, MirrorGenerationChanged, decideOutboxRow, keyMayCarry, wipeKeepUnion,
+  type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
+} from "./store.js";
 import { OutboxNoticeBus, outboxNoticeChannel, type NoticeChannel } from "./outbox-notices.js";
 import { OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, type Cursor } from "./types.js";
 
@@ -759,17 +762,8 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     return out.filter((r) => r.entity !== null);
   }
 
-  protected async readOutboxRowOnDisk(id: string): Promise<unknown> {
-    if (this.fenced) return undefined;
-    const db = await this.open();
-    const tx = db.transaction([ENTITIES], "readonly");
-    const rec = await requestDone(tx.objectStore(ENTITIES).get(`${OUTBOX_TYPE}:${id}`)) as MirrorRecord | undefined;
-    await txDone(tx);
-    return rec?.entity ?? undefined;
-  }
-
-  /** The compare-and-set behind {@link BaseMirrorStore.markOutboxWithdrawn}, under the generation fence. */
-  protected async markWithdrawnOnDisk(id: string, withdrawn: boolean): Promise<MirrorRecord | null> {
+  /** The compare-and-set behind {@link BaseMirrorStore.decideOutboxRow}, under the generation fence. */
+  protected async decideOnDisk(id: string, act: OutboxRowAct): Promise<{ verdict: OutboxRowVerdict; rec: MirrorRecord | null }> {
     const db = await this.open();
     const tx = db.transaction([ENTITIES, META], "readwrite");
     const entities = tx.objectStore(ENTITIES);
@@ -782,15 +776,12 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     }
     const key = `${OUTBOX_TYPE}:${id}`;
     const rec = await requestDone(entities.get(key)) as MirrorRecord | undefined;
-    if (rec === undefined || rec.entity === null || typeof rec.entity !== "object") {
-      await commitWrite(tx);
-      return null;
-    }
-    const next: MirrorRecord = { ...rec, entity: { ...(rec.entity as object), withdrawn } };
-    entities.put(next, key);
+    const { verdict, next } = decideOutboxRow(rec?.entity ?? null, act);
+    const written: MirrorRecord | null = next === null || rec === undefined ? null : { ...rec, entity: next };
+    if (written !== null) entities.put(written, key);
     await commitWrite(tx);
-    this.noticeOutbox([key]);
-    return next;
+    if (written !== null) this.noticeOutbox([key]);
+    return { verdict, rec: written };
   }
 
   /**
@@ -912,12 +903,11 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       try { tx.abort(); } catch { /* already settled */ }
       throw new MirrorGenerationChanged(expected, found);
     }
-    /* A WITHDRAWN MARK IS NEVER WRITTEN OVER BY A PUT THAT DOES NOT SPEAK TO IT: another window may
-       have marked this row while this engine's request was out, and the re-put after it must not
-       erase the cancellation. A put carrying `withdrawn` (either value) is the owning engine deciding. */
+    /* A WITHDRAWN MARK IS NEVER WRITTEN OVER: another window's Cancel won its compare-and-set, and no
+       later put of the row, the owning engine's included, takes it back. */
     for (const rec of puts) {
       const entity = rec.entity as Record<string, unknown> | null;
-      if (rec.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object" || "withdrawn" in entity) continue;
+      if (rec.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object" || entity.withdrawn === true) continue;
       const prior = await requestDone(entities.get(`${rec.type}:${rec.id}`)) as MirrorRecord | undefined;
       if ((prior?.entity as { withdrawn?: unknown } | null | undefined)?.withdrawn === true) {
         rec.entity = { ...entity, withdrawn: true };

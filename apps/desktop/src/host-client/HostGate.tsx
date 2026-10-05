@@ -22,14 +22,14 @@
  * hosted constant, under-selling the door.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "../../../webapp/app/shell/AppShell";
 import { dropLocalStorageKeys, type LocalSweep } from "../../../webapp/app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
 import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "../../../webapp/app/shell/mail-send";
 import { SCREENER_INTENTS_PREFIX } from "../../../webapp/app/shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "../../../webapp/app/shell/delete-intents";
-import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
+import { ROUTING_INTENTS_PREFIX, type OhmailEngine } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "../../../webapp/app/shell/send-lock";
 import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
 import { BearerManager } from "./bearer.js";
@@ -162,6 +162,14 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
     // engine (and the mirror inside it) is rebuilt for the account that is now being served.
     [paired, bearer, scope],
   );
+  /* AN ENGINE THE PAGE REPLACES LETS GO OF ITS OUTBOX ROWS (`OhmailEngine.dispose`), so the next one
+     adopts them. Disposed when the memo moves on, never in the effect's own cleanup: StrictMode
+     replays that cleanup over the engine still in use. */
+  const previous = useRef<OhmailEngine | null>(null);
+  useEffect(() => {
+    if (previous.current !== null && previous.current !== engine) previous.current.dispose();
+    previous.current = engine;
+  }, [engine]);
 
   /* Stable identities: the shared hooks (`useProfileImport`, the mail-state probe) treat their
      transport as a dependency, and a fresh object per render would re-run them per render. */

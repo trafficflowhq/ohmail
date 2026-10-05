@@ -279,8 +279,8 @@ export {
 // Apply core (the convergence oracle) + stores.
 export { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 export {
-  BaseMirrorStore, MemoryMirrorStore, MirrorGenerationChanged, isOutboxKey,
-  type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices,
+  BaseMirrorStore, MemoryMirrorStore, MirrorGenerationChanged, OUTBOX_PROTOCOL, decideOutboxRow, isOutboxKey,
+  type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "./store.js";
 export {
   IndexedDbMirrorStore,
@@ -655,7 +655,6 @@ export {
   // with — a surface reads the code to say nothing rather than "it failed".
   type WithdrawOutcome,
   OUTBOX_WITHDRAWN_CODE,
-  WITHDRAW_ASK_MS,
   // Which queued or wire entry a new send press may join — both surfaces' lookups.
   joinableStandingSend,
   // The two structural capabilities an adapter WRAPPER has to forward by hand. Exported so a
