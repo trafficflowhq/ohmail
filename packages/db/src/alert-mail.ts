@@ -61,9 +61,9 @@ const hours = (ms: number): string => `${ms / 3_600_000} h`;
 /** The mail schedule, from the constants the pass runs on — the footer every alert mail carries. */
 export const ALERT_MAIL_SCHEDULE =
   "Sent when an alert starts. Another mail about the same kind of alert waits at least " +
-  `${hours(MAIL_COOLDOWN_MS)} unless its severity rises; while it stands, a reminder follows ` +
-  `about every ${hours(DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS)}. Nothing is mailed when an alert ` +
-  "clears, and lesser alerts wait for the daily summary.";
+  `${hours(MAIL_COOLDOWN_MS)} unless its severity rises; one that stands is mailed again about ` +
+  `a day after it started, then every ${hours(DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS)}. Nothing is ` +
+  "mailed when an alert clears, and lesser alerts wait for the daily summary.";
 
 const DIGEST_MAIL_SCHEDULE =
   `Sent at most once every ${hours(DIGEST_INTERVAL_MS)}, listing every incident that opened, stood ` +

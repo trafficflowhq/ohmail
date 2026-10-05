@@ -72,6 +72,12 @@ export function mailCooldownMs(kind: string): number {
   return kind === "alert_driver_dark" ? DRIVER_DARK_COOLDOWN_MS : MAIL_COOLDOWN_MS;
 }
 
+/**
+ * How far ahead of this pass's clock a window's stamp may be and still count: two drivers on two
+ * hosts disagree by seconds. A stamp further ahead is a wrong clock and states no mail.
+ */
+export const MAIL_CLOCK_SKEW_MS = 15 * 60 * 1000;
+
 /** The `kind` every policy row carries, beside `cls = 'signal'` and a resolved_at at the epoch. */
 export const MAIL_POLICY_ROW_KIND = "mail_policy";
 

@@ -14,7 +14,8 @@ import type {
   AccountsAtCapReader, AtCapAccount, ParkedAccountsReader,
 } from "./entitlements-port.js";
 import {
-  DIGEST_INTERVAL_MS, DIGEST_POLICY_KEY, MAIL_POLICY_ROW_KIND, mailCooldownMs, mailVerdictOf,
+  DIGEST_INTERVAL_MS, DIGEST_POLICY_KEY, MAIL_CLOCK_SKEW_MS, MAIL_POLICY_ROW_KIND,
+  SYNC_LAG_PAGE_ACCOUNTS, mailCooldownMs, mailVerdictOf,
   policyKeyOf, renderDigestInput, severityRankOf, storedRankOf,
   type AlertDigest, type MailVerdict,
 } from "./alert-mail-policy.js";
@@ -1261,6 +1262,7 @@ export async function evaluateAlertsWithScope(
     });
   }
   if (criticalCount > 0) {
+    const criticalAccounts = onDuty.filter((r) => Number(r.criticalCount) > 0).length;
     const oldestSeconds = secondsBetween(now, minDate(
       onDuty.map((r) => (r.oldest ? new Date(r.oldest as unknown as string) : null)),
     ));
@@ -1284,12 +1286,17 @@ export async function evaluateAlertsWithScope(
       // not receiving mail" is the plain truth, and it is true of one owner as much as of forty.
       // The promotion above is about the WARNING tier only.
       cls: "incident",
-      affectedAccounts: onDuty.filter((r) => Number(r.criticalCount) > 0).length,
+      affectedAccounts: criticalAccounts,
       fixHref: "/worker",
       // The worst age in doubling buckets: a lag that keeps growing re-pages about once per
-      // doubling, and one that stands still falls to the daily reminder.
+      // doubling, and one that stands still falls to the daily reminder. The third level is the
+      // mail policy's page line (`SYNC_LAG_PAGE_ACCOUNTS`): reaching it is a worsening, so a
+      // third account arriving in its own pass pages at once instead of waiting for a reminder.
       signature: `critical|${pow2Floor(criticalCount)}|${syncLagAgeBucket(oldestSeconds)}`,
-      levels: [pow2Floor(criticalCount), syncLagAgeRank(oldestSeconds)],
+      levels: [
+        pow2Floor(criticalCount), syncLagAgeRank(oldestSeconds),
+        criticalAccounts >= SYNC_LAG_PAGE_ACCOUNTS ? 1 : 0,
+      ],
     });
   }
 
@@ -2640,7 +2647,7 @@ export interface AlertPassResult {
    * it was the one the original `undeliverable` flag could not see.
    */
   escalate: SinkEscalation | null;
-  /** One entry per sink attempted on THIS pass, with its closed code. Empty when nothing was. */
+  /** One entry per delivery attempted on THIS pass (pages per sink, then any digest). */
   sinkOutcomes: SinkOutcome[];
   /**
    * The arms that just crossed their OWN failure threshold while the page still landed
@@ -2973,16 +2980,17 @@ async function settlePolicyRow(
  */
 async function sendDigest(
   db: Tx, sinks: readonly AlertSink[], ctx: AlertNotifyContext, leaseUntil: Date,
-): Promise<AlertDigest | null> {
+): Promise<{ digest: AlertDigest | null; outcomes: SinkOutcome[] }> {
   const tellers = sinks.filter((s) => s.channel === "mail" && typeof s.notifyDigest === "function");
-  if (tellers.length === 0) return null;
+  if (tellers.length === 0) return { digest: null, outcomes: [] };
   const now = ctx.now;
   const digest = await db.transaction(async (tx): Promise<AlertDigest | null> => {
     const [row] = await selectMailPolicyRow(tx, DIGEST_POLICY_KEY).limit(1).for("update");
     if (!row) return null;
     const lease = row.claimedUntil ? new Date(row.claimedUntil as unknown as string) : null;
     if (lease !== null && lease.getTime() > now.getTime()) return null;
-    const last = row.notifiedAt ? new Date(row.notifiedAt as unknown as string) : null;
+    const stamped = row.notifiedAt ? new Date(row.notifiedAt as unknown as string) : null;
+    const last = stamped !== null && stamped.getTime() <= now.getTime() + MAIL_CLOCK_SKEW_MS ? stamped : null;
     const due = last === null || last.getTime() <= now.getTime() - DIGEST_INTERVAL_MS;
     if (!due) return null;
     const since = last ?? new Date(now.getTime() - DIGEST_INTERVAL_MS);
@@ -2991,16 +2999,26 @@ async function sendDigest(
     await claimPolicyRow(tx, DIGEST_POLICY_KEY, leaseUntil, now);
     return renderDigestInput(rows, since);
   });
-  if (digest === null) return null;
-  let ok = false;
+  if (digest === null) return { digest: null, outcomes: [] };
+  // Each attempt is accounted like a page's, so an arm that refuses only digests still shows.
+  const outcomes: SinkOutcome[] = [];
   for (const sink of tellers) {
     try {
       const out = await sink.notifyDigest!(digest, ctx);
-      if (typeof out === "boolean" ? out : out.ok) ok = true;
-    } catch { /* never throws by contract; a thrown one is a refusal */ }
+      const ok = typeof out === "boolean" ? out : out.ok;
+      const error = typeof out === "boolean" ? null : out.error ?? null;
+      const code = typeof out === "boolean" ? null : out.outcome ?? null;
+      outcomes.push({ sink: sink.name, ok, outcome: code ?? (ok ? "ok" : "refused"), error });
+    } catch (err) {
+      outcomes.push({
+        sink: sink.name, ok: false, outcome: "threw",
+        error: `threw: ${(err as { message?: string })?.message ?? String(err)}`.slice(0, 200),
+      });
+    }
   }
+  const ok = outcomes.some((o) => o.ok);
   await settlePolicyRow(db, DIGEST_POLICY_KEY, leaseUntil, ok ? { now, signature: null } : null);
-  return ok ? digest : null;
+  return { digest: ok ? digest : null, outcomes };
 }
 
 export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise<AlertPassResult> {
@@ -3232,6 +3250,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   /** Policy rows this pass leased, with the severity rank its confirm records. */
   const wonPolicy = new Map<string, number>();
 
+  /** Due keys whose window is another pass's in-flight mail: left unclaimed this pass. */
+  const waiting: Array<{ alertKey: string; kind: string; retryAt: string | null }> = [];
   /** Each claimed alert with the peak its confirm will record and what its mail does. */
   const claimed: Array<{ alert: Alert; peak: string; mail: "page" | "hold" | "none"; retryAt: Date | null }> = [];
   for (const alert of firing) {
@@ -3241,6 +3261,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     const verdict: MailVerdict | null = mailSinks.length > 0 ? mailVerdictOf(alert) : null;
     const pkey = verdict === "page" ? policyKeyOf(alert) : null;
     type Won = { peak: string; mail: "page" | "hold" | "none"; retryAt: Date | null };
+    /** Due, but the window is another pass's in-flight mail: not claimed, asked again next pass. */
+    let waitingUntil: Date | null = null;
     const won = await db.transaction(async (tx): Promise<Won | null> => {
       const [policy] = pkey ? await selectMailPolicyRow(tx, pkey).limit(1).for("update") : [];
       const [cur] = await selectOpenAlerts(tx, {
@@ -3298,7 +3320,10 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         wonPolicy.set(pkey, Math.max(wonPolicy.get(pkey) ?? 0, severityRankOf(alert.severity)));
       } else if (pkey !== null && policy) {
         const lease = policy.claimedUntil ? new Date(policy.claimedUntil as unknown as string) : null;
-        const last = policy.notifiedAt ? new Date(policy.notifiedAt as unknown as string) : null;
+        // A stamp past the skew tolerance states no mail: only a wrong clock writes one, and
+        // honoured it would hold a first page for as long as the clock was wrong.
+        const stamped = policy.notifiedAt ? new Date(policy.notifiedAt as unknown as string) : null;
+        const last = stamped !== null && stamped.getTime() <= now.getTime() + MAIL_CLOCK_SKEW_MS ? stamped : null;
         const cooldown = mailCooldownMs(alert.kind);
         const rank = severityRankOf(alert.severity);
         const leased = lease !== null && lease.getTime() > now.getTime();
@@ -3308,8 +3333,13 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           mail = "page";
           await claimPolicyRow(tx, pkey, leaseUntil, now);
           wonPolicy.set(pkey, expired ? rank : Math.max(rank, storedRankOf(policy.notifiedSignature)));
+        } else if (expired || rose) {
+          // Held ONLY by another pass's in-flight mail: no claim, so if that mail fails this key
+          // is due again at the lease's end rather than after its whole repeat interval.
+          waitingUntil = lease;
+          return null;
         } else {
-          retryAt = leased ? lease : new Date(last!.getTime() + cooldown);
+          retryAt = new Date(last!.getTime() + cooldown);
         }
       }
       // THE LEASE AND NOTHING ELSE — see the peak bullet above: a claim that wrote the peak
@@ -3325,10 +3355,13 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       return { peak: raisedPeak(cur.notifiedSignature, alert), mail, retryAt };
     });
     if (won !== null) claimed.push({ alert, ...won });
+    else if (waitingUntil !== null) {
+      waiting.push({ alertKey: alert.key, kind: alert.kind, retryAt: (waitingUntil as Date).toISOString() });
+    }
   }
-  const mailHeld = claimed.filter((c) => c.mail === "hold").map((c) => ({
+  const mailHeld = [...claimed.filter((c) => c.mail === "hold").map((c) => ({
     alertKey: c.alert.key, kind: c.alert.kind, retryAt: c.retryAt?.toISOString() ?? null,
-  }));
+  })), ...waiting];
   /** What each sink is handed: a pager everything claimed, a mail sink its pages only. */
   const listFor = new Map<AlertSink, Alert[]>(sinks.map((s) => [s, s.channel === "mail"
     ? claimed.filter((c) => c.mail === "page").map((c) => c.alert)
@@ -3391,14 +3424,24 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const resolutionsTold = await tellResolutions(db, sinks, {
     source: opts.source ?? "api", environment: opts.environment ?? "production", now,
   }, floorAt, leaseUntil);
-  // The daily digest goes after this pass's pages, so a page is never second in the inbox.
-  const digestNow = () => sendDigest(db, mailSinks, {
-    source: opts.source ?? "api", environment: opts.environment ?? "production", now,
-  }, leaseUntil);
-
   const streak = opts.deliveryStreak;
+  // The daily digest goes after this pass's pages, so a page is never second in the inbox. Its
+  // attempt moves the sink streaks like a page's does.
+  const digestNow = async () => {
+    const sent = await sendDigest(db, mailSinks, {
+      source: opts.source ?? "api", environment: opts.environment ?? "production", now,
+    }, leaseUntil);
+    if (sent.outcomes.length === 0) return { ...sent, escalate: null, sinkDegraded: [] as SinkDegradation[] };
+    const errs = sent.outcomes.filter((o) => !o.ok && o.error).map((o) => `${o.sink}: ${o.error}`);
+    const acct = accountDelivery(streak, sinks, sent.outcomes,
+      sent.outcomes.filter((o) => o.ok).map((o) => o.sink), sent.outcomes.filter((o) => !o.ok).map((o) => o.sink),
+      errs, now, opts);
+    return { ...sent, ...acct };
+  };
+
   if (claimed.length === 0) {
-    const digest = await digestNow();
+    const { digest, outcomes: digestOutcomes, escalate: digestEscalate, sinkDegraded: digestDegraded } =
+      await digestNow();
     // THE QUIET PASS IS THE ONE THAT MOST HAS TO BE RECORDED. A driver whose deployment is
     // healthy delivers nothing for weeks, and if only delivering passes wrote a row then a
     // healthy driver and a dead one would leave identical evidence — which is the entire failure
@@ -3418,8 +3461,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       now: now.toISOString(), firing, notified: [], resolved, closedUnconfirmed, resolutionsTold,
       mailHeld, digest,
       delivered: [], failedSinks: [], sinkErrors: [], undeliverable: false,
-      sinkFailureStreak: streak?.consecutiveFailures ?? 0, escalate: null,
-      sinkOutcomes: [], sinkDegraded: [],
+      sinkFailureStreak: streak?.consecutiveFailures ?? 0, escalate: digestEscalate,
+      sinkOutcomes: digestOutcomes, sinkDegraded: digestDegraded,
       // Published on a pass that attempted nothing, and that is the point: standing health is
       // what the last ATTEMPT established, and a quiet pass neither confirms nor disturbs it.
       sinkHealth: sinkHealthOf(sinks, streak),
@@ -3491,7 +3534,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   for (const [key, rank] of wonPolicy) {
     await settlePolicyRow(db, key, leaseUntil, mailAccepted ? { now, signature: `peak|${rank}` } : null);
   }
-  const digest = await digestNow();
+  const digestRun = await digestNow();
+  const digest = digestRun.digest;
 
   await recordAlertPass(db, {
     driver: opts.driver,
@@ -3517,9 +3561,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     sinkErrors: errors,
     undeliverable: sinks.length === 0,
     sinkFailureStreak: streak?.consecutiveFailures ?? 0,
-    escalate,
-    sinkOutcomes: outcomes,
-    sinkDegraded,
+    escalate: escalate ?? digestRun.escalate,
+    sinkOutcomes: [...outcomes, ...digestRun.outcomes],
+    sinkDegraded: [...sinkDegraded, ...digestRun.sinkDegraded],
     sinkHealth: sinkHealthOf(sinks, streak),
     unread: unreadListOf(scope),
   };
