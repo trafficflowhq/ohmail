@@ -53,7 +53,8 @@ mount from the bundled one, and give the `api` service the proxy's two `OHMAIL_`
 <!-- changes: fix-026-send-across-windows.md -->
 
 On the web, a message waiting for a connection goes from the window that pressed Send, once; other
-windows of the same account see it waiting, and Cancel there cancels it.
+windows of the same account see it waiting, and Cancel there stops it unless that window has
+already begun sending it.
 
 ### The phone and the desktop app say when a message could not be read
 <!-- changes: fix-026-set-aside-and-write-off-said.md -->
