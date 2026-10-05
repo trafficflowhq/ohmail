@@ -49,10 +49,12 @@ export interface SignInRetentionOptions {
   clock?: () => number;
 }
 
-/** The oldest `n` ids past `cut`, as the array an `= any(...)` delete takes in one statement. */
+/** The oldest `n` ids past `cut` that no other transaction holds, as the array an `= any(...)`
+ *  delete takes in one statement. SKIP LOCKED: a row an erasure has already taken is passed over,
+ *  so the pass never waits for that transaction and never holds a row it waits on. */
 const oldest = (id: AnyPgColumn, expires: AnyPgColumn, table: SQL, cut: string, n: number, extra?: SQL): SQL =>
   sql`${id} = any(array(select ${id} from ${table} where ${expires} < ${cut}::timestamptz${
-    extra ? sql` and ${extra}` : sql``} order by ${expires} limit ${n}))`;
+    extra ? sql` and ${extra}` : sql``} order by ${expires} limit ${n} for update skip locked))`;
 
 export async function pruneSignInRecords(
   db: Tx, now: Date, opts: SignInRetentionOptions,
@@ -100,7 +102,8 @@ export async function pruneSignInRecords(
     .where(oldest(invites.id, invites.expiresAt, sql`${invites}`, cut, n, sql`${invites.consumedAt} is null`))), batch);
 
   // SESSIONS, the family's lock order: the session rows first (FOR UPDATE, SKIP LOCKED, so an
-  // erasure or a rotation holding one is passed over, never waited on), then their tokens.
+  // erasure or a rotation holding one is passed over, never waited on), then their tokens, under a
+  // lock timeout for the one wait left (a token row some path took without its session row).
   const dead = or(
     lt(sessions.revokedAt, sql`${cut}::timestamptz`),
     and(isNull(sessions.revokedAt), lt(sessions.refreshExpiresAt, sql`${cut}::timestamptz`)),
@@ -119,12 +122,12 @@ export async function pruneSignInRecords(
     return affected(await tx.delete(sessions).where(inArray(sessions.id, ids)));
   }), sessionBatch);
 
-  // The address a device was added from, once no session of its is left. The row and its name stay.
+  // The address a device was added from, once no session of its is left. The row and its name stay;
+  // a device another transaction holds is passed over, as above.
   if (!late()) {
-    result.deviceAddresses = affected(await db.update(devices).set({ ip: "" }).where(and(
-      ne(devices.ip, ""), lt(devices.lastSeenAt, sql`${cut}::timestamptz`),
-      sql`not exists (select 1 from ${sessions} where ${sessions.deviceId} = ${devices.id})`,
-    )));
+    result.deviceAddresses = affected(await db.update(devices).set({ ip: "" }).where(sql`${devices.id} = any(array(
+      select ${devices.id} from ${devices} where ${and(ne(devices.ip, ""), lt(devices.lastSeenAt, sql`${cut}::timestamptz`))}
+      and not exists (select 1 from ${sessions} where ${sessions.deviceId} = ${devices.id}) for update skip locked))`));
   } else stoppedBy = "deadline";
 
   // The ceremony tables keep their own hour; here they stop waiting for the next ceremony.
