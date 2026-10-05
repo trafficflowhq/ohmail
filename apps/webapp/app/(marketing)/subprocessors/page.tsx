@@ -173,8 +173,8 @@ export default function SubprocessorsPage() {
               <tr>
                 <th scope="row">Sign-in links and challenges</th>
                 <td>
-                  Each works for 5 minutes at most, a code that adds a device for up to
-                  15 and an email-verification link for 24 hours. The hourly pass
+                  Each works for 5 minutes at most, a code that adds a device
+                  included; an email-verification link for 24 hours. The hourly pass
                   deletes their records 30 days after they expire, a desktop sign-in
                   request nobody confirmed included, and a passkey challenge&rsquo;s
                   record from an hour after it expires.

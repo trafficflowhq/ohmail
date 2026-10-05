@@ -25,18 +25,22 @@ export type PairingGrant = "invite" | "device-pair";
 const GRANTS: ReadonlySet<string> = new Set<PairingGrant>(["invite", "device-pair"]);
 
 /**
- * TTL bounds per grant, in milliseconds, deliberately different orders of magnitude. `invite`
- * defaults to 7 days (cap 30): a setup token must survive until the operator reads the boot log;
- * single-use, and the invite it mints is itself email-bound and short-lived. `device-pair`
- * defaults to 5 minutes (cap 15): the mint is step-up-gated, so a short TTL keeps the redeem near
- * the factor assertion that authorized it — the session it mints starts with NO step-up standing
- * (`PairedDeviceSessionMinter`), so the cap bounds exposure, not privilege. Out-of-bounds
- * requests are REFUSED, never clamped: a clamp hides the caller's bug and ships a credential with
- * a lifetime nobody chose.
+ * A device-pair code's lifetime, its default and its ceiling at once: the mint is step-up-gated,
+ * so a short TTL keeps the redeem near the factor that authorized it, and no app asks for more.
+ * Every door that mints one (the hosted and self-host `POST /pair`, the desktop host) reaches
+ * `mintPairingToken`, which refuses a longer request rather than clamping it.
+ */
+export const DEVICE_PAIR_TTL_MS = 5 * 60_000;
+
+/**
+ * TTL bounds per grant, in milliseconds. `invite` defaults to 7 days (cap 30): a setup token must
+ * survive until the operator reads the boot log; single-use, and the invite it mints is itself
+ * email-bound and short-lived. Out-of-bounds requests are REFUSED, never clamped: a clamp hides
+ * the caller's bug and ships a credential with a lifetime nobody chose.
  */
 export const PAIRING_TTL_BOUNDS: Record<PairingGrant, { defaultMs: number; minMs: number; maxMs: number }> = {
   invite: { defaultMs: 7 * 24 * 60 * 60_000, minMs: 60_000, maxMs: 30 * 24 * 60 * 60_000 },
-  "device-pair": { defaultMs: 5 * 60_000, minMs: 60_000, maxMs: 15 * 60_000 },
+  "device-pair": { defaultMs: DEVICE_PAIR_TTL_MS, minMs: 60_000, maxMs: DEVICE_PAIR_TTL_MS },
 };
 
 /** The minter's words, shown in lists and stamped onto a paired device row. Bounded, not clamped. */
