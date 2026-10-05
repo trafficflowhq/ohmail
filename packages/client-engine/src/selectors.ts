@@ -259,17 +259,19 @@ function collapseTwins(members: EngineMessage[], openId: string): EngineMessage[
  * caller cannot render "1 message" chrome around a message with no conversation (every consumer
  * checks `length > 0`). A conversation spans folders (the Ohbox, Sent under the server's name, a
  * pinned gate row) but a HELD member stands in it by a header another sender wrote, so it is left
- * out ({@link standsHeld}) unless it is the message asked about. O(n) over the mirror; never call
- * per row for list badges — that is O(n²).
+ * out ({@link standsHeld}) of the conversation a placed message opens. Opened at a held message
+ * (the Screener's reader) it is the whole thread, held siblings included. O(n) over the mirror;
+ * never call per row for list badges — that is O(n²).
  */
 export function threadOf(reader: EntityReader, messageId: string): EngineMessage[] {
   const self = reader.get<EngineMessage>("message", messageId);
   if (!self?.threadId) return [];
   const claims = winningStates(reader);
+  const all = standsHeld(self, claims);
   const members = collapseTwins(
     reader
       .list<EngineMessage>("message")
-      .filter((m) => m.threadId === self.threadId && (m.id === messageId || !standsHeld(m, claims)))
+      .filter((m) => m.threadId === self.threadId && (all || !standsHeld(m, claims)))
       .sort(byDateAsc),
     messageId,
   );
