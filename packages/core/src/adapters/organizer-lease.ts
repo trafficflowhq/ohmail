@@ -3295,7 +3295,8 @@ export function makeLeaseIo(
        * unverifiable anchor is worse than none, because none leaves the read's own-claim control
        * unasked and the count check standing. */
       if (typeof uid === "number" && Number.isFinite(uid) && uid > 0 && generation !== null) {
-        writeMemo(identity, generation, { claimUid: uid });
+        const mono = monoNowMs();
+        writeMemo(identity, generation, { claimUid: uid, ...(mono === null ? {} : { claimWrittenMonoMs: mono }) });
       } else {
         forgetMemo(identity, "claimUid");
       }
@@ -5209,7 +5210,7 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
    * (SWEEP-CUTOFF-READS-THE-HOST-CLOCK) — the hosts' form; a `Date` is taken as given. Returns how
    * many were removed.
    */
-  sweepStaleAcks?(before: Date | { staleAfterMs: number }): Promise<number>;
+  sweepStaleAcks?(before: Date | SweepClock): Promise<number>;
   /**
    * MOVE THE FOLDER'S RECORDS BACK INSIDE THE WALK — what the sweep cannot do. The sweep makes
    * `ohmail/_meta` SMALLER; nothing made it SHALLOWER, so the span between its lowest record and
@@ -5426,6 +5427,91 @@ async function staleAckUidsInWindow(
   return read.items.filter((u): u is { uid: number; claim: boolean } => u !== null);
 }
 
+/** The hosts' sweep clock: the stale window, this host's now, and whether the gate refused a full folder. */
+export interface SweepClock {
+  staleAfterMs: number;
+  now: Date;
+  /** The lease-refused arm: nothing appends, so the folder's newest date may be frozen. */
+  refused?: boolean;
+}
+
+const monoNowMs = (): number | null => {
+  const p = (globalThis as { performance?: { now?: () => number } }).performance;
+  return typeof p?.now === "function" ? p.now() : null;
+};
+
+/**
+ * THE SWEEP'S CUTOFF, from the server's clock (SWEEP-CUTOFF-READS-THE-HOST-CLOCK, with its
+ * SAFETY and PROGRESS invariants). Server-now is the folder's newest INTERNALDATE, capped by our own newest claim's
+ * INTERNALDATE plus the time elapsed since we wrote it (monotonic when this process wrote it), so a
+ * future-dated record cannot reach a live claim of ours. On the refused arm that same estimate is
+ * a floor, so a frozen folder still shrinks; read off the wall clock it is capped a window behind
+ * this host's now, so a clock up to a window ahead cannot take a claim younger than the window.
+ * Our own claims are swept only where our newest claim was located.
+ */
+async function sweepCutoff(
+  client: LeaseImapClient, path: string, identity: MetaIdentity, clock: SweepClock,
+): Promise<{ before: Date; floor: number | null; ownClaims: boolean } | null> {
+  const newest = await newestInternalDate(client, path);
+  if (newest === null) return null;
+  const stale = clock.staleAfterMs;
+  const hostNow = clock.now.getTime();
+  const own = await ownNewestClaim(client, path, identity);
+  let estimate: number | null = null;
+  let exact = false;
+  if (own !== null) {
+    exact = own.writtenMonoMs !== null;
+    const mono = monoNowMs();
+    const elapsed = exact && mono !== null ? mono - own.writtenMonoMs! : hostNow - own.heartbeat;
+    estimate = own.internalDate + Math.max(0, elapsed);
+  }
+  /* Unanchored by a claim of ours, a refused folder's newest date is capped a window behind this
+     host's now too: nothing else bounds a future-dated record there. */
+  const serverNow = estimate !== null ? Math.min(newest.getTime(), estimate)
+    : clock.refused === true ? Math.min(newest.getTime(), hostNow - stale) : newest.getTime();
+  let floor: number | null = null;
+  if (clock.refused === true) {
+    const fromOwn = estimate === null ? hostNow - stale : exact ? estimate : Math.min(estimate, hostNow - stale);
+    floor = fromOwn - stale;
+  }
+  return { before: new Date(serverNow - stale), floor, ownClaims: own !== null || clock.refused === true };
+}
+
+/** Our newest claim by INTERNALDATE: the one the gate remembers writing, else the top window's. */
+async function ownNewestClaim(
+  client: LeaseImapClient, path: string, identity: MetaIdentity,
+): Promise<{ internalDate: number; heartbeat: number; writtenMonoMs: number | null } | null> {
+  if (typeof client.fetch !== "function") return null;
+  const held = readMemo(identity, generationOf(client));
+  const memo = held.kind === "memo" ? held.memo : null;
+  const read = async (range: string): Promise<Array<{ uid: number; internalDate: number; heartbeat: number }>> => {
+    const page = await boundedFetch(client.fetch(range, { uid: true, headers: true, internalDate: true }, { uid: true }), {
+      max: META_RECORDS_MAX_PER_FETCH, onOverflow: "stop", bound: "page_rows",
+      bytes: { max: IMAP_META_BYTES_MAX, of: (m) => m.headers?.byteLength ?? 0 },
+      map: (m): { uid: number; internalDate: number; heartbeat: number } | null => {
+        if (typeof m.uid !== "number" || m.headers === undefined || !(m.internalDate instanceof Date)) return null;
+        const c = parseClaim(m.headers.toString("utf8"));
+        if (c === null || isMalformed(c) || c.installId !== identity.installId) return null;
+        return { uid: m.uid, internalDate: m.internalDate.getTime(), heartbeat: c.heartbeat.getTime() };
+      },
+    });
+    return page.items.filter((x): x is { uid: number; internalDate: number; heartbeat: number } => x !== null);
+  };
+  const newestOf = (rows: Array<{ uid: number; internalDate: number; heartbeat: number }>) =>
+    rows.reduce<(typeof rows)[number] | null>((a, r) => (a === null || r.internalDate > a.internalDate ? r : a), null);
+  if (typeof memo?.claimUid === "number") {
+    const hit = newestOf(await read(String(memo.claimUid)));
+    if (hit !== null) {
+      const mono = typeof memo.claimWrittenMonoMs === "number" ? memo.claimWrittenMonoMs : null;
+      return { internalDate: hit.internalDate, heartbeat: hit.heartbeat, writtenMonoMs: mono };
+    }
+  }
+  const top = await highestUid(client, path);
+  if (top === null) return null;
+  const hit = newestOf(await read(`${Math.max(1, top - SEARCH_UID_WINDOW + 1)}:${top}`));
+  return hit === null ? null : { internalDate: hit.internalDate, heartbeat: hit.heartbeat, writtenMonoMs: null };
+}
+
 /**
  * THE SERVER'S CLOCK, AS THE FOLDER SHOWS IT: the INTERNALDATE of its newest message, by sequence.
  * `null` for an empty folder (nothing to sweep); a reply with no stamp refuses, because a cutoff
@@ -5485,17 +5571,21 @@ export function makeRequestOrganizerIo(
      * never a request, another install's claim or the settings document — and `before` is
      * compared against the server's INTERNALDATE, never a header.
      */
-    async sweepStaleAcks(cutoff: Date | { staleAfterMs: number }): Promise<number> {
+    async sweepStaleAcks(cutoff: Date | SweepClock): Promise<number> {
       const metaPath = await meta.path();
       const lock = await client.getMailboxLock(metaPath);
       try {
         let before: Date;
+        let ownClaims = true;
+        let unfloored: number | null = null;
         if (cutoff instanceof Date) {
           before = cutoff;
         } else {
-          const newest = await newestInternalDate(client, metaPath);
-          if (newest === null) return 0;
-          before = new Date(newest.getTime() - cutoff.staleAfterMs);
+          const at = await sweepCutoff(client, metaPath, identity, cutoff);
+          if (at === null) return 0;
+          before = at.before;
+          ownClaims = at.ownClaims;
+          unfloored = at.floor;
         }
         if (typeof client.fetch !== "function") {
           throw new RequestUnavailableError(
@@ -5507,7 +5597,9 @@ export function makeRequestOrganizerIo(
         /* The cutoff is floored to a day boundary, the set the SEARCH form reached, and the only
            error it leaves is on the safe side: keeping a record too long costs one row in a folder
            swept again next cycle; removing a live one loses an answer somebody is waiting for. */
-        const floored = ackSweepCutoff(before);
+        /* The refused arm's floor is exact, not floored: its own bound already keeps it a window
+           clear of any claim this host could have written in the last window. */
+        const floored = new Date(Math.max(ackSweepCutoff(before).getTime(), unfloored ?? -Infinity));
         /* WINDOWED. The ceiling comes from the server, never the connection's cached mailbox
          * object: a stale ceiling puts every window below the records that matter. Without one
          * there is no window to read, and this module has one answer for that. */
@@ -5533,7 +5625,8 @@ export function makeRequestOrganizerIo(
         let hi = resumeAt !== undefined && resumeAt < top ? resumeAt : top;
         for (let w = 0; w < SWEEP_SEARCH_WINDOW_BUDGET; w++) {
           const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
-          found.push(...await staleAckUidsInWindow(client, lo, hi, floored, identity.installId));
+          found.push(...(await staleAckUidsInWindow(client, lo, hi, floored, identity.installId))
+            .filter((f) => ownClaims || !f.claim));
           /* ── WHERE THIS PASS WOULD RESUME, DECIDED NOW AND WRITTEN LATER ────────────────
            *
            * Moving the mark here — before a single record has been removed — claims the stretch
@@ -5586,7 +5679,7 @@ export function makeRequestOrganizerIo(
            does neither (the renew's rule, {@link noteCleanupOutcome}). */
         const refused = (batch: ReadonlyArray<{ uid: number; claim: boolean }>): void => {
           noteCleanupOutcome(identity, {
-            landed: false, uid: (batch.find((f) => f.claim) ?? batch[0])?.uid ?? null, generation: sweepGeneration,
+            landed: false, uid: batch.find((f) => f.claim)?.uid ?? null, generation: sweepGeneration,
           });
         };
         for (let i = 0; i < budget; i += SWEEP_DELETE_BATCH) {

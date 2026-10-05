@@ -390,6 +390,8 @@ function refusalFields(err: unknown): { err: unknown; op?: string } {
  */
 export async function shrinkMeta(
   io: RequestOrganizerIo, now: Date, log: (event: string, detail: Record<string, unknown>) => void,
+  /** The lease-refused arm: the cutoff may take its floor (see `SweepClock.refused`). */
+  opts: { refused?: boolean } = {},
 ): Promise<{ ran: boolean; swept: number; moved: number }> {
   let swept = 0;
   let moved = 0;
@@ -405,9 +407,9 @@ export async function shrinkMeta(
   const sweep = async (): Promise<void> => {
     if (typeof io.sweepStaleAcks !== "function") return;
     try {
-      /* The window only: the cutoff is the folder's newest INTERNALDATE less it, the server's clock
-         and never this host's (SWEEP-CUTOFF-READS-THE-HOST-CLOCK). */
-      swept = await io.sweepStaleAcks({ staleAfterMs: REQUEST_STALE_AFTER_MS });
+      /* The cutoff is the server's clock as the folder shows it, capped by our own newest claim; the
+         refused arm adds its bounded floor (`SweepClock`). */
+      swept = await io.sweepStaleAcks({ staleAfterMs: REQUEST_STALE_AFTER_MS, now, refused: opts.refused === true });
       if (swept > 0) {
         log("meta_ack_sweep", { swept });
       }
@@ -463,7 +465,7 @@ export async function shrinkMetaOnRefusal(
     return false;
   }
   const ids = { mailboxId: rt.mailboxId, accountId: rt.accountId };
-  const done = await shrinkMeta(io, now, (event, detail) => { log(event, { ...ids, ...detail }); });
+  const done = await shrinkMeta(io, now, (event, detail) => { log(event, { ...ids, ...detail }); }, { refused: true });
   noteMetaShrinkRan({ installId: rt.installId, mailboxId: rt.mailboxId }, now.getTime());
   log("meta_shrink", { ...ids, phase: "lease_refused", ...done });
   return true;

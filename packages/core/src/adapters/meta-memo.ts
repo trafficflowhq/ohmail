@@ -51,6 +51,8 @@ export type Generation = number | bigint | null;
 export interface MetaMemo {
   /** The uid the server gave this install's own claim when it wrote it. */
   readonly claimUid?: number;
+  /** This process's monotonic clock (`performance.now()`) when it appended that claim. */
+  readonly claimWrittenMonoMs?: number;
   /** The uid the server gave this install's own settings document. */
   readonly profileUid?: number;
   /** Where the acknowledgement sweep stopped looking. */
