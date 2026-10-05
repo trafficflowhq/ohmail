@@ -1,12 +1,11 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import {
-  approvals, routingDecisions, messages, folderState, claimIdempotencyKey, recordChange, type Tx,
+  approvals, routingDecisions, messages, folderState, claimIdempotencyKey, lockAccountRuleKeys, recordChange, type Tx,
 } from "@trafficflow/db";
 import type { AdapterPort, Destination, NativeLocator } from "@trafficflow/core/mail";
 import { applyReconcileAction } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
@@ -44,7 +43,6 @@ export interface ListApprovalsOptions {
   limit?: number;
 }
 
-const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
 const asDb = (tx: Tx): Db => bridgeDb(tx);
 
@@ -132,13 +130,12 @@ export class ApprovalService {
     const label = approve ? "positive" : "negative";
 
     // ── DB tx: flip status, (approve) re-route folder-state, emit change_log, feed learning (step 2) ──
-    const dto = await asTx(ctx).transaction(async (txRaw) => {
-      /* CARRIED. The seam refuses a handle with no dialect brand, a transaction object has
-         none of its own, and something inside this block composes a statement through it —
-         `learning.recordOn` reaches the signal write, which resolves a dialect. Handed the
-         parent's, which is the only reading that is correct: a transaction cannot be on a
-         different store from the connection that opened it. */
-      const tx = carryDialect(ctx.db, txRaw as object) as typeof txRaw;
+    /* THE LOCK ORDER, because one held message can meet a Screener decision and a move at once: the
+       fence, the rule-key lock, the message's `folder_state` row, the change-log counter, then the
+       graduation's row. A decision takes its counter early under the rule-key lock, so the two
+       queue on that lock; a move takes the row before the counter, as this does. */
+    const dto = await withAccountTx(ctx, async (tx) => {
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
       /**
        * The status flip is a CLAIM, not a write — the `pending` check above is only a fast
        * refusal outside this transaction. A primary-key-only qual is check-then-act, and row
@@ -169,8 +166,8 @@ export class ApprovalService {
           .set({ status: approve ? "approved" : "rejected", updatedAt: ctx.now() })
           .where(eq(routingDecisions.id, appr.routingDecisionId));
       }
-      let lastSeq = await recordChange(tx, { accountId: ctx.accountId, entityType: "approval", entityId: id, op: "update", meta: null });
 
+      let movedHere = false;
       if (approve && msg && target) {
         /**
          * An approved move is a MOVE, so it asks who organizes the mailbox (mail 0094). This arm
@@ -191,7 +188,7 @@ export class ApprovalService {
           });
           /* NO `folder_state`, NO `move` change — a request writes desired state on the machine
              that holds the mailbox and nothing on this one. And nothing here spends a seq:
-             the approval's own `update` change above is what moved, and emitting a `move` for a
+             the approval's own `update` change below is what moved, and emitting a `move` for a
              message that did not move would tell every client to re-render it in a folder it is
              not in. */
         } else {
@@ -203,15 +200,20 @@ export class ApprovalService {
             target: folderState.messageId,
             set: { desiredFolder: target, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: ctx.now() },
           });
-          lastSeq = await recordChange(tx, {
-            accountId: ctx.accountId, entityType: "message", entityId: msg.id, op: "move",
-            meta: { from: msg.observedFolder, to: target },
-          });
+          movedHere = true;
         }
       }
 
+      let lastSeq = await recordChange(tx, { accountId: ctx.accountId, entityType: "approval", entityId: id, op: "update", meta: null });
+      if (movedHere && msg && target) {
+        lastSeq = await recordChange(tx, {
+          accountId: ctx.accountId, entityType: "message", entityId: msg.id, op: "move",
+          meta: { from: msg.observedFolder, to: target },
+        });
+      }
+
       if (msg && target) {
-        await this.learning.recordOn(tx, ctx.accountId, {
+        await this.learning.recordOn(bridgeTx(tx), ctx.accountId, {
           triggeringActionId: `approval:${id}`,
           kind: "approval",
           senderAddress: msg.fromAddress,
@@ -223,7 +225,7 @@ export class ApprovalService {
       // Materialize the resolved ApprovalDTO INSIDE the tx (reads the uncommitted
       // status flip). The demotion pass + physical move below never touch the
       // `approvals` row, so this is the exact DTO the method returns.
-      const materialized = await materializeApproval(asDb(tx), ctx.accountId, id);
+      const materialized = await materializeApproval(asDb(bridgeTx(tx)), ctx.accountId, id);
       if (!materialized) throw new ServiceError("internal", 500, "approval vanished after decision");
 
       // Store the verbatim response IN this tx so a commit-then-crash retry
@@ -247,8 +249,10 @@ export class ApprovalService {
       return materialized;
     });
 
-    // Demotion pass on reject (accumulated overrides disable a promoted pattern).
-    if (!approve && msg && target) {
+    /* THE PROMOTION PASS, after the commit, on BOTH decisions: an approval can graduate the sender
+       into a rule the person sees, pauses and removes (the visible undo), a rejection can demote one.
+       A pass lost to a crash here is asked again by the pattern's next decision. */
+    if (msg && target) {
       const pk = patternKeyFor({ senderAddress: msg.fromAddress, destination: target });
       if (pk) await this.learning.promoteOrDemote(ctx, pk);
     }

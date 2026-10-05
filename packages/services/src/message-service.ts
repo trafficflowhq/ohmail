@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
   mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
-  recordChange, recordChanges, recordRouteOverride, recordRuleDelta, routeOverrideActionId,
+  recordChange, recordChanges, recordRouteOverride, demoteRoute, routeOverrideActionId,
   senderPatternFromAddress,
   upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell, type ChangeInput, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
@@ -13,7 +13,7 @@ import {
   createLogger, httpsUnsubscribeUri, unsubscribeHeaderState,
   NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination,
 } from "@trafficflow/core/mail";
-import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";
@@ -1262,7 +1262,10 @@ export class MessageService {
        `null` when this request wrote no desired folder, so the organizer is not woken for work
        that does not exist. */
     let filed: string | null = null;
-    const answer = await asTx(ctx).transaction(async (tx) => {
+    /** The route this move's override demoted: switched off after the commit, never inside it. */
+    let owedDemotion: string | null = null;
+    // Fenced at the top, as every writer under a sender's key opens.
+    const answer = await withAccountTx(ctx, async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator,
         // The sender the route keyed on, for the override below. Read HERE rather than in a
@@ -1327,19 +1330,16 @@ export class MessageService {
        * never the observed one: a message the organizer filed and the server has not moved yet
        * sits in the arrival folder, and asking about that folder asks about nothing. `null`
        * desired means nothing ever filed it, and a person's first placement contradicts no
-       * route. This arm holds the ledger transaction, so the demotion's deltas are owed here —
-       * a rule switched off that no client is told about reads as having done nothing. */
+       * route. A demotion it owes runs after the commit, through the one door that records the
+       * rule's delta: this transaction writes no `rules` row and ends at the graduation's. */
       const override = desired === null || desired === folder ? null : await recordRouteOverride(
-        tx, ctx.accountId, {
+        bridgeTx(tx), ctx.accountId, {
           ...senderPatternFromAddress(msg.fromAddress),
           filedTo: desired,
           triggeringActionId: routeOverrideActionId(id, String(seqBig)),
         },
       );
-      // Through the DOOR, not an inline `recordChange`: `rule-state-delta-census` refuses a second
-      // spelling of this row, and the op is the whole contract.
-      const ruleSeqs = await recordRuleDelta(tx, ctx.accountId, override?.ruleIds ?? [], "update");
-      if (ruleSeqs.length > 0) seqBig = ruleSeqs[ruleSeqs.length - 1]!;
+      if (override?.demoted) owedDemotion = override.patternKey;
       // Re-filing spends the resurface (see `spendResurface`) — BEFORE the materialize below,
       // so the DTO this route answers (and stores for idempotent replay) already says `none`.
       const spent = await this.spendResurface(tx, ctx, [id]);
@@ -1369,6 +1369,9 @@ export class MessageService {
 
       return { dto, seq };
     });
+
+    // The owed switch-off, after the commit: a person's pause meeting it queues, never deadlocks.
+    if (owedDemotion !== null) await demoteRoute(asTx(ctx), ctx.accountId, owedDemotion);
 
     /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
        transaction this deadlocked against every other writer of the mailbox row — measured on

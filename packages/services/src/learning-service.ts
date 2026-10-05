@@ -1,9 +1,8 @@
-import { and, eq } from "drizzle-orm";
 import { canonicalDestination } from "@trafficflow/core/mail";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
-  graduations, fenceErased, lockAccountRuleKeys, writeRuleUnderKey, type LedgerTx, type Tx,
-  recordLearningSignal, patternKeyFor, parsePatternKey, demoteGraduatedRoute, recordRuleDelta,
+  fenceErased, lockAccountRuleKeys, writeRuleUnderKey, type LedgerTx, type Tx,
+  recordLearningSignal, patternKeyFor, parsePatternKey, demoteRoute, graduationVerdict, routeIsLearned,
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
   type FoundRule, type RuleRowWrite,
   type LearningSignalInput, type LearningKind, type LearningLabel, type ParsedPattern,
@@ -49,74 +48,38 @@ export class LearningService {
     await recordLearningSignal(tx, accountId, s);
   }
 
-  /** True when the (pattern, action) has graduated — the same read the 1c pipeline performs. */
-  async isGraduated(ctx: ServiceContext, patternKey: string, action: "route" = "route"): Promise<boolean> {
-    const rows = await asTx(ctx)
-      .select({ graduated: graduations.graduated })
-      .from(graduations)
-      .where(and(
-        eq(graduations.accountId, ctx.accountId),
-        eq(graduations.patternKey, patternKey),
-        eq(graduations.action, action),
-        eq(graduations.graduated, true),
-      ))
-      .limit(1);
-    return rows.length > 0;
+  /**
+   * True when the route is LEARNED — graduated, and no decision of the person's under the sender's
+   * key ({@link routeIsLearned}): the one read the pipeline performs too.
+   */
+  async isGraduated(ctx: ServiceContext, patternKey: string, _action: "route" = "route"): Promise<boolean> {
+    return routeIsLearned(asTx(ctx), ctx.accountId, patternKey);
   }
 
   /**
-   * Promotion / demotion pass for a pattern. When a `sender:<addr>→<dest>`
-   * pattern has graduated, write its promoted rule under the sender's key
-   * ({@link ensurePromotedRule}). When accumulated overrides push net negative past the demotion
-   * threshold, disable the promoted rule (`demotions++`) and clear `graduated` — all in SQL.
+   * Promotion / demotion pass for a pattern, run AFTER the approval that fed it commits. A
+   * learned `sender:<addr>→<dest>` pattern at the threshold writes its promoted rule under the
+   * sender's key ({@link ensurePromotedRule}); a net past the demotion margin switches the
+   * promoted rule off through the demotions' one door (`demoteRoute`), which records its own delta.
    */
   async promoteOrDemote(ctx: ServiceContext, patternKey: string): Promise<void> {
-    const outer = asTx(ctx);
-    const [g] = await outer
-      .select()
-      .from(graduations)
-      .where(and(
-        eq(graduations.accountId, ctx.accountId),
-        eq(graduations.patternKey, patternKey),
-        eq(graduations.action, "route"),
-      ))
-      .limit(1);
-    if (!g) return;
-
     const parsed = parsePatternKey(patternKey);
     if (!parsed) return;
-
-    const net = g.positives - g.negatives;
-    const promote = g.graduated && net >= GRADUATION_THRESHOLD;
-    // The SHARED effect, not a second spelling of it. This arm is the LIFETIME-net trigger;
-    // `recordRouteOverride` is the recent-override one, and both have to disable the same rule
-    // and clear the same flag or a route can be demoted by one reading and not the other.
-    const demote = !promote && net <= -DEMOTION_THRESHOLD;
-    if (!promote && !demote) return;
-
-    /**
-     * THE ROW AND ITS DELTA COMMIT TOGETHER, which is why the transaction is opened here and was
-     * not before. `rule` is a synced entity: a promotion that moved the row and no change row
-     * leaves every client showing the rule the way it was, with nothing wrong at the write and
-     * nothing later to correct it. `recordRuleDelta` refuses an autocommit handle for that
-     * reason, and this method is called from OUTSIDE `ApprovalService`'s own transaction.
-     *
-     * Dialect is resolved from `tx`, not from the outer handle: the brand is inherited by
-     * transactions, and the two writes below belong to one decision.
-     */
-    /* THROUGH THE SEAM. `rules` is a table the Art. 17 sweep empties and the approval that leads
-       here is read before this transaction opens: an erasure committing in between met a
-       promotion that inserted the rule and its change-log row into an account that was gone. */
+    const verdict = await graduationVerdict(asTx(ctx), ctx.accountId, patternKey);
+    if (verdict === "demote") {
+      await demoteRoute(asTx(ctx), ctx.accountId, patternKey);
+      return;
+    }
+    if (verdict !== "promote") return;
+    /* THROUGH THE SEAM. `rules` is a table the Art. 17 sweep empties and the verdict is read before
+       this transaction opens: an erasure committing in between met a promotion that inserted the
+       rule and its change-log row into an account that was gone. */
     await withAccountTx(ctx, async (tx) => {
-      const d = dialect(tx);
-      // Both arms write `rules`: the account's rule-key lock after the fence, before either.
+      // The account's rule-key lock after the fence, before the first `rules` statement.
       await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
-      if (promote) {
-        await this.ensurePromotedRule(tx, d, ctx.accountId, parsed, ctx.now());
-        return;
-      }
-      const { ruleIds } = await demoteGraduatedRoute(tx, ctx.accountId, patternKey);
-      await recordRuleDelta(tx, ctx.accountId, ruleIds, "update");
+      // Asked again under the lock: a person's pause or removal committed since the verdict wins.
+      if (!(await routeIsLearned(bridgeTx(tx), ctx.accountId, patternKey))) return;
+      await this.ensurePromotedRule(tx, dialect(tx), ctx.accountId, parsed, ctx.now());
     });
   }
 

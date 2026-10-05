@@ -282,6 +282,12 @@ export interface ProcessResult {
   outcome: DedupOutcome["kind"];
   messageId: string;
   action: ReconcileAction;
+  /**
+   * Route patterns whose override reached the threshold inside this commit. The switch-off is the
+   * CALLER's, after the commit (`WorkerRepo.demoteRoute`): a `rules` write here would take the rule
+   * row after the counter and the graduation's row, the order a person's pause meets backwards.
+   */
+  owedDemotions?: readonly string[];
 }
 
 // ── The two-phase, transaction-safe write path ──
@@ -1717,6 +1723,8 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     });
   }
 
+  /** A route this commit's override demoted — its switch-off runs after the commit. */
+  let owedDemotion: string | null = null;
   switch (e.action.type) {
     case "none": {
       /* CONDITIONAL, because this plan is older than this transaction: `e.state` was read in
@@ -1775,14 +1783,9 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
         accountId, messageId: e.messageId,
         filedTo: e.state.desiredFolder, movedTo: to, seq: adoptSeq,
       });
-      // The demotion switched a promoted rule off, and a client that is not told still shows it
-      // ON — the state would be a silent one, which is the failure this seam exists to make
-      // visible. This arm holds the ledger transaction, so the delta is owed here.
-      for (const ruleId of override?.ruleIds ?? []) {
-        await repo.recordChange({
-          accountId, entityType: "rule", entityId: ruleId, op: "update", meta: null,
-        });
-      }
+      // The demotion is OWED, not run: its rule write and that write's delta happen after this
+      // commit, through the one door, so this transaction ends at the graduation's row.
+      if (override?.demoted) owedDemotion = override.patternKey;
       break;
     }
     case "move": {
@@ -1830,5 +1833,8 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     });
   }
 
-  return { outcome: e.kind, messageId: e.messageId, action: e.action };
+  return {
+    outcome: e.kind, messageId: e.messageId, action: e.action,
+    ...(owedDemotion === null ? {} : { owedDemotions: [owedDemotion] }),
+  };
 }

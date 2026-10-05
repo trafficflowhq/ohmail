@@ -324,13 +324,15 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // dirty-by-default rule did its job late; classified at the 0.12.0 release gate.
   "lockAccountThreadStructure",
   // the route-override seam's predicate: it READS `messages.from_address` and writes
-  // `learning_signals`, the `graduations` counters and `rules.enabled/demotions` — three tables
-  // this projection does not touch, and neither projected `messages` column (`unread`,
-  // `message_id_header`) is written by it. It sits on the ingest path's `adopt_external` arm,
-  // inside the fenced transaction whose repo IS the watched one, so it runs on every externally
-  // observed move: unclassified it would drop the memo once per adoption and re-read the whole
-  // mailbox's locators.
+  // `learning_signals` and the `graduations` counters — tables this projection does not touch,
+  // and neither projected `messages` column (`unread`, `message_id_header`) is written by it. It
+  // sits on the ingest path's `adopt_external` arm, inside the fenced transaction whose repo IS
+  // the watched one, so it runs on every externally observed move: unclassified it would drop the
+  // memo once per adoption and re-read the whole mailbox's locators.
   "recordExternalOverride",
+  // the switch-off an ingest's override owes, after its commit: `rules.enabled/demotions`, the
+  // rule's `change_log` row and the `graduations` flag — none of them projected here.
+  "demoteRoute",
   // the pass-through
   "transaction",
 ]);

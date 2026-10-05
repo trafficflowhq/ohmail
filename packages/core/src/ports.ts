@@ -601,8 +601,9 @@ export interface RoutingPort {
   isGraduated(accountId: string, patternKey: string, action: "route"): Promise<boolean>;
   enqueueApproval(a: ApprovalInput): Promise<{ id: string }>;
   /**
-   * A person moved a message AWAY from where a graduated route filed it: record the override,
-   * and demote the route once enough of them stand inside the window.
+   * A person moved a message AWAY from where a learned route filed it: record the override. Once
+   * enough stand inside the window the outcome says `demoted`, and the switch-off is OWED to the
+   * caller's commit (`WorkerRepo.demoteRoute`), never run inside this transaction.
    *
    * `null` ⇒ nothing to contradict (no graduated route filed it there — every ordinary
    * adoption) or the move is a replay. OPTIONAL because a shell with no routing port never
@@ -628,9 +629,8 @@ export interface ExternalOverrideOutcome {
   patternKey: string;
   /** Overrides standing inside the window, this one included. */
   overrides: number;
+  /** The window reached the threshold: the route's switch-off is owed after the commit. */
   demoted: boolean;
-  /** Promoted rules the demotion switched off. The caller owes each one a `rule` delta. */
-  ruleIds: readonly string[];
 }
 
 /**

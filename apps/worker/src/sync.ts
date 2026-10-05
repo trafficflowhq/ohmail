@@ -1,7 +1,7 @@
 import {
   planChange, commitChange, isOrganizedFolder, MAX_RAW_MESSAGE_BYTES,
   type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
-  type ImportHold, type Logger, type OhboxPolicy, type StorageCap,
+  type ImportHold, type Logger, type OhboxPolicy, type ProcessResult, type StorageCap,
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
@@ -784,19 +784,18 @@ function planHeldAtGate(plan: ChangePlan): boolean {
  */
 async function commitFenced(
   plan: ChangePlan, txRepo: DrizzleRepo, deps: CommitDeps, alreadyAsked: boolean,
-): Promise<void> {
+): Promise<ProcessResult> {
   const mailboxId = deps.mailboxId;
   // THE LEASE FENCE ASKED IT, ON A ROW IT STILL HOLDS. Its `FOR UPDATE` is the first statement of
   // this transaction and the lock is held to the commit, so no removal can land between its answer
   // and these writes — a second question here would be a second statement for an answer we have.
-  if (alreadyAsked) { await commitChange(plan, deps); return; }
+  if (alreadyAsked) return commitChange(plan, deps);
   if (plan.outcome !== "new") {
     await assertMailboxStillHere(txRepo, mailboxId);
-    await commitChange(plan, deps);
-    return;
+    return commitChange(plan, deps);
   }
   let asked: string | null | undefined;
-  await commitChange(plan, {
+  const result = await commitChange(plan, {
     ...deps,
     mailboxMustBeLive: {
       mailboxId,
@@ -804,6 +803,17 @@ async function commitFenced(
     },
   });
   if (asked === undefined) await assertMailboxStillHere(txRepo, mailboxId);
+  return result;
+}
+
+/**
+ * THE SWITCH-OFFS A COMMITTED INGEST OWES — after the commit, one door each, never inside the
+ * ingest's transaction (its `rules` write would take the rule row after the counter and the
+ * graduation's row). Lost to a crash before this line, a demotion is owed again by the next
+ * override that crosses the window.
+ */
+async function runOwedDemotions(repo: WorkerRepo, accountId: string, result: ProcessResult): Promise<void> {
+  for (const patternKey of result.owedDemotions ?? []) await repo.demoteRoute(accountId, patternKey);
 }
 
 /**
@@ -1360,15 +1370,15 @@ async function syncCycleWithin(
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
       const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
-      await fencedIngest(deps, async (txRepo) => {
+      const committed = await fencedIngest(deps, async (txRepo) =>
         // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
         // ran outside any transaction and may have spent a classifier call there, which is exactly
         // the gap a removal lands in. See {@link commitFenced} for which statement carries the
         // question and {@link assertMailboxStillHere} for what it is.
-        await commitFenced(plan, txRepo, {
+        commitFenced(plan, txRepo, {
           repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
-        }, deps.fence !== undefined);
-      });
+        }, deps.fence !== undefined));
+      await runOwedDemotions(repo, accountId, committed);
       // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
       if (plan.outcome === "new") deadLetters.noteStored();
       // AFTER the commit settles, outside the transaction — a hold that committed owes the
@@ -1756,13 +1766,14 @@ async function retryFailedMessages(
         // outside every transaction exactly as the ordinary path's does, so a removal lands in the
         // same gap and this commit needs the same question asked inside the same transaction —
         // {@link commitFenced} puts it on whichever statement this plan's shape already sends.
-        await fencedIngest(deps, (txRepo) =>
+        const committed = await fencedIngest(deps, (txRepo) =>
           commitFenced(
             plan, txRepo,
             { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap },
             deps.fence !== undefined,
           ),
         );
+        await runOwedDemotions(repo, accountId, committed);
         // The retry is the SAME two-phase ingest, so a held sender it commits owes the same
         // visit — the path beside the one above, fixed together ({@link SyncDeps.onScreenerHold}).
         if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);

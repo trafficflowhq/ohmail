@@ -1,8 +1,10 @@
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, ne, notExists, or, sql } from "drizzle-orm";
 import { graduations, learningSignals, rules } from "./schema-mail.js";
-import type { Tx } from "./change-log.js";
+import { recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
-import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { fencedAccountWrite } from "./erasure-fence.js";
+import { lockAccountRuleKeys } from "./rule-key.js";
+import { ruleMatchKey, ruleMatchKeySql } from "./rule-match-sql.js";
 
 /**
  * The learning-signal write, on its own leaf — moved down the spine for `flag-intent.ts`'s
@@ -144,8 +146,8 @@ export async function recordLearningSignal(tx: Tx, accountId: string, s: Learnin
  * The override — a person's own hand outranks a graduated route from then on. Graduation is
  * earned and has to be undoable, by the only evidence that settles it: the person moving the mail
  * somewhere else. {@link recordRouteOverride} is the ONE definition of "this move contradicts a
- * route", and {@link demoteGraduatedRoute} the ONE effect — a second write site cannot mean
- * something slightly different by either. `learning_signals.triggering_action_id` already
+ * route", and {@link demoteRoute} the ONE effect — a second write site cannot mean something
+ * slightly different by either. `learning_signals.triggering_action_id` already
  * specified this signal's identity (`move:<msgId>:<seq>`, beside `kind = 'external_move'`) and
  * nothing wrote it; the shape is kept because it makes a replayed adoption count once — the
  * unique is `(account_id, triggering_action_id)`.
@@ -172,54 +174,110 @@ export interface RouteOverrideOutcome {
   patternKey: string;
   /** Overrides standing inside the window, this one included. */
   overrides: number;
-  demoted: boolean;
   /**
-   * Promoted rules this demotion switched OFF, if any.
-   *
-   * Returned rather than reported, because the delta a client needs can only be written by a
-   * caller holding a ledger transaction and this module does not know whether it has one. A
-   * caller that has one files an `update` for each id; see the `adopt_external` arm in
-   * `packages/core/src/pipeline.ts`.
+   * The window reached the threshold: the route's switch-off is OWED, and the caller runs it
+   * through {@link demoteRoute} after its own transaction commits — never inside it.
    */
-  ruleIds: readonly string[];
+  demoted: boolean;
 }
 
 /**
- * Demote a graduated route: switch off the promoted rule it produced, and clear `graduated` so
- * the pipeline stops auto-applying and goes back to PROPOSING.
- *
- * `enabled = true` is in the update's where clause, so `demotions` counts actual disablings and
- * the returned ids are exactly the rows whose state changed — which is what a delta must be.
+ * THE PERSON'S DECISION UNDER A SENDER'S BARE KEY: a `rules` row that is not a promotion nobody
+ * stamped, paused included. While one stands, nothing learned acts for that sender.
  */
-export async function demoteGraduatedRoute(
-  tx: Tx, accountId: string, patternKey: string,
-): Promise<{ demoted: boolean; ruleIds: string[] }> {
-  const p = parsePatternKey(patternKey);
-  if (!p) return { demoted: false, ruleIds: [] };
-  const d = dialect(tx);
-  const disabled = await tx
-    .update(rules)
-    .set({ enabled: false, demotions: sql`${rules.demotions} + 1`, updatedAt: d.now() })
-    .where(and(
-      eq(rules.accountId, accountId),
-      eq(rules.kind, p.kind),
-      // Key to key, both through the one builder (no import of `screener-apply`, which imports this).
-      sql`${ruleMatchKeySql(rules.match)} = ${ruleMatchKeySql(sql`${p.match}`)}`,
-      eq(rules.destination, p.destination),
-      eq(rules.provenance, "promoted"),
-      eq(rules.enabled, true),
-    ))
-    .returning({ id: rules.id });
-  await clearGraduation(tx, accountId, patternKey, "kept");
-  return { demoted: true, ruleIds: disabled.map((r) => r.id) };
+function personDecidedUnderKey(accountId: string, p: { kind: string; match: string }) {
+  return and(
+    eq(rules.accountId, accountId),
+    eq(rules.kind, p.kind),
+    // Key to key, both through the one builder (no import of `screener-apply`, which imports this).
+    sql`${ruleMatchKeySql(rules.match)} = ${ruleMatchKeySql(sql`${p.match}`)}`,
+    isNull(rules.subjectContains),
+    isNull(rules.bodyContains),
+    or(ne(rules.provenance, "promoted"), isNotNull(rules.personDecidedAt)),
+  );
 }
 
 /**
- * THE GRADUATION'S CLEAR, one door for the demotion and for a person's pause or removal of the
- * rule a graduation made (graduation is undoable): the route stops applying itself. `kept` leaves
- * the counts to the evidence, so an override demotion's negatives cost one confirmation each to
- * re-graduate; `from zero` restarts them for a person's undo, which recorded no evidence and would
- * otherwise re-graduate on the very next approval.
+ * IS THIS ROUTE LEARNED — the one read of a graduation, which is earned and undoable. Graduated,
+ * and no decision of the person's under the sender's bare key. A flag the counter flipped under
+ * such a decision is inert here; the person's next pause or removal clears it.
+ */
+export async function routeIsLearned(tx: Tx, accountId: string, patternKey: string): Promise<boolean> {
+  const p = parsePatternKey(patternKey);
+  if (!p) return false;
+  const rows = await tx
+    .select({ graduated: graduations.graduated })
+    .from(graduations)
+    .where(and(
+      eq(graduations.accountId, accountId),
+      eq(graduations.patternKey, patternKey),
+      eq(graduations.action, "route"),
+      eq(graduations.graduated, true),
+      notExists(tx.select({ id: rules.id }).from(rules).where(personDecidedUnderKey(accountId, p))),
+    ))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * The LIFETIME arms of a pattern, read from its counters: promote once it is learned at the
+ * threshold, demote once the net falls past the demotion margin, else nothing.
+ */
+export async function graduationVerdict(
+  tx: Tx, accountId: string, patternKey: string,
+): Promise<"promote" | "demote" | null> {
+  const [g] = await tx
+    .select({ positives: graduations.positives, negatives: graduations.negatives })
+    .from(graduations)
+    .where(and(
+      eq(graduations.accountId, accountId),
+      eq(graduations.patternKey, patternKey),
+      eq(graduations.action, "route"),
+    ))
+    .limit(1);
+  if (!g) return null;
+  const net = g.positives - g.negatives;
+  if (net >= GRADUATION_THRESHOLD && await routeIsLearned(tx, accountId, patternKey)) return "promote";
+  return net <= -DEMOTION_THRESHOLD ? "demote" : null;
+}
+
+/**
+ * THE DEMOTION'S SWITCH-OFF, the one door both demotions take AFTER their own commit (the override
+ * from a move, the lifetime net from a rejected approval): fence, rule-key lock, the promoted rule
+ * nobody stamped switched off, its delta, then the graduation's row last. A demotion lost to a crash
+ * between the commit and this door is owed again by the next override that crosses the window.
+ */
+export async function demoteRoute(
+  db: Tx, accountId: string, patternKey: string,
+): Promise<{ ruleIds: string[] }> {
+  const p = parsePatternKey(patternKey);
+  if (!p) return { ruleIds: [] };
+  return fencedAccountWrite(db, { accountId }, async (tx) => {
+    await lockAccountRuleKeys(tx, accountId);
+    const d = dialect(tx);
+    const disabled = await tx
+      .update(rules)
+      .set({ enabled: false, demotions: sql`${rules.demotions} + 1`, updatedAt: d.now() })
+      .where(and(
+        eq(rules.accountId, accountId),
+        eq(rules.kind, p.kind),
+        sql`${ruleMatchKeySql(rules.match)} = ${ruleMatchKeySql(sql`${p.match}`)}`,
+        eq(rules.destination, p.destination),
+        eq(rules.provenance, "promoted"),
+        isNull(rules.personDecidedAt),
+        eq(rules.enabled, true),
+      ))
+      .returning({ id: rules.id });
+    const ruleIds = disabled.map((r) => r.id);
+    await recordRuleDelta(tx as unknown as LedgerTx, accountId, ruleIds, "update");
+    await clearGraduation(tx, accountId, patternKey, "kept");
+    return { ruleIds };
+  });
+}
+
+/**
+ * THE GRADUATION'S CLEAR for one pattern. `kept` leaves the counts to the evidence, so an override
+ * demotion's negatives cost one confirmation each to re-graduate; `from zero` restarts them.
  */
 export async function clearGraduation(
   tx: Tx, accountId: string, patternKey: string, counts: "kept" | "from zero",
@@ -239,33 +297,25 @@ export async function clearGraduation(
 }
 
 /**
- * A PERSON PAUSED OR REMOVED A PROMOTED RULE: the graduation of its pattern ends, from zero, in
- * every spelling of its place a signal may have recorded (`places`; the caller owns the alias
- * table, which this leaf may not import).
+ * A PERSON PAUSED OR REMOVED A RULE UNDER A SENDER'S BARE KEY: every graduation of that sender
+ * ends, from zero, whatever place it learned (`sender:<key>→…`, both News spellings included).
+ * `substr` rather than LIKE: an address may carry `%` or `_`, and both stores spell it alike.
  */
 export async function endGraduationOfRule(
-  tx: Tx, accountId: string, rule: { kind: string; match: string }, places: readonly string[],
+  tx: Tx, accountId: string, rule: { kind: string; match: string },
 ): Promise<void> {
-  for (const destination of new Set(places)) {
-    const key = rule.kind === "sender" ? patternKeyFor({ senderAddress: rule.match, destination })
-      : rule.kind === "domain" ? patternKeyFor({ senderDomain: rule.match, destination }) : null;
-    if (key) await clearGraduation(tx, accountId, key, "from zero");
-  }
-}
-
-/** Is this exact (account, pattern) route auto-applying today? */
-async function isRouteGraduated(tx: Tx, accountId: string, patternKey: string): Promise<boolean> {
-  const rows = await tx
-    .select({ graduated: graduations.graduated })
-    .from(graduations)
+  if (rule.kind !== "sender" && rule.kind !== "domain") return;
+  const prefix = `${rule.kind}:${ruleMatchKey(rule.match)}\u2192`;
+  const d = dialect(tx);
+  await tx
+    .update(graduations)
+    .set({ graduated: false, positives: 0, negatives: 0, graduatedAt: null, updatedAt: d.now() })
     .where(and(
       eq(graduations.accountId, accountId),
-      eq(graduations.patternKey, patternKey),
       eq(graduations.action, "route"),
-      eq(graduations.graduated, true),
-    ))
-    .limit(1);
-  return rows.length > 0;
+      // Characters, as both stores' `substr` counts them: code points, never UTF-16 units.
+      sql`substr(${graduations.patternKey}, 1, ${Array.from(prefix).length}) = ${prefix}`,
+    ));
 }
 
 /**
@@ -301,13 +351,11 @@ async function countOverridesInWindow(
 }
 
 /**
- * THE PREDICATE. An externally observed move away from where a GRADUATED route filed this message
- * is an override of that route; enough of them inside the window demote it. `null` means there
- * was nothing to contradict — no graduated route filed the message to `filedTo` (every ordinary
- * adoption) — or the move was a replay; both are silence rather than a verdict, because adoption
- * is commonplace and this seam sits on the ingest path. The SENDER key is asked before the DOMAIN
- * key: it is the specific pattern and the one the pipeline auto-applies on, and asking the domain
- * only when no sender route graduated stops an account holding both from counting one move twice.
+ * THE PREDICATE. An externally observed move away from where a LEARNED route filed this message
+ * is an override of that route; enough of them inside the window owe its demotion, which the
+ * caller runs after its commit ({@link demoteRoute}). `null` means nothing to contradict or a
+ * replay. The SENDER key is asked before the DOMAIN key, so an account holding both counts one
+ * move once. No `rules` statement here: the move's transaction ends at the graduation's row.
  */
 export async function recordRouteOverride(
   tx: Tx, accountId: string, input: RouteOverrideInput,
@@ -319,9 +367,9 @@ export async function recordRouteOverride(
   for (const pattern of candidates) {
     const patternKey = patternKeyFor({ ...pattern, destination: input.filedTo });
     if (!patternKey) continue;
-    if (!(await isRouteGraduated(tx, accountId, patternKey))) continue;
+    if (!(await routeIsLearned(tx, accountId, patternKey))) continue;
 
-    // Only a NEWLY inserted signal demotes. A replayed adoption inserts nothing, bumps no
+    // Only a NEWLY inserted signal counts. A replayed adoption inserts nothing, bumps no
     // counter, and must not spend a second override on one act of the person's.
     const inserted = await recordLearningSignal(tx, accountId, {
       triggeringActionId: input.triggeringActionId,
@@ -334,11 +382,7 @@ export async function recordRouteOverride(
 
     const since = new Date((input.now?.getTime() ?? Date.now()) - OVERRIDE_WINDOW_MS);
     const overrides = await countOverridesInWindow(tx, accountId, pattern, input.filedTo, since);
-    if (overrides < OVERRIDE_DEMOTION_THRESHOLD) {
-      return { patternKey, overrides, demoted: false, ruleIds: [] };
-    }
-    const { ruleIds } = await demoteGraduatedRoute(tx, accountId, patternKey);
-    return { patternKey, overrides, demoted: true, ruleIds };
+    return { patternKey, overrides, demoted: overrides >= OVERRIDE_DEMOTION_THRESHOLD };
   }
   return null;
 }

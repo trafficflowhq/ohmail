@@ -7,7 +7,7 @@ import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, listPressLegs, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
 import { accountWritesHere } from "./organizer-role.js";
-import { LEGACY_NEWS_FOLDER, NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
+import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 import { convergeRuleKey, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
@@ -1008,16 +1008,12 @@ export async function applyRuleRequest(
      "done" from "never happened". */
   if (!found) return { applied: false, refusal: "no_such_rule" };
 
-  /* A person's pause or removal of a learned rule, travelled here: the graduation behind every
-     promoted row under the key ends, from zero, as on the install it was pressed on
-     (`RulesService`). After the delta: the other writers of a graduation's row take the counter first. */
+  /* A person's pause or removal under a sender's bare key, travelled here: every graduation of the
+     sender ends, from zero, in every place, as on the install it was pressed on (`RulesService`).
+     After the delta: the other writers of a graduation's row take the counter first. */
   const endsLearning = async (): Promise<void> => {
-    for (const row of [found, ...twins]) {
-      if (row.provenance !== "promoted") continue;
-      const news = canonicalNewsSpelling(row.destination) === NEWS_FOLDER;
-      const places = news ? [NEWS_FOLDER, LEGACY_NEWS_FOLDER] : [row.destination];
-      await endGraduationOfRule(tx, accountId, { kind: key.kind, match: ruleMatchKey(key.match) }, places);
-    }
+    if (key.subjectContains !== null || key.bodyContains !== null) return;
+    await endGraduationOfRule(tx, accountId, { kind: key.kind, match: key.match });
   };
 
   if (payload.op === "delete") {

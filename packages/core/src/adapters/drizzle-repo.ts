@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql } from "@trafficflow/db";
+import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -324,6 +324,12 @@ export interface FlagCompletion {
 
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
 export interface WorkerRepo extends RepoPort, RoutingPort {
+  /**
+   * The switch-off an ingest's route override OWES (`ProcessResult.owedDemotions`), run after that
+   * ingest committed and never inside it. Required: a worker that cannot run it would record a
+   * demotion that switches nothing off.
+   */
+  demoteRoute(accountId: string, patternKey: string): Promise<void>;
   /**
    * The completion write, and why it is not {@link RepoPort.upsertFolderState}: a filing reads a
    * pending row, dials the network, and writes back minutes later, while `desired_folder` has six
@@ -2267,15 +2273,17 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return { id: row!.id };
   }
 
-  async isGraduated(accountId: string, patternKey: string, action: "route"): Promise<boolean> {
-    const rows = await this.db.select({ graduated: graduations.graduated }).from(graduations)
-      .where(and(
-        eq(graduations.accountId, accountId),
-        eq(graduations.patternKey, patternKey),
-        eq(graduations.action, action),
-        eq(graduations.graduated, true),
-      )).limit(1);
-    return rows.length > 0;
+  /** The pipeline's read of a route: LEARNED, through the one read (`routeIsLearned`). */
+  async isGraduated(accountId: string, patternKey: string, _action: "route"): Promise<boolean> {
+    return routeIsLearned(this.db as unknown as Tx, accountId, patternKey);
+  }
+
+  /**
+   * The override demotion's switch-off, after the ingest committed: the one door (the bare name is
+   * `@trafficflow/db#demoteRoute`, the import, not this method), its own transaction.
+   */
+  async demoteRoute(accountId: string, patternKey: string): Promise<void> {
+    await demoteRoute(this.db as unknown as Tx, accountId, patternKey);
   }
 
   /**

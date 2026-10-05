@@ -6,7 +6,7 @@ import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeenMany } from "./flag-intent.js";
-import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { ruleMatchKey, ruleMatchKeySql } from "./rule-match-sql.js";
 import { keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
 
 /**
@@ -15,18 +15,8 @@ import { keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWri
  */
 export const RULE_PRIORITY_MAX = 1000;
 
-/**
- * `@trafficflow/core/rule-order#ruleMatchKey`, copied for the same reason: a rule's `match` as the
- * queue SQL's `trim(lower(match))` compares it, SPACES only. `rule-match-key-twin.test.ts` holds
- * the two equal; `test/rule-match-key-census.test.ts` admits this one copy by name.
- */
-export function ruleMatchKey(match: string): string {
-  let a = 0;
-  let b = match.length;
-  while (a < b && match.charCodeAt(a) === 32) a++;
-  while (b > a && match.charCodeAt(b - 1) === 32) b--;
-  return match.slice(a, b).toLowerCase();
-}
+/** The drain's copy of the match key, re-exported from the leaf that holds it (`rule-match-sql.ts`). */
+export { ruleMatchKey };
 
 /**
  * How many messages one set of a per-message write carries — a decision's held mail, the bulk

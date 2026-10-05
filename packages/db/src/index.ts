@@ -59,11 +59,11 @@ export { upsertDesiredSeen, upsertDesiredSeenMany } from "./flag-intent.js";
 export {
   recordLearningSignal, patternKeyFor, parsePatternKey,
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
-  // The override: one predicate, one effect, one action-id shape. See the module header.
-  recordRouteOverride, demoteGraduatedRoute, routeOverrideActionId, senderPatternFromAddress,
+  // The override: one predicate, one effect after the commit, one action-id shape.
+  recordRouteOverride, demoteRoute, routeOverrideActionId, senderPatternFromAddress,
   OVERRIDE_DEMOTION_THRESHOLD, OVERRIDE_WINDOW_MS,
-  // A person's pause or removal of a promoted rule ends its graduation through the same clear.
-  clearGraduation, endGraduationOfRule,
+  // The one read of a graduation, the lifetime verdict, and a person's end of every place.
+  routeIsLearned, graduationVerdict, clearGraduation, endGraduationOfRule,
   type LearningKind, type LearningLabel, type LearningSignalInput,
   type ParsedPattern, type RouteOverrideInput, type RouteOverrideOutcome,
   type SenderPattern,
