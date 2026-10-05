@@ -1011,6 +1011,9 @@ export const rules = pgTable("rules", {
   // the key the router keys a rule by, within the account, enabled rules only.
   ixAccountMatchKey: index("rules_account_match_key_idx").on(t.accountId, ruleMatchKeySql(t.match))
     .where(sql`${t.enabled}`),
+  // Mail 0144 — the same key over EVERY row, paused included: the one read of a graduation asks
+  // whether a person decided under a sender's key (`routeIsLearned`), and a pause is a decision.
+  ixAccountKey: index("rules_account_key_idx").on(t.accountId, ruleMatchKeySql(t.match)),
 }));
 
 export const contacts = pgTable("contacts", {

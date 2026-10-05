@@ -899,6 +899,11 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // the arrival key, and without it each page sorts the account's living set. The needle is the
   // key's clamp arm, which renders the same in every session zone (the epoch literal does not).
   ["messages_account_arrival_order_idx", "WHEN (((date - arrived_at) <= '48:00:00'::interval) AND ((arrived_at - date) <= '48:00:00'::interval)) THEN date"],
+  // mail 0144_rule_person_decided_backfill. The SILENT kind: the one read of a graduation asks, per
+  // learned sender the pipeline meets, whether a person decided under its key, paused rows included,
+  // and without this index that is a scan of the account's rules. Committed with 0144's two backfill
+  // classes in one transaction, so its presence also says they ran.
+  ["rules_account_key_idx", "ON public.rules USING btree (account_id, TRIM(BOTH FROM lower(match)))"],
 ];
 
 /**
@@ -1202,7 +1207,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0143_sync_blocked_reason_meta_undeletable";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0144_rule_person_decided_backfill";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

@@ -904,6 +904,8 @@ export const rules = sqliteTable("rules", {
   // Mail 0136 — the rule key within the account, as the server twin declares it.
   ixAccountMatchKey: index("rules_account_match_key_idx").on(t.accountId, ruleMatchKeySql(t.match))
     .where(sql`${t.enabled}`),
+  // Mail 0144 — the same key over every row, paused included, as the server twin declares it.
+  ixAccountKey: index("rules_account_key_idx").on(t.accountId, ruleMatchKeySql(t.match)),
 }));
 
 export const contacts = sqliteTable("contacts", {
