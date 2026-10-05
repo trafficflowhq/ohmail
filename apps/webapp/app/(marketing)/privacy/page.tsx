@@ -59,8 +59,8 @@ export default function PrivacyPage() {
           password you type, and we store them on servers in Switzerland to operate the
           account. Passwords are stored only as a scrypt hash — never in a form
           we can read. We also record the IP address and browser user agent of
-          each sign-in, failed sign-in and sign-out on an account, and of each new
-          account, and keep them for 180 days to keep accounts secure; the IP
+          each sign-in, failed sign-in, sign-out and other security event on an
+          account, and of each new account, and keep them for 180 days to keep accounts secure; the IP
           address each desktop or phone app was added from is kept until you
           delete your account, to show you your own devices. Other attempts leave
           only counters under hashes of the address typed and of the IP address,

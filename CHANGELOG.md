@@ -74,8 +74,8 @@ now named as the clock, as it already was on the web.
 <!-- changes: fix-026-meta-renew-and-shrink.md -->
 
 On a mail server that will not let ohmail remove its own messages from the `ohmail/_meta` folder,
-ohmail now stops writing new ones after three tries instead of filling the folder, and the mailbox
-says so: give that folder delete permission, or ask your provider. ohmail starts again on its own
+ohmail now stops writing new ones after three tries instead of filling the folder, and on the web
+and the desktop the mailbox says so: give that folder delete permission, or ask your provider. ohmail starts again on its own
 once a delete goes through. When the folder is too full to read, ohmail now removes its own records
 older than a day from it by itself and starts again with no press. On the desktop, these states and
 a wrong computer clock no longer read as a lost connection.
