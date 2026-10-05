@@ -12,8 +12,9 @@
 import { CREDENTIAL_REFUSED, isSessionRefusal } from "@ohmail/client-engine";
 import { csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
-import { durableRemove, durableSet } from "./shell/durable";
+import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
 import { readOwner } from "./shell/owner-cookie";
+import { isDemoOwned, storageOwner } from "./shell/storage-owner";
 import {
   ERASED_DECLARATION, clearAccountErased, erasedAnswerOf, erasedCapture, hearAccountErased,
 } from "./shell/account-erased";
@@ -314,6 +315,12 @@ export interface ResumeOptions {
    * resume and the server will serve them); `api()` does not pass one at all.
    */
   mayProceed?: () => boolean;
+  /**
+   * THE NAME THIS PRESENTATION GOES OUT UNDER, in place of `attemptFor`'s. Only the late-answer
+   * repair passes it: the row it presents was killed under that name, and past the server's grace a
+   * new name reads as a second holder. A presentation that names itself arms no watch.
+   */
+  attemptId?: string;
 }
 
 /**
@@ -383,8 +390,21 @@ function settleAttempt(): void {
   durableRemove(SESSION_ATTEMPT_KEY, "session-attempt");
 }
 
+/**
+ * THE LATE-ANSWER REPAIR IN FLIGHT, with whether its own question, asked inside the lock, refused it.
+ * A repair so refused did not happen: a caller that joined it asks for itself, as it would have with
+ * no repair in flight. Every other answer is shared with its joiners, as `inFlight`'s is.
+ */
+let inFlightRepair: { answer: Promise<ResumeAnswer>; asked: { refused: boolean } } | null = null;
+
 export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAnswer> {
+  const repair = inFlightRepair;
+  if (repair !== null) {
+    const answer = await repair.answer;
+    return answer === "refused" && repair.asked.refused ? resumeSession(opts) : answer;
+  }
   if (inFlight) return inFlight;
+  const asked = { refused: false };
   inFlight = withCrossTabLock(async () => {
     /*
      * Still the same browser? Asked INSIDE the lock, not before it. A refresh rotates whatever
@@ -403,7 +423,10 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // left the module's dedupe holding a settled promise for the life of the page and every
       // later resume — including `api()`'s recovery — answered `false` without asking anything.
       // Found by running the cases in file order rather than one at a time.
-      if (opts.mayProceed && !opts.mayProceed()) return "refused";
+      if (opts.mayProceed && !opts.mayProceed()) {
+        asked.refused = true;
+        return "refused";
+      }
       /*
        * The CSRF header is required here — the old "none is needed" comment was wrong in production:
        * `withCsrf` keys off the SESSION, not the route, so a POST arriving with a live `tf_session` is
@@ -419,7 +442,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       const csrf = csrfToken();
       // Who this refresh leaves under — BEFORE it goes: an erased account's answer clears the jar.
       const erasedBefore = erasedCapture();
-      const attemptId = attemptFor(csrf);
+      const attemptId = opts.attemptId ?? attemptFor(csrf);
       const res = await fetch(REFRESH_ENDPOINT, {
         method: "POST",
         headers: {
@@ -453,6 +476,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         settleAttempt();
         recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
         noteSessionMinted();
+        // A repair's own answer arms no watch: one repair per renewal, then the 12-minute belt.
+        watchForLateAnswer(opts.attemptId === undefined ? attemptId : null);
         markSessionAlive();
         return "resumed";
       }
@@ -507,7 +532,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
    * unreachable cannot be watched fail. The fix is the PLACEMENT.
    */
   const started = inFlight;
-  void started.finally(() => { inFlight = null; });
+  if (opts.attemptId !== undefined) inFlightRepair = { answer: started, asked };
+  void started.finally(() => { inFlight = null; inFlightRepair = null; });
   return started;
 }
 
@@ -608,6 +634,8 @@ function noteSessionMinted(): void {
   mintedHere = Date.now();
   mintsHere += 1;
   durableSet(SESSION_MINTED_KEY, String(mintedHere), "session-mint");
+  // A sign-in's mint is recorded as a renewal's is: a live page's answer, never a dead page's.
+  noteAnswer();
 }
 
 /** The latest mint this origin recorded, or `null` when nothing says how old the session is. */
@@ -621,6 +649,180 @@ function lastSessionMint(): number | null {
   }
   if (stored === null) return mintedHere;
   return mintedHere === null ? stored : Math.max(stored, mintedHere);
+}
+
+/**
+ * A LATE ANSWER, REPAIRED BY THE LIVE TAB. A renewal outlives its page (`keepalive`), so a page that
+ * unloaded mid-renewal can have its answer stored AFTER the next page presented the same token and
+ * stored its own: the jar then holds a row the server killed, and the next renewal signs out. Every
+ * mint a live page sees records its `tf_csrf` mark here (never the value); for one window after its
+ * own 204 a tab polls the jar, and a mark no live page recorded is a dead page's answer. Presented
+ * once more under the name this tab's renewal went out as, inside the server's grace, it converges.
+ */
+export const SESSION_ANSWER_KEY = "ohmail.session.lastAnswer";
+/**
+ * THE TAB'S WATCH, FOR ITS NEXT PAGE: a resume splash reloads itself just after the 204 it armed on.
+ * Per tab (`sessionStorage`) and per account (`storageOwner()`), holding the mark, the renewal's name,
+ * its time and the account, never a token, a CSRF value or a cookie. The first page that confirms
+ * that account's session inside the window continues the watch; any other account's note is removed.
+ */
+export const SESSION_WATCH_PREFIX = "ohmail.session.lateWatch.";
+/** The server's `refreshReuseGraceMs`, stated once on this side; a root test holds the two equal. */
+export const REFRESH_GRACE_MS = 60_000;
+/** The answer's way back and the repair's way out, taken from the grace; the watch is the rest. */
+export const LATE_ANSWER_TRANSIT_MS = 5_000;
+export const LATE_ANSWER_WATCH_MS = REFRESH_GRACE_MS - LATE_ANSWER_TRANSIT_MS;
+export const LATE_ANSWER_POLL_MS = 500;
+
+/** This page's copy of the last mark it recorded, for a jar that refuses storage. */
+let answerHere: string | null = null;
+/** The watch's next poll: one per tab, replaced or ended by every own 204. */
+let lateTimer: ReturnType<typeof setTimeout> | null = null;
+/** Whether this page has read its tab's note: once, at its first confirmed session. */
+let noteRead = false;
+
+interface LateWatchNote { mark: string; name: string; at: number; account: string }
+
+function noteAnswer(): void {
+  const csrf = csrfToken();
+  if (csrf === null) return;
+  answerHere = csrfMark(csrf);
+  durableSet(SESSION_ANSWER_KEY, answerHere, "session-answer");
+}
+
+/** Did a live page of this origin record this mark: this page, or the one shared record? */
+function answerRecorded(mark: string): boolean {
+  if (mark === answerHere) return true;
+  try {
+    return window.localStorage.getItem(SESSION_ANSWER_KEY) === mark;
+  } catch {
+    return false;
+  }
+}
+
+/** The account a note is written for and read by: the jar's owner, never the demo's. */
+function watchAccount(): string | null {
+  // The cookie is asked first: `storageOwner()` says out loud when there is none, and a healthy
+  // renewal writes no line (`session-death.test.ts`).
+  if (readOwner() === null) return null;
+  const owner = storageOwner();
+  return owner === null || isDemoOwned(owner) ? null : owner;
+}
+
+const noteKey = (account: string): string => `${SESSION_WATCH_PREFIX}${account}`;
+
+/** This tab's notes, every account's; `null` when the jar cannot be walked. */
+function noteKeys(): string[] | null {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i += 1) {
+      const key = window.sessionStorage.key(i);
+      if (key !== null && key.startsWith(SESSION_WATCH_PREFIX)) keys.push(key);
+    }
+    return keys;
+  } catch {
+    return null;
+  }
+}
+
+/** Sign-out's door: the poll stops and every account's note goes. Answers what could not be removed. */
+export function forgetLateAnswerWatch(): string[] {
+  if (lateTimer !== null) clearTimeout(lateTimer);
+  lateTimer = null;
+  const keys = noteKeys();
+  if (keys === null) return [`${SESSION_WATCH_PREFIX}*`];
+  return keys.filter((key) => durableSessionRemove(key, "session-watch") === "lost");
+}
+
+/** At an own 204: watch for the presentation that went out as `name`; `null` (a repair's) ends it. */
+function watchForLateAnswer(name: string | null): void {
+  const account = watchAccount();
+  const csrf = csrfToken();
+  if (name === null || csrf === null) {
+    if (lateTimer !== null) clearTimeout(lateTimer);
+    lateTimer = null;
+    // A repair's answer takes its note too, or the tab's next page would watch again.
+    if (account !== null) durableSessionRemove(noteKey(account), "session-watch");
+    return;
+  }
+  const mark = csrfMark(csrf);
+  const at = Date.now();
+  if (account !== null) {
+    const note: LateWatchNote = { mark, name, at, account };
+    durableSessionSet(noteKey(account), JSON.stringify(note), "session-watch");
+  }
+  armLateWatch(mark, name, at, account);
+}
+
+/** A confirmed session: other accounts' notes go; the first one in this page continues its own. */
+function readLateAnswerNote(): void {
+  const account = watchAccount();
+  for (const key of noteKeys() ?? []) {
+    if (account === null || key !== noteKey(account)) durableSessionRemove(key, "session-watch");
+  }
+  if (noteRead) return;
+  noteRead = true;
+  if (account === null || lateTimer !== null) return;
+  let note: Partial<LateWatchNote> | null = null;
+  try {
+    const raw = window.sessionStorage.getItem(noteKey(account));
+    note = raw === null ? null : (JSON.parse(raw) as Partial<LateWatchNote> | null);
+  } catch {
+    return;
+  }
+  if (note === null) return;
+  if (note.account !== account || typeof note.mark !== "string" || typeof note.name !== "string"
+    || typeof note.at !== "number") {
+    durableSessionRemove(noteKey(account), "session-watch");
+    return;
+  }
+  armLateWatch(note.mark, note.name, note.at, account);
+}
+
+subscribeSessionRevival(readLateAnswerNote);
+
+/** Poll the jar until `at` plus the window, firing at most once, for `account`; `own` is the answer's mark. */
+function armLateWatch(own: string, name: string, at: number, account: string | null): void {
+  if (lateTimer !== null) clearTimeout(lateTimer);
+  lateTimer = null;
+  if (typeof window === "undefined") return;
+  // The bound by clock AND by count, both from the answer's own time: a throttled timer, or a test
+  // clock that never moves. A time ahead of this clock is discarded.
+  const budget = Math.ceil((LATE_ANSWER_WATCH_MS - (Date.now() - at)) / LATE_ANSWER_POLL_MS);
+  if (Date.now() < at || budget <= 0) return;
+  let polls = 0;
+  // The jar moved to a mark no live page recorded, and is still the armed account's: its owner is read
+  // the way the arm read it. Asked at the poll and again inside the lock. Another account's jar ends
+  // the watch and takes its note: it is never presented under this account's renewal name.
+  const lateAnswerHeld = (): boolean => {
+    const csrf = csrfToken();
+    if (csrf === null || sessionIsDead()) return false;
+    if (watchAccount() !== account) {
+      if (account !== null) durableSessionRemove(noteKey(account), "session-watch");
+      return false;
+    }
+    const mark = csrfMark(csrf);
+    return mark !== own && !answerRecorded(mark);
+  };
+  const poll = (): void => {
+    lateTimer = null;
+    polls += 1;
+    try {
+      const age = Date.now() - at;
+      if (age < 0 || age >= LATE_ANSWER_WATCH_MS || polls >= budget) return;
+      const csrf = csrfToken();
+      if (csrf === null || sessionIsDead()) return;
+      if (csrfMark(csrf) === own) {
+        lateTimer = setTimeout(poll, LATE_ANSWER_POLL_MS);
+        return;
+      }
+      // Moved: a recorded mark is a live page's rotation and ends the watch; otherwise ONE repair.
+      if (lateAnswerHeld()) void resumeSession({ attemptId: name, mayProceed: lateAnswerHeld });
+    } catch {
+      /* a page going away: the watch ends with it */
+    }
+  };
+  lateTimer = setTimeout(poll, LATE_ANSWER_POLL_MS);
 }
 
 let renewTimer: ReturnType<typeof setTimeout> | null = null;

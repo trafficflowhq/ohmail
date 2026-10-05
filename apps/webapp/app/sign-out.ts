@@ -17,7 +17,9 @@ import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { READING_ALONG_PREFIX } from "./shell/reading-along";
 import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
-import { SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY } from "./session-refresh";
+import {
+  SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch,
+} from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
 import { postSignedOut } from "./signed-out-signal";
 
@@ -204,6 +206,8 @@ export async function forgetThisBrowser(
     SESSION_MINTED_KEY,
     // The name of a renewal whose answer never landed, which belongs to the same session.
     SESSION_ATTEMPT_KEY,
+    // The mark of the last answer a live page received, which the late-answer watch reads.
+    SESSION_ANSWER_KEY,
     // `ohmail.access.<owner>` — where the service last found this account. Left behind it would
     // decide the next account's first paint on this browser from somebody else's standing.
     ACCESS_VERDICT_PREFIX,
@@ -246,6 +250,12 @@ export async function forgetThisBrowser(
   } catch {
     deviceCeremonySwept = false;
     survivors.push(HANDOFF_KEY);
+  }
+  // The tab's late-answer watch note (`session-refresh.ts`): an account id, a renewal's name, a time.
+  const watchLeft = forgetLateAnswerWatch();
+  if (watchLeft.length > 0) {
+    deviceCeremonySwept = false;
+    survivors.push(...watchLeft);
   }
   const wipe = only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
   return {
