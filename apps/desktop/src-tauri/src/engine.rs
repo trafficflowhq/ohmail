@@ -1412,7 +1412,7 @@ pub struct Shell {
     /// with the window on screen the whole time, because a run loop can neither hide a window nor
     /// process its own destroy while a handler is blocked inside it. The waiting happens on a
     /// thread of its own now, and the process exits when it ends.
-    leaving: Mutex<Leaving>,
+    leaving: Shutdown,
     /// THE ENGINE RUNNING NOW IS A PENDING DOOR'S, and which kind. The hosted door waiting for its
     /// account (`Mode::Cloud`): its claim writes `config.json`, so the file alone cannot say so, and
     /// the status reports `identityPending` until the next spawn. The first local door waiting for
@@ -1431,10 +1431,53 @@ static PAIRING_LEFT_AT: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
 /// started one" and "one was started and its bound ran out" decides whether the last wait may call
 /// [`Shell::stop`] again, and calling it on a supervisor that is already stuck would hang the exit
 /// on a lock rather than bound it.
-enum Leaving {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LeaveStage {
     NotStarted,
-    InFlight(Receiver<()>),
+    InFlight,
     Done,
+}
+
+/// A quit's stage, and what every wait on one stop shares.
+struct Leaving {
+    stage: LeaveStage,
+    /// Bumped by every stop this shell starts, so a stop that ends late marks only its own run.
+    run: u64,
+    /// When every wait on this run gives up, and the bound that set it: the first wait's, so a
+    /// second wait adds no second bound.
+    ends_by: Option<(Instant, Duration)>,
+    /// The engine left inside the bound: what a wait answers once the run is done.
+    left: bool,
+    /// The person closed the app. A restart that then does not happen ends it, instead of
+    /// starting the engine again behind a window that is already gone.
+    quitting: bool,
+}
+
+/// [`Leaving`] behind its lock, and the wake-up its waits sleep on. NO WAIT HOLDS THE LOCK: a
+/// restart's stop used to wait inside it, so a close pressed meanwhile blocked the thread that
+/// draws for the whole stop, up to [`SHUTDOWN_BOUND`], and was then dropped.
+pub(crate) struct Shutdown {
+    state: Mutex<Leaving>,
+    left: Condvar,
+}
+
+impl Shutdown {
+    pub(crate) const fn new() -> Shutdown {
+        Shutdown {
+            state: Mutex::new(Leaving {
+                stage: LeaveStage::NotStarted,
+                run: 0,
+                ends_by: None,
+                left: false,
+                quitting: false,
+            }),
+            left: Condvar::new(),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Leaving> {
+        self.state.lock().expect("shell shutdown")
+    }
 }
 
 /// The last line of the app: wait, bounded, for the engine to finish leaving, then end the process
@@ -1484,12 +1527,15 @@ pub fn after_the_engine<R: tauri::Runtime, T>(
     }
 }
 
-/// [`Shell::resume_after_failed_restart`] for the running app.
+/// [`Shell::resume_after_failed_restart`] for the running app, which quits instead when the person
+/// closed it while the restart stopped the engine.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn resume_after_failed_restart<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
     if let Some(shell) = app.try_state::<Arc<Shell>>() {
-        shell.resume_after_failed_restart();
+        if !shell.resume_after_failed_restart() {
+            crate::updater::quit(app, 0);
+        }
     }
 }
 
@@ -1529,7 +1575,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
-            leaving: Mutex::new(Leaving::NotStarted),
+            leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
     }
@@ -1543,7 +1589,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(engine)),
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
-            leaving: Mutex::new(Leaving::NotStarted),
+            leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
     }
@@ -1632,7 +1678,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(engine)),
             host_plan: Mutex::new(host),
             door: Mutex::new(()),
-            leaving: Mutex::new(Leaving::NotStarted),
+            leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
     }
@@ -1781,20 +1827,34 @@ impl Shell {
     /// the engine. Everything [`Shell::stop`] does still happens, in the same order, with the same
     /// grace period and the same kill — on a thread nobody is drawing on.
     pub fn begin_stop(self: &Arc<Shell>) -> bool {
-        let mut slot = self.leaving.lock().expect("shell shutdown");
-        if !matches!(*slot, Leaving::NotStarted) {
+        let mut slot = self.leaving.lock();
+        self.start_stop(&mut slot)
+    }
+
+    /// [`Shell::begin_stop`] under the lock its caller holds.
+    fn start_stop(self: &Arc<Shell>, slot: &mut Leaving) -> bool {
+        if slot.stage != LeaveStage::NotStarted {
             return false;
         }
-        let (done, waited) = mpsc::channel();
+        slot.run += 1;
+        let run = slot.run;
+        slot.stage = LeaveStage::InFlight;
+        slot.ends_by = None;
+        slot.left = false;
         let shell = Arc::clone(self);
-        *slot = Leaving::InFlight(waited);
         thread::Builder::new()
             .name("ohmail-quit".into())
             .spawn(move || {
                 shell.stop();
-                // A receiver that has already given up is not a failure: the bound belongs to the
-                // app, and this thread's work is done whether or not anybody is still listening.
-                let _ = done.send(());
+                // This run's, and only while it is current: a restart that did not happen started
+                // the engine again, and that engine is not the one this thread stopped.
+                let mut slot = shell.leaving.lock();
+                if slot.run == run && slot.stage != LeaveStage::NotStarted {
+                    slot.stage = LeaveStage::Done;
+                    slot.left = true;
+                }
+                drop(slot);
+                shell.leaving.left.notify_all();
             })
             .expect("ohmail: failed to start the shutdown thread");
         true
@@ -1811,31 +1871,32 @@ impl Shell {
     /// same engine a second bound, and [`Shell::stop`] on a supervisor that is already stuck would
     /// block on its lock instead of being bounded by anything.
     pub fn finish_stop(self: &Arc<Shell>, within: Duration) -> bool {
-        let mut slot = self.leaving.lock().expect("shell shutdown");
-        let verdict = match &*slot {
-            Leaving::Done => true,
-            // Nothing started one — a platform that ends the app without a close request, or a
-            // quit from the tray. The window is gone by now, so this is the old behaviour.
-            Leaving::NotStarted => {
-                self.stop();
-                true
+        let mut slot = self.leaving.lock();
+        // Nothing started one — a platform that ends the app without a close request, or a quit
+        // from the tray. The window is gone by now.
+        self.start_stop(&mut slot);
+        // EVERY WAIT ON ONE STOP SHARES THE FIRST ONE'S BOUND, and sleeps with the lock released,
+        // so a press on the thread that draws never waits behind a restart's stop.
+        loop {
+            match slot.stage {
+                LeaveStage::Done => return slot.left,
+                // A restart that did not happen began again while this waited: its stop is over.
+                LeaveStage::NotStarted => return true,
+                LeaveStage::InFlight => {}
             }
-            Leaving::InFlight(waited) => match waited.recv_timeout(within) {
-                Ok(()) => true,
-                // The sender was dropped without a word: the thread is over either way.
-                Err(mpsc::RecvTimeoutError::Disconnected) => true,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    log_line(format_args!(
-                        "the engine had not finished leaving {}ms after it was asked to; the \
-                         app is going anyway, which closes its input",
-                        within.as_millis()
-                    ));
-                    false
-                }
-            },
-        };
-        *slot = Leaving::Done;
-        verdict
+            let (ends_by, bound) = *slot.ends_by.get_or_insert_with(|| (Instant::now() + within, within));
+            let now = Instant::now();
+            if now >= ends_by {
+                log_line(format_args!(
+                    "the engine had not finished leaving {}ms after it was asked to; the \
+                     app is going anyway, which closes its input",
+                    bound.as_millis()
+                ));
+                slot.stage = LeaveStage::Done;
+                return false;
+            }
+            slot = self.leaving.left.wait_timeout(slot, ends_by - now).expect("shell shutdown").0;
+        }
     }
 
     /// Leave: start the engine's shutdown and end the app when it is done, or when the bound runs
@@ -1892,12 +1953,30 @@ impl Shell {
             hide();
             None
         };
-        if !self.begin_stop() {
-            return;
-        }
+        // THE PRESS IS ANSWERED, NEVER QUEUED BEHIND A STOP. It starts the engine leaving, or a stop
+        // is already under way (a restart's, or an earlier close's) and the app leaves with that
+        // one, inside that one's bound. The close is recorded first, under the same lock, so a
+        // restart that then does not happen ends the app.
+        let owns = {
+            let mut slot = self.leaving.lock();
+            slot.quitting = true;
+            self.start_stop(&mut slot)
+        };
         if installing {
             fence.quit_asked();
             waiting();
+        }
+        if !owns {
+            if let Some(hide) = hide_later {
+                thread::Builder::new()
+                    .name("ohmail-leave".into())
+                    .spawn(move || {
+                        fence.wait();
+                        hide();
+                    })
+                    .expect("ohmail: failed to start the shutdown thread");
+            }
+            return;
         }
         let shell = Arc::clone(self);
         thread::Builder::new()
@@ -1923,11 +2002,22 @@ impl Shell {
 
     /// A restart that did not happen after the engine was stopped for it — preparing the Windows
     /// installer failed, the one failure the plugin returns. The engine comes back from the stored
-    /// configuration, and a later quit stops it the way it stops any engine.
+    /// configuration, and a later quit stops it the way it stops any engine. `false`, and nothing
+    /// started, when the person closed the app meanwhile: its window is gone, so the app goes too.
     #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn resume_after_failed_restart(&self) {
-        *self.leaving.lock().expect("shell shutdown") = Leaving::NotStarted;
+    pub fn resume_after_failed_restart(&self) -> bool {
+        {
+            let mut slot = self.leaving.lock();
+            if slot.quitting {
+                return false;
+            }
+            slot.run += 1;
+            slot.stage = LeaveStage::NotStarted;
+            slot.ends_by = None;
+            slot.left = false;
+        }
         self.replan();
+        true
     }
 
     /// Replace the running engine with one started from `next`.

@@ -1940,21 +1940,23 @@ describe("the auto-updater", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^[ \t]*\/\/.*$/gm, "");
     const named = [...engineCode.matchAll(/updater/g)];
-    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(9);
+    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(10);
     expect(engineCode).toMatch(/crate::updater::update_state/);
     expect(engineCode).toMatch(/crate::updater::update_press/);
     expect(engineCode).toMatch(/crate::updater::update_poll/);
     /* AND THE INSTALL FENCE, WHICH IS NOT THE FLOW. The close and every restart are engine.rs's,
        and none may end the process while an install writes the app, so this file reads the fence
        (its type, the app's one fence, a restart's wait) and asks for its exit through the
-       updater's one door, saying so in the window. Six mentions, each named: nothing here checks,
-       fetches, verifies or installs. */
+       updater's one door, saying so in the window. Seven mentions, each named: nothing here
+       checks, fetches, verifies or installs. The second `quit` is a restart that did not happen
+       after the person closed the app, which ends it through the same door. */
     const fence = engineCode.match(/crate::updater::\w+/g) ?? [];
     expect(fence.filter((name) => !/update_(?:state|press|poll)$/.test(name)).sort()).toEqual([
       "crate::updater::FENCE",
       "crate::updater::InstallFence",
       "crate::updater::after_install",
       "crate::updater::after_install",
+      "crate::updater::quit",
       "crate::updater::quit",
       "crate::updater::say_a_quit_waits",
     ]);

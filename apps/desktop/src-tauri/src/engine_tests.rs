@@ -1263,12 +1263,130 @@ fn a_restart_that_did_not_happen_starts_the_engine_again_and_a_quit_still_stops_
 
     assert!(shell.stop_for_restart(), "the engine did not leave inside the bound");
     assert_eq!(before.state(), EngineState::Stopped);
-    shell.resume_after_failed_restart();
+    assert!(shell.resume_after_failed_restart(), "a restart nobody closed the app during did not resume");
 
     assert!(!Arc::ptr_eq(&before, &shell.engine()), "the slot still holds the stopped engine");
-    assert!(
-        matches!(*shell.leaving.lock().expect("leaving"), Leaving::NotStarted),
+    assert_eq!(
+        shell.leaving.lock().stage,
+        LeaveStage::NotStarted,
         "the quit was spent by a restart that never happened"
+    );
+}
+
+/// Has a stop begun? Read without waiting: a lock somebody holds is a stop under way, which is
+/// what the defect below looked like from outside.
+fn a_stop_is_under_way(shell: &Shell) -> bool {
+    match shell.leaving.state.try_lock() {
+        Ok(slot) => slot.stage == LeaveStage::InFlight,
+        Err(std::sync::TryLockError::WouldBlock) => true,
+        Err(std::sync::TryLockError::Poisoned(_)) => panic!("the shutdown lock is poisoned"),
+    }
+}
+
+/// A CLOSE PRESSED WHILE A RESTART STOPS THE ENGINE IS ANSWERED AT ONCE. The restart's wait held
+/// the shutdown lock, so the press (and the window's own Destroyed and Exit) blocked the thread
+/// that draws for the whole stop, and the close was then dropped. Now the window goes at the press,
+/// the close adds no exit of its own because the restart is the exit, and the new copy still
+/// starts only after the engine has left.
+#[cfg(unix)]
+#[test]
+fn a_close_during_a_restarts_stop_is_answered_at_once_and_the_restart_still_waits_for_the_engine() {
+    let _live = live_process();
+    let fixture = Fixture::new("close-during-restart");
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve-deaf"), quick())));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let pid = shell.engine().pid().expect("a running engine has a pid");
+    let idle = fence_for_tests(Duration::from_secs(30));
+    let (restarted_tx, restarted) = mpsc::channel();
+    let restarting = {
+        let shell = Arc::clone(&shell);
+        thread::spawn(move || restart_after(&shell, idle, move || { let _ = restarted_tx.send(alive(pid)); }))
+    };
+    wait_for(|| a_stop_is_under_way(&shell), Duration::from_secs(10), "the restart to begin its stop");
+
+    let began = Instant::now();
+    assert!(!shell.begin_stop(), "a second stop was started beside the restart's");
+    let (hid_tx, hid) = mpsc::channel();
+    let (exit_tx, exited) = mpsc::channel();
+    shell.leave_with(idle, SHUTDOWN_BOUND, || {}, move || { let _ = hid_tx.send(()); }, move || { let _ = exit_tx.send(()); });
+    let pressed = began.elapsed();
+    assert!(
+        pressed < quick().stop_grace / 4,
+        "the press waited {pressed:?} of the {:?} grace behind the restart's stop",
+        quick().stop_grace
+    );
+    hid.try_recv().expect("the press did not take the window away itself");
+
+    let engine_alive = restarted.recv_timeout(Duration::from_secs(20)).expect("the restart never went");
+    assert!(!engine_alive, "the new copy started beside engine {pid}");
+    restarting.join().unwrap();
+    assert!(exited.try_recv().is_err(), "the close ran an exit of its own beside the restart's");
+    assert!(shell.leaving.lock().quitting, "the close was not recorded");
+}
+
+/// A RESTART THAT DOES NOT HAPPEN AFTER A CLOSE STARTS NO ENGINE. Preparing the Windows installer
+/// can fail after the engine left for it, and the engine came back behind a window the close had
+/// already taken away. The close is recorded under the shutdown lock, and the resume then starts
+/// nothing and answers that the app is going.
+#[test]
+fn a_restart_that_does_not_happen_after_a_close_starts_no_engine() {
+    let _live = live_process();
+    let fixture = Fixture::new("restart-then-close");
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve"), quick())));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let before = shell.engine();
+    assert!(shell.stop_for_restart(), "the engine did not leave inside the bound");
+    let idle = fence_for_tests(Duration::from_secs(30));
+    let (hid_tx, hid) = mpsc::channel();
+    let (exit_tx, exited) = mpsc::channel();
+    shell.leave_with(idle, SHUTDOWN_BOUND, || {}, move || { let _ = hid_tx.send(()); }, move || { let _ = exit_tx.send(()); });
+    hid.try_recv().expect("the press did not take the window away itself");
+
+    assert!(!shell.resume_after_failed_restart(), "the engine was resumed for an app the person closed");
+    assert!(Arc::ptr_eq(&before, &shell.engine()), "an engine was started behind the closed window");
+    assert_eq!(before.state(), EngineState::Stopped);
+    assert_ne!(shell.leaving.lock().stage, LeaveStage::NotStarted, "the quit was handed back");
+    assert!(exited.try_recv().is_err(), "the close ran an exit of its own beside the restart's");
+}
+
+/// EVERY WAIT ON ONE STOP SHARES THE FIRST ONE'S BOUND. A wait that joins a stop already being
+/// waited for ends when the first one gives up, never after a bound of its own.
+#[cfg(unix)]
+#[test]
+fn a_second_wait_on_one_stop_ends_with_the_first_ones_bound() {
+    let _live = live_process();
+    let fixture = Fixture::new("shared-bound");
+    let timings = Timings { stop_grace: Duration::from_secs(2), ..quick() };
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve-deaf"), timings)));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let began = Instant::now();
+    let first = {
+        let shell = Arc::clone(&shell);
+        thread::spawn(move || shell.finish_stop(Duration::from_millis(200)))
+    };
+    wait_for(|| shell.leaving.lock().ends_by.is_some(), Duration::from_secs(10), "the first wait to set its bound");
+    let second = shell.finish_stop(Duration::from_secs(20));
+    let waited = began.elapsed();
+
+    assert!(!second, "a stop past its bound was reported as having left");
+    assert!(!first.join().unwrap(), "a deaf engine was reported gone inside 200 ms");
+    assert!(waited < Duration::from_secs(1), "the second wait took {waited:?}, a bound of its own");
+    wait_for(
+        || shell.engine().state() == EngineState::Stopped,
+        Duration::from_secs(20),
+        "the stop to finish behind the waits",
     );
 }
 
@@ -3001,7 +3119,7 @@ fn a_pending_local_door_that_gave_up_is_retried_onto_no_door() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
-        leaving: Mutex::new(Leaving::NotStarted),
+        leaving: Shutdown::new(),
         pending_door: Mutex::new(Some(Mode::Local)),
     };
     assert_eq!(shell.status()["doorPending"], serde_json::Value::Bool(true));
@@ -4526,7 +4644,7 @@ fn given_up_with_lock(name: &str, record: &str) -> (Shell, PathBuf, PathBuf) {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
-        leaving: Mutex::new(Leaving::NotStarted),
+        leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
     let planned = shell.planned(None);
@@ -4741,7 +4859,7 @@ fn the_start_over_press_sets_the_store_aside_and_starts_the_engine_again() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
-        leaving: Mutex::new(Leaving::NotStarted),
+        leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
     // The store sits where the PLAN says the data directory is, read the way the press reads it.
@@ -4817,7 +4935,7 @@ fn the_retry_press_starts_the_engine_again_and_removes_nothing() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
-        leaving: Mutex::new(Leaving::NotStarted),
+        leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
     let planned = shell.planned(None);
@@ -4854,7 +4972,7 @@ fn the_retry_press_refuses_an_install_with_no_engine_to_start() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
-        leaving: Mutex::new(Leaving::NotStarted),
+        leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
     let said = shell.retry().expect_err("an inert plan must refuse the press");
@@ -4897,7 +5015,7 @@ fn the_retry_press_re_plans_a_no_key_engine_through_the_keystore() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
-        leaving: Mutex::new(Leaving::NotStarted),
+        leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
     crate::engine::keystore_double::queue(vec![
