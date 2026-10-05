@@ -363,10 +363,12 @@ export function standaloneHere(): StandaloneHere | null {
        * Only where this install is NOT organizing: over our own claim the engine reports US, and
        * rendering that as "another machine has it" is the false state in the other direction.
        */
+      /* THE GATE'S OWN REFUSAL, read whether or not the engine still says organizing: a holder whose
+         poll gate refuses keeps `organizing` (Stop reads it) while nothing is filed. The desktop's
+         overlay reads its reason first too (PHONE-START-HERE-META-FOLDER-FULL). */
+      const blocked = entries.map(([, s]) => s.unreadableReason).find((r) => r === "meta_folder_full" || r === "meta_undeletable");
+      metaBlocked = blocked === "meta_folder_full" || blocked === "meta_undeletable" ? blocked : null;
       if (!organizing) {
-        /* THE GATE'S OWN REFUSAL, which `organizing: false` alone reads as a free mailbox. */
-        const blocked = entries.map(([, s]) => s.unreadableReason).find((r) => r === "meta_folder_full" || r === "meta_undeletable");
-        metaBlocked = blocked === "meta_folder_full" || blocked === "meta_undeletable" ? blocked : null;
         const stood = entries.map(([, state]) => state).find((state) => state.reason !== null);
         heldBy = stood === undefined
           ? null

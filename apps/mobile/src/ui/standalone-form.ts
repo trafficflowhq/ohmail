@@ -284,10 +284,11 @@ export type PhoneClaim =
   /** Somebody else holds it and named nothing — an install from before the holder columns. */
   | { k: "theirsUnnamed"; kind: HolderKind }
   /**
-   * THIS PHONE'S GATE CANNOT READ `ohmail/_meta` for a reason fixed on the mail server. Not `free`:
-   * that said "Nothing organizes this mailbox" beside a Start the gate would refuse again.
+   * THIS PHONE'S GATE CANNOT READ `ohmail/_meta` for a reason fixed on the mail server — ahead of
+   * `ours` and `free`, the desktop's precedence. `holding`: this install still holds the claim, so
+   * Stop stays offered; it reads `ours` again at the first healthy pass.
    */
-  | { k: "blocked"; reason: "meta_folder_full" | "meta_undeletable" };
+  | { k: "blocked"; reason: "meta_folder_full" | "meta_undeletable"; holding: boolean };
 
 /** The chip's caption. `null` for `unknown`: no chip at all rather than a chip that guesses. */
 export function claimChipLabel(claim: PhoneClaim): string | null {
@@ -333,7 +334,7 @@ export function metaBlockedLine(reason: "meta_folder_full" | "meta_undeletable")
  * press was reachable there.
  */
 export function mayStopHere(claim: PhoneClaim): boolean {
-  return claim.k === "ours" && !claim.stopping;
+  return (claim.k === "ours" && !claim.stopping) || (claim.k === "blocked" && claim.holding);
 }
 
 /**
@@ -547,8 +548,12 @@ export function claimHere(
   const ours = (): PhoneClaim => ({
     k: "ours", stopping: instruction === "stopping", releasePending, ...(siblingLapse ? { siblingLapse } : {}),
   });
+  /* A REFUSED GATE'S REASON WINS OVER `organizing`, the desktop's precedence — except while a
+     stop the person made is being carried out, which is their act and says so. */
+  if (here.metaBlocked != null && instruction !== "stopping" && here.releaseRequestedAt === null) {
+    return { k: "blocked", reason: here.metaBlocked, holding: here.organizing };
+  }
   if (here.organizing) return ours();
-  if (here.metaBlocked != null) return { k: "blocked", reason: here.metaBlocked };
   const held = here.heldBy;
   /* A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS. The engine arranges nothing while it
    * carries out a release, so `organizing` is false on both of its endings — and on a device that
@@ -685,14 +690,14 @@ export function pressSaidOf(outcome: string): PressSaid {
  * the sentence never stands over a phone still organizing (the next start clears the record).
  */
 export function settingsLeftLine(left: "kept_other" | "not_saved" | null, claim: PhoneClaim): string | null {
-  if (left === null || claim.k === "ours" || claim.k === "unknown") return null;
+  if (left === null || claim.k === "ours" || claim.k === "unknown" || (claim.k === "blocked" && claim.holding)) return null;
   return left === "kept_other" ? Copy.settingsStopLeftOther : Copy.settingsStopLeftUnsaved;
 }
 
 export function pressSaidLine(said: PressSaid, claim: PhoneClaim): string | null {
   if (said === null) return null;
   if (claim.k !== "unknown") {
-    const ours = claim.k === "ours";
+    const ours = claim.k === "ours" || (claim.k === "blocked" && claim.holding);
     if (said === "stopRefused" ? !ours : ours) return null;
   }
   /* A press refused over a `_meta` the gate cannot read says the desktop row's sentence — once: a

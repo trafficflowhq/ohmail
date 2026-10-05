@@ -56,6 +56,7 @@ import {
   mayStopHere,
   portFieldSaid,
   pressSaidLine,
+  pressSaidOf,
   refusalField,
   serverChangeOf,
   serverFieldsFrom,
@@ -760,11 +761,7 @@ function ThisPhonePanel() {
                          racing it. The engine's own verb underneath refuses a live foreign claim,
                          so it can never produce a second organizer. */
                       void pressOrganizeHere("start").then(async (outcome) => {
-                        setSaid(
-                          outcome === "refused" ? "startRefused"
-                            : outcome === "unreadable" ? "startUnreadable"
-                              : null,
-                        );
+                        setSaid(pressSaidOf(outcome));
                         /* THE ASK, WHERE ORGANIZING ACTUALLY STARTED — the door's Connect runs the
                            same gate at the same moment. A refused start asks for nothing: a
                            permission spent on a press that achieved nothing is an ask this
@@ -878,7 +875,8 @@ function ThisPhonePanel() {
                  `refused` rather than reporting the instruction as already in force — the chip
                  goes back to `Organizing` on its own and this is the sentence beside it.
                  There is one card this sheet can open over: `mayStopHere` answers true only for
-                 `ours`, which only the door in this process produces. */
+                 `ours` and a `blocked` claim this install still holds, which only the door in this
+                 process produces. */
               /* AND NOT `setSaid(null)` FIRST — see the start verb. The condition clears a
                  refusal, never a press. */
               void pressOrganizeHere("stop").then((outcome) => {
