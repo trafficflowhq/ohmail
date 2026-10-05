@@ -2029,6 +2029,20 @@ describe("the auto-updater", () => {
     const relabel = /fn relabel<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
     expect(relabel, "the relabel helper was not found").toContain("set_text");
     expect(relabel, "the window is not told when the flow moves").toContain("STATE_EVENT");
+    /* AND THE WRITE RUNS ON THE THREAD THAT DRAWS. Tauri's menu setters wait for that thread when
+       called from any other, and a background relabel holding the item's lock there deadlocked
+       against a relabel on that thread. The whole write is handed over, setters included, and the
+       hand-over posts rather than waits; `updater_tests.rs` drives it against a double of Tauri. */
+    expect(rustCode(relabel), "the relabel's write does not go to the thread that draws").toMatch(
+      /^\s*let at = app\.clone\(\);\s*on_the_drawing_thread\(app, move \|\| \{/,
+    );
+    expect(relabel.indexOf("set_text"), "a setter runs before the hand-over").toBeGreaterThan(relabel.indexOf("on_the_drawing_thread("));
+    expect(updater).toMatch(
+      /pub\(crate\) fn on_the_drawing_thread\(drawing: &impl DrawingThread, write: impl FnOnce\(\) \+ Send \+ 'static\) \{\s*drawing\.post\(Box::new\(write\)\);\s*\}/,
+    );
+    expect(updater).toMatch(
+      /impl<R: Runtime> DrawingThread for AppHandle<R> \{\s*fn post\(&self, write: Box<dyn FnOnce\(\) \+ Send \+ 'static>\) \{[^}]*let _ = self\.run_on_main_thread\(write\);\s*\}\s*\}/,
+    );
 
     /* THE THREE NAMES ARE WRITTEN DOWN TWICE, in two languages that share no artifact to import
        one from — the same arrangement `menu.rs`/`native.ts` and the progress window already have.
@@ -2326,8 +2340,8 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(
       /pub fn quit<R: Runtime>\(app: &AppHandle<R>, code: i32\) \{\s*let leaving = app\.clone\(\);\s*quit_with\(&FENCE, \|\| say_a_quit_waits\(app\), move \|\| leaving\.exit\(code\)\);/,
     );
-    /* The window's sentence is sent from the thread that draws, so it never relabels the menu item:
-       a relabel holds the item's lock while it waits for that thread. */
+    /* The window's sentence is the quit's report alone and never relabels the menu item: a quit
+       moves no stage, so the item has nothing new to say. */
     const say = /pub\(crate\) fn say_a_quit_waits<R: Runtime>[\s\S]*?\n\}\n/.exec(updater)?.[0] ?? "";
     expect(say, "say_a_quit_waits was not found").not.toBe("");
     expect(say, "the quit's sentence does not send the window its report").toContain("app.emit(STATE_EVENT, report)");

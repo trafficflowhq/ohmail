@@ -1605,9 +1605,8 @@ thread_local! {
 }
 
 /// The window, told that a quit waits for the install: shown again if it was hidden, and sent the
-/// report with `closing` set ([`told`]). NOT [`relabel`]: this runs on the thread that draws, and a
-/// relabel holds the menu item's lock while it waits for that thread, so a second one there would
-/// wait on the first for ever.
+/// report with `closing` set ([`told`]). NOT [`relabel`]: a quit moves no stage, so the menu item
+/// has nothing new to say, and the window's report is the one surface that changes.
 pub(crate) fn say_a_quit_waits<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -1762,24 +1761,51 @@ fn signal<R: Runtime>(app: &AppHandle<R>, signal: Signal) {
 /// over the `core:event:allow-listen` grant the menu's own events use. A failed emit is a window
 /// that is not there yet or is closing, and the pane re-reads the state when it next mounts.
 fn relabel<R: Runtime>(app: &AppHandle<R>) {
-    let state = app.state::<Updater<R>>();
-    let (label, enabled, report) = {
-        let flow = lock(&state.flow);
-        let last = *lock(&state.last);
-        let kind = install_kind();
-        let (label, enabled) = menu_text(kind, &flow);
-        (label, enabled, told(&flow, last, kind))
-    };
-    // A bar that has not been built yet (this runs before `menu.rs` hands the item over on a very
-    // early check) simply has nothing to relabel; `adopt_menu_item` relabels once on arrival. On a
-    // session where the compositor owns the frame there is no bar at ALL — `frame.rs` — and the
-    // settings pane below is then the only surface, which is why it is not optional.
-    let item = lock(&state.item);
-    if let Some(item) = item.as_ref() {
-        let _ = item.set_text(label);
-        let _ = item.set_enabled(enabled);
+    let at = app.clone();
+    on_the_drawing_thread(app, move || {
+        let app = &at;
+        let state = app.state::<Updater<R>>();
+        let (label, enabled, report) = {
+            let flow = lock(&state.flow);
+            let last = *lock(&state.last);
+            let kind = install_kind();
+            let (label, enabled) = menu_text(kind, &flow);
+            (label, enabled, told(&flow, last, kind))
+        };
+        // A bar that has not been built yet (this runs before `menu.rs` hands the item over on a
+        // very early check) has nothing to relabel; `adopt_menu_item` relabels once on arrival. On
+        // a session where the compositor owns the frame there is no bar at ALL — `frame.rs` — and
+        // the settings pane below is then the only surface, which is why it is not optional.
+        let item = lock(&state.item);
+        if let Some(item) = item.as_ref() {
+            let _ = item.set_text(label);
+            let _ = item.set_enabled(enabled);
+        }
+        let _ = app.emit(STATE_EVENT, report);
+    });
+}
+
+/// The thread a write to the menu runs on: the one that draws.
+pub(crate) trait DrawingThread {
+    /// Run `write` there: at once when the caller is that thread, posted otherwise, and never
+    /// waited for.
+    fn post(&self, write: Box<dyn FnOnce() + Send + 'static>);
+}
+
+impl<R: Runtime> DrawingThread for AppHandle<R> {
+    fn post(&self, write: Box<dyn FnOnce() + Send + 'static>) {
+        // An error is a loop that has already gone, with no menu left to write.
+        let _ = self.run_on_main_thread(write);
     }
-    let _ = app.emit(STATE_EVENT, report);
+}
+
+/// EVERY MENU WRITE RUNS ON THE THREAD THAT DRAWS, AND NO THREAD WAITS FOR IT. Tauri's setters post
+/// to that thread and wait when called from any other, so a background relabel used to hold the
+/// item's lock while it waited there, and a relabel on that thread meanwhile (a press, the Settings
+/// button, the daily check) waited for the same lock: neither moved again. The write reads the flow
+/// when it runs, so the last one to run carries the newest state.
+pub(crate) fn on_the_drawing_thread(drawing: &impl DrawingThread, write: impl FnOnce() + Send + 'static) {
+    drawing.post(Box::new(write));
 }
 
 /// Write down what a completed check found.

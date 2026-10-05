@@ -2187,3 +2187,132 @@ fn the_window_is_told_closing_only_while_a_quit_waits_on_a_writing_install() {
     drop(writing);
     assert_eq!(closing(), serde_json::json!(false), "closing after the install returned");
 }
+
+/* ── The menu, written on the thread that draws ───────────────────────────────────────────────
+ *
+ * A double of Tauri's two rules (2.11.5): `run_on_main_thread` runs a task at once on the main
+ * thread and posts it from any other, and a menu setter called off that thread posts its write and
+ * waits for it (`run_item_main_thread!`). `relabel` needs an app, so its shape is driven here: the
+ * item's lock, then the setter, inside one write handed to `on_the_drawing_thread`. */
+
+use super::{on_the_drawing_thread, DrawingThread};
+use std::sync::atomic::AtomicU32;
+
+type Write = Box<dyn FnOnce() + Send + 'static>;
+
+/// The thread that draws: tasks run there in the order they were posted.
+#[derive(Clone)]
+struct DrawingDouble {
+    tasks: mpsc::Sender<Write>,
+    id: thread::ThreadId,
+}
+
+impl DrawingDouble {
+    fn start() -> DrawingDouble {
+        let (tasks, queue) = mpsc::channel::<Write>();
+        let (id_tx, id) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = id_tx.send(thread::current().id());
+            for task in queue {
+                task();
+            }
+        });
+        DrawingDouble { tasks, id: id.recv().expect("the drawing thread started") }
+    }
+
+    fn here(&self) -> bool {
+        thread::current().id() == self.id
+    }
+}
+
+impl DrawingThread for DrawingDouble {
+    fn post(&self, write: Write) {
+        if self.here() {
+            write();
+        } else {
+            let _ = self.tasks.send(write);
+        }
+    }
+}
+
+/// A menu item that keeps Tauri's rule: set from another thread, it posts the write and waits.
+struct ItemDouble {
+    drawing: DrawingDouble,
+    labels: Arc<std::sync::Mutex<Vec<u32>>>,
+}
+
+impl ItemDouble {
+    fn set_text(&self, label: u32) {
+        let labels = Arc::clone(&self.labels);
+        if self.drawing.here() {
+            labels.lock().unwrap().push(label);
+            return;
+        }
+        let (done, written) = mpsc::channel();
+        let _ = self.drawing.tasks.send(Box::new(move || {
+            labels.lock().unwrap().push(label);
+            let _ = done.send(());
+        }));
+        let _ = written.recv();
+    }
+}
+
+/// `relabel`'s shape against the doubles: the stage read when the write runs, then the item's lock,
+/// then the setter.
+fn relabel_double(drawing: &DrawingDouble, item: &Arc<std::sync::Mutex<ItemDouble>>, stage: &Arc<AtomicU32>) {
+    let (item, stage) = (Arc::clone(item), Arc::clone(stage));
+    on_the_drawing_thread(drawing, move || {
+        let label = stage.load(Ordering::SeqCst);
+        let item = item.lock().unwrap();
+        item.set_text(label);
+    });
+}
+
+/// A RELABEL FROM ANY THREAD NEVER WAITS FOR THE THREAD THAT DRAWS UNDER THE ITEM'S LOCK. A
+/// background relabel used to take the item's lock and set the text there, waiting for that thread;
+/// a press on that thread meanwhile waited for the same lock, and neither moved again. The last
+/// write to run also carries the newest stage, not the one its caller saw.
+#[test]
+fn a_relabel_from_any_thread_never_waits_for_the_drawing_thread_under_the_items_lock() {
+    let drawing = DrawingDouble::start();
+    let labels = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let item = Arc::new(std::sync::Mutex::new(ItemDouble { drawing: drawing.clone(), labels: Arc::clone(&labels) }));
+    let stage = Arc::new(AtomicU32::new(1));
+
+    // The thread that draws is inside a handler, a press, until the test lets it go.
+    let (go, held) = mpsc::channel::<()>();
+    let (pressed_tx, pressed) = mpsc::channel();
+    {
+        let (on_it, item, stage) = (drawing.clone(), Arc::clone(&item), Arc::clone(&stage));
+        drawing.post(Box::new(move || {
+            let _ = held.recv();
+            stage.store(2, Ordering::SeqCst);
+            relabel_double(&on_it, &item, &stage);
+            let _ = pressed_tx.send(());
+        }));
+    }
+    // A background transition relabels meanwhile.
+    let (relabelled_tx, relabelled) = mpsc::channel();
+    {
+        let (drawing, item, stage) = (drawing.clone(), Arc::clone(&item), Arc::clone(&stage));
+        thread::spawn(move || {
+            relabel_double(&drawing, &item, &stage);
+            let _ = relabelled_tx.send(());
+        });
+    }
+
+    assert!(
+        relabelled.recv_timeout(Duration::from_secs(2)).is_ok(),
+        "the background relabel waited for the thread that draws"
+    );
+    let _ = go.send(());
+    assert!(
+        pressed.recv_timeout(Duration::from_secs(2)).is_ok(),
+        "the press on the thread that draws never finished: it waited for the item's lock"
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while labels.lock().unwrap().len() < 2 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(*labels.lock().unwrap(), vec![2, 2], "a write ran off the thread that draws, or wrote a stale stage");
+}
