@@ -74,6 +74,19 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.15" date="2026-10-05">
+      <description>
+        <ul>
+          <li>Fewer presses fail beside another change, and a rule keeps its place</li>
+          <li>Behind your own terminator, the proxy alone decides who a visitor is</li>
+          <li>A message waiting for a connection goes from one window</li>
+          <li>The phone and the desktop app say when a message could not be read</li>
+          <li>A wrong code is never retried as a session renewal</li>
+          <li>Held messages stay out of Ohbox conversations</li>
+          <li>The ⋯ button in a message's header is a plain icon again</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.14" date="2026-10-05">
       <description>
         <ul>
@@ -136,13 +149,6 @@
           <li>The desktop app no longer closes its local store under a write when it quits</li>
           <li>An html message on the phone is shown as text when drawing it would stall the app</li>
           <li>Showing the images of a message no longer closes the phone app</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.10" date="2026-10-03">
-      <description>
-        <ul>
-          <li>A long message no longer stops the phone from syncing</li>
         </ul>
       </description>
     </release>
