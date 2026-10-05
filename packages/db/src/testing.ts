@@ -212,27 +212,40 @@ export function boxDoorHeld(env: NodeJS.ProcessEnv, tokenPath: string = BOX_TOKE
 
 /**
  * Why the door's token does not license this run, or `null` when it does. A matching token is not
- * enough (BOX-TOKEN-OUTLIVES-A-KILLED-DOOR): a SIGKILLed door never removes its file. So the file's
- * `pid=` writer must still hold `ohmail-pg.lock` beside the token open, and that lock must stand in
- * /proc/locks as a FLOCK — the RESOURCE is read, never `kill -0`, which a zombie or a reused pid
- * answers.
+ * enough: a SIGKILLed door never removes its file, and the 0600 file is readable by every lane on this
+ * one user (BOX-TOKEN-OUTLIVES-A-KILLED-DOOR). So a process in THIS run's own
+ * ancestor chain must hold the FLOCK on `ohmail-pg.lock` beside the token: /proc/locks names it and it
+ * still holds a descriptor on that inode. The resource is read, never `kill -0`. The token file stays
+ * one line, which is all a harness from before this rule compares.
  */
 function boxDoorVerdict(env: NodeJS.ProcessEnv, tokenPath: string): string | null {
   const token = env[BOX_TOKEN_ENV];
   if (!token || !/^[0-9a-f]{32}$/.test(token)) return `no ${BOX_TOKEN_ENV} was handed to this run`;
   let text: string;
   try { text = readFileSync(tokenPath, "utf8"); } catch { return `there is no token file at ${tokenPath}`; }
-  const [first = "", ...rest] = text.split("\n");
-  if (first.trim() !== token) return `${BOX_TOKEN_ENV} does not match the token at ${tokenPath}`;
-  const pid = Number(/^pid=([1-9][0-9]*)$/m.exec(rest.join("\n"))?.[1] ?? NaN);
-  if (!Number.isInteger(pid)) return `the token at ${tokenPath} names no writer pid`;
+  if (text.trim() !== token) return `${BOX_TOKEN_ENV} does not match the token at ${tokenPath}`;
   const lock = join(dirname(tokenPath), "ohmail-pg.lock");
   let dev: bigint, ino: bigint;
   try { ({ dev, ino } = statSync(lock, { bigint: true })); } catch { return `there is no lock file at ${lock}`; }
-  if (!processHoldsFile(pid, dev, ino)) return `the token's writer (pid ${pid}) no longer holds ${lock} — a door killed before its cleanup left the token`;
   let locks: string;
   try { locks = readFileSync("/proc/locks", "utf8"); } catch { return "/proc/locks cannot be read, so whether the lock is held cannot be said"; }
-  return flockHeldIn(locks, dev, ino) ? null : `${lock} is not flock-held — the door that wrote the token has released it`;
+  const holders = flockHoldersIn(locks, dev, ino);
+  if (holders.length === 0) return `${lock} is not flock-held — the door that wrote the token has released it`;
+  const chain = ancestorsOf(process.pid);
+  if (holders.some((pid) => chain.includes(pid) && processHoldsFile(pid, dev, ino))) return null;
+  return `no process in this run's ancestry holds ${lock} (held by pid ${holders.join(",")}) — the token reached a run outside the door, or the door that wrote it is gone`;
+}
+
+/** This process and every parent up to init, from /proc/<pid>/stat (the ppid follows the comm's `)`). */
+function ancestorsOf(pid: number): number[] {
+  const out: number[] = [];
+  for (let p = pid; p > 0 && !out.includes(p) && out.length < 256;) {
+    out.push(p);
+    let stat: string;
+    try { stat = readFileSync(`/proc/${p}/stat`, "utf8"); } catch { break; /* the parent exited: the chain ends here */ }
+    p = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+  }
+  return out;
 }
 
 /** Does `pid` hold a descriptor open on the file `dev`/`ino`? Read from /proc/<pid>/fd; an exited
@@ -245,16 +258,18 @@ function processHoldsFile(pid: number, dev: bigint, ino: bigint): boolean {
   });
 }
 
-/** Is a FLOCK on the file `dev`/`ino` listed in a /proc/locks text? `dev` is a stat `st_dev`;
- *  /proc/locks prints `<major hex>:<minor hex>:<inode>`, decoded here as glibc decodes st_dev. A
- *  waiter's ` -> ` line holds nothing and is not read. */
-export function flockHeldIn(locks: string, dev: bigint, ino: bigint): boolean {
+/** The pids a /proc/locks text names as holding a FLOCK on the file `dev`/`ino`. `dev` is a stat
+ *  `st_dev`; /proc/locks prints `<major hex>:<minor hex>:<inode>`, decoded here as glibc decodes
+ *  st_dev. A waiter's ` -> ` line holds nothing and is not read. */
+export function flockHoldersIn(locks: string, dev: bigint, ino: bigint): number[] {
   const major = ((dev >> 8n) & 0xfffn) | ((dev >> 32n) & ~0xfffn);
   const minor = (dev & 0xffn) | ((dev >> 12n) & ~0xffn);
-  return locks.split("\n").some((l) => {
-    const m = /^\d+: FLOCK\s+\S+\s+\S+\s+\d+\s+([0-9a-f]+):([0-9a-f]+):(\d+)\s/.exec(l);
-    return m !== null && BigInt(`0x${m[1]}`) === major && BigInt(`0x${m[2]}`) === minor && BigInt(m[3]!) === ino;
-  });
+  const out: number[] = [];
+  for (const l of locks.split("\n")) {
+    const m = /^\d+: FLOCK\s+\S+\s+\S+\s+(\d+)\s+([0-9a-f]+):([0-9a-f]+):(\d+)\s/.exec(l);
+    if (m !== null && BigInt(`0x${m[2]}`) === major && BigInt(`0x${m[3]}`) === minor && BigInt(m[4]!) === ino) out.push(Number(m[1]));
+  }
+  return out;
 }
 
 function boxDoorRefusal(why: string): string {
