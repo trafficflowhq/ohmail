@@ -1,7 +1,8 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER } from "./screener-apply.js";
-import { ruleNamesSenderSql } from "./rule-match-sql.js";
+import { ruleMatchKeySql, ruleNamesSenderSql } from "./rule-match-sql.js";
+import { SCREENER_ACT_TRIGGER_PREFIX } from "./rule-decided-by.js";
 
 /**
  * The cutline, as SQL — one implementation of "is this sender still worth a decision", for every
@@ -228,17 +229,18 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
 }
 
 /**
- * DID A PERSON SCREEN THIS SENDER OUT — the automatic unsubscribe pass's licence (UD-R4-03). An
- * enabled `sender`/`domain` rule naming the author, filing to one of `denyFolders`, whose decision
- * a person made (`person_decided_at`). {@link senderIsDecidedSql}'s claim, with the account as an
- * EXPRESSION because the drain runs deployment-wide. `senderExpr` is lower-cased by the caller.
- * Through the dialect only: the phone bundle runs this against its own store.
+ * DID A PERSON SCREEN THIS SENDER OUT HERE — the automatic unsubscribe pass's licence (UD-R4-03). An
+ * enabled `sender`/`domain` rule naming the author, filing to one of `denyFolders`, whose decision a
+ * person made (`person_decided_at`) ON THIS ACCOUNT: a person's (not the act's) Screener decision for
+ * the rule's own key into a deny folder is on record here. A stamp a profile import carried has no
+ * such record, so it licenses nothing. `senderExpr` is lower-cased by the caller; through the dialect.
  */
 export function senderScreenedOutByPersonSql(
   d: Dialect, accountExpr: SQL, senderExpr: SQL, denyFolders: readonly string[],
 ): SQL {
   if (denyFolders.length === 0) return sql`false`;
   const deny = sql`(${sql.join(denyFolders.map((f) => sql`${f}`), sql`, `)})`;
+  const key = ruleMatchKeySql(sql`rp.match`);
   return sql`exists (
     select 1 from rules rp
      where rp.account_id = ${accountExpr}
@@ -246,6 +248,14 @@ export function senderScreenedOutByPersonSql(
        and rp.person_decided_at is not null
        and rp.destination in ${deny}
        and ${ruleNamesSenderSql(d, { kind: sql`rp.kind`, match: sql`rp.match` }, senderExpr)}
+       and exists (
+         select 1 from learning_signals ls
+          where ls.account_id = rp.account_id
+            and ls.kind = 'screener'
+            and ls.triggering_action_id not like ${`${SCREENER_ACT_TRIGGER_PREFIX}%`}
+            and ls.destination in ${deny}
+            and ((rp.kind = 'sender' and lower(ls.sender_address) = ${key})
+              or (rp.kind = 'domain' and lower(ls.sender_domain) = ${key})))
   )`;
 }
 
