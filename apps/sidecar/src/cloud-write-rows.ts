@@ -114,6 +114,8 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /screener/junk/rescue": direct,
   "POST /screener/junk/sweep": direct,
   "POST /screener/suggest": direct,
+  // A Cancel's answer: the tombstone lives on the hosted server alone, and nothing here mirrors it.
+  "POST /sends/withdraw": none,
   "POST /snippets": none,
   "POST /sync/pull": none,
   "POST /tags": verbs("tag_create"),

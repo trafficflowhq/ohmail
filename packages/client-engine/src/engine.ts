@@ -7868,10 +7868,11 @@ export class OhmailEngine {
       if (claim === "offline") {
         throw new MutationRejectedError("network failure: this device is offline", { code: "network", retryable: true });
       }
-      // With no claim (no disk shared with another window) the wire fact is written here, first.
-      if (claim === "unclaimed" && p.mutation.kind === "mail_send" && p.wired !== true) {
+      // THE WIRE FACT, before the request: always in memory, and on disk here only where no window
+      // shares it (the claim wrote it otherwise). A shared row the claim found gone is not re-made.
+      if (p.mutation.kind === "mail_send" && p.wired !== true) {
         p.wired = true;
-        await this.putOutbox(p);
+        if (!this.ownershipOn()) await this.putOutbox(p);
       }
       const outcome = await this.adapter.mutate(p.mutation, {
         idempotencyKey: p.key,

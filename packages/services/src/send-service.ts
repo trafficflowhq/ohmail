@@ -1013,6 +1013,16 @@ export class SendService {
    */
   async withdraw(
     ctx: ServiceContext, idempotencyKey: string, draftId: string | null,
+    deps: Pick<SendDeps, "openSendAdapter" | "log">,
+  ): Promise<SendWithdrawResult> {
+    const answer = await this.withdrawOnce(ctx, idempotencyKey, draftId, deps);
+    // One line per answer, content-free: the outcome is what a person was told.
+    (deps.log ?? defaultLog).info("send_withdraw", { accountId: ctx.accountId, outcome: answer.outcome });
+    return answer;
+  }
+
+  private async withdrawOnce(
+    ctx: ServiceContext, idempotencyKey: string, draftId: string | null,
     deps: Pick<SendDeps, "openSendAdapter">,
   ): Promise<SendWithdrawResult> {
     type Decided = { result: SendWithdrawResult } | { stale: typeof outboundSends.$inferSelect; mailboxId: string };
