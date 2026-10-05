@@ -121,6 +121,18 @@ export const DECIDED_DESTINATIONS: readonly string[] = ORGANIZED_FOLDERS.filter(
 export const CONSENTING_DESTINATIONS: readonly string[] = DECIDED_DESTINATIONS
   .filter((f) => f !== "ohmail/Screened" && f !== "ohmail/Quarantine");
 
+/**
+ * WHERE A MESSAGE IS HELD: the gate, Screened and Quarantine — every organized folder that does not
+ * let its sender through. Derived, never listed. A held message stands in no Ohbox conversation a
+ * header threaded it into (the fold, the panel, the participants, the row's target) unless the
+ * person pinned it; the Screener's segments are this set spelled as views, pinned by a parity test.
+ */
+export const HELD_FOLDERS: readonly string[] = ORGANIZED_FOLDERS.filter((f) => !CONSENTING_DESTINATIONS.includes(f));
+
+export function isHeldFolder(folder: string | null | undefined): boolean {
+  return folder != null && HELD_FOLDERS.includes(folder);
+}
+
 /** Is a rule or placement at `destination` a decision about its sender? A stray string is not. */
 export function isDecidedDestination(destination: string | null | undefined): boolean {
   return destination != null && DECIDED_DESTINATIONS.includes(destination);

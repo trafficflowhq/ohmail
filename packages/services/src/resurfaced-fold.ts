@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { messages } from "@trafficflow/db";
 import { heldOutByFolds, type FoldMember } from "@trafficflow/core/conversation-fold";
 import { isSentFolderPath } from "@trafficflow/core/mail";
+import { isHeldFolder } from "@trafficflow/core/destinations";
 import type { Db } from "./context.js";
 import { materializeMessagesInOrder } from "./dto/materialize.js";
 import type { MessageDTO } from "./dto/types.js";
@@ -29,6 +30,8 @@ export function foldMemberOf(m: MessageDTO): FoldMember {
     arrivedMs: ms(m.sortAt) ?? ms(m.date) ?? ms(m.arrivedAt),
     fromSomeone: !isSentFolderPath(m.folder) && m.autoReplyByUs !== true && m.itipReplyHeader !== true,
     state: m.triage?.state ?? null, setAtMs: ms(m.triage?.setAt),
+    // The filed folder, as the client reads its presented one: a held reply joins no fold.
+    placed: !isHeldFolder(m.folder),
   };
 }
 

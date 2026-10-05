@@ -4,6 +4,7 @@ import { isAcknowledgementSubject } from "@trafficflow/core/ics";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { resurfacedFolds } from "@trafficflow/core/conversation-fold";
+import { isHeldFolder } from "@trafficflow/core/destinations";
 import type { EntityReader } from "./store.js";
 /* The address fold and the own-address predicate, from the leaf that owns both — never
    re-spelled here. A LEAF and not `consent-cutline.ts`: the partition imports this module, so
@@ -256,18 +257,19 @@ function collapseTwins(members: EngineMessage[], openId: string): EngineMessage[
  * The conversation a message belongs to, oldest first — the one place the grouping is computed.
  * The empty array is a contract: no `threadId` and sole-member threads both answer `[]`, so a
  * caller cannot render "1 message" chrome around a message with no conversation (every consumer
- * checks `length > 0`). No folder filter: a conversation legitimately spans folders — a
- * stranger's first mail in `ohmail/Screener`, accepted follow-ups in the Ohbox, and the user's
- * own replies under the server's Sent name (the worker watches Sent now). O(n) over the mirror;
- * never call per row for list badges — that is O(n²).
+ * checks `length > 0`). A conversation spans folders (the Ohbox, Sent under the server's name, a
+ * pinned gate row) but a HELD member stands in it by a header another sender wrote, so it is left
+ * out ({@link standsHeld}) unless it is the message asked about. O(n) over the mirror; never call
+ * per row for list badges — that is O(n²).
  */
 export function threadOf(reader: EntityReader, messageId: string): EngineMessage[] {
   const self = reader.get<EngineMessage>("message", messageId);
   if (!self?.threadId) return [];
+  const claims = winningStates(reader);
   const members = collapseTwins(
     reader
       .list<EngineMessage>("message")
-      .filter((m) => m.threadId === self.threadId)
+      .filter((m) => m.threadId === self.threadId && (m.id === messageId || !standsHeld(m, claims)))
       .sort(byDateAsc),
     messageId,
   );
@@ -510,6 +512,19 @@ export function winningStates(reader: EntityReader): Map<string, MessageStateDTO
   return claimOf;
 }
 
+/**
+ * HELD AND NOT PINNED: at the gate, screened out or quarantined ({@link isHeldFolder} over the
+ * folder this reader shows), with no `resurfaced`/`bubbled_up` claim the person put on it. Such a
+ * message is in no conversation another sender's header threaded it into — not its panel, not its
+ * participants, not its Resurfaced row. On a raw reader a pinned gate row reads its physical
+ * folder, which is why the claim is asked and not the folder alone.
+ */
+function standsHeld(m: Pick<EngineMessage, "id" | "folder">, claims: ReadonlyMap<string, MessageStateDTO>): boolean {
+  if (!isHeldFolder(m.folder)) return false;
+  const state = claims.get(m.id)?.state;
+  return state !== "resurfaced" && state !== "bubbled_up";
+}
+
 /** Two claims a surface cannot tell apart — used to keep a row's identity when nothing moved. */
 function sameClaim(a: MessageStateDTO | null, b: MessageStateDTO | null): boolean {
   if (a === b) return true;
@@ -711,7 +726,7 @@ export interface ResurfacedThreadRow {
   /** Stable row identity: the thread, or the lone message for a row with no conversation. */
   key: string;
   threadId: string | null;
-  /** Every mirror message of the conversation, newest arrival first. */
+  /** Every mirror message of the conversation but a held one ({@link standsHeld}), newest first. */
   members: EngineMessage[];
   /** The members carrying the claim — `resurfaced` and `bubbled_up` alike. */
   pinned: EngineMessage[];
@@ -874,6 +889,8 @@ export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
     return {
       id: m.id, threadId: m.threadId, arrivedMs: arrivalMs(m), fromSomeone: isFromSomeone(m), unread: m.unread,
       state: (claim?.state as string | undefined) ?? null, setAtMs: msOf(claim?.setAt ?? null), msg: m,
+      // The PRESENTED folder: a pinned gate row presents INBOX; the fold keeps a pin wherever it is.
+      placed: !isHeldFolder(m.folder),
     };
   });
   const rows: ResurfacedThreadRow[] = [];
@@ -944,8 +961,9 @@ export const THREAD_PARTICIPANTS_MAX = 3;
  * for mounted rows carrying a `threadId`.
  */
 export function threadParticipants(reader: EntityReader, threadId: string): EmailAddress[] {
+  const claims = winningStates(reader);
   return participantsOfMembers(
-    reader.list<EngineMessage>("message").filter((m) => m.threadId === threadId),
+    reader.list<EngineMessage>("message").filter((m) => m.threadId === threadId && !standsHeld(m, claims)),
   );
 }
 
@@ -961,8 +979,10 @@ export function threadParticipants(reader: EntityReader, threadId: string): Emai
  */
 export function threadParticipantsIndex(reader: EntityReader): Map<string, EmailAddress[]> {
   const byThread = new Map<string, EngineMessage[]>();
+  const claims = winningStates(reader);
   for (const m of reader.list<EngineMessage>("message")) {
-    if (!m.threadId) continue;
+    // A held stranger is no voice of the conversation a header threaded them into.
+    if (!m.threadId || standsHeld(m, claims)) continue;
     const members = byThread.get(m.threadId);
     if (members) members.push(m);
     else byThread.set(m.threadId, [m]);

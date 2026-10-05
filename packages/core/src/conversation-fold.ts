@@ -18,6 +18,12 @@ export interface FoldMember {
   /** The message's winning triage state, and when it was set. */
   state: string | null;
   setAtMs: number | null;
+  /**
+   * The message stands where a decision or the person put it — not held at the gate, screened out
+   * or quarantined. Required, so neither door can forget it; each fills it from its own folder
+   * (`isHeldFolder`), because this module imports nothing (the worker loads it under plain Node).
+   */
+  placed: boolean;
 }
 
 export interface ResurfacedFold<M extends FoldMember> {
@@ -48,6 +54,9 @@ export function conversationKey(m: Pick<FoldMember, "id" | "threadId">): string 
 export function resurfacedFolds<M extends FoldMember>(members: readonly M[]): ResurfacedFold<M>[] {
   const byKey = new Map<string, M[]>();
   for (const m of members) {
+    // A held message is no member: a header another sender wrote threads it, its place does not.
+    // The person's own pin places it wherever it sits.
+    if (!m.placed && m.state !== "resurfaced" && m.state !== "bubbled_up") continue;
     const key = conversationKey(m);
     const held = byKey.get(key);
     if (held) held.push(m);

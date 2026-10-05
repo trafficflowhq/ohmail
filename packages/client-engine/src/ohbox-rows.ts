@@ -7,6 +7,7 @@ import {
   resurfacedThreads,
   type ResurfacedThreadRow,
 } from "./selectors.js";
+import { isHeldFolder } from "@trafficflow/core/destinations";
 import type { EntityReader } from "./store.js";
 import type { EngineMessage } from "./types.js";
 
@@ -144,6 +145,9 @@ export function foldOhboxRows(
 export function rowOpenTarget(
   reader: EntityReader, opened: EngineMessage, openHeld: string | null = null,
 ): EngineMessage {
+  // A held message stands in no row (its place is the gate or Quarantine): opened, it is its own
+  // target, never one a header another sender wrote would redirect it to.
+  if (isHeldFolder(opened.folder)) return opened;
   const key = conversationKeyOf(opened);
   const rows = ohboxRows(reader, openHeld);
   for (const section of SECTIONS) {
