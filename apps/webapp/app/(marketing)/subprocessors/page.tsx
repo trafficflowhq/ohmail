@@ -188,11 +188,12 @@ export default function SubprocessorsPage() {
                   latest; the desktop and phone apps renew while you use them and stop
                   after 400 days without use. Signing out, or removing a device, ends it
                   immediately. The hourly pass deletes a session&rsquo;s record 30 days
-                  after it is signed out or its device removed, and 400 days after it
-                  ran out otherwise, so an app that was offline can still be told the
-                  account is gone; it clears the IP address a desktop or phone app was
-                  added from once its last session&rsquo;s record is gone. The name it
-                  is listed under stays until you delete your account.
+                  after it is signed out or its device removed. A session that was not
+                  signed out, or one a later deletion of your account would still have to
+                  reach, stays until 400 days after its sign-in ran out, so that app can
+                  still be told the account is gone. The pass clears the IP address a
+                  desktop or phone app was added from once its last session&rsquo;s record
+                  is gone; the name it is listed under stays until you delete your account.
                 </td>
               </tr>
               <tr>
