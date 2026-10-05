@@ -1,4 +1,4 @@
-import { renderAlertMail } from "@trafficflow/db/cloud";
+import { renderAlertMail, renderDigestMail, type AlertDigest } from "@trafficflow/db/cloud";
 
 /**
  * The transactional templates. Plain TypeScript returning `{ subject, text, html }` — no template
@@ -494,6 +494,21 @@ function operatorAlert(d: OperatorAlertData): RenderedEmail {
 }
 
 /**
+ * The operator's DAILY ALERT SUMMARY — `operator_alert`'s sibling, not customer mail: the configured
+ * operator address, a digest of incident keys, kinds, titles and timestamps. Rendered by
+ * `packages/db`, so the worker's mail arm and this one send the same bytes.
+ */
+export interface OperatorDigestData {
+  environment: string;
+  digest: AlertDigest;
+  consoleUrl: string;
+}
+
+function operatorDigest(d: OperatorDigestData): RenderedEmail {
+  return renderDigestMail(d.digest, d.environment, safeUrl(d.consoleUrl));
+}
+
+/**
  * Template 6 — ACCOUNT ALREADY EXISTS, the one that closes the oracle. `POST /auth/register`
  * answers a CONSTANT 202 on the public path either way, so the "sign in instead" news has nowhere
  * to go except here — the inbox only the address owner can read. The prober learns nothing; the
@@ -661,9 +676,9 @@ function lifecycleNotice(d: LifecycleNoticeData): RenderedEmail {
 /**
  * Template name → its data shape — the contract `MailerPort.send` is generic over, so a caller
  * cannot pass invite data to the verification template. The set is closed on purpose: adding an
- * entry is a product decision. Five are customer mail; `operator_alert` is not. "Closed" has
- * always meant the typed map and the absence of a free-form body, never a frozen cardinality: two
- * entries have been added since the original four, each argued at its own definition. What may
+ * entry is a product decision. `operator_alert` and `operator_digest` are not customer mail.
+ * "Closed" has always meant the typed map and the absence of a free-form body, never a frozen
+ * cardinality: entries have been added since the original four, each argued at its own definition. What may
  * never happen: an entry whose data shape can carry arbitrary text into an outbound message from
  * our domain, or a `send` overload that skips this map.
  */
@@ -674,6 +689,7 @@ export interface TemplateDataMap {
   security_notice: SecurityNoticeData;
   email_verification: EmailVerificationData;
   operator_alert: OperatorAlertData;
+  operator_digest: OperatorDigestData;
   account_exists: AccountExistsData;
   lifecycle_notice: LifecycleNoticeData;
 }
@@ -687,6 +703,7 @@ const RENDERERS: { [K in TemplateName]: (data: TemplateDataMap[K]) => RenderedEm
   security_notice: securityNotice,
   email_verification: emailVerification,
   operator_alert: operatorAlert,
+  operator_digest: operatorDigest,
   account_exists: accountExists,
   lifecycle_notice: lifecycleNotice,
 };

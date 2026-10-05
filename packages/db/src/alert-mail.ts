@@ -1,20 +1,19 @@
 import { createHash } from "node:crypto";
 import {
-  classifyTransportError, nodePostJson,
-  DEFAULT_ALERT_FLAP_FLOOR_MS, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS, DEFAULT_ALERT_REPEAT_MS,
-  DEFAULT_CRITICAL_HOURLY_PAGES,
-  type AlertDeliveryResult, type AlertSink, type PostJson, type ResolutionNotice,
+  classifyTransportError, nodePostJson, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS,
+  type Alert, type AlertDeliveryResult, type AlertSink, type PostJson,
 } from "./alerts.js";
+import { DIGEST_INTERVAL_MS, MAIL_COOLDOWN_MS, type AlertDigest } from "./alert-mail-policy.js";
 
 /**
  * The mail arm of the worker's pager — one JSON POST to the product's own transactional mailer,
  * no SDK, no `packages/services` import. Measured need: the webhook arm's host blackholes the
  * worker's egress while the mailer answered 200; the failure streak reached 199 on a real firing
- * alert. Its own module: `alerts.ts` stays "drizzle plus one fetch", and the worker imports core
- * + db only. `TF_ALERT_EMAIL` arms it: unset ⇒ null (a deliberate disarm); set but unusable ⇒ a
- * sink refusing every delivery naming the fault. Divergent from the API host's all-or-nothing
- * block: no customer mail to protect here. The mail is {@link renderAlertMail}'s, from `Alert`
- * fields only; five payload keys (pinned); the key redacted; the cadence is the retry.
+ * alert. Its own module: the worker imports core + db only. `TF_ALERT_EMAIL` arms it: unset ⇒
+ * null; set but unusable ⇒ a sink refusing every delivery naming the fault (no customer mail to
+ * protect here, unlike the API host). The mail is {@link renderAlertMail}'s, from `Alert` fields
+ * only; five payload keys (pinned); the key redacted. A `channel: "mail"` sink: the pass hands it
+ * pages only (`alert-mail-policy.ts`) and a daily digest, never a resolution.
  */
 
 /** Where the mail arm posts. Fixed rather than configurable — the credential picks the account. */
@@ -59,18 +58,16 @@ export interface AlertMailInput {
 
 const hours = (ms: number): string => `${ms / 3_600_000} h`;
 
-/** The page schedule, from the constants the pass runs on — the footer every alert mail carries. */
+/** The mail schedule, from the constants the pass runs on — the footer every alert mail carries. */
 export const ALERT_MAIL_SCHEDULE =
-  "Sent when an alert starts and when it gets worse than any earlier mail about it said (for " +
-  "example a higher severity, or its count past the next doubling). A falling count sends " +
-  "nothing. While " +
-  `it stands, a critical alert is sent again after ${hours(DEFAULT_ALERT_REPEAT_MS)} until it ` +
-  `has been sent ${DEFAULT_CRITICAL_HOURLY_PAGES} times, then every ` +
-  `${hours(DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS)}; a warning every ` +
-  `${hours(DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS)}.`;
+  "Sent when an alert starts. Another mail about the same kind of alert waits at least " +
+  `${hours(MAIL_COOLDOWN_MS)} unless its severity rises; while it stands, a reminder follows ` +
+  `about every ${hours(DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS)}. Nothing is mailed when an alert ` +
+  "clears, and lesser alerts wait for the daily summary.";
 
-const RESOLVED_MAIL_SCHEDULE =
-  `Sent once, after the alert has stayed resolved for ${hours(DEFAULT_ALERT_FLAP_FLOOR_MS)}.`;
+const DIGEST_MAIL_SCHEDULE =
+  `Sent at most once every ${hours(DIGEST_INTERVAL_MS)}, listing every incident that opened, stood ` +
+  "or cleared since the last summary. Nothing is sent when there is nothing to list.";
 
 const escHtml = (v: string): string => v
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -126,17 +123,22 @@ export function renderAlertMail(input: AlertMailInput): AlertMail {
   );
 }
 
-/** The resolved mail: key, kind, the firing's span and its page count. No clock, no driver. */
-export function renderResolvedMail(
-  notices: readonly ResolutionNotice[], environment: string, consoleUrl?: string | null,
+/** The daily summary: one line per incident, from the digest alone. No clock, no driver. */
+export function renderDigestMail(
+  digest: AlertDigest, environment: string, consoleUrl?: string | null,
 ): AlertMail {
+  const n = digest.lines.length + digest.more;
   return mailOf(
-    `[${environment}] ohmail: resolved — ${notices.map((n) => n.key).join(", ")}`,
-    notices.map((n) => ({
-      body: `${n.key} (${n.kind}) — firing since ${n.openedAt}, resolved at ${n.resolvedAt}, ` +
-        `paged ${n.pages} time(s). It has stayed resolved since.`,
-    })),
-    consoleLink(consoleUrl), RESOLVED_MAIL_SCHEDULE,
+    `[${environment}] ohmail: daily alert summary — ${n} incident${n === 1 ? "" : "s"}`,
+    [
+      { body: `Incidents since ${digest.since}.` },
+      ...digest.lines.map((l) => ({
+        body: `[${l.severity}] ${l.title ?? l.kind} — ${l.key} — opened ${l.openedAt}` +
+          (l.resolvedAt ? ` — resolved ${l.resolvedAt}` : ""),
+      })),
+      ...(digest.more > 0 ? [{ body: `${digest.more} more — open the console.` }] : []),
+    ],
+    consoleLink(consoleUrl), DIGEST_MAIL_SCHEDULE,
   );
 }
 
@@ -148,6 +150,15 @@ export function renderResolvedMail(
  * body, and a count that moved between two sends inside one bucket silenced the pager for it.
  */
 export const ALERT_IDEMPOTENCY_BUCKET_MS = 10 * 60 * 1000;
+
+/**
+ * A lone `schema_behind` has no `alert_state` row to hold a cooldown, and its body is constant per
+ * host, so its key holds for the page window instead: the provider replays the first result.
+ */
+export function alertIdempotencyBucketMs(alerts: readonly Pick<Alert, "kind">[]): number {
+  return alerts.length === 1 && alerts[0]!.kind === "schema_behind"
+    ? MAIL_COOLDOWN_MS : ALERT_IDEMPOTENCY_BUCKET_MS;
+}
 
 const digest = (body: string): string => createHash("sha256").update(body).digest("hex").slice(0, 32);
 
@@ -226,11 +237,13 @@ export function resendAlertSink(
         "display name, or a comma list in the value?)"
       : null;
   if (configError) {
-    return {
-      name: "mail",
-      notify: () => Promise.resolve({ ok: false, error: configError, outcome: "misconfigured" }),
-    };
+    const refuse = () => Promise.resolve({ ok: false, error: configError, outcome: "misconfigured" as const });
+    return { name: "mail", channel: "mail", notify: refuse, notifyDigest: refuse };
   }
+
+  // The belt for a lone `schema_behind`: once one was accepted, its key stays put for the page
+  // window even across a clock bucket's edge. In-process; the bucket alone covers a restart.
+  let behindAnchor: { bucket: number; acceptedAt: number } | null = null;
 
   /** One POST under one key; the key is a function of the body, so it cannot meet another. */
   async function send(body: string, idem: string): Promise<AlertDeliveryResult> {
@@ -260,6 +273,7 @@ export function resendAlertSink(
 
   return {
     name: "mail",
+    channel: "mail",
     async notify(alerts, ctx) {
       const mail = renderAlertMail({
         alerts, environment: ctx.environment, source: ctx.source, consoleUrl,
@@ -267,17 +281,21 @@ export function resendAlertSink(
       const body = JSON.stringify({ from, to: [to], subject: mail.subject, text: mail.text, html: mail.html });
       // Retries of the same page inside one bucket replay the stored result instead of mailing
       // again; a different body or alert set is a different key, so nothing is refused.
-      const bucket = Math.floor(ctx.now.getTime() / ALERT_IDEMPOTENCY_BUCKET_MS);
+      const bucketMs = alertIdempotencyBucketMs(alerts);
+      const now = ctx.now.getTime();
+      const behind = bucketMs !== ALERT_IDEMPOTENCY_BUCKET_MS;
+      const bucket = behind && behindAnchor && now - behindAnchor.acceptedAt < bucketMs
+        ? behindAnchor.bucket : Math.floor(now / bucketMs);
       const keys = alerts.map((a) => a.key).sort().join("+");
-      return send(body, `tf-alert/${ctx.source}/${bucket}/${digest(`${keys}\n${body}`)}`);
+      const out = await send(body, `tf-alert/${ctx.source}/${bucket}/${digest(`${keys}\n${body}`)}`);
+      if (behind && out.ok && behindAnchor?.bucket !== bucket) behindAnchor = { bucket, acceptedAt: now };
+      return out;
     },
-    async notifyResolved(notices, ctx) {
-      // Built from the notices and the environment only: whichever driver retries, whenever,
-      // sends these exact bytes under this exact key.
-      const mail = renderResolvedMail(notices, ctx.environment, consoleUrl);
+    async notifyDigest(d, ctx) {
+      // Built from the digest and the environment only, so a retry sends the same bytes.
+      const mail = renderDigestMail(d, ctx.environment, consoleUrl);
       const body = JSON.stringify({ from, to: [to], subject: mail.subject, text: mail.text, html: mail.html });
-      const first = notices[0]!;
-      return send(body, `tf-alert/resolved/${first.key}/${first.resolvedAt}/${digest(body)}`);
+      return send(body, `tf-alert/digest/${d.since}/${digest(body)}`);
     },
   };
 }

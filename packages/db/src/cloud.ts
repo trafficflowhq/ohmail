@@ -142,8 +142,15 @@ export {
 
 export {
   resendAlertSink, RESEND_EMAILS_URL, type ResendAlertSinkConfig,
-  renderAlertMail, renderResolvedMail, ALERT_MAIL_SCHEDULE, type AlertMail, type AlertMailInput,
+  renderAlertMail, renderDigestMail, ALERT_MAIL_SCHEDULE, alertIdempotencyBucketMs,
+  type AlertMail, type AlertMailInput,
 } from "./alert-mail.js";
+
+/* What the operator's mail carries: pages for what is down or at risk, a daily digest for the rest. */
+export {
+  MAIL_POLICY, PAGE_ROUTE_PREFIXES, mailVerdictOf, mailCooldownMs, policyKeyOf, DIGEST_MAX_LINES,
+  renderDigestInput, type AlertDigest, type DigestLine, type MailVerdict,
+} from "./alert-mail-policy.js";
 
 /* The API's own 5xx record (cloud 0033). CLOUD-ONLY — `index.ts` does not carry it, because the
  * table does not exist in a local install and the recorder reaches it through a port. */

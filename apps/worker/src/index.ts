@@ -5521,6 +5521,14 @@ export async function startWorkerWithLock(
         }
         for (const key of result.resolved) log.info("alert_resolved", { alertKey: key });
         for (const key of result.closedUnconfirmed) log.info("alert_closed_unconfirmed", { alertKey: key });
+        // What the mail policy did: a held page, the day's digest, the resolutions a pager was told.
+        for (const held of result.mailHeld) {
+          log.info("alert_mail_held", { alertKey: held.alertKey, kind: held.kind, retryAt: held.retryAt });
+        }
+        if (result.digest) log.info("alert_digest_sent", { count: result.digest.lines.length + result.digest.more });
+        if (result.resolutionsTold.length > 0) {
+          log.info("alert_resolutions_told", { alertKeys: result.resolutionsTold });
+        }
         // `api_faults`' seven-day retention, on the cadence of the arm that reads the table.
         // AFTER the pass, never before: the rules read a ten-minute window, so a prune ahead of
         // them could only ever delete rows they were about to ignore — and if it throws, the

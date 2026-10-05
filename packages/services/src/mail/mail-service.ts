@@ -1,6 +1,6 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { users, type Tx } from "@trafficflow/db";
-import { authThrottle, loginTokens } from "@trafficflow/db/cloud";
+import { authThrottle, loginTokens, type AlertDigest } from "@trafficflow/db/cloud";
 import { bridgeTx, type Db } from "../context.js";
 import { generateToken, hashToken } from "../auth/crypto.js";
 import { isLoopbackHostname } from "../auth/origins.js";
@@ -164,8 +164,8 @@ export const DEFAULT_LINK_ORIGINS = [
   "https://app.ohmail.app",
   // The staff console. It is a first-party surface of the same deployment —
   // `withRequestGuard` already treats it as one — and it is where an operator alert mail
-  // has to be able to point. No customer mail links here; `operator_alert` is the only
-  // template that names it.
+  // has to be able to point. No customer mail links here; `operator_alert` and
+  // `operator_digest` are the only templates that name it.
   "https://admin.ohmail.app",
   "http://localhost",
   "http://127.0.0.1",
@@ -274,8 +274,8 @@ export class MailService {
    * Mail the configured operator about firing alerts. The recipient is CONFIGURATION, never an
    * argument: this mail is triggered by a machine on a timer, so a `to` parameter would be an
    * unattended mail-bomb primitive. It still goes through {@link guarded} — deliberately a
-   * BACKSTOP, not the dedup: `alert_state` already collapses a standing fault into one mail per
-   * hour, and if the limiter fires here the dedup has a bug, and being rate-limited is the right
+   * BACKSTOP, not the dedup: `alert_state`'s mail policy already holds each kind to one mail per
+   * window, and if the limiter fires here the dedup has a bug, and being rate-limited is the right
    * outcome. It takes an {@link OperatorAlertContext}, not a {@link MailContext}: the limiter
    * claim is the whole of its database use, and an unneeded runtime handle behind a staff
    * credential is exactly the hazard the capability split removes.
@@ -286,10 +286,16 @@ export class MailService {
       alerts: ReadonlyArray<{ title: string; detail: string; severity: string }>;
       source: string;
       environment: string;
+      /**
+       * How long one page's idempotency key holds. REQUIRED: the sink decides (a minute for a page,
+       * the page window for a lone `schema_behind`), so a caller cannot fall back to a default.
+       */
+      idempotencyBucketMs: number;
     },
   ): Promise<MailSendResult> {
     if (!this.cfg.operatorEmail) return { status: "skipped", reason: "mailer_disabled" };
     if (input.alerts.length === 0) return { status: "skipped", reason: "mailer_disabled" };
+    const bucket = Math.floor(ctx.now().getTime() / Math.max(1, input.idempotencyBucketMs));
     return this.guarded(ctx, this.cfg.operatorEmail, "transactional", (to) =>
       this.deps.mailer.send(to, "operator_alert", {
         environment: input.environment,
@@ -297,13 +303,35 @@ export class MailService {
         alerts: input.alerts.map((a) => ({ title: a.title, detail: a.detail, severity: a.severity })),
         consoleUrl: trimSlash(this.cfg.adminUrl),
       }, {
-        // Keyed on WHICH alerts, WHEN and observed by WHOM. A serverless invocation the
-        // platform re-drives is one alert mail; the next hour's repeat is a different one
-        // because the minute differs.
+        // Keyed on WHICH alerts, WHEN (the sink's bucket) and observed by WHOM. A serverless
+        // invocation the platform re-drives is one alert mail; the next bucket's is another.
         idempotencyKey: `alert:${hashToken(
           `${input.source}|${input.environment}|` +
           `${input.alerts.map((a) => a.title).sort().join(",")}|` +
-          `${ctx.now().toISOString().slice(0, 16)}`,
+          `${input.idempotencyBucketMs}:${bucket}`,
+        )}`,
+      }));
+  }
+
+  /**
+   * Mail the configured operator the daily alert summary. Same recipient rule and the same
+   * limiter as {@link sendOperatorAlert}; keyed on the window and the lines, so a retry replays.
+   */
+  async sendOperatorDigest(
+    ctx: OperatorAlertContext,
+    input: { digest: AlertDigest; environment: string },
+  ): Promise<MailSendResult> {
+    if (!this.cfg.operatorEmail) return { status: "skipped", reason: "mailer_disabled" };
+    if (input.digest.lines.length === 0) return { status: "skipped", reason: "mailer_disabled" };
+    return this.guarded(ctx, this.cfg.operatorEmail, "transactional", (to) =>
+      this.deps.mailer.send(to, "operator_digest", {
+        environment: input.environment,
+        digest: input.digest,
+        consoleUrl: trimSlash(this.cfg.adminUrl),
+      }, {
+        idempotencyKey: `digest:${hashToken(
+          `${input.environment}|${input.digest.since}|${input.digest.more}|` +
+          input.digest.lines.map((l) => `${l.key}@${l.openedAt}@${l.resolvedAt ?? ""}`).join(","),
         )}`,
       }));
   }

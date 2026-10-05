@@ -1,8 +1,8 @@
 /**
  * Transactional mail. The template set is CLOSED: waitlist confirmation, invite delivery,
- * new-device sign-in notice, email verification, the account-exists notice — and
- * `operator_alert`, the only non-customer one (the configured operator address, no
- * user-controlled string, the pager's second path). Adding a template is a product decision,
+ * new-device sign-in notice, email verification, the account-exists notice — and the two
+ * non-customer ones, `operator_alert` and its daily `operator_digest` (the configured operator
+ * address, no user-controlled string, the pager's second path). Adding a template is a product decision,
  * argued in `templates.ts`. `ResendMailer` is exported because a composition root must construct
  * the transport — it is NOT what callers hold: no rate limit, no URLs, no token lifecycle;
  * construct once, wrap in `MailService`, pass the service. Under a test runner it refuses to
@@ -17,6 +17,7 @@ export {
   type RenderedEmail, type TemplateName, type TemplateDataMap, type WaitlistTier,
   type WaitlistConfirmationData, type InviteData,
   type NewDeviceSignInData, type SecurityNoticeData, type EmailVerificationData, type OperatorAlertData,
+  type OperatorDigestData,
 } from "./templates.js";
 export { mailAlertSink } from "./alert-sink.js";
 export {

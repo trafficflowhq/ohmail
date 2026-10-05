@@ -388,6 +388,14 @@ async function alertPass(
     }
     for (const key of result.resolved) log.info("alert_resolved", { alertKey: key });
     for (const key of result.closedUnconfirmed) log.info("alert_closed_unconfirmed", { alertKey: key });
+    // What the mail policy did: a held page, the day's digest, the resolutions a pager was told.
+    for (const held of result.mailHeld) {
+      log.info("alert_mail_held", { alertKey: held.alertKey, kind: held.kind, retryAt: held.retryAt });
+    }
+    if (result.digest) log.info("alert_digest_sent", { count: result.digest.lines.length + result.digest.more });
+    if (result.resolutionsTold.length > 0) {
+      log.info("alert_resolutions_told", { alertKeys: result.resolutionsTold });
+    }
     if (result.notified.length > 0) {
       log.warn("alert_notified", {
         alertKeys: result.notified.map((a) => a.key),

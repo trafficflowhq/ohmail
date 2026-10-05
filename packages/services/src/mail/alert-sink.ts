@@ -1,4 +1,4 @@
-import type { Alert, AlertSink } from "@trafficflow/db/cloud";
+import { isSchemaBehind, mailCooldownMs, type Alert, type AlertSink } from "@trafficflow/db/cloud";
 import type { OperatorAlertContext, MailService } from "./mail-service.js";
 
 /**
@@ -17,18 +17,30 @@ export function mailAlertSink(
 ): AlertSink {
   return {
     name: "mail",
+    // Pages only, under the mail policy, and a daily digest: see `AlertSink.channel`.
+    channel: "mail",
     async notify(alerts: readonly Alert[], notifyCtx): Promise<boolean> {
       try {
         const result = await mail.sendOperatorAlert(ctx, {
           alerts: alerts.map((a) => ({ title: a.title, detail: a.detail, severity: a.severity })),
           source: notifyCtx.source,
           environment: notifyCtx.environment,
+          // A page keeps today's minute; a lone `schema_behind` holds its key for the page window.
+          idempotencyBucketMs: isSchemaBehind(alerts) ? mailCooldownMs("schema_behind") : 60_000,
         });
         // `skipped` is NOT success. The two reasons it can happen here are "no operator
         // address is configured" and "the per-recipient limiter refused", and treating
         // either as delivered would stamp `notified_at` on an alert nobody received —
         // which is the precise failure this whole slice exists to prevent, reproduced
         // inside the thing meant to prevent it.
+        return result.status === "sent";
+      } catch {
+        return false;
+      }
+    },
+    async notifyDigest(digest, notifyCtx): Promise<boolean> {
+      try {
+        const result = await mail.sendOperatorDigest(ctx, { digest, environment: notifyCtx.environment });
         return result.status === "sent";
       } catch {
         return false;
