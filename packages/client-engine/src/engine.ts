@@ -6910,7 +6910,7 @@ export class OhmailEngine {
     } catch { /* still queued on disk: the next boot asks again, and never replays it */ }
   }
 
-  private async dropOutbox(id: string): Promise<void> {
+  private async dropOutbox(id: string): Promise<boolean> {
     try {
       // THROUGH THE STORE'S OWN WRITE LANE, like every other durable outbox write. `prune` is
       // memory-first by design and that is still right here, but its PERSISTED half raced the
@@ -6919,7 +6919,10 @@ export class OhmailEngine {
       // reached its terminal outcome coming back to life on the next boot. `prune` now runs on
       // the lane, so it and the reset take turns.
       await this.store.pruneSerialized([{ type: OUTBOX_TYPE, id }]);
-    } catch { /* an undeleted entry replays idempotently — the safe direction */ }
+      return true;
+    } catch {
+      return false; // an undeleted entry replays idempotently — the safe direction; a Cancel asks
+    }
   }
 
   /** Is this refusal the server out of reach — see {@link EngineOptions.outboxTransportIsUnreachable}. */
@@ -8533,12 +8536,7 @@ export class OhmailEngine {
     } catch {
       this.sayEnded(p, "withdrawn");
       // `true` only when the delete reached the disk: a row neither marked nor deleted can still be sent.
-      try {
-        await this.store.pruneSerialized([{ type: OUTBOX_TYPE, id: p.id }]);
-        return true;
-      } catch {
-        return false;
-      }
+      return this.dropOutbox(p.id);
     }
   }
 
