@@ -1457,11 +1457,23 @@ export function ComposeSheet({
               paddingTop: 16,
               paddingBottom: 12 + insets.bottom,
               gap: 10,
+              flexShrink: 1,
             },
             panelBounds,
             t.liftUp("l3"),
           ]}
         >
+          {/* THE LETTER SCROLLS; ITS ANSWERS AND ITS BUTTONS DO NOT. On a cover screen held sideways
+              (403 dp) the fields alone outgrew the window and Send and Cancel stood below it.
+              Everything down to the Send-later picker scrolls inside the window-bound panel; the
+              sentences that answer a press and the button row stay pinned under it. */}
+          <ScrollView
+            style={{ flexGrow: 0, flexShrink: 1 }}
+            contentContainerStyle={{ gap: 10 }}
+            bounces={false}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+          >
           {/* The head states the audience — the same statement the webapp editor opens with,
               and for reply-all the same envelope the send will carry, every name on it. */}
           <Txt variant="settingsLabel">
@@ -1694,23 +1706,6 @@ export function ComposeSheet({
               ))}
             </>
           ) : null}
-          {phase === "queued" || phase === "unverified" ? (
-            <Txt variant="caption" tone="ink3">
-              {phase === "queued" ? Copy[queuedCaptionKey(network, accepted)] : Copy.replyUnverified}
-            </Txt>
-          ) : null}
-          {phase === "unverified" && againNote ? (
-            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
-              {Copy.replyUnverifiedAgain}
-            </Txt>
-          ) : null}
-          {/* THE REFUSED CANCEL, SAID IN PLACE — a Cancel that did nothing and rendered nothing
-              is a person watching a button not work. An alert, because it answers a press. */}
-          {alreadySent ? (
-            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
-              {Copy.replyAlreadySent}
-            </Txt>
-          ) : null}
           {/* ── SEND LATER: the picker, above the button row (see the state block above) ──── */}
           {later !== null ? (
             <View
@@ -1811,6 +1806,24 @@ export function ComposeSheet({
                 }
               />
             </View>
+          ) : null}
+          </ScrollView>
+          {phase === "queued" || phase === "unverified" ? (
+            <Txt variant="caption" tone="ink3">
+              {phase === "queued" ? Copy[queuedCaptionKey(network, accepted)] : Copy.replyUnverified}
+            </Txt>
+          ) : null}
+          {phase === "unverified" && againNote ? (
+            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+              {Copy.replyUnverifiedAgain}
+            </Txt>
+          ) : null}
+          {/* THE REFUSED CANCEL, SAID IN PLACE — a Cancel that did nothing and rendered nothing
+              is a person watching a button not work. An alert, because it answers a press. */}
+          {alreadySent ? (
+            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+              {Copy.replyAlreadySent}
+            </Txt>
           ) : null}
           {/* WHY THERE IS NO SEND LATER on a phone that organizes its own mailbox. Only for that
               reason — a forward's absence has its own note above — and above the buttons, where

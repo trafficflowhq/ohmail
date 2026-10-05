@@ -20,7 +20,7 @@ import { SurfaceBoundary } from "./ErrorBoundary";
 import { GlassRail, GlassSidebar } from "./glass";
 import { Icon } from "./Icon";
 import { MoreNav, Nav } from "./MoreNav";
-import { PaneChromeContext } from "./pane-chrome";
+import { InPaneContext, PaneChromeContext } from "./pane-chrome";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
 import { readerHeldNow, subscribeReaderHeld } from "./reader-held";
@@ -117,6 +117,7 @@ export function ListDetail({
   const railPad = plan.nav === "rail" ? RAIL_W : 0;
 
   const listPane = (
+    <InPaneContext.Provider value>
     <PaneChromeContext.Provider value={plan.drawer ? { openDrawer: () => setDrawerOpen(true) } : null}>
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1 }}>{list}</View>
@@ -175,15 +176,18 @@ export function ListDetail({
         ) : null}
       </View>
     </PaneChromeContext.Provider>
+    </InPaneContext.Provider>
   );
 
   /* The reading pane under its own boundary, keyed on the selection: a throw while drawing one
      message leaves the list standing, and opening another message starts the pane afresh. */
   const readerPane =
     open !== null ? (
-      <SurfaceBoundary surface="reader" frame="inline" key={open}>
-        {renderDetail(open, { inPane: true, onClose })}
-      </SurfaceBoundary>
+      <InPaneContext.Provider value>
+        <SurfaceBoundary surface="reader" frame="inline" key={open}>
+          {renderDetail(open, { inPane: true, onClose })}
+        </SurfaceBoundary>
+      </InPaneContext.Provider>
     ) : (
       <View style={{ flex: 1, justifyContent: "center" }}>
         <Empty title={Copy.paneNothingOpen} hint={Copy.paneNothingOpenHint} />
@@ -200,8 +204,9 @@ export function ListDetail({
     />
   );
 
+  /* The pair pays the rail once, in its own padding below — never its Screen as well. */
   return (
-    <Screen>
+    <Screen fullWindow={false}>
       <View style={{ flex: 1 }} onLayout={measure}>
         {split !== null || holding ? (
           <View

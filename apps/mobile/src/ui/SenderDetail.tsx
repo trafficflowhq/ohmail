@@ -27,7 +27,7 @@ import { useBodies, useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { BodyPages } from "./BodyPages";
 import { withheldNote } from "./body-note";
-import { DetailBar } from "./chrome";
+import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
 import { Segmented } from "./Segmented";
@@ -79,7 +79,7 @@ export function SenderDetail({
   if (!row) {
     return (
       <Screen>
-        {inPane ? null : <DetailBar title={Copy.screener} />}
+        {inPane ? <PaneTop /> : <DetailBar title={Copy.screener} />}
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
             {Copy.senderGone}
@@ -97,7 +97,7 @@ export function SenderDetail({
 
   return (
     <Screen>
-      {inPane ? null : <DetailBar title={Copy.screener} />}
+      {inPane ? <PaneTop /> : <DetailBar title={Copy.screener} />}
       <Scroller contentStyle={{ paddingBottom: 40 }}>
         <View style={{ paddingHorizontal: 12, paddingBottom: 14 }}>
           <Txt variant="h2">{row.name}</Txt>

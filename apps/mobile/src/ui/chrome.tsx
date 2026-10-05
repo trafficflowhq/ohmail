@@ -110,6 +110,16 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
 }
 
 /**
+ * THE TOP A BAR-LESS PANE OWES: the status bar's inset and nothing drawn. A reader or a sender
+ * page in the pair's pane yields its `DetailBar` to the list beside it, and with the bar went
+ * the inset — its title started inside the transparent status bar, under the clock.
+ */
+export function PaneTop() {
+  const top = useTopPad(0);
+  return <View style={{ paddingTop: top }} />;
+}
+
+/**
  * A back bar for the pushed screens (message, screener detail, settings…).
  * The Servers screen can also be the FIRST screen (the gate lands a paired but
  * disconnected phone there), where there is no history to pop — the back

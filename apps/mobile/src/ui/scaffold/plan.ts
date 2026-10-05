@@ -110,6 +110,15 @@ export function screenRailClearance(plan: ScaffoldPlan, fullWindow: boolean): { 
 }
 
 /**
+ * Whether a `Screen` fills the window, and so pays the rail's column on a two-pane posture: what
+ * it says, else every screen that is not one pane of the pair. Settings, Search, More and the
+ * composer render alone under a two-pane posture, and starting at the window's edge put the rail
+ * over their first letters.
+ */
+export const screenFillsWindow = (fullWindow: boolean | undefined, inPane: boolean): boolean =>
+  fullWindow ?? !inPane;
+
+/**
  * The two panes' split along the plan's axis, in dp — the FIRST pane's size and the gap
  * between them. Row mode: list then reader, the list ending at the hinge when one crosses the
  * window (the seam is the divider); no hinge, the canonical ~42% list. Column mode (tabletop):

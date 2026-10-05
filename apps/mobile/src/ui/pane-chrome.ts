@@ -16,3 +16,13 @@ export const PaneChromeContext = createContext<PaneChrome | null>(null);
 export function usePaneChrome(): PaneChrome | null {
   return useContext(PaneChromeContext);
 }
+
+/**
+ * True inside one pane of the list-detail pair, which pays the rail's column itself; false
+ * everywhere else, where a `Screen` fills the window and pays it (`screenFillsWindow`).
+ */
+export const InPaneContext = createContext(false);
+
+export function useInPane(): boolean {
+  return useContext(InPaneContext);
+}

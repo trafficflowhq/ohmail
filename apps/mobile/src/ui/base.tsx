@@ -27,7 +27,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { listInsets, type ListInsets } from "./list-insets";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import { usePosture } from "./posture";
-import { listNavClearance, scaffoldPlan, screenRailClearance } from "./scaffold/plan";
+import { listNavClearance, scaffoldPlan, screenFillsWindow, screenRailClearance } from "./scaffold/plan";
+import { useInPane } from "./pane-chrome";
 import { topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
@@ -92,18 +93,18 @@ export function useListInsets(): ListInsets {
  * notch is the same inset on the other axis. Top and bottom stay the strips' and the
  * Scroller's, as before.
  */
-export function Screen({ children, style, fullWindow = false }: {
+export function Screen({ children, style, fullWindow }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
-  /** This screen fills the window even on a two-pane posture (a pushed reader beside the rail). */
+  /** Whether this screen fills the window; unsaid, every screen but a pane of the pair does. */
   fullWindow?: boolean;
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
   /* THE RAIL OWNS ITS COLUMN: a screen beside it starts past it — the title, the reader, its bar,
-     the composer. Two panes pay their own rail padding, unless this screen fills the window. */
+     the composer. A pane of the pair pays nothing here; the pair pays the rail once. */
   const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
-  const rail = screenRailClearance(plan, fullWindow);
+  const rail = screenRailClearance(plan, screenFillsWindow(fullWindow, useInPane()));
   return (
     <View
       style={[

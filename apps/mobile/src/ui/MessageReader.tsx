@@ -18,7 +18,7 @@ import { useTheme } from "../theme";
 import { useBodyStamp, useWorld } from "../state/world";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
-import { DetailBar } from "./chrome";
+import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { BodyPages } from "./BodyPages";
 import { MailBodyFrame } from "./MailBodyFrame";
@@ -109,7 +109,7 @@ export function MessageReader({
   if (!m) {
     return (
       <Screen fullWindow={!inPane}>
-        {bare ? null : <DetailBar />}
+        {bare ? <PaneTop /> : <DetailBar />}
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
             {Copy.messageGone}
@@ -147,7 +147,7 @@ export function MessageReader({
           over the very mail the reader is being asked to decide about (`gateHeld`). History
           first — a dormant sender's held mail is in both, and History is the surface it was
           opened from. In a PANE the list is beside this view, so the bar and its Back yield. */}
-      {bare ? null : (
+      {bare ? <PaneTop /> : (
         <DetailBar
           title={m.historyPlace ? Copy.history : m.gateHeld ? Copy.screener : m.folderLeaf ?? placeName(m.place)}
         />
@@ -323,8 +323,11 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
 
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 20 }}>
+      {/* A TILE NEVER OUTGROWS ITS LINE: a 60-character name ran the tile past the screen's edge,
+          cut mid-word with its size and its end gone. The name gives way, from the middle so the
+          extension stays; the clip, the size and the tag never do. */}
       {tiles.map((a) => (
-        <View key={a.id}>
+        <View key={a.id} style={{ maxWidth: "100%", flexShrink: 1 }}>
           <Tap
             accessibilityRole="button"
             accessibilityLabel={a.inline ? Copy.attachmentEmbeddedLabel(a.filename) : a.filename}
@@ -339,6 +342,7 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
                 backgroundColor: t.c.panel,
                 paddingHorizontal: 15,
                 paddingVertical: 9,
+                maxWidth: "100%",
               },
               t.lift("l0"),
             ]}
@@ -348,14 +352,16 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
             ) : (
               <Icon name="clip" size={13} color={t.c.ink2} />
             )}
-            <Txt variant="button">{a.filename}</Txt>
+            <Txt variant="button" numberOfLines={1} ellipsizeMode="middle" style={{ flexShrink: 1 }}>
+              {a.filename}
+            </Txt>
             {a.size ? (
-              <Txt variant="caption" tone="ink3">
+              <Txt variant="caption" tone="ink3" style={{ flexShrink: 0 }}>
                 {a.size}
               </Txt>
             ) : null}
             {a.inline ? (
-              <Txt variant="caption" tone="ink3">
+              <Txt variant="caption" tone="ink3" style={{ flexShrink: 0 }}>
                 {Copy.attachmentEmbedded}
               </Txt>
             ) : null}
