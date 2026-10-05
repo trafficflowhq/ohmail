@@ -22,6 +22,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
+import { storageRowSentence } from "./storage-row-sentence.js";
 import {
   Button, Gloss, SettingsActions, SettingsField, SettingsNote, SettingsRow, SettingsSection,
   SettingsVerdict,
@@ -1468,13 +1469,17 @@ export function DesktopMailboxes(
     /* THE COPY THIS COMPUTER COULD NOT STORE — the Cloud mirror's overlay, which is not a
        connection failure: the mailbox connects, the local store refused rows. Said with the count
        through the strip's own figure, before the generic code. */
-    if (m.status === "error" && m.errorCode === "storage" && m.storeRefusals && m.storeRefusals.count > 0) {
-      const count = storeRefusalsFigure(m.storeRefusals, (figure) => t("storeRefusalsFloor", { count: figure }));
-      return say(t("desktopStateStorage", { count, n: m.storeRefusals.count }));
+    /* A `storage` row's sentence comes from ONE table (`storage-row-sentence.ts`): a count, this
+       computer's store refusing writes on the local door, or the generic code arm below. */
+    if (m.status === "error" && m.errorCode === "storage") {
+      const which = storageRowSentence(paired ? "paired" : cloud ? "cloud" : "local", m.errorDetail,
+        (m.storeRefusals?.count ?? 0) > 0);
+      if (which === "count" && m.storeRefusals) {
+        const count = storeRefusalsFigure(m.storeRefusals, (figure) => t("storeRefusalsFloor", { count: figure }));
+        return say(t("desktopStateStorage", { count, n: m.storeRefusals.count }));
+      }
+      if (which === "storeRefused") return say(t("desktopStateStoreRefused"));
     }
-    /* THIS COMPUTER'S STORE REFUSES THE MAIL (a held write-off run, a store fault, a stuck Cloud
-       copy) and states no count: the connection stands, so "Not connecting" was the wrong sentence. */
-    if (m.status === "error" && m.errorCode === "storage") return say(t("desktopStateStoreRefused"));
     if (m.status === "error") {
       const specific = r?.answered === true
         && (r.signInRefused || r.plaintextRefused === true || r.credentialBlocked !== null

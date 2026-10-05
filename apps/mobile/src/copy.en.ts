@@ -556,10 +556,11 @@ const TABLE = {
      keeps asking, and a mailbox that later reads stops saying this. */
   firstSyncNothingReadable: "Nothing could be read from this mailbox yet.",
   /* MESSAGES THIS PHONE SET ASIDE: it could not read them and moved on, so they are not in the
-     list. A count only, never an address or a subject; said until a re-read takes them in. */
+     list. A count only, never an address or a subject; said until a re-read takes them in. No
+     claim about the server: the message or its folder may since have gone from it. */
   connectionSetAside: (n: number) => n === 1
-    ? "One message could not be read and was set aside. It stays on your server."
-    : `${n} messages could not be read and were set aside. They stay on your server.`,
+    ? "One message could not be read and was set aside."
+    : `${n} messages could not be read and were set aside.`,
 
   /* WHERE A BUDGETED FIRST SYNC IS CONTINUING — the browser strip says the same thing beside its
      count (`sync.importingContinuesAt`). A first sync of a large mailbox runs in bounded passes:

@@ -473,7 +473,11 @@ export const DETERMINISTIC_MESSAGE_FAILURE_CODES = [
  * legal in an IMAP folder name can appear IN one; a Map key only (never persisted, parsed or shown), so
  * the encoding is free to be verbose. */
 const keyOf = (folder: string, uidValidity: string, uid: number): string =>
-  JSON.stringify([folder, uidValidity, uid]);
+  JSON.stringify([folder, storedEpoch(uidValidity), uid]);
+
+/* THE EPOCH AS `recordMessageFailure` STORES IT: digits as a number, anything else `0`. A ref with no
+   UIDVALIDITY parses as "undefined" while its row reads back "0"; keyed apart, one message counted twice. */
+const storedEpoch = (v: string): string => (/^[0-9]+$/.test(v) ? String(BigInt(v)) : "0");
 
 /**
  * The ledger itself: per mailbox, held on the `MailboxRuntime`'s `SyncDeps` so it lives as long as
@@ -594,6 +598,20 @@ export class DeadLetterLedger {
         terminal: true,
       });
     }
+  }
+
+  /**
+   * THE STORE'S WHOLE SET, at the top of a cycle: {@link hydrate}, and a terminal key the store no longer
+   * holds is dropped. A folder rename moves the row under a new name and a retry closes it, so the store's
+   * unresolved rows ARE the set; a key kept past them counted one message twice ({@link skipped}).
+   * Only the full read may call this; a claimed subset goes through {@link hydrate}.
+   */
+  reconcile(rows: ReadonlyArray<{
+    folder: string; uidValidity: string; uid: number; code: string; attempts: number;
+  }>): void {
+    const held = new Set(rows.map((r) => keyOf(r.folder, r.uidValidity, r.uid)));
+    for (const [key, it] of this.items) if (it.terminal && !held.has(key)) this.items.delete(key);
+    this.hydrate(rows);
   }
 
   /**

@@ -1541,6 +1541,9 @@ const CONNECTION_ERROR_CODES = new Set([
   "ETIMEDOUT", "ETIMEOUT", "ESOCKET", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND",
 ]);
 
+/** The detail token for a device store refusing writes, beside `storage` (the desktop row's sentence keys on it). */
+export const STORE_REFUSED_DETAIL = "MAILBOX_STORE_REFUSED";
+
 /**
  * THE LOCAL DOOR'S SYNC-FAILURE DISCLOSURE, derived at read time and never written, so the writer
  * pair clears it: a served cycle ends the outage, a replaced password a refused sign-in. `auth`
@@ -1618,6 +1621,9 @@ export async function discloseLocalSyncFailures(
       /* BELOW THE CONNECTION'S FACTS: the server answers and this install's own store or pipeline
          refuses the mail, so the sentence is ours ("could not store this mail"), never the network. */
       failures.set(r.mailboxId, "storage");
+      /* THE STORE ITSELF REFUSING, named apart from a held write-off run: only this one is "this
+         computer cannot store mail" — a hold over a healthy store keeps the code's own sentence. */
+      if (r.connection.storeFaultSince instanceof Date) details.set(r.mailboxId, STORE_REFUSED_DETAIL);
     } else if (r.organizer?.unreadableSince && r.organizer.unreadableReason) {
       unreadable.set(r.mailboxId, { since: r.organizer.unreadableSince, reason: r.organizer.unreadableReason });
     }
@@ -4130,6 +4136,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const deadLetters = new DeadLetterLedger({
         holdAtCap: true, ...(opened.storeWrites ? { storeWrites: () => opened.storeWrites!() } : {}),
       });
+      /* THE SET-ASIDE COUNT FROM THE FIRST MOMENT, not the first cycle: a relaunch into an outage or a
+         missing password would otherwise say nothing while rows stand. Additive (`hydrate`), the read
+         the first cycle makes anyway; a failed read leaves the count to that cycle. */
+      void repo.listMessageFailures(mb.id).then((rows) => { deadLetters.hydrate(rows); }, () => undefined);
       const syncDeps = {
         repo,
         /**

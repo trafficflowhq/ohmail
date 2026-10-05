@@ -946,7 +946,7 @@ async function syncCycleWithin(
   // guessing "none" is advancing a Sent watermark over mail it has no record of — which is the loss
   // this table exists to stop. An unreadable table is an infrastructure fault and is handled like
   // one: no cursor written, the mailbox's ordinary failure counting takes over.
-  deadLetters.hydrate(await repo.listMessageFailures(mailboxId));
+  deadLetters.reconcile(await repo.listMessageFailures(mailboxId));
   // THE LOCAL BACKSTOP'S RUN, as the store has it (see `DeadLetterLedger.holdsAtCap`), so a hold
   // outlives a relaunch under this build's label and a new label starts the count again.
   const heldBefore = deadLetters.writeOffsHeldSince !== null;

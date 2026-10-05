@@ -4697,23 +4697,41 @@ describe("the row takes a new password without the mailbox being removed", () =>
  * error arm removed → the state case; the row controls withheld on `error` → the retry case.
  */
 describe("a store that cannot keep up is disclosed, with the retry beside it", () => {
-  /* THE SENTENCE CHANGED: "Not connecting (storage)" named a connection that stands; the row says
-     this computer's store instead, on both doors. */
+  /* The hosted worker writes `storage` for the provider's OVERQUOTA and its own database: not this
+     computer's store, so the Cloud door keeps the code's own sentence. */
   it("an error/storage row on the CLOUD door renders the failed state", async () => {
     FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
     const el = await render("cloud");
     const row = addressRows(el)[0]!;
     expect(row.textContent, "the wedge stayed invisible — the released 0.20.0 shape")
-      .toContain("This computer cannot store mail right now");
-    expect(row.textContent).not.toContain("Not connecting");
+      .toContain("Not connecting (storage)");
+    expect(row.textContent).not.toContain("This computer cannot store mail");
   });
 
-  it("an error/storage row on the LOCAL door says this computer cannot store mail, not that it is not connecting", async () => {
-    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
-    bridgeReply = () => new Response(JSON.stringify({ items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null }] }),
-      { status: 200, headers: { "content-type": "application/json" } });
+  /* THE STORE ITSELF REFUSING, on the LOCAL door only: the engine names it with its detail token. A
+     held write-off run over a healthy store sends `storage` with no detail and keeps the code. */
+  const reachUp = () => new Response(JSON.stringify({ items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null }] }),
+    { status: 200, headers: { "content-type": "application/json" } });
+  it("a LOCAL row whose store refuses writes says this computer cannot store mail", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage", errorDetail: "MAILBOX_STORE_REFUSED" }];
+    bridgeReply = reachUp;
     const el = await render("local");
     expect(el.querySelector(".mbx-reach")?.textContent).toBe("This computer cannot store mail right now");
+  });
+
+  it("a LOCAL row held over a healthy store keeps the code's own sentence", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
+    bridgeReply = reachUp;
+    const el = await render("local");
+    expect(el.querySelector(".mbx-reach")?.textContent).toBe("Not connecting (storage)");
+  });
+
+  it("a PAIRED row carrying the host's store refusal keeps the code: 'this computer' is not the host", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage", errorDetail: "MAILBOX_STORE_REFUSED" }];
+    const el = await render("cloud", { host: "host.local:7878" });
+    const row = addressRows(el)[0]!;
+    expect(row.textContent).toContain("Not connecting (storage)");
+    expect(row.textContent).not.toContain("This computer cannot store mail");
   });
 
   /* THE COUNT, when the engine states it (CLOUD-QUARANTINE-STRIP-COUNT-AND-CAP-STATE): the mailbox
@@ -4754,7 +4772,7 @@ describe("messages this computer set aside are said under the row", () => {
     bridgeReply = reachWith(2);
     const el = await render("local");
     expect(el.querySelector(".mbx-set-aside")?.textContent)
-      .toBe("2 messages could not be read and were set aside. They stay on your server.");
+      .toBe("2 messages could not be read and were set aside.");
     expect(el.querySelector(".mbx-reach")?.textContent).not.toContain("set aside");
   });
 
@@ -4762,7 +4780,7 @@ describe("messages this computer set aside are said under the row", () => {
     bridgeReply = reachWith(1);
     const el = await render("local");
     expect(el.querySelector(".mbx-set-aside")?.textContent)
-      .toBe("One message could not be read and was set aside. It stays on your server.");
+      .toBe("One message could not be read and was set aside.");
   });
 
   for (const v of [0, undefined, "3", 2.5]) {
