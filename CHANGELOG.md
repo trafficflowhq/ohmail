@@ -13,6 +13,66 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A sign-in renewal that finishes after a reload no longer signs the browser out
+<!-- changes: fix-026-late-answer-repaired-by-the-live-tab.md -->
+
+If a page was reloaded or a tab closed while it was renewing your sign-in, its answer could arrive
+after the page that renewed next, and the browser could be signed out at its next renewal. The tab
+that renewed next now renews once more when that answer arrives within a minute of its own renewal,
+so you stay signed in; only a tab that renewed within that minute does this.
+
+### Sign-in records are deleted after they expire, and a code that adds a device lasts five minutes
+<!-- changes: fix-026-retention-prunes-and-the-kept-list.md -->
+
+- Sign-in links and codes, desktop sign-in requests, OAuth and pairing codes and unused invitations
+  are deleted 30 days after they expire.
+- A session is deleted 30 days after it is signed out. One that was not signed out, or one a later
+  deletion of the account would still have to reach, stays until 400 days after its sign-in ran
+  out, so an app that was offline is still told its account was deleted.
+- A device keeps its name, and the IP address it was added from is cleared once its last session
+  is gone. The privacy and subprocessors pages say how long each of these is kept.
+- A code that adds a device works for five minutes at most; the server refuses a longer one.
+- On the phone, the sender sheet and Reads say why a message's text is not stored, as the reader
+  does.
+
+### ohmail/_meta is cleaned when it needs it, and the phone names a full one
+<!-- changes: fix-026-meta-folder-residue.md -->
+
+ohmail now cleans its `ohmail/_meta` folder once a day, or when the folder nears its limit, instead
+of on every pass, and dates that cleanup by the mail server's clock rather than the computer's. When
+that folder is full on a server that also refuses deletes, the mailbox asks for delete permission
+instead of asking you to move mail. On the phone, a full or undeletable `ohmail/_meta` now shows the
+same sentence as the desktop, in place of "Organizing" or "Nothing organizes this mailbox"; Stop
+organizing here stays available, and Start organizing here waits until it is fixed. The desktop
+cleans a full folder at launch rather than at its next check. A phone or computer that only reads a
+mailbox now leaves room in that folder for the one organizing it.
+
+### The update menu can no longer freeze the desktop window
+<!-- changes: fix-026-desktop-doors.md -->
+
+Pressing Check for Updates, in the menu or in Settings, just as an update check finished could stop
+the window responding for good. The menu's label is now written by the window itself, and nothing
+waits for it. Closing the window while the app restarts for an update or a relaunch no longer
+freezes it for up to six seconds: the window goes at once, or, while the update is still being
+installed, says so and goes when it is done. On Linux, Unlock and retry no longer keeps the lock of
+a mail engine that has stopped just because another program now runs under its old process number,
+except for the first engine of a new copy of the mail and one started while another copy's engine
+was still running.
+
+### An update whose installer does not start no longer closes the app
+<!-- changes: fix-026-updater-plugin-bump.md -->
+
+On Windows, when the installer for an update could not be started, ohmail closed without installing
+anything. It now stays open and says the installer did not start, and Try again downloads the update
+again, checks its signature and starts the installer once more.
+
+### The alert mail sends what matters, at most once per kind of problem every six hours
+<!-- changes: fix-026-pager-mail-policy.md -->
+
+The operator alert mail sends one message per kind of problem at most every six hours, sooner only
+when the problem gets more severe. It mails nothing when a problem clears, and sends a daily
+summary of the rest. Webhook and Telegram alerts are unchanged.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
