@@ -120,6 +120,13 @@ export interface ProfileRuleEntry {
   provenance: string;
   subjectContains?: string;
   bodyContains?: string;
+  /**
+   * WHEN A PERSON DECIDED THIS RULE — `rules.person_decided_at`, an ISO 8601 instant, OPTIONAL and
+   * present only when stamped, so a document written before the key keeps its fingerprint. It is
+   * what keeps another organizer's learning off a sender the person decided: a merge writes a stamp
+   * it receives and never clears one it holds. `PROFILE_VERSION` does not move (field-level both ways).
+   */
+  personDecidedAt?: string;
 }
 
 /** One notification opt-in. */
@@ -221,6 +228,8 @@ export interface ApplicableProfileRule {
   provenance: string;
   subjectContains: string | null;
   bodyContains: string | null;
+  /** The person's stamp the document carries; `null` when it carries none or an unreadable one. */
+  personDecidedAt: Date | null;
 }
 
 const PROFILE_RULE_KINDS = new Set(["sender", "domain", "header"]);
@@ -258,9 +267,12 @@ export function applicableProfileRule(r: ProfileRuleEntry): ApplicableProfileRul
   if ((subjectContains !== null || bodyContains !== null) && r.kind !== "sender") return null;
   const provenance = typeof r.provenance === "string" && r.provenance.length > 0 ? r.provenance : "manual";
   if (hasNul(provenance)) return null;
+  // A stamp that is not an instant is not a decision anybody can be held to: absent, not refused.
+  const stamp = typeof r.personDecidedAt === "string" ? new Date(r.personDecidedAt) : null;
   return {
     kind: r.kind, match: r.match, destination: r.destination, priority: r.priority,
     enabled: r.enabled === true, provenance, subjectContains, bodyContains,
+    personDecidedAt: stamp !== null && Number.isFinite(stamp.getTime()) ? stamp : null,
   };
 }
 
@@ -390,6 +402,8 @@ function normalizeRule(r: ProfileRuleEntry): ProfileRuleEntry {
     priority: r.priority, enabled: r.enabled, provenance: r.provenance,
     ...(r.subjectContains === undefined || r.subjectContains === null ? {} : { subjectContains: r.subjectContains }),
     ...(r.bodyContains === undefined || r.bodyContains === null ? {} : { bodyContains: r.bodyContains }),
+    // Present only when stamped: an unstamped rule keeps the bytes it had before the key existed.
+    ...(r.personDecidedAt === undefined || r.personDecidedAt === null ? {} : { personDecidedAt: r.personDecidedAt }),
   };
 }
 
@@ -635,7 +649,7 @@ const PREAMBLE = [
  * field is escaped until someone adds it here. Keys, numbers and booleans are plain.
  */
 const PLAIN_STRING_VALUES: ReadonlySet<string> = new Set([
-  "updatedAt", "producer.kind", "producer.version", "rules[].kind", "rules[].provenance",
+  "updatedAt", "producer.kind", "producer.version", "rules[].kind", "rules[].provenance", "rules[].personDecidedAt",
   "notifyRules[].kind", "awayResponder.audience", "awayResponder.throttle",
   "awayResponder.startsAt", "awayResponder.endsAt", "awayResponder.piles[]",
 ]);
@@ -787,6 +801,8 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
       if (!kind || !match || !destination) continue;
       const subjectContains = asString(o.subjectContains);
       const bodyContains = asString(o.bodyContains);
+      // Only the instant `toISOString` writes; anything else reads as no stamp.
+      const personDecidedAt = asString(o.personDecidedAt);
       rules.push({
         kind, match, destination,
         // Clamped into the one bound, so an imported rule is one every other door accepts.
@@ -796,6 +812,7 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
         provenance: asString(o.provenance) ?? "manual",
         ...(subjectContains === null ? {} : { subjectContains }),
         ...(bodyContains === null ? {} : { bodyContains }),
+        ...(personDecidedAt !== null && isWrittenInstant(personDecidedAt) ? { personDecidedAt } : {}),
       });
     }
   }

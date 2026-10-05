@@ -69,6 +69,7 @@ export async function serializeOrganizerProfileCounted(
         kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination,
         priority: rulesTbl.priority, enabled: rulesTbl.enabled, provenance: rulesTbl.provenance,
         subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
+        personDecidedAt: rulesTbl.personDecidedAt,
       }).from(rulesTbl).where(eq(rulesTbl.accountId, accountId))
         .orderBy(sql`${rulesTbl.provenance} = 'promoted'`, desc(rulesTbl.createdAt), desc(rulesTbl.id))
         .limit(PROFILE_LIST_MAX.rules + 1),
@@ -121,6 +122,7 @@ export async function serializeOrganizerProfileCounted(
       priority: r.priority, enabled: r.enabled, provenance: r.provenance,
       ...(r.subjectContains === null ? {} : { subjectContains: r.subjectContains }),
       ...(r.bodyContains === null ? {} : { bodyContains: r.bodyContains }),
+      ...(r.personDecidedAt === null ? {} : { personDecidedAt: r.personDecidedAt.toISOString() }),
     })),
     notifyRules: notifyRows.map((n) => ({ kind: n.kind, target: n.target })),
     awayResponder: away === undefined ? null : {
@@ -285,6 +287,7 @@ export async function applyOrganizerProfile(
     id: rulesTbl.id, kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination,
     priority: rulesTbl.priority, enabled: rulesTbl.enabled, provenance: rulesTbl.provenance,
     subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
+    personDecidedAt: rulesTbl.personDecidedAt,
   }).from(rulesTbl).where(eq(rulesTbl.accountId, o.accountId)).orderBy(asc(rulesTbl.createdAt), asc(rulesTbl.id));
   const localByKey = new Map<string, typeof localRules>();
   for (const row of localRules) {
@@ -301,13 +304,16 @@ export async function applyOrganizerProfile(
       const want = docRows[i];
       const have = localRows[i];
       if (want && have) {
+        // The person's stamp: written when it arrives, never cleared once held.
+        const stamp = have.personDecidedAt ?? want.personDecidedAt;
         const same = have.destination === want.destination && have.priority === want.priority
-          && have.enabled === want.enabled && have.provenance === want.provenance;
+          && have.enabled === want.enabled && have.provenance === want.provenance
+          && (stamp === null) === (have.personDecidedAt === null);
         if (same) continue; // already the document's row — no write, no change row
         if (screensOut(want)) screenOuts.push(want);
         await tx.update(rulesTbl).set({
           destination: want.destination, priority: want.priority,
-          enabled: want.enabled, provenance: want.provenance, updatedAt: now,
+          enabled: want.enabled, provenance: want.provenance, personDecidedAt: stamp, updatedAt: now,
           // Deliberately NOT re-requesting the retroactive pass: an import restores
           // configuration; the travelling mailbox's mail was filed by its previous
           // organizer, and a confirm click must not become a bulk re-filing.
@@ -320,6 +326,7 @@ export async function applyOrganizerProfile(
           destination: want.destination,
           priority: want.priority, enabled: want.enabled, provenance: want.provenance,
           subjectContains: want.subjectContains, bodyContains: want.bodyContains,
+          personDecidedAt: want.personDecidedAt,
           retroRequestedAt: null,
         }).returning({ id: rulesTbl.id });
         changes.push(ruleDelta(o.accountId, row!.id, "create"));
