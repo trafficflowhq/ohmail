@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { dirname, join } from "node:path";
@@ -183,7 +183,7 @@ export function sharedBoxRefusal(
   url: string, env: NodeJS.ProcessEnv, worktree = "\"$PWD\"", tokenPath: string = BOX_TOKEN_PATH,
 ): string | null {
   if (databaseOf(url) !== SHARED_BOX_DB) return null;
-  if (env[FREEZE_ENV] === "1") return boxDoorHeld(env, tokenPath) ? null : boxDoorRefusal();
+  if (env[FREEZE_ENV] === "1") { const why = boxDoorVerdict(env, tokenPath); return why === null ? null : boxDoorRefusal(why); }
   return (
     `this run resolved to the SHARED box database (${SHARED_BOX_DB}) and no ${FREEZE_ENV}=1 was set. ` +
     "Co-tenants on that database share its advisory keys, so a leader-lock or lease case here reads " +
@@ -207,16 +207,59 @@ export const BOX_TOKEN_PATH = "/tmp/ohmail-pg.token";
  * under BOX_LOCK_DIR — is refused.
  */
 export function boxDoorHeld(env: NodeJS.ProcessEnv, tokenPath: string = BOX_TOKEN_PATH): boolean {
-  const token = env[BOX_TOKEN_ENV];
-  if (!token || !/^[0-9a-f]{32}$/.test(token)) return false;
-  try {
-    return readFileSync(tokenPath, "utf8").trim() === token;
-  } catch { return false; }
+  return boxDoorVerdict(env, tokenPath) === null;
 }
 
-function boxDoorRefusal(): string {
+/**
+ * Why the door's token does not license this run, or `null` when it does. A matching token is not
+ * enough (BOX-TOKEN-OUTLIVES-A-KILLED-DOOR): a SIGKILLed door never removes its file. So the file's
+ * `pid=` writer must still hold `ohmail-pg.lock` beside the token open, and that lock must stand in
+ * /proc/locks as a FLOCK — the RESOURCE is read, never `kill -0`, which a zombie or a reused pid
+ * answers.
+ */
+function boxDoorVerdict(env: NodeJS.ProcessEnv, tokenPath: string): string | null {
+  const token = env[BOX_TOKEN_ENV];
+  if (!token || !/^[0-9a-f]{32}$/.test(token)) return `no ${BOX_TOKEN_ENV} was handed to this run`;
+  let text: string;
+  try { text = readFileSync(tokenPath, "utf8"); } catch { return `there is no token file at ${tokenPath}`; }
+  const [first = "", ...rest] = text.split("\n");
+  if (first.trim() !== token) return `${BOX_TOKEN_ENV} does not match the token at ${tokenPath}`;
+  const pid = Number(/^pid=([1-9][0-9]*)$/m.exec(rest.join("\n"))?.[1] ?? NaN);
+  if (!Number.isInteger(pid)) return `the token at ${tokenPath} names no writer pid`;
+  const lock = join(dirname(tokenPath), "ohmail-pg.lock");
+  let dev: bigint, ino: bigint;
+  try { ({ dev, ino } = statSync(lock, { bigint: true })); } catch { return `there is no lock file at ${lock}`; }
+  if (!processHoldsFile(pid, dev, ino)) return `the token's writer (pid ${pid}) no longer holds ${lock} — a door killed before its cleanup left the token`;
+  let locks: string;
+  try { locks = readFileSync("/proc/locks", "utf8"); } catch { return "/proc/locks cannot be read, so whether the lock is held cannot be said"; }
+  return flockHeldIn(locks, dev, ino) ? null : `${lock} is not flock-held — the door that wrote the token has released it`;
+}
+
+/** Does `pid` hold a descriptor open on the file `dev`/`ino`? Read from /proc/<pid>/fd; an exited
+ *  or zombie process has no descriptors left, so it answers false. */
+function processHoldsFile(pid: number, dev: bigint, ino: bigint): boolean {
+  let fds: string[];
+  try { fds = readdirSync(`/proc/${pid}/fd`); } catch { return false; }
+  return fds.some((fd) => {
+    try { const s = statSync(`/proc/${pid}/fd/${fd}`, { bigint: true }); return s.dev === dev && s.ino === ino; } catch { return false; }
+  });
+}
+
+/** Is a FLOCK on the file `dev`/`ino` listed in a /proc/locks text? `dev` is a stat `st_dev`;
+ *  /proc/locks prints `<major hex>:<minor hex>:<inode>`, decoded here as glibc decodes st_dev. A
+ *  waiter's ` -> ` line holds nothing and is not read. */
+export function flockHeldIn(locks: string, dev: bigint, ino: bigint): boolean {
+  const major = ((dev >> 8n) & 0xfffn) | ((dev >> 32n) & ~0xfffn);
+  const minor = (dev & 0xffn) | ((dev >> 12n) & ~0xffn);
+  return locks.split("\n").some((l) => {
+    const m = /^\d+: FLOCK\s+\S+\s+\S+\s+\d+\s+([0-9a-f]+):([0-9a-f]+):(\d+)\s/.exec(l);
+    return m !== null && BigInt(`0x${m[1]}`) === major && BigInt(`0x${m[2]}`) === minor && BigInt(m[3]!) === ino;
+  });
+}
+
+function boxDoorRefusal(why: string): string {
   return (
-    `${FREEZE_ENV}=1 was set, but this run did not come through the box door: no ${BOX_TOKEN_ENV} matching ` +
+    `${FREEZE_ENV}=1 was set, but this run did not come through the box door (${why}): no ${BOX_TOKEN_ENV} matching ` +
     "the token box-lock.sh writes while it holds the Postgres lock. A bare flock jumps the landing's and the " +
     "freeze's priority claim, which only the door honours — use box-lock.sh " +
     "(box-lock.sh pg <LANE> -- <command>), or give this checkout its own database with scripts/lane-db.sh."
