@@ -1,6 +1,7 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import {
-  approvals, routingDecisions, messages, folderState, claimIdempotencyKey, lockAccountRuleKeys, recordChange, type Tx,
+  approvals, routingDecisions, messages, folderState, claimIdempotencyKey, lockAccountRuleKeys, recordChange,
+  recordLearningSignal, type Tx,
 } from "@trafficflow/db";
 import type { AdapterPort, Destination, NativeLocator } from "@trafficflow/core/mail";
 import { applyReconcileAction } from "@trafficflow/core/mail";
@@ -212,8 +213,9 @@ export class ApprovalService {
         });
       }
 
+      // The learning door itself (`recordOn` only wraps it), so a reader of this order sees its row.
       if (msg && target) {
-        await this.learning.recordOn(bridgeTx(tx), ctx.accountId, {
+        await recordLearningSignal(bridgeTx(tx), ctx.accountId, {
           triggeringActionId: `approval:${id}`,
           kind: "approval",
           senderAddress: msg.fromAddress,
