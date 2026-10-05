@@ -901,7 +901,7 @@ export function ScreenerView({
   }, []);
 
   /**
-   * IS THE SPLIT'S READ COLUMN OFF SCREEN — the ≤900px breakpoint, SUBSCRIBED rather than
+   * IS THE SPLIT'S READ COLUMN OFF SCREEN — the <700px breakpoint, SUBSCRIBED rather than
    * sampled: a rotation or window-resize reveals `.scn-read` without touching any other
    * dependency of the body-open effect, and a sampled value left the newly visible preview
    * idle until its stall face appeared (found in the mobile gating).

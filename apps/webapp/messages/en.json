@@ -580,6 +580,7 @@
     "emptyFiledHint": "{count, plural, one {1 message} other {# messages}} arrived and none of it belongs here. Try News, Receipts or Search.",
     "emptyRestTitle": "Nothing open.",
     "emptyRestHint": "Pick a message with <kbd>j</kbd> or a click — it opens here.",
+    "emptyRestHintTouch": "Pick a message — it opens here.",
     "picked": "{count, plural, one {1 selected} other {# selected}}",
     "pickedWord": "selected",
     "pickedAria": "{count, plural, one {1 selected — clear the selection} other {# selected — clear the selection}}",
@@ -1677,6 +1678,7 @@
     "hint": "to return",
     "back": "Back",
     "pane": "Open message",
+    "closeColumn": "Close",
     "hintReturn": "to return"
   },
   "body": {

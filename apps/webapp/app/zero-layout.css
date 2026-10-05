@@ -17,12 +17,12 @@
 
    ── THE LADDER (owner-ruled, §12 — boundaries derived from content
       floors, one degradation per step) ───────────────────────────────────
-     ≥901       three tiles: full rail | list | reader. 900 is the shell's
-                own established breakpoint (`max-width: 900px` is narrow),
-                so the full-rail tier starts where classic desktop always
-                did — the demo's "≥900" read against the app's inclusive
-                edge lands at 901, the app's model winning by §0.
-     722–900    the rail (only) gives: a PERSISTENT DOCKED 52px icon
+     ≥1024      three tiles: full rail | list | reader. 1024 is the shell's
+                own drawer breakpoint (`max-width: 1023.98px` is the drawer
+                band, DESIGN-FOLD-WIDTHS §0 — it was 900 until 0.25.15),
+                so the full-rail tier starts where classic desktop does,
+                the app's model winning by §0.
+     722–1023   the rail (only) gives: a PERSISTENT DOCKED 52px icon
                 ribbon; both content tiles stay. The ribbon never
                 auto-floats — only ≡ or `h` summons the full rail as a
                 drawer over the tiles, esc puts it back.
@@ -35,11 +35,14 @@
      ≤391       FLOATING is the last resort: even the ribbon would rob the
                 tile of its floor, so the rail leaves the flow and Zero
                 stands on classic's own phone model (topbar, overlay
-                drawer, full-screen reader) — "the paper shell's <900
+                drawer, full-screen reader) — "the paper shell's phone
                 drawer model", per the demo's own derivation.
    The JS half of the same ladder is shell/narrow.ts: under zero the
-   reading column leaves at 721, not 900, and every "is the column
-   hidden" call site asks that one module.
+   reading column leaves at 721, not classic's 700, and every "is the
+   column hidden" call site asks that one module. Classic's own two-pane
+   band (700–1023) is a different shape from this ladder's push tier, so
+   the 392–721 tier below restates the one-column structure for 700–721,
+   where classic would otherwise seat two panes beside the ribbon.
 
    ── THE RIBBON'S FACES ARE THE QUICK-NAV KEYS ──────────────────────────
    The demo's ribbon shows icons because the demo HAS a rail icon set; the
@@ -62,8 +65,8 @@
   margin: 0;
 }
 
-/* ═══ the ribbon tiers, 392–900: docked 52px rail, no topbar ═══════════ */
-@media (min-width: 392px) and (max-width: 900px) {
+/* ═══ the ribbon tiers, 392–1023: docked 52px rail, no topbar ══════════ */
+@media (min-width: 392px) and (max-width: 1023.98px) {
   :root[data-layout="zero"] .topbar {
     display: none;
   }
@@ -119,7 +122,7 @@
   /* THE OPEN DRAWER IS THE FULL RAIL, at the full rail's own width — classic's 76%
      phone drawer read oversized beside a 52px ribbon (VM adjacency, shot w2e-08): the
      §12 model is "the same rail, temporarily floated", so it floats at the width it
-     stands with at ≥901. The head becomes a row so the way-back ≡ sits at its end. */
+     stands with at ≥1024. The head becomes a row so the way-back ≡ sits at its end. */
   :root[data-layout="zero"] .deck > .rail.open {
     inset: 0 auto 0 0;
     width: 248px;
@@ -242,12 +245,14 @@
   }
 }
 
-/* ═══ 722–900: the split survives beside the ribbon — the tier classic
-       never had. These undo exactly the STRUCTURAL half of app.css's
-       narrow block; the tighter in-tile densities it also sets are kept
+/* ═══ 722–1023: the split survives beside the ribbon, at the READER'S
+       dragged width. From 700 classic seats two panes of its own at a fixed
+       clamp; this tier keeps zero's `--split-user` fall-through instead and
+       undoes exactly the STRUCTURAL half of app.css's phone block for
+       722–1023; the tighter in-tile densities it also sets are kept
        deliberately (they are nearer the demo's own compact register than
        desktop gutters would be — named in the close-out). ═══════════════ */
-@media (min-width: 722px) and (max-width: 900px) {
+@media (min-width: 722px) and (max-width: 1023.98px) {
   :root[data-layout="zero"] .view.split {
     /* the same fall-through app.css states: a dragged list width, else the token. Without
        `--split-user` here a reader who resized the list at a wide width would see it snap
@@ -255,8 +260,8 @@
     grid-template-columns: var(--split-user, var(--split));
     column-gap: var(--gap-tile);
   }
-  /* …and the separator that drags it. `column-handles.css` hides both handles below 901
-     because that is CLASSIC's answer — the split has collapsed to one column there. Zero
+  /* …and the separator that drags it. `column-handles.css` hides both handles below 1024
+     because that is CLASSIC's answer — its 700–1023 split is a fixed clamp with no seam. Zero
      keeps the split alive from 722, so the seam exists and so does the handle standing in
      it. The RAIL handle stays hidden: at this tier the rail is a docked 52px ribbon whose
      width is the ladder's, not the reader's. */
@@ -286,6 +291,7 @@
   :root[data-layout="zero"] .boot-sk-window {
     display: grid;
     grid-template-columns: 52px minmax(0, 1fr) 1.2fr;
+    grid-template-rows: minmax(0, 1fr); /* classic's drawer band adds a topbar row; none here */
     flex-direction: row;
   }
   :root[data-layout="zero"] .boot-sk-rail,
@@ -353,11 +359,48 @@
   :root[data-layout="zero"] .rail-bg {
     z-index: calc(var(--z-read) + 1);
   }
+  /* ONE TILE, RESTATED FOR 700–721. Classic's phone block ends at 699.98 and its two-pane
+     band begins at 700, so without these the push tier's last 22 pixels would seat a second
+     pane beside the ribbon while `readColumnHidden()` (721 under zero) still opened the
+     re-housed sheet over it. Harmless below 700, where classic already says the same. */
+  :root[data-layout="zero"] .view.split {
+    grid-template-columns: 1fr;
+  }
+  :root[data-layout="zero"] .view.split > .read-col {
+    display: none;
+  }
+  :root[data-layout="zero"] .view-reads .list-col,
+  :root[data-layout="zero"] .view-receipts .list-col {
+    display: none;
+  }
+  :root[data-layout="zero"] .stream-top {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    max-width: 620px;
+    margin: 0 auto;
+    padding: 14px 20px 8px;
+  }
+  :root[data-layout="zero"] .view-screener .scn-read {
+    display: none;
+  }
+  :root[data-layout="zero"] .view-screener.scn-full .scn-read {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-read);
+    border-radius: 0;
+    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+  }
   /* boot skeleton: ribbon + one tile */
   :root[data-layout="zero"] .boot-sk-window {
     display: grid;
     grid-template-columns: 52px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     flex-direction: row;
+  }
+  :root[data-layout="zero"] .boot-sk-reader {
+    display: none;
   }
   :root[data-layout="zero"] .boot-sk-rail {
     display: block;

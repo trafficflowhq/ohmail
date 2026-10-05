@@ -86,7 +86,7 @@ export function UnsavedChangesList({
   /**
    * WHICH ARRANGEMENT this copy belongs to — the same two the sync line has, and for the same
    * reason. Both are mounted at once and CSS decides which is visible, so each needs a class the
-   * one breakpoint in `app.css` can address. Without it both were on screen together above 901px:
+   * one breakpoint in `app.css` can address. Without it both were on screen together at 1024px and up:
    * one sentence twice, and two `role="status"` regions announcing it in turn.
    */
   variant?: "shell" | "rail";

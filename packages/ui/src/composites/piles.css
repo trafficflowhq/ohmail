@@ -19,7 +19,9 @@
 .pile-item .when{display:inline-flex;gap:5px;align-items:center;margin-top:5px;font-size:calc(11px + var(--type-up));color:var(--accent-ink);
   font-variant-numeric:tabular-nums;font-weight:600}
 .pile-hint{font-size:calc(11px + var(--type-up));color:var(--ink3);margin:12px 0 0;line-height:1.5}
-@media (max-width: 900px){
+/* One column wherever the rail is a drawer (below 1024, DESIGN-FOLD-WIDTHS §0): three 230px
+   piles plus their gaps do not sit side by side in a 680–1003px stage without wrapping 2 + 1. */
+@media (max-width: 1023.98px){
   .piles{flex-direction:column;padding:8px 14px 22px}
   .pile{max-width:none;width:100%}
 }

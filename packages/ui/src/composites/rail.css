@@ -189,7 +189,7 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
  * ── AND IT DECLARES NO `display` ─────────────────────────────────────────────────────────────
  *
  * Deliberately, and this was a defect before it was a rule. Whether this line or the shell-width
- * one is on screen is decided in `app.css`, in the SAME single `min-width: 901px` query the sync
+ * one is on screen is decided in `app.css`, in the SAME single `min-width: 1024px` query the sync
  * line swaps on — and both declarations sit together directly above it. A resting `display:none`
  * here would look equivalent and is not: this stylesheet is concatenated AFTER `app.css` in the
  * built bundle, the two selectors have equal specificity, and a media query adds none — so source

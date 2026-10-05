@@ -9,7 +9,7 @@
 
 /**
  * The `List`/`Split` control is gone with the solo mode it defaulted to (the slower shape, re-chosen every visit);
- * under 900px the reading column is `display:none` and a click raises the shell's sheet — why `readColumnHidden()`
+ * under 700px the reading column is `display:none` and a click raises the shell's sheet — why `readColumnHidden()`
  * outlives the modes. The tag is managed from its own page: Rename and Delete live here as well as Settings
  * (`tag_rename`/`tag_delete` via `tagAdmin`), and Delete states the count and that the messages do not move BEFORE it
  * asks — a tag is ohmail's own row.

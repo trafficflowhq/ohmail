@@ -175,7 +175,7 @@ export interface ShellComposeInput {
    */
   replyTo: string | null;
   setReplyTo: Dispatch<SetStateAction<string | null>>;
-  /** Below 900px the reading column is hidden, so an open reply opens the reader too. */
+  /** Below 700px the reading column is hidden, so an open reply opens the reader too. */
   setReaderFor: Dispatch<SetStateAction<string | null>>;
   /** The Reply Run's cursor — a settled send advances it. */
   fr: { step: number; items: TriagePileEntry[] } | null;
@@ -389,7 +389,7 @@ export function useShellCompose({
       setReplyMode("reply");
       setReplyTo(messageId);
       setReplyBody(body);
-      // MOBILE. Under 900px the reading column is `display:none` (app.css), so an inline
+      // MOBILE. Under 700px the reading column is `display:none` (app.css), so an inline
       // reply would mount into a pane nobody can see and `r` would look broken — measured on
       // the shipped build at 390px. There, the reader IS the open message, so open it.
       if (readColumnHidden()) setReaderFor(messageId);
@@ -431,7 +431,7 @@ export function useShellCompose({
       setReplyMode("forward");
       setReplyTo(messageId);
       setReplyBody(readReplyDraft(replyDraftKey("forward", messageId)));
-      // The same mobile rule `openReply` states: below 900px the dock lives in the reader.
+      // The same mobile rule `openReply` states: below 700px the dock lives in the reader.
       if (readColumnHidden()) setReaderFor(messageId);
     };
     if (!press.fetch) { open(); return; }
@@ -682,7 +682,7 @@ export function useShellCompose({
     setReplyTo(messageId);
     setReplyBody(next);
     writeReplyDraft(messageId, next);
-    // Same mobile rule `openReply` states: under 900px the reading column is display:none,
+    // Same mobile rule `openReply` states: under 700px the reading column is display:none,
     // so an editor mounted there is one nobody can see.
     if (readColumnHidden()) setReaderFor(messageId);
   });

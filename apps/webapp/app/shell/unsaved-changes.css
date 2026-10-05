@@ -102,7 +102,7 @@
 }
 
 /* THE RAIL COPY NEEDED ITS OWN RULE, and the one above could never give it one: the rail exists
-   only at 901px and up, while that query fires only below 520px, so the two can never both be
+   only at 1024px and up, while that query fires only below 520px, so the two can never both be
    true. The rail column itself is roughly 200–360px — "Erneut versuchen" beside "Verwerfen" does
    not fit — and the actions clipped with no breakpoint able to reach them. Keyed on the copy
    rather than the viewport, which is what the layout actually depends on. */

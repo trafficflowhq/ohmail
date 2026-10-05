@@ -74,7 +74,7 @@ import { mailboxErrorKey, storeRefusalsFigure } from "./mailbox-error-key";
 /**
  * Rendered twice, in two shapes. The rail carries everything that acts on the app rather than on mail, so
  * the shell renders `variant="rail"` into the rail's slot and keeps `variant="shell"` where it was;
- * `app.css` shows exactly one (under 900px the rail collapses into a drawer, and a sync line in a closed
+ * `app.css` shows exactly one (under 1024px the rail collapses into a drawer, and a sync line in a closed
  * drawer tells nobody anything). `display:none`, not a JS width test: the hidden copy leaves the
  * accessibility tree too, so two `role="status"` regions never announce twice. Written as ONE stylesheet
  * rule: two complementary-looking queries left a fractional width where both copies painted

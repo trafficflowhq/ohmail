@@ -44,14 +44,14 @@
   animation:hint 3.6s var(--swift) .2s both}
 @keyframes hint{0%{opacity:0}10%{opacity:1}82%{opacity:1}100%{opacity:0}}
 body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
-/* THE ON-SCREEN WAY BACK — hidden at rest, real below 900px. On the desktop overlay the
+/* THE ON-SCREEN WAY BACK — hidden at rest, real below 700px. On the desktop overlay the
    exhale keeps its chrome-free surface: esc and the visible dimmed backdrop both say the way
    out. At phone width neither does — the overlay covers everything, the esc hint is (rightly)
    suppressed for coarse pointers — so a walked 390 review found an overlay whose only labelled
    exit was a keycap on a fading toast. This is the exit that stays. */
 .reader-close{display:none}
-@media (max-width: 900px){
-  /* AN OPAQUE GROUND, AND ONLY HERE. The overlay paints nothing above 900px — the receded
+@media (max-width: 699.98px){
+  /* AN OPAQUE GROUND, AND ONLY HERE. The overlay paints nothing from 700px — the receded
      shell at 5% IS the desktop design. Below it the overlay is the whole viewport, and the 5%
      residue ghosted through the seams between message panels as stray dimmed words — a walked
      defect, both themes. `--canvas` because a full-screen reading surface is a PAGE of the
@@ -77,8 +77,9 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
  *
  * `.read-col` is one scroller (message.css). On a deep thread with the reply open, the editor
  * sat at the bottom of a tall column, below the fold — and an editor nobody can see is the
- * compose dialog this design rejected, wearing different clothes. At split width (≥901px, where
- * the reading column exists at all) AND with room for it, the reply dock STICKS to the bottom
+ * compose dialog this design rejected, wearing different clothes. At three-pane width (≥1024px;
+ * the two-pane band from 700 keeps the scroll-into-view fallback, its 364–596px column being too
+ * narrow for a pinned editor — DESIGN-FOLD-WIDTHS §0) AND with room for it, the reply dock STICKS to the bottom
  * of the scrollport: the conversation scrolls behind it and the whole panel stays in view.
  * Below that height, and in the reader overlay (which this rule deliberately does not touch —
  * it is `.read-col` only), the editor scrolls itself into view on open instead (`InlineReply`,
@@ -94,7 +95,7 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
  * `--lift-3` over the conversation — the same layer grammar as the action pill above it.
  * Re-adding an overflow or a height cap here reintroduces the scrolled-away chrome, and the
  * panel's own stylesheet is guarded against exactly that. */
-@media (min-width: 901px) and (min-height: 640px) {
+@media (min-width: 1024px) and (min-height: 640px) {
   .read-col .reply-dock {
     position: sticky;
     bottom: 0;

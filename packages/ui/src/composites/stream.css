@@ -165,8 +165,8 @@
  * indicator that edge is the glass. So the inset belongs on the offset as well.
  *
  * Unconditionally, not inside the phone block, and the difference is a real band rather than a
- * tidiness argument: the scroller's reservation carries the inset from 900px down, so scoping the
- * offset to 640 would leave 641–900 — a tablet in a standalone window — resting clear of the
+ * tidiness argument: the scroller's reservation carries the inset from 700px down, so scoping the
+ * offset to 640 would leave 641–699 — a small tablet in a standalone window — resting clear of the
  * indicator and pinning into it, which is the exact mismatch this clause exists to remove.
  * `env(...,0px)` is 0 in every browser window and on the desktop, so nothing moves there.
  *

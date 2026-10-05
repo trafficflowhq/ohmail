@@ -23,6 +23,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { isTypingTarget, useOptionalKeyBindings, type KeyBinding } from "./keymap";
+import { railLayout } from "./narrow";
 
 /**
  * `"none"` is the fourth answer: a dialog is layered ABOVE the open reader (a screening
@@ -107,19 +108,20 @@ function computeZone(): Zone {
  * THE MOBILE DRAWER IS OFF-CANVAS BY TRANSFORM, NOT `display:none` — so the focus-refusal
  * guard that protects every other hidden surface here does not fire: a translated button
  * accepts `focus()` happily, and ← from the list would put real focus into a drawer nobody
- * can see, without opening it. The same 900px question the views' `readColumnHidden()` asks,
- * plus the drawer's own open flag (`.rail.open`, set by the shell) — entering the rail by
- * key is allowed exactly where the rail is on screen.
+ * can see, without opening it. The DRAWER question `narrow.ts` answers (below 1024 the rail is a
+ * drawer — not the views' column question, which turns at 700 since the width ladder), plus
+ * the drawer's own open flag (`.rail.open`, set by the shell) — entering the rail by key is
+ * allowed exactly where the rail is on screen.
  */
 function railHidden(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
-  if (!window.matchMedia("(max-width: 900px)").matches) return false;
+  if (!railLayout().drawer) return false;
   return document.querySelector(`${RAIL}.open`) == null;
 }
 
 /**
  * THE ZERO LADDER'S DRAWER SUMMON — `h` keeps its one meaning (OHMARCHY-PLAN §12: "toward the rail", which at ribbon
- * widths means drawer-in). Under the Zero layout the rail below 900px is a docked icon ribbon (or, under 392px, off
+ * widths means drawer-in). Under the Zero layout the rail below 1024px is a docked icon ribbon (or, under 392px, off
  * canvas entirely), and the FULL rail is a user-summoned drawer — so "step into the rail" where the full rail is not
  * standing means SUMMON it, not focus a translated button nobody can see. A module-level seam, not a layout read: the
  * shell REGISTERS the summon only while the Zero layout is active (`AppShell`'s effect — the one ledgered layout

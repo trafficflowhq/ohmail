@@ -99,10 +99,12 @@
    `display: none` is also what keeps them out of the tab order — a focusable separator for a
    seam that is not on screen would be a stop on the keyboard walk that does nothing.
 
-   The list handle's rule is the ≤900 one BY DEFAULT because that is classic's answer; the
-   Zero ladder keeps the split alive from 722 and re-shows the handle there, in its own
-   stylesheet, where every layout-conditional rule in this app lives. */
-@media (max-width: 900px) {
+   The list handle's rule is the ≤1023.98 one BY DEFAULT because that is classic's answer —
+   between 700 and 1023 the split is two panes at a fixed ratio (`clamp(300px, 38%, 380px)`,
+   DESIGN-FOLD-WIDTHS §1) with no drag; the Zero ladder keeps its dragged split alive from 722
+   and re-shows the handle there, in its own stylesheet, where every layout-conditional rule in
+   this app lives. */
+@media (max-width: 1023.98px) {
   .col-handle-rail,
   .col-handle-list {
     display: none;

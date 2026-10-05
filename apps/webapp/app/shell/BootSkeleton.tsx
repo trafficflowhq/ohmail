@@ -124,9 +124,10 @@ export function BootSkeleton({
   }
   return (
     <div className="boot-sk boot-sk-window" aria-hidden="true">
-      {/* The NARROW shell's topbar, as shape — rendered always, shown only ≤900px (where the
-          rail and reader silhouettes hide): without it a long narrow boot ended with the real
-          topbar appearing and every row shifting down. Wordmark bar left, one capsule right. */}
+      {/* The NARROW shell's topbar, as shape — rendered always, shown only below 1024px (where
+          the rail silhouette hides; the reader silhouette stays to 700, the two-pane band):
+          without it a long narrow boot ended with the real topbar appearing and every row
+          shifting down. Wordmark bar left, one capsule right. */}
       <div className="boot-sk-topbar">
         <span className="boot-sk-bar boot-sk-mark" />
         <span className="boot-sk-tb-btn" />

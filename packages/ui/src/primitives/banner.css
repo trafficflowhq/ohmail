@@ -1,8 +1,8 @@
 /* ═══ BANNER — a standing fact at the head of a list, pinned wide and in the flow narrow ══════
  *
  * The form is decided by ONE media rule at the bottom of this file and by nothing else. Its
- * literal is the shell's own breakpoint — `layout.mobileMax` (900) in `@ohmail/tokens`, so the
- * rule reads `min-width: 901px` exactly as the rail's and the split's do — and a test pins the two
+ * literal is the shell's own breakpoint — `layout.mobileMax` (1023) in `@ohmail/tokens`, so the
+ * rule reads `min-width: 1024px` exactly as the rail's does — and a test pins the two
  * to each other, because a media query cannot read a custom property and a second breakpoint
  * typed by hand is how a banner ends up pinned on a tablet the rest of the shell treats as a phone.
  *
@@ -45,6 +45,6 @@
    same token product) plus the banner's own 4px top margin — so the stuck position and the resting
    position are the same pixel and the banner does not hop when the list starts to move. Measured:
    with `top` at the ring room alone it moved 4px on the first scroll under paper. */
-@media (min-width: 901px){
+@media (min-width: 1024px){
   .banner{position:sticky;top:calc(var(--focus-w) * var(--teach) + 4px);z-index:2}
 }

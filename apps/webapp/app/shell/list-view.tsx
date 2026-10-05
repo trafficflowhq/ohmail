@@ -144,16 +144,19 @@ export function ListSentence({ glyph, title, status, children }: {
 }
 
 /** The reading column: the shown row, the gone notice, or nothing; `instead` is a view's own population (Trash's live rows). */
-export function ListReadColumn<M>({ list, regionLabel, instead, children }: {
+export function ListReadColumn<M>({ list, regionLabel, instead, onClose, closeLabel, children }: {
   list: Pick<ListView<M>, "column">;
   regionLabel: string;
   instead?: ReactNode;
+  /** The column's own way out under a thumb in the two-pane band (`ReadColumn`); absent, no ✕. */
+  onClose?: () => void;
+  closeLabel?: string;
   children: (m: M) => ReactNode;
 }) {
   const facts = useContext(ListGone);
   const c = list.column;
   return (
-    <ReadColumn regionLabel={regionLabel}>
+    <ReadColumn regionLabel={regionLabel} onClose={onClose} closeLabel={closeLabel}>
       {instead != null
         ? instead
         : c.kind === "message"

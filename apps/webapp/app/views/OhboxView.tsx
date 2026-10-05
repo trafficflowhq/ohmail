@@ -1187,7 +1187,7 @@ export function OhboxView({
   useEffect(() => leaveRead, [leaveRead]);
 
   /**
-   * #3 — the reader sheet closes, and only where the sheet WAS the reading. Below 900px there
+   * #3 — the reader sheet closes, and only where the sheet WAS the reading. Below 700px there
    * is no reading column: dismissing the sheet is leaving the message, and on a phone it is
    * usually the only departure. At a split width the column goes on showing the same message,
    * so releasing its place there would slide the row away while it is being read. The width is
@@ -2479,11 +2479,18 @@ export function OhboxView({
       </ListPane>
       {/* NO `onEnterReader` ON THE PANE. `ReadingPane` renders a small
           "Open reading mode" button when it is given one, and this column is the ONE place
-          that passed it. Below 900px the column is `display:none`, so that button was
+          that passed it. Below 700px the column is `display:none`, so that button was
           reachable at exactly the widths where the sheet duplicates the pane it is standing
           on — a control whose only outcome was the defect. The reader is not lost: it is
-          what "opened" means where there is no column, which is the shell's `enterReader`. */}
-      <ReadColumn regionLabel={tReader("pane")}>
+          what "opened" means where there is no column, which is the shell's `enterReader`.
+          THE ✕ is the column's way out under a thumb in the two-pane band (700–1023, no Esc):
+          it clears the selection, which is what Esc does at 1024; the stylesheet shows it
+          only there. Only while something is open — an empty column has nothing to close. */}
+      <ReadColumn
+        regionLabel={tReader("pane")}
+        onClose={selected || gone ? () => onSelect(null) : undefined}
+        closeLabel={tReader("closeColumn")}
+      >
         {selected ? (
           <MessagePane
             /* The pane derives its read-state verb from `message.unread`, so the open message
@@ -2533,12 +2540,17 @@ export function OhboxView({
           /**
            * And only when there are rows: an empty Ohbox already says it is empty in the list — the Screener's
            * show-once rule — so with no rows the column stays empty. Mobile needs no arm: `app.css` hides this column
-           * under 900px, where a tap IS the open.
+           * under 700px, where a tap IS the open.
            */
           <div className="empty">
             <span className="glyph" aria-hidden="true">✉</span>
             <b>{t("emptyRestTitle")}</b>
-            {t.rich("emptyRestHint", { kbd: (chunks) => <Kbd>{chunks}</Kbd> })}
+            {/* Two sentences, one painted: the keycap names `j`, which a coarse-pointer device
+                does not have, so `app.css` swaps in the touch twin under `(pointer: coarse)`. */}
+            <span className="empty-hint-keys">
+              {t.rich("emptyRestHint", { kbd: (chunks) => <Kbd>{chunks}</Kbd> })}
+            </span>
+            <span className="empty-hint-touch">{t("emptyRestHintTouch")}</span>
           </div>
         ) : null}
       </ReadColumn>

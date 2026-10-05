@@ -4,7 +4,7 @@
  * Who organizes these mailboxes changed — said once, then gone. Two kinds are news (`organizerNotices`): another
  * install took a mailbox, or its holder stopped and nothing files it. ONE BLOCK PER KIND, `stopped` first; a block
  * about several mailboxes is one sentence with the count, and the count opens the list. Rendered at the rail's foot
- * (`variant="rail"`) and, under 901px where the rail is a drawer, as the topbar's twin (`variant="shell"`) — one
+ * (`variant="rail"`) and, under 1024px where the rail is a drawer, as the topbar's twin (`variant="shell"`) — one
  * query in `app.css` shows exactly one. "Mark read" acknowledges every row its block lists, on the row itself, so the
  * press holds on every device and across a relaunch (DESIGN-026 §1.2-1.4).
  */

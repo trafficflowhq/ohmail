@@ -1,10 +1,11 @@
 /**
- * The narrow question, asked once — "is the reading column off screen at this width?" Classic has one breakpoint
- * (under 900px the column is `display:none` and "open" means the reader sheet), and eleven call sites asked that
- * media query inline — one predicate written ten times. The Zero layout moves the ANSWER without moving the question:
- * under `data-layout="zero"` the split survives to 722px beside a docked ribbon (OHMARCHY-PLAN.md §12's ladder), so
- * the column only leaves at 721 — a per-site edit would be ten copies of a layout branch; here it is one, ledgered
- * once in the census.
+ * The narrow question, asked once — "is the reading column off screen at this width?" Classic has one phone
+ * breakpoint (under 700px the column is `display:none` and "open" means the reader sheet; from 700 the split is
+ * two panes, list and reader, with the rail still a drawer up to 1023 — DESIGN-FOLD-WIDTHS §0), and eleven call
+ * sites asked that media query inline — one predicate written ten times. The Zero layout moves the ANSWER without
+ * moving the question: under `data-layout="zero"` the split survives to 722px beside a docked ribbon
+ * (OHMARCHY-PLAN.md §12's ladder), so the column only leaves at 721 — a per-site edit would be ten copies of a
+ * layout branch; here it is one, ledgered once in the census.
  */
 
 /**
@@ -15,8 +16,20 @@
 
 /** The zero ladder's one JS-visible boundary: the split dies under 722 (§12: 52+5+320+10+325+10). */
 const ZERO_NARROW = "(max-width: 721px)";
-/** Classic's one breakpoint — the shipping shell's, unchanged. */
-const CLASSIC_NARROW = "(max-width: 900px)";
+/**
+ * Classic's PHONE edge — the last width at which a split view is one column and the reader is
+ * the floating sheet (`app.css`'s `(max-width: 699.98px)` block hides `.read-col` there). The
+ * `.98` is the range-context spelling: one pair per threshold, `699.98` / `700`, so no
+ * fractional width matches both halves or neither (the 900.5px lesson in app.css).
+ */
+const CLASSIC_NARROW = "(max-width: 699.98px)";
+/**
+ * Classic's DRAWER edge — the last width at which the rail is a drawer under a topbar
+ * (`app.css`'s `(max-width: 1023.98px)` block). Between the two edges the shell is a topbar over
+ * two panes: the column is on screen and the rail is still a drawer, which is why the drawer
+ * question is no longer the column question.
+ */
+const CLASSIC_DRAWER = "(max-width: 1023.98px)";
 
 export function narrowQuery(): string {
   return typeof document !== "undefined" &&
@@ -110,7 +123,7 @@ export function watchNarrow(onChange: (narrow: boolean) => void): () => void {
 }
 
 /**
- * WHERE THE RAIL IS A DRAWER. Under classic's 900px the rail is a drawer that stands over the page
+ * WHERE THE RAIL IS A DRAWER. Under classic's 1024px the rail is a drawer that stands over the page
  * when open (`app.css`); the Zero ladder docks it as a ribbon from 392px, so only under that is a
  * closed rail off canvas. A closed off-canvas rail is inert; an open drawer holds focus.
  */
@@ -118,7 +131,7 @@ export interface RailLayout { drawer: boolean; offCanvas: boolean }
 
 export function railLayout(): RailLayout {
   if (typeof window === "undefined" || !window.matchMedia) return { drawer: false, offCanvas: false };
-  const drawer = window.matchMedia(CLASSIC_NARROW).matches;
+  const drawer = window.matchMedia(CLASSIC_DRAWER).matches;
   const docked = narrowQuery() === ZERO_NARROW && window.matchMedia("(min-width: 392px)").matches;
   return { drawer, offCanvas: drawer && !docked };
 }
@@ -127,7 +140,7 @@ export function railLayout(): RailLayout {
 export function watchRailLayout(onChange: (layout: RailLayout) => void): () => void {
   if (typeof window === "undefined" || !window.matchMedia) return () => {};
   const emit = (): void => onChange(railLayout());
-  const mqs = [CLASSIC_NARROW, "(min-width: 392px)"].map((q) => window.matchMedia(q));
+  const mqs = [CLASSIC_DRAWER, "(min-width: 392px)"].map((q) => window.matchMedia(q));
   for (const mq of mqs) mq.addEventListener?.("change", emit);
   const mo = typeof MutationObserver !== "undefined"
     ? new MutationObserver((muts) => { if (muts.some((m) => m.attributeName === "data-layout")) emit(); })

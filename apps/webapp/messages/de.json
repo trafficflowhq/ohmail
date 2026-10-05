@@ -580,6 +580,7 @@
     "emptyFiledHint": "{count, plural, one {1 Nachricht ist} other {# Nachrichten sind}} angekommen, und nichts davon gehört hierher. Schau in News, in den Belegen oder in der Suche.",
     "emptyRestTitle": "Nichts offen.",
     "emptyRestHint": "Wähl eine Nachricht mit <kbd>j</kbd> oder per Klick — sie öffnet sich hier.",
+    "emptyRestHintTouch": "Wähl eine Nachricht — sie öffnet sich hier.",
     "picked": "{count, plural, one {1 ausgewählt} other {# ausgewählt}}",
     "pickedWord": "ausgewählt",
     "pickedAria": "{count, plural, one {1 ausgewählt — Auswahl aufheben} other {# ausgewählt — Auswahl aufheben}}",
@@ -1677,6 +1678,7 @@
     "hint": "zum Zurückgehen",
     "back": "Zurück",
     "pane": "Geöffnete Nachricht",
+    "closeColumn": "Schließen",
     "hintReturn": "zum Zurückgehen"
   },
   "body": {

@@ -2,4 +2,6 @@
 .waterline{display:flex;align-items:center;gap:12px;padding:20px 30px 16px;font-size:calc(11px + var(--type-up));color:var(--ink3)}
 .waterline::before,.waterline::after{content:"";flex:1;height:1px;background:var(--hair-soft)}
 .waterline b{color:var(--ink2);font-weight:600;font-size:calc(11.5px + var(--type-up));flex:none}
-.waterline span{flex:none}
+/* The meta gives way, the label never: at the two-pane band's 300px list (DESIGN-FOLD-WIDTHS §1)
+   "Seen up to here · last visit · <stamp>" ran 3px past the column and the list scrolled sideways. */
+.waterline span{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

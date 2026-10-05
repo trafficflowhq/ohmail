@@ -57,7 +57,10 @@
   .decide .dbtn kbd{display:none}
 }
 
-@media (max-width: 900px){
+/* The full-screen read's way back, and the bar's phone density: ONE-COLUMN widths only. From
+   700px the Screener is list + inline read (DESIGN-FOLD-WIDTHS §0), where a back verb would
+   close a preview that stands beside its list. */
+@media (max-width: 699.98px){
   .scn-back{display:inline-flex}
   .decide{padding:14px 18px 12px}
 }

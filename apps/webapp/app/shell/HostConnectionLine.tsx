@@ -18,7 +18,7 @@
  * travel on the prop, rather than shipping to every phone and tab as payload nothing there renders
  * — the bargain `mailboxFacts` and `mirrorFreshness` strike. Two shapes, one sentence:
  * `variant="rail"` in the rail's account-line slot, `variant="shell"` above the topbar where
- * the rail is a closed drawer; `app.css` shows exactly one, from the SAME single `min-width: 901px`
+ * the rail is a closed drawer; `app.css` shows exactly one, from the SAME single `min-width: 1024px`
  * query the sync line swaps on — see `.rail-sync-slot` for why that is one rule and not two.
  */
 

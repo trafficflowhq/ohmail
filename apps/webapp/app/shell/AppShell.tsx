@@ -2046,7 +2046,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        * so the footer simply did not appear until a shell supplied them. Nothing did, so a reader looking back at an
        * older message in a thread had no way to answer it without first making it the focused one — the exact detour
        * the footer exists to remove. `openReply` is the SAME callback the focused message's action bar runs, passed
-       * straight through: one reply machine, retargeted by id, so the mobile rule it carries (under 900px the reading
+       * straight through: one reply machine, retargeted by id, so the mobile rule it carries (under 700px the reading
        * column is `display:none`, so open the reader) holds for a sibling too. Any second implementation here would
        * be a copy of that rule waiting to drift.
        */
@@ -2221,14 +2221,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             forget it — see `SyncBar.tsx` for why that placement is the fix and the sentence
             is not.
 
-            THE NARROW-WIDTH COPY. Above 900px the rail is standing and carries this line
+            THE NARROW-WIDTH COPY. At 1024px and up the rail is standing and carries this line
             itself (`sync` on the rail below); this one is hidden there by `app.css`. Under
-            900px the rail is a drawer that is closed most of the time, so the strip and the
+            1024px the rail is a drawer that is closed most of the time, so the strip and the
             corner pill are the only way the mailbox can speak, and they keep the job. */}
         {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} />}
 
         {/* THE COMPUTER THIS WINDOW READS THROUGH, when it is not answering — the narrow-width
-            copy, on `SyncBar`'s rule and hidden above 901px by the same single query. It sits
+            copy, on `SyncBar`'s rule and hidden at 1024px and up by the same single query. It sits
             BELOW the sync strip deliberately: the strip is chrome about a process, this is a
             statement about what the window can do, and a standing fact under a transient reads
             in the right order. Absent from the DOM in every other case. */}
@@ -2259,7 +2259,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         <DurabilityNotice />
 
         {/* WHO ORGANIZES THESE MAILBOXES CHANGED — the narrow-width copy, beside the other
-            app-level strips and never over the Ohbox rows; hidden at 901px and up, where the
+            app-level strips and never over the Ohbox rows; hidden at 1024px and up, where the
             rail's foot carries it. */}
         {noticeOn ? (
           <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant="shell" />
@@ -2283,7 +2283,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             <Icon name="menu" />
           </button>
           <b>{mobileTitle}</b>
-          {/* The worker doorbell, under 900px — the rail (whose foot carries the wide-width
+          {/* The worker doorbell, under 1024px — the rail (whose foot carries the wide-width
               copy of this button) is a closed drawer here, and a refresh affordance inside a
               closed drawer is one nobody is told about. See `PullNewMail.tsx`. */}
           <PullNewMail variant="topbar" binding={pullBinding} />
@@ -2352,7 +2352,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             }))}
             dock={railDock}
             /* The organizer notice's rail form — `undefined` when there is nothing to say, so the
-               foot keeps no empty band; the topbar twin above carries it under 901px. */
+               foot keeps no empty band; the topbar twin above carries it under 1024px. */
             notice={noticeOn
               ? <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant="rail" />
               : undefined}

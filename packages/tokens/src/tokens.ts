@@ -353,8 +353,17 @@ export const layout = {
   split: "minmax(320px,400px) 1fr",
   /** Rail width on desktop. */
   rail: "224px",
-  /** Mobile breakpoint — at or below, the rail becomes a drawer. */
-  mobileMax: 900,
+  /**
+   * THE WIDTH LADDER (DESIGN-FOLD-WIDTHS §0). Two thresholds, each written in CSS as ONE pair:
+   * `(max-width: 1023.98px)` / `(min-width: 1024px)` and `(max-width: 699.98px)` / `(min-width: 700px)`.
+   *   · below 1024 the rail is a drawer under a topbar (`mobileMax` is the last drawer width);
+   *   · below 700 a split view is one column and a message opens the floating reader
+   *     (`phoneMax` is the last one-column width); 700–1023 is two panes, list and reader.
+   * `shell/narrow.ts` asks the same two numbers in JS; `banner.css` pins its one rule to
+   * `mobileMax + 1`. Android's two-pane floor is the same 700 (`derive.ts`).
+   */
+  mobileMax: 1023,
+  phoneMax: 699,
   /** Stream / message column maximums. */
   streamMax: "620px",
   messageMax: "640px",

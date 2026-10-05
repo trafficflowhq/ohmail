@@ -563,7 +563,7 @@ export function useShellOpenState({
       : readerMessage;
 
   /**
-   * Is the reading column absent? Below the active layout's breakpoint (`narrow.ts` — 900px
+   * Is the reading column absent? Below the active layout's breakpoint (`narrow.ts` — 700px
    * classic, 721px zero) `app.css`/`zero-layout.css` set `display:none` on it, so a
    * split-pane selection shows the user nothing and "opened" has to mean the reader sheet.
    * One predicate, used by `openReply` (which had it inline) and by `openMessage` — now the
@@ -806,7 +806,7 @@ export function useShellOpenState({
    * `<button>` and has always called this) — what was wrong is everything AFTER the routing decision: this set a view
    * and a cursor and stopped, so on three of five destinations the user arrived at a list and had to find the thing
    * they had just clicked, and on the fourth at a pane that is `display:none` at their screen width. ohbox — the
-   * split pane IS the open on a desktop; under 900px the reading column is hidden, so the reader sheet is what
+   * split pane IS the open on a desktop; under 700px the reading column is hidden, so the reader sheet is what
    * "opened" means, exactly as `OhboxView`'s own tap handler decided. reads/receipts — cursor plus a `jump`, which
    * extends the mounted run through the card, anchors the stream on it and OPENS it (`ReadsView`,
    * `StreamShell.scrollTo`): a card the stream merely scrolled near is not the message the reader clicked.

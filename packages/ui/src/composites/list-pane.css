@@ -6,7 +6,7 @@
 .list-col.solo{width:100%;max-width:680px;margin:0 auto}
 .vhead{display:flex;align-items:baseline;gap:12px;padding:22px 30px 14px;flex-wrap:wrap}
 /* ONE TITLE SIZE, AND THIS IS THE ONLY PLACE IT IS DECLARED. A pile label ("Ohbox", "Reads", a
-   tag's name) names the list under it; at 26px, with a 22px override under 900px on top, it read
+   tag's name) names the list under it; at 26px, with a 22px override in the phone block on top, it read
    as a page heading and outweighed the mail. Consumers must not re-declare it per breakpoint: a
    stylesheet guard collects every rule that sizes a pile title, media blocks included, and
    requires the set of sizes to have exactly one member. */

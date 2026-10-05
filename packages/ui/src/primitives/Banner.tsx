@@ -17,7 +17,7 @@ export interface BannerProps {
 /**
  * A standing banner at the head of a list — pinned on a desktop, in the
  * flow on a phone. A media query on the shell's breakpoint
- * (`layout.mobileMax`, 900) decides the form: at and above, sticky at the
+ * (`layout.mobileMax`, 1023) decides the form: above it, sticky at the
  * top of its scroller; below, a block that scrolls away. It must be the
  * scroller's first child — one media rule then gives both forms with no
  * JavaScript width decision (no `useNarrow()` here, ever). Look: the away

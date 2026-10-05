@@ -47,8 +47,9 @@ body.reading .shell {
    is what the live walk actually reported.
    `div.shell` and not `.shell`: `packages/ui/composites/reader.css` declares the same rule
    at the same specificity, so equal weight would leave this to stylesheet order. Below
-   901px the prototype's 5% stays exactly as designed — there the shell behind is the list,
-   not a second copy of the message.
+   1024px the prototype's 5% stays exactly as designed — there the rail is a drawer, and the
+   shell behind is the list (or, from 700, two panes under a topbar), not a second copy of
+   the message with a standing rail beside it.
    THE RAIL STAYS OPERABLE: at these widths the sheet is the reading surface for the
    views with no reading column (folders, tags, history, triage, trash), and a whole-shell
    hide made every rail press die on the sheet's backdrop — one click swallowed per
@@ -56,7 +57,7 @@ body.reading .shell {
    keeps its pointer events above the overlay (z 51, under --z-fr), faded to the abar's
    resting .35 and lifted by hover/focus — the exhale recedes it, never disarms it. A
    landed press navigates, and the route transition closes the reader itself. */
-@media (min-width: 901px) {
+@media (min-width: 1024px) {
   body.reading div.shell {
     opacity: 1;
     transform: none;
@@ -113,7 +114,7 @@ body.reading .shell {
 /* A SHORT VIEWPORT (200 % zoom on a 1280x800 window is 640x400): the page is the one scroller, so
    the strips and a view's head scroll away with it, and each view's own scroller is one viewport
    tall, so a windowed list keeps a bounded box and fills the screen once its head has gone. */
-@media (max-height: 480px) and (max-width: 900px) {
+@media (max-height: 480px) and (max-width: 1023.98px) {
   .app-root {
     height: auto;
     min-height: 100dvh;
@@ -140,12 +141,12 @@ body.reading .shell {
    keep `overflow: visible` so panel shadows in other views still breathe). `padding-top: 18px`
    holds the first card exactly where it sits today — the stream's own 2px plus the deck's 16px —
    and `padding-bottom` stays whatever `stream.css` reserves for the last card's shadow falloff
-   (48px, since the floating capsule that used to need 132px moved into the rail). The ≤900px
+   (48px, since the floating capsule that used to need 132px moved into the rail). The ≤699.98px
    block (further down) is untouched, and the single-message `.read-col` keeps its frame — it is
    one lifted panel, not a scroll of cards. The THREAD column does the same reclaim as this rule,
    on all four sides (`.read-col:has(> .conv)`, packages/ui message.css): a thread is a scroll of
    panels on the canvas, and its panels run to the same edges these cards do. */
-@media (min-width: 901px) {
+@media (min-width: 1024px) {
   .view-reads .stream,
   .view-receipts .stream {
     /* the deck frame is a token now (--gap-edge); the reclaim and the give-back move with it
@@ -873,8 +874,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 /* ONE BREAKPOINT, NOT TWO NUMBERS THAT HAPPEN TO LINE UP.
 
    "Exactly one of the two shapes is ever on screen" is the claim above, and it used to be
-   spelled as a pair of independent queries: `min-width: 901px` hid the strip, `max-width: 900px`
-   hid the rail slot. Between them they leave a gap. A viewport of 900.5px matches NEITHER — and
+   spelled as a pair of independent queries: a `min-width` hid the strip and a `max-width` one
+   pixel below it hid the rail slot. Between them they leave a gap. A viewport half a pixel
+   past the lower number (900.5px, when the breakpoint was 900) matched NEITHER — and
    fractional widths are ordinary, not exotic: browser zoom, a device pixel ratio that does not
    divide evenly, a window dragged to an odd size on a scaled display all produce them. At any
    width in that gap BOTH copies were displayed, so the same sentence stood on screen twice and
@@ -912,7 +914,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .rail-notice-slot {
   display: none;
 }
-@media (min-width: 901px) {
+@media (min-width: 1024px) {
   .sync-bar {
     display: none;
   }
@@ -929,7 +931,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
      does: two complementary queries are not the same thing as one rule, and the gap between two
      numbers once put a sentence on screen twice with two live regions reading it out. Its rail
      copy is hidden at rest (`rail.css`) and revealed here, so exactly one is painted at every
-     width — including inside an OPEN drawer under 901px, where the rail exists but this query
+     width — including inside an OPEN drawer under 1024px, where the rail exists but this query
      does not match and the shell form is the visible one. */
   .host-strip {
     display: none;
@@ -1245,7 +1247,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .ohx-notice button:hover {
   background: var(--accent-soft);
 }
-@media (max-width: 900px) {
+@media (max-width: 699.98px) {
   .ohx-notice {
     margin: 8px 14px 0;
   }
@@ -1255,14 +1257,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    It used to be `.ohx-notice.ohx-standing`, the pane's rules written here beside the subline's.
    The pane is `packages/ui`'s `Banner` now (primitives/banner.css: the soft accent ground over
    the panel, the card radius, the 2px leading rule, the quiet verb — and the ONE media rule that
-   pins it at 901px and up while it scrolls with the rows below), and `AwayNotice` renders through
+   pins it at 1024px and up while it scrolls with the rows below), and `AwayNotice` renders through
    `OhboxView`'s `standingNotice` slot INSIDE the scroller rather than in this header slot. */
 
-/* ============ the organizer notice, under 901px: the topbar's twin =====================
+/* ============ the organizer notice, under 1024px: the topbar's twin ====================
    The rail's foot carries the notice at width (`.rail-notice`, rail.css); where the rail is a
    closed drawer this is the one copy — one quiet line in the strip register of the host line,
    never over the Ohbox rows. Its `display` is declared beside `.host-strip`, above the single
-   901px query that swaps the pair. The inner marks, rows and verbs are rail.css's `.rn-*`. */
+   1024px query that swaps the pair. The inner marks, rows and verbs are rail.css's `.rn-*`. */
 .notice-shell {
   flex: none;
   flex-direction: column;
@@ -1339,7 +1341,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   gap: 8px;
   margin-top: 12px;
 }
-@media (max-width: 900px) {
+@media (max-width: 699.98px) {
   .pfi-card {
     top: 8px;
     width: min(520px, calc(100% - 16px));
@@ -1384,7 +1386,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    (322px), so no viewport breakpoint can express "is there room".
 
    One correction to the earlier note, because it changes where the narrow case lives:
-   the desktop column is 400px, not 320px. `.view.split` collapses to `1fr` below 900px, and
+   the desktop column is 400px, not 320px. `.view.split` collapses to `1fr` below 700px, and
    above it the `1fr` sibling always leaves the first track room for its 400px MAXIMUM, so the
    `minmax(320px,400px)` floor is unreachable. The narrowest doorbell in the product is the
    SMALL PHONE. Verified in Chrome against `next build` with four-digit counts in the live
@@ -3728,7 +3730,7 @@ input.set-tag-input {
 
 /* ── THE OTHER COMPUTER IS NOT ANSWERING — the narrow arrangement ─────────────
    The rail's twin (`.rail-host`, `rail.css`), for the widths where the rail is a
-   closed drawer. It joins the SAME single `min-width: 901px` query the sync line
+   closed drawer. It joins the SAME single `min-width: 1024px` query the sync line
    and the unsaved strip already swap on — one rule, both halves, so "exactly one
    copy is on screen" holds at every width by construction. Two complementary
    queries left a fractional gap once and printed the sentence twice; see the
@@ -3741,7 +3743,7 @@ input.set-tag-input {
    asserts their absence, because the moment this wears a transient's clothes it
    starts reading as something that is about to fix itself. */
 /* NO `display` HERE. It is declared beside `.rail-sync-slot`, immediately above the one
-   `min-width: 901px` query, because the cascade resolves equal specificity by SOURCE ORDER and
+   `min-width: 1024px` query, because the cascade resolves equal specificity by SOURCE ORDER and
    this block sits two thousand lines BELOW that query — so a `display: flex` here would beat the
    query's `display: none` and paint both copies at desktop widths. Measured by
    `sync-notice-one-copy.test.ts`'s sweep, which is exactly the defect it was written for on the
@@ -4198,7 +4200,18 @@ input.set-tag-input {
   font-weight: 600;
 }
 
-/* ================= mobile ================= */
+/* ================= mobile =================
+   THE WIDTH LADDER (DESIGN-FOLD-WIDTHS §0; the numbers live in `@ohmail/tokens` `layout` and
+   `shell/narrow.ts` asks the same two in JS). Three bands, two thresholds, ONE query pair per
+   threshold — `(max-width: 1023.98px)` / `(min-width: 1024px)` and `(max-width: 699.98px)` /
+   `(min-width: 700px)` — so no fractional width matches both halves or neither:
+     < 700       the phone: topbar over ONE column; a message opens the floating reader.
+     700–1023    topbar over TWO panes (list + inline reader); the rail is still a drawer.
+     ≥ 1024      three panes with the standing rail — the shipped desktop, unchanged.
+   The first block below is the DRAWER band (everything about the rail being a drawer under a
+   topbar); the second is the PHONE band (everything about there being one column); the third is
+   the two-pane band's own split. An unfolded foldable (700–830 CSS px) lands in the middle band,
+   which is where Android's own two-pane floor (700 dp) puts it too. */
 .topbar {
   display: none;
 }
@@ -4215,7 +4228,8 @@ input.set-tag-input {
 .stream-top {
   display: none;
 }
-@media (max-width: 900px) {
+/* ═══ THE DRAWER BAND, < 1024: the rail is a drawer, the topbar stands over the deck ═══════ */
+@media (max-width: 1023.98px) {
   .topbar {
     display: flex;
     align-items: center;
@@ -4270,9 +4284,34 @@ input.set-tag-input {
   .ritem.on::before {
     left: -8px;
   }
+  /* Settings without a rail beside it is one column: the nav is a wrapping row of pills above
+     the pane (two rows at 700–1023, accepted — DESIGN-FOLD-WIDTHS §5), so there is no placement
+     to reset, only the gap between a pane's own sections, which follows the sheet's. */
+  .set-layout {
+    width: calc(100% - 28px);
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .set-pane-col {
+    gap: 10px;
+  }
+  .set-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0;
+  }
+  .set-nav button {
+    width: auto;
+  }
+}
+
+/* ═══ THE PHONE BAND, < 700: one column; the floating reader is the open ═══════════════════ */
+@media (max-width: 699.98px) {
   /* EVERY SPLIT VIEW ON A PHONE IS ITS LIST: the reading column is hidden and a tap opens the
      reader sheet (Trash's live rows, its own sheet). ONE rule for every split view, because
-     `readColumnHidden()` asks the SAME 900px question before a click selects or opens, and a
+     `readColumnHidden()` asks the SAME 700px question before a click selects or opens, and a
      view missing from a per-view list (Folder once, Trash until 0.25.5) put the column on screen
      while a tap opened the sheet over it. The Screener's full read re-shows itself below. */
   .view.split {
@@ -4413,26 +4452,6 @@ input.set-tag-input {
   .c-subject .tf {
     font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));
   }
-  .set-layout {
-    width: calc(100% - 28px);
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
-  /* The nav is a wrapping row of pills above a single column here, so there is no placement to
-     reset — only the gap between a pane's own sections, which follows the sheet's. */
-  .set-pane-col {
-    gap: 10px;
-  }
-  .set-nav {
-    position: static;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 0;
-  }
-  .set-nav button {
-    width: auto;
-  }
   .triage-cta {
     padding: 0 14px 10px;
   }
@@ -4447,12 +4466,80 @@ input.set-tag-input {
     padding: 5px 10px;
   }
 }
-/* THE SCREENER ROW AT PHONE WIDTH. The subject is what a person screens on, so the badge strip
-   takes at most a third of the row and the mailbox chip ellipsizes inside it; the subject gets
-   the rest. With a coarse pointer the row is ONE target: the avatar and the address were the
+
+/* ═══ THE TWO-PANE BAND, 700–1023: list and inline reader under the topbar ═════════════════
+   DESIGN-FOLD-WIDTHS §1. The list track is a clamp rather than the desktop's dragged
+   `--split-user`: measured, 700 gives list 300 / reader 364 (deck padding 10 a side, gap 16),
+   821 gives 300 / 469, 1023 gives 375 / 596 — the reader never under Android's own 320 floor. No
+   drag handle here (`column-handles.css` hides both below 1024). The reader is the inline
+   `.read-col` in the three-pane scale (`.msg` padding, the split's h2), never the overlay:
+   `.read-col` is `display:none` only in the phone band above, and `readColumnHidden()` answers
+   false from 700, so `body.reading` is never set by a list tap in this band. */
+@media (min-width: 700px) and (max-width: 1023.98px) {
+  .view.split {
+    grid-template-columns: clamp(300px, 38%, 380px) minmax(0, 1fr);
+    column-gap: var(--gap-tile);
+  }
+  /* THE SCREENER ROW AT THE BAND'S 300px LIST: the row's trailing action slot (Accept · ⌃) leaves
+     159px for name, address and time, and the names read "L…". The address gives first — the
+     sacrifice order DESIGN-FOLD-WIDTHS §6 rules below a 300px line, whose general form is the
+     lists lane's; this is the band's own case — and stays in the row's spoken name (`row-spoken`). */
+  .view-screener .row .row-top .addr {
+    display: none;
+  }
+}
+/* THE WAY OUT OF THE INLINE READER UNDER A THUMB. A fine pointer keeps Esc and no button, as at
+   1024; a coarse one has no Esc, so in the two-pane band the column shows the overlay's own exit
+   skin (`reader.css` `.reader-close`: 38px, `--float`, `--lift-2`) sticky at its top-right. First
+   child of the scroller and pulled back over the panel's head with a negative margin, so it
+   overlays the message head rather than pushing it down. Hidden at rest and everywhere else. */
+.read-col-close {
+  display: none;
+}
+@media (min-width: 700px) and (max-width: 1023.98px) and (pointer: coarse) {
+  .read-col-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: sticky;
+    top: 10px;
+    z-index: 2;
+    width: 38px;
+    height: 38px;
+    margin: 10px 10px -48px auto;
+    border-radius: var(--r-avatar);
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    color: var(--ink);
+    background: var(--float);
+    box-shadow: var(--lift-2);
+  }
+  .read-col-close:active {
+    transform: scale(.94);
+  }
+}
+/* THE EMPTY COLUMN'S SENTENCE UNDER A THUMB, at every width: the keycap sentence names a key a
+   coarse-pointer device does not have (the 1024 touch frame showed it), so the touch twin stands
+   instead. Both are rendered; one is painted. */
+.read-col .empty .empty-hint-touch {
+  display: none;
+}
+@media (pointer: coarse) {
+  .read-col .empty .empty-hint-keys {
+    display: none;
+  }
+  .read-col .empty .empty-hint-touch {
+    display: block;
+  }
+}
+/* THE SCREENER ROW AT A NARROW LIST — the phone's full width and the two-pane band's 300–380px
+   list alike (below 1024). The subject is what a person screens on, so the badge strip takes at
+   most a third of the row and the mailbox chip ellipsizes inside it; the subject gets the rest.
+   With a coarse pointer on a PHONE the row is ONE target: the avatar and the address were the
    row's middle, and a thumb there opened the full-height sender sheet instead of the letter. They
    stop being hit targets, so a tap anywhere opens the preview, whose sender press opens the sheet. */
-@media (max-width: 900px) {
+@media (max-width: 1023.98px) {
   .view-screener .row .badges {
     max-width: 33.333%;
   }
@@ -4465,13 +4552,13 @@ input.set-tag-input {
     white-space: nowrap;
   }
 }
-@media (pointer: coarse) and (max-width: 900px) {
+@media (pointer: coarse) and (max-width: 699.98px) {
   .view-screener .row .av,
   .view-screener .row .addr {
     pointer-events: none;
   }
 }
-@media (min-width: 901px) {
+@media (min-width: 1024px) {
   .rail-bg {
     display: none !important;
   }
@@ -4837,7 +4924,7 @@ input.set-tag-input {
 .boot-sk-item { display: flex; align-items: center; gap: 9px; padding: 7px 8px; }
 .boot-sk-dot { width: 10px; height: 10px; border-radius:var(--r-avatar); background: var(--tint2); flex: none;
   animation: boot-sk-breathe 2s var(--swift) infinite; }
-/* The NARROW shell's topbar, as shape — `.topbar` at ≤900px: 12/16/8 padding, the wordmark
+/* The NARROW shell's topbar, as shape — `.topbar` below 1024px: 12/16/8 padding, the wordmark
    left, one `.tb-btn` capsule right. Hidden wide, where no topbar exists (without
    it, a long narrow boot ended with a topbar suddenly appearing and every row shifting down). */
 .boot-sk-topbar { display: none; }
@@ -4892,17 +4979,28 @@ input.set-tag-input {
   .boot-sk-bar { animation: none; }
   .boot-sk-av, .boot-sk-dot, .boot-sk-pill { animation: none; }
 }
-/* Narrow: the live shell is the topbar over a one-column deck (`.deck` at ≤900px:
-   `grid-template-columns: 1fr; padding: 0 10px 10px`) — the rail is a drawer and the reading
-   pane is a sheet, so silhouettes of either would describe a layout this width does not have,
-   and the topbar's shape has to be there or the real one's arrival shifts every row down. */
-@media (max-width: 900px) {
-  .boot-sk-window { display: flex; flex-direction: column; }
-  .boot-sk-rail, .boot-sk-reader { display: none; }
-  .boot-sk-topbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px 8px; flex: none; }
+/* Narrow: the live shell is the topbar over a one-column deck (`.deck` below 1024px:
+   `grid-template-columns: 1fr; padding: 0 10px 10px`) — the rail is a drawer, so a rail
+   silhouette would describe a layout this width does not have, and the topbar's shape has to
+   be there or the real one's arrival shifts every row down. Between 700 and 1023 the deck holds
+   TWO panes (the two-pane band above), so the skeleton keeps its reader panel there at the
+   band's own list track; only the phone band drops it. */
+@media (max-width: 1023.98px) {
+  .boot-sk-window {
+    grid-template-columns: clamp(300px, 38%, 380px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    padding: 0 10px 10px;
+  }
+  .boot-sk-rail { display: none; }
+  .boot-sk-topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 12px 6px 8px; flex: none; }
   .boot-sk-topbar .boot-sk-mark { width: 64px; margin: 0 auto 0 0; }
   .boot-sk-tb-btn { width: 76px; height: 29px; border-radius:var(--r-pill); background: var(--tint); flex: none;
     animation: boot-sk-breathe 2s var(--swift) infinite; }
+}
+@media (max-width: 699.98px) {
+  .boot-sk-window { display: flex; flex-direction: column; padding: 0; }
+  .boot-sk-reader { display: none; }
+  .boot-sk-topbar { padding: 12px 16px 8px; }
   .boot-sk-pane { margin: 0 10px 10px; flex: 1 1 auto; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -4929,7 +5027,7 @@ input.set-tag-input {
 /* The narrow gate frame — DECLARED AFTER the base inset so it wins their equal-specificity tie
    (the same source-order rule the bar modifiers follow): the narrow shell's own frame is the
    topbar's padding plus the deck's 0 10px 10px, both drawn inside the silhouette itself. */
-@media (max-width: 900px) {
+@media (max-width: 1023.98px) {
   .gate-boot > .boot-sk { inset: 0; }
 }
 .gate-boot > .gate-card { position: relative; z-index: 1; }
@@ -6913,6 +7011,6 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
   .set-nav button{min-width:44px}
   /* The first row's strip was clipped 4px by the settings scroller's top edge. */
   .set-nav{padding-top:5px}
-  /* The reader sheet's one visible exit is drawn 38 between 641 and 900px; it is already fixed. */
+  /* The reader sheet's one visible exit is drawn 38 between 641 and 699px; it is already fixed. */
   .reader-close::before{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;translate:-50% -50%}
 }

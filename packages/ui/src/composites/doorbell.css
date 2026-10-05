@@ -72,7 +72,7 @@
    are 6px apart:
 
      390px phone   → content 316 → text is 13px → needs 323 → the faces MUST drop
-     ≥900px split  → content 322 → text is 12px → needs 303 → the faces MUST STAY
+     ≥1024px split → content 322 → text is 12px → needs 303 → the faces MUST STAY
 
    The desktop column is NARROWER than the phone's requirement and WIDER than its own, because the
    step applies at one width and not the other. So the rung goes between the two boxes rather than
@@ -90,10 +90,10 @@
 
      320px viewport → pane 300 → doorbell 272 → content 246 → faces DROP, one line, 36px
      390px viewport → pane 370 → doorbell 342 → content 316 → faces stay, one line, 44px
-     ≥900px (split) → column  400 → doorbell 348 → content 322 → faces stay, one line, 44px
+     ≥1024px (split) → column 400 → doorbell 348 → content 322 → faces stay, one line, 44px
 
    Note the last row against the older note that the desktop column is 320px: it is not. Below
-   900px `.view.split` collapses to `1fr` (list only), and above it the `1fr` sibling always
+   700px `.view.split` collapses to `1fr` (list only), and above it the `1fr` sibling always
    leaves room for the first track to take its 400px MAXIMUM — so `minmax(320px,400px)`
    resolves to 400 at every width where the split exists, and the 320 floor is unreachable.
    The narrowest doorbell in the product is therefore the SMALL PHONE, not the desktop pane.
@@ -106,6 +106,8 @@
 @container (max-width: 320px){
   .doorbell .avs{display:none}
 }
-@media (max-width: 900px){
+/* The phone's full-width list: from 700px the list is a pane again (300–375px in the two-pane
+   band, 320–400 at three), so the desktop margins stand there — DESIGN-FOLD-WIDTHS §0. */
+@media (max-width: 699.98px){
   .doorbell{margin:12px 14px 0;width:calc(100% - 28px)}
 }

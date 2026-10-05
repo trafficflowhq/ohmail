@@ -181,15 +181,24 @@ export function ReadingPane({
  * `role="region"` with the label so the landing is announced, and the global
  * `:focus-visible` ring (base.css) marks the focused zone in both themes. Optional and
  * default-absent: a column nobody navigates by keyboard renders exactly as before.
+ *
+ * `onClose` renders the column's own way out — a 38px ✕ the webapp's stylesheet shows ONLY in
+ * the two-pane band under a coarse pointer (700–1023px, where there is no Esc; DESIGN-FOLD-WIDTHS
+ * §1) and hides everywhere else. It is the first child, so the stylesheet can keep it sticky
+ * at the column's top-right over the message head. Absent prop, absent button.
  */
 export function ReadColumn({
   children,
   className,
   regionLabel,
+  onClose,
+  closeLabel,
 }: {
   children: ReactNode;
   className?: string;
   regionLabel?: string;
+  onClose?: () => void;
+  closeLabel?: string;
 }) {
   return (
     <div
@@ -198,6 +207,15 @@ export function ReadColumn({
         ? ({ role: "region", "aria-label": regionLabel, tabIndex: -1 } as const)
         : {})}
     >
+      {onClose ? (
+        <button type="button" className="read-col-close" aria-label={closeLabel} onClick={onClose}>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      ) : null}
       {children}
     </div>
   );

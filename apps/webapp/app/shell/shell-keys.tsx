@@ -338,7 +338,7 @@ export function useShellKeys({
   });
 
   /**
-   * The Zero drawer summon (zone-nav's module seam): under zero the sub-900px rail is a
+   * The Zero drawer summon (zone-nav's module seam): under zero the sub-1024px rail is a
    * docked icon ribbon (off canvas under 392px), and `h`/← toward it means "summon the full
    * drawer" — §12's one meaning for `h`; the ribbon itself never auto-floats. Registered
    * ONLY while zero is active, so classic's keyboard behavior does not move.
