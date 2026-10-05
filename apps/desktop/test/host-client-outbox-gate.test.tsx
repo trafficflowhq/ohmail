@@ -91,6 +91,8 @@ function answeringDatabase(): { factory: IDBFactory; rows: Map<string, unknown> 
   const store = {
     getAllKeys: () => answer(() => [...rows.keys()].map((k) => JSON.parse(k) as unknown)),
     getAll: () => answer(() => [...rows.values()]),
+    // A put reads the row it replaces first (another tab's Cancel mark is kept), as a real store answers.
+    get: (k: unknown) => answer(() => rows.get(JSON.stringify(k))),
     put: (v: unknown, k: unknown) => { rows.set(JSON.stringify(k), v); },
     delete: (k: unknown) => { rows.delete(JSON.stringify(k)); },
   };
