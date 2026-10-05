@@ -994,7 +994,7 @@ jobs:
           # ships ONE artifact that runs on both architectures; Linux ships TWO
           # artifacts that each run on one. `tauri-plugin-updater` derives the
           # arch half of its key from `cfg!(target_arch)` in the running binary
-          # (`updater.rs::updater_arch` in 2.10.1: `x86_64` → "x86_64",
+          # (`updater.rs::updater_arch` in 2.12.0: `x86_64` → "x86_64",
           # `aarch64` → "aarch64"), so an arm64 install asks for `linux-aarch64`
           # and nothing else — there is no fallback to another architecture's
           # entry, and there must not be one: the payload would not run.

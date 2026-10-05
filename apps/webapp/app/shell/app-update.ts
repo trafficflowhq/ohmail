@@ -25,14 +25,14 @@ export const UPDATE_PERIOD_MS = 24 * 60 * 60 * 1000;
 /**
  * What is on offer, and what pressing the notice would do.
  *
- *  · `reload` — the origin is serving a newer build than this document was loaded from. The
- *    remedy is entirely local to the tab.
- *  · `restart` — the desktop shell has already fetched and verified a release and is one
- *    press away from installing it.
- *  · `package` — the desktop shell cannot install this update itself, because the app was
- *    installed by something that owns its files. There is no button; there is a place to go.
+ *  · `reload` — the origin serves a newer build than this document was loaded from; the remedy
+ *    is entirely local to the tab.
+ *  · `restart` — the desktop shell fetched and verified a release, one press from installing it.
+ *  · `package` — the desktop shell cannot install this update itself: something else owns the
+ *    app's files. There is no button; there is a place to go.
+ *  · `retry` — the desktop shell's installer did not start; the press fetches it and tries again.
  */
-export type UpdateOfferKind = "reload" | "restart" | "package";
+export type UpdateOfferKind = "reload" | "restart" | "package" | "retry";
 
 export interface UpdateOffer {
   kind: UpdateOfferKind;

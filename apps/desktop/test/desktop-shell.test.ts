@@ -607,10 +607,13 @@ describe("the Rust side", () => {
     expect(cargo).toMatch(
       /^tauri-plugin-single-instance = \{ version = "2", features = \["deep-link"\], optional = true \}$/m,
     );
-    for (const shipped of ["tauri-plugin-dialog", "tauri-plugin-updater"]) {
-      expect(runtime, `${shipped} must stay unconditional — it ships in every build`)
-        .toMatch(new RegExp(`^${shipped} = "2"$`, "m"));
-    }
+    expect(runtime, "tauri-plugin-dialog must stay unconditional — it ships in every build")
+      .toMatch(/^tauri-plugin-dialog = "2"$/m);
+    /* THE UPDATER SHIPS IN EVERY BUILD TOO, at 2.12 or later (its Windows install answers an
+       installer that did not start) and with the feature set 2.10.1 shipped: `system-proxy`, on
+       by default since 2.11.0, would route the update request through the system's proxy. */
+    expect(runtime, "tauri-plugin-updater must stay unconditional, at 2.12, with the pinned features")
+      .toMatch(/^tauri-plugin-updater = \{ version = "2\.12", default-features = false, features = \["rustls-tls", "zip"\] \}$/m);
     // No HAND-ROLLED HTTP client is declared. `tauri-plugin-updater` pulls
     // `reqwest` in transitively — that is the one HTTP client in the binary, and
     // it is reached only from `updater.rs` — but nothing here declares one.
@@ -1868,8 +1871,12 @@ describe("the auto-updater", () => {
   it("consent gates the INSTALL, is asked once, and never blocks", () => {
     // The two calls are separate, and the fused one is not used.
     expect(updater).toMatch(/\.download\(/);
-    expect(updater).toMatch(/\.install\(&payload\.bytes\)/);
+    expect(updater).toMatch(/fenced\(fence, \|\| waiting\.payload\.install\(&bytes\)\)/);
     expect(updater).not.toMatch(/download_and_install/);
+    // A retry after an installer that did not start fetches through the plugin's `download`, which
+    // verifies the signature before it returns a byte; the bytes the installer was handed are not kept.
+    expect(updater).toMatch(/fn fetch\(&self\) -> Result<Vec<u8>, Self::Error> \{\s*tauri::async_runtime::block_on\(self\.0\.download\(/);
+    expect(updater).toMatch(/let bytes = match waiting\.bytes\.take\(\) \{/);
 
     // Non-blocking, both for the question and for every notice. Matched as a CALL, so the
     // module's own note about why it does not use the blocking form does not stand in for the
@@ -1894,7 +1901,7 @@ describe("the auto-updater", () => {
     // security comment explains who the attacker is teaches people to delete the comment. Every
     // API that could put these bytes on disk is still named, and one that is not can be added; the
     // list is the assertion, and it must stay exhaustive rather than convenient.
-    expect(updater).toMatch(/bytes: Vec<u8>/);
+    expect(updater).toMatch(/bytes: Option<Vec<u8>>/);
     expect(updater).not.toMatch(/File::create|fs::write|tempfile|OpenOptions|\.write(_all)?\(|write!\(/);
   });
 
@@ -1965,23 +1972,22 @@ describe("the auto-updater", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^[ \t]*\/\/.*$/gm, "");
     const named = [...engineCode.matchAll(/updater/g)];
-    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(10);
+    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(9);
     expect(engineCode).toMatch(/crate::updater::update_state/);
     expect(engineCode).toMatch(/crate::updater::update_press/);
     expect(engineCode).toMatch(/crate::updater::update_poll/);
     /* AND THE INSTALL FENCE, WHICH IS NOT THE FLOW. The close and every restart are engine.rs's,
        and none may end the process while an install writes the app, so this file reads the fence
        (its type, the app's one fence, a restart's wait) and asks for its exit through the
-       updater's one door, saying so in the window. Seven mentions, each named: nothing here
-       checks, fetches, verifies or installs. The second `quit` is a restart that did not happen
-       after the person closed the app, which ends it through the same door. */
+       updater's one door, saying so in the window. Six mentions, each named: nothing here
+       checks, fetches, verifies or installs. A restart that did not happen after the person
+       closed the app answers so (`Resume::Quitting`), and the updater ends the app itself. */
     const fence = engineCode.match(/crate::updater::\w+/g) ?? [];
     expect(fence.filter((name) => !/update_(?:state|press|poll)$/.test(name)).sort()).toEqual([
       "crate::updater::FENCE",
       "crate::updater::InstallFence",
       "crate::updater::after_install",
       "crate::updater::after_install",
-      "crate::updater::quit",
       "crate::updater::quit",
       "crate::updater::say_a_quit_waits",
     ]);
@@ -2171,8 +2177,9 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/pub fn update_poll<R: Runtime>[^}]*check\(app, false\)/);
     expect(updater).toMatch(/Press::Check => check\(app, true\)/);
     expect(updater).toMatch(/check\(retry, true\)/);
-    // One `app.updater()` in the module: the flow's own run, behind the gate.
-    expect([...updater.matchAll(/app\.updater\(\)/g)]).toHaveLength(1);
+    // One updater built in the module: the flow's own run, behind the gate, with our hook.
+    expect([...updater.matchAll(/app\.updater_builder\(\)/g)]).toHaveLength(1);
+    expect([...updater.matchAll(/app\.updater\(\)/g)]).toHaveLength(0);
 
     /* THE BAR AND THE PANE READ THE SAME INSTALL. `relabel` is the one place both surfaces are
        written, so the kind is folded in there rather than at each of them — the failure mode of
@@ -2274,9 +2281,16 @@ describe("the auto-updater", () => {
     expect(install.indexOf("after_the_engine(app, || {")).toBeLessThan(install.indexOf(withhold));
     expect(relaunch.indexOf("crate::updater::after_the_engine(&answer, || {")).toBeGreaterThan(-1);
     expect(relaunch.indexOf("crate::updater::after_the_engine(&answer, || {")).toBeLessThan(relaunch.indexOf(withhold));
-    // Windows' install is its restart, so there the engine leaves before the install.
-    expect(install).toMatch(/#\[cfg\(windows\)\]\s*Some\(payload\) => after_the_engine\(app, \|\| fenced\(&FENCE, \|\| payload\.update\.install\(&payload\.bytes\)\)\),/);
-    expect(install).toMatch(/#\[cfg\(not\(windows\)\)\]\s*Some\(payload\) => fenced\(&FENCE, \|\| payload\.update\.install\(&payload\.bytes\)\),/);
+    /* Windows' install is its restart, so there the engine leaves before the installer starts: in
+       the hook the plugin runs between preparing the installer and starting it, which replaces the
+       plugin's default (`cleanup_before_exit`, which hides the windows a failed start returns to).
+       The updater is built only through that builder, the hook stops the engine through the
+       restart's own stop, and the install runs inside the fence on every platform. */
+    expect(updater).toMatch(/app\.updater_builder\(\)\.on_before_exit\(move \|\| hook\.run\(\)\)\.build\(\)/);
+    expect(rustCode(updater)).not.toMatch(/\.updater\(\)/);
+    expect(updater).toMatch(/pub\(crate\) fn run\(&self\) \{\s*self\.ran\.store\(true, Ordering::SeqCst\);\s*let left = self\.door\.stop\(\);/);
+    expect(updater).toMatch(/fn stop\(&self\) -> bool \{\s*self\.0\.stop_for_restart\(\)\s*\}/);
+    expect(updater).toMatch(/let Some\(installed\) = fenced\(fence, \|\| waiting\.payload\.install\(&bytes\)\) else \{/);
     expect(updater).toMatch(
       /pub\(crate\) fn after_the_engine<R: Runtime, T>\(app: &AppHandle<R>, then: impl FnOnce\(\) -> T\) -> T \{\s*#\[cfg\(feature = "local-engine"\)\]\s*\{\s*crate::engine::after_the_engine\(app, &FENCE, then\)\s*\}\s*#\[cfg\(not\(feature = "local-engine"\)\)\]\s*\{\s*let _ = app;\s*after_install\(&FENCE, then\)/,
     );
@@ -2289,7 +2303,8 @@ describe("the auto-updater", () => {
     // The menu and the Settings press no longer install on the thread that draws.
     expect(updater).not.toMatch(/Press::Restart => install_and_restart\(/);
     /* NO THIRD RESTART AND NO THIRD INSTALL, in any spelling, in any module of the tree: the two
-       restarts above, and the two cfg arms of the one install (on Windows itself a restart). */
+       restarts above, and the one install (on Windows itself a restart): `attempt`'s call inside
+       the fence, and the plugin's own `install` it reaches through the `Payload` seam. */
     const sources = rustSources(path.join(APP, "src-tauri/src"));
     const restarts = Object.entries(sources).flatMap(([f, src]) => restartsIn(src).map((r) => `${f}: ${r}`));
     expect(restarts.sort(), "a restart outside the two that run through the engine's door").toEqual([
@@ -2489,9 +2504,9 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/EXPECTED_ASSET: &str = "ohmail-linux-aarch64\.AppImage"/);
 
     // Verification is the plugin's and is reached the same way it always was: the ONLY bytes this
-    // module can install are the ones `download` returned.
+    // module can install are the ones `download` returned, at the check or at a retry's fetch.
     expect(updater).toMatch(/let bytes = match fetched \{/);
-    expect(updater).toMatch(/Some\(payload\) => fenced\(&FENCE, \|\| payload\.update\.install\(&payload\.bytes\)\)/);
+    expect(updater).toMatch(/fenced\(fence, \|\| waiting\.payload\.install\(&bytes\)\)/);
 
     /* AND A REFUSED VERSION IS NOT AN ERROR REPORT. It used to raise a dialog reading "Ignoring
        offered version 0.9.0: it is not newer than the installed 0.9.1", which is a sentence about

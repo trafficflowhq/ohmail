@@ -2316,3 +2316,342 @@ fn a_relabel_from_any_thread_never_waits_for_the_drawing_thread_under_the_items_
     }
     assert_eq!(*labels.lock().unwrap(), vec![2, 2], "a write ran off the thread that draws, or wrote a stale stage");
 }
+
+/* ── THE WINDOWS INSTALLER'S START, AND A PRESS AFTER IT FAILED ─────────────────────────────────
+ *
+ * The plugin's Windows install (2.12.0, src/updater.rs:841-883) prepares the installer, runs the
+ * hook, starts the installer and exits; it returns only when preparing or starting failed.
+ * `StubPayload` keeps that order, and `attempt` is the whole press but the app's answer to it.
+ * The same core runs against a real engine in `engine_tests.rs`. */
+
+use super::{attempt, Attempt, EngineDoor, InstallHook, Payload, Resumed, Waiting};
+use std::sync::atomic::AtomicBool;
+
+/// After the hook, what the installer's start comes to.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Start {
+    /// The start failed, and the plugin returns its error.
+    Fails,
+    /// The installer replaced the app and the install returned (macOS, Linux).
+    Replaces,
+    /// The installer started and the plugin ends the process, as it does on Windows.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    Exits,
+}
+
+/// The plugin's two calls, recorded, in the plugin's order: prepare, the hook, the start.
+pub(crate) struct StubPayload {
+    hook: Arc<InstallHook>,
+    /// What each fetch answers, in order. A fetch the test queued nothing for panics.
+    answers: std::sync::Mutex<Vec<Result<Vec<u8>, String>>>,
+    fetched: AtomicUsize,
+    /// The bytes each install was handed.
+    handed: std::sync::Mutex<Vec<Vec<u8>>>,
+    /// Does preparing succeed? `false` is a disk that cannot take the installer: no hook runs.
+    prepares: bool,
+    start: Start,
+}
+
+impl StubPayload {
+    pub(crate) fn new(hook: &Arc<InstallHook>, prepares: bool, start: Start) -> StubPayload {
+        StubPayload {
+            hook: Arc::clone(hook),
+            answers: std::sync::Mutex::new(Vec::new()),
+            fetched: AtomicUsize::new(0),
+            handed: std::sync::Mutex::new(Vec::new()),
+            prepares,
+            start,
+        }
+    }
+
+    pub(crate) fn answering(self, answers: Vec<Result<Vec<u8>, String>>) -> StubPayload {
+        *self.answers.lock().unwrap() = answers;
+        self
+    }
+
+    pub(crate) fn fetches(&self) -> usize {
+        self.fetched.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn handed(&self) -> Vec<Vec<u8>> {
+        self.handed.lock().unwrap().clone()
+    }
+}
+
+impl Payload for StubPayload {
+    type Error = String;
+
+    fn fetch(&self) -> Result<Vec<u8>, String> {
+        self.fetched.fetch_add(1, Ordering::SeqCst);
+        let mut answers = self.answers.lock().unwrap();
+        assert!(!answers.is_empty(), "a fetch the test did not expect");
+        answers.remove(0)
+    }
+
+    fn install(&self, bytes: &[u8]) -> Result<(), String> {
+        if !self.prepares {
+            return Err("the installer could not be written".into());
+        }
+        self.handed.lock().unwrap().push(bytes.to_vec());
+        self.hook.run();
+        match self.start {
+            Start::Fails => Err("the installer did not start".into()),
+            Start::Replaces => Ok(()),
+            Start::Exits => std::process::exit(0),
+        }
+    }
+}
+
+/// An engine door that counts, and can hold the hook inside its stop until the test lets go.
+#[derive(Default)]
+pub(crate) struct StubDoor {
+    stops: AtomicUsize,
+    resumes: AtomicUsize,
+    entered: std::sync::Mutex<Option<mpsc::Sender<()>>>,
+    hold: std::sync::Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl StubDoor {
+    fn holding(entered: mpsc::Sender<()>, hold: mpsc::Receiver<()>) -> StubDoor {
+        StubDoor {
+            entered: std::sync::Mutex::new(Some(entered)),
+            hold: std::sync::Mutex::new(Some(hold)),
+            ..StubDoor::default()
+        }
+    }
+}
+
+impl EngineDoor for StubDoor {
+    fn stop(&self) -> bool {
+        self.stops.fetch_add(1, Ordering::SeqCst);
+        if let Some(entered) = self.entered.lock().unwrap().take() {
+            let _ = entered.send(());
+        }
+        // Taken, so only the first stop is held; a later one, which no correct run makes, is not.
+        let held = self.hold.lock().unwrap().take();
+        if let Some(go) = held {
+            let _ = go.recv();
+        }
+        true
+    }
+
+    fn resume(&self) -> Resumed {
+        self.resumes.fetch_add(1, Ordering::SeqCst);
+        Resumed::Running
+    }
+}
+
+fn waiting(payload: StubPayload, hook: Arc<InstallHook>, bytes: &[u8]) -> std::sync::Mutex<Option<Waiting<StubPayload>>> {
+    std::sync::Mutex::new(Some(Waiting::new(payload, bytes.to_vec(), hook)))
+}
+
+/// THE INSTALLER DID NOT START: the engine the hook stopped is started again exactly once, the
+/// bytes the installer was handed are not kept, and the latch and the fence are free again.
+#[test]
+fn an_installer_that_did_not_start_resumes_the_engine_once_and_keeps_no_bytes() {
+    let door = Arc::new(StubDoor::default());
+    let hook = Arc::new(InstallHook::new(door.clone()));
+    let pending = waiting(StubPayload::new(&hook, true, Start::Fails), hook, b"v1");
+    let (latch, fence) = (AtomicBool::new(false), fence_for_tests(Duration::from_secs(30)));
+
+    let outcome = attempt(&latch, fence, &pending, |_| {});
+
+    assert!(matches!(outcome, Attempt::NotStarted(_, Resumed::Running)), "{outcome:?}");
+    assert_eq!(door.stops.load(Ordering::SeqCst), 1, "the hook did not stop the engine once");
+    assert_eq!(door.resumes.load(Ordering::SeqCst), 1, "the engine was not started again exactly once");
+    assert!(!pending.lock().unwrap().as_ref().unwrap().holds_bytes(), "the installer's bytes are still kept");
+    assert!(!latch.load(Ordering::SeqCst), "the latch outlived a start that failed");
+    assert!(!fence.must_wait(), "the fence outlived the install");
+}
+
+/// THE POSITIVE ARM: an installer never prepared never ran the hook, so the engine was never
+/// stopped and nothing starts it again; and one that replaced the app owes no resume either.
+#[test]
+fn an_installer_never_prepared_or_one_that_replaced_the_app_resumes_nothing() {
+    for (prepares, start, expect_stops) in [(false, Start::Fails, 0), (true, Start::Replaces, 1)] {
+        let door = Arc::new(StubDoor::default());
+        let hook = Arc::new(InstallHook::new(door.clone()));
+        let pending = waiting(StubPayload::new(&hook, prepares, start), hook, b"v1");
+        let latch = AtomicBool::new(false);
+        let outcome = attempt(&latch, fence_for_tests(Duration::from_secs(30)), &pending, |_| {});
+        match (prepares, &outcome) {
+            (false, Attempt::NotPrepared(_)) => assert!(!latch.load(Ordering::SeqCst)),
+            (true, Attempt::Installed) => assert!(latch.load(Ordering::SeqCst), "a restart under way let a press in"),
+            _ => panic!("{prepares} {start:?}: {outcome:?}"),
+        }
+        assert_eq!(door.stops.load(Ordering::SeqCst), expect_stops, "{start:?}");
+        assert_eq!(door.resumes.load(Ordering::SeqCst), 0, "{start:?}: an engine was started again");
+    }
+}
+
+/// THE PRESS AFTER A START THAT FAILED FETCHES AND VERIFIES AGAIN: the installer is handed what the
+/// retry's fetch returned, never the bytes it was handed the first time, and the flow is told.
+#[test]
+fn the_press_after_a_failed_start_fetches_again_and_never_installs_the_kept_bytes() {
+    let door = Arc::new(StubDoor::default());
+    let hook = Arc::new(InstallHook::new(door.clone()));
+    let payload = StubPayload::new(&hook, true, Start::Fails).answering(vec![Ok(b"v1, fetched again".to_vec())]);
+    let pending = waiting(payload, hook, b"v1");
+    let (latch, fence) = (AtomicBool::new(false), fence_for_tests(Duration::from_secs(30)));
+    let mut told = Vec::new();
+
+    assert!(matches!(attempt(&latch, fence, &pending, |s| told.push(s)), Attempt::NotStarted(..)));
+    assert!(told.is_empty(), "the first press fetched: {told:?}");
+    assert!(matches!(attempt(&latch, fence, &pending, |s| told.push(s)), Attempt::NotStarted(..)));
+
+    let held = pending.lock().unwrap();
+    let payload = &held.as_ref().unwrap().payload;
+    assert_eq!(payload.fetches(), 1, "the retry did not fetch the payload again");
+    assert_eq!(payload.handed(), vec![b"v1".to_vec(), b"v1, fetched again".to_vec()], "a retry installed kept bytes");
+    assert_eq!(told, vec![Signal::Refetching, Signal::Downloaded]);
+}
+
+/// A RETRY WHOSE PAYLOAD NO LONGER VERIFIES HANDS THE INSTALLER NOTHING. The fetch answers what the
+/// plugin's primitive says over the committed fixture with one byte changed, against the shipped key.
+#[test]
+fn a_retry_whose_payload_no_longer_verifies_hands_the_installer_nothing() {
+    let pk = minisign_public_key();
+    let sig = minisign_signature(&fs::read_to_string(fixtures_dir().join("payload.bin.sig")).unwrap());
+    let mut bytes = fs::read(fixtures_dir().join("payload.bin")).unwrap();
+    assert!(pk.verify(&bytes, &sig, true).is_ok(), "the fixture does not verify, so this measures nothing");
+    bytes[0] ^= 0x01;
+    let refetched = pk.verify(&bytes, &sig, true).map(|_| bytes.clone()).map_err(|err| format!("{err:?}"));
+    assert!(refetched.is_err(), "the changed fixture verified, so this measures nothing");
+
+    let door = Arc::new(StubDoor::default());
+    let hook = Arc::new(InstallHook::new(door.clone()));
+    let payload = StubPayload::new(&hook, true, Start::Fails).answering(vec![refetched]);
+    let pending = waiting(payload, hook, b"v1");
+    let (latch, fence) = (AtomicBool::new(false), fence_for_tests(Duration::from_secs(30)));
+    assert!(matches!(attempt(&latch, fence, &pending, |_| {}), Attempt::NotStarted(..)));
+
+    let outcome = attempt(&latch, fence, &pending, |_| {});
+
+    assert!(matches!(outcome, Attempt::FetchFailed(_)), "{outcome:?}");
+    let held = pending.lock().unwrap();
+    let waiting = held.as_ref().unwrap();
+    assert_eq!(waiting.payload.handed(), vec![b"v1".to_vec()], "an installer was handed bytes that did not verify");
+    assert!(!waiting.holds_bytes(), "the next press would install without fetching");
+    assert_eq!(door.stops.load(Ordering::SeqCst), 1, "the engine was stopped for nothing");
+}
+
+/// A SECOND PRESS DURING THE HOOK IS A NO-OP: while the first press waits in the hook for the
+/// engine, a second one is answered at once and starts no install of its own.
+#[test]
+fn a_second_press_while_the_hook_stops_the_engine_changes_nothing() {
+    let (entered_tx, entered) = mpsc::channel();
+    let (go, hold) = mpsc::channel::<()>();
+    let door = Arc::new(StubDoor::holding(entered_tx, hold));
+    let hook = Arc::new(InstallHook::new(door.clone()));
+    let pending = Arc::new(waiting(StubPayload::new(&hook, true, Start::Fails), hook, b"v1"));
+    let latch = Arc::new(AtomicBool::new(false));
+    let fence = fence_for_tests(Duration::from_secs(30));
+    let first = {
+        let (pending, latch) = (Arc::clone(&pending), Arc::clone(&latch));
+        thread::spawn(move || attempt(&latch, fence, &pending, |_| {}))
+    };
+    entered.recv_timeout(Duration::from_secs(10)).expect("the hook never ran");
+
+    let (answer_tx, answer) = mpsc::channel();
+    {
+        let (pending, latch) = (Arc::clone(&pending), Arc::clone(&latch));
+        thread::spawn(move || {
+            let _ = answer_tx.send(attempt(&latch, fence, &pending, |_| {}));
+        });
+    }
+    let second = answer.recv_timeout(Duration::from_secs(2));
+    drop(go);
+    let first = first.join().unwrap();
+
+    assert!(matches!(second, Ok(Attempt::Busy)), "the second press was not refused at once: {second:?}");
+    assert!(matches!(first, Attempt::NotStarted(..)), "{first:?}");
+    assert_eq!(pending.lock().unwrap().as_ref().unwrap().payload.handed().len(), 1, "a second install started");
+    assert_eq!(door.stops.load(Ordering::SeqCst), 1, "the engine was stopped twice");
+}
+
+/// THE HOOK RECORDS, THEN STOPS, AND DOES NOTHING ELSE: no resume, and its line says the engine
+/// left. Armed again by each attempt, so a failure before it is never read as one after it.
+#[test]
+fn the_hook_records_that_it_ran_stops_the_engine_and_starts_nothing() {
+    let door = Arc::new(StubDoor::default());
+    let hook = InstallHook::new(door.clone());
+    assert!(!hook.ran());
+    let lines = captured(|| hook.run());
+    assert!(hook.ran(), "the hook did not record that it ran");
+    assert_eq!(door.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(door.resumes.load(Ordering::SeqCst), 0, "the hook started the engine again");
+    assert_eq!(lines.len(), 1);
+    let seen = as_json(&lines[0]);
+    assert_eq!(seen["event"], serde_json::json!("updater_hook"));
+    assert_eq!(seen["engineLeft"], serde_json::json!("true"));
+    hook.arm();
+    assert!(!hook.ran(), "a new attempt inherited the last one's record");
+}
+
+/// AN INSTALLER THAT DID NOT START LEAVES THE RELEASE ON OFFER AND SAYS SO: the same press installs
+/// it, the dialog is not asked again, and the report carries the instant the window keys its
+/// sentence on, until the press's fetch begins.
+#[test]
+fn an_installer_that_did_not_start_leaves_the_release_on_offer_and_the_report_says_so() {
+    let at = 1_700_000_000_000u64;
+    let mut flow = ready();
+    let kind = InstallKind::WindowsSetup;
+    assert_eq!(report(&flow, None, "0.9.1", kind)["notStartedAt"], serde_json::Value::Null, "an ordinary ready says it");
+
+    flow.apply(Signal::InstallerDidNotStart { at_unix_ms: at });
+    assert_eq!(flow.stage(), &Stage::Ready("0.9.2".into()));
+    assert_eq!(flow.press(), Press::Restart);
+    assert_eq!(flow.menu_label(), "Restart to Install 0.9.2");
+    assert!(!flow.should_prompt(), "the one dialog was owed again");
+    let seen = report(&flow, None, "0.9.1", kind);
+    assert_eq!(seen["notStartedAt"], serde_json::json!(at));
+    assert_eq!(seen["canInstall"], serde_json::json!(true));
+    assert_eq!(field(&seen, "state"), "ready");
+
+    flow.apply(Signal::Refetching);
+    assert_eq!(flow.stage(), &Stage::Downloading("0.9.2".into()));
+    assert_eq!(report(&flow, None, "0.9.1", kind)["notStartedAt"], serde_json::Value::Null);
+    flow.apply(Signal::Downloaded);
+    assert_eq!(flow.stage(), &Stage::Ready("0.9.2".into()));
+    assert!(!flow.should_prompt(), "a press already pressed was asked about again");
+
+    flow.apply(Signal::InstallerDidNotStart { at_unix_ms: at + 1 });
+    flow.apply(Signal::Failed);
+    flow.apply(Signal::CheckStarted);
+    assert_eq!(flow.not_started_at(), None, "a new cycle carried the last release's sentence");
+}
+
+/// THE PLUGIN'S OWN SIGNED-VERSION CHECK SEES NO VERSION IN OUR SIGNATURES, AND STAYS OFF. 2.12.0
+/// reads a `version:` field of the verified trusted comment and refuses one that disagrees with the
+/// feed; `requireSignedVersion` would refuse a comment with none. Our signer writes `timestamp` and
+/// `file` only, the release riding in `file`, so the plugin admits our releases and the switch,
+/// like `allowDowngrades`, must stay off.
+#[test]
+fn our_signers_trusted_comment_names_no_version_field_and_the_signature_still_verifies() {
+    // The plugin's reader as 2.12.0 writes it (`signed_version`, src/updater.rs:1600-1604).
+    fn plugin_signed_version(comment: &str) -> Option<&str> {
+        comment.split('\t').find_map(|field| field.strip_prefix("version:"))
+    }
+    assert_eq!(plugin_signed_version("timestamp:1700000000\tfile:app.zip\tversion:1.2.3"), Some("1.2.3"));
+
+    let pk = minisign_public_key();
+    let payload = fs::read(fixtures_dir().join("payload.bin")).unwrap();
+    for name in ["payload.bin.sig", "payload-versioned.bin.sig", "payload-forged-untrusted.bin.sig"] {
+        let sig_b64 = fs::read_to_string(fixtures_dir().join(name)).unwrap();
+        let sig = minisign_signature(&sig_b64);
+        assert_eq!(plugin_signed_version(sig.trusted_comment()), None, "{name}: the plugin would compare a version");
+        pk.verify(&payload, &sig, true).unwrap_or_else(|err| panic!("{name} no longer verifies: {err:?}"));
+    }
+    let versioned = fs::read_to_string(fixtures_dir().join("payload-versioned.bin.sig")).unwrap();
+    assert!(signed_release(&versioned).is_some(), "the pipeline's shape no longer names its release");
+
+    let conf: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(manifest_dir().join("tauri.conf.json")).unwrap()).unwrap();
+    let updater = &conf["plugins"]["updater"];
+    for switch in ["requireSignedVersion", "require-signed-version", "allowDowngrades", "allow-downgrades"] {
+        assert!(
+            updater.get(switch).map_or(true, |on| on == &serde_json::json!(false)),
+            "{switch} is on in tauri.conf.json"
+        );
+    }
+}

@@ -121,7 +121,9 @@ export function checkDue(report: UpdateReport, now: number, floor: number): bool
  */
 export function offerOf(report: UpdateReport, linux: boolean): UpdateOffer | null {
   if (report.state === "ready" && report.canInstall) {
-    return { kind: "restart", version: report.offered ?? report.version, act: () => void updatePress() };
+    // An installer that did not start is told at once: it answers a press somebody just made.
+    const kind = typeof report.notStartedAt === "number" ? "retry" : "restart";
+    return { kind, version: report.offered ?? report.version, act: () => void updatePress() };
   }
   if (cannotSelfInstall(report, linux)) return { kind: "package" };
   return null;
@@ -221,13 +223,15 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
       announceUpdate(null);
       return;
     }
-    const key = offerKey(offer);
+    /* A START THAT FAILED IS KEYED BY ITS INSTANT, so each one is said once, at once, and Later
+       puts that one away; the next failure is a new answer to a new press. */
+    const key = offer.kind === "retry" ? `${offerKey(offer)}@${report.notStartedAt}` : offerKey(offer);
     const memory = readAskMemory();
     /* THE SHELL'S OWN DIALOG IS THIS RELEASE'S FIRST ASK. It is raised the moment a payload
        becomes ready, so the first time this sees `ready` for a version, somebody is being asked
        already — and a strip beside that dialog would be the same question twice. Recorded and
        not spoken; a day later the entry has aged out and the strip is what asks. */
-    const first = report.state === "ready" && memory[key] === undefined;
+    const first = offer.kind === "restart" && report.state === "ready" && memory[key] === undefined;
     if (first || !askDue(memory, key, now())) {
       if (first) writeAskMemory(rememberAsk(memory, key, now()));
       return;

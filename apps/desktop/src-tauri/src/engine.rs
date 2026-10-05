@@ -84,6 +84,23 @@ use std::time::{Duration, Instant};
 #[path = "engine_tests.rs"]
 mod tests;
 
+/// THE NEXT PLAN A TEST'S SHELL MAKES, per test thread and once: what lets a resume or a retry in a
+/// test start a real engine where a shell with no configuration would start none. The closure runs
+/// at the moment the plan is made, which is the instant a test asks what was still running.
+#[cfg(test)]
+pub(crate) mod plan_double {
+    use std::cell::RefCell;
+    thread_local! {
+        static NEXT: RefCell<Option<Box<dyn FnOnce() -> super::Plan>>> = const { RefCell::new(None) };
+    }
+    pub(crate) fn next(plan: impl FnOnce() -> super::Plan + 'static) {
+        NEXT.with(|n| *n.borrow_mut() = Some(Box::new(plan)));
+    }
+    pub(super) fn take() -> Option<super::Plan> {
+        NEXT.with(|n| n.borrow_mut().take()).map(|plan| plan())
+    }
+}
+
 /// A KEYSTORE THAT REFUSES AND THEN ANSWERS, for the key card's press — per test thread, ahead of
 /// the environment key the other cases set, and absent from every build that is not a test.
 #[cfg(test)]
@@ -1442,6 +1459,19 @@ enum LeaveStage {
     Done,
 }
 
+/// What [`Shell::resume_after_failed_restart`] came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resume {
+    /// The stop had completed and the engine was started again.
+    Resumed,
+    /// The person closed the app meanwhile: nothing was started, and the app goes.
+    Quitting,
+    /// The stop never completed inside the bound: nothing was started beside the engine.
+    StillLeaving,
+    /// Nothing was stopped, or a resume already ran: there is nothing to start again.
+    NothingStopped,
+}
+
 /// A quit's stage, and what every wait on one stop shares.
 struct Leaving {
     stage: LeaveStage,
@@ -1501,8 +1531,8 @@ pub fn leave_the_process(shell: &Arc<Shell>, code: i32) -> ! {
 /// held, and an engine that would not leave ran on beside it, renewing one saved session. Every
 /// restart runs `then` through here: once an install still writing has returned (`fence`; nothing
 /// can hold a restart's exit later), then once the engine has left or been killed —
-/// [`SHUTDOWN_BOUND`] at most. On Windows `then` is the install, which starts the installer and
-/// exits itself.
+/// [`SHUTDOWN_BOUND`] at most. The Windows install is not a `then`: the updater's hook stops the
+/// engine itself, between preparing the installer and starting it.
 pub fn restart_after<T>(shell: &Arc<Shell>, fence: &InstallFence, then: impl FnOnce() -> T) -> T {
     crate::updater::after_install(fence, || {
         let began = Instant::now();
@@ -1528,18 +1558,6 @@ pub fn after_the_engine<R: tauri::Runtime, T>(
     match shell {
         Some(shell) => restart_after(&shell, fence, then),
         None => crate::updater::after_install(fence, then),
-    }
-}
-
-/// [`Shell::resume_after_failed_restart`] for the running app, which quits instead when the person
-/// closed it while the restart stopped the engine.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn resume_after_failed_restart<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    use tauri::Manager;
-    if let Some(shell) = app.try_state::<Arc<Shell>>() {
-        if !shell.resume_after_failed_restart() {
-            crate::updater::quit(app, 0);
-        }
     }
 }
 
@@ -1691,6 +1709,10 @@ impl Shell {
     /// spawn the shell makes goes through here, so a reconfigure keeps the host door and a
     /// disarm loses it, on the same launch shape either way.
     fn planned(&self, config: Option<&Config>) -> Plan {
+        #[cfg(test)]
+        if let Some(plan) = plan_double::take() {
+            return plan;
+        }
         let stored;
         let config = match config {
             Some(c) => Some(c),
@@ -2007,24 +2029,46 @@ impl Shell {
         self.finish_stop(SHUTDOWN_BOUND)
     }
 
-    /// A restart that did not happen after the engine was stopped for it — preparing the Windows
-    /// installer failed, the one failure the plugin returns. The engine comes back from the stored
-    /// configuration, and a later quit stops it the way it stops any engine. `false`, and nothing
-    /// started, when the person closed the app meanwhile: its window is gone, so the app goes too.
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn resume_after_failed_restart(&self) -> bool {
-        {
-            let mut slot = self.leaving.lock();
+    /// A restart that did not happen after the engine was stopped for it: the Windows installer
+    /// did not start. The engine comes back from the stored configuration, ONCE and only after
+    /// the stop has completed, waiting up to `within` for a stop still killing its engine, so the
+    /// spawn's witness and the engine's own lock meet a directory nobody holds. Nothing starts
+    /// when the person closed the app meanwhile (its window is gone, so the app goes too), when
+    /// the stop never completed (the stage starts over all the same), or when nothing was stopped.
+    pub fn resume_after_failed_restart(&self, within: Duration) -> Resume {
+        let mut slot = self.leaving.lock();
+        let ends_by = Instant::now() + within;
+        loop {
             if slot.quitting {
-                return false;
+                return Resume::Quitting;
             }
-            slot.run += 1;
-            slot.stage = LeaveStage::NotStarted;
-            slot.ends_by = None;
-            slot.left = false;
+            match (slot.stage, slot.left) {
+                (LeaveStage::Done, true) => break,
+                (LeaveStage::NotStarted, _) => return Resume::NothingStopped,
+                _ => {}
+            }
+            let now = Instant::now();
+            if now >= ends_by {
+                log_line(format_args!(
+                    "the engine had not left {}ms after a restart that did not happen; it was not started again",
+                    within.as_millis()
+                ));
+                // The stage starts over, so a later close owns a stop of its own and ends the app.
+                slot.run += 1;
+                slot.stage = LeaveStage::NotStarted;
+                slot.ends_by = None;
+                slot.left = false;
+                return Resume::StillLeaving;
+            }
+            slot = self.leaving.left.wait_timeout(slot, ends_by - now).expect("shell shutdown").0;
         }
+        slot.run += 1;
+        slot.stage = LeaveStage::NotStarted;
+        slot.ends_by = None;
+        slot.left = false;
+        drop(slot);
         self.replan();
-        true
+        Resume::Resumed
     }
 
     /// Replace the running engine with one started from `next`.

@@ -49,14 +49,18 @@ export function UpdateNotice({ quiet = false }: { quiet?: boolean }) {
       ? t("barReload")
       : offer.kind === "package"
         ? t("barPackage")
-        : t("barRestart", { version });
+        : offer.kind === "retry"
+          ? t("barNotStarted", { version })
+          : t("barRestart", { version });
+  const action =
+    offer.kind === "reload" ? t("barReloadAction") : offer.kind === "retry" ? t("barRetryAction") : t("barRestartAction");
 
   return (
     <div className="upd-bar" role="status">
       <span>{sentence}</span>
       {offer.act ? (
         <button type="button" className="upd-do" onClick={offer.act}>
-          {offer.kind === "reload" ? t("barReloadAction") : t("barRestartAction")}
+          {action}
         </button>
       ) : null}
       {/* THE WAY OUT IS ALWAYS THERE, including on the notice that has no button to press.

@@ -118,7 +118,8 @@
 //!     user can act on. `signed_release`'s own comment carries the mechanism.
 //!   * IT WRITES DOWN WHAT IT DID — three lines per cycle, in the engine log's own JSON shape:
 //!     the feed it asked and the version it asked about, what the check found, and what became
-//!     of a payload. It used to log nothing at all, so answering "which feed did this install
+//!     of a payload, plus on Windows whether the engine had left before the installer started.
+//!     It used to log nothing at all, so answering "which feed did this install
 //!     reach" meant reading the compiled endpoint out of the binary. The endpoint
 //!     comes from the config rather than a literal here, no payload url is logged, and a failure
 //!     is a CLASS rather than a library's error text.
@@ -137,7 +138,7 @@
 //! { "signature", "url" } } }`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use tauri::menu::MenuItem;
@@ -204,6 +205,11 @@ pub enum Signal {
     Failed,
     /// The user answered "Later" to the one dialog. Asked once per run, never twice.
     Deferred,
+    /// The installer did not start after the engine stopped for it. The release stays on offer,
+    /// and the next press fetches and verifies it again.
+    InstallerDidNotStart { at_unix_ms: u64 },
+    /// That press's fetch began.
+    Refetching,
 }
 
 /// What picking the menu item does, in this stage.
@@ -640,6 +646,9 @@ pub fn install_kind() -> InstallKind {
 pub struct Flow {
     stage: Stage,
     deferred: bool,
+    /// When the last installer did not start, while that release is still on offer: what the
+    /// window's sentence and its strip are keyed on.
+    not_started_at: Option<u64>,
 }
 
 impl Flow {
@@ -649,6 +658,11 @@ impl Flow {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn stage(&self) -> &Stage {
         &self.stage
+    }
+
+    /// When the last installer did not start, while its release is still the one on offer.
+    pub fn not_started_at(&self) -> Option<u64> {
+        self.not_started_at
     }
 
     /// Fold one signal in. Signals that do not belong to the current stage are ignored rather than
@@ -669,9 +683,21 @@ impl Flow {
             }
             // An install that failed leaves nothing to restart into.
             (Stage::Ready(_), Signal::Failed) => Stage::Failed,
+            // AN INSTALLER THAT DID NOT START LEAVES THE RELEASE ON OFFER: the same press installs
+            // it, after fetching and verifying it again. The question was asked, and is spent.
+            (Stage::Ready(version), Signal::InstallerDidNotStart { at_unix_ms }) => {
+                self.not_started_at = Some(*at_unix_ms);
+                self.deferred = true;
+                Stage::Ready(version.clone())
+            }
+            (Stage::Ready(version), Signal::Refetching) => {
+                self.not_started_at = None;
+                Stage::Downloading(version.clone())
+            }
             (stage, _) => stage.clone(),
         };
         if self.stage == Stage::Checking {
+            self.not_started_at = None;
             // A NEW CYCLE GETS A NEW CHANCE TO ASK — and what can start a cycle has changed, so
             // the old note beside this line ("reached by a user pressing the item … the only way
             // back to `Checking`") is no longer true and is corrected rather than left standing.
@@ -787,9 +813,56 @@ pub struct Check {
 ///
 /// Held in memory rather than written anywhere: an update nobody consented to must leave no trace
 /// on the machine, so quitting the app is enough to discard it.
-struct Pending {
-    update: tauri_plugin_updater::Update,
-    bytes: Vec<u8>,
+type Pending = Waiting<Plugin>;
+
+/// A release waiting for the press that installs it: the payload, its verified bytes, and the hook
+/// the plugin runs before the Windows installer starts.
+pub(crate) struct Waiting<P> {
+    payload: P,
+    /// What `download` verified, or `None` once an installer did not start: the next press fetches
+    /// and verifies the payload again rather than handing kept bytes to an installer.
+    bytes: Option<Vec<u8>>,
+    hook: Arc<InstallHook>,
+}
+
+impl<P> Waiting<P> {
+    pub(crate) fn new(payload: P, bytes: Vec<u8>, hook: Arc<InstallHook>) -> Self {
+        Waiting { payload, bytes: Some(bytes), hook }
+    }
+
+    /// Are verified bytes held? `false` after an installer that did not start.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn holds_bytes(&self) -> bool {
+        self.bytes.is_some()
+    }
+}
+
+/// The plugin's two calls an install makes, behind a seam the tests drive: `download` fetches and
+/// verifies, `install` hands verified bytes to the platform's installer.
+pub(crate) trait Payload {
+    type Error: std::fmt::Debug;
+    /// Fetch the payload again and verify its signature against the shipped key.
+    fn fetch(&self) -> Result<Vec<u8>, Self::Error>;
+    /// On Windows the plugin prepares the installer, runs the hook, starts the installer and exits,
+    /// and returns only when preparing or starting it failed.
+    fn install(&self, bytes: &[u8]) -> Result<(), Self::Error>;
+}
+
+/// The release the plugin found, as a [`Payload`].
+pub(crate) struct Plugin(tauri_plugin_updater::Update);
+
+impl Payload for Plugin {
+    type Error = tauri_plugin_updater::Error;
+
+    /// The plugin's `download`, which verifies the signature before it returns any byte. Called on
+    /// the install's own thread, never on a thread the async runtime drives.
+    fn fetch(&self) -> Result<Vec<u8>, Self::Error> {
+        tauri::async_runtime::block_on(self.0.download(|_, _| {}, || {}))
+    }
+
+    fn install(&self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.0.install(bytes)
+    }
 }
 
 /// The flow, the payload waiting on it, the menu item that reports both, and the last check.
@@ -855,6 +928,8 @@ pub fn report(
         // would refuse. One flow, one install, one policy — never two.
         "canCheck": flow.press() == Press::Check && kind.self_applies(),
         "canInstall": flow.press() == Press::Restart && kind.self_applies(),
+        // Unix milliseconds of an installer that did not start, while its release is on offer.
+        "notStartedAt": flow.not_started_at(),
         "lastCheckedAt": last.map(|c| c.at_unix_ms),
         "lastResult": last.map(|c| c.result.as_str()).unwrap_or("never"),
     })
@@ -880,7 +955,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 // ── WHAT THE UPDATER WRITES DOWN ─────────────────────────────────────────────────────────────
 //
 // Three lines per cycle: `updater_check` names the feed and the running version, `updater_offer`
-// what the check found, `updater_verdict` what became of a payload. This module used to log
+// what the check found, `updater_verdict` what became of a payload; on Windows `updater_hook`
+// says whether the engine left before the installer was started. This module used to log
 // nothing at all, so answering "which feed did this install reach, and what did it decide"
 // meant reading the one compiled endpoint out of the binary and watching the process's sockets.
 //
@@ -899,6 +975,8 @@ pub enum Verdict {
     /// "Later". The payload stays ready and nothing was applied.
     Deferred,
     Failed,
+    /// The engine stopped for the Windows installer and the installer did not start.
+    NotStarted,
 }
 
 impl Verdict {
@@ -907,6 +985,7 @@ impl Verdict {
             Verdict::Installed => "installed",
             Verdict::Deferred => "deferred",
             Verdict::Failed => "failed",
+            Verdict::NotStarted => "notStarted",
         }
     }
 }
@@ -1143,19 +1222,21 @@ fn pressed<R: Runtime>(app: AppHandle<R>) {
     };
     match what {
         Press::Check => check(app, true),
-        // OFF THE THREAD THAT DRAWS: the restart waits for the engine to leave first, and the menu
-        // and the Settings press arrive on the main thread, where that wait would hold a window
-        // that can neither paint nor close. The dialog's press already arrives on its own thread.
-        // So the window stays live during the install, and a quit there waits for it ([`FENCE`]).
-        Press::Restart => {
-            std::thread::Builder::new()
-                .name("ohmail-install".into())
-                .spawn(move || install_and_restart(&app))
-                .expect("ohmail: failed to start the install thread");
-        }
+        Press::Restart => start_install(app),
         // Disabled in the bar; belt and braces for a platform that lets a disabled item fire.
         Press::Nothing => {}
     }
+}
+
+/// OFF THE THREAD THAT DRAWS, for every press that installs: the menu's, the pane's and the
+/// dialog's. The engine stops before the installer starts and a retry fetches the payload again,
+/// and either wait on the main thread would hold a window that can neither paint nor close. The
+/// window stays live during the install, and a quit there waits for it ([`FENCE`]).
+fn start_install<R: Runtime>(app: AppHandle<R>) {
+    std::thread::Builder::new()
+        .name("ohmail-install".into())
+        .spawn(move || install_and_restart(&app))
+        .expect("ohmail: failed to start the install thread");
 }
 
 /// Check the pinned feed and, if there is a newer signed release, fetch it. Runs
@@ -1189,9 +1270,18 @@ fn check<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
 
 /// The whole flow, in the order a person experiences it.
 async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
-    let updater = match app.updater() {
-        Ok(updater) => updater,
-        Err(_) => return failed(&app, user_initiated),
+    /* OUR HOOK REPLACES THE PLUGIN'S DEFAULT, Tauri's `cleanup_before_exit`, which on Windows hides
+       every window and clears the tray and the resource tables before the installer starts, and
+       must be followed by the exit. The plugin returns when the start fails, and an app it had
+       cleared would take that answer with nothing left on screen. Ours stops the engine and
+       nothing else ([`InstallHook::run`]). The plugin calls it on Windows only. */
+    let hook = Arc::new(InstallHook::new(engine_door(&app)));
+    let updater = {
+        let hook = Arc::clone(&hook);
+        match app.updater_builder().on_before_exit(move || hook.run()).build() {
+            Ok(updater) => updater,
+            Err(_) => return failed(&app, user_initiated),
+        }
     };
     let update = match updater.check().await {
         Ok(Some(update)) => update,
@@ -1276,7 +1366,7 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
 
     {
         let state = app.state::<Updater<R>>();
-        *lock(&state.pending) = Some(Pending { update, bytes });
+        *lock(&state.pending) = Some(Waiting::new(Plugin(update), bytes, hook));
     }
     signal(&app, Signal::Downloaded);
     prompt_ready(&app, &version);
@@ -1306,7 +1396,7 @@ fn prompt_ready<R: Runtime>(app: &AppHandle<R>, version: &str) {
         ))
         .show(move |now| {
             if now {
-                install_and_restart(&deferrer);
+                start_install(deferrer.clone());
             } else {
                 log_verdict(Verdict::Deferred, None);
                 signal(&deferrer, Signal::Deferred);
@@ -1314,39 +1404,20 @@ fn prompt_ready<R: Runtime>(app: &AppHandle<R>, version: &str) {
         });
 }
 
-/// Apply the waiting payload and relaunch into it. The only place anything is installed.
+/// Apply the waiting payload and relaunch into it. The only place anything is installed; what the
+/// press did is [`attempt`]'s, and this is the app's answer to it.
 ///
-/// ONE AT A TIME: a press while an install is in flight is ignored until that install fails. With
-/// the presses off the main thread a second one would write the payload again under the first
-/// one's restart. The install runs inside the [`FENCE`], so no exit passes while it writes, and the
-/// engine leaves before the new copy starts — [`after_the_engine`].
+/// WINDOWS' INSTALL IS ITS RESTART: the plugin starts the installer and exits this process, and
+/// the installer replaces the runtime the engine runs on, so [`InstallHook`] stops the engine
+/// before the start. When the start fails the plugin returns, the engine comes back, and the
+/// release is offered again. Elsewhere the install returns, and the engine leaves before the new
+/// copy starts — [`after_the_engine`].
 fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
-    if INSTALLING.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let outcome = {
-        let state = app.state::<Updater<R>>();
-        let pending = lock(&state.pending);
-        match pending.as_ref() {
-            // Nothing waiting: a press that raced the payload being dropped. Silent by design.
-            None => {
-                INSTALLING.store(false, Ordering::SeqCst);
-                return;
-            }
-            // WINDOWS' INSTALL IS ITS RESTART: the plugin starts the installer and exits this
-            // process whether or not the installer started, and the installer replaces the runtime
-            // the engine runs on. So there the engine leaves BEFORE the install. It comes back only
-            // when preparing the installer failed, the one failure the plugin returns.
-            #[cfg(windows)]
-            Some(payload) => after_the_engine(app, || fenced(&FENCE, || payload.update.install(&payload.bytes))),
-            #[cfg(not(windows))]
-            Some(payload) => fenced(&FENCE, || payload.update.install(&payload.bytes)),
-        }
-    };
-    match outcome {
-        // An exit closed the fence first: the app is going, and nothing was written.
-        None => INSTALLING.store(false, Ordering::SeqCst),
-        Some(Ok(())) => after_the_engine(app, || {
+    let state = app.state::<Updater<R>>();
+    match attempt(&INSTALLING, &FENCE, &state.pending, |told| signal(app, told)) {
+        // Another install in flight, nothing waiting, or an exit that closed the fence first.
+        Attempt::Busy | Attempt::Nothing | Attempt::Closed => {}
+        Attempt::Installed => after_the_engine(app, || {
             // Before the restart, and it survives it: the log flushes per write, so the last
             // line of the old build's log is the one saying why there is a new one.
             log_verdict(Verdict::Installed, None);
@@ -1355,15 +1426,202 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
             crate::inherited_fds::withhold_from_the_restart();
             app.restart();
         }),
-        Some(Err(err)) => {
-            #[cfg(windows)]
-            resume_the_engine(app);
-            INSTALLING.store(false, Ordering::SeqCst);
-            // The one failure that always speaks, whoever started the check: the user pressed a
-            // button that promised a restart, and nothing at all happening is the worst answer.
+        // The failures that always speak, whoever started the check: the user pressed a button
+        // that promised a restart, and nothing at all happening is the worst answer.
+        Attempt::FetchFailed(err) => {
+            log_verdict(Verdict::Failed, Some(error_class(&format!("{err:?}"))));
+            signal(app, Signal::Failed);
+            say_it_failed(app, "ohmail could not fetch the update. Check your connection and try again.");
+        }
+        Attempt::NotPrepared(err) => {
             log_verdict(Verdict::Failed, Some(error_class(&format!("{err:?}"))));
             signal(app, Signal::Failed);
             say_it_failed(app, "ohmail could not install the update. Try again in a moment.");
+        }
+        // The installer did not start. The person closed the app meanwhile: it goes, silently.
+        // Otherwise the release stays on offer and the window says so in its own language.
+        Attempt::NotStarted(err, resumed) => {
+            log_verdict(Verdict::NotStarted, Some(error_class(&format!("{err:?}"))));
+            if resumed == Resumed::AppGoing {
+                return quit(app, 0);
+            }
+            signal(app, Signal::InstallerDidNotStart { at_unix_ms: now_unix_ms() });
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+            }
+        }
+    }
+}
+
+/// What one press of Restart came to.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Attempt<E> {
+    /// Another install is in flight: this press changed nothing.
+    Busy,
+    /// Nothing was waiting to install.
+    Nothing,
+    /// An exit closed the fence first: nothing was run.
+    Closed,
+    /// The retry's fetch or its signature check failed; nothing was installed.
+    FetchFailed(E),
+    /// The installer replaced the app (macOS, Linux); the restart is the caller's.
+    Installed,
+    /// Preparing the installer failed before the hook ran; the engine was never stopped.
+    NotPrepared(E),
+    /// The hook stopped the engine and the installer did not start: the engine's resume ran once,
+    /// and the bytes are gone, so the next press fetches and verifies them again.
+    NotStarted(E, Resumed),
+}
+
+/// ONE PRESS OF RESTART, everything but the app's answer to it.
+///
+/// THE LATCH FIRST: a press while another is in flight (in the hook's stop, or in a retry's
+/// fetch) changes nothing. The bytes are TAKEN, so no failure can leave them to be installed again
+/// unverified: a retry fetches through the plugin's `download`, which verifies the signature before
+/// it returns a byte. The install runs inside the fence, and `tell` folds the retry's own fetch
+/// into the flow. Generic so the tests drive it with a stub payload and a real engine.
+pub(crate) fn attempt<P: Payload>(
+    latch: &AtomicBool,
+    fence: &InstallFence,
+    waiting: &Mutex<Option<Waiting<P>>>,
+    tell: impl FnMut(Signal),
+) -> Attempt<P::Error> {
+    if latch.swap(true, Ordering::SeqCst) {
+        return Attempt::Busy;
+    }
+    let outcome = attempt_held(fence, waiting, tell);
+    // Held on past an install that returned: its restart is under way, and nothing may begin.
+    if !matches!(outcome, Attempt::Installed) {
+        latch.store(false, Ordering::SeqCst);
+    }
+    outcome
+}
+
+fn attempt_held<P: Payload>(
+    fence: &InstallFence,
+    waiting: &Mutex<Option<Waiting<P>>>,
+    mut tell: impl FnMut(Signal),
+) -> Attempt<P::Error> {
+    let mut slot = lock(waiting);
+    // Nothing waiting: a press that raced the payload being dropped. Silent by design.
+    let Some(waiting) = slot.as_mut() else { return Attempt::Nothing };
+    let bytes = match waiting.bytes.take() {
+        Some(bytes) => bytes,
+        None => {
+            tell(Signal::Refetching);
+            match waiting.payload.fetch() {
+                Ok(bytes) => {
+                    tell(Signal::Downloaded);
+                    bytes
+                }
+                Err(err) => return Attempt::FetchFailed(err),
+            }
+        }
+    };
+    waiting.hook.arm();
+    let Some(installed) = fenced(fence, || waiting.payload.install(&bytes)) else {
+        // Nothing ran: these are still the verified bytes, kept for a press after the exit.
+        waiting.bytes = Some(bytes);
+        return Attempt::Closed;
+    };
+    match installed {
+        Ok(()) => Attempt::Installed,
+        // The hook ran, so the engine was stopped for an installer that did not start.
+        Err(err) if waiting.hook.ran() => Attempt::NotStarted(err, waiting.hook.door.resume()),
+        Err(err) => Attempt::NotPrepared(err),
+    }
+}
+
+/// THE ENGINE'S TWO ACTS AN INSTALL NEEDS: stopping for the installer, and coming back when the
+/// installer did not start. The shell's own in the engine build ([`ShellDoor`]); nothing to stop
+/// in the preview.
+pub(crate) trait EngineDoor: Send + Sync {
+    /// Stop the engine and wait for it, bounded. `false` when the bound ran out first.
+    fn stop(&self) -> bool;
+    /// The installer did not start: start the engine again, once its stop has completed.
+    fn resume(&self) -> Resumed;
+}
+
+/// What a resume came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Resumed {
+    /// The engine runs again, or there was none to stop.
+    Running,
+    /// The person closed the app meanwhile: nothing was started, and the app goes.
+    AppGoing,
+    /// The stop never completed inside its bound: nothing was started beside the engine.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    StillLeaving,
+}
+
+/// WHAT THE PLUGIN RUNS BETWEEN PREPARING THE WINDOWS INSTALLER AND STARTING IT: the engine
+/// stopped and waited for, and nothing else. It hides no window and clears no tray, so a start that
+/// fails returns to an app that is still there. It records that it ran, which is how the caller
+/// tells an installer that did not start (the engine stopped) from one never prepared (untouched).
+pub(crate) struct InstallHook {
+    door: Arc<dyn EngineDoor>,
+    ran: AtomicBool,
+}
+
+impl InstallHook {
+    pub(crate) fn new(door: Arc<dyn EngineDoor>) -> Self {
+        InstallHook { door, ran: AtomicBool::new(false) }
+    }
+
+    /// The hook itself. Recorded first: once the stop has begun, a failed start owes the resume.
+    pub(crate) fn run(&self) {
+        self.ran.store(true, Ordering::SeqCst);
+        let left = self.door.stop();
+        emit(line("updater_hook", &[("engineLeft", if left { "true" } else { "false" })]));
+    }
+
+    fn arm(&self) {
+        self.ran.store(false, Ordering::SeqCst);
+    }
+
+    fn ran(&self) -> bool {
+        self.ran.load(Ordering::SeqCst)
+    }
+}
+
+/// The door the hook stops: the shell's engine where this build has one, nothing otherwise.
+fn engine_door<R: Runtime>(app: &AppHandle<R>) -> Arc<dyn EngineDoor> {
+    #[cfg(feature = "local-engine")]
+    if let Some(shell) = app.try_state::<Arc<crate::engine::Shell>>() {
+        return Arc::new(ShellDoor(Arc::clone(shell.inner())));
+    }
+    let _ = app;
+    Arc::new(NoEngine)
+}
+
+/// The preview's door: no engine to stop, none to start again.
+struct NoEngine;
+
+impl EngineDoor for NoEngine {
+    fn stop(&self) -> bool {
+        true
+    }
+    fn resume(&self) -> Resumed {
+        Resumed::Running
+    }
+}
+
+/// The engine build's door: the restart's own stop, and a resume that waits for it to complete.
+#[cfg(feature = "local-engine")]
+pub(crate) struct ShellDoor(pub(crate) Arc<crate::engine::Shell>);
+
+#[cfg(feature = "local-engine")]
+impl EngineDoor for ShellDoor {
+    fn stop(&self) -> bool {
+        self.0.stop_for_restart()
+    }
+
+    fn resume(&self) -> Resumed {
+        use crate::engine::Resume;
+        match self.0.resume_after_failed_restart(crate::engine::SHUTDOWN_BOUND) {
+            Resume::Resumed | Resume::NothingStopped => Resumed::Running,
+            Resume::Quitting => Resumed::AppGoing,
+            Resume::StillLeaving => Resumed::StillLeaving,
         }
     }
 }
@@ -1641,16 +1899,6 @@ pub(crate) fn after_the_engine<R: Runtime, T>(app: &AppHandle<R>, then: impl FnO
 pub(crate) fn after_install<T>(fence: &InstallFence, then: impl FnOnce() -> T) -> T {
     fence.wait();
     then()
-}
-
-/// Preparing the Windows installer failed after the engine left for it: start the engine again.
-/// An installer that was started and then failed is not seen here; the plugin had already exited.
-#[cfg(windows)]
-fn resume_the_engine<R: Runtime>(app: &AppHandle<R>) {
-    #[cfg(feature = "local-engine")]
-    crate::engine::resume_after_failed_restart(app);
-    #[cfg(not(feature = "local-engine"))]
-    let _ = app;
 }
 
 /// Was the refusal about the payload's IDENTITY rather than about its age?
@@ -1977,9 +2225,10 @@ pub struct SignedRelease {
 ///
 /// `latest.json` is UNSIGNED METADATA. Every byte of every payload is minisign-verified
 /// before `download` will hand it back, but nothing signs the manifest that says which
-/// payload is which — `tauri-plugin-updater` 2.10.1 parses it with plain serde
-/// (`parse_version`) and there is no signature over it anywhere in the crate. So the
-/// version the feed ADVERTISES is a claim by whoever can write the feed, and the
+/// payload is which — `tauri-plugin-updater` 2.12.0 parses it with plain serde
+/// (`parse_version`). Its own version check reads a `version:` field of the trusted comment,
+/// which our signer does not write, so it admits our releases and this guard is the check.
+/// So the version the feed ADVERTISES is a claim by whoever can write the feed, and the
 /// artifacts of every past release are public, permanently downloadable, and genuinely
 /// signed.
 ///

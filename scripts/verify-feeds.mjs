@@ -160,7 +160,7 @@ console.log(`\nlatest.json — version ${latest.version}`);
  * list is ALSO a failure (`latest.json` is remote code delivery, so every entry must be one somebody decided
  * to publish; extending the list records the decision). `linux-aarch64` is here because Linux ships two
  * artifacts and `tauri-plugin-updater` composes its key as `{os}-{arch}` from the RUNNING binary and looks
- * it up exactly with no fallback (2.10.1 `updater.rs::updater_arch`), so an arm64 install without it stays
+ * it up exactly with no fallback (2.12.0 `updater.rs::updater_arch`), so an arm64 install without it stays
  * put for ever. No `-deb` key: the updater asks `{os}-{arch}-{installer}` first, the AppImage fallback hands
  * a deb build an AppImage it refuses (watched at 0.12.1), and a `.deb` updates through its package manager (README/CHANGELOG/AUR say so). The list depends on the VERSION (the workflow can rebuild an old tag's feed): required at/above a floor, ABSENT below it, both directions asserted (releases before 0.13.3 shipped no arm64). */
 const ARM_LINUX_FROM = [0, 13, 3];

@@ -55,6 +55,7 @@ const report = (over: Partial<UpdateReport> = {}): UpdateReport => ({
   installKind: "appimage",
   canCheck: true,
   canInstall: false,
+  notStartedAt: null,
   lastCheckedAt: START,
   lastResult: "upToDate",
   closing: false,
@@ -390,6 +391,16 @@ describe("what the window says about a report", () => {
     expect(offerOf(installFailed, false)).toBeNull();
   });
 
+  it("AN INSTALLER THAT DID NOT START IS THE RETRY, and still names the release", () => {
+    const failedStart = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, notStartedAt: START });
+    const offer = offerOf(failedStart, false);
+    expect(offer?.kind).toBe("retry");
+    expect(offer?.version).toBe(NEXT);
+    expect(typeof offer?.act).toBe("function");
+    // The positive control: the same payload with no failed start is the ordinary ask.
+    expect(offerOf({ ...failedStart, notStartedAt: null }, false)?.kind).toBe("restart");
+  });
+
   it("nothing in flight is nothing to say", () => {
     expect(offerOf(report(), true)).toBeNull();
     expect(offerOf(report({ state: "downloading", offered: NEXT, canCheck: false }), true)).toBeNull();
@@ -466,6 +477,39 @@ describe("the cadence, running", () => {
     clock.at += 6 * HOUR;
     await vi.advanceTimersByTimeAsync(6 * HOUR);
     expect(currentUpdateOffer()).toBeNull();
+    stop();
+  });
+
+  it("A START THAT FAILED IS SAID AT ONCE AND ONCE — and the next failure is said again", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
+    let now = ready;
+    const s = shell(() => now);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The shell's dialog is the release's first ask, so the strip says nothing beside it.
+    s.tell(ready);
+    expect(currentUpdateOffer()).toBeNull();
+    // The dialog's press, and an installer that did not start: the answer to it is due now.
+    clock.at += 5_000;
+    now = { ...ready, notStartedAt: clock.at };
+    s.tell(now);
+    expect(currentUpdateOffer()?.kind).toBe("retry");
+    expect(currentUpdateOffer()?.version).toBe(NEXT);
+
+    // Put away, and that failure is not said again.
+    resetUpdateStoreForTests();
+    s.tell(now);
+    expect(currentUpdateOffer()).toBeNull();
+
+    // The press's own fetch, then a second start that failed: a new answer to a new press.
+    s.tell(report({ state: "downloading", offered: NEXT, canCheck: false }));
+    clock.at += 60_000;
+    now = { ...ready, notStartedAt: clock.at };
+    s.tell(now);
+    expect(currentUpdateOffer()?.kind).toBe("retry");
     stop();
   });
 

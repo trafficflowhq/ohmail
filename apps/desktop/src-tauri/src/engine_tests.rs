@@ -17,7 +17,7 @@ use crate::inherited_fds::tests::live_process;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The stand-in engine. Modes, in the order the tests use them:
 ///
@@ -242,6 +242,8 @@ struct Fixture {
     dir: PathBuf,
     script: PathBuf,
     log: PathBuf,
+    /// This process made the directory, and removes it when done.
+    owned: bool,
 }
 
 impl Fixture {
@@ -252,7 +254,13 @@ impl Fixture {
         let script = dir.join("fake-engine.cjs");
         fs::write(&script, FAKE_ENGINE_JS).expect("write fake engine");
         let log = dir.join("starts.log");
-        Fixture { dir, script, log }
+        Fixture { dir, script, log, owned: true }
+    }
+
+    /// A fixture a parent test process made: the same script and log, and nothing removed here.
+    #[cfg(unix)]
+    fn adopt(dir: PathBuf) -> Fixture {
+        Fixture { script: dir.join("fake-engine.cjs"), log: dir.join("starts.log"), dir, owned: false }
     }
 
     fn launch(&self, mode: &str) -> Launch {
@@ -290,7 +298,9 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.dir);
+        if self.owned {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
     }
 }
 
@@ -1281,8 +1291,8 @@ fn a_restart_starts_the_new_copy_only_after_the_engine_has_left() {
     assert_eq!(shell.engine().state(), EngineState::Stopped);
 }
 
-/// A restart that did not happen — preparing the Windows installer failed after the engine left
-/// for it — leaves an app with an engine again and a quit that still stops it.
+/// A restart that did not happen — the Windows installer did not start after the engine left for
+/// it — leaves an app with an engine again and a quit that still stops it.
 #[test]
 fn a_restart_that_did_not_happen_starts_the_engine_again_and_a_quit_still_stops_it() {
     let _live = live_process();
@@ -1297,7 +1307,11 @@ fn a_restart_that_did_not_happen_starts_the_engine_again_and_a_quit_still_stops_
 
     assert!(shell.stop_for_restart(), "the engine did not leave inside the bound");
     assert_eq!(before.state(), EngineState::Stopped);
-    assert!(shell.resume_after_failed_restart(), "a restart nobody closed the app during did not resume");
+    assert_eq!(
+        shell.resume_after_failed_restart(SHUTDOWN_BOUND),
+        Resume::Resumed,
+        "a restart nobody closed the app during did not resume"
+    );
 
     assert!(!Arc::ptr_eq(&before, &shell.engine()), "the slot still holds the stopped engine");
     assert_eq!(
@@ -1362,8 +1376,8 @@ fn a_close_during_a_restarts_stop_is_answered_at_once_and_the_restart_still_wait
     assert!(shell.leaving.lock().quitting, "the close was not recorded");
 }
 
-/// A RESTART THAT DOES NOT HAPPEN AFTER A CLOSE STARTS NO ENGINE. Preparing the Windows installer
-/// can fail after the engine left for it, and the engine came back behind a window the close had
+/// A RESTART THAT DOES NOT HAPPEN AFTER A CLOSE STARTS NO ENGINE. The Windows installer can fail to
+/// start after the engine left for it, and the engine came back behind a window the close had
 /// already taken away. The close is recorded under the shutdown lock, and the resume then starts
 /// nothing and answers that the app is going.
 #[test]
@@ -1384,11 +1398,49 @@ fn a_restart_that_does_not_happen_after_a_close_starts_no_engine() {
     shell.leave_with(idle, SHUTDOWN_BOUND, || {}, move || { let _ = hid_tx.send(()); }, move || { let _ = exit_tx.send(()); });
     hid.try_recv().expect("the press did not take the window away itself");
 
-    assert!(!shell.resume_after_failed_restart(), "the engine was resumed for an app the person closed");
+    assert_eq!(
+        shell.resume_after_failed_restart(SHUTDOWN_BOUND),
+        Resume::Quitting,
+        "the engine was resumed for an app the person closed"
+    );
     assert!(Arc::ptr_eq(&before, &shell.engine()), "an engine was started behind the closed window");
     assert_eq!(before.state(), EngineState::Stopped);
     assert_ne!(shell.leaving.lock().stage, LeaveStage::NotStarted, "the quit was handed back");
     assert!(exited.try_recv().is_err(), "the close ran an exit of its own beside the restart's");
+}
+
+/// A RESUME THAT GAVE UP ON A STOP STILL UNDER WAY LEAVES A CLOSE ITS EXIT. The stop for the
+/// installer ran past its bound and so did the resume's wait, so no engine started again; the stage
+/// left behind then answered a later close as a stop already under way, and the close hid the
+/// window and never exited. The close now owns a stop of its own, and the app ends once it is done.
+#[cfg(unix)]
+#[test]
+fn a_close_after_a_resume_that_gave_up_on_the_stop_still_ends_the_app() {
+    let _live = live_process();
+    let fixture = Fixture::new("resume-gave-up");
+    // Deaf, and killed only past this grace, which outlasts both bounds below.
+    let timings = Timings { stop_grace: Duration::from_secs(2), ..quick() };
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve-deaf"), timings)));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let pid = shell.engine().pid().expect("a running engine has a pid");
+    // The hook's stop (`stop_for_restart`) with its bound run out, then the resume's.
+    shell.begin_stop();
+    assert!(!shell.finish_stop(Duration::from_millis(100)), "a deaf engine left inside 100 ms");
+    assert_eq!(shell.resume_after_failed_restart(Duration::from_millis(100)), Resume::StillLeaving);
+
+    let idle = fence_for_tests(Duration::from_secs(30));
+    let (hid_tx, hid) = mpsc::channel();
+    let (exit_tx, exited) = mpsc::channel();
+    shell.leave_with(idle, Duration::from_secs(10), || {}, move || { let _ = hid_tx.send(()); }, move || { let _ = exit_tx.send(alive(pid)); });
+
+    hid.try_recv().expect("the press did not take the window away itself");
+    let engine_alive = exited.recv_timeout(Duration::from_secs(8)).expect("the close never ended the app");
+    assert!(!engine_alive, "the app ended before engine {pid} had gone");
+    assert_eq!(fixture.starts(), 1, "an engine was started again: {:?}", fixture.lines());
 }
 
 /// EVERY WAIT ON ONE STOP SHARES THE FIRST ONE'S BOUND. A wait that joins a stop already being
@@ -1554,6 +1606,144 @@ fn a_restart_during_an_install_waits_for_it_before_it_stops_the_engine() {
     assert!(whole, "the new copy started before the image was whole");
     restarting.join().unwrap();
     assert_eq!(shell.engine().state(), EngineState::Stopped);
+}
+
+// ── The Windows installer's start, against a real engine ─────────────────────────────────────
+//
+// The plugin's Windows install runs the hook between preparing the installer and starting it, and
+// `StubPayload` keeps that order. Each guard is driven through the shipped door (`ShellDoor`), so
+// the stop and the resume under test are the ones the app makes.
+
+use crate::updater::tests::{Start, StubPayload};
+use crate::updater::{attempt, Attempt, InstallHook, Resumed, ShellDoor, Waiting};
+
+/// THE ORDER: the hook returns only once the engine has gone, proved by the resource it
+/// held, its witness, which the kernel lets go when the engine and everything it started have
+/// exited. The plugin starts the installer as soon as the hook returns. An engine that ignores the
+/// ask is the hard case: only the kill past its grace ends it.
+#[cfg(unix)]
+#[test]
+fn the_install_hook_returns_only_once_the_engine_has_let_go_of_its_witness() {
+    let _live = live_process();
+    let fixture = Fixture::new("hook-order");
+    let (data, engine) = witnessed(&fixture, "serve-deaf");
+    let pid = engine.pid().expect("a running engine has a pid");
+    let shell = Arc::new(Shell::around(engine));
+    assert!(matches!(witness::read(&data), witness::Reading::Held), "the engine did not hold its witness");
+    let hook = InstallHook::new(Arc::new(ShellDoor(Arc::clone(&shell))));
+
+    let began = Instant::now();
+    hook.run();
+
+    assert!(
+        matches!(witness::read(&data), witness::Reading::Free { .. }),
+        "the installer could start while the engine still held its witness"
+    );
+    assert!(!alive(pid), "engine {pid} was still running when the installer could start");
+    assert!(began.elapsed() >= quick().stop_grace, "a deaf engine was not held to its grace: {:?}", began.elapsed());
+}
+
+/// A START THAT FAILED: the engine comes back ONCE, only after its stop completed, and
+/// through the spawn every engine takes, so the new one takes the witness the old one let go and
+/// two engines on one directory cannot happen. The hard case is a stop that has NOT completed when
+/// the hook gives up: a wait already under way set a bound shorter than the deaf engine's grace.
+#[cfg(unix)]
+#[test]
+fn a_failed_start_brings_the_engine_back_once_after_its_stop_completed_through_the_witness() {
+    let _live = live_process();
+    let fixture = Fixture::new("hook-resume");
+    let (data, engine) = witnessed(&fixture, "serve-deaf");
+    let gone = engine.pid().expect("a running engine has a pid");
+    let shell = Arc::new(Shell::around(engine));
+    shell.begin_stop();
+    let short = {
+        let shell = Arc::clone(&shell);
+        thread::spawn(move || shell.finish_stop(Duration::from_millis(100)))
+    };
+    wait_for(|| shell.leaving.lock().ends_by.is_some(), Duration::from_secs(10), "the short wait to set its bound");
+    let (planned_tx, planned) = mpsc::channel();
+    let next = fixture.launch_in(&data, "serve-locked");
+    plan_double::next(move || {
+        let _ = planned_tx.send(alive(gone));
+        Plan::Spawn(next)
+    });
+    let hook = Arc::new(InstallHook::new(Arc::new(ShellDoor(Arc::clone(&shell)))));
+    let pending = Mutex::new(Some(Waiting::new(StubPayload::new(&hook, true, Start::Fails), b"v1".to_vec(), hook)));
+
+    let outcome = attempt(&AtomicBool::new(false), fence_for_tests(Duration::from_secs(30)), &pending, |_| {});
+
+    assert!(matches!(outcome, Attempt::NotStarted(_, Resumed::Running)), "{outcome:?}");
+    let beside = planned.recv_timeout(Duration::from_secs(10)).expect("the resume planned no engine");
+    assert!(!beside, "the engine was started again while engine {gone} still ran");
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine started again to serve",
+    );
+    assert!(
+        matches!(witness::read(&data), witness::Reading::Held),
+        "the engine started again holds no witness, so it was spawned beside the old one"
+    );
+    assert_eq!(fixture.starts(), 2, "the engine was not started again exactly once: {:?}", fixture.lines());
+    assert_eq!(shell.resume_after_failed_restart(SHUTDOWN_BOUND), Resume::NothingStopped, "a second resume");
+    assert_eq!(fixture.starts(), 2, "a second resume started another engine: {:?}", fixture.lines());
+    assert!(!short.join().unwrap(), "the short wait read a deaf engine as gone");
+    shell.stop();
+}
+
+/// Where the parent below tells its child which fixture to run in.
+#[cfg(unix)]
+const HOOK_CHILD_DIR: &str = "OHMAIL_TEST_HOOK_CHILD_DIR";
+
+/// THE CHILD HALF of the test below and nothing else: it returns at once unless its parent named a
+/// fixture. It presses the way the plugin's Windows install ends when the installer starts: the
+/// hook, then the process exit, with a real engine and a resume that would show if one ran.
+#[cfg(unix)]
+#[test]
+#[ignore = "the child process of a_started_installer_ends_the_app_and_nothing_starts_the_engine_again"]
+fn child_the_plugins_windows_install_that_starts_its_installer() {
+    let Some(dir) = std::env::var_os(HOOK_CHILD_DIR) else { return };
+    let fixture = Fixture::adopt(PathBuf::from(dir));
+    let (data, engine) = witnessed(&fixture, "serve-locked");
+    let shell = Arc::new(Shell::around(engine));
+    // A resume plans its engine before it spawns one, so the mark is down before any exit can win.
+    let (next, mark) = (fixture.launch_in(&data, "serve-locked"), fixture.dir.join("planned-again"));
+    plan_double::next(move || {
+        let _ = fs::write(&mark, b"planned");
+        Plan::Spawn(next)
+    });
+    let hook = Arc::new(InstallHook::new(Arc::new(ShellDoor(Arc::clone(&shell)))));
+    let pending = Mutex::new(Some(Waiting::new(StubPayload::new(&hook, true, Start::Exits), b"v1".to_vec(), hook)));
+    let _ = attempt(&AtomicBool::new(false), fence_for_tests(Duration::from_secs(30)), &pending, |_| {});
+    // The stub exits inside the install; reaching this line means the plugin's order was not kept.
+    std::process::exit(3);
+}
+
+/// A START THAT SUCCEEDED: the plugin ends the process right after the hook, and nothing
+/// starts the engine again. In a child process, because the exit is the subject: one engine
+/// started, it left before the exit, nothing started another, and no engine outlived the app.
+#[cfg(unix)]
+#[test]
+fn a_started_installer_ends_the_app_and_nothing_starts_the_engine_again() {
+    let _live = live_process();
+    let fixture = Fixture::new("hook-success");
+    let child = Command::new(std::env::current_exe().expect("the test binary"))
+        .args(["engine::tests::child_the_plugins_windows_install_that_starts_its_installer", "--exact", "--ignored", "--test-threads=1"])
+        .env(HOOK_CHILD_DIR, &fixture.dir)
+        .stdin(Stdio::null())
+        .output()
+        .expect("the child could not be started");
+
+    let said = String::from_utf8_lossy(&child.stdout);
+    assert!(said.contains("1 test"), "the child ran nothing: {said}");
+    assert_eq!(child.status.code(), Some(0), "the child did not end as the plugin ends it: {said}");
+    assert!(!fixture.dir.join("planned-again").exists(), "an engine was planned again after the installer started");
+    assert_eq!(fixture.starts(), 1, "an engine was started again: {:?}", fixture.lines());
+    assert_eq!(fixture.exits(), 1, "the engine did not leave before the exit: {:?}", fixture.lines());
+    assert!(
+        matches!(witness::read(&fixture.dir.join("data")), witness::Reading::Free { .. }),
+        "an engine outlived the app"
+    );
 }
 
 // ── Supervision: noticing, restarting, and knowing when to stop ─────────────────────────────

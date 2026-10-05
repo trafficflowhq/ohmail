@@ -130,6 +130,11 @@ export interface UpdateReport {
   canCheck: boolean;
   /** Whether a press would restart into a verified payload. */
   canInstall: boolean;
+  /**
+   * Unix milliseconds of an installer that did not start, while its release is still on offer:
+   * the next press fetches it again and retries. Null otherwise, and from a shell that does not say.
+   */
+  notStartedAt: number | null;
   /** Unix milliseconds, or null when no check has finished in this run. */
   lastCheckedAt: number | null;
   lastResult: UpdateResult;
@@ -187,6 +192,10 @@ export function reportOfPayload(payload: unknown): UpdateReport | null {
     offered: typeof raw.offered === "string" && raw.offered !== "" ? raw.offered : null,
     canCheck: raw.canCheck === true,
     canInstall: raw.canInstall === true,
+    notStartedAt:
+      typeof raw.notStartedAt === "number" && Number.isFinite(raw.notStartedAt)
+        ? raw.notStartedAt
+        : null,
     lastCheckedAt:
       typeof raw.lastCheckedAt === "number" && Number.isFinite(raw.lastCheckedAt)
         ? raw.lastCheckedAt
@@ -337,8 +346,9 @@ export function updateSentenceKey(report: UpdateReport): string {
       return "checking";
     case "downloading":
       return "downloading";
+    // The same ready payload, after an installer that did not start: the press tries again.
     case "ready":
-      return "ready";
+      return typeof report.notStartedAt === "number" ? "notStarted" : "ready";
     case "failed":
       return "failed";
     // `idle` and `unknown` are both "nothing in flight", and what is worth saying then is what the

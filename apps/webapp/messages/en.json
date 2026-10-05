@@ -3754,6 +3754,7 @@
     "ready": "ohmail {offered} is ready. ohmail restarts to finish.",
     "failed": "The last check did not finish. Check your connection and try again.",
     "refused": "ohmail could not confirm which version the available update is, so nothing was installed. The version you have is unchanged.",
+    "notStarted": "The installer for ohmail {offered} did not start, so nothing was installed.",
     "managedPackage": "ohmail {version}. A packaged install does not update itself — install the newer package the way you installed this one.",
     "managedFlatpak": "ohmail {version}. Flatpak installs are updated by your software centre.",
     "managedAppStore": "ohmail {version}. App Store installs are updated by the App Store.",
@@ -3767,6 +3768,8 @@
     "barReloadAction": "Reload",
     "barRestart": "ohmail {version} is ready to install.",
     "barRestartAction": "Restart now",
+    "barNotStarted": "The installer for ohmail {version} did not start, so nothing was installed.",
+    "barRetryAction": "Try again",
     "barPackage": "A newer ohmail is available, and ohmail could not replace its own files. If you installed it through your distribution's packages, update it there.",
     "barLater": "Later"
   },

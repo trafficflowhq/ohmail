@@ -150,7 +150,13 @@ tauri = { version = "2", default-features = false, features = [
 # binary and it is reached from nowhere but the updater. MIT OR Apache-2.0 —
 # permissive, like every dependency of this client: the only copyleft in the
 # shipped binary is meant to be this project's own AGPL-3.0.
-tauri-plugin-updater = "2"
+#
+# 2.12 at least: from 2.11.0 the Windows install answers a failed installer start
+# instead of exiting regardless, and `updater.rs` turns that answer into an app that
+# stays. The default features are off so the set is the one 2.10.1 shipped:
+# `system-proxy`, on by default since 2.11.0, would send the update request through
+# the Windows and macOS proxy settings, a network change this build does not make.
+tauri-plugin-updater = { version = "2.12", default-features = false, features = ["rustls-tls", "zip"] }
 
 # The native dialog the updater notifies through — "an update is available,
 # install it?" and the up-to-date / error notices. A native window, symmetric

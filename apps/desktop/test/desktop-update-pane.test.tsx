@@ -95,6 +95,11 @@ const WIRE: Record<string, Wire> = {
     version: VERSION, state: "ready", offered: NEXT,
     canCheck: false, canInstall: true, lastCheckedAt: CHECKED_AT, lastResult: "offered",
   },
+  // The same release still on offer after its installer did not start: the press tries again.
+  notStarted: {
+    version: VERSION, state: "ready", offered: NEXT, notStartedAt: CHECKED_AT + 60_000,
+    canCheck: false, canInstall: true, lastCheckedAt: CHECKED_AT, lastResult: "offered",
+  },
   failed: {
     version: VERSION, state: "failed", offered: null,
     canCheck: true, canInstall: false, lastCheckedAt: CHECKED_AT, lastResult: "failed",
@@ -308,6 +313,16 @@ describe("every state the update pane can be in renders, and says the true thing
     expect(button()!.textContent).toBe(copy.restart!);
     expect(button()!.disabled).toBe(false);
     capture("5-ready");
+  });
+
+  it("5b — the installer did not start: it says so, and the same press tries again", async () => {
+    shell(WIRE.notStarted!);
+    await mount();
+    expect(hostEl.textContent).toContain(copy.notStarted!.replace("{offered}", NEXT));
+    expect(hostEl.textContent).not.toContain(`ohmail ${NEXT} is ready`);
+    expect(button()!.textContent).toBe(copy.restart!);
+    expect(button()!.disabled).toBe(false);
+    capture("5b-not-started");
   });
 
   it("6 — failed: one plain sentence and a way to try again", async () => {
@@ -638,6 +653,14 @@ describe("the pane speaks the reader's language", () => {
     // ANTI-VACUITY: the German sentence is not the English one.
     expect(german.refused).not.toBe(copy.refused);
   });
+
+  it("says in German that the installer did not start", async () => {
+    shell(WIRE.notStarted!);
+    await mount("de");
+    const german = (de as { update: Record<string, string> }).update;
+    expect(hostEl.textContent).toContain(german.notStarted!.replace("{offered}", NEXT));
+    expect(german.notStarted).not.toBe(copy.notStarted);
+  });
 });
 
 // ═══ THE PARSER AND THE TWO PURE MAPPINGS ═════════════════════════════════════════════════════
@@ -691,6 +714,10 @@ describe("what the window will accept from a shell that may be a version ahead",
     for (const junk of [null, "now", Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
       expect(reportOfPayload({ ...good, lastCheckedAt: junk })!.lastCheckedAt).toBeNull();
     }
+    expect(reportOfPayload({ ...good, notStartedAt: CHECKED_AT })!.notStartedAt).toBe(CHECKED_AT);
+    for (const junk of [null, "now", Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+      expect(reportOfPayload({ ...good, notStartedAt: junk })!.notStartedAt).toBeNull();
+    }
   });
 });
 
@@ -703,6 +730,7 @@ describe("the two pure mappings", () => {
       for (const lastResult of UPDATE_RESULTS) {
         for (const installKind of INSTALL_KINDS) {
           keys.add(updateSentenceKey({ ...base, state, lastResult, installKind } as UpdateReport));
+          keys.add(updateSentenceKey({ ...base, state, lastResult, installKind, notStartedAt: 1 } as UpdateReport));
         }
       }
     }
@@ -730,6 +758,8 @@ describe("the two pure mappings", () => {
       expect(updateSentenceKey({ ...base, state: "checking", lastResult })).toBe("checking");
       expect(updateSentenceKey({ ...base, state: "downloading", lastResult })).toBe("downloading");
       expect(updateSentenceKey({ ...base, state: "ready", lastResult })).toBe("ready");
+      expect(updateSentenceKey({ ...base, state: "ready", lastResult, notStartedAt: 1 })).toBe("notStarted");
+      expect(updateSentenceKey({ ...base, state: "downloading", lastResult, notStartedAt: 1 })).toBe("downloading");
       expect(updateSentenceKey({ ...base, state: "failed", lastResult })).toBe("failed");
     }
   });
