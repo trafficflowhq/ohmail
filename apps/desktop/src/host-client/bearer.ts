@@ -33,13 +33,15 @@
  * inside the presented token's window, and the legitimate retry rotates straight past it.
  */
 
-import { readRefreshAnswer } from "@ohmail/client-engine";
+import { isCredentialRefusal, readRefreshAnswer } from "@ohmail/client-engine";
 import { storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
 
 /** The wire pair the redeem and the refresh both answer. */
 export interface BearerTokens {
   accessToken: string;
   refreshToken: string;
+  /** The access window in seconds, where the issuing door stated one. Held in memory only. */
+  expiresIn?: number;
 }
 
 /** Where the refresh token survives a page load. One key; the access token is never stored. */
@@ -95,8 +97,9 @@ function mintAttemptId(): string {
 
 /**
  * THE ROUTES WHOSE 401 IS AN ANSWER: a wrong code, a wrong password, a spent single-use token. A
- * lapsed access token gets the same 401, so a renewal there would send the credential twice: two
- * attempts against the sign-in throttle and a rotated pairing per wrong code. Path prefixes, held to the
+ * server older than `credential_refused` gives a lapsed access token the same 401, so a renewal there
+ * would send the credential twice: two attempts against the sign-in throttle and a rotated pairing per
+ * wrong code. The code is read first ({@link isCredentialRefusal}); this list is the belt. Held to the
  * server by `factor-routes-never-refresh.test.ts`, which drives this transport over every route
  * the server checks such a credential on.
  */
@@ -104,6 +107,15 @@ const NEVER_RENEW = [
   "/auth/login", "/auth/register", "/auth/refresh", "/auth/verify-email", "/auth/2fa/", "/auth/step-up/",
   "/pair/redeem", "/admin/staff/", "/auth/desktop-claim", "/auth/desktop-approval/claim", "/oauth/token",
 ];
+
+/** A stated window this close to its end counts as lapsed: the answer's transit, on this clock. */
+const WINDOW_LEAD_MS = 30_000;
+
+/** The instant a stated window ends, from now; `null` where the door stated none. */
+function windowEndOf(expiresIn: number | undefined): number | null {
+  return typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0
+    ? Date.now() + expiresIn * 1000 : null;
+}
 
 /** May a 401 here be renewed and the request sent again? Read below the origin, where the URL names one. */
 function mayRenewFor(url: string): boolean {
@@ -132,6 +144,8 @@ function defaultStorage(): Storage | null {
 
 export class BearerManager {
   private access: string | null = null;
+  /** When the held access token's stated window ends ({@link windowEndOf}); never persisted, no timer. */
+  private accessExpiresAt: number | null = null;
   private refresh: string | null = null;
   /**
    * THE DOOR OVER THIS PAGE'S JAR — the jar stays injectable (the tests hand one in), the ANSWER
@@ -224,6 +238,7 @@ export class BearerManager {
    */
   adopt(tokens: BearerTokens, opts: { fresh?: boolean } = {}): void {
     this.access = tokens.accessToken;
+    this.accessExpiresAt = windowEndOf(tokens.expiresIn);
     this.refresh = tokens.refreshToken;
     this.generation++;
     // Storage refused answers "lost" from the door and raises the notice; the session then lives
@@ -270,6 +285,7 @@ export class BearerManager {
   /** End the session locally and tell the gate. Never throws. */
   private die(): void {
     this.access = null;
+    this.accessExpiresAt = null;
     this.refresh = null;
     this.attempt = null;
     this.door.remove(REFRESH_STORAGE_KEY);
@@ -293,6 +309,7 @@ export class BearerManager {
    */
   private standDown(): void {
     this.access = null;
+    this.accessExpiresAt = null;
     this.refresh = null;
     // In memory only, like the pair: the jar belongs to the pairing that replaced this one.
     this.attempt = null;
@@ -440,14 +457,26 @@ export class BearerManager {
       ...options,
       headers: { ...(options.headers ?? {}), ...this.headers() },
     });
+    // A press whose 401 is never renewed leaves on a live token: a lapsed window rotates FIRST,
+    // then the press is sent once (the phone's rule). An unstated window with a token held is
+    // today's path.
+    if (!mayRenewFor(url) && this.refresh !== null && this.windowLapsed()) await this.rotate();
     const stampedIn = this.generation;
     const first = await this.fetchImpl(url, stamped());
     if (first.status !== 401 || this.refresh === null || !mayRenewFor(url)) return first;
+    // The server named the CREDENTIAL (a wrong code): the answer itself, never a lapsed session.
+    if (await isCredentialRefusal(first)) return first;
     if (this.generation === stampedIn && !(await this.rotate())) return first;
     // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
     // was stamped — both mean the same thing: replay once under the current generation.
     return this.fetchImpl(url, stamped());
   };
+
+  /** No access token to send, or its stated window has run out ({@link WINDOW_LEAD_MS} early). */
+  private windowLapsed(): boolean {
+    return this.access === null
+      || (this.accessExpiresAt !== null && Date.now() >= this.accessExpiresAt - WINDOW_LEAD_MS);
+  }
 
   /**
    * Sign this device out on purpose: tell the door (best-effort — the local clear must not hang

@@ -654,9 +654,9 @@ function apiPathOf(url: string): string | null {
   return path.startsWith("/") ? path : null;
 }
 
-/** The refusal's code, read off a copy so the caller still reads the body; only a 403 needs it. */
+/** The refusal's code, read off a copy so the caller still reads the body; a 401 and a 403 need it. */
 async function refusalCodeOf(res: Response): Promise<string | undefined> {
-  if (res.status !== 403) return undefined;
+  if (res.status !== 401 && res.status !== 403) return undefined;
   try {
     const code = ((await res.clone().json()) as { error?: { code?: unknown } } | null)?.error?.code;
     return typeof code === "string" ? code : undefined;

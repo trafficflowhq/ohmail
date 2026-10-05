@@ -9,7 +9,9 @@
  * A death is this manager's own fact: settled once, and told to a listener that subscribes late.
  */
 
-import { ACCOUNT_ERASED, ERASED_ANSWER_HEADER, readRefreshAnswer, sessionEndedResponse } from "@ohmail/client-engine";
+import {
+  ACCOUNT_ERASED, ERASED_ANSWER_HEADER, isCredentialRefusal, readRefreshAnswer, sessionEndedResponse,
+} from "@ohmail/client-engine";
 import type { SessionRenewalDoor } from "@ohmail/client-engine";
 import type { RefreshWrite } from "../state/servers";
 
@@ -17,6 +19,8 @@ import type { RefreshWrite } from "../state/servers";
 export interface BearerTokens {
   accessToken: string;
   refreshToken: string;
+  /** The access window in seconds, where the issuing door stated one. Held in memory only. */
+  expiresIn?: number;
 }
 
 /**
@@ -88,8 +92,9 @@ async function erasesAccount(res: Response, accountId: string | null): Promise<b
 
 /**
  * THE ROUTES WHOSE 401 IS AN ANSWER: a wrong code, a wrong password, a spent single-use token. A
- * lapsed access token gets the same 401, so a renewal there would send the credential twice: two
- * attempts against the sign-in throttle and a rotated session per wrong code. Path prefixes, held to the
+ * server older than `credential_refused` gives a lapsed access token the same 401, so a renewal there
+ * would send the credential twice: two attempts against the sign-in throttle and a rotated session per
+ * wrong code. The code is read first ({@link isCredentialRefusal}); this list is the belt. Held to the
  * server by `test/factor-routes-never-refresh.test.ts`, which drives this transport over every
  * route the server checks such a credential on. `/auth/logout` is not here: a cold launch sends it
  * with no access token, and the renewal is what lets it land.
@@ -98,6 +103,15 @@ const NEVER_RENEW = [
   "/auth/login", "/auth/register", "/auth/refresh", "/auth/verify-email", "/auth/2fa/", "/auth/step-up/",
   "/pair/redeem", "/admin/staff/", "/auth/desktop-claim", "/auth/desktop-approval/claim", "/oauth/token",
 ];
+
+/** A stated window this close to its end counts as lapsed: the answer's transit, on this clock. */
+const WINDOW_LEAD_MS = 30_000;
+
+/** The instant a stated window ends, from now; `null` where the door stated none. */
+function windowEndOf(expiresIn: number | undefined): number | null {
+  return typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0
+    ? Date.now() + expiresIn * 1000 : null;
+}
 
 /** May a 401 here be renewed and the request sent again? Read below the origin and the `/api` mount. */
 function mayRenewFor(url: string): boolean {
@@ -117,6 +131,8 @@ interface LooseInit {
 
 export class BearerManagerRN implements SessionRenewalDoor {
   private access: string | null;
+  /** When the held access token's stated window ends ({@link windowEndOf}); never persisted, no timer. */
+  private accessExpiresAt: number | null = null;
   private refresh: string | null;
   /** Requests are ABSOLUTE on this platform — there is no served origin to be relative to. */
   private readonly origin: string;
@@ -207,6 +223,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     const held = this.held();
     this.chain.push(tokens.refreshToken);
     this.access = tokens.accessToken;
+    this.accessExpiresAt = windowEndOf(tokens.expiresIn);
     this.refresh = tokens.refreshToken;
     this.generation++;
     // THE ATTEMPT IS ANSWERED. In memory first, for the stamp's reason; the store clears it in
@@ -257,6 +274,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
       return this.dying === null ? Promise.resolve() : this.dying.then(() => undefined);
     }
     this.access = null;
+    this.accessExpiresAt = null;
     this.refresh = null;
     this.attempt = null;
     const dying = (async (): Promise<SessionDeath> => {
@@ -366,14 +384,26 @@ export class BearerManagerRN implements SessionRenewalDoor {
       ...options,
       headers: { ...(options.headers ?? {}), ...this.headers() },
     });
+    // A press whose 401 is never renewed leaves on a live token: a lapsed window rotates FIRST,
+    // then the press is sent once, so a correct code is not refused for a session that only
+    // needed renewing. An unstated window with a token held is today's path.
+    if (!mayRenewFor(url) && this.refresh !== null && this.windowLapsed()) await this.rotate();
     const stampedIn = this.generation;
     const first = await this.heard(await this.fetchImpl(url, stamped()));
     if (first.status !== 401 || this.refresh === null || !mayRenewFor(url)) return first;
+    // The server named the CREDENTIAL (a wrong code): the answer itself, never a lapsed session.
+    if (await isCredentialRefusal(first)) return first;
     if (this.generation === stampedIn && !(await this.rotate())) return first;
     // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
     // was stamped — both mean the same thing: replay once under the current generation.
     return this.heard(await this.fetchImpl(url, stamped()));
   };
+
+  /** No access token to send, or its stated window has run out ({@link WINDOW_LEAD_MS} early). */
+  private windowLapsed(): boolean {
+    return this.access === null
+      || (this.accessExpiresAt !== null && Date.now() >= this.accessExpiresAt - WINDOW_LEAD_MS);
+  }
 
   /**
    * THE READ PATH'S ERASED ANSWER, heard before the engine sees it: the session dies as `erased`

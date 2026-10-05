@@ -74,14 +74,24 @@ const REFUSAL_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * A CREDENTIAL'S OWN VERDICT (a wrong code or passkey), said apart from a lapsed session's
+ * `unauthorized`: its 401 is the answer and is never renewed and sent again. The client engine's
+ * constant, kept here as a twin for {@link REFUSAL_CODES}' reason and held equal by
+ * `test/refresh-answer-one-classifier.test.ts`.
+ */
+const CREDENTIAL_REFUSED = "credential_refused";
+
+/**
  * THE RELAYED ROUTES WHOSE 401 IS AN ANSWER: a wrong step-up code or passkey, a wrong code or key at
- * two-step setup. A lapsed access token gets the same 401, so a renewal there would send the code
- * twice and rotate the session per wrong code. Only what the relay forwards, and nothing wider: every
+ * two-step setup, a spent sign-in token. A server older than {@link CREDENTIAL_REFUSED} gives a lapsed
+ * access token the same 401, so a renewal there would send the code twice and rotate the session per
+ * wrong code; the code is read first and this list is the belt. Only what the relay forwards: every
  * ordinary route it forwards, two-step settings among them, must still renew. Held to the server by
  * `test/factor-routes-never-refresh.test.ts`, which drives this transport over every relayed route.
  */
 const NEVER_RENEW = [
   "/auth/step-up/totp", "/auth/step-up/webauthn/verify", "/auth/2fa/totp/activate", "/auth/2fa/webauthn/register/verify",
+  "/auth/2fa/webauthn/assert/options",
 ];
 
 /** May a 401 at this path be renewed? Asked of the canonical route, as the relay's allowlist is (the
@@ -644,6 +654,8 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
       return erasedResponse();
     }
     if (reading.state === "refused" || !mayRenewFor(path)) return res;
+    // The server named the CREDENTIAL (a wrong code): the answer itself, read off a clone.
+    if (await envelopeCode(res.clone()) === CREDENTIAL_REFUSED) return res;
     const again = async (): Promise<Response> =>
       noticeErased(await send(`${base}${path}`, withBearer(init, tokens.accessToken)));
     if (tokens.accessToken !== sentWith) {

@@ -31,7 +31,9 @@ export type { PressAnswer, PressTally, PressVerdict } from "./press-verdict.js";
  */
 export {
   ACCOUNT_ERASED,
+  CREDENTIAL_REFUSED,
   ERASED_ANSWER_HEADER,
+  isCredentialRefusal,
   isSessionRefusal,
   readRefreshAnswer,
   SESSION_REFUSAL_CODES,

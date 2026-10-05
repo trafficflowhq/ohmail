@@ -9,7 +9,7 @@
  * — `next.config.mjs` carries the dedicated rewrite (`REFRESH_PATH`).
  */
 
-import { isSessionRefusal } from "@ohmail/client-engine";
+import { CREDENTIAL_REFUSED, isSessionRefusal } from "@ohmail/client-engine";
 import { csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSet } from "./shell/durable";
@@ -707,10 +707,11 @@ export function renewalArmedForTests(): boolean {
  * session and no double-submit token, and `withRequestGuard` answers
  * **403 `csrf_failed`**, not 401. A retry policy watching only 401 would
  * fix reads and leave every write in an idle tab broken. A refresh mints a
- * new `tf_csrf` alongside the new session, so the retry fixes both.
+ * new `tf_csrf` alongside the new session, so the retry fixes both. A 401
+ * naming the CREDENTIAL is the answer (a wrong code), and is never retried.
  */
 export function isRecoverable(status: number, code?: string): boolean {
-  if (status === 401) return true;
+  if (status === 401) return code !== CREDENTIAL_REFUSED;
   return status === 403 && code === "csrf_failed";
 }
 
@@ -728,12 +729,12 @@ const NEVER_REFRESH = [
   "/auth/verify-email",
   "/auth/2fa/",
   /*
-   * A factor's 401 is an answer. A wrong step-up code is refused 401 `unauthorized`, which is also
-   * what a lapsed session gets, so a refresh here sent the same code twice: two attempts against
-   * the sign-in throttle and a rotated session per wrong code. `/pair/redeem` spends a single-use
-   * token. The set is not remembered: `factor-routes-never-refresh.test.ts` derives every route
-   * that checks a factor or a single-use credential from the server and refuses one this list does
-   * not cover.
+   * A factor's 401 is an answer. A server older than `credential_refused` refuses a wrong step-up
+   * code 401 `unauthorized`, which is also what a lapsed session gets, so a refresh here sent the
+   * same code twice: two attempts against the sign-in throttle and a rotated session per wrong
+   * code. The list stays as that belt. `/pair/redeem` spends a single-use token. The set is not
+   * remembered: `factor-routes-never-refresh.test.ts` derives every route that checks a factor or a
+   * single-use credential from the server and refuses one this list does not cover.
    */
   "/auth/step-up/",
   "/pair/redeem",
