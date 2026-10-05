@@ -18,6 +18,71 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.25.15] — 2026-10-05
+
+### Fewer presses fail beside another change, and a rule keeps its place
+
+Two "Not junk" presses on one mailbox at the same moment both go through, and a Screener decision
+made while ohmail lets through someone you wrote to, resetting screening beside a Screener decision,
+and deleting your account while ohmail files a waiting sender no longer fail. A rule ohmail learns,
+and confirming People you write to, no longer add a rule beside one you already have, and creating a
+rule without choosing where it ranks keeps an existing rule where it ranked. Pausing or removing a
+rule ohmail learned ends what it learned for the folder that rule files to, so learning it there
+again takes the full number of approvals, and from now on "Not junk, always allow" writes your own
+rule, not one ohmail learned.
+
+### Behind your own terminator, the proxy alone decides who a visitor is
+<!-- changes: fix-026-selfhost-door-defaults.md -->
+
+Behind a TLS terminator of your own (`OHMAIL_EXTERNAL_TLS`), the stack believes a forwarded address
+only from the address the terminator reaches it from: the stack's network gateway, found when the
+proxy starts, so a terminator on the same box needs no setting and Docker networks outside
+`172.16.0.0/12` need nothing now. The proxy takes the rightmost address the terminator added, and
+the server believes the proxy alone. A relay on the same box that adds no header still arrives from
+that gateway, so a visitor's own `X-Forwarded-For` is believed through it: set
+`OHMAIL_TLS_TERMINATOR=0.0.0.0/32` with one. `OHMAIL_TLS_TERMINATOR` is addresses and CIDRs
+separated by single spaces; a value the proxy and the server could read differently (a comma, other
+whitespace, an IPv4 address written in IPv6 form, a word such as `private_ranges`) refuses the start
+and says what to write. A terminator that is itself a container
+on the stack's network must now be named in `OHMAIL_TLS_TERMINATOR`; until it is, every visitor
+through it shares one address and the server log names it once as `forwarded_address_collapsed`. If
+you keep your own compose file, take the proxy's `entrypoint:` line and its `proxy-entrypoint.sh`
+mount from the bundled one, and give the `api` service the proxy's two `OHMAIL_` lines.
+
+### A message waiting for a connection goes from one window
+<!-- changes: fix-026-send-across-windows.md -->
+
+On the web, a message waiting for a connection goes from the window that pressed Send, once; other
+windows of the same account see it waiting, and Cancel there stops it unless that window has
+already begun sending it.
+
+### The phone and the desktop app say when a message could not be read
+<!-- changes: fix-026-set-aside-and-write-off-said.md -->
+
+When the phone or the desktop app could not read a message and set it aside, nothing said so. The
+phone's top line and the desktop app's mailbox list now say how many messages were set aside. When
+the desktop app's own storage refuses to save mail, its mailbox list now says "This computer cannot
+store mail right now" instead of "Not connecting".
+
+### A wrong code is never retried as a session renewal
+<!-- changes: fix-026-late-renewal-keeps-the-session.md -->
+
+A wrong password, code or passkey is refused with its own error code, and no app retries it as a
+session renewal.
+
+### Held messages stay out of Ohbox conversations
+<!-- changes: fix-026-a-reference-is-not-a-place.md -->
+
+A message held in the Screener no longer appears in, leads, or brings back a conversation in the
+Ohbox.
+
+### The ⋯ button in a message's header is a plain icon again
+<!-- changes: fix-026-header-menu-class.md -->
+
+Since 0.25.9 the ⋯ button in a message's header drew an outlined box with a second row of dots,
+and the Show more button under a very long message was squeezed into a narrow column. The ⋯ button
+is a plain icon again and Show more draws on one line, on the web and in the desktop apps.
+
 ## [0.25.14] — 2026-10-05
 
 ### Deleting your account no longer fails when a device renews its sign-in or signs out at the same time
@@ -11284,7 +11349,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.14...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.15...HEAD
+[0.25.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.15
 [0.25.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.14
 [0.25.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.13
 [0.25.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.12
