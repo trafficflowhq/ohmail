@@ -121,24 +121,33 @@ export function splitTrustedProxyList(raw: string): string[] {
 }
 
 /** Why an `OHMAIL_TLS_TERMINATOR` value is refused: a shape the proxy and the api read differently. */
-export type TlsTerminatorRefusal = "comma" | "line" | "mapped" | "word" | "malformed";
+export type TlsTerminatorRefusal = "comma" | "line" | "whitespace" | "mapped" | "word" | "malformed";
+
+/**
+ * An unset `OHMAIL_TLS_TERMINATOR`, here and in the proxy's entrypoint alike: nothing but space, tab,
+ * line feed, carriage return, vertical tab, form feed and U+00A0 (proxy-entrypoint.sh tests the same
+ * bytes). The proxy then takes its network's gateway; any other value is read as written, untrimmed.
+ */
+export const UNSET_TLS_TERMINATOR = /^[ \t\n\r\v\f\u00a0]*$/;
 
 export type TlsTerminatorList =
   | { ok: true; entries: string[] }
   | { ok: false; refusal: TlsTerminatorRefusal; position: number };
 
 /**
- * `OHMAIL_TLS_TERMINATOR`, which the proxy reads as Caddy's `trusted_proxies static` list: only the
- * shapes both read alike. Spaces or tabs on one line separate entries; each is an IPv4 or IPv6
- * address or CIDR as written. Refused: a comma (the proxy will not start), a line break (a new
- * proxy directive), an IPv4 address in IPv6 form (IPv6 to the proxy, IPv4 here), a word (a Caddy
- * keyword such as `private_ranges`, or a name the proxy never looks up) and anything else that is
- * not a plain address. Empty is unset. `position` is 1-based, 0 for the whole value.
+ * `OHMAIL_TLS_TERMINATOR` as the proxy reads it, Caddy's `trusted_proxies static` list, untrimmed:
+ * only the shapes both read alike. Entries are IPv4 or IPv6 addresses or CIDRs as written, separated
+ * by single spaces. Refused: a comma (the proxy will not start), a line break (a new proxy
+ * directive), any other whitespace, an IPv4 address in IPv6 form (IPv6 to the proxy, IPv4 here), a
+ * word (a Caddy keyword such as `private_ranges`, or a name) and anything else that is not a plain
+ * address. {@link UNSET_TLS_TERMINATOR} is unset. `position` is 1-based, 0 for the whole value.
  */
 export function parseTlsTerminatorList(raw: string): TlsTerminatorList {
+  if (UNSET_TLS_TERMINATOR.test(raw)) return { ok: true, entries: [] };
   if (raw.includes(",")) return { ok: false, refusal: "comma", position: 0 };
-  if (/[\r\n\v\f]/.test(raw)) return { ok: false, refusal: "line", position: 0 };
-  const entries = raw.split(/[ \t]+/).filter((s) => s.length > 0);
+  if (/[\r\n\v\f\u0085\u2028\u2029]/.test(raw)) return { ok: false, refusal: "line", position: 0 };
+  if (!/^\S+(?: \S+)*$/.test(raw)) return { ok: false, refusal: "whitespace", position: 0 };
+  const entries = raw.split(" ");
   for (const [i, entry] of entries.entries()) {
     const slash = entry.indexOf("/");
     const address = slash >= 0 ? entry.slice(0, slash) : entry;

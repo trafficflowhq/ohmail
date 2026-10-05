@@ -365,11 +365,12 @@ export type ExternalDoor = { door: "tls" } | { door: "external"; raw: string; en
 
 /** What to write instead, per refused shape. The value itself is never echoed. */
 const TLS_TERMINATOR_FIX: Record<TlsTerminatorRefusal, string> = {
-  comma: "separates entries with a comma: separate them with spaces — a comma stops the proxy",
-  line: "spans more than one line: put the entries on one line, separated by spaces",
+  comma: "separates entries with a comma: separate them with single spaces — a comma stops the proxy",
+  line: "spans more than one line: put the entries on one line, separated by single spaces",
   mapped: "is an IPv4 address written in IPv6 form: the proxy reads it as IPv6 and the api as IPv4 — write the IPv4 form",
   word: "is a word, not an address: a Caddy keyword such as private_ranges means something to the proxy and nothing to the api, and the proxy takes no host names — write addresses or CIDRs",
-  malformed: "is not an address or a CIDR — write addresses or CIDRs separated by spaces, or 0.0.0.0/32 to trust no terminator",
+  whitespace: "uses whitespace other than single spaces between entries — write the entries on one line, separated by single spaces",
+  malformed: "is not an address or a CIDR — write addresses or CIDRs separated by single spaces, or 0.0.0.0/32 to trust no terminator",
 };
 
 /**
@@ -380,13 +381,14 @@ const TLS_TERMINATOR_FIX: Record<TlsTerminatorRefusal, string> = {
  */
 function loadTlsTerminator(env: NodeJS.ProcessEnv): ExternalDoor {
   if ((env.OHMAIL_EXTERNAL_TLS ?? "") === "") return { door: "tls" };
-  const raw = trimmed(env, "OHMAIL_TLS_TERMINATOR");
+  // UNTRIMMED: the proxy's entrypoint and Caddy read the value exactly as compose hands it over.
+  const raw = env.OHMAIL_TLS_TERMINATOR ?? "";
   const parsed = parseTlsTerminatorList(raw);
   if (!parsed.ok) {
     const which = parsed.position > 0 ? `OHMAIL_TLS_TERMINATOR entry ${parsed.position}` : "OHMAIL_TLS_TERMINATOR";
     throw new Error(`${which} ${TLS_TERMINATOR_FIX[parsed.refusal]}`);
   }
-  return { door: "external", raw, entries: parsed.entries };
+  return parsed.entries.length === 0 ? { door: "external", raw: "", entries: [] } : { door: "external", raw, entries: parsed.entries };
 }
 
 /** Both, or neither. Half an SMTP block is a mailer that looks configured and sends nothing. */

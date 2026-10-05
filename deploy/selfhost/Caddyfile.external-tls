@@ -16,8 +16,9 @@
 # decides it: routes.caddy hands the api the one address it settled on. There is no default below.
 # Unset, the entrypoint sets this network's gateway, where a same-box terminator arrives from;
 # without the entrypoint nothing is trusted. Strict: the client is the rightmost address not in the
-# list, the one the terminator added, so a header a visitor wrote to its left is never believed. The
-# terminator must set or append X-Forwarded-For; for a relay that adds nothing set 0.0.0.0/32.
+# list, the one the terminator added, so a header a visitor wrote to its left is not believed while
+# the terminator adds an address (strict skips an entry that is not one). A relay that adds nothing
+# arrives from the same gateway: set 0.0.0.0/32 with one.
 {
 	servers {
 		trusted_proxies static {$OHMAIL_TLS_TERMINATOR}

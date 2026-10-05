@@ -556,23 +556,32 @@ when it starts and says which address in `docker compose logs proxy`. Set the
 variable to your terminator's address when it is on another host or is itself
 a container on the stack's network; until you do, the api log names that
 terminator once as `forwarded_address_collapsed` and every visitor through it
-shares one address. Separate several addresses with spaces. A comma, an IPv4
-address written in IPv6 form or a word such as `private_ranges` reads
-differently to the proxy and the api, so the api refuses to start on one and
-says what to write instead.
+shares one address. A value replaces the gateway rather than adding to it: if
+you list a CDN's ranges in front of a terminator on this box, list the gateway
+too. The proxy's log names the gateway while the variable is empty, and
+`docker network inspect ohmail_default` (your `OHMAIL_PROJECT` in place of
+`ohmail`) shows it as `Gateway` at any time. Separate several addresses with
+single spaces. A comma, other whitespace, an IPv4 address written in IPv6 form
+or a word such as `private_ranges` could read differently to the proxy and the
+api, so the api refuses to start on one and says what to write instead. A value
+of nothing but whitespace counts as empty.
 
 **Your terminator must set or append `X-Forwarded-For` with the visitor's
 address**, because the stack believes what arrives from it. The proxy reads
 that header from the right and takes the first address not in
 `OHMAIL_TLS_TERMINATOR`, the one your terminator added, so an address a
-visitor wrote into the header itself is never believed. A terminator that
-speaks HTTP does this: Caddy on its own, and nginx with
+visitor wrote to its left is not believed. That holds only while your
+terminator adds an address: the proxy skips an entry that is not one, such as
+`unknown` from a terminator listening on a unix socket, and takes the address
+to its left, which a visitor may have written. A terminator that speaks HTTP
+adds the address: Caddy on its own, and nginx with
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. A relay that
 only passes the connection through — socat, stunnel, a TCP (layer-4) load
-balancer — adds nothing, and a visitor could then put any address in that
-header: lock that address out of an account, or have it written into the
-sign-in records. With such a relay, or if you are not sure what yours does,
-set `OHMAIL_TLS_TERMINATOR=0.0.0.0/32`. No connection ever comes from that
+balancer — adds nothing, and on this box it arrives from the same gateway, so
+the proxy trusts it and a visitor could put any address in that header: lock
+that address out of an account, or have it written into the sign-in records.
+With such a relay, or if you are not sure what yours does, set
+`OHMAIL_TLS_TERMINATOR=0.0.0.0/32`. No connection ever comes from that
 address, so no forwarded address is believed and every visitor shares one
 address. That is its cost: the password lock then counts every visitor as one,
 so five wrong passwords from anyone lock that account for everyone until the
