@@ -627,7 +627,7 @@ function PagedBody({ text }: { text: string }) {
     <>
       {ends.map((e, i) => <BodyPage key={i} index={i} text={text.slice(i === 0 ? 0 : ends[i - 1]!, e)} />)}
       {end < text.length ? (
-        <button type="button" className="msg-more" onClick={() => setShown({ text, pages: pages + 1 })}>
+        <button type="button" className="msg-page-more" onClick={() => setShown({ text, pages: pages + 1 })}>
           {COPY.more(String(Math.floor((end / text.length) * 100)))}
         </button>
       ) : null}

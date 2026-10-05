@@ -216,7 +216,7 @@
    there; `align-self` pins the flex case and `width:fit-content` says the same thing everywhere
    else. The 14px below is `.msg-quote`'s own step, so expanding does not reflow the lead.
    Guarded structurally by history-toggle-pill.test.ts in the webapp suite. */
-.msg-history-toggle,.msg-more{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;
+.msg-history-toggle,.msg-page-more{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;
   width:fit-content;border:0;background:none;box-shadow:inset 0 0 0 1px var(--hair-soft);
   border-radius:var(--r-pill);padding:4px 12px;margin:0 0 14px;
   font:inherit;font-size:calc(11.5px + var(--type-up));font-weight:500;line-height:1.5;color:var(--ink3);cursor:pointer;
@@ -226,10 +226,10 @@
    hold. The doubled `content` is deliberate — the `/ ""` alternative-text form strips the dots
    from the accessibility tree where it is supported, and the bare form is the fallback that
    keeps them visible everywhere else. */
-.msg-history-toggle::before,.msg-more::before{content:"···";content:"···" / "";letter-spacing:.18em;
+.msg-history-toggle::before,.msg-page-more::before{content:"···";content:"···" / "";letter-spacing:.18em;
   font-weight:650;line-height:1}
-.msg-history-toggle:hover,.msg-more:hover{background:var(--tint);color:var(--ink)}
-.msg-history-toggle:last-child,.msg-more:last-child{margin-bottom:0}
+.msg-history-toggle:hover,.msg-page-more:hover{background:var(--tint);color:var(--ink)}
+.msg-history-toggle:last-child,.msg-page-more:last-child{margin-bottom:0}
 /* A link in mail is the accent, quietly: coloured ink and a hairline underline rather than the
    browser's blue. `overflow-wrap` is inherited from `.msg-p`, so a 300-character tracking URL
    breaks inside the anchor instead of pushing the panel. */

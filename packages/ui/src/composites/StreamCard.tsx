@@ -418,7 +418,7 @@ export function StreamCard({
         {!showViewer && open && moreLabel && shownEnd < body.length ? (
           <button
             type="button"
-            className="msg-more"
+            className="msg-page-more"
             onClick={(e) => {
               e.stopPropagation();
               setPaged({ body, pages: pages + 1 });
