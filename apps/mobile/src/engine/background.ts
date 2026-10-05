@@ -139,7 +139,7 @@ export interface BackgroundEngine {
    * door; it is the ordinary answer while another machine organizes the mailbox and owes nobody a
    * sentence.
    */
-  claimHere(): Promise<"claimed" | "held" | "unreadable" | "refused">;
+  claimHere(): Promise<"claimed" | "held" | "unreadable" | "meta_folder_full" | "meta_undeletable" | "refused">;
   /**
    * DOES A LIVE FOREIGN CLAIM HOLD THE MAILBOX, as the row says — asked before {@link claimHere},
    * so a stood-down phone presses only once the holder has gone. `null` is "cannot say" and the
@@ -1001,7 +1001,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
        for as long as the other machine organizes. The row turns `stopped` when it leaves. */
     const held = await (deps.engine.heldElsewhere?.() ?? Promise.resolve(null)).catch(() => null);
     if (held === true || disposed) return;
-    let outcome: "claimed" | "held" | "unreadable" | "refused";
+    let outcome: "claimed" | "held" | "unreadable" | "meta_folder_full" | "meta_undeletable" | "refused";
     try {
       outcome = await deps.engine.claimHere();
     } catch (err) {
@@ -1021,7 +1021,8 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       log("organizer_reclaim_unreadable", { why: "holder_left" });
       return;
     }
-    reclaimSettled(outcome);
+    /* A folder the person must fix on the server is a standing refusal: backed off like one. */
+    reclaimSettled(outcome === "meta_folder_full" || outcome === "meta_undeletable" ? "refused" : outcome);
   };
 
   const claimLostCheck = async (): Promise<void> => {

@@ -6245,6 +6245,34 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
       };
 
+      /* THE REFUSED-ARM SHRINK, one spelling for the poll's gate and the launch's: a `_meta` too full
+         to read is swept on the connection the gate asked. A failed sweep's line carries the thrown
+         value, so it names its class and code (DESKTOP-LAUNCH-ARM-DOES-NOT-SHRINK). */
+      const shrinkRefusedMeta = (err: unknown, conn: MailboxAdapter): Promise<boolean> => shrinkMetaOnRefusal(err, {
+        mailboxId: mb.id, accountId: world.accountId, installId, adapter: conn,
+      }, now(), (event, detail) => {
+        const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+        if (event === "meta_shrink") {
+          log("meta_shrink", {
+            mailboxId: mb.id, phase: "lease_refused", ran: detail.ran === true,
+            swept: num(detail.swept), moved: num(detail.moved),
+          });
+        } else {
+          log("organizer_requests_note", { mailboxId: mb.id, outcome: event, ...(detail.err === undefined ? {} : { err: detail.err }) });
+        }
+      });
+
+      /* A CYCLE THAT DIED ON THE LEASE marks the runtime unreadable, with the reason — the poll's
+         failure and a resume's alike, so a phone opened over a refused gate names it at once. */
+      const markLeaseRefused = (err: unknown): void => {
+        if (!(err instanceof LeaseUnavailableError)) return;
+        organizer = {
+          ...organizer,
+          unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
+          unreadableReason: leaseBlockReason(err),
+        };
+      };
+
       const drainPass = async (maxCycles = 100): Promise<number> =>
         serialize(async () => {
           // The gate, immediately before `runSyncCycle`, once per DRAIN not per inner cycle:
@@ -6280,19 +6308,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           } catch (err) {
             /* A `_meta` too full to read is swept here, on the connection the gate asked, before
                the refusal travels on; every other refusal runs nothing (`shrinkMetaOnRefusal`). */
-            await shrinkMetaOnRefusal(err, {
-              mailboxId: mb.id, accountId: world.accountId, installId, adapter: conn,
-            }, now(), (event, detail) => {
-              const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
-              if (event === "meta_shrink") {
-                log("meta_shrink", {
-                  mailboxId: mb.id, phase: "lease_refused", ran: detail.ran === true,
-                  swept: num(detail.swept), moved: num(detail.moved),
-                });
-              } else {
-                log("organizer_requests_note", { mailboxId: mb.id, outcome: event });
-              }
-            });
+            await shrinkRefusedMeta(err, conn);
             throw err;
           }
           if (stopped) return 0;
@@ -6640,13 +6656,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                * Narrowed BY CLASS — arming this for every cycle failure would make a dropped
                * connection look like an unreadable lease and the field would stop meaning anything.
                * Cleared by the next successful gate, like the other paths. */
-              if (err instanceof LeaseUnavailableError) {
-                organizer = {
-                  ...organizer,
-                  unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
-                  unreadableReason: leaseBlockReason(err),
-                };
-              }
+              markLeaseRefused(err);
               // A store mark thrown outside the drain (the gate's own reads) raises the sentence too.
               deadLetters.settleStoreFault(err);
               // Which of our ceilings ended it, as the hosted worker's line says; null otherwise.
@@ -6799,6 +6809,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             permitted = await serialize(mayOrganize);
           } catch (err) {
             if (!(err instanceof LeaseUnavailableError)) throw err;
+            await shrinkRefusedMeta(err, conn);
             // `err` and not `err.message`, and this is the sharpest case for that rule:
             // `LeaseUnavailableError` is constructed with `{ cause: err }` around an ImapFlow
             // failure, so its message quotes the folder and the driver's response. The logger
@@ -7818,6 +7829,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             schedule();
             return served;
           } catch (err) {
+            markLeaseRefused(err);
             schedule();
             log("organizer_resume_cycle_failed", {
               mailboxId: mb.id,

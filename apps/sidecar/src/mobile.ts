@@ -216,8 +216,17 @@ export type ClaimHereOutcome =
    * the authorization, and reporting `claimed` for a mailbox nothing organized.
    */
   | "unreadable"
+  /**
+   * THE GATE CANNOT READ `ohmail/_meta` FOR A NAMED REASON — too full to read, or a server that
+   * keeps refusing our deletes. Nothing was written; the caller says the desktop row's sentence.
+   */
+  | "meta_folder_full"
+  | "meta_undeletable"
   /** The door said no for any other reason. The caller says so where a person can read it. */
   | "refused";
+
+/** The two lease refusals a person can act on, which the door answers under their own codes. */
+const NAMED_META_BLOCKS: ReadonlySet<string> = new Set(["meta_folder_full", "meta_undeletable"]);
 
 /**
  * WHAT THE PERSON'S STOP SETTLED — three answers, because a boolean collapsed two of them.
@@ -994,12 +1003,11 @@ async function composePhoneEngine(
   /** 503 with the code the app renders as its own sentence. Never 409: the two are different
    *  facts and a person told "another computer has it" about a look that did not land would go
    *  looking for a machine that may not exist. */
-  const unreadableResponse = (): Response => new Response(
+  const unreadableResponse = (op?: string | null): Response => new Response(
     JSON.stringify({
-      error: {
-        code: "organizer_unreadable",
-        message: "whether another install organizes this mailbox could not be read",
-      },
+      error: NAMED_META_BLOCKS.has(op ?? "")
+        ? { code: op, message: "the claim folder on this mail server cannot be read until it is fixed there" }
+        : { code: "organizer_unreadable", message: "whether another install organizes this mailbox could not be read" },
     }),
     { status: 503, headers: { "content-type": "application/json" } },
   );
@@ -1070,6 +1078,17 @@ async function composePhoneEngine(
     const matched = ORGANIZE_ROUTE.exec(new URL(req.url).pathname);
     if (matched === null) return null;
     const mailboxId = decodeURIComponent(matched[1]!);
+    /* A GATE THIS ENGINE SAW REFUSED FOR A NAMED REASON refuses the press under that reason: a
+       consent written now would organize nothing, and the press would be a silent no-op. */
+    const gated = sidecar.organizerStates()[mailboxId];
+    if (gated !== undefined && !gated.organizing && NAMED_META_BLOCKS.has(gated.unreadableReason ?? "")) {
+      log("organizer_consent_lease_read_failed", {
+        mailboxId, op: gated.unreadableReason,
+        reason: "this engine's own gate could not read the claim folder for a reason the person must fix "
+          + "on the mail server, so no consent was recorded; the press is answered with that reason",
+      });
+      return unreadableResponse(gated.unreadableReason);
+    }
     let fromRow: RowHolderAnswer;
     try {
       fromRow = await liveForeignHolder(store.db, mailboxId, deps.installId);
@@ -1147,7 +1166,7 @@ async function composePhoneEngine(
             + "be read either, so no consent was recorded; a look that did not land is not "
             + "permission, and the next press looks again",
         });
-        return unreadableResponse();
+        return unreadableResponse(looked.op);
       }
       /* OUR OWN CLAIM IS NOT A FOREIGN ONE, on the path that has to LOOK for it. The row read
          above takes this exemption off `organized_by_install_id`; this path did not, and a row
@@ -1394,6 +1413,7 @@ async function composePhoneEngine(
         () => ({ error: undefined }),
       );
       if (body.error?.code === "organizer_unreadable") return "unreadable";
+      if (body.error?.code === "meta_folder_full" || body.error?.code === "meta_undeletable") return body.error.code;
       return "refused";
     }
     /* ── THE LOCAL DOOR ANSWERS 200 FOR EVERY OUTCOME, so the OUTCOME is what is read ────────

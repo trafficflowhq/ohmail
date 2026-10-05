@@ -253,6 +253,8 @@ export interface StandaloneHere {
   /** Why that stop has not finished: `sibling_lapse` while a copy of this install holds the claim. */
   readonly releaseRefusal: "sibling_lapse" | null;
   readonly heldBy: StandDownHolder | null;
+  /** The engine's gate refused `ohmail/_meta` for a reason fixed on the mail server, or `null`. */
+  readonly metaBlocked: "meta_folder_full" | "meta_undeletable" | null;
   /** `null` until the engine has said — see the body. */
   readonly reachable: boolean | null;
   /** ISO 8601, or `null` while reachable. The FIRST observation of the current outage. */
@@ -331,6 +333,7 @@ export function standaloneHere(): StandaloneHere | null {
    * one.
    */
   let heldBy: StandDownHolder | null = null;
+  let metaBlocked: StandaloneHere["metaBlocked"] = null;
   /** See {@link StandaloneHere.releaseRequestedAt}. `null` is "none standing, or not said yet". */
   let releaseRequestedAt: string | null = null;
   let releaseRefusal: "sibling_lapse" | null = null;
@@ -361,6 +364,9 @@ export function standaloneHere(): StandaloneHere | null {
        * rendering that as "another machine has it" is the false state in the other direction.
        */
       if (!organizing) {
+        /* THE GATE'S OWN REFUSAL, which `organizing: false` alone reads as a free mailbox. */
+        const blocked = entries.map(([, s]) => s.unreadableReason).find((r) => r === "meta_folder_full" || r === "meta_undeletable");
+        metaBlocked = blocked === "meta_folder_full" || blocked === "meta_undeletable" ? blocked : null;
         const stood = entries.map(([, state]) => state).find((state) => state.reason !== null);
         heldBy = stood === undefined
           ? null
@@ -416,7 +422,7 @@ export function standaloneHere(): StandaloneHere | null {
        somebody's organizing on screen. */
   }
   return {
-    id, address: held.address, organizing, releaseRequestedAt, releaseRefusal, heldBy, reachable,
+    id, address: held.address, organizing, releaseRequestedAt, releaseRefusal, heldBy, metaBlocked, reachable,
     unreachableSince, signInRefused, certificateRefused, needsCredential, dialled, firstSync,
     writeOffsHeld, setAside,
   };
@@ -545,6 +551,8 @@ export type PressOutcome =
    * where every other holder in this app is read from.
    */
   | "held"
+  /** The gate cannot read `ohmail/_meta` for a reason fixed on the server; the press says which. */
+  | "meta_folder_full" | "meta_undeletable"
   | "refused";
 
 let instruction: OrganizeInstruction = "idle";
@@ -666,6 +674,7 @@ async function startHere(): Promise<PressOutcome> {
   /* CARRIED, not folded. The door says `unreadable` exactly where it could not check, and the
      panel owes that its own sentence — see {@link PressOutcome}. */
   if (outcome === "unreadable") return "unreadable";
+  if (outcome === "meta_folder_full" || outcome === "meta_undeletable") return outcome;
   if (outcome !== "claimed") return "refused";
   /* AND THE SESSION COMES BACK WITH THE CLAIM. The stop disposed it, taking the notification, the
      foreground service and both watches with it — so a start that only claimed would leave the
@@ -953,7 +962,7 @@ export function pokeOrganizerState(): void {
     here === null
       ? null
       : [here.id, here.address, here.organizing, here.releaseRequestedAt,
-        here.heldBy?.name ?? null, here.heldBy?.standDownReason ?? null],
+        here.heldBy?.name ?? null, here.heldBy?.standDownReason ?? null, here.metaBlocked],
     instruction,
     live !== null,
     live?.organizing.backgrounded() ?? false,

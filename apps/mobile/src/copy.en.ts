@@ -306,6 +306,12 @@ const TABLE = {
    */
   settingsStartHereUnreadable:
     "This phone could not read whether another computer organizes this mailbox. Nothing changed. Try again.",
+  /* THE GATE'S TWO REFUSALS A PERSON FIXES ON THE MAIL SERVER — the desktop row's sentences, word
+     for word (`sync.blocked_meta_*`), on the strip and as the answer to a start press. */
+  phoneStateMetaFolderFull:
+    "Not syncing — the ohmail/_meta folder on that server holds more messages than ohmail can read. Move mail that was filed into it to another folder and leave the messages ohmail wrote (their subject starts with \"ohmail\"). ohmail starts again on its own.",
+  phoneStateMetaUndeletable:
+    "Not syncing — the mail server will not let ohmail remove its own messages from ohmail/_meta. Give that folder delete permission, or ask your provider. ohmail starts again on its own.",
 
   /* The standalone door's own refusals. Each one names what is missing; none of them ever
      carries the password, which is not an argument any of these takes. */

@@ -282,7 +282,12 @@ export type PhoneClaim =
   /** Somebody else holds it, and named itself. */
   | { k: "theirs"; name: string; kind: HolderKind }
   /** Somebody else holds it and named nothing — an install from before the holder columns. */
-  | { k: "theirsUnnamed"; kind: HolderKind };
+  | { k: "theirsUnnamed"; kind: HolderKind }
+  /**
+   * THIS PHONE'S GATE CANNOT READ `ohmail/_meta` for a reason fixed on the mail server. Not `free`:
+   * that said "Nothing organizes this mailbox" beside a Start the gate would refuse again.
+   */
+  | { k: "blocked"; reason: "meta_folder_full" | "meta_undeletable" };
 
 /** The chip's caption. `null` for `unknown`: no chip at all rather than a chip that guesses. */
 export function claimChipLabel(claim: PhoneClaim): string | null {
@@ -309,7 +314,15 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
       return Copy.phoneStateReader(claim.name);
     case "theirsUnnamed":
       return Copy.phoneStateReaderLegacy;
+    case "blocked":
+      // The chip is the whole sentence: the desktop row's, word for word.
+      return metaBlockedLine(claim.reason);
   }
+}
+
+/** The desktop row's sentence for the gate's two named `_meta` refusals. */
+export function metaBlockedLine(reason: "meta_folder_full" | "meta_undeletable"): string {
+  return reason === "meta_folder_full" ? Copy.phoneStateMetaFolderFull : Copy.phoneStateMetaUndeletable;
 }
 
 /**
@@ -496,6 +509,8 @@ export function claimHere(
     releaseRequestedAt: string | null;
     /** `sibling_lapse`: a copy of this install holds the claim and the stop waits for it to lapse. */
     releaseRefusal?: "sibling_lapse" | null;
+    /** The gate's named `_meta` refusal ({@link StandaloneHere}); absent reads as none. */
+    metaBlocked?: "meta_folder_full" | "meta_undeletable" | null;
     /**
      * WHO ELSE HOLDS IT, from the engine's stand-down and its last look. `holderState` decides
      * whether that holder still organizes: `none` or `stopped` is nobody, as {@link claimFrom}
@@ -533,6 +548,7 @@ export function claimHere(
     k: "ours", stopping: instruction === "stopping", releasePending, ...(siblingLapse ? { siblingLapse } : {}),
   });
   if (here.organizing) return ours();
+  if (here.metaBlocked != null) return { k: "blocked", reason: here.metaBlocked };
   const held = here.heldBy;
   /* A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS. The engine arranges nothing while it
    * carries out a release, so `organizing` is false on both of its endings — and on a device that
@@ -606,6 +622,7 @@ export function claimNoteLine(
          and says what this phone does instead, in the reader's words the two foreign arms use. */
       return Copy.phoneStatePairedServerWhy;
     case "parked":
+    case "blocked":
       // The chip is the whole sentence, and the platform rule describes a phone that organizes.
       return null;
     case "handedBack":
@@ -636,7 +653,17 @@ export function claimNoteLine(
  * Three words and not two booleans: the panel held `startRefusal` and `stopFailed` side by side
  * and rendered each on its own, so the two could both be standing at once over one card.
  */
-export type PressSaid = "startRefused" | "startUnreadable" | "stopRefused" | null;
+export type PressSaid = "startRefused" | "startUnreadable" | "startMetaFolderFull" | "startMetaUndeletable"
+  | "stopRefused" | null;
+
+/** What a START press answered, as the line beside the verb records it; `null` owes no sentence. */
+export function pressSaidOf(outcome: string): PressSaid {
+  return outcome === "refused" ? "startRefused"
+    : outcome === "unreadable" ? "startUnreadable"
+      : outcome === "meta_folder_full" ? "startMetaFolderFull"
+        : outcome === "meta_undeletable" ? "startMetaUndeletable"
+          : null;
+}
 
 /**
  * THE SENTENCE BESIDE THE VERB, AND IT MAY NOT OUTLIVE THE STATE IT DESCRIBES.
@@ -667,6 +694,11 @@ export function pressSaidLine(said: PressSaid, claim: PhoneClaim): string | null
   if (claim.k !== "unknown") {
     const ours = claim.k === "ours";
     if (said === "stopRefused" ? !ours : ours) return null;
+  }
+  /* A press refused over a `_meta` the gate cannot read says the desktop row's sentence — once: a
+     chip already saying it needs no second copy beside it. */
+  if (said === "startMetaFolderFull" || said === "startMetaUndeletable") {
+    return claim.k === "blocked" ? null : metaBlockedLine(said === "startMetaFolderFull" ? "meta_folder_full" : "meta_undeletable");
   }
   return said === "stopRefused" ? Copy.settingsStopHereFailed
     : said === "startUnreadable" ? Copy.settingsStartHereUnreadable

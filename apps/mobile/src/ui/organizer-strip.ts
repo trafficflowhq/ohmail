@@ -50,6 +50,7 @@ export function organizerStripOf(
       return facts.stoppedHere ? said(false) : null;
     case "theirs":
     case "theirsUnnamed":
+    case "blocked":
       return said(false);
     case "ours":
       return claim.releasePending ? said(false) : null;

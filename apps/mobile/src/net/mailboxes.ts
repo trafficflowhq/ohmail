@@ -346,6 +346,9 @@ export async function organizeHere(
     if (code === "organizer_unreadable") {
       return { kind: "refused", reason: refuse("organizeHereStillLooking") };
     }
+    /* The gate cannot read `ohmail/_meta` for a reason fixed on the server: the desktop row's words. */
+    if (code === "meta_folder_full") return { kind: "refused", reason: refuse("phoneStateMetaFolderFull") };
+    if (code === "meta_undeletable") return { kind: "refused", reason: refuse("phoneStateMetaUndeletable") };
   }
   /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. 400 is a screening answer the door
      would not store, 404 an engine older than the local spelling; none is a state this app can

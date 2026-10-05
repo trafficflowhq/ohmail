@@ -17,7 +17,7 @@ import { Button, Panel, Txt } from "./base";
 import { stoodDown } from "./lifecycle-strip";
 import { NotifyPermission } from "./NotifyPermission";
 import { organizerStripOf } from "./organizer-strip";
-import { claimHere, pressSaidLine, type PressSaid } from "./standalone-form";
+import { claimHere, pressSaidLine, pressSaidOf, type PressSaid } from "./standalone-form";
 import { useNotifyPermission } from "./useNotifyPermission";
 
 export function OrganizerStrip() {
@@ -65,8 +65,7 @@ function OnThisPhone() {
               /* THE CARD'S OWN DOOR AND ITS OWN ASK, in the same order: a refused start asks for
                  nothing, and a started one runs the notification ask the card runs. */
               void pressOrganizeHere("start").then(async (outcome) => {
-                setSaid(outcome === "refused" ? "startRefused"
-                  : outcome === "unreadable" ? "startUnreadable" : null);
+                setSaid(pressSaidOf(outcome));
                 if (outcome === "started") await notify.gate();
               });
             }}

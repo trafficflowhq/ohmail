@@ -175,6 +175,11 @@ export const DE: Deck = {
      Telefon nichts schiefgegangen, das Postfach konnte nur nicht gefragt werden. */
   settingsStartHereUnreadable:
     "Dieses Telefon konnte nicht lesen, ob ein anderer Computer dieses Postfach organisiert. Nichts hat sich geändert. Versuche es noch einmal.",
+  /* Die Sätze der Desktop-Zeile, Wort für Wort (`sync.blocked_meta_*`). */
+  phoneStateMetaFolderFull:
+    "Wird nicht synchronisiert — der Ordner ohmail/_meta auf diesem Server enthält mehr Nachrichten, als ohmail lesen kann. Verschiebe dort abgelegte Mails in einen anderen Ordner und lass die Nachrichten von ohmail stehen (ihr Betreff beginnt mit „ohmail“). ohmail macht dann von selbst weiter.",
+  phoneStateMetaUndeletable:
+    "Wird nicht synchronisiert — der Mailserver lässt ohmail seine eigenen Nachrichten in ohmail/_meta nicht entfernen. Gib diesem Ordner die Berechtigung zum Löschen oder frag deinen Anbieter. ohmail macht dann von selbst weiter.",
 
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:

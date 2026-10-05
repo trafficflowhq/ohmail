@@ -73,6 +73,28 @@ const leaseUnreadable = (): ServiceError => new ServiceError(
   "The mailbox could not be checked for other ohmail installs. Try again.",
 );
 
+/**
+ * A FOLDER THE LOOK COULD READ NO ANSWER FROM FOR A NAMED REASON — still a 502, never "nobody holds
+ * it", but under its own code: `meta_folder_full` (too full to read) and `meta_undeletable` (the
+ * server keeps refusing our deletes). Every other lease fault stays `organizer_unreadable`.
+ */
+const NAMED_LEASE_REFUSALS: Readonly<Record<string, string>> = {
+  meta_folder_full: "The mailbox could not be checked for other ohmail installs: the ohmail/_meta folder on that "
+    + "server holds more messages than ohmail can read. Move mail that was filed into it to another folder and "
+    + "leave the messages ohmail wrote.",
+  meta_undeletable: "The mailbox could not be checked for other ohmail installs: the mail server will not let ohmail "
+    + "remove its own messages from ohmail/_meta. Give that folder delete permission, or ask your provider.",
+};
+
+/** What a failed look answers: a named lease refusal, `organizer_unreadable`, or `null` (rethrow). */
+export function organizerPeekRefusal(err: unknown): ServiceError | null {
+  if (err instanceof LeaseUnavailableError) {
+    const said = NAMED_LEASE_REFUSALS[err.op];
+    return said === undefined ? leaseUnreadable() : new ServiceError(err.op, 502, said);
+  }
+  return isImapDoorTimeout(err) ? leaseUnreadable() : null;
+}
+
 export type OrganizerPeek = (mailboxId: string) => Promise<OrganizerPeekDTO>;
 
 /**
@@ -114,8 +136,7 @@ export function makeOrganizerPeek(deps: ApiDeps, opts: OpenAdapterOptions = {}):
       // error that means "could not look", and it must not be reachable from "nobody is there".
       // OUR clock running out is the same fact from the other side, so it gets the same answer:
       // a 504 here would be a second spelling of "could not check" for one caller to learn.
-      if (err instanceof LeaseUnavailableError || isImapDoorTimeout(err)) throw leaseUnreadable();
-      throw err;
+      throw organizerPeekRefusal(err) ?? err;
     }
   };
 }

@@ -24,7 +24,11 @@ import { portRefusal, type StandaloneFields } from "../ui/standalone-form";
  * anybody holds the mailbox, and the sentence there is "try again". It must never arrive as
  * `claimed`. `refused` is what is left: everything else the door said.
  */
-export type ClaimHereOutcome = "claimed" | "held" | "unreadable" | "refused";
+export type ClaimHereOutcome =
+  | "claimed" | "held" | "unreadable"
+  /** The gate cannot read `ohmail/_meta` for a reason fixed on the mail server — the desktop row's sentence. */
+  | "meta_folder_full" | "meta_undeletable"
+  | "refused";
 
 /**
  * WHAT THE PERSON'S STOP SETTLED — the engine's own three answers, mirrored here.
@@ -148,6 +152,8 @@ export interface StandaloneEngine {
       claimed: boolean;
       /** `sibling_lapse`: a copy of this install holds the claim and the stop waits for it to lapse. */
       releaseRefusal?: "sibling_lapse" | null;
+      /** Why the gate last refused to read the lease (`meta_folder_full`, …), or `null`; absent on older engines. */
+      unreadableReason?: string | null;
       /**
        * The last look at the claims: `none` read no holder, `null` (or absent) did not look. Absent
        * reads as not looked, so an engine that predates the field keeps the stand-down's sentence.
