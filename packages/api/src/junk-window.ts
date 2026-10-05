@@ -461,6 +461,8 @@ async function allowSender(
      import no longer owns it), and unless it is already theirs (manual or migrated) it becomes
      `manual`, so a graduation never retargets it. The backlog is asked for when the routing moved. */
   const retro: RuleRowWrite = { retroRequestedAt: nowAt, retroDoneAt: null, retroCursor: null, retroMoved: 0 };
+  // Whether the press moved anything the Rules page shows (the stamp alone is not on it).
+  let shown = false;
   const wrote = await writeRuleUnderKey(tx as unknown as Tx, {
     accountId, now: nowAt, overExisting: "converge",
     key: { kind: "sender", match: addr, subjectContains: null, bodyContains: null },
@@ -472,6 +474,7 @@ async function allowSender(
       // Manual and migrated rows are already the person's; a learned or seeded one becomes theirs.
       if (row.provenance !== "manual" && row.provenance !== "migrated") d.provenance = "manual";
       if (row.personDecidedAt === null) d.personDecidedAt = nowAt;
+      shown = d.destination !== undefined || d.enabled === true || d.provenance !== undefined;
       return d.destination !== undefined || d.enabled === true ? { ...d, ...retro } : d;
     },
     /* The backlog comes with the rescue. "Not junk" says this sender's mail belongs in the Ohbox,
@@ -479,7 +482,8 @@ async function allowSender(
        wherever the spam verdict put it, because NULL is read everywhere as "nobody asked". */
     insert: { destination: ALLOW_RULE_DESTINATION, provenance: "manual", enabled: true, retroRequestedAt: nowAt, personDecidedAt: nowAt },
   });
-  return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: wrote.op === "unchanged" ? null : wrote.ruleId };
+  const created = wrote.op === "create" || (wrote.op === "update" && shown);
+  return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: created ? wrote.ruleId : null };
 }
 
 /** What a press leaves behind: the command's id, and the allow half when the second verb ran. */
