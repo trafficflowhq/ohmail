@@ -275,6 +275,8 @@ export interface StandaloneHere {
   /** Mail kept failing to save on this phone and the engine stopped setting it aside: the
    *  connection stands, the mail is not arriving. `false` while unsaid (an older engine). */
   readonly writeOffsHeld: boolean;
+  /** Messages this phone set aside and has not read since, summed over its mailboxes; 0 while unsaid. */
+  readonly setAside: number;
   /**
    * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`,
    * `produced_nothing_readable`, or `null` while the engine has not said, exactly as the two
@@ -310,6 +312,7 @@ export function standaloneHere(): StandaloneHere | null {
   let needsCredential = false;
   let dialled = true;
   let writeOffsHeld = false;
+  let setAside = 0;
   /** `null` until the engine has said — see the field. */
   let firstSync: string | null = null;
   /**
@@ -387,6 +390,8 @@ export function standaloneHere(): StandaloneHere | null {
       dialled = conn.every((c) => c.dialled !== false);
       /* `some`, like the refusals: one mailbox whose mail has stopped is the news. */
       writeOffsHeld = conn.some((c) => c.writeOffsHeldSince instanceof Date || c.storeFaultSince instanceof Date);
+      /* A SUM, not `some`: the sentence names a count. A value that is not a whole number is unsaid. */
+      setAside = conn.reduce((n, c) => n + (Number.isInteger(c.setAside) && c.setAside! > 0 ? c.setAside! : 0), 0);
       const since = conn
         .map((c) => c.unreachableSince)
         .filter((d): d is Date => d instanceof Date)
@@ -413,7 +418,7 @@ export function standaloneHere(): StandaloneHere | null {
   return {
     id, address: held.address, organizing, releaseRequestedAt, releaseRefusal, heldBy, reachable,
     unreachableSince, signInRefused, certificateRefused, needsCredential, dialled, firstSync,
-    writeOffsHeld,
+    writeOffsHeld, setAside,
   };
 }
 

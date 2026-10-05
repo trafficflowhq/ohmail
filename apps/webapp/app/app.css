@@ -4937,6 +4937,8 @@ input.set-tag-input {
 /* A button label never breaks — "Reconnect Microsoft" on two lines inside its own capsule is
    the cramped wrapping the screenshot showed. The row makes room by wrapping BETWEEN items. */
 .mbx-btn { font-size:calc(12px + var(--type-up)); padding: 5px 12px; white-space: nowrap; flex: none; }
+/* Messages set aside on this computer: a second line under the row's state, never inline with it. */
+.mbx-set-aside { display: block; }
 /* The takeover panel's two buttons. `wrap` because the confirm sits under a two-sentence
    explanation that is deliberately not shortened, and at 390px the pair must go to a second line
    rather than push the row wider than the card. */

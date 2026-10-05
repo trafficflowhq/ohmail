@@ -329,6 +329,9 @@ export const DE: Deck = {
   networkOfflineHeld: "Dieses Telefon hat kein Netz — angezeigt wird die neuere Post, die es hat.",
 
   firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
+  connectionSetAside: (n: number) => n === 1
+    ? "Eine Nachricht konnte nicht gelesen werden und wurde zurückgelegt. Sie bleibt auf deinem Server."
+    : `${n} Nachrichten konnten nicht gelesen werden und wurden zurückgelegt. Sie bleiben auf deinem Server.`,
 
   firstSyncContinuesAt: (folder: string) => `Erste Synchronisierung läuft bei ${folder} weiter`,
 

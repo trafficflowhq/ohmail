@@ -4697,12 +4697,23 @@ describe("the row takes a new password without the mailbox being removed", () =>
  * error arm removed → the state case; the row controls withheld on `error` → the retry case.
  */
 describe("a store that cannot keep up is disclosed, with the retry beside it", () => {
+  /* THE SENTENCE CHANGED: "Not connecting (storage)" named a connection that stands; the row says
+     this computer's store instead, on both doors. */
   it("an error/storage row on the CLOUD door renders the failed state", async () => {
     FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
     const el = await render("cloud");
     const row = addressRows(el)[0]!;
     expect(row.textContent, "the wedge stayed invisible — the released 0.20.0 shape")
-      .toContain("Not connecting (storage)");
+      .toContain("This computer cannot store mail right now");
+    expect(row.textContent).not.toContain("Not connecting");
+  });
+
+  it("an error/storage row on the LOCAL door says this computer cannot store mail, not that it is not connecting", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
+    bridgeReply = () => new Response(JSON.stringify({ items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null }] }),
+      { status: 200, headers: { "content-type": "application/json" } });
+    const el = await render("local");
+    expect(el.querySelector(".mbx-reach")?.textContent).toBe("This computer cannot store mail right now");
   });
 
   /* THE COUNT, when the engine states it (CLOUD-QUARANTINE-STRIP-COUNT-AND-CAP-STATE): the mailbox
@@ -4730,6 +4741,39 @@ describe("a store that cannot keep up is disclosed, with the retry beside it", (
     await act(async () => { syncNow!.click(); });
     expect(pressed()).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
   });
+});
+
+/* MESSAGES SET ASIDE ON THIS COMPUTER: a second line under the row, a count only, from the
+   engine's own connection read; nothing at zero or from an engine older than the field. */
+describe("messages this computer set aside are said under the row", () => {
+  const reachWith = (setAside?: unknown) => () => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null, ...(setAside !== undefined ? { setAside } : {}) }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  it("two set aside: the second line says so, and the row's state is untouched", async () => {
+    bridgeReply = reachWith(2);
+    const el = await render("local");
+    expect(el.querySelector(".mbx-set-aside")?.textContent)
+      .toBe("2 messages could not be read and were set aside. They stay on your server.");
+    expect(el.querySelector(".mbx-reach")?.textContent).not.toContain("set aside");
+  });
+
+  it("one set aside is said in the singular", async () => {
+    bridgeReply = reachWith(1);
+    const el = await render("local");
+    expect(el.querySelector(".mbx-set-aside")?.textContent)
+      .toBe("One message could not be read and was set aside. It stays on your server.");
+  });
+
+  for (const v of [0, undefined, "3", 2.5]) {
+    it(`CONTROL: setAside ${JSON.stringify(v) ?? "absent"} shows no line`, async () => {
+      bridgeReply = reachWith(v);
+      const el = await render("local");
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      expect(el.querySelector(".mbx-reach")).not.toBeNull();
+      expect(el.querySelector(".mbx-set-aside")).toBeNull();
+    });
+  }
 });
 
 /**
@@ -4772,15 +4816,16 @@ describe("a door-derived error and the row's own reach read", () => {
     expect(text).not.toContain("Not connecting");
   });
 
+  /* `connect`, not `storage`: a storage row has its own sentence on both doors now, so it no
+     longer exercises the generic arm. */
   it("POSITIVE CONTROL — an error with NO reach row keeps the generic code", async () => {
-    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "connect" }];
     /* The engine predates the route: silence, no rows — the hosted quarantine's and the cloud
        overlay's shape, whose only fact IS the code. */
     bridgeReply = () => new Response(null, { status: 404 });
     const text = (await render("local")).textContent ?? "";
     expect(text, "an error the poll knows nothing about lost its sentence")
-      .toContain("Not connecting");
-    expect(text).toContain("storage");
+      .toContain("Not connecting (connect)");
   });
 });
 

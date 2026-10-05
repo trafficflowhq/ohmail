@@ -138,7 +138,7 @@ import { runSyncCycle, type CycleCensus, type SyncDeps } from "@trafficflow/work
    `runSyncCycle` alone, because a second value out of the loop's module would be a second piece of
    the pipeline running here. This is per-attachment state, not a piece of the pipeline. */
 import { KnownSetCache } from "@trafficflow/worker/known-set";
-import { DeadLetterLedger } from "@trafficflow/worker/dead-letter";
+import { DeadLetterLedger, isDeviceStoreFault } from "@trafficflow/worker/dead-letter";
 import { startTailProgress } from "./drain-tail-progress.js";
 
 // The ORGANIZER LEASE, from the same package and for the same reason: two readings of one decision
@@ -3924,6 +3924,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         outageSince = null;
       };
 
+      /* A DRAIN THE DEVICE STORE ENDED, OVER A LIVE SOCKET: the server answered, so the person's
+         outage clock ends and the store's sentence is the one said. A socket still known dead
+         keeps its clock: nothing was asked of the server then. */
+      const noteStoreFaultDrain = (): void => {
+        if (stopped || connectionDeadSince !== null) return;
+        outageSince = null;
+      };
+
       /**
        * A DRAIN THREW. Only one class counts, and it is the one the wedge produced.
        *
@@ -6567,6 +6575,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              re-reads rather than trusting a comparison against a moment that was never finished. */
           knownSetMark = null;
           noteCycleFailed(err);
+          if (isDeviceStoreFault(err)) noteStoreFaultDrain();
           /* AND THE REFUSAL IS NAMED, once per settled attempt. `noteCycleFailed` already exempts
              it correctly — a tagged `NO` is not a connection failure and never advanced the bound
              — but it exempted it in SILENCE, so every poll after the launch left no line at all
@@ -7309,6 +7318,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             firstSync: firstSync.state(),
             writeOffsHeldSince: deadLetters.writeOffsHeldSince,
             storeFaultSince: deadLetters.storeFaultSince,
+            /* HOW MANY MESSAGES THIS DEVICE SET ASIDE and has not read since: the ledger's own
+               terminal count, hydrated from the store each cycle and lowered where a re-read
+               resolves a row. A count only: no address, no subject, no folder. */
+            setAside: deadLetters.skipped,
           };
         },
         serialize,
@@ -8556,6 +8569,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  an identifier this build produces, never a server's text — nothing here carries
                  a message, a server name or an address. */
               profileBlocked: r.connection.profileBlocked,
+              /* MESSAGES THIS DEVICE SET ASIDE, a count and nothing else; 0 when there are none. */
+              setAside: r.connection.setAside ?? 0,
               /* WHAT THE LAST STOP LEFT IN THE SETTINGS DOCUMENT, and only the two a surface owes a
                  sentence (this computer's decisions are on this computer only). Absent otherwise,
                  and gone once this install claims the mailbox again. */

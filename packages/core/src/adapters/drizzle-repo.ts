@@ -570,10 +570,10 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   listMessageFailures(mailboxId: string): Promise<MessageFailureRow[]>;
   /**
-   * THE LOCAL BACKSTOP'S RUN, from the store: how many unresolved write-offs under `version` came
-   * after the newest message this mailbox stored, and — where that is at least `cap` — when the
-   * cap-th of them was written. Reads the failure rows first and the messages only past `cap` of
-   * them. OPTIONAL: a repo without it leaves the ledger counting in memory.
+   * THE LOCAL BACKSTOP'S RUN, from the store: how many unresolved write-offs under `version` were
+   * first written after the newest message this mailbox stored (at most `cap`), and — where that
+   * is `cap` — when the cap-th newest was written. Reads at most `cap` failure rows, and the
+   * messages only once `cap` of them wait. OPTIONAL: a repo without it counts in memory.
    */
   writeOffRun?(mailboxId: string, version: string, cap: number): Promise<{ count: number; heldSince: Date | null }>;
   /**
@@ -1050,16 +1050,19 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   // planet, so an unscoped read here would let one account's IMAP server decide what another
   // account's sync loop treats as already-known.
 
+  /* THE INSERT IS THE WRITE-OFF: keyed on `first_failed_at`, which no re-failure and no retry claim
+     moves (`last_failed_at` moved on both, so five old rows re-failing re-engaged a lifted hold).
+     Bounded at `cap` rows, newest first; the messages read runs only once a full cap waits. */
   async writeOffRun(mailboxId: string, version: string, cap: number): Promise<{ count: number; heldSince: Date | null }> {
-    const failed = await this.db.select({ at: messageFailures.lastFailedAt }).from(messageFailures)
+    const failed = await this.db.select({ at: messageFailures.firstFailedAt }).from(messageFailures)
       .where(and(eq(messageFailures.mailboxId, mailboxId), isNull(messageFailures.resolvedAt),
         eq(messageFailures.attemptedVersion, version)))
-      .orderBy(desc(messageFailures.lastFailedAt));
+      .orderBy(desc(messageFailures.firstFailedAt)).limit(Math.max(1, cap));
     if (failed.length < cap) return { count: failed.length, heldSince: null };
     const [stored] = await this.db.select({ at: messages.createdAt }).from(messages)
       .where(eq(messages.mailboxId, mailboxId)).orderBy(desc(messages.createdAt)).limit(1);
     const after = stored ? failed.filter((f) => f.at.getTime() > stored.at.getTime()) : failed;
-    return { count: after.length, heldSince: after.length >= cap ? after[after.length - cap]!.at : null };
+    return { count: after.length, heldSince: after.length >= cap ? after[cap - 1]!.at : null };
   }
 
   async listMessageFailures(mailboxId: string): Promise<MessageFailureRow[]> {

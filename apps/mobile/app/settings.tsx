@@ -663,6 +663,10 @@ function ThisPhonePanel() {
                 {unreadable === null ? null : (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">{unreadable}</Txt>
                 )}
+                {/* MESSAGES SET ASIDE, below both verdicts and not an alert — see `live.ts#setAsideSaid`. */}
+                {w.boot.setAside === null ? null : (
+                  <Txt variant="note" tone="ink2">{w.boot.setAside}</Txt>
+                )}
                 {/* BATTERY SAVER, SAID WHERE THE PLATFORM RULE IS — and only once the background
                     half has actually met it. `organizerRestrictedSaid` is the record
                     `announceRestricted` writes; the deck's own note says this app organizes while

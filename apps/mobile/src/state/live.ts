@@ -5793,6 +5793,16 @@ export function firstSyncSaid(verdict: FirstSyncSay | null): string | null {
 }
 
 /**
+ * MESSAGES THIS PHONE SET ASIDE, said — or `null`. Its own line below the connection verdicts and
+ * never an alert: the link may be fine and the rest of the mail here, and the sentence names a
+ * count only. `null` where nothing has said (a paired session) and at zero.
+ */
+export function setAsideSaid(here: { setAside?: number } | null): string | null {
+  const n = here?.setAside ?? 0;
+  return Number.isInteger(n) && n > 0 ? Copy.connectionSetAside(n) : null;
+}
+
+/**
  * WHERE A BUDGETED FIRST SYNC IS CONTINUING, said — `MailboxDTO.firstSyncStopFolder` off the
  * mailbox rows, the browser strip's twin (`mail-state.ts#continuesAtFolder`, rendered as
  * `sync.importingContinuesAt`). ONE rule, and it is the reason this is a derivation rather than

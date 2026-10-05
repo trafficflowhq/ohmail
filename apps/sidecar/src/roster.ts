@@ -190,6 +190,11 @@ export interface MailboxConnectionState {
    * writes nothing off and holds every folder. `null` while the store answers. Read with the hold.
    */
   storeFaultSince?: Date | null;
+  /**
+   * HOW MANY MESSAGES THIS ENGINE SET ASIDE and has not read since — unresolved write-offs, a
+   * count only. Optional so a state built elsewhere reads as none. Lowered when a re-read resolves one.
+   */
+  setAside?: number;
 }
 
 /** Why this install is not organizing a mailbox, when it is not. One answer per mailbox. */

@@ -59,7 +59,7 @@ import { createProjector, listStamp, type Projected } from "./world-projection";
 import { usePrefs } from "./store";
 import { useListsClock } from "./use-lists-clock";
 import {
-  connectionSay, firstSyncSay,
+  connectionSay, firstSyncSay, setAsideSaid,
   dispatchHeldRouting,
   answersWaiting, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
   liveActions,
@@ -206,6 +206,8 @@ export interface World {
      * nothing ever had.
      */
     firstSync: FirstSyncSay | null;
+    /** MESSAGES THIS PHONE SET ASIDE, said (`live.ts#setAsideSaid`), or `null`; below the verdicts. */
+    setAside: string | null;
   };
   /**
    * Changes the server would not take — the phone's half of the web's "could not be saved"
@@ -634,7 +636,7 @@ const LIVE_VERDICT_BEAT_MS = 15_000;
 function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
-    boot: { settled: false, syncFailure: null, staleAsOf: null, draining: false, connection: null, firstSync: null },
+    boot: { settled: false, syncFailure: null, staleAsOf: null, draining: false, connection: null, firstSync: null, setAside: null },
     // Nothing is queued on the empty world, so nothing was given up on. `EMPTY_ABANDONED` rather
     // than a fresh `[]`: this object is compared by identity in places, and a new array per call
     // is the same re-render trap `useAbandoned` avoids on the web.
@@ -1692,6 +1694,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            same module state in the same synchronous derivation, which is one moment. See the
            field: they are two facts and both are rendered. */
         firstSync: firstSyncSay(standaloneHereFor(session)),
+        setAside: setAsideSaid(standaloneHereFor(session)),
       },
       abandoned: engine.abandoned(),
       queued: engine.queuedDiscards(),
@@ -1724,7 +1727,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The verdict's own SHAPE, not the object: `connectionSay` answers a fresh record per call, so
      comparing references would bump the beat on every tick and re-derive the whole world four
      times a minute over a healthy link. */
-  const renderedConnection = JSON.stringify([world.boot.connection, world.boot.firstSync]);
+  const renderedConnection = JSON.stringify([world.boot.connection, world.boot.firstSync, world.boot.setAside]);
   /* WHOSE DOOR THIS WORLD RENDERS, as a BOOLEAN — see `standaloneHereFor`. The world object is
      fresh per derivation, so depending on it would re-subscribe this watcher every render. */
   const rendersOwnDoor = world.standalone;
@@ -1736,6 +1739,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         [
           connectionSay(standaloneHereFor({ standalone: rendersOwnDoor }), new Date(), zone),
           firstSyncSay(standaloneHereFor({ standalone: rendersOwnDoor })),
+          setAsideSaid(standaloneHereFor({ standalone: rendersOwnDoor })),
         ],
       ) !== renderedConnection;
       /* ONE bump for either, so the loop still terminates in one step: the re-derive re-reads

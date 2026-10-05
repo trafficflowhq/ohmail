@@ -555,6 +555,11 @@ const TABLE = {
      those would be false in the other direction. `yet` is the whole of the promise: the engine
      keeps asking, and a mailbox that later reads stops saying this. */
   firstSyncNothingReadable: "Nothing could be read from this mailbox yet.",
+  /* MESSAGES THIS PHONE SET ASIDE: it could not read them and moved on, so they are not in the
+     list. A count only, never an address or a subject; said until a re-read takes them in. */
+  connectionSetAside: (n: number) => n === 1
+    ? "One message could not be read and was set aside. It stays on your server."
+    : `${n} messages could not be read and were set aside. They stay on your server.`,
 
   /* WHERE A BUDGETED FIRST SYNC IS CONTINUING — the browser strip says the same thing beside its
      count (`sync.importingContinuesAt`). A first sync of a large mailbox runs in bounded passes:

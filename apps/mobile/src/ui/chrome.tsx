@@ -94,6 +94,13 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
           {line.text}
         </Txt>
       ) : null}
+      {/* MESSAGES THIS PHONE SET ASIDE, below the ranked line and never instead of it: a standing
+          fact about mail that is not in the list, said on every tab until a re-read takes it in. */}
+      {boot.setAside !== null ? (
+        <Txt variant="meta" tone="ink3" accessibilityRole="text" style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
+          {boot.setAside}
+        </Txt>
+      ) : null}
       {/* BELOW the freshness label and independent of it: a change can be abandoned while the
           mirror is perfectly current, which is the state `stale === null` describes. Rendering it
           inside that branch would hide the notice in the case it is most likely to occur. */}

@@ -115,6 +115,11 @@ export interface MailboxReach {
    * saved, and on an engine older than the field.
    */
   settingsLeft: "kept_other" | "not_saved" | null;
+  /**
+   * MESSAGES THIS COMPUTER SET ASIDE and has not read since — a count, 0 when none and on an
+   * engine older than the field. Said as a second line under the row, never as the row's state.
+   */
+  setAside: number;
 }
 
 /**
@@ -393,6 +398,7 @@ export async function readMailboxReachVia(
       settingsLeft?: unknown;
       plaintextRefused?: unknown;
       dialled?: unknown;
+      setAside?: unknown;
     };
     /* NO ID, NOTHING TO SAY IT ABOUT. Dropped rather than faulted: marking the slice would let one
        unattributable entry speak for rows it never named. */
@@ -401,7 +407,7 @@ export async function readMailboxReachVia(
       out[it.mailboxId] = {
         answered: false, reachable: false, signInRefused: false, credentialBlocked: null,
         profileBlocked: null, unreachableSince: null, needsCredential: false, settingsLeft: null,
-        dialled: true,
+        dialled: true, setAside: 0,
       };
       continue;
     }
@@ -429,6 +435,8 @@ export async function readMailboxReachVia(
          what an absent field means. */
       profileBlocked: profileBlock(it.profileBlocked),
       settingsLeft: it.settingsLeft === "kept_other" || it.settingsLeft === "not_saved" ? it.settingsLeft : null,
+      /* A WHOLE COUNT OR NOTHING: anything else is an engine that did not say, which reads as none. */
+      setAside: Number.isInteger(it.setAside) && (it.setAside as number) > 0 ? it.setAside as number : 0,
     };
   }
   /* STAMPED WHERE THE ANSWER IS MADE, not where it is stored: the sequence guard discards a read
@@ -1464,6 +1472,9 @@ export function DesktopMailboxes(
       const count = storeRefusalsFigure(m.storeRefusals, (figure) => t("storeRefusalsFloor", { count: figure }));
       return say(t("desktopStateStorage", { count, n: m.storeRefusals.count }));
     }
+    /* THIS COMPUTER'S STORE REFUSES THE MAIL (a held write-off run, a store fault, a stuck Cloud
+       copy) and states no count: the connection stands, so "Not connecting" was the wrong sentence. */
+    if (m.status === "error" && m.errorCode === "storage") return say(t("desktopStateStoreRefused"));
     if (m.status === "error") {
       const specific = r?.answered === true
         && (r.signInRefused || r.plaintextRefused === true || r.credentialBlocked !== null
@@ -2142,6 +2153,12 @@ export function DesktopMailboxes(
                 <>
                   <span className="mbx-reach" role="status">{s.said}</span>
                   {s.when ? <> <span className="mbx-reach-when" role="note">{s.when}</span></> : null}
+                  {/* MESSAGES SET ASIDE ON THIS COMPUTER: a second line, a count and nothing else. */}
+                  {(reach.rows[shown.id]?.setAside ?? 0) > 0 ? (
+                    <span className="mbx-set-aside" role="note">
+                      {t("desktopSetAside", { n: reach.rows[shown.id]!.setAside })}
+                    </span>
+                  ) : null}
                 </>
               );
             })()}
