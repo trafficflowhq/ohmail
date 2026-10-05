@@ -119,7 +119,7 @@ The envelope:
 | `provenance` | string | How the rule came to be. Today's writers emit `"manual"` (written by hand), `"migrated"` (imported from another tool), `"promoted"` (a screening decision — a screen-out and a spam verdict both leave one), or `"seeded-from-sent"` (the onboarding pass over your own Sent mail). The field is open: a reader must carry an unknown value through unchanged, never reject the profile over it. |
 | `subjectContains` | string, optional | Narrows the rule to subjects containing this term. |
 | `bodyContains` | string, optional | Narrows the rule to bodies containing this term. |
-| `personDecidedAt` | string, optional | When a press of yours first made this rule yours (a Screener decision, "Not junk, always allow", or a pause), as an ISO 8601 instant. Absent where no such press touched the rule, which includes most rules you wrote by hand: their `provenance` already says they are yours. A reader keeps a date it already holds, and ohmail's learning never changes a rule that carries one. The date alone never unsubscribes you from a sender. |
+| `personDecidedAt` | string, optional | When ohmail marked this rule as decided by you, as an ISO 8601 instant; a Screener decision of yours, "Not junk, always allow" and a pause set it. Absent where nothing set it, which includes most rules you wrote by hand: their `provenance` already says they are yours. A reader keeps a date it already holds, and ohmail's learning never changes a rule that carries one. The date alone never unsubscribes you from a sender. |
 
 **`notifyRules`** — an array of senders or threads opted back **into** notifications:
 
