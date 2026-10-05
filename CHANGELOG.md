@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.14] — 2026-10-05
+
 ### Deleting your account no longer fails when a device renews its sign-in or signs out at the same time
 <!-- changes: fix-026-erasure-lock-order.md -->
 
@@ -116,10 +123,16 @@ sent now says so, instead of saying the newer words would go.
 On the web and the desktop app, a message sent without a connection goes out once when ohmail
 reconnects, however long it waited.
 
-### Still to come
+### The privacy pages say what is kept and what reaches the AI model
+<!-- changes: fix-026-retention-prunes-and-the-kept-list.md -->
 
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
+- The subprocessors page names the mail the AI model reads without a press, and says it happens
+  only while your AI switch is on.
+- It says what a deleted message leaves behind, how long device names, their IP addresses and
+  invitation addresses stay, and that a code adding a device can work for up to 15 minutes.
+- The privacy page says what a sign-in records and for how long; the account page's Kept list
+  names the sign-in token hashes and the staff record an account deletion keeps.
+- A message whose text is not stored says its headers, preview and search words are kept.
 
 ## [0.25.13] — 2026-10-04
 
@@ -11272,7 +11285,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.13...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.14...HEAD
+[0.25.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.14
 [0.25.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.13
 [0.25.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.12
 [0.25.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.11

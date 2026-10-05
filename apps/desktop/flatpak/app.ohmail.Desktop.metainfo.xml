@@ -74,6 +74,26 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.14" date="2026-10-05">
+      <description>
+        <ul>
+          <li>Deleting your account no longer fails when a device renews its sign-in or signs out at the same time</li>
+          <li>A changed rule takes effect where an older copy of it existed</li>
+          <li>A message this device could not save is no longer given up on</li>
+          <li>The subprocessors page names the database that holds your mail</li>
+          <li>A message with a long run of text inside a table no longer stalls the phone's reader</li>
+          <li>A mailbox whose ohmail/_meta folder is full says so</li>
+          <li>ohmail stops filling an ohmail/_meta it cannot clean, and shrinks a full one</li>
+          <li>Forwarding a message that just moved goes out on the first press</li>
+          <li>A server port saved as digits works</li>
+          <li>A conversation opens at the message its buttons act on</li>
+          <li>Requests no longer race the web app's session renewal</li>
+          <li>Pressing Send again while ohmail reconnects no longer sends the message twice</li>
+          <li>A message that waited without a connection goes out once when ohmail reconnects</li>
+          <li>The privacy pages say what is kept and what reaches the AI model</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.13" date="2026-10-04">
       <description>
         <ul>
@@ -123,44 +143,6 @@
       <description>
         <ul>
           <li>A long message no longer stops the phone from syncing</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.9" date="2026-10-02">
-      <description>
-        <ul>
-          <li>A message a rule screens leaves the phone's inbox when its body arrives</li>
-          <li>Closing a tab while your session renews no longer signs you out</li>
-          <li>A self-hosted desktop manages its mailboxes on its own server</li>
-          <li>A Mark read that did not go through says why</li>
-          <li>Undo on the phone says "Not deleted" once it is saved</li>
-          <li>Sign out always ends the session</li>
-          <li>The phone app is smaller</li>
-          <li>The IMAP library is updated</li>
-          <li>Attachments in nested messages open again</li>
-          <li>A sender you screen out stays out of the Ohbox while your mail is still syncing</li>
-          <li>"Sign in with browser" works in a browser that is signed out</li>
-          <li>A very long folder name no longer stops a mailbox's sync</li>
-          <li>A message that cannot be parsed no longer stops syncing</li>
-          <li>A very long message no longer stalls the window</li>
-          <li>A very long message no longer freezes the phone app</li>
-          <li>The Android download on the website gives the newest APK again</li>
-          <li>A message the mail parser fails on mid-part no longer stops syncing</li>
-          <li>A sender you send to the Ohbox keeps their newsletters there</li>
-          <li>Choosing where a sender's mail goes holds whichever switches are set</li>
-          <li>The sender sheet says why some of their mail stayed</li>
-          <li>The phone's sender sheet says why some of their mail stayed</li>
-          <li>"Sign in with browser" comes back after you sign in in another tab</li>
-          <li>The Screened out and Spam counts are no longer a partial number during a sync</li>
-          <li>The Sent, Trash and Junk folders ohmail uses stay the same</li>
-          <li>Second-factor refusals in Settings are in your language</li>
-          <li>A wrong verification code counts once</li>
-          <li>A very long html message is shown a page at a time</li>
-          <li>An html message is shown as text when drawing it would stall the window</li>
-          <li>Send + Done files the conversation as it is when the reply goes out</li>
-          <li>A dropped mail server connection no longer closes the phone app</li>
-          <li>A mail server reached over TLS that the machine cannot reach no longer stops the organizer</li>
-          <li>The Microsoft sign-in note says where it applies</li>
         </ul>
       </description>
     </release>
