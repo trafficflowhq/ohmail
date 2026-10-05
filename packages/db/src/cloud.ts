@@ -159,9 +159,11 @@ export {
  * module names `auth_events`, which a local install does not have. */
 export {
   changeLogHorizon, pruneChangeLogForAccount, retentionAccountsAfter,
-  pruneAuditLog, pruneAuthEvents,
+  pruneAuditLog, pruneAuthEvents, pruneSignInRecords,
   CHANGE_LOG_RETENTION_GRACE_MS, CHANGE_LOG_HOLDBACK_LIVE_MS,
-  AUDIT_LOG_RETENTION_MS, AUTH_EVENTS_RETENTION_MS,
+  AUDIT_LOG_RETENTION_MS, AUTH_EVENTS_RETENTION_MS, SIGN_IN_RECORD_RETENTION_MS,
+  SIGN_IN_SESSION_BATCH, SIGN_IN_RETENTION_DEADLINE_MS,
+  type SignInRetentionResult, type SignInRetentionOptions,
   RETENTION_ACCOUNTS_PER_TICK, RETENTION_DELETE_BATCH, RETENTION_BATCHES_PER_ACCOUNT,
   type ChangeLogPruneResult,
 } from "./retention.js";

@@ -345,6 +345,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock (it rides the maintenance block); the floor is raised before anything is deleted",
   },
   {
+    name: "sign_in_retention",
+    module: `${W}/retention-prune.ts`, entry: "signInRetentionPass",
+    triggers: ["interval"],
+    cadence: "on the maintenance cadence (MAINTENANCE_EVERY_MS, ~hourly), leader-only, after retention_prune",
+    budget: "per table at most RETENTION_BATCHES_PER_ACCOUNT DELETEs of RETENTION_DELETE_BATCH rows; sessions SIGN_IN_SESSION_BATCH per transaction; the whole pass SIGN_IN_RETENTION_DEADLINE_MS",
+    owns: "sign-in records, OAuth and pairing codes, staff sessions, unused invitations and sessions go SIGN_IN_RECORD_RETENTION_MS after they end (a live family keeps its tokens); a device's address goes once its last session's record is gone; expired ceremonies stop waiting for the next ceremony",
+    fence: "leader lock (it rides the maintenance block); sessions locked in id order FOR UPDATE SKIP LOCKED under a 2 s lock timeout, so an erasure or a rotation holding one is passed over",
+  },
+  {
     name: "refund_obligation_drain",
     module: `${W}/refund-obligation-drain.ts`, entry: "refundObligationDrainPass",
     triggers: ["interval"],

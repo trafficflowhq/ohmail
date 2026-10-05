@@ -27,11 +27,11 @@ export const WEBAUTHN_CHALLENGE_PRUNE_LIMIT = 200;
 /**
  * Delete expired challenges, at most {@link WEBAUTHN_CHALLENGE_PRUNE_LIMIT} per call.
  *
- * OPPORTUNISTIC, on the ceremony START doors rather than a scheduled pass, for
- * `pruneOAuthCeremonies`' reason: the only thing that grows this table is a ceremony start, so a
- * timer would be a new scheduled surface for a table nobody is writing to. Keyed by
- * `webauthn_challenges_expires_idx`, so nothing due is an empty range scan. Two statements, not `DELETE … WHERE id IN (SELECT … LIMIT n)`: the id read makes the
- * bound exact on both dialects, and an empty read returns rather than building an `IN ()`.
+ * Called by the ceremony START doors and by the worker's hourly sign-in retention pass, so an
+ * expired challenge does not wait for the next ceremony. Keyed by `webauthn_challenges_expires_idx`,
+ * so nothing due is an empty range scan. Two statements, not `DELETE … WHERE id IN (SELECT … LIMIT
+ * n)`: the id read makes the bound exact on both dialects, and an empty read returns rather than
+ * building an `IN ()`.
  */
 export async function pruneWebauthnChallenges(
   tx: Tx,

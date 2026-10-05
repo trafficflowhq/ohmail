@@ -24,6 +24,18 @@ export {
  *  It carries `ip` and `device`, so keeping less is the point, not a saving. */
 export const AUTH_EVENTS_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 
+/** Sign-in records, codes, staff sessions and unused invitations go this long past their expiry,
+ *  and a session this long after it ended. Past the 30-day history the staff console reads and the
+ *  14 days the device-staleness alert reads (`sign-in-horizon-coherence.test.ts`). */
+export const SIGN_IN_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/* The deletes, beside it: `sign-in-retention.ts` takes the horizon as an argument, so it never
+   imports this file back. */
+export {
+  pruneSignInRecords, SIGN_IN_SESSION_BATCH, SIGN_IN_RETENTION_DEADLINE_MS,
+  type SignInRetentionResult, type SignInRetentionOptions,
+} from "./sign-in-retention.js";
+
 /** Accounts visited per maintenance tick (round-robin by account id, wrapping). */
 export const RETENTION_ACCOUNTS_PER_TICK = 25;
 /**

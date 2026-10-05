@@ -174,12 +174,10 @@ export default function SubprocessorsPage() {
                 <th scope="row">Sign-in links and challenges</th>
                 <td>
                   Each works for 5 minutes at most, a code that adds a device for up to
-                  15 and an email-verification link for 24 hours. A passkey
-                  challenge&rsquo;s record is deleted from an hour after it expires,
-                  at a later passkey prompt; the other
-                  records have no expiry of their own and go when you delete your
-                  account, and a desktop sign-in request nobody confirmed is never
-                  deleted.
+                  15 and an email-verification link for 24 hours. The hourly pass
+                  deletes their records 30 days after they expire, a desktop sign-in
+                  request nobody confirmed included, and a passkey challenge&rsquo;s
+                  record from an hour after it expires.
                 </td>
               </tr>
               <tr>
@@ -189,10 +187,10 @@ export default function SubprocessorsPage() {
                   signed in. In a browser it stops after 90 days without use at the
                   latest; the desktop and phone apps renew while you use them and stop
                   after 400 days without use. Signing out, or removing a device, ends it
-                  immediately. The rows go when you delete your account — no
-                  automatic expiry yet. The name a desktop or phone app is listed under,
-                  and the IP address it was added from, stay until you delete your
-                  account.
+                  immediately. The hourly pass deletes a session&rsquo;s record 30
+                  days after it ends, and clears the IP address a desktop or phone app
+                  was added from once its last session&rsquo;s record is gone; the name
+                  it is listed under stays until you delete your account.
                 </td>
               </tr>
               <tr>
@@ -225,8 +223,8 @@ export default function SubprocessorsPage() {
               <tr>
                 <th scope="row">Invitations we send: the address each one went to</th>
                 <td>
-                  An unused one has no expiry yet; a used one keeps the address until
-                  the account it opened is deleted
+                  An unused one is deleted 30 days after it expires; a used one keeps
+                  the address until the account it opened is deleted
                 </td>
               </tr>
               <tr>
@@ -271,8 +269,9 @@ export default function SubprocessorsPage() {
         <p>
           A pass runs every hour and deletes what the table says has expired:
           stored answers to retried requests and the double-send guard, sign-in
-          attempt limits, staged attachments and the token hashes of deleted
-          accounts. It also ages out sign-in and action history and compacts the
+          records and sessions 30 days after they end, expired passkey challenges,
+          unused invitations, sign-in attempt limits, staged attachments and the
+          token hashes of deleted accounts. It also ages out sign-in and action history and compacts the
           sync change log. Where a row says a record stays until you delete your
           account, there is no automatic expiry yet, and we would
           rather write it than publish a period no job enforces.

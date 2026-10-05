@@ -119,12 +119,10 @@ export async function consumeOAuthCeremony(
 /**
  * Drop ceremonies older than the retention window.
  *
- * OPPORTUNISTIC, called by the START handler rather than by a cron, and that is a deliberate
- * refusal to add a scheduled surface for a table whose whole content is the last hour of consent
- * clicks. It costs one indexed DELETE on the path that is already writing a row, it is keyed by the
- * `mailbox_oauth_ceremonies_created_idx` the migration creates, and a deployment that never runs a
- * ceremony has nothing to prune. A failure is the caller's to swallow: a table that grew by one row
- * is not a reason to refuse somebody's connect.
+ * Called by the START handler, one indexed DELETE on the path already writing a row (keyed by
+ * `mailbox_oauth_ceremonies_created_idx`), and by the worker's hourly sign-in retention pass, so a
+ * ceremony nobody follows does not wait for the next one. A failure is the caller's to swallow: a
+ * table that grew by one row is not a reason to refuse somebody's connect.
  */
 export async function pruneOAuthCeremonies(
   tx: Tx, opts: { now: Date; retentionMs?: number },
@@ -354,11 +352,10 @@ export async function claimDeviceCeremony(
 /**
  * Drop device ceremonies past retention.
  *
- * OPPORTUNISTIC, called by the START handler, for {@link pruneOAuthCeremonies}'s reason verbatim: a
- * table whose whole content is the last hour of connect attempts does not earn a scheduled surface,
- * and this costs one indexed DELETE on the path that is already writing a row. Abandoned ceremonies
- * — somebody closed the tab without approving — are half its input, which is why the predicate is
- * the age and not `consumed_at IS NOT NULL`.
+ * Called by the START handler and by the hourly sign-in retention pass, for
+ * {@link pruneOAuthCeremonies}'s reasons. Abandoned ceremonies — somebody closed the tab without
+ * approving — are half its input, which is why the predicate is the age and not
+ * `consumed_at IS NOT NULL`.
  */
 export async function pruneDeviceCeremonies(
   tx: Tx, opts: { now: Date; retentionMs?: number },

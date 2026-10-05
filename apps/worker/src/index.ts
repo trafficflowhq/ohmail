@@ -96,7 +96,7 @@ import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { gateReleasePass } from "./gate-release.js";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
-import { retentionPrunePass } from "./retention-prune.js";
+import { retentionPrunePass, signInRetentionPass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { newScreenerAutoWalk, screenerAutoApplyPass } from "./screener-auto.js";
 import { screenerActConsentFrom, screenerAutoActPass } from "./screener-auto-act.js";
@@ -5190,6 +5190,9 @@ export async function startWorkerWithLock(
           // failure is a logged warning, never a cycle abort — the pass states that itself). The
           // horizons live in ONE place, `@trafficflow/db/cloud`'s `retention.ts`.
           await retentionPrunePass(db as unknown as Tx, new Date(), log);
+          // Sign-in records, sessions and the ceremony tables, 30 days past their end; its own
+          // deadline, never a throw (`retention-prune.ts`).
+          await signInRetentionPass(db as unknown as Tx, new Date(), log);
         },
       },
     };
