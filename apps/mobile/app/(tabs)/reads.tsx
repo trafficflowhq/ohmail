@@ -18,6 +18,7 @@ import { useTheme } from "../../src/theme";
 import { useMessageBody, useWorld, type WorldMail } from "../../src/state/world";
 import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
 import { BodyPages } from "../../src/ui/BodyPages";
+import { withheldNote } from "../../src/ui/body-note";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList, type RowFrame } from "../../src/ui/MailList";
@@ -200,7 +201,7 @@ function StreamCard({
     open && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
       : open && m.bodyState === "withheld"
-        ? (m.bodyWithheld === "too_large" ? Copy.liveBodyWithheldTooLarge : Copy.liveBodyWithheld)
+        ? withheldNote(m, true)
         : open && m.bodyState === "failed"
           ? Copy.liveBodyFailed
           : null;

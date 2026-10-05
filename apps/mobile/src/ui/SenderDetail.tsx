@@ -26,6 +26,7 @@ import { relayMarkFor, senderSheetLine } from "../state/relay";
 import { useBodies, useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { BodyPages } from "./BodyPages";
+import { withheldNote } from "./body-note";
 import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
@@ -203,7 +204,7 @@ export function SenderDetail({
                  about not taking a consent decision over a truncation presented as the mail,
                  and a withheld body is permanently exactly that. */
               <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>
-                {h.bodyWithheld === "too_large" ? Copy.liveBodyWithheldTooLarge : Copy.liveBodyWithheld}
+                {withheldNote(h, true)}
               </Txt>
             ) : h.bodyState === "failed" ? (
               <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>
