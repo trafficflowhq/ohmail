@@ -72,6 +72,7 @@ describe("the desktop window's sheet and decide", () => {
     const answers: Array<() => void> = [];
     const engine = new OhmailEngine({
       adapter: {
+        withdrawSend: async () => ({ outcome: "unsupported" as const }),
         fetchBody: async () => null,
         sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: s.getCursor(), hasMore: false, serverTime: NOW.toISOString() }),
         mutate: async () => {
