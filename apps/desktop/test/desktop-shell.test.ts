@@ -1548,11 +1548,14 @@ describe("the Rust side", () => {
     // `File::open` or a directory listing is a new capability and fails here as it always did.
     expect(engine.match(/fs::read_to_string/g)).toHaveLength(1);
     expect(engine).not.toMatch(/fs::File::open/);
-    /* THE LOG'S TAIL AND THE LOCK'S RECORD ARE THE TWO OTHER READS. The tail: one `File::open`
-       inside the tail reader, whose one caller hands it the path the log was opened at. The lock:
-       one inside `read_lock`, which the unlock press calls twice — to judge the holder, and to
-       check the file is still the one judged before removing it — on the plan's lock path only. */
-    expect(engine.match(/\bFile::open\(/g)).toHaveLength(2);
+    /* THE LOG'S TAIL, THE LOCK'S RECORD AND A PID'S START TIME ARE THE THREE OTHER READS. The tail:
+       one `File::open` inside the tail reader, whose one caller hands it the path the log was opened
+       at. The lock: one inside `read_lock`, which the unlock press calls twice — to judge the holder,
+       and to check the file is still the one judged before removing it — on the plan's lock path
+       only. The start time: one inside the witness's `start_ticks_of`, the kernel's own
+       `/proc/<pid>/stat` for a pid and nothing else, which backs a free witness on Linux. */
+    expect(engine.match(/\bFile::open\(/g)).toHaveLength(3);
+    expect(engine).toMatch(/pub\(super\) fn start_ticks_of\(pid: u32\) -> Option<u64> \{[\s\S]{0,140}?File::open\(format!\("\/proc\/\{pid\}\/stat"\)\)/);
     expect(engine).toMatch(/fn tail_lines\(path: &Path, max_bytes: u64\) -> Vec<String> \{[\s\S]{0,120}?File::open\(path\)/);
     expect(engine).toMatch(/fn read_lock\(lock: &Path\) -> io::Result<Option<HeldLock>> \{\s*let mut file = match File::open\(lock\)/);
     expect(engine.match(/read_lock\(lock\)/g)).toHaveLength(2);
@@ -1609,14 +1612,15 @@ describe("the Rust side", () => {
     expect(engine.match(/remove_unheld_lock\(&lock, process_is_running, &witness\)/g)).toHaveLength(1);
     expect(engine.match(/fs::remove_file\(lock\)/g)).toHaveLength(1);
     /* THE WITNESS DECIDES FIRST, and the pid's rule is what is left: a held witness keeps the lock,
-     * a free one removes a record its engine wrote while holding it, and any other record is
-     * judged by its pid as before. */
+     * a free one removes a record its engine wrote while holding it unless that record's pid still
+     * names its engine (the belt), and any other record is judged by its pid as before. */
     expect(engine).toMatch(
-      /fn remove_unheld_lock\(lock: &Path, running: impl Fn\(u32\) -> bool, witness: &witness::Reading\) -> Result<\(\), String> \{[\s\S]*?witness::Reading::Held => return Err\(format!\("\{UNLOCK_HELD\}\{HELD_BY_ITS_WITNESS\}"\)\),[\s\S]*?witness::Reading::Free \{ served, \.\. \} if served\.contains\(&witness::record_hash\(&judged\.bytes\)\) => \{\}[\s\S]*?if running\(pid\) \{[\s\S]*?Some\(now\) if now == judged => \{\}[\s\S]*?fs::remove_file\(lock\)/,
+      /fn remove_unheld_lock\(lock: &Path, running: impl Fn\(u32\) -> bool, witness: &witness::Reading\) -> Result<\(\), String> \{[\s\S]*?witness::Reading::Held => return Err\(format!\("\{UNLOCK_HELD\}\{ITS_ENGINE_STILL_RUNS\}"\)\),[\s\S]*?served\.iter\(\)\.find\(\|entry\| entry\.hash == hash\)[\s\S]*?Some\(served\) => \{\s*if witness::still_that_engine\(&judged\.bytes, served\) \{\s*return Err\(format!\("\{UNLOCK_HELD\}\{ITS_ENGINE_STILL_RUNS\}"\)\);[\s\S]*?None => \{\s*if let Some\(pid\) = lock_pid\(&judged\.bytes\) \{\s*if running\(pid\) \{[\s\S]*?Some\(now\) if now == judged => \{\}[\s\S]*?fs::remove_file\(lock\)/,
     );
     /* THE WITNESS'S OWN REACH: one file, beside the lock, in the plan's data directory. Its three
      * opens name that file only, its one read of the lock record is the plan's `sidecar.lock`, its
-     * one write is the served list into its own file, and it removes and renames nothing. */
+     * one write is the served list into its own file, its one other read is a pid's start time,
+     * and it removes and renames nothing. */
     const witnessModule = /\nmod witness \{([\s\S]*?)\n\}\n/.exec(engine)?.[1] ?? "";
     expect(witnessModule, "the witness module was not found").toContain('pub(super) const FILE: &str = "engine.hold";');
     expect(witnessModule.match(/\.open\(/g)).toHaveLength(3);
@@ -1627,6 +1631,7 @@ describe("the Rust side", () => {
     expect(witnessModule.match(/write_all\(/g)).toEqual(["write_all("]);
     expect(witnessModule).toMatch(/file\.write_all\(kept\.as_bytes\(\)\)/);
     expect(witnessModule).not.toMatch(/\bfs::(?!OpenOptionsExt\b)|remove|rename/);
+    expect(witnessModule.match(/File::open\(/g)).toEqual(["File::open("]);
     // The witness is taken where the engine is spawned, and its directory is the plan's.
     expect(engine).toMatch(/let held = plan_data_dir\(&launch\)\.and_then\(\|dir\| witness::take\(&dir\)/);
     expect(engine).toMatch(/if !matches!\(self\.engine\(\)\.state\(\), EngineState::Failed \{ \.\. \}\) \{/);

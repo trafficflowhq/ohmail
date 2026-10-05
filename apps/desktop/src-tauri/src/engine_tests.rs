@@ -133,7 +133,7 @@ if (mode === "loud-once") {
 // THE DATA DIRECTORY'S LOCK, taken before the engine announces itself as the real one takes it:
 // one record with a nonce in `$OHMAIL_DATA_DIR/sidecar.lock`. `serve-locked-drops-witness` then
 // closes the witness descriptor it was handed (found through /proc, so Linux only) and serves.
-if (mode === "serve-locked" || mode === "serve-locked-drops-witness") {
+if (mode === "serve-locked" || mode === "serve-locked-drops-witness" || mode === "serve-locked-drops-witness-late") {
   const dir = process.env.OHMAIL_DATA_DIR;
   fs.writeFileSync(dir + "/sidecar.lock", JSON.stringify({ pid: process.pid, nonce: String(Math.random()) }) + "\n");
   if (mode === "serve-locked-drops-witness") {
@@ -143,6 +143,18 @@ if (mode === "serve-locked" || mode === "serve-locked-drops-witness") {
       } catch {}
     }
   }
+}
+
+// `serve-locked-drops-witness-late` closes it half a second AFTER serving, which no shipped engine
+// does: the witness then reads free over an engine that still runs.
+if (mode === "serve-locked-drops-witness-late") {
+  setTimeout(() => {
+    for (const fd of fs.readdirSync("/proc/self/fd")) {
+      try {
+        if (fs.readlinkSync("/proc/self/fd/" + fd).endsWith("/engine.hold")) fs.closeSync(Number(fd));
+      } catch {}
+    }
+  }, 500);
 }
 
 if (mode === "phased") {
@@ -4827,7 +4839,10 @@ fn the_witness_is_held_for_exactly_the_life_of_the_engine_it_was_handed_to() {
     assert_eq!(engine.state(), EngineState::Stopped);
     match witness::read(&data) {
         witness::Reading::Free { served, .. } => {
-            assert_eq!(served, vec![witness::record_hash(&record)], "the served record was not remembered")
+            let hashes: Vec<&str> = served.iter().map(|entry| entry.hash.as_str()).collect();
+            assert_eq!(hashes, vec![witness::record_hash(&record)], "the served record was not remembered");
+            #[cfg(target_os = "linux")]
+            assert!(served[0].spawn_ticks.is_some(), "the start time read at the spawn was not kept");
         }
         witness::Reading::Held => panic!("the witness outlived the engine it was handed to"),
         witness::Reading::Unread => panic!("the witness could not be read"),
@@ -4926,6 +4941,102 @@ fn an_engine_that_let_its_witness_go_is_never_vouched_for() {
     assert!(lock.exists());
     drop(reading);
     engine.stop();
+}
+
+/// The close-on-exec flag in a `/proc/<pid>/fdinfo/<fd>` reading: O_CLOEXEC in its octal flags.
+#[cfg(target_os = "linux")]
+fn cloexec(fdinfo: &str) -> Option<bool> {
+    let flags = fdinfo.lines().find_map(|line| line.strip_prefix("flags:"))?.trim();
+    Some(i64::from_str_radix(flags, 8).ok()? & 0o2_000_000 != 0)
+}
+
+/// THE WITNESS CROSSES ONE EXEC, THE ENGINE'S. Close-on-exec is cleared in that child alone, between
+/// its fork and its exec, and the shell's own copy keeps it, so nothing else the shell starts in that
+/// moment holds the witness for its own life (the card would then say the engine still runs).
+#[cfg(target_os = "linux")]
+#[test]
+fn the_witness_crosses_the_engines_exec_alone_and_the_shells_copy_keeps_close_on_exec() {
+    use std::os::unix::io::AsRawFd;
+    let _live = live_process();
+    let dir = candidate_root("witness-cloexec");
+    let held = witness::take(&dir).expect("a free witness was not taken");
+    let fdinfo = format!("/proc/self/fdinfo/{}", held.as_raw_fd());
+    let mut engine = Command::new("cat");
+    engine.arg(&fdinfo).stderr(Stdio::null());
+    witness::hand_to(&mut engine, &held);
+    let engine_view = engine.output().expect("the engine's spawn ran");
+    let shells_copy = fs::read_to_string(&fdinfo).expect("the shell's own copy");
+    let other_view = Command::new("cat").arg(&fdinfo).stderr(Stdio::null()).output().expect("another spawn ran");
+    drop(held);
+    assert_eq!(
+        cloexec(&String::from_utf8_lossy(&engine_view.stdout)),
+        Some(false),
+        "the engine's spawn did not inherit the witness"
+    );
+    assert_eq!(cloexec(&shells_copy), Some(true), "close-on-exec was cleared in the shell's own copy");
+    assert!(other_view.stdout.is_empty(), "a spawn the witness was not handed to inherited it");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// THE BELT: A FREE WITNESS IS NOT THE ONLY PROOF while the record's pid still names its engine. The
+/// fixture closes its witness half a second after serving, so the witness reads free over an engine
+/// that still runs; the start time the shell read at its spawn still names it, and the lock is kept.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_record_whose_engine_closed_its_witness_and_still_runs_is_kept() {
+    let _live = live_process();
+    let fixture = Fixture::new("witness-belt");
+    let (data, engine) = witnessed(&fixture, "serve-locked-drops-witness-late");
+    let lock = data.join("sidecar.lock");
+    wait_for(
+        || matches!(witness::read(&data), witness::Reading::Free { .. }),
+        Duration::from_secs(10),
+        "the engine to close its witness after serving",
+    );
+    let before = fs::read(&lock).expect("the record");
+    let reading = witness::read(&data);
+    match &reading {
+        witness::Reading::Free { served, .. } => {
+            assert_eq!(served.len(), 1, "the record was not remembered while the witness was held")
+        }
+        _ => panic!("the witness did not stay free"),
+    }
+    let refused = remove_unheld_lock(&lock, process_is_running, &reading);
+    assert!(
+        refused.as_ref().is_err_and(|why| why.starts_with(UNLOCK_HELD)),
+        "a live engine's lock went on a free witness: {refused:?}"
+    );
+    assert_eq!(fs::read(&lock).expect("still there"), before);
+    drop(reading);
+    engine.stop();
+}
+
+/// THE BELT READS THE RECORD'S OWN START TIME TOO, and only a match keeps: a record naming a live
+/// process with that process's start time is kept, and the same record with another start time, a
+/// pid issued again, is removed whatever the pid rule says, which is the case the witness exists for.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_belt_keeps_a_record_whose_start_time_names_its_live_process_and_removes_a_reused_pid() {
+    let _live = live_process();
+    let dir = candidate_root("witness-belt-record");
+    let lock = dir.join("sidecar.lock");
+    let mut live = Command::new("sleep").arg("30").spawn().expect("a live process");
+    let ticks = witness::start_ticks_of(live.id()).expect("its start time");
+    for (record, kept) in [
+        (format!(r#"{{"pid":{},"startTicks":{ticks}}}"#, live.id()), true),
+        (format!(r#"{{"pid":{},"startTicks":{}}}"#, live.id(), ticks + 1), false),
+    ] {
+        fs::write(&lock, &record).expect("record");
+        fs::write(dir.join(witness::FILE), format!("{}\n", witness::record_hash(record.as_bytes()))).expect("witness");
+        let reading = witness::read(&dir);
+        let verdict = remove_unheld_lock(&lock, |_| true, &reading);
+        drop(reading);
+        assert_eq!(verdict.is_err(), kept, "{record}: {verdict:?}");
+        assert_eq!(lock.exists(), kept, "{record}");
+    }
+    let _ = live.kill();
+    let _ = live.wait();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A WITNESS THE PRESS READ IS LET GO THE MOMENT THE READING IS DROPPED, even while a fork elsewhere

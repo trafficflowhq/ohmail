@@ -1006,9 +1006,9 @@ struct Shared {
     /// what the loopback listener said (the tailnet publication gates on THAT). Same per-run
     /// lifetime as `host_signal`.
     lan_signal: Option<crate::host::LanSignal>,
-    /// The data directory whose witness this run was handed at its spawn ([`witness`]), so the
-    /// record it writes is remembered once it serves. Per run, like `ready`.
-    witness: Option<PathBuf>,
+    /// The data directory whose witness this run was handed at its spawn ([`witness`]), and the
+    /// start time read for it then, so the record it writes is remembered once it serves. Per run.
+    witness: Option<(PathBuf, Option<u64>)>,
     stop: bool,
     /// How many of this run's two pipe readers are still reading.
     ///
@@ -3023,10 +3023,11 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         };
 
         // The engine holds the witness now, and this process must not: a descriptor kept here
-        // would hold the lock past the engine's death.
-        let witness_dir = held.map(|(dir, file)| {
+        // would hold the lock past the engine's death. Its start time is read while the pid can
+        // name nothing else, the child being unreaped.
+        let witnessed = held.map(|(dir, file)| {
             drop(file);
-            dir
+            (dir, witness::start_ticks_of(child.id()))
         });
         let stdout = child.stdout.take().expect("stdout was piped");
         let stderr = child.stderr.take().expect("stderr was piped");
@@ -3049,7 +3050,7 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             // line: the give-up message must quote the attempt that actually just failed.
             s.host_signal = None;
             s.lan_signal = None;
-            s.witness = witness_dir;
+            s.witness = witnessed;
             s.first_error = None;
             s.latest_error = None;
             // BOTH READERS, COUNTED IN BEFORE EITHER IS SPAWNED. They are what tells the
@@ -3566,8 +3567,8 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
         s.witness.clone()
     };
     // The record this engine wrote is remembered before anything can read it as serving.
-    if let Some(dir) = witness {
-        witness::record_served(&dir);
+    if let Some((dir, spawn_ticks)) = witness {
+        witness::record_served(&dir, spawn_ticks);
     }
     // The mailbox id, and nothing else. Not the token, and not the data directory: a directory
     // under the user's home carries their account name, and the shell that set it already knows.
@@ -5032,6 +5033,14 @@ fn lock_pid(bytes: &[u8]) -> Option<u32> {
     u32::try_from(pid).ok().filter(|&pid| pid > 0)
 }
 
+/// The start time a lock's record carries (`startTicks`, which the sidecar writes where `/proc`
+/// answers), or `None`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn lock_start_ticks(bytes: &[u8]) -> Option<u64> {
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    serde_json::from_str::<serde_json::Value>(text).ok()?.get("startTicks")?.as_u64()
+}
+
 /// Remove the lock at `lock` unless the engine that wrote it may still run, and only while it is
 /// still the file that was judged: a record a starting engine put back meanwhile is that engine's.
 /// The witness decides first ([`witness`]); a record it never vouched for keeps the pid's rule.
@@ -5040,13 +5049,24 @@ fn lock_pid(bytes: &[u8]) -> Option<u32> {
 fn remove_unheld_lock(lock: &Path, running: impl Fn(u32) -> bool, witness: &witness::Reading) -> Result<(), String> {
     let unreadable = |err: io::Error| format!("the lock could not be read ({err}); nothing was removed");
     let Some(judged) = read_lock(lock).map_err(unreadable)? else { return Ok(()) };
-    match witness {
+    let vouched = match witness {
         // An engine handed the witness still runs, whatever the record's pid reads as now.
-        witness::Reading::Held => return Err(format!("{UNLOCK_HELD}{HELD_BY_ITS_WITNESS}")),
-        // Its writer served holding the witness, which is free: that engine has gone, whatever
-        // runs under its pid today.
-        witness::Reading::Free { served, .. } if served.contains(&witness::record_hash(&judged.bytes)) => {}
-        _ => {
+        witness::Reading::Held => return Err(format!("{UNLOCK_HELD}{ITS_ENGINE_STILL_RUNS}")),
+        witness::Reading::Free { served, .. } => {
+            let hash = witness::record_hash(&judged.bytes);
+            served.iter().find(|entry| entry.hash == hash)
+        }
+        witness::Reading::Unread => None,
+    };
+    match vouched {
+        // Its writer served holding the witness, which is free: that engine has gone, whatever runs
+        // under its pid today, unless that pid still names it.
+        Some(served) => {
+            if witness::still_that_engine(&judged.bytes, served) {
+                return Err(format!("{UNLOCK_HELD}{ITS_ENGINE_STILL_RUNS}"));
+            }
+        }
+        None => {
             if let Some(pid) = lock_pid(&judged.bytes) {
                 if running(pid) {
                     return Err(format!(
@@ -5069,16 +5089,19 @@ fn remove_unheld_lock(lock: &Path, running: impl Fn(u32) -> bool, witness: &witn
     }
 }
 
-/// The refusal for a record whose witness is still held.
-const HELD_BY_ITS_WITNESS: &str = "the engine that holds this copy of your mail is still running, \
-                                   so its lock was kept and the engine was not restarted";
+/// The refusal for a record whose engine still runs: its witness is held, or on Linux its pid
+/// still names it.
+const ITS_ENGINE_STILL_RUNS: &str = "the engine that holds this copy of your mail is still running, \
+                                     so its lock was kept and the engine was not restarted";
 
 /// THE ENGINE'S WITNESS, which the unlock press asks before it trusts a pid. `sidecar.lock` is a
 /// record nothing holds and its pid can be issued again to a stranger, so the press kept a dead
 /// engine's lock for whatever ran under that number, and the card blamed another copy. The shell
 /// flocks `engine.hold` beside it and hands the descriptor to that engine alone, so the kernel lets
 /// go exactly when the engine has gone, and keeps the hash of the record it wrote once it serves.
-/// Unix only: elsewhere every reading is `Unread`, which is the pid's rule.
+/// Unix only: elsewhere every reading is `Unread`, which is the pid's rule. On Linux a start time
+/// backs a free reading, so a pid that still names its engine is kept (`still_that_engine`).
+#[cfg_attr(not(unix), allow(dead_code))]
 mod witness {
     use super::*;
 
@@ -5093,9 +5116,33 @@ mod witness {
         Held,
         /// Nothing holds it, and these records were written by engines that held it while they
         /// served. The reading keeps the lock until it is dropped.
-        Free { served: Vec<String>, _hold: Hold },
+        Free { served: Vec<Served>, _hold: Hold },
         /// Never taken here, or it could not be read.
         Unread,
+    }
+
+    /// One record the witness vouches for: its hash, and the start time the shell read for the
+    /// engine that wrote it when it spawned that engine, where the platform has one.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) struct Served {
+        pub(super) hash: String,
+        pub(super) spawn_ticks: Option<u64>,
+    }
+
+    impl Served {
+        /// One line of the witness file: the hash, then the start time where there is one.
+        fn parse(line: &str) -> Option<Served> {
+            let mut words = line.split_whitespace();
+            let hash = words.next()?.to_string();
+            Some(Served { hash, spawn_ticks: words.next().and_then(|ticks| ticks.parse().ok()) })
+        }
+
+        fn line(&self) -> String {
+            match self.spawn_ticks {
+                Some(ticks) => format!("{} {ticks}", self.hash),
+                None => self.hash.clone(),
+            }
+        }
     }
 
     /// A witness this process locked to read it, let go the moment it is dropped: UNLOCKED, not
@@ -5149,7 +5196,7 @@ mod witness {
 
     /// Remember the record the engine wrote, once it serves, and only while the witness is still
     /// held: an engine that let it go is never vouched for by it.
-    pub(super) fn record_served(dir: &Path) {
+    pub(super) fn record_served(dir: &Path, spawn_ticks: Option<u64>) {
         #[cfg(unix)]
         {
             use std::io::{Seek, SeekFrom};
@@ -5168,10 +5215,15 @@ mod witness {
             if file.read_to_string(&mut text).is_err() {
                 return;
             }
-            let hash = record_hash(&record.bytes);
-            let mut served: Vec<&str> = text.lines().filter(|line| !line.is_empty() && *line != hash).collect();
-            served.push(&hash);
-            let kept = format!("{}\n", served[served.len().saturating_sub(KEPT)..].join("\n"));
+            let served = Served { hash: record_hash(&record.bytes), spawn_ticks };
+            let mut lines: Vec<String> = text
+                .lines()
+                .filter_map(Served::parse)
+                .filter(|entry| entry.hash != served.hash)
+                .map(|entry| entry.line())
+                .collect();
+            lines.push(served.line());
+            let kept = format!("{}\n", lines[lines.len().saturating_sub(KEPT)..].join("\n"));
             let _ = file
                 .set_len(0)
                 .and_then(|_| file.seek(SeekFrom::Start(0)))
@@ -5179,7 +5231,7 @@ mod witness {
         }
         #[cfg(not(unix))]
         {
-            let _ = dir;
+            let _ = (dir, spawn_ticks);
         }
     }
 
@@ -5196,10 +5248,7 @@ mod witness {
                     let read = file.read_to_string(&mut text);
                     let hold = Hold(file);
                     match read {
-                        Ok(_) => Reading::Free {
-                            served: text.lines().filter(|line| !line.is_empty()).map(str::to_string).collect(),
-                            _hold: hold,
-                        },
+                        Ok(_) => Reading::Free { served: text.lines().filter_map(Served::parse).collect(), _hold: hold },
                         Err(_) => Reading::Unread,
                     }
                 }
@@ -5210,6 +5259,39 @@ mod witness {
         {
             let _ = dir;
             Reading::Unread
+        }
+    }
+
+    /// THE BELT, on Linux: a free witness is not the only proof while the record's pid still names
+    /// the engine that wrote it, by the start time the record carries or the one the shell read
+    /// when it spawned that engine. An engine that closed its descriptor and still runs is kept.
+    pub(super) fn still_that_engine(record: &[u8], served: &Served) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let Some(live) = lock_pid(record).and_then(start_ticks_of) else { return false };
+            lock_start_ticks(record) == Some(live) || served.spawn_ticks == Some(live)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (record, served);
+            false
+        }
+    }
+
+    /// When `pid` started, in clock ticks since boot: field 22 of `/proc/<pid>/stat`, read after
+    /// the last `)` because the name before it may hold spaces and parentheses. `None` for a
+    /// process that is gone or cannot be read, and on every platform without `/proc`.
+    pub(super) fn start_ticks_of(pid: u32) -> Option<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut stat = String::new();
+            File::open(format!("/proc/{pid}/stat")).ok()?.read_to_string(&mut stat).ok()?;
+            stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = pid;
+            None
         }
     }
 
