@@ -29,6 +29,7 @@ import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
 import { ipClassOf, networkVerdict, type NetworkVerdict } from "./ip-class.js";
+import { credentialRefused } from "./credential-refused.js";
 import { clampPageLimit } from "../pagination.js";
 // The ONE definition of "a valid address" — see {@link requireEmail} for why registration
 // borrows the mailer's predicate instead of growing a second one.
@@ -413,7 +414,7 @@ const invalidDesktopChallenge = (): ServiceError => new ServiceError(
 
 /** A sign-in on an account erased under it: the answer its credentials give once it is gone. */
 const refusedSignIn = (): never => {
-  throw new ServiceError("unauthorized", 401, "invalid email or password");
+  throw credentialRefused("invalid email or password");
 };
 
 /**
@@ -898,7 +899,7 @@ export class AuthService extends SessionLifecycle {
       await this.throttleLock(db, guessKey, guessPolicy);
       await this.audit(db, user, "login_failed", "password", ctx);
       // `login`'s exact sentence. The token is still live and still single-use.
-      throw new ServiceError("unauthorized", 401, "invalid email or password");
+      throw credentialRefused("invalid email or password");
     }
 
     await this.throttleRefund(db, guessKey, guessPolicy);
@@ -1018,7 +1019,7 @@ export class AuthService extends SessionLifecycle {
       if (pwKey) await this.throttleLock(db, pwKey);
       if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
       if (user) await this.audit(db, user, "login_failed", "password", ctx);
-      throw new ServiceError("unauthorized", 401, "invalid email or password");
+      throw credentialRefused("invalid email or password");
     }
 
     // The password was right, so give the reservations back. Both paths below reach
@@ -1538,7 +1539,7 @@ export class AuthService extends SessionLifecycle {
     try {
       reg = await verifyRegistration(this.cfg, b.credential, ch.challenge, ch.origin);
     } catch {
-      throw new ServiceError("unauthorized", 401, "passkey registration verification failed");
+      throw credentialRefused("passkey registration verification failed");
     }
 
     // ONE transaction for "the factor lands ⇄ the enrollment session is retired".
@@ -1601,7 +1602,7 @@ export class AuthService extends SessionLifecycle {
     const stored = (await this.webauthnCreds(db, user.id)).find((c) => c.credentialId === credId);
     if (!stored) {
       await this.twofaFail(db, user, ctx, true);
-      throw new ServiceError("unauthorized", 401, "unknown credential");
+      throw credentialRefused("unknown credential");
     }
 
     let result;
@@ -1610,7 +1611,7 @@ export class AuthService extends SessionLifecycle {
       result = await verifyAssertion(this.cfg, b.credential, ch.challenge, stored, ch.origin);
     } catch {
       await this.twofaFail(db, user, ctx, true);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
 
     await db.update(webauthnCredentials)
@@ -1765,14 +1766,14 @@ export class AuthService extends SessionLifecycle {
       .where(and(eq(totpSecrets.userId, user.id), eq(totpSecrets.activated, true))).limit(1))[0];
     if (!row) {
       await this.twofaFail(db, user, ctx, true);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     const secret = await this.deps.keyProvider.decrypt(row.secretEnc, row.keyVersion);
     // Single-use per timestep: reject any token whose step ≤ the last consumed one.
     const v = verifyTotp({ secret, token: b.code, now: ctx.now(), window: this.cfg.totpWindow, afterStep: numOrNull(row.lastConsumedStep) });
     if (!v.valid) {
       await this.twofaRefused(db, user, ctx, this.replayedTotp(secret, b.code, ctx.now()), true);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     // ADVANCE THE STEP CONDITIONALLY — this is what makes "single-use per timestep"
     // true rather than merely intended. `verifyTotp` was given `afterStep` from a row this
@@ -1797,7 +1798,7 @@ export class AuthService extends SessionLifecycle {
       // it is a REPLAY by construction (the code verified; only the step was spent), so it
       // is not counted toward the lockout. See {@link twofaRefused}.
       await this.twofaRefused(db, user, ctx, true, true);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     await this.consumeLoginToken(db, lt.id, ctx.now());
     await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
@@ -1854,13 +1855,13 @@ export class AuthService extends SessionLifecycle {
       .where(and(eq(totpSecrets.userId, user.id), eq(totpSecrets.activated, true))).limit(1))[0];
     if (!row) {
       await this.twofaFail(db, user, ctx);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     const secret = await this.deps.keyProvider.decrypt(row.secretEnc, row.keyVersion);
     const v = verifyTotp({ secret, token: b.code, now: ctx.now(), window: this.cfg.totpWindow, afterStep: numOrNull(row.lastConsumedStep) });
     if (!v.valid) {
       await this.twofaRefused(db, user, ctx, this.replayedTotp(secret, b.code, ctx.now()));
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     // The conditional advance, INCLUDING the fail-on-zero-rows arm — `totpVerify`'s exact
     // shape, and the property it buys here is cross-door: a code consumed at sign-in (or at a
@@ -1881,7 +1882,7 @@ export class AuthService extends SessionLifecycle {
       // A replay by construction — the code verified, the step was already spent. Same
       // sentence, no lockout slot burned. See {@link twofaRefused}.
       await this.twofaRefused(db, user, ctx, true);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     // A TOTP code was just verified, here, by the holder of THIS session.
     return this.stampStepUp(ctx, db, user, "totp");
@@ -1931,7 +1932,7 @@ export class AuthService extends SessionLifecycle {
     const submitted = challengeOfAssertion(b.credential);
     if (!submitted) {
       await this.twofaFail(db, user, ctx);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     // A claim that finds no row — a selector naming no open ceremony, an expired row, an
     // origin mismatch — is a FAILED FACTOR at this door and is finalized as one
@@ -1945,20 +1946,20 @@ export class AuthService extends SessionLifecycle {
       ch = await this.consumeChallenge(db, ctx, { userId: user.id, type: "authentication", challenge: submitted });
     } catch {
       await this.twofaFail(db, user, ctx);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     const credId = b.credential?.id as string | undefined;
     const stored = (await this.webauthnCreds(db, user.id)).find((c) => c.credentialId === credId);
     if (!stored) {
       await this.twofaFail(db, user, ctx);
-      throw new ServiceError("unauthorized", 401, "unknown credential");
+      throw credentialRefused("unknown credential");
     }
     let result;
     try {
       result = await verifyAssertion(this.cfg, b.credential, ch.challenge, stored, ch.origin);
     } catch {
       await this.twofaFail(db, user, ctx);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     await db.update(webauthnCredentials)
       .set({ counter: result.newCounter, lastUsedAt: ctx.now() })
@@ -2076,7 +2077,7 @@ export class AuthService extends SessionLifecycle {
       // No codes have ever been generated for this user. Refused exactly like a wrong code —
       // the caller must not learn which of the two it was.
       await this.twofaFail(db, user, ctx, true);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     const row = (await db.select().from(recoveryCodes)
       .where(and(
@@ -2088,7 +2089,7 @@ export class AuthService extends SessionLifecycle {
       .limit(1))[0];
     if (!row) {
       await this.twofaFail(db, user, ctx, true);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     // ONE TRANSACTION, and that single call is the whole fix. The burn used to autocommit and
     // the session to follow in a commit of its own, so an outage between the two spent a
@@ -2105,7 +2106,7 @@ export class AuthService extends SessionLifecycle {
       // transaction that has just rolled back.
       if (!(e instanceof RecoveryCodeAlreadySpent)) throw e;
       await this.twofaFail(db, user, ctx, true);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+      throw credentialRefused("two-factor verification failed");
     }
     await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     return { ...spent.est, remainingCodes: spent.remaining };
@@ -2578,7 +2579,7 @@ export class AuthService extends SessionLifecycle {
         eq(loginTokens.purpose, "login"),
       )).limit(1))[0];
     if (!row || row.consumedAt || row.expiresAt.getTime() <= ctx.now().getTime()) {
-      throw new ServiceError("unauthorized", 401, "login session expired");
+      throw credentialRefused("login session expired");
     }
     return { id: row.id, userId: boundUserId(row.userId), methods: (row.methods as Method[]) ?? [] };
   }
@@ -2597,7 +2598,7 @@ export class AuthService extends SessionLifecycle {
       .where(and(eq(loginTokens.id, id), isNull(loginTokens.consumedAt)))
       .returning({ id: loginTokens.id });
     if (claimed.length === 0) {
-      throw new ServiceError("unauthorized", 401, "login session expired");
+      throw credentialRefused("login session expired");
     }
   }
 
@@ -2650,7 +2651,7 @@ export class AuthService extends SessionLifecycle {
     const row = (await db.select().from(webauthnChallenges)
       .where(and(...preds)).orderBy(desc(webauthnChallenges.createdAt)).limit(1))[0];
     if (!row || row.expiresAt.getTime() <= ctx.now().getTime()) {
-      throw new ServiceError("unauthorized", 401, "webauthn challenge expired");
+      throw credentialRefused("webauthn challenge expired");
     }
     // Single-use + origin/RP-ID binding. `rpID` stays single-valued — an equality check. The
     // ORIGIN is checked twice, answering different questions: (a) MEMBERSHIP — is the origin this
@@ -2662,10 +2663,10 @@ export class AuthService extends SessionLifecycle {
     // enforced downstream, because `expectedOrigin` is `row.origin` and `clientDataJSON.origin`
     // is signed.
     if (row.rpId !== this.cfg.rpID || !allowedOrigins(this.cfg).includes(row.origin)) {
-      throw new ServiceError("unauthorized", 401, "webauthn challenge origin mismatch");
+      throw credentialRefused("webauthn challenge origin mismatch");
     }
     if (ctx.origin != null && ctx.origin.trim() !== "" && tryNormalizeOrigin(ctx.origin) !== row.origin) {
-      throw new ServiceError("unauthorized", 401, "webauthn challenge origin mismatch");
+      throw credentialRefused("webauthn challenge origin mismatch");
     }
     // CLAIM IT, do not merely mark it. The `isNull(consumedAt)` above is in the SELECT, so
     // an unconditional UPDATE here left the pair a read-modify-write: two verifies carrying
@@ -2677,7 +2678,7 @@ export class AuthService extends SessionLifecycle {
       .where(and(eq(webauthnChallenges.id, row.id), isNull(webauthnChallenges.consumedAt)))
       .returning({ id: webauthnChallenges.id });
     if (claimed.length === 0) {
-      throw new ServiceError("unauthorized", 401, "webauthn challenge expired");
+      throw credentialRefused("webauthn challenge expired");
     }
     return row;
   }

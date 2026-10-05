@@ -77,7 +77,7 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
         // purpose: a mailed link plus a password must not skip a factor somebody added.
         setDone(true);
       } catch (err) {
-        // `invalid_token` is the one-sentence refusal for every dead link; `unauthorized` is a
+        // `invalid_token` is the one-sentence refusal for every dead link; `credential_refused` is a
         // wrong password, and the token is still live so retrying in place is the right remedy.
         setError(messageOf(err));
         if (codeOf(err) === "invalid_token") setToken("");

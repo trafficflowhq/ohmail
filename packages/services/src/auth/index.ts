@@ -15,6 +15,7 @@ export {
 // entry) must not re-export it, because a hosted maintenance pass has no business in the
 // public engine artifact's graph. Its one caller is `GET /internal/sessions/reap`.
 export { reapStaleWebSessions, type ReapResult } from "./session-reaper.js";
+export { CREDENTIAL_REFUSED, credentialRefused } from "./credential-refused.js";
 export {
   scryptHasher, generateToken, hashToken, sha256,
   StaticKeyProvider,
