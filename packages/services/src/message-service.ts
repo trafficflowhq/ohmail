@@ -1057,7 +1057,10 @@ export class MessageService {
        `null` when this request wrote no desired folder: an `unread`-only patch owes the organizer
        nothing new, and ringing for it would wake the worker for work that does not exist. */
     let filed: string | null = null;
-    const seq = await asTx(ctx).transaction(async (tx) => {
+    /* ONE LOCK ORDER WITH THE MOVE AND THE APPROVAL: fenced at the top, the message's rows, then the
+       change-log counter. Both halves' changes are recorded after the rows, so a patch never holds
+       the counter while it waits for a `folder_state` row another writer holds. */
+    const seq = await withAccountTx(ctx, async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, unread: messages.unread, nativeLocator: messages.nativeLocator,
         // Which mailbox this message is in, and the name BOTH installs have for the message —
@@ -1070,6 +1073,8 @@ export class MessageService {
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
       let last: bigint | null = null;
+      let read = false;
+      let movedFrom: string | null = null;
 
       if (body.unread !== undefined) {
         // ONE instant for this decision, read once. The reading stamp, the row's `updated_at`
@@ -1089,10 +1094,8 @@ export class MessageService {
         }).where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
         // The read model AND the intent, in the same transaction. Writing only `messages.unread`
         // was the original bug: the flag never reached the mailbox, so it survived nothing.
-        await upsertDesiredSeen(tx, id, !msg.unread, !body.unread, at);
-        last = await recordChange(tx, {
-          accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
-        });
+        await upsertDesiredSeen(bridgeTx(tx), id, !msg.unread, !body.unread, at);
+        read = true;
       }
 
       if (folder !== undefined) {
@@ -1127,11 +1130,21 @@ export class MessageService {
           // from an earlier delete. See `upsertDesired`'s own parameter block. The request branch
           // above writes no `folder_state` row, so there is nothing there to clear.
           await this.upsertDesired(tx, id, observed, folder, ctx.now(), null);
-          last = await recordChange(tx, {
-            accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
-            meta: { from: observed, to: folder },
-          });
+          movedFrom = observed;
         }
+      }
+
+      // The counter, after every row this patch writes (the read first, then the move, as before).
+      if (read) {
+        last = await recordChange(tx, {
+          accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
+        });
+      }
+      if (folder !== undefined && movedFrom !== null) {
+        last = await recordChange(tx, {
+          accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
+          meta: { from: movedFrom, to: folder },
+        });
       }
 
       // A DELIBERATE read — or a re-file — spends the resurface. The batch route has always
