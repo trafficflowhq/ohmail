@@ -1372,9 +1372,7 @@ export class MessageService {
     });
 
     // The owed switch-off, after the commit: a person's pause meeting it queues, never deadlocks.
-    if (owedDemotion !== null) {
-      await demoteRoute(asTx(ctx), ctx.accountId, owedDemotion).catch((err: unknown) => { throw asServiceRefusal(err); });
-    }
+    if (owedDemotion !== null) await this.switchOffOwedRoute(ctx, owedDemotion);
 
     /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
        transaction this deadlocked against every other writer of the mailbox row — measured on
@@ -1695,6 +1693,26 @@ export class MessageService {
    * ring costs ONE ROTATION, and a throw is swallowed — a committed decision must not be reported
    * as failed by the thing that was only trying to make it faster.
    */
+  /**
+   * THE SWITCH-OFF A COMMITTED MOVE OWES. An erased account answers 410, as the fenced seam does;
+   * any other failure is logged and the move answers its commit, because the move HAS committed and
+   * the next override that crosses the window owes the switch-off again.
+   */
+  private async switchOffOwedRoute(ctx: ServiceContext, patternKey: string): Promise<void> {
+    try {
+      await demoteRoute(asTx(ctx), ctx.accountId, patternKey);
+    } catch (err) {
+      const refusal = asServiceRefusal(err);
+      if (refusal !== err) throw refusal;
+      doorbellLog.warn("route_switch_off_failed", {
+        accountId: ctx.accountId,
+        err,
+        reason: "the move COMMITTED; only the learned rule's switch-off failed, and the next move "
+          + "that contradicts the route owes it again",
+      });
+    }
+  }
+
   private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
     try {
       await ringFilingDoorbell(bridgeTx(ctx.db), mailboxId, ctx.now());

@@ -4,7 +4,7 @@ import {
   recordLearningSignal, type Tx,
 } from "@trafficflow/db";
 import type { AdapterPort, Destination, NativeLocator } from "@trafficflow/core/mail";
-import { applyReconcileAction } from "@trafficflow/core/mail";
+import { applyReconcileAction, createLogger } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -46,6 +46,7 @@ export interface ListApprovalsOptions {
 
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
 const asDb = (tx: Tx): Db => bridgeDb(tx);
+const learningLog = createLogger({ service: "learning" });
 
 /**
  * ApprovalService. Lists pending approvals and resolves them. On
@@ -256,7 +257,7 @@ export class ApprovalService {
        A pass lost to a crash here is asked again by the pattern's next decision. */
     if (msg && target) {
       const pk = patternKeyFor({ senderAddress: msg.fromAddress, destination: target });
-      if (pk) await this.learning.promoteOrDemote(ctx, pk);
+      if (pk) await this.promoteOrDemoteAfterCommit(ctx, pk);
     }
 
     // ── Physical IMAP move via the reconciler write-path, OUTSIDE the tx (step 3, idempotent) ──
@@ -288,6 +289,25 @@ export class ApprovalService {
     }
 
     return dto;
+  }
+
+  /**
+   * THE PASS AFTER THE DECISION COMMITTED. An erased account answers 410 as the seam does; any
+   * other failure is logged and the person is answered their committed decision, because the
+   * pattern's next decision asks the pass again.
+   */
+  private async promoteOrDemoteAfterCommit(ctx: ServiceContext, patternKey: string): Promise<void> {
+    try {
+      await this.learning.promoteOrDemote(ctx, patternKey);
+    } catch (err) {
+      if (err instanceof ServiceError && err.code === "account_erased") throw err;
+      learningLog.warn("approval_learning_pass_failed", {
+        accountId: ctx.accountId,
+        err,
+        reason: "the decision COMMITTED; only the promotion pass after it failed, and the "
+          + "pattern's next decision asks it again",
+      });
+    }
   }
 }
 
