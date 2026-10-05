@@ -736,6 +736,23 @@ export function firstSendFacts(status: string, at: Date): FirstSendFacts {
   return { status, at: at.toISOString() };
 }
 
+/** What a replay of a key a Cancel tombstoned is told (409 `send_withdrawn`). */
+export const SEND_WITHDRAWN_SENTENCE = "This send was cancelled before it left; nothing was sent.";
+
+/**
+ * WHAT THE SERVER SAYS ABOUT A CANCEL — `POST /sends/withdraw`. `withdrawn`: nothing under this key
+ * left and nothing ever will, because a tombstone refuses every replay of it. `already_sent` and
+ * `unverified`: the key's send is the server's, and its row answers. `in_flight`: an attempt may
+ * be running and nothing is claimed. `failed`: nothing left, and the key is spent.
+ */
+export type SendWithdrawOutcome = "withdrawn" | "already_sent" | "unverified" | "in_flight" | "failed";
+
+export interface SendWithdrawResult {
+  outcome: SendWithdrawOutcome;
+  /** The send this key already holds, as the replayed 200 names it — on `already_sent`/`unverified`. */
+  firstSend?: FirstSendFacts;
+}
+
 /**
  * HOW a stale reservation was decided — the half of `ResolveStaleOutcome` the reconciling pass
  * counts and the client path discards. `mirror` — the account's own `messages` mirror holds the
@@ -985,6 +1002,79 @@ export class SendService {
       .limit(1);
     if (!row || row.draftId !== draftId) return null;
     return firstSendFacts(row.status, row.sentAt ?? row.createdAt);
+  }
+
+  /**
+   * CANCEL, DECIDED WHERE THE DELIVERY LIVES. A key nobody reserved gets a `withdrawn` tombstone,
+   * so every later replay of it, from any window or store, is refused (`resumeExisting`); a key
+   * already reserved answers what its row says. One transaction, then at most the stale arm's
+   * verify-by-Sent through `resolveStale`. Never SMTP and never a resend; no content claim (the
+   * same words under a new key must still send), no draft write, no `change_log` row.
+   */
+  async withdraw(
+    ctx: ServiceContext, idempotencyKey: string, draftId: string | null,
+    deps: Pick<SendDeps, "openSendAdapter">,
+  ): Promise<SendWithdrawResult> {
+    type Decided = { result: SendWithdrawResult } | { stale: typeof outboundSends.$inferSelect; mailboxId: string };
+    const decided = await withAccountTx(ctx, async (tx): Promise<Decided> => {
+      // The draft is recorded only when this account holds it: the composite FK refuses anything else.
+      // KEY SHARE, FIRST: the reservation takes this row `FOR UPDATE` before it inserts the key, and
+      // the tombstone's FK check takes this lock after; read later, the two deadlocked (measured, the
+      // race arm). Key share still admits the finalize's non-key UPDATE, which locks in the other order.
+      let ownDraft: string | null = null;
+      if (draftId !== null) {
+        const [d] = await dialect(ctx.db).forUpdate(tx.select({ id: drafts.id }).from(drafts)
+          .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1), { mode: "key share" });
+        ownDraft = d?.id ?? null;
+      }
+      const now = ctx.now();
+      const inserted = await tx.insert(outboundSends).values({
+        accountId: ctx.accountId, idempotencyKey, draftId: ownDraft,
+        // NOT NULL on the column; a tombstone's id is never dialled and names no message.
+        mintedMessageId: mintMessageId(),
+        status: "withdrawn", resolvedBy: "person", resolvedAt: now, createdAt: now,
+      })
+        .onConflictDoNothing({ target: [outboundSends.accountId, outboundSends.idempotencyKey] })
+        .returning({ id: outboundSends.id });
+      if (inserted.length > 0) return { result: { outcome: "withdrawn" } };
+      const [row] = await dialect(ctx.db).forUpdate(tx.select().from(outboundSends)
+        .where(and(eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.idempotencyKey, idempotencyKey)))
+        .limit(1));
+      if (!row) throw new ServiceError("internal", 500, "reservation vanished");
+      if (row.status === "withdrawn") return { result: { outcome: "withdrawn" } };
+      if (row.status === "failed") return { result: { outcome: "failed" } };
+      if (row.status === "sent") {
+        return { result: { outcome: "already_sent", firstSend: firstSendFacts("sent", row.sentAt ?? row.createdAt) } };
+      }
+      if (row.status === "unverified") {
+        return { result: { outcome: "unverified", firstSend: firstSendFacts("unverified", row.createdAt) } };
+      }
+      // `pending`, or a word this build does not know: a live attempt may own it, so nothing is claimed.
+      const young = now.getTime() - row.createdAt.getTime() < SEND_STALE_AFTER_MS;
+      if (row.status !== "pending" || young || row.draftId === null) return { result: { outcome: "in_flight" } };
+      const [d] = await tx.select({ mailboxId: drafts.mailboxId }).from(drafts)
+        .where(and(eq(drafts.id, row.draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
+      return d ? { stale: row, mailboxId: d.mailboxId } : { result: { outcome: "in_flight" } };
+    });
+    if ("result" in decided) return decided.result;
+    // STALE: the single writer settles it by its own evidence, as a same-key replay would.
+    let out: ResolveStaleOutcome;
+    try {
+      out = await this.resolveStale(ctx, decided.stale, decided.mailboxId, deps.openSendAdapter);
+    } catch (err) {
+      // A dial the mail server refused or deferred says nothing about the message: ask again later.
+      if (err instanceof TransientDialRefusal || mailServerRefusalOf(err) !== null) return { outcome: "in_flight" };
+      throw err;
+    }
+    if (out.status === "sent") {
+      const [now] = await asTx(ctx).select({ sentAt: outboundSends.sentAt }).from(outboundSends)
+        .where(and(eq(outboundSends.id, decided.stale.id), eq(outboundSends.accountId, ctx.accountId))).limit(1);
+      return { outcome: "already_sent", firstSend: firstSendFacts("sent", now?.sentAt ?? ctx.now()) };
+    }
+    if (out.status === "unverified") {
+      return { outcome: "unverified", firstSend: firstSendFacts("unverified", decided.stale.createdAt) };
+    }
+    return { outcome: out.status === "failed" ? "failed" : "in_flight" };
   }
 
   async send(
@@ -2037,6 +2127,7 @@ export class SendService {
 
   /**
    * Branch on an already-reserved row (a same-key request):
+   *  - `withdrawn`  → 409 `send_withdrawn`: a Cancel tombstoned the key; NOTHING is sent.
    *  - `sent`       → replay the stored result, NO resend.
    *  - `unverified` → surface the terminal ambiguous state, NO resend.
    *  - `failed`     → surface the terminal failure, NO resend.
@@ -2050,6 +2141,11 @@ export class SendService {
     mailboxId: string,
     deps: SendDeps,
   ): Promise<SendResult> {
+    // A CANCELLED KEY SENDS NOTHING, from any window: first, so a draftless tombstone is not read
+    // as a discard below. Terminal and not retryable — the client ends the send as withdrawn.
+    if (row.status === "withdrawn") {
+      throw new ServiceError("send_withdrawn", 409, SEND_WITHDRAWN_SENTENCE, undefined, false);
+    }
     /**
      * THE KEY'S MESSAGE WAS DISCARDED, SO THERE IS NOTHING TO REPLAY (mail 0095: `draft_id` is
      * `ON DELETE SET NULL`). This read is keyed on `(account_id, idempotency_key)` ALONE, so the

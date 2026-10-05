@@ -308,6 +308,29 @@ export const draftsRoutes: Route[] = [
     },
   },
   {
+    /**
+     * CANCEL ASKS THE SERVER — `{ outcome, firstSend? }` for the `Idempotency-Key` header's send. A
+     * key nobody reserved is tombstoned, so no window can send it later; a reserved one answers
+     * what its row says. `connection`: its stale arm verifies by Sent, the send's own dial; it
+     * never opens SMTP. Convergent, so a repeat answers the same. `draftId` is recorded only when
+     * this account holds that draft. Relayed with the send, so a Cancel reaches the server it went to.
+     */
+    method: "POST",
+    pattern: "/sends/withdraw",
+    relay: true,
+    cost: "connection",
+    replay: "state",
+    handler: async (req, deps) => {
+      const key = req.headers.get("idempotency-key");
+      if (!key) throw new ServiceError("validation_failed", 400, "Idempotency-Key header is required");
+      const body = (await readBody<{ draftId?: unknown } | null>(req)) ?? {};
+      const draftId = body.draftId === undefined || body.draftId === null ? null : requireUuid(body.draftId, "draftId");
+      const openSendAdapter = deps.services?.sendAdapter ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId));
+      const answer = await sends(deps).withdraw(serviceContext(deps, req), key, draftId, { openSendAdapter });
+      return jsonResponse(answer.firstSend ? { outcome: answer.outcome, firstSend: answer.firstSend } : { outcome: answer.outcome });
+    },
+  },
+  {
     // §5 POST /drafts/:id/send — the GATED IDEMPOTENT send. Session +
     // CSRF (default pipeline); deliberately NOT idempotent-marked — the
     // generic verbatim idempotency cache can't model the `pending` reservation, so
