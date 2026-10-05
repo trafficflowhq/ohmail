@@ -2998,7 +2998,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    and this cannot be taken back. `restoredPending` is keyed on WHICH MESSAGE, so a
                    new message started on the same lane is never held. */
                 locked={mailSend.restoredPending(COMPOSE_SEND_KEY)
-                  ? { sentence: t("compose.sendingFromLastSession") }
+                  /* A store whose load was refused cannot say the send is over: held, and said. */
+                  ? { sentence: t(engine.outboxUnreadable?.() === true ? "compose.sendingOutboxUnread" : "compose.sendingFromLastSession") }
                   : null}
                 onSend={sendCompose}
                 onSendLater={sendCompose}

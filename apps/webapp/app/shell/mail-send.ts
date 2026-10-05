@@ -34,7 +34,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { OUTBOX_TYPE, joinableStandingSend, pressVerdict } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pressVerdict } from "@ohmail/client-engine";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
@@ -419,6 +419,33 @@ function durableSends(engine: OhmailEngine): DurableSends {
   return hit;
 }
 
+/**
+ * The durable outbox's pending sends by key, each with the lane a surface shows it on: a reply's
+ * message, an inline forward's dock (a forward row does not say which surface sent it, and the
+ * compose surface's forward is a compose), or the compose lane.
+ */
+function pendingSendLanes(reader: EntityReader): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of reader.list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow>) {
+    if (!pendingSendRow(r) || typeof r.key !== "string") continue;
+    const m = r.mutation as unknown as MailSend;
+    out.set(r.key, m.inReplyTo === null && m.forwardOf != null ? inlineForwardKey(m.forwardOf) : sendKeyOf(m));
+  }
+  return out;
+}
+
+/**
+ * DID ANOTHER WINDOW'S SEND GO — read once its row has left this window's durable outbox. Not when
+ * the row is still there marked withdrawn, nor when its owner said it was refused or withdrawn;
+ * otherwise yes (dropped after its answer, or kept marked `confirmed` for its echo).
+ */
+function endedAsSent(engine: OhmailEngine, key: string): boolean {
+  const said = typeof engine.foreignSendEnding === "function" ? engine.foreignSendEnding(key) : undefined;
+  if (said === "refused" || said === "withdrawn") return false;
+  const rows = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow> : [];
+  return !rows.some((r) => r.key === key && r.withdrawn === true);
+}
+
 export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): boolean {
   return durableSends(engine).lanes.has(lane);
 }
@@ -449,23 +476,16 @@ export function sendSettledIn(engine: OhmailEngine): (key: string) => boolean {
   return (key) => !pending.has(key);
 }
 
-/** The keys each engine has pressed under — this window's own presses, which its outbox view holds. */
-const pressedHere = new WeakMap<object, Set<string>>();
-
 /**
  * WHICH SEND RECORDS ARE STILL OWED AN ENDING — the one reading every deletion in `send-lock.ts` is
- * handed. Owed: a key not settled (the outbox unread, or queued, on the wire, on the durable outbox);
- * every key while a late answer waits uncollected (it names a mutation, not a key); and, for a sweep
- * that only guesses (not an `ended` the server answered), a record written after this engine's
- * outbox view by a press this engine did not make: another window's, whose row this view cannot see.
+ * handed. Owed: a key not settled (the outbox unread, or queued, on the wire, on the durable outbox),
+ * and every key while a late answer waits uncollected (it names a mutation, not a key). The durable
+ * outbox is every window's: the store follows the disk, so another window's waiting send is here too.
  */
 export function sendLockOwed(engine: OhmailEngine): SendLockOwed {
   const settled = sendSettledIn(engine);
   const late = typeof engine.hasLateResults === "function" && engine.hasLateResults();
-  const since = typeof engine.outboxViewSince === "function" ? engine.outboxViewSince() : null;
-  const mine = pressedHere.get(engine);
-  return (r, why) => late || !settled(r.key)
-    || (why !== "ended" && mine?.has(r.key) !== true && (since === null || r.at > since));
+  return (key) => late || !settled(key);
 }
 
 /** What the composer's hold reads off the engine: which keys are settled, and which are owed. */
@@ -1121,6 +1141,11 @@ export function canSend(state: SendState, m: MailSend): boolean {
  * "ambiguous is its own thing" — and a hook is a poor place to keep something that wants
  * asserting one row at a time.
  */
+/** A send withdrawn before the wire, by a Cancel this lane did not press: it owes no sentence. */
+function cancelledElsewhere(res: MutationResult): boolean {
+  return res.status === "rolled_back" && res.error?.code === OUTBOX_WITHDRAWN_CODE;
+}
+
 export function phaseFor(res: MutationResult): SendState {
   if (res.status === "confirmed") return IDLE;
   // `send_queued` is the SERVER's own accepted-pending answer (HTTP 202 from the send route past
@@ -1331,7 +1356,7 @@ export function useMailSend(
    * closes if it is still the one on screen.
    */
   const settle = useCallback(
-    (key: string, m: MailSend, andDone?: SendAndDonePlan, earlierWent = false) => {
+    (key: string, m: MailSend, andDone?: SendAndDonePlan, earlierWent = false, answeredEarlier = false) => {
       /* THE IDENTITY THE PRESS RECORDED — see {@link sentFor}. The fallback is the mutation's own
          row and no session, which is the most this can know about a settlement no press on this
          mount produced; an unnameable one admits, which is the rule everywhere else here. */
@@ -1412,6 +1437,12 @@ export function useMailSend(
         toast(t(key === COMPOSE_SEND_KEY ? "compose.toastEarlierWent" : key.startsWith("fwd:") ? "reply.toastForwardEarlierWent" : "reply.toastEarlierWent"));
         return;
       }
+      /* ANSWERED FROM THE RESERVATION: the server already held this key's send (`firstSend`), so the
+         press delivered nothing new. A resumed key alone says nothing: it is also the first delivery. */
+      if (answeredEarlier && key === COMPOSE_SEND_KEY && !m.sendAt) {
+        toast(t("compose.toastAlreadySent"));
+        return;
+      }
       toast(
         key === COMPOSE_SEND_KEY
           ? (m.sendAt
@@ -1468,7 +1499,8 @@ export function useMailSend(
     (key: string, m: MailSend, res: MutationResult) => {
       // Replaced on the wire by a newer press under this key: that press's answer settles the lane.
       if (res.status === "superseded") return;
-      let next = phaseFor(res);
+      // CANCELLED IN ANOTHER WINDOW: the lane ends as this window's own Cancel ends it, silently.
+      let next = cancelledElsewhere(res) ? IDLE : phaseFor(res);
       if (res.status === "queued") {
         // A waiting send whose newer words were kept back carries the earlier ones: said once.
         if ((res.error?.details as { earlierWordsKept?: boolean } | undefined)?.earlierWordsKept === true && !saidGoing.current.has(res.key)) {
@@ -1570,8 +1602,9 @@ export function useMailSend(
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the
       // draft and discharges the debt exactly as the first press would have.
-      if (res.status === "confirmed") settle(key, m, res.andDone, res.earlierWordsKept === true && res.firstSend !== undefined);
-      else {
+      if (res.status === "confirmed") {
+        settle(key, m, res.andDone, res.earlierWordsKept === true && res.firstSend !== undefined, res.firstSend !== undefined);
+      } else {
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
            not terminal — the flush confirms it later and `settle` answers then. */
@@ -1799,11 +1832,12 @@ export function useMailSend(
       releaseSendLock(record.lane, record.fp, sendLockOwed(engine), owner.current);
       /* The live path's own failure sentence, on the surface this answer is about: without it
          the composer comes back editable saying nothing, which is a message the person
-         pressed Send on and no account of what happened to it. */
-      if (speaksForScreen) setPhase(record.lane, phaseFor(res));
+         pressed Send on and no account of what happened to it. A Cancel says nothing. */
+      const ended = cancelledElsewhere(res) ? IDLE : phaseFor(res);
+      if (speaksForScreen) setPhase(record.lane, ended);
       // And the lane's owner hears it as the live path's owner does: this send is over, not sent.
       outcomeRef.current?.(
-        record.lane, { kind: "mail_send" } as unknown as MailSend, false, phaseFor(res).phase,
+        record.lane, { kind: "mail_send" } as unknown as MailSend, false, ended.phase,
         // The replay's own row, for the surface this answer speaks to and no other.
         speaksForScreen && refusedRowOf(res, true) ? { left: refusedRowOf(res, true)! } : undefined,
       );
@@ -1897,6 +1931,52 @@ export function useMailSend(
     return () => { cancelled = true; off(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);
+
+  /**
+   * ANOTHER WINDOW'S SEND ENDS HERE TOO. The store follows the disk, so a row another engine owns is
+   * read in this window, and leaving the outbox (dropped, or kept marked confirmed) is its confirmed
+   * ending unless its owning engine said refused or withdrawn. A reply's or an inline forward's lane ends
+   * as the live path ends it (its dock was held, so the words are the ones that went); a compose
+   * ends only through its record, and only in the tab whose compose it is. Keys this engine holds
+   * end through its own results.
+   */
+  useEffect(() => {
+    let watched = new Map<string, string>();
+    let stamp = -1;
+    let pending = new Map<string, string>();
+    const look = (): void => {
+      const reader = typeof engine.read === "function" ? engine.read() : null;
+      if (reader === null) return;
+      const at = typeof reader.stampOf === "function" ? reader.stampOf(OUTBOX_TYPE) : NaN;
+      if (at !== stamp || Number.isNaN(at)) { stamp = at; pending = pendingSendLanes(reader); }
+      const held = new Set<string>();
+      const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
+      for (const p of [...engine.pendingMutations(), ...wire]) held.add(p.key);
+      for (const [key, lane] of watched) {
+        if (pending.has(key) || held.has(key) || !endedAsSent(engine, key)) continue;
+        if (lane !== COMPOSE_SEND_KEY) {
+          endedElsewhere.current(lane);
+          continue;
+        }
+        const record = recordForEndedSend(key, owner.current);
+        if (record !== null && record.session === composeSessionId(owner.current)) {
+          adoptForeign.current({ id: key, key, status: "confirmed", seq: null });
+        }
+      }
+      watched = new Map([...pending].filter(([k]) => !held.has(k)));
+    };
+    look();
+    return engine.subscribe(look);
+  }, [engine]);
+
+  /** A reply's or an inline forward's send that went from another window: the lane ends as `settle` ends it. */
+  const endedElsewhere = useRef<(lane: string) => void>(() => {});
+  endedElsewhere.current = (lane: string): void => {
+    const m = { kind: "mail_send", inReplyTo: lane.startsWith("fwd:") ? null : lane, draftId: null } as unknown as MailSend;
+    clearLaneScratch(lane, m, owner.current, true);
+    setPhase(lane, IDLE);
+    settledRef.current(lane, m, true);
+  };
 
   const arm = useCallback(() => {
     if (timer.current !== null) return; // one timer for the whole queue
@@ -2102,10 +2182,6 @@ export function useMailSend(
       }
 
       ownKeys.current.add(sendKey);
-      // This engine's press: its row is in this engine's own outbox view (`sendLockOwed`).
-      let pressed = pressedHere.get(engine);
-      if (pressed === undefined) pressedHere.set(engine, pressed = new Set());
-      pressed.add(sendKey);
       locked.current.add(key);
       setPhase(key, { phase: "sending", since: Date.now() });
       // ACKNOWLEDGE FIRST, WORK SECOND — see {@link afterPaint}. The lock and the durable claim
@@ -2147,17 +2223,18 @@ export function useMailSend(
     for (const [k, l] of queued.current) {
       if (l === lane) { key = k; break; }
     }
-    /* A SEND THIS MOUNT NEVER PRESSED IS WITHDRAWN TOO: a reply or forward restored after a restart
-       sits on the engine's queue (or its wire) from the boot replay, and its dock is held as queued
-       (`replyDockState`), so Cancel means what it means on the live path. The engine's withdrawal
-       marks the key and the durable row, so neither this session nor a later boot delivers it. */
+    /* A SEND THIS MOUNT NEVER PRESSED IS WITHDRAWN TOO: a reply or forward restored after a restart,
+       or one another window owns, holds its dock as queued (`replyDockState`), so Cancel means what
+       it means on the live path. The engine withdraws its own row, or marks another window's on disk
+       and asks its owner; `gone` is a send that already ended there, whose record is not this
+       Cancel's to release. */
     if (key === null) {
       const restored = standingSendKey(engine, lane);
       // Nothing out on this lane: the ordinary case for Cancel, not a refusal.
       if (restored === null) return "close";
       const outcome = await engine.withdrawQueued(restored);
       if (outcome === "on_the_wire") return "already_sent";
-      const record = recordForEndedSend(restored, owner.current);
+      const record = outcome === "gone" ? null : recordForEndedSend(restored, owner.current);
       if (record !== null && record.lane === lane) {
         releaseSendLock(record.lane, record.fp, sendLockOwed(engine), owner.current);
       }

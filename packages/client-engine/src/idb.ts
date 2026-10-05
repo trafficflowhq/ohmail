@@ -5,8 +5,9 @@ import {
   durableSet,
   type DurableWrite,
 } from "./durable.js";
-import { BaseMirrorStore, MirrorGenerationChanged, keyMayCarry, wipeKeepUnion } from "./store.js";
-import { OUTBOX_TYPE, type Cursor } from "./types.js";
+import { BaseMirrorStore, MirrorGenerationChanged, keyMayCarry, wipeKeepUnion, type OutboxNotices } from "./store.js";
+import { OutboxNoticeBus, outboxNoticeChannel, type NoticeChannel } from "./outbox-notices.js";
+import { OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, type Cursor } from "./types.js";
 
 /**
  * WHICH STORE LOST A WRITE, for the notice's log line. The mirror's stable label and not the
@@ -116,6 +117,11 @@ async function carriedOnDisk(entities: IDBObjectStore): Promise<MirrorRecord[]> 
   return out;
 }
 
+/** Both outbox types' key ranges, the only rows a window re-reads when another one writes. */
+function outboxRanges(KeyRange: typeof IDBKeyRange): IDBKeyRange[] {
+  return [OUTBOX_TYPE, OUTBOX_ABANDONED_TYPE].map((t) => KeyRange.bound(`${t}:`, `${t}:\uffff`));
+}
+
 export interface IndexedDbMirrorStoreOptions {
   /**
    * THE ACCOUNT THIS MIRROR BELONGS TO — a server-verified account id, never a client guess. Required unless {@link
@@ -138,6 +144,8 @@ export interface IndexedDbMirrorStoreOptions {
   dbName?: string;
   /** Injectable factory — `fake-indexeddb`'s IDBFactory in tests, else global. */
   factory?: IDBFactory;
+  /** The notice channel's maker — the browser's `BroadcastChannel` unless a test hands one in. */
+  notices?: (name: string) => NoticeChannel | null;
 }
 
 /**
@@ -538,6 +546,9 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
    */
   private readonly bornEpoch = readEpoch();
 
+  /** The other windows over this database — see {@link IndexedDbMirrorStore.noticeOutbox}. */
+  private readonly bus: OutboxNoticeBus;
+
   constructor(opts: IndexedDbMirrorStoreOptions = {}) {
     super();
     const owner = opts.owner?.trim();
@@ -563,6 +574,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       throw new Error("IndexedDB is unavailable in this environment — use MemoryMirrorStore instead");
     }
     this.factory = factory;
+    this.bus = new OutboxNoticeBus(outboxNoticeChannel(this.dbName), opts.notices);
   }
 
   private async open(): Promise<IDBDatabase> {
@@ -661,6 +673,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     }
     meta.put(this.owner, OWNER_KEY);
     await commitWrite(tx);
+    if (stamped !== undefined) this.bus.post({ t: "changed" });
   }
 
   /** The database's current generation, 0 when it has never been stamped. */
@@ -721,6 +734,65 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     return this.dbName;
   }
 
+  outboxNotices(): OutboxNotices | null {
+    return this.bus.notices();
+  }
+
+  /**
+   * EVERY WRITE TRANSACTION THAT TOUCHED AN OUTBOX ROW SAYS SO once it has committed, so the other
+   * windows re-read the outbox: a row on disk that a window's memory lacks is a send it cannot see.
+   */
+  private noticeOutbox(keys: Iterable<string>): void {
+    this.bus.changed(keys);
+  }
+
+  protected async readOutboxRange(): Promise<MirrorRecord[] | null> {
+    const KeyRange = (globalThis as { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange;
+    if (KeyRange === undefined || this.fenced) return null;
+    const db = await this.open();
+    const tx = db.transaction([ENTITIES], "readonly");
+    const out: MirrorRecord[] = [];
+    for (const range of outboxRanges(KeyRange)) {
+      out.push(...await requestDone(tx.objectStore(ENTITIES).getAll(range)) as MirrorRecord[]);
+    }
+    await txDone(tx);
+    return out.filter((r) => r.entity !== null);
+  }
+
+  protected async readOutboxRowOnDisk(id: string): Promise<unknown> {
+    if (this.fenced) return undefined;
+    const db = await this.open();
+    const tx = db.transaction([ENTITIES], "readonly");
+    const rec = await requestDone(tx.objectStore(ENTITIES).get(`${OUTBOX_TYPE}:${id}`)) as MirrorRecord | undefined;
+    await txDone(tx);
+    return rec?.entity ?? undefined;
+  }
+
+  /** The compare-and-set behind {@link BaseMirrorStore.markOutboxWithdrawn}, under the generation fence. */
+  protected async markWithdrawnOnDisk(id: string, withdrawn: boolean): Promise<MirrorRecord | null> {
+    const db = await this.open();
+    const tx = db.transaction([ENTITIES, META], "readwrite");
+    const entities = tx.objectStore(ENTITIES);
+    const found = generationOf(await requestDone(tx.objectStore(META).get(GEN_KEY)));
+    if (found !== this.generation) {
+      const expected = this.generation;
+      this.generation = found;
+      try { tx.abort(); } catch { /* already settled */ }
+      throw new MirrorGenerationChanged(expected, found);
+    }
+    const key = `${OUTBOX_TYPE}:${id}`;
+    const rec = await requestDone(entities.get(key)) as MirrorRecord | undefined;
+    if (rec === undefined || rec.entity === null || typeof rec.entity !== "object") {
+      await commitWrite(tx);
+      return null;
+    }
+    const next: MirrorRecord = { ...rec, entity: { ...(rec.entity as object), withdrawn } };
+    entities.put(next, key);
+    await commitWrite(tx);
+    this.noticeOutbox([key]);
+    return next;
+  }
+
   /**
    * THE COMPARE-AND-SET behind {@link BaseMirrorStore.adoptOrphanedOutbox}: the outbox's key range read and re-stamped
    * inside one write transaction under the generation fence, so two tabs adopting at once serialize here and the
@@ -755,6 +827,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       taken.push(next);
     }
     await commitWrite(tx);
+    this.noticeOutbox(taken.map((r) => `${r.type}:${r.id}`));
     return taken;
   }
 
@@ -795,6 +868,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     if (cursor !== null) meta.put(cursor, CURSOR_KEY);
     for (const [k, v] of metaEntries) meta.put(v, k);
     await commitWrite(tx);
+    this.noticeOutbox(dirty.map((r) => `${r.type}:${r.id}`));
   }
 
   /**
@@ -812,6 +886,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     const entities = tx.objectStore(ENTITIES);
     for (const key of keys) entities.delete(key);
     await commitWrite(tx);
+    this.noticeOutbox(keys);
   }
 
   /**
@@ -837,9 +912,21 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       try { tx.abort(); } catch { /* already settled */ }
       throw new MirrorGenerationChanged(expected, found);
     }
+    /* A WITHDRAWN MARK IS NEVER WRITTEN OVER BY A PUT THAT DOES NOT SPEAK TO IT: another window may
+       have marked this row while this engine's request was out, and the re-put after it must not
+       erase the cancellation. A put carrying `withdrawn` (either value) is the owning engine deciding. */
+    for (const rec of puts) {
+      const entity = rec.entity as Record<string, unknown> | null;
+      if (rec.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object" || "withdrawn" in entity) continue;
+      const prior = await requestDone(entities.get(`${rec.type}:${rec.id}`)) as MirrorRecord | undefined;
+      if ((prior?.entity as { withdrawn?: unknown } | null | undefined)?.withdrawn === true) {
+        rec.entity = { ...entity, withdrawn: true };
+      }
+    }
     for (const rec of puts) entities.put(rec, `${rec.type}:${rec.id}`);
     for (const key of deletes) entities.delete(key);
     await commitWrite(tx);
+    this.noticeOutbox([...puts.map((r) => `${r.type}:${r.id}`), ...deletes]);
   }
 
   /**
@@ -883,10 +970,12 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     meta.put(next, GEN_KEY);
     await commitWrite(tx);
     this.generation = next;
+    this.noticeOutbox([...onDisk, ...keep].map((r) => `${r.type}:${r.id}`));
   }
 
   close(): void {
     this.db?.close();
     this.db = null;
+    this.bus.close();
   }
 }

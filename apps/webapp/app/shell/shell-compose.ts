@@ -959,6 +959,11 @@ export function useShellCompose({
     key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,
   ): boolean => {
     if (!accepted && phase === "failed") handBackLane(key);
+    // Cancelled in another window: the dock showing that send closes as its own Cancel closes it.
+    if (!accepted && phase === "idle" && replyToRef.current !== null) {
+      const target = replyToRef.current;
+      if ((replyModeRef.current === "forward" ? inlineForwardKey(target) : target) === key) setReplyTo(null);
+    }
     // A compose send refused for good names its row, and the composer takes it — one draft, not two.
     const left = detail?.left;
     if (!accepted && left !== undefined && key === COMPOSE_SEND_KEY) {

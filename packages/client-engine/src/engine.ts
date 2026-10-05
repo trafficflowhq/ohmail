@@ -47,7 +47,7 @@ import { sendFingerprint } from "./send-fingerprint.js";
 import { UNJUDGED_WRITE_CODES, type UnjudgedWriteCode } from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
-import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
+import { MemoryMirrorStore, type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices } from "./store.js";
 // THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
 // derivations over the drain stamp, held in one module with the desktop sidecar's mirror
 // (INSTANT-ARCH §6.7). A dependency-free core subpath, like `./ics` above; imported for local
@@ -144,6 +144,12 @@ export type WithdrawOutcome = "withdrawn" | "on_the_wire" | "gone";
  * verb the person cancelled owes no sentence, and "it failed" would be the wrong one.
  */
 export const OUTBOX_WITHDRAWN_CODE = "withdrawn";
+
+/**
+ * HOW LONG A WINDOW THAT DOES NOT OWN A SEND WAITS FOR ITS OWNER'S ANSWER to a Cancel. The mark is
+ * already on disk when it asks, so silence still cancels: the owning engine reads it before the wire.
+ */
+export const WITHDRAW_ASK_MS = 1_000;
 
 export interface MutationResult {
   id: string;
@@ -575,6 +581,14 @@ export function targetOf(m: EngineMutation): string | null {
 
 /** Replay order is user order: the stamp minted at `mutate()`, then its sequence. */
 const byAtN = (a: PendingMutation, b: PendingMutation): number => (a.at - b.at) || (a.n - b.n);
+
+/** The answer a verb cancelled from another window settles with: the code a surface says nothing for. */
+function withdrawnResult(p: PendingMutation): MutationResult {
+  return {
+    id: p.id, key: p.key, status: "rolled_back", seq: null,
+    error: new MutationRejectedError("withdrawn before it was sent", { code: OUTBOX_WITHDRAWN_CODE, retryable: false }),
+  };
+}
 
 /** One pending verb as the row that is persisted for it. */
 function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
@@ -1790,6 +1804,8 @@ export interface EngineOptions {
    * (memory, the phone's database) never uses it either way.
    */
   locks?: EngineLocks | null;
+  /** {@link WITHDRAW_ASK_MS}, for a test that drives a silent owner. */
+  withdrawAskMs?: number;
   /**
    * Override the archive transport. The shipped path takes it from the adapter (see
    * {@link ServerSearchCapableAdapter}); this exists so a test can drive the whole seam
@@ -2400,8 +2416,8 @@ export class OhmailEngine {
   private drainEpoch = 0;
   /** {@link OhmailEngine.restoreOutbox}'s latch. */
   private outboxRestored = false;
-  /** {@link OhmailEngine.outboxViewSince}: `Date.now()` as the first load of this engine's outbox began. */
-  private outboxViewAt: number | null = null;
+  /** A load the store refused — see {@link OhmailEngine.outboxUnreadable}. */
+  private loadFailed = false;
   /**
    * Restored verbs whose target was not in the mirror at the restore — the desktop window's mirror
    * is empty until its first drain. Painted at a drain's settle once the rows are there, so a
@@ -2525,6 +2541,15 @@ export class OhmailEngine {
    * fresh expression of intent under a reused key is not withdrawn.
    */
   private readonly withdrawnKeys = new Set<string>();
+  /** The shared disk's notice channel, once this engine listens to it — see {@link listenToDisk}. */
+  private notices: OutboxNotices | null = null;
+  /** How the sends other windows dropped ended, by key, as their owners said it (bounded). */
+  private readonly foreignEndings = new Map<string, "confirmed" | "refused" | "withdrawn">();
+  /** Cancels this engine asked another window's owner about, by ask id. */
+  private readonly asks = new Map<string, (outcome: WithdrawOutcome) => void>();
+  private following: Promise<void> | null = null;
+  private followAgain = false;
+  private readonly withdrawAskMs: number;
   private readonly listeners = new Set<() => void>();
   /** See {@link OhmailEngine.onMessagesRemoved} — told BEFORE the page is written. */
   private readonly removalListeners = new Set<(ids: readonly string[]) => void>();
@@ -2864,7 +2889,9 @@ export class OhmailEngine {
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
     this.locks = opts.locks === undefined ? defaultEngineLocks() : opts.locks;
+    this.withdrawAskMs = opts.withdrawAskMs ?? WITHDRAW_ASK_MS;
     this.holdOwnerLock();
+    this.listenToDisk();
     this.readerView = new OverlayReader(this.store, this.overlays, () => this.overlayRev, this.kept);
     this.resolvedView = oneSourceReader(this.readerView);
     this.storeTruth = oneSourceReader(this.store);
@@ -2888,15 +2915,14 @@ export class OhmailEngine {
    * Single-flight, cleared in `finally` — `syncOnce()`'s pattern: concurrent callers coalesce, and
    * the promise is cleared even on REJECTION, so a failed hydration (IndexedDB blocked) can be
    * tried on the next wake — a memoized-forever version turns one transient storage error into a
-   * mirror that can never be read for the life of the tab. `notify()` fires only on success: a
-   * failed read changed nothing, and the scheduler counts the rejection as a failed tick, which is
-   * what makes the retry happen. Re-hydrating mid-session is not reachable today (the scheduler
-   * latches; `start()` runs this before its only drain) — noted rather than guarded, because a
-   * guard nothing can trigger is a claim no test can put under load.
+   * mirror that can never be read for the life of the tab. A failed read changes one fact,
+   * {@link outboxUnreadable}, and notifies once for it; the scheduler counts the rejection as a
+   * failed tick, which is what makes the retry happen. Re-hydrating mid-session is not reachable
+   * today (the scheduler latches; `start()` runs this before its only drain) — noted rather than
+   * guarded, because a guard nothing can trigger is a claim no test can put under load.
    */
   async hydrate(): Promise<void> {
     if (this.hydrating) return this.hydrating;
-    this.outboxViewAt ??= Date.now();
     this.hydrating = this.store
       .load()
       // Reconcile the no-raw-secret-at-rest rule before publishing: a body cached by an older
@@ -2917,10 +2943,25 @@ export class OhmailEngine {
         await this.trimBodyCache();
         this.notify();
       })
+      .catch((err: unknown) => {
+        if (!this.storeLoaded && !this.loadFailed) {
+          this.loadFailed = true;
+          this.notify();
+        }
+        throw err;
+      })
       .finally(() => {
         this.hydrating = null;
       });
     return this.hydrating;
+  }
+
+  /**
+   * TRUE WHILE THE STORE HAS REFUSED ITS LOAD and nothing has loaded since: this engine cannot read
+   * its outbox, so it cannot say any send is over. A composer held for one says so, once.
+   */
+  outboxUnreadable(): boolean {
+    return this.loadFailed && !this.storeLoaded;
   }
 
   /**
@@ -3190,7 +3231,6 @@ export class OhmailEngine {
    * — only the local paint is skipped.
    */
   restoreOutbox(): void {
-    this.outboxViewAt ??= Date.now();
     // Calling this IS the statement that the store was loaded first, so it also arms the drive's
     // own door — a host that loaded and restored has nothing left for `restoreOutboxIfLoaded` to
     // wait on.
@@ -3211,18 +3251,6 @@ export class OhmailEngine {
    */
   outboxKnown(): boolean {
     return this.outboxRestored;
-  }
-
-  /**
-   * WHEN THIS ENGINE'S VIEW OF THE OUTBOX WAS TAKEN, in `Date.now()` ms, or `null` before it was.
-   * The store reads the outbox from disk when it loads and never again (`store.ts`, the keep set),
-   * so a verb another tab queued after this moment is on disk and not here: a key this engine
-   * calls settled is settled only if it was named before this. Taken as the first load BEGAN,
-   * which is the earlier and safe end; a host that loaded the store itself is stamped at its
-   * `restoreOutbox()` call.
-   */
-  outboxViewSince(): number | null {
-    return this.outboxViewAt;
   }
 
   /**
@@ -3253,7 +3281,11 @@ export class OhmailEngine {
       .sort((a, b) => (a.at - b.at) || (a.n - b.n));
     if (rows.length === 0) return;
     let restored = false;
+    const ownership = this.ownershipOn();
     for (const e of rows) {
+      /* ANOTHER ENGINE'S ROW STAYS ON DISK: its owner sends it, and this engine reads it there. A
+         row whose owner's lock is gone is adopted by a drive (`adoptOrphanedOutbox`), once. */
+      if (ownership && typeof e.owner === "string" && e.owner !== this.ownerName) continue;
       if (this.restoreEntry(e)) restored = true;
     }
     /**
@@ -3371,13 +3403,90 @@ export class OhmailEngine {
    * store other engines share; the name is recorded once the lock is GRANTED, never before.
    */
   private holdOwnerLock(): void {
-    const disk = this.store.sharedDiskName?.() ?? null;
-    if (this.locks === null || disk === null || typeof this.store.adoptOrphanedOutbox !== "function") return;
-    const name = `ohmail.engine.${disk}.${this.uuid()}`;
+    if (!this.ownershipOn() || this.locks === null) return;
+    const name = `ohmail.engine.${this.store.sharedDiskName!()}.${this.uuid()}`;
     void this.locks.request(name, { mode: "exclusive" }, () => {
       this.ownerName = name;
       return new Promise<never>(() => { /* held until the tab goes */ });
     }).catch(() => { this.ownerName = null; });
+  }
+
+  /**
+   * ONE OWNER PER ROW is on: Web Locks to ask, a disk other engines share, and adoption over it. Off
+   * (the phone, the desktop window, a browser without Web Locks): every row is this engine's, as before.
+   */
+  private ownershipOn(): boolean {
+    return this.locks !== null && (this.store.sharedDiskName?.() ?? null) !== null
+      && typeof this.store.adoptOrphanedOutbox === "function";
+  }
+
+  /**
+   * THE OTHER WINDOWS' WRITES REACH THIS ONE: a `changed` notice re-reads the outbox from disk, a
+   * `withdraw` asks this engine to cancel a row it owns, and the answers come back the same way.
+   */
+  private listenToDisk(): void {
+    if (!this.ownershipOn()) return;
+    const bus = this.store.outboxNotices?.() ?? null;
+    if (bus === null) return;
+    this.notices = bus;
+    bus.listen((n) => { void this.heard(n); });
+  }
+
+  private async heard(n: OutboxNotice): Promise<void> {
+    if (n.t === "changed") return this.followDisk();
+    if (n.t === "withdraw-answer") {
+      this.asks.get(n.ask)?.(n.outcome);
+      return;
+    }
+    if (n.t === "ended") {
+      this.foreignEndings.delete(n.key);
+      this.foreignEndings.set(n.key, n.how);
+      if (this.foreignEndings.size > 256) this.foreignEndings.delete(this.foreignEndings.keys().next().value!);
+      return;
+    }
+    // `withdraw`: answered only by the engine holding the key; any other stays silent.
+    const onWire = [...this.inFlight.values()].filter((p) => p.key === n.key);
+    if (onWire.length === 0 && !this.queue.some((p) => p.key === n.key)) return;
+    const outcome = await this.withdrawQueued(n.key, { askedElsewhere: true });
+    /* THE REQUEST HAD LEFT: the asker's mark is taken back on disk before the answer goes, so every
+       window reads the send as still on its way and this engine's own next write keeps it so. */
+    if (outcome === "on_the_wire") {
+      for (const p of onWire) await this.store.markOutboxWithdrawn?.(p.id, false).catch(() => "gone");
+    }
+    this.notices?.post({ t: "withdraw-answer", ask: n.ask, outcome });
+  }
+
+  /** The ids whose memory is newer than the disk: this engine's queue, wire and overlays. */
+  private heldIds(): ReadonlySet<string> {
+    return new Set<string>([...this.overlays.keys(), ...this.queue.map((q) => q.id), ...this.inFlight.keys()]);
+  }
+
+  /** One re-read at a time; a notice heard during one asks for one more after it. */
+  private async followDisk(): Promise<void> {
+    if (!this.storeLoaded || typeof this.store.refreshOutbox !== "function") return;
+    if (this.following !== null) { this.followAgain = true; return this.following; }
+    this.following = (async () => {
+      do {
+        this.followAgain = false;
+        const moved = await this.store.refreshOutbox!(() => this.heldIds()).catch(() => false);
+        if (moved) this.notify();
+      } while (this.followAgain);
+    })().finally(() => { this.following = null; });
+    return this.following;
+  }
+
+  /**
+   * HOW ANOTHER WINDOW'S SEND ENDED, as its owner said before dropping the row: `undefined` when
+   * nobody said (the owning window closed first, or this one opened after). Read by a surface that saw
+   * the row leave the outbox and must not take a cancellation or a refusal for a delivery.
+   */
+  foreignSendEnding(key: string): "confirmed" | "refused" | "withdrawn" | undefined {
+    return this.foreignEndings.get(key);
+  }
+
+  /** Say how a send this engine owns ended, before its row is dropped, so the order holds. */
+  private sayEnded(p: PendingMutation, how: "confirmed" | "refused" | "withdrawn"): void {
+    if (p.mutation.kind === "mail_send") this.notices?.post({ t: "ended", key: p.key, how });
   }
 
   /**
@@ -6839,6 +6948,7 @@ export class OhmailEngine {
      * is enough to buy a duplicate. Try again then means "ask the server what happened under this key": the same-key
      * replay is verify-before-resend, never a second message.
      */
+    this.sayEnded(p, "refused");
     const isSend = p.mutation.kind === "mail_send";
     const reported = isSend
       ? new MutationRejectedError(
@@ -7623,10 +7733,18 @@ export class OhmailEngine {
      * reaches the wire unless it is stopped here. Terminal: the overlay and the durable row go, and the refusal names itself so the
      * ledger above says nothing about mail nobody sent.
      */
+    /* AND ANOTHER WINDOW'S CANCEL, read off the disk row: one read per send, and only where
+       windows share the disk. */
+    if (!this.withdrawnKeys.has(p.key) && p.mutation.kind === "mail_send" && this.ownershipOn()
+        && typeof this.store.readOutboxRow === "function") {
+      const onDisk = await this.store.readOutboxRow(p.id).catch(() => undefined);
+      if ((onDisk as { withdrawn?: unknown } | undefined)?.withdrawn === true) this.withdrawnKeys.add(p.key);
+    }
     if (this.withdrawnKeys.has(p.key)) {
       this.overlays.delete(p.id);
       this.overlayRev++;
       this.notify();
+      this.sayEnded(p, "withdrawn");
       await this.dropOutbox(p.id);
       return {
         id: p.id, key: p.key, status: "rolled_back", seq: null,
@@ -7782,8 +7900,10 @@ export class OhmailEngine {
       // a kill before that sweep replays the entry under its original key — the server's
       // idempotency machinery answers with the stored response, never a second effect.
       const intent = p.released === true ? undefined : p.andDone;
-      if (!echoPending && this.settleConfirmed(p.id, p.mutation, shadow)) await this.dropOutbox(p.id);
-      else if (p.mutation.kind === "mail_send") {
+      if (!echoPending && this.settleConfirmed(p.id, p.mutation, shadow)) {
+        this.sayEnded(p, "confirmed");
+        await this.dropOutbox(p.id);
+      } else if (p.mutation.kind === "mail_send") {
         // KEPT for its echo: the send is confirmed and its intent handed over on THIS result.
         p.confirmed = true;
         if (intent !== undefined) p.released = true;
@@ -7931,6 +8051,7 @@ export class OhmailEngine {
        * would leave them with a row that says something went wrong and no way to find out.
        */
       if (p.restored === true) {
+        this.sayEnded(p, "refused");
         const code = rejection.code;
         const record: PersistedOutboxEntry = {
           v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
@@ -7964,6 +8085,7 @@ export class OhmailEngine {
       } else {
         // The durable entry goes with it: a refused verb whose owner read the sentence must not
         // replay, and must not sit in a list claiming to be unfinished work.
+        this.sayEnded(p, "refused");
         await this.dropOutbox(p.id);
       }
       this.overlayRev++;
@@ -8246,15 +8368,21 @@ export class OhmailEngine {
    * can deliver it. `on_the_wire` is the one answer that withdraws nothing: the request has gone
    * and this device cannot un-send it — the caller says so rather than promising a cancellation.
    */
-  async withdrawQueued(key: string): Promise<WithdrawOutcome> {
+  async withdrawQueued(key: string, opts: { askedElsewhere?: boolean } = {}): Promise<WithdrawOutcome> {
     for (const p of this.inFlight.values()) if (p.key === key) return "on_the_wire";
     const rows = this.queue.filter((p) => p.key === key);
     this.withdrawnKeys.add(key);
+    if (rows.length === 0 && !opts.askedElsewhere) {
+      const foreign = await this.withdrawForeign(key);
+      if (foreign !== null) return foreign;
+    }
     for (const p of rows) {
       const at = this.queue.indexOf(p);
       if (at >= 0) this.queue.splice(at, 1);
       this.overlays.delete(p.id);
       await this.markWithdrawn(p);
+      // Cancelled from another window: the surface here hears the ending as a late answer.
+      if (opts.askedElsewhere) this.lateResults.set(p.id, withdrawnResult(p));
       // An earlier press under this key was delivered and waited for this one to speak: it speaks now.
       const waiting = this.silencedConfirms.get(p.id);
       if (waiting !== undefined) {
@@ -8266,6 +8394,43 @@ export class OhmailEngine {
     this.overlayRev++;
     this.notify();
     return "withdrawn";
+  }
+
+  /**
+   * CANCEL IN A WINDOW THAT DOES NOT OWN THE SEND: the row is marked `withdrawn` on disk first (so
+   * a silent owner still reads it before the wire), then its owner is asked and its answer taken
+   * within {@link WITHDRAW_ASK_MS}. `null` when no other live engine's pending row carries the key.
+   */
+  private async withdrawForeign(key: string): Promise<WithdrawOutcome | null> {
+    if (!this.ownershipOn() || typeof this.store.markOutboxWithdrawn !== "function") return null;
+    const rows = this.store.entries<unknown>(OUTBOX_TYPE).map((e) => e.entity).filter(isPersistedOutboxEntry)
+      .filter((e) => e.key === key && e.withdrawn !== true && e.confirmed !== true
+        && typeof e.owner === "string" && e.owner !== this.ownerName);
+    if (rows.length === 0) return null;
+    let marked = false;
+    for (const e of rows) {
+      if (await this.store.markOutboxWithdrawn(e.id).catch(() => "gone" as const) === "marked") marked = true;
+    }
+    if (!marked) return "gone";
+    this.notify();
+    const owners = new Set(rows.map((e) => e.owner!));
+    let live = false;
+    try {
+      live = ((await this.locks!.query()).held ?? []).some((h) => typeof h.name === "string" && owners.has(h.name));
+    } catch { /* unaskable: the mark stands */ }
+    if (!live || this.notices === null) return "withdrawn";
+    const said = await this.askOwner(key);
+    if (said === "on_the_wire") this.withdrawnKeys.delete(key);
+    return said ?? "withdrawn";
+  }
+
+  private askOwner(key: string): Promise<WithdrawOutcome | null> {
+    const ask = this.uuid();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.asks.delete(ask); resolve(null); }, this.withdrawAskMs);
+      this.asks.set(ask, (outcome) => { clearTimeout(timer); this.asks.delete(ask); resolve(outcome); });
+      this.notices!.post({ t: "withdraw", key, ask });
+    });
   }
 
   /**

@@ -37,6 +37,18 @@ const BUILD_ENV: EngineEnv = {
   NEXT_PUBLIC_DESKTOP: process.env.NEXT_PUBLIC_DESKTOP,
 };
 
+let saidNoWebLocks = false;
+/**
+ * A BROWSER WITHOUT WEB LOCKS gives no waiting send an owner, so every window replays every one
+ * (the server's key still delivers it once). Said once, by name, because nothing else shows it.
+ */
+function sayNoWebLocks(): void {
+  const locks = (globalThis as { navigator?: { locks?: { request?: unknown } } }).navigator?.locks;
+  if (saidNoWebLocks || typeof locks?.request === "function") return;
+  saidNoWebLocks = true;
+  console.warn("ohmail: outbox_owner_absent — no Web Locks here, so every window replays every waiting send");
+}
+
 /**
  * Should the sync scheduler treat "hidden" as meaningful at all? `startSyncScheduler` gates on
  * `document.visibilityState` — right for a tab, wrong for the desktop app: a Tauri window the OS composites out
@@ -153,6 +165,7 @@ export function createEngine(
   if (!apiBase) throw new EngineUnarmedError();
 
   const persist = owner !== null && typeof indexedDB !== "undefined";
+  if (persist) sayNoWebLocks();
   if (persist) {
     // Fire-and-forget, once per engine: the pre-repair database is not ours to read and
     // is not something to leave lying on the origin. It is never opened, only deleted.

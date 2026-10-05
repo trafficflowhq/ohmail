@@ -1,7 +1,33 @@
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 import { beginDerive, noteMirrorMessages } from "./client-vitals.js";
-import { MAILBOX_TYPE, OUTBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
+import { MAILBOX_TYPE, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
+
+/**
+ * WHAT THE WINDOWS OVER ONE SHARED DISK SAY TO EACH OTHER about its outbox. `changed`: a write or
+ * delete of an outbox row committed; every other window re-reads the outbox's key range. `withdraw`
+ * and `withdraw-answer`: a window that does not own a row asks its owner to cancel it, after marking
+ * it on disk. `ended`: the owning engine says how a send it dropped ended, first. Nothing persisted.
+ */
+export type OutboxNotice =
+  | { t: "changed" }
+  | { t: "withdraw"; key: string; ask: string }
+  | { t: "withdraw-answer"; ask: string; outcome: "withdrawn" | "on_the_wire" | "gone" }
+  | { t: "ended"; key: string; how: "confirmed" | "refused" | "withdrawn" };
+
+/** One channel per shared disk: a post reaches every OTHER window's listeners, never its own. */
+export interface OutboxNotices {
+  post(n: OutboxNotice): void;
+  listen(cb: (n: OutboxNotice) => void): () => void;
+}
+
+/** The two outbox types, as `type:` key prefixes. */
+const OUTBOX_PREFIXES = [`${OUTBOX_TYPE}:`, `${OUTBOX_ABANDONED_TYPE}:`];
+
+/** Does a `type:id` key name an outbox row of either type. */
+export function isOutboxKey(key: string): boolean {
+  return OUTBOX_PREFIXES.some((p) => key.startsWith(p));
+}
 
 /**
  * The durable baseline this store was writing against is gone. Thrown by a
@@ -192,6 +218,21 @@ export interface MirrorStore extends EntityReader {
    * no owner is never taken. See `OhmailEngine`'s outbox adoption.
    */
   adoptOrphanedOutbox?(me: string, live: ReadonlySet<string>, exclude: ReadonlySet<string>): Promise<unknown[]>;
+  /** The shared disk's notice channel — `null` for a store no other window opens. */
+  outboxNotices?(): OutboxNotices | null;
+  /**
+   * FOLLOW THE DISK: re-read the outbox's two types and replace them in memory, except the outbox
+   * rows `exclude` names (this engine's own queue, wire and overlays: its memory is newer). `true`
+   * when memory moved. On the write lane, so it never reads behind this store's own writes.
+   */
+  refreshOutbox?(exclude: () => ReadonlySet<string>): Promise<boolean>;
+  /** The disk's own copy of one outbox row, read now; `undefined` when there is none. */
+  readOutboxRow?(id: string): Promise<unknown>;
+  /**
+   * Set one outbox row's `withdrawn` on disk, inside one transaction; `gone` when the row is not
+   * there. `true` is another window's Cancel; `false` is the owning engine: its request had left.
+   */
+  markOutboxWithdrawn?(id: string, withdrawn?: boolean): Promise<"marked" | "gone">;
   /**
    * HARD-DELETE EVERY RECORD CARRYING EXACTLY `seq` — the abandoned-snapshot-prefix sweep. A snapshot stamps every
    * row it emits with the SAME `seq` (its `asOfSeq`), so one seq value names one snapshot's output exactly. That
@@ -873,6 +914,86 @@ export abstract class BaseMirrorStore implements MirrorStore {
     _me: string, _live: ReadonlySet<string>, _exclude: ReadonlySet<string>,
   ): Promise<MirrorRecord[]> {
     return [];
+  }
+
+  /** The shared disk's notice channel; a store no other window opens has none. */
+  outboxNotices(): OutboxNotices | null {
+    return null;
+  }
+
+  /**
+   * FOLLOW THE DISK — see {@link MirrorStore.refreshOutbox}. Only the outbox's two key ranges are
+   * read, never the mirror, and memory moves (with one stamp) only when a row differs.
+   */
+  async refreshOutbox(exclude: () => ReadonlySet<string>): Promise<boolean> {
+    return this.serializeWrite(async () => {
+      const disk = await this.readOutboxRange();
+      if (disk === null) return false;
+      const held = exclude();
+      const keep = (rec: { type: string; id: string }): boolean => !(rec.type === OUTBOX_TYPE && held.has(rec.id));
+      const onDisk = new Map<string, MirrorRecord>();
+      for (const rec of disk) if (keep(rec)) onDisk.set(recordKey(rec.type, rec.id), rec);
+      let moved = false;
+      for (const [key, rec] of [...this.records]) {
+        if (!isOutboxKey(key) || !keep(rec) || onDisk.has(key)) continue;
+        this.records.delete(key);
+        moved = true;
+      }
+      for (const [key, rec] of onDisk) {
+        const mine = this.records.get(key);
+        if (mine !== undefined && JSON.stringify(mine.entity) === JSON.stringify(rec.entity)) continue;
+        this.records.set(key, rec);
+        moved = true;
+      }
+      if (moved) {
+        this.ver++;
+        this.stampTypes([OUTBOX_TYPE, OUTBOX_ABANDONED_TYPE]);
+      }
+      return moved;
+    });
+  }
+
+  /** The disk's outbox rows of both types, or `null` for a store with no disk to read. */
+  protected async readOutboxRange(): Promise<MirrorRecord[] | null> {
+    return null;
+  }
+
+  /** See {@link MirrorStore.readOutboxRow}: on the write lane, so it reads after this store's own writes. */
+  async readOutboxRow(id: string): Promise<unknown> {
+    return this.serializeWrite(() => this.readOutboxRowOnDisk(id));
+  }
+
+  /** The disk's half of {@link readOutboxRow}; a store with no disk answers from nothing. */
+  protected async readOutboxRowOnDisk(_id: string): Promise<unknown> {
+    return undefined;
+  }
+
+  /**
+   * See {@link MirrorStore.markOutboxWithdrawn}. Serialized with every other local write, under the
+   * generation fence, and memory learns only what the disk's own transaction wrote.
+   */
+  async markOutboxWithdrawn(id: string, withdrawn = true): Promise<"marked" | "gone"> {
+    return this.serializeWrite(async () => {
+      await this.settleWipe();
+      let rec: MirrorRecord | null;
+      try {
+        rec = await this.markWithdrawnOnDisk(id, withdrawn);
+      } catch (err) {
+        if (!(err instanceof MirrorGenerationChanged)) throw err;
+        await this.adoptWipedBaseline();
+        rec = await this.markWithdrawnOnDisk(id, withdrawn);
+      }
+      if (rec === null) return "gone";
+      this.records.set(recordKey(rec.type, rec.id), rec);
+      this.ver++;
+      this.stampTypes([OUTBOX_TYPE]);
+      return "marked";
+    });
+  }
+
+  /** The disk's half of {@link markOutboxWithdrawn}: the row as written, or `null` when absent. */
+  protected async markWithdrawnOnDisk(_id: string, _withdrawn: boolean): Promise<MirrorRecord | null> {
+    return null;
   }
 
   /** See {@link MirrorStore.putLocal} — seq 0, latest wins, never through the seq guard. */

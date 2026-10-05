@@ -279,8 +279,8 @@ export {
 // Apply core (the convergence oracle) + stores.
 export { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 export {
-  BaseMirrorStore, MemoryMirrorStore, MirrorGenerationChanged,
-  type EntityReader, type MirrorStore,
+  BaseMirrorStore, MemoryMirrorStore, MirrorGenerationChanged, isOutboxKey,
+  type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices,
 } from "./store.js";
 export {
   IndexedDbMirrorStore,
@@ -292,6 +292,7 @@ export {
   purgeLegacyMirror,
   type IndexedDbMirrorStoreOptions,
 } from "./idb.js";
+export { OutboxNoticeBus, outboxNoticeChannel, type NoticeChannel } from "./outbox-notices.js";
 // The React Native arm of the mirror: same layout and ownership discipline as idb.ts, over an
 // INJECTED SQL executor (expo-sqlite in the app, node:sqlite in tests) — no Node built-in, no
 // browser global, so the module is inert everywhere the executor is not injected.
@@ -654,6 +655,7 @@ export {
   // with — a surface reads the code to say nothing rather than "it failed".
   type WithdrawOutcome,
   OUTBOX_WITHDRAWN_CODE,
+  WITHDRAW_ASK_MS,
   // Which queued or wire entry a new send press may join — both surfaces' lookups.
   joinableStandingSend,
   // The two structural capabilities an adapter WRAPPER has to forward by hand. Exported so a

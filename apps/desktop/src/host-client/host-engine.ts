@@ -21,10 +21,20 @@ export interface HostClientEngineOptions {
   onUnkept?: () => void;
 }
 
+let saidNoWebLocks = false;
+/** A browser without Web Locks gives no waiting send an owner: every tab replays it. Said once. */
+function sayNoWebLocks(): void {
+  const locks = (globalThis as { navigator?: { locks?: { request?: unknown } } }).navigator?.locks;
+  if (saidNoWebLocks || typeof locks?.request === "function") return;
+  saidNoWebLocks = true;
+  console.warn("ohmail: outbox_owner_absent — no Web Locks here, so every tab replays every waiting send");
+}
+
 export function createHostClientEngine(
   bearer: BearerManager,
   opts: HostClientEngineOptions,
 ): OhmailEngine {
+  if (opts.scope !== null) sayNoWebLocks();
   return new OhmailEngine({
     adapter: new HttpAdapter({
       baseUrl: "",

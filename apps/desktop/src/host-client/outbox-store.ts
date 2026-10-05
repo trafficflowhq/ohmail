@@ -5,9 +5,11 @@
  * at the next load, where the engine's restore replays them under their original keys. Rows are
  * keyed by the pairing and written only while the jar still holds it, so a pairing that ended
  * writes nothing. A browser that refuses the database keeps the changes in memory and says so once.
+ * Several tabs of one pairing share these rows: each row has one owner, as on the web's mirror.
  */
 import {
-  BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, recordKey, type MirrorRecord,
+  BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OutboxNoticeBus, outboxNoticeChannel, recordKey,
+  type MirrorRecord, type NoticeChannel, type OutboxNotices,
 } from "@ohmail/client-engine";
 
 export const HOST_OUTBOX_DB = "ohmail-host-outbox";
@@ -82,6 +84,14 @@ export interface HostOutboxStoreOptions {
   factory?: IDBFactory | null;
   /** Called once when this browser will not keep the changes. */
   onUnkept?: () => void;
+  /** The notice channel's maker — the browser's `BroadcastChannel` unless a test hands one in. */
+  notices?: (name: string) => NoticeChannel | null;
+}
+
+/** One type's rows of one pairing, as an IndexedDB key range over `[scope, type, id]`. */
+function typeRange(scope: string, type: string): IDBKeyRange | null {
+  const KeyRange = (globalThis as { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange;
+  return KeyRange === undefined ? null : KeyRange.bound([scope, type], [scope, type, []]);
 }
 
 export class HostOutboxStore extends BaseMirrorStore {
@@ -91,6 +101,8 @@ export class HostOutboxStore extends BaseMirrorStore {
   private readonly onUnkept: (() => void) | undefined;
   private db: Promise<IDBDatabase> | null = null;
   private unkept = false;
+  /** The other tabs of this pairing — every committed outbox write says so. */
+  private readonly bus: OutboxNoticeBus | null;
 
   constructor(opts: HostOutboxStoreOptions) {
     super();
@@ -98,6 +110,80 @@ export class HostOutboxStore extends BaseMirrorStore {
     this.live = opts.live;
     this.factory = browserFactory(opts.factory);
     this.onUnkept = opts.onUnkept;
+    const disk = this.sharedDiskName();
+    this.bus = disk === null ? null : new OutboxNoticeBus(outboxNoticeChannel(disk), opts.notices);
+  }
+
+  /** The pairing's rows in this browser, which every tab of it opens: `null` with no pairing or no database. */
+  sharedDiskName(): string | null {
+    return this.scope === null || this.factory === null ? null : `${HOST_OUTBOX_DB}:${this.scope}`;
+  }
+
+  outboxNotices(): OutboxNotices | null {
+    return this.bus?.notices() ?? null;
+  }
+
+  /** The compare-and-set behind adoption: this pairing's outbox rows, read and re-stamped in one transaction. */
+  protected async adoptOrphans(
+    me: string, live: ReadonlySet<string>, exclude: ReadonlySet<string>,
+  ): Promise<MirrorRecord[]> {
+    const range = this.usable() ? typeRange(this.scope!, OUTBOX_TYPE) : null;
+    if (range === null) return [];
+    const db = await this.database();
+    const tx = db.transaction(ROWS, "readwrite");
+    const rows = tx.objectStore(ROWS);
+    const taken: MirrorRecord[] = [];
+    for (const v of await request(rows.getAll(range))) {
+      const rec = storedRow(v);
+      const owner = (rec?.entity as { owner?: unknown } | undefined)?.owner;
+      if (rec === null || typeof owner !== "string" || owner === me || live.has(owner) || exclude.has(rec.id)) continue;
+      const next: MirrorRecord = { ...rec, entity: { ...(rec.entity as object), owner: me } };
+      rows.put({ type: next.type, id: next.id, entity: next.entity }, [this.scope!, next.type, next.id]);
+      taken.push(next);
+    }
+    await committed(tx);
+    this.bus?.changed(taken.map((r) => recordKey(r.type, r.id)));
+    return taken;
+  }
+
+  protected async readOutboxRange(): Promise<MirrorRecord[] | null> {
+    if (!this.usable()) return null;
+    const ranges = [OUTBOX_TYPE, OUTBOX_ABANDONED_TYPE].map((t) => typeRange(this.scope!, t));
+    if (ranges.some((r) => r === null)) return null;
+    const db = await this.database();
+    const tx = db.transaction(ROWS, "readonly");
+    const out: MirrorRecord[] = [];
+    for (const range of ranges) {
+      for (const v of await request(tx.objectStore(ROWS).getAll(range!))) {
+        const rec = storedRow(v);
+        if (rec) out.push(rec);
+      }
+    }
+    return out;
+  }
+
+  protected async readOutboxRowOnDisk(id: string): Promise<unknown> {
+    if (!this.usable()) return undefined;
+    const db = await this.database();
+    const tx = db.transaction(ROWS, "readonly");
+    return storedRow(await request(tx.objectStore(ROWS).get([this.scope!, OUTBOX_TYPE, id])))?.entity;
+  }
+
+  protected async markWithdrawnOnDisk(id: string, withdrawn: boolean): Promise<MirrorRecord | null> {
+    if (!this.usable()) return null;
+    const db = await this.database();
+    const tx = db.transaction(ROWS, "readwrite");
+    const rows = tx.objectStore(ROWS);
+    const rec = storedRow(await request(rows.get([this.scope!, OUTBOX_TYPE, id])));
+    if (rec === null) {
+      await committed(tx);
+      return null;
+    }
+    const next: MirrorRecord = { ...rec, entity: { ...(rec.entity as object), withdrawn } };
+    rows.put({ type: next.type, id: next.id, entity: next.entity }, [this.scope!, next.type, next.id]);
+    await committed(tx);
+    this.bus?.changed([recordKey(next.type, next.id)]);
+    return next;
   }
 
   private database(): Promise<IDBDatabase> {
@@ -192,9 +278,17 @@ export class HostOutboxStore extends BaseMirrorStore {
       if (!this.usable()) return;
       const tx = db.transaction(ROWS, "readwrite");
       const rows = tx.objectStore(ROWS);
+      // Another tab's Cancel is never written over by a put that does not speak to it (`idb.ts`).
+      for (const r of puts) {
+        const entity = r.entity as Record<string, unknown> | null;
+        if (r.type !== OUTBOX_TYPE || entity === null || typeof entity !== "object" || "withdrawn" in entity) continue;
+        const prior = storedRow(await request(rows.get([this.scope!, r.type, r.id])));
+        if ((prior?.entity as { withdrawn?: unknown } | undefined)?.withdrawn === true) r.entity = { ...entity, withdrawn: true };
+      }
       for (const r of puts) rows.put({ type: r.type, id: r.id, entity: r.entity }, [this.scope!, r.type, r.id]);
       for (const k of deletes) rows.delete([this.scope!, k.type, k.id]);
       await committed(tx);
+      this.bus?.changed([...puts.map((r) => recordKey(r.type, r.id)), ...deletes.map((k) => recordKey(k.type, k.id))]);
     } catch {
       this.fallBack();
     }
