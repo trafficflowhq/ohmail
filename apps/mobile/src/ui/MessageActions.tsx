@@ -1469,18 +1469,6 @@ export function ComposeSheet({
         {Copy.replyAlreadySent}
       </Txt>
     ) : null,
-    /* Why there is no Send later: a phone organizing its own mailbox, or attachments (a draft row
-       stores no files). A forward's absence has its own note. */
-    w.standalone && !forward ? (
-      <Txt key="standalone" variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
-        {scheduledNotHereSentence(w.mailboxes.organizer)}
-      </Txt>
-    ) : null,
-    !w.standalone && !forward && attachments.length > 0 ? (
-      <Txt key="laterFiles" variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
-        {Copy.sendLaterUnavailable}
-      </Txt>
-    ) : null,
     /* The told refusal: a Send lacking only content earned a sentence, gone once content arrives. */
     needNote && needsContent ? (
       <Txt key="needContent" variant="caption" tone="ink2" accessibilityRole="alert">
@@ -1876,6 +1864,19 @@ export function ComposeSheet({
                 }
               />
             </View>
+          ) : null}
+          {/* WHY THERE IS NO SEND LATER — a phone organizing its own mailbox, or attachments (a draft
+              row stores no files); a forward's absence has its own note. It explains a control, not a
+              press, so it ends the letter rather than taking the short window's pinned room. */}
+          {w.standalone && !forward ? (
+            <Txt variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
+              {scheduledNotHereSentence(w.mailboxes.organizer)}
+            </Txt>
+          ) : null}
+          {!w.standalone && !forward && attachments.length > 0 ? (
+            <Txt variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
+              {Copy.sendLaterUnavailable}
+            </Txt>
           ) : null}
           {pinNotes ? null : notesBlock}
           </ScrollView>
