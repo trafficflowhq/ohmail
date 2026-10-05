@@ -457,9 +457,9 @@ async function allowSender(
   /* 3. ONE RULE PER KEY: the sender's bare key converges onto its ACTING row. An enabled row on
      the allow side already admits them and keeps its place (both News spellings count); anything
      else — a screen-out, the spam rule just switched off — becomes the allow into the Ohbox. It is
-     THE PERSON'S OWN RULE: a row this press writes carries their stamp and, unless it is already
-     theirs (manual or migrated), becomes `manual`, so a graduation for the sender never retargets
-     it. The backlog is asked for when the routing moved. A key with no row gets the person's allow. */
+     THE PERSON'S OWN RULE: every press stamps the row, one that already admits included (so the HEY
+     import no longer owns it), and unless it is already theirs (manual or migrated) it becomes
+     `manual`, so a graduation never retargets it. The backlog is asked for when the routing moved. */
   const retro: RuleRowWrite = { retroRequestedAt: nowAt, retroDoneAt: null, retroCursor: null, retroMoved: 0 };
   const wrote = await writeRuleUnderKey(tx as unknown as Tx, {
     accountId, now: nowAt, overExisting: "converge",
@@ -471,7 +471,7 @@ async function allowSender(
       if (!row.enabled) d.enabled = true;
       // Manual and migrated rows are already the person's; a learned or seeded one becomes theirs.
       if (row.provenance !== "manual" && row.provenance !== "migrated") d.provenance = "manual";
-      if (Object.keys(d).length > 0 && row.personDecidedAt === null) d.personDecidedAt = nowAt;
+      if (row.personDecidedAt === null) d.personDecidedAt = nowAt;
       return d.destination !== undefined || d.enabled === true ? { ...d, ...retro } : d;
     },
     /* The backlog comes with the rescue. "Not junk" says this sender's mail belongs in the Ohbox,

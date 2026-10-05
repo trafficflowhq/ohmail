@@ -1,7 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
-  rules as rulesTbl, messages, folderState, auditLog, auditAction, lockAccountRuleKeys, recordRuleDelta, writeRuleUnderKey, type Tx,
+  rules as rulesTbl, messages, folderState, auditLog, auditAction, lockAccountRuleKeys, recordRuleDelta, writeRuleUnderKey,
+  type FoundRule, type Tx,
 } from "@trafficflow/db";
 import type {
   AdapterPort, Destination, MigrationObservation, FolderScanner, NativeLocator, ScanOptions,
@@ -15,6 +16,14 @@ import {
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 const domainOf = (addr: string): string => { const i = addr.indexOf("@"); return i >= 0 ? addr.slice(i + 1) : ""; };
+
+/**
+ * THE IMPORT OWNS A ROW only while it is `migrated` and no person has decided on it since: an
+ * "always allow" or a Screener decision over an imported row stamps it, and from then a re-run, a
+ * re-route and the undo leave that sender as the person left them.
+ */
+const importOwns = (row: Pick<FoundRule, "provenance" | "personDecidedAt">): boolean =>
+  row.provenance === "migrated" && row.personDecidedAt === null;
 
 export interface MigrateInput {
   /** Optional mailbox scope for the (opt-in) reconciler re-route pass. */
@@ -110,20 +119,19 @@ export class HeyMigrationService {
       await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
       for (const o of deduped) {
         /* ONE RULE PER KEY: the observation's bare key converges onto its ACTING row. A row this
-           migration wrote takes the observation's destination (a re-run after the mapping moved);
-           any other row is a decision made HERE and is left as it is (counted `unchanged`): an
-           import carries decisions made in another product and never overrides one made in this
-           one. No row: the migrated rule, with NO retro request — `profile-import-service`'s rule,
-           since walking a whole imported mailbox on arrival is a press this flow never offered. */
+           migration wrote, and no person has decided on since ({@link importOwns}), takes the
+           observation's destination (a re-run after the mapping moved); any other row is a decision
+           made HERE and is left as it is (counted `unchanged`). No row: the migrated rule, with NO
+           retro request — walking a whole imported mailbox on arrival is a press this flow never offered. */
         const wrote = await writeRuleUnderKey(bridgeTx(tx), {
           accountId: ctx.accountId, now: ctx.now(), overExisting: "converge",
           key: { kind: o.kind, match: o.senderOrDomain, subjectContains: null, bodyContains: null },
-          diff: (row) => (row.provenance === "migrated" && row.destination !== o.destination
+          diff: (row) => (importOwns(row) && row.destination !== o.destination
             ? { destination: o.destination } : {}),
           insert: { destination: o.destination, provenance: "migrated", enabled: true, retroRequestedAt: null },
         });
         ruleIds.push(wrote.ruleId!);
-        if (wrote.op === "create" || wrote.acting?.provenance === "migrated") owned.push(o);
+        if (wrote.op === "create" || (wrote.acting !== null && importOwns(wrote.acting))) owned.push(o);
         if (wrote.op === "create") {
           createdIds.push(wrote.ruleId!);
           created++;
@@ -155,11 +163,17 @@ export class HeyMigrationService {
     return { created, unchanged, ruleIds, rerouted, deferred, superseded };
   }
 
-  /** Remove ONLY `provenance:'migrated'` rules; emit a `change_log` `rule` `delete` per row. */
+  /**
+   * Remove ONLY the rules the import still owns (migrated, no person's decision since); emit a
+   * `change_log` `rule` `delete` per row. Fenced, and the rule-key lock before the delete.
+   */
   async undoMigration(ctx: ServiceContext): Promise<{ removed: number }> {
-    return asTx(ctx).transaction(async (tx) => {
+    return withAccountTx(ctx, async (tx) => {
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
       const removedRows = await tx.delete(rulesTbl)
-        .where(and(eq(rulesTbl.accountId, ctx.accountId), eq(rulesTbl.provenance, "migrated")))
+        .where(and(
+          eq(rulesTbl.accountId, ctx.accountId), eq(rulesTbl.provenance, "migrated"), isNull(rulesTbl.personDecidedAt),
+        ))
         .returning({ id: rulesTbl.id });
       await recordRuleDelta(tx, ctx.accountId, removedRows.map((r) => r.id), "delete");
       if (removedRows.length > 0) {
