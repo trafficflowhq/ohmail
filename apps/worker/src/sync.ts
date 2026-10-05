@@ -809,11 +809,20 @@ async function commitFenced(
 /**
  * THE SWITCH-OFFS A COMMITTED INGEST OWES — after the commit, one door each, never inside the
  * ingest's transaction (its `rules` write would take the rule row after the counter and the
- * graduation's row). Lost to a crash before this line, a demotion is owed again by the next
- * override that crosses the window.
+ * graduation's row). The message is committed either way, so a failed switch-off is logged by name
+ * and the cycle goes on: like a crash before this line, it is owed again by the next override.
  */
-async function runOwedDemotions(repo: WorkerRepo, accountId: string, result: ProcessResult): Promise<void> {
-  for (const patternKey of result.owedDemotions ?? []) await repo.demoteRoute(accountId, patternKey);
+async function runOwedDemotions(
+  repo: WorkerRepo, accountId: string, mailboxId: string, result: ProcessResult, log: Logger | undefined,
+): Promise<void> {
+  for (const patternKey of result.owedDemotions ?? []) {
+    try {
+      await repo.demoteRoute(accountId, patternKey);
+    } catch (err) {
+      rethrowRefusal(err);
+      log?.warn("sync_route_demotion_failed", { mailboxId, accountId, err });
+    }
+  }
 }
 
 /**
@@ -1378,7 +1387,7 @@ async function syncCycleWithin(
         commitFenced(plan, txRepo, {
           repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
         }, deps.fence !== undefined));
-      await runOwedDemotions(repo, accountId, committed);
+      await runOwedDemotions(repo, accountId, mailboxId, committed, log);
       // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
       if (plan.outcome === "new") deadLetters.noteStored();
       // AFTER the commit settles, outside the transaction — a hold that committed owes the
@@ -1773,7 +1782,7 @@ async function retryFailedMessages(
             deps.fence !== undefined,
           ),
         );
-        await runOwedDemotions(repo, accountId, committed);
+        await runOwedDemotions(repo, accountId, mailboxId, committed, log);
         // The retry is the SAME two-phase ingest, so a held sender it commits owes the same
         // visit — the path beside the one above, fixed together ({@link SyncDeps.onScreenerHold}).
         if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);

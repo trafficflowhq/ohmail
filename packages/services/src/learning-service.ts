@@ -9,6 +9,7 @@ import {
 } from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
+import { asServiceRefusal } from "./erasure-fence.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -67,7 +68,8 @@ export class LearningService {
     if (!parsed) return;
     const verdict = await graduationVerdict(asTx(ctx), ctx.accountId, patternKey);
     if (verdict === "demote") {
-      await demoteRoute(asTx(ctx), ctx.accountId, patternKey);
+      // An erased account answers as the fenced seam does (410), not as a fault.
+      await demoteRoute(asTx(ctx), ctx.accountId, patternKey).catch((err: unknown) => { throw asServiceRefusal(err); });
       return;
     }
     if (verdict !== "promote") return;

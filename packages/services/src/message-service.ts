@@ -14,6 +14,7 @@ import {
   NEWS_FOLDER, LEGACY_NEWS_FOLDER, canonicalDestination,
 } from "@trafficflow/core/mail";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
+import { asServiceRefusal } from "./erasure-fence.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";
@@ -1371,7 +1372,9 @@ export class MessageService {
     });
 
     // The owed switch-off, after the commit: a person's pause meeting it queues, never deadlocks.
-    if (owedDemotion !== null) await demoteRoute(asTx(ctx), ctx.accountId, owedDemotion);
+    if (owedDemotion !== null) {
+      await demoteRoute(asTx(ctx), ctx.accountId, owedDemotion).catch((err: unknown) => { throw asServiceRefusal(err); });
+    }
 
     /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
        transaction this deadlocked against every other writer of the mailbox row — measured on
