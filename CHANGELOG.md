@@ -102,6 +102,20 @@ refused once and the session renewed a second time. They now wait for the renewa
 request a renewal overtakes in flight is sent once more on the renewed session without renewing
 again.
 
+### Pressing Send again while ohmail reconnects no longer sends the message twice
+<!-- changes: fix-026-one-key-per-send.md -->
+
+A reply, forward or new message pressed again while ohmail was still sending it after
+reconnecting or restarting could reach the recipient twice. The second press now joins the send
+already under way. A reply edited and pressed again while its earlier version was already being
+sent now says so, instead of saying the newer words would go.
+
+### A message that waited without a connection goes out once when ohmail reconnects
+<!-- changes: fix-026-kept-send-releases-the-composer.md -->
+
+On the web and the desktop app, a message sent without a connection goes out once when ohmail
+reconnects, however long it waited.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
