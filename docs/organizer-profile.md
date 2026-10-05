@@ -41,8 +41,8 @@ One RFC822 message in `ohmail/_meta`:
   an ordinary mail client), then the JSON document. A reader takes the
   substring from the body's first `{` to its last `}` — the preamble is
   guaranteed not to contain `{`. Every string value except the format fields
-  (`updatedAt`, `producer`, rule and notification kinds, a rule's provenance,
-  the away reply's audience, rate, dates and piles) is written as JSON
+  (`updatedAt`, `producer`, rule and notification kinds, a rule's provenance
+  and decision date, the away reply's audience, rate, dates and piles) is written as JSON
   `\uXXXX` escapes; any JSON parser reads the same values. The body is 7-bit ASCII
   (`Content-Transfer-Encoding: 7bit`).
 
@@ -68,7 +68,8 @@ One RFC822 message in `ohmail/_meta`:
       "enabled": true,
       "provenance": "manual" | "migrated" | "promoted" | "seeded-from-sent",
       "subjectContains": "<optional narrowing term>",
-      "bodyContains": "<optional narrowing term>"
+      "bodyContains": "<optional narrowing term>",
+      "personDecidedAt": "<optional ISO 8601 instant>"
     }
   ],
   "notifyRules": [                 // senders/threads opted back INTO notifications
@@ -118,6 +119,7 @@ The envelope:
 | `provenance` | string | How the rule came to be. Today's writers emit `"manual"` (written by hand), `"migrated"` (imported from another tool), `"promoted"` (a screening decision — a screen-out and a spam verdict both leave one), or `"seeded-from-sent"` (the onboarding pass over your own Sent mail). The field is open: a reader must carry an unknown value through unchanged, never reject the profile over it. |
 | `subjectContains` | string, optional | Narrows the rule to subjects containing this term. |
 | `bodyContains` | string, optional | Narrows the rule to bodies containing this term. |
+| `personDecidedAt` | string, optional | When you decided this rule yourself (pressed it in the Screener, allowed a sender from Junk, or paused a rule ohmail learned), as an ISO 8601 instant. Absent on a rule nobody decided. A reader keeps a date it already holds; ohmail never lets what it learns change a rule you decided. |
 
 **`notifyRules`** — an array of senders or threads opted back **into** notifications:
 
