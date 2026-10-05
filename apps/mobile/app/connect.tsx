@@ -111,7 +111,8 @@ function ConnectBody() {
 
   return (
     <Screen>
-      <DetailBar title={Copy.connectTitle} />
+      {/* The page carries its own heading, so the bar carries only the way back. */}
+      <DetailBar />
       <Scroller bounded>
         {/* The FORM is put away for the confirmation, for the reason the scanner puts the camera
             away: a field that can still be edited beside three facts about what answered would

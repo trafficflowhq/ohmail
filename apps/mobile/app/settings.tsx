@@ -204,7 +204,8 @@ function SettingsBody() {
 
   return (
     <Screen>
-      <DetailBar title={Copy.settings} />
+      {/* The page carries its own heading, so the bar carries only the way back (one title). */}
+      <DetailBar />
       <Scroller bounded>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.settings}</Txt>

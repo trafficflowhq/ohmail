@@ -119,7 +119,8 @@ function TrashBody() {
 
   const list = (
     <Screen>
-      <DetailBar title={Copy.trashTitle} />
+      {/* The page carries its own heading, so the bar carries only the way back. */}
+      <DetailBar />
       <MailList
         groups={failed ? [] : [{ key: "trash", rows: items }]}
         rowKey={(r) => r.mail.id}

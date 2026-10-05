@@ -204,7 +204,8 @@ export function ListDetail({
     />
   );
 
-  /* The pair pays the rail once, in its own padding below — never its Screen as well. */
+  /* On a two-pane posture the pair pays the rail once, in its padding below, never its Screen. While a
+     fold holds the pair open behind a sheet, one-pane rules pay it on every Screen too (filed). */
   return (
     <Screen fullWindow={false}>
       <View style={{ flex: 1 }} onLayout={measure}>

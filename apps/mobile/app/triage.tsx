@@ -52,7 +52,8 @@ function TriageBody() {
 
   return (
     <Screen>
-      <DetailBar title={Copy.triage} />
+      {/* The page carries its own heading, so the bar carries only the way back. */}
+      <DetailBar />
       <Scroller bounded refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.triage}</Txt>

@@ -10,7 +10,7 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View,
+  Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
   type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -95,6 +95,7 @@ import { keepAct, worthKeeping } from "./compose-keep";
 import { editWhileIdle } from "./compose-edit";
 import { Segmented } from "./Segmented";
 import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
+import { composeBodyMin, notesPinned, pinnedNotesMax } from "./compose-fit";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
 import { holdReader } from "./reader-held";
@@ -1083,6 +1084,14 @@ export function ComposeSheet({
   const t = useTheme();
   const keyboardLift = useKeyboardLift();
   const insets = useSafeAreaInsets();
+  const heightClass = usePosture().heightClass;
+  const windowHeight = useWindowDimensions().height;
+  const letterScroll = useRef<null | ScrollView>(null);
+  const [notesHeight, setNotesHeight] = useState<number | null>(null);
+  const pinNotes = notesPinned(notesHeight, pinnedNotesMax(windowHeight));
+  useEffect(() => {
+    if (!pinNotes) letterScroll.current?.scrollToEnd({ animated: false });
+  }, [pinNotes, notesHeight]);
   const w = useWorld();
   /** The composer never straddles a hinge and stays bounded on wide windows (`Sheet.tsx`). */
   const panelBounds = useSheetPanelBounds();
@@ -1440,6 +1449,66 @@ export function ComposeSheet({
     if (result.outcome === "failed" && result.failure) setFailNote(result.failure);
   };
 
+  /* THE SENTENCES ABOVE THE BUTTONS, each answering a press or saying why a control is absent: the
+     toast and the top bar render under this Modal, so a sentence said only there was a press with no
+     answer. Pinned up to `pinnedNotesMax`; past it they scroll at the letter's end, scrolled to. */
+  const noteItems = [
+    phase === "queued" || phase === "unverified" ? (
+      <Txt key="queued" variant="caption" tone="ink3">
+        {phase === "queued" ? Copy[queuedCaptionKey(network, accepted)] : Copy.replyUnverified}
+      </Txt>
+    ) : null,
+    phase === "unverified" && againNote ? (
+      <Txt key="again" variant="caption" tone="ink2" accessibilityRole="alert">
+        {Copy.replyUnverifiedAgain}
+      </Txt>
+    ) : null,
+    /* A refused Cancel, said in place — a Cancel that rendered nothing is a button not working. */
+    alreadySent ? (
+      <Txt key="alreadySent" variant="caption" tone="ink2" accessibilityRole="alert">
+        {Copy.replyAlreadySent}
+      </Txt>
+    ) : null,
+    /* Why there is no Send later: a phone organizing its own mailbox, or attachments (a draft row
+       stores no files). A forward's absence has its own note. */
+    w.standalone && !forward ? (
+      <Txt key="standalone" variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
+        {scheduledNotHereSentence(w.mailboxes.organizer)}
+      </Txt>
+    ) : null,
+    !w.standalone && !forward && attachments.length > 0 ? (
+      <Txt key="laterFiles" variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
+        {Copy.sendLaterUnavailable}
+      </Txt>
+    ) : null,
+    /* The told refusal: a Send lacking only content earned a sentence, gone once content arrives. */
+    needNote && needsContent ? (
+      <Txt key="needContent" variant="caption" tone="ink2" accessibilityRole="alert">
+        {Copy.composeNeedContent}
+      </Txt>
+    ) : null,
+    failNote !== null && phase === "idle" ? (
+      <Txt key="failed" variant="caption" tone="ink2" accessibilityRole="alert">
+        {failedSendLine(failNote, w.boot.connection, draftId !== null)}
+      </Txt>
+    ) : phase === "idle" && connectionSaid(w.boot.connection) !== null ? (
+      <Txt key="connection" variant="caption" tone="ink3">
+        {connectionSaid(w.boot.connection)}
+      </Txt>
+    ) : null,
+    /* Why the close stayed — nothing typed is thrown away without the person being told. */
+    keepNote !== null ? (
+      <Txt key="keep" variant="caption" tone="ink2" accessibilityRole="alert">
+        {keepNote === "failed" ? Copy.composeKeepFailed : Copy.composeKeepFiles}
+      </Txt>
+    ) : null,
+  ].filter((n) => n !== null);
+  const notesBlock = noteItems.length === 0 ? null : (
+    <View style={{ gap: 10 }} onLayout={(e) => setNotesHeight(Math.round(e.nativeEvent.layout.height))}>
+      {noteItems}
+    </View>
+  );
+
   return (
     <Modal transparent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={closeComposer}>
       <KeyboardAvoidingView
@@ -1463,11 +1532,12 @@ export function ComposeSheet({
             t.liftUp("l3"),
           ]}
         >
-          {/* THE LETTER SCROLLS; ITS ANSWERS AND ITS BUTTONS DO NOT. On a cover screen held sideways
-              (403 dp) the fields alone outgrew the window and Send and Cancel stood below it.
-              Everything down to the Send-later picker scrolls inside the window-bound panel; the
-              sentences that answer a press and the button row stay pinned under it. */}
+          {/* THE LETTER SCROLLS; THE BUTTONS DO NOT. On a cover screen held sideways (403 dp) the
+              fields outgrew the window and Send and Cancel stood below it. The sentences answering
+              a press stand pinned over the buttons up to a bound and scroll with the letter past it
+              (`compose-fit.ts`); the Send / Cancel row alone is always pinned. */}
           <ScrollView
+            ref={letterScroll}
             style={{ flexGrow: 0, flexShrink: 1 }}
             contentContainerStyle={{ gap: 10 }}
             bounces={false}
@@ -1585,7 +1655,7 @@ export function ComposeSheet({
                    Send-later picker is open the writing area yields to it: the first line
                    still stands (nothing is disowned, and the text is untouched), and the
                    full editor comes back with a single Back. */
-                minHeight: later === null ? 120 : 44,
+                minHeight: composeBodyMin(later !== null, heightClass),
                 textAlignVertical: "top",
               },
             ]}
@@ -1807,65 +1877,11 @@ export function ComposeSheet({
               />
             </View>
           ) : null}
+          {pinNotes ? null : notesBlock}
           </ScrollView>
-          {phase === "queued" || phase === "unverified" ? (
-            <Txt variant="caption" tone="ink3">
-              {phase === "queued" ? Copy[queuedCaptionKey(network, accepted)] : Copy.replyUnverified}
-            </Txt>
-          ) : null}
-          {phase === "unverified" && againNote ? (
-            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
-              {Copy.replyUnverifiedAgain}
-            </Txt>
-          ) : null}
-          {/* THE REFUSED CANCEL, SAID IN PLACE — a Cancel that did nothing and rendered nothing
-              is a person watching a button not work. An alert, because it answers a press. */}
-          {alreadySent ? (
-            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
-              {Copy.replyAlreadySent}
-            </Txt>
-          ) : null}
-          {/* WHY THERE IS NO SEND LATER on a phone that organizes its own mailbox. Only for that
-              reason — a forward's absence has its own note above — and above the buttons, where
-              the control it explains would have been. */}
-          {w.standalone && !forward ? (
-            <Txt variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
-              {scheduledNotHereSentence(w.mailboxes.organizer)}
-            </Txt>
-          ) : null}
-          {/* WHY THERE IS NO SEND LATER over attachments — a draft row stores no files, the
-              webapp's own withheld affordance and sentence. Only where attachments are the
-              reason: the standalone and forward absences have their own notes. */}
-          {!w.standalone && !forward && attachments.length > 0 ? (
-            <Txt variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
-              {Copy.sendLaterUnavailable}
-            </Txt>
-          ) : null}
-          {/* THE TOLD REFUSAL — the press on a Send that lacks only content earned a sentence,
-              and it leaves the moment content arrives (the webapp's `role="status"` rule). */}
-          {needNote && needsContent ? (
-            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
-              {Copy.composeNeedContent}
-            </Txt>
-          ) : null}
-          {/* THE REFUSED SEND, OR THE CONNECTION, SAID ABOVE THE BUTTONS. The toast and the top bar
-              render under this Modal, so a sentence said only there was a Send press with no answer.
-              An alert for the press's answer; the connection line is a status. */}
-          {failNote !== null && phase === "idle" ? (
-            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
-              {failedSendLine(failNote, w.boot.connection, draftId !== null)}
-            </Txt>
-          ) : phase === "idle" && connectionSaid(w.boot.connection) !== null ? (
-            <Txt variant="caption" tone="ink3">
-              {connectionSaid(w.boot.connection)}
-            </Txt>
-          ) : null}
-          {/* WHY THE CLOSE STAYED — nothing typed is thrown away without the person being told. */}
-          {keepNote !== null ? (
-            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
-              {keepNote === "failed" ? Copy.composeKeepFailed : Copy.composeKeepFiles}
-            </Txt>
-          ) : null}
+          {/* The scroller's bottom edge, drawn: a cut letter reads as an edge, not a sliced field. */}
+          <View style={{ height: StyleSheet.hairlineWidth * 2, marginTop: -10, backgroundColor: t.c.hairSoft }} />
+          {pinNotes ? notesBlock : null}
           {/* The footer WRAPS on a narrow sheet: Cancel keeps the left edge on its own line and the
               send verbs stay right-aligned under it — nothing starts off-screen (the attach row's grammar). */}
           <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", columnGap: 8, rowGap: 8 }}>

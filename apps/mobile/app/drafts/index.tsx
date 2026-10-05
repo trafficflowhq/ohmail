@@ -47,7 +47,8 @@ function DraftsBody() {
 
   const list = (
     <Screen>
-      <DetailBar title={Copy.draftsTitle} />
+      {/* The page carries its own heading, so the bar carries only the way back. */}
+      <DetailBar />
       <Scroller bounded refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.draftsTitle}</Txt>

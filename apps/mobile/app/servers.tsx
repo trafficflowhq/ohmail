@@ -66,7 +66,8 @@ function ServersBody() {
 
   return (
     <Screen>
-      <DetailBar title={Copy.serversTitle} />
+      {/* The page carries its own heading, so the bar carries only the way back. */}
+      <DetailBar />
       {stranded ? (
         <Tap
           onPress={leave}
