@@ -97,7 +97,14 @@ export default function SubprocessorsPage() {
               <tr>
                 <th scope="row">Anthropic</th>
                 <td>The AI model</td>
-                <td>Message content sent for a suggestion or a draft</td>
+                <td>
+                  While your AI switch is on: the sender&rsquo;s address, subject and a
+                  short preview of new mail from senders you have allowed that no rule
+                  files, and of new senders&rsquo; mail while the Screener suggests
+                  automatically; which senders you often file to the same place; your
+                  words on what belongs in your Ohbox; and the message content you send
+                  for a suggestion or a draft
+                </td>
                 <td>USA</td>
               </tr>
               <tr>
@@ -146,7 +153,10 @@ export default function SubprocessorsPage() {
                   mail. As your plan&rsquo;s storage fills, the bodies of your oldest
                   messages are emptied to make room for new mail; the messages stay
                   findable, because their headers, preview and the words search
-                  finds them by are kept.
+                  finds them by are kept. A message you delete in ohmail is kept whole,
+                  in Trash, so you can restore it. A message deleted on your mail server
+                  is hidden here but not erased: its headers, preview and search words
+                  stay. Both go when you remove the mailbox or delete your account.
                 </td>
               </tr>
               <tr>
@@ -163,9 +173,10 @@ export default function SubprocessorsPage() {
               <tr>
                 <th scope="row">Sign-in links and challenges</th>
                 <td>
-                  Each works for 5 minutes at most, an email-verification link for
-                  24 hours. A passkey challenge&rsquo;s record is deleted from an
-                  hour after it expires, at a later passkey prompt; the other
+                  Each works for 5 minutes at most, a code that adds a device for up to
+                  15 and an email-verification link for 24 hours. A passkey
+                  challenge&rsquo;s record is deleted from an hour after it expires,
+                  at a later passkey prompt; the other
                   records have no expiry of their own and go when you delete your
                   account, and a desktop sign-in request nobody confirmed is never
                   deleted.
@@ -176,10 +187,12 @@ export default function SubprocessorsPage() {
                 <td>
                   A session refreshes while you use it, so using ohmail keeps you
                   signed in. In a browser it stops after 90 days without use at the
-                  latest; the desktop app renews on every launch and stops after
-                  400 days without use. Signing out, or removing a device, ends it
+                  latest; the desktop and phone apps renew while you use them and stop
+                  after 400 days without use. Signing out, or removing a device, ends it
                   immediately. The rows go when you delete your account — no
-                  automatic expiry yet
+                  automatic expiry yet. The name a desktop or phone app is listed under,
+                  and the IP address it was added from, stay until you delete your
+                  account.
                 </td>
               </tr>
               <tr>
@@ -201,10 +214,20 @@ export default function SubprocessorsPage() {
               </tr>
               <tr>
                 <th scope="row">
-                  Limits on sign-in attempts: keyed hashes of the address typed and
-                  of the IP address
+                  Limits on attempts: hashes of the address typed and of the IP
+                  address — keyed for sign-in, plain SHA-256 for sign-up, email
+                  verification, desktop sign-in and the waitlist, and for each address
+                  our own mail goes to — and counts of second-factor refusals per
+                  account
                 </th>
                 <td>48 hours; for a device that has signed in, 90 days after it last did</td>
+              </tr>
+              <tr>
+                <th scope="row">Invitations we send: the address each one went to</th>
+                <td>
+                  An unused one has no expiry yet; a used one keeps the address until
+                  the account it opened is deleted
+                </td>
               </tr>
               <tr>
                 <th scope="row">Action history: what an action changed, so it can be undone</th>
@@ -262,9 +285,10 @@ export default function SubprocessorsPage() {
           backups when those backups expire. What survives is the billing record,
           under a random account id with no name attached: Swiss law requires a
           business to keep its books, and a money trail that can be deleted on
-          request is not a money trail. For up to 400 days after they expire,
-          hashes of the account&rsquo;s sign-in tokens survive too, so an app
-          still signed in is told the account is gone.
+          request is not a money trail. So does the record of what our staff looked
+          at or changed on the account, under the same id. For up to 400 days
+          after they expire, hashes of the account&rsquo;s sign-in tokens survive
+          too, so an app still signed in is told the account is gone.
         </p>
         <p>
           One copy is not covered yet: the former database (Neon, in the table

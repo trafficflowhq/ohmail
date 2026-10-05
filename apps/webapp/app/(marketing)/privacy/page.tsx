@@ -58,11 +58,14 @@ export default function PrivacyPage() {
           Creating an ohmail Cloud account sends us the email address, name and
           password you type, and we store them on servers in Switzerland to operate the
           account. Passwords are stored only as a scrypt hash — never in a form
-          we can read. We also record the connection details every sign-in and
-          sign-up attempt arrives with (IP address, browser user agent) to
-          rate-limit abuse and to show you your own active devices. Legal basis:
-          performance of the contract, and our legitimate interest in keeping
-          accounts secure.
+          we can read. We also record the IP address and browser user agent of
+          each sign-in, failed sign-in and sign-out on an account, and of each new
+          account, and keep them for 180 days to keep accounts secure; the IP
+          address each desktop or phone app was added from is kept until you
+          delete your account, to show you your own devices. Other attempts leave
+          only counters under hashes of the address typed and of the IP address,
+          to rate-limit abuse. Legal basis: performance of the contract, and our
+          legitimate interest in keeping accounts secure.
         </p>
         <p>
           The &ldquo;keep me posted&rdquo; form stores the address and the
@@ -70,7 +73,8 @@ export default function PrivacyPage() {
           there is something to tell you. It is used for nothing else, and asking
           us to remove it removes it from our live database. An address given
           before 3 August 2026 also stays in our former database, frozen, until
-          that database is deleted.
+          that database is deleted. The form also keeps a hash of the IP address
+          it was sent from for 48 hours, to limit sign-ups per connection.
         </p>
 
         <h2>Hosting and server logs</h2>
@@ -111,8 +115,9 @@ export default function PrivacyPage() {
         </p>
         <p>
           That copy is a full one — bodies, headers, subjects and senders, not
-          only metadata — on servers in Switzerland, solely to provide sync, push and
-          search. It is encrypted at rest and your
+          only metadata — on servers in Switzerland, solely to provide the service
+          — sync, push, search, the filing your rules ask for, and the AI features
+          you turn on. It is encrypted at rest and your
           mailbox credentials are additionally encrypted at the application
           level, but the mail itself is not: it is <strong>not</strong>{" "}
           end-to-end encrypted, and a small number of people with production
