@@ -5201,15 +5201,13 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
   /** STORE `\Deleted` + EXPUNGE the given messages, in ONE round trip. */
   remove(refs: readonly unknown[]): Promise<void>;
   /**
-   * Expunge every ack older than `before`, WITHOUT reading the folder first. The ack sweep is the
-   * only thing that ever makes `ohmail/_meta` smaller, and it sat behind the bounded read — which
-   * refuses a folder over the ceiling — so a folder that crossed the ceiling BY ACKS could never
-   * come back down: the read refuses, the sweep never runs, every drain refuses for ever. So it
-   * reads uid windows by FETCH (header and INTERNALDATE, never SEARCH), bounded per window and per
-   * pass; INTERNALDATE of an ack this organizer appended is its `ackedAt` to the day. This
-   * install's own claims older than `before` go in the same walk. Returns how many were removed.
-   * Given `{ staleAfterMs }` the cutoff is the folder's newest INTERNALDATE less that window, the
-   * server's clock alone (SWEEP-CUTOFF-READS-THE-HOST-CLOCK); hosts pass that form.
+   * Expunge every ack older than the cutoff, WITHOUT reading the folder first: the sweep is the only
+   * thing that makes `ohmail/_meta` smaller, and behind the bounded read a folder past the ceiling
+   * could never come back down. Uid windows by FETCH (header and INTERNALDATE, never SEARCH),
+   * bounded per window and per pass; this install's own claims older than the cutoff go in the same
+   * walk. `{ staleAfterMs }` dates the cutoff by the folder's newest INTERNALDATE, the server's clock
+   * (SWEEP-CUTOFF-READS-THE-HOST-CLOCK) — the hosts' form; a `Date` is taken as given. Returns how
+   * many were removed.
    */
   sweepStaleAcks?(before: Date | { staleAfterMs: number }): Promise<number>;
   /**
