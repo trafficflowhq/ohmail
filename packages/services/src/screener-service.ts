@@ -15,7 +15,6 @@ import {
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
-  ruleKeyIsOwnAddress,
   readRequestEligibility, decisionCanBeApplied,
   listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -56,6 +55,7 @@ import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { refuseAiSpend, type AiRefusalClass } from "./ai-refusal.js";
 import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
+import { refuseOwnAddressRule } from "./rules-service.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, Page, RuleDTO, ScreenerItem } from "./dto/types.js";
 
@@ -1127,11 +1127,8 @@ export class ScreenerReadService {
       );
     }
 
-    // NOT A DECISION ABOUT THE ACCOUNT ITSELF: a sender rule on one of its own addresses would file or
-    // hold the person's own mail, so it is refused as `POST /rules` refuses it (`ruleKeyIsOwnAddress`).
-    if (scope === "sender" && await ruleKeyIsOwnAddress(asTx(ctx), ctx.accountId, { kind: "sender", match: address })) {
-      throw new ServiceError("own_address", 400, "a rule cannot be about one of this account's own addresses");
-    }
+    // Not a decision about the account itself: refused as `POST /rules` refuses it.
+    if (scope === "sender") await refuseOwnAddressRule(asTx(ctx), ctx.accountId, { kind: "sender", match: address });
 
     return { scope, decision, dest, target, address, domain, appliedFolder, applyRetro };
   }

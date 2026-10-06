@@ -334,6 +334,17 @@ function travelled(plan: AccountFanOut): boolean {
   return plan.requestTo.length > 0 || plan.refused.length > 0;
 }
 
+/**
+ * THE `own_address` REFUSAL, built once for every press door: a sender rule naming one of the
+ * account's own addresses (`ruleKeyIsOwnAddress`, the one set) never decides the account's own mail
+ * at the router, so a press asking for one is refused under the code every surface turns into words.
+ */
+export async function refuseOwnAddressRule(db: Tx, accountId: string, key: { kind: string; match: string }): Promise<void> {
+  if (await ruleKeyIsOwnAddress(db, accountId, key)) {
+    throw new ServiceError("own_address", 400, "a rule cannot be about one of this account's own addresses");
+  }
+}
+
 export class RulesService {
   async list(ctx: ServiceContext): Promise<RuleDTO[]> {
     const rows = await ctx.db.select({ id: rules.id }).from(rules)
@@ -366,12 +377,8 @@ export class RulesService {
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
     return withAccountTx(ctx, async (tx) => {
-      /* NOT A RULE ABOUT THE ACCOUNT ITSELF: a sender rule naming one of its own addresses would
-         file or hold the person's own mail (`ruleKeyIsOwnAddress`). Refused before anything is
-         written here or travels, under the closed code every surface turns into its sentence. */
-      if (await ruleKeyIsOwnAddress(bridgeTx(tx), ctx.accountId, { kind, match })) {
-        throw new ServiceError("own_address", 400, "a rule cannot be about one of this account's own addresses");
-      }
+      // Not a rule about the account itself, refused before anything is written or travels.
+      await refuseOwnAddressRule(bridgeTx(tx), ctx.accountId, { kind, match });
       // One instant for the press: the local row's stamp and every leg's `decidedAt`.
       const at = ctx.now();
       const travelling = (): Record<string, unknown> => ruleCreatePayload({
@@ -679,9 +686,7 @@ export class RulesService {
       };
       const keyMoved = !sameRuleKey(oldKey, newKey);
       // An edit may not move a rule onto one of the account's own addresses, as a create may not.
-      if (keyMoved && await ruleKeyIsOwnAddress(bridgeTx(tx), ctx.accountId, newKey)) {
-        throw new ServiceError("own_address", 400, "a rule cannot be about one of this account's own addresses");
-      }
+      if (keyMoved) await refuseOwnAddressRule(bridgeTx(tx), ctx.accountId, newKey);
       let acting: Pick<FoundRule, "destination"> = before;
       if (!keyMoved) {
         const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: oldKey, survivor: id });
