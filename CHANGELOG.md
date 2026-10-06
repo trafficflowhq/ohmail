@@ -72,9 +72,10 @@ again, checks its signature and starts the installer once more.
 
 The operator alert mail sends one message per kind of problem at most every six hours, sooner only
 when the problem gets more severe. It mails nothing when a problem clears, and sends a daily
-summary of every problem since the last one, those already mailed included. An alert the six hours
-hold back is not recorded as sent, so it is mailed when they end. Webhook and Telegram alerts still
-receive every problem, at times one check later while an alert mail of the same kind is being sent.
+summary of every problem since the last one, those already mailed included. Where alerts go only
+by mail, an alert the six hours hold back is not recorded as sent, so it is mailed when they end.
+Webhook and Telegram alerts still receive every problem, at times one check later while an alert
+mail of the same kind is being sent.
 
 ### Still to come
 
