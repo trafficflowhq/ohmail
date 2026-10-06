@@ -678,6 +678,10 @@ export class RulesService {
         bodyContains: set.bodyContains === undefined ? before.bodyContains : (set.bodyContains as string | null),
       };
       const keyMoved = !sameRuleKey(oldKey, newKey);
+      // An edit may not move a rule onto one of the account's own addresses, as a create may not.
+      if (keyMoved && await ruleKeyIsOwnAddress(bridgeTx(tx), ctx.accountId, newKey)) {
+        throw new ServiceError("own_address", 400, "a rule cannot be about one of this account's own addresses");
+      }
       let acting: Pick<FoundRule, "destination"> = before;
       if (!keyMoved) {
         const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: oldKey, survivor: id });
