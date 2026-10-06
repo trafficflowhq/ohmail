@@ -1,9 +1,8 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
-  ServiceError, IdempotencyRaceLost, resolveSession, sha256, isAllowedOrigin,
+  ServiceError, IdempotencyRaceLost, resolveSession, sha256, isAllowedOrigin, PRESS_AGE_MAX_MS, pressIsAged,
 } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
-import { PRESS_AGE_MAX_MS, pressIsAged } from "@trafficflow/db";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
 // cannot live beside `ServiceError`.
 import { jarCookie } from "./cookies.js";

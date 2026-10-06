@@ -12,6 +12,8 @@
 export const SERVICES_VERSION = "0.0.0";
 
 export { ServiceError, IdempotencyRaceLost, MailboxSideRefusal } from "./errors.js";
+// The press age's bounds, for the API's one reader of the header (which may not name `@trafficflow/db`).
+export { PRESS_AGE_MAX_MS, pressIsAged } from "@trafficflow/db";
 // The reader's zone and locale as a client states them — History's months, a forward's date.
 export {
   parseReaderZone, parseReaderLocale, forwardedDate, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS,

@@ -669,8 +669,20 @@ export interface CommitDeps {
    * fold is sound only where the message INSERT's foreign key has already taken the mailbox row.
    */
   mailboxMustBeLive?: MailboxMustBeLive;
-  /** {@link AdoptDeps.observedSince}, for the `adopt_external` arm. */
+  /** {@link AdoptDeps.observedSince}, for the `adopt_external` arm; absent ⇒ read when it adopts. */
   observedSince?: Date | null;
+}
+
+/**
+ * THE LOWER BOUND OF AN EXTERNAL MOVE — the mailbox's `last_sync_at` as this cycle found it (the
+ * previous successful cycle's START; the cycle's own stamp lands after its ingest). Read in the
+ * adoption's own transaction and only when one happens, so an idle drain pays nothing. NULL when
+ * no cycle completed or the read is unavailable: an unstamped adoption admits every later press.
+ */
+async function adoptionBound(repo: unknown, mailboxId: string): Promise<Date | null> {
+  const r = repo as Partial<Pick<WorkerRepo, "getMailbox">>;
+  if (typeof r.getMailbox !== "function") return null;
+  return (await r.getMailbox(mailboxId))?.lastSyncAt ?? null;
 }
 
 /**
@@ -1771,7 +1783,8 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // observation is older than it. A miss records where the message IS and leaves the desire
       // to the newer press. The three writes below stand either way — the person's hand landing
       // somewhere is a fact whichever desire won.
-      await adoptWithWitness({ repo, accountId, observedSince: deps.observedSince ?? null }, e.messageId, to, e.state.desiredFolder);
+      const observedSince = deps.observedSince !== undefined ? deps.observedSince : await adoptionBound(repo, mailboxId);
+      await adoptWithWitness({ repo, accountId, observedSince }, e.messageId, to, e.state.desiredFolder);
       // The tombstone was already cleared before the switch (every arrival shape clears it, not
       // only this arm — see the block above); the `move` change below carries the live entity,
       // so this arm needs no separate resurrection delta.
