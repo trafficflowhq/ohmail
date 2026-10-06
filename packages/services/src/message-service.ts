@@ -1697,16 +1697,6 @@ export class MessageService {
   }
 
   /**
-   * Ask the organizer to come sooner — AFTER the commit, never inside it. The ROTATION decides
-   * the wait, so one pending move waited minutes; every other filing verb rings this doorbell and
-   * the move door did not. Inside the transaction it DEADLOCKED, measured: the transaction
-   * already holds row locks on `messages` and `folder_state`, so adding a `mailboxes` lock closed
-   * a cycle — real Postgres answered `40P01` for two concurrent decisions over ONE mailbox; three
-   * pg suites caught it, PGlite saw none. Post-commit and best-effort: a crash between commit and
-   * ring costs ONE ROTATION, and a throw is swallowed — a committed decision must not be reported
-   * as failed by the thing that was only trying to make it faster.
-   */
-  /**
    * THE SWITCH-OFF A COMMITTED MOVE OWES. An erased account answers 410, as the fenced seam does;
    * any other failure is logged and the move answers its commit, because the move HAS committed and
    * the next override that crosses the window owes the switch-off again.
@@ -1726,6 +1716,16 @@ export class MessageService {
     }
   }
 
+  /**
+   * Ask the organizer to come sooner — AFTER the commit, never inside it. The ROTATION decides
+   * the wait, so one pending move waited minutes; every other filing verb rings this doorbell and
+   * the move door did not. Inside the transaction it DEADLOCKED, measured: the transaction
+   * already holds row locks on `messages` and `folder_state`, so adding a `mailboxes` lock closed
+   * a cycle — real Postgres answered `40P01` for two concurrent decisions over ONE mailbox; three
+   * pg suites caught it, PGlite saw none. Post-commit and best-effort: a crash between commit and
+   * ring costs ONE ROTATION, and a throw is swallowed — a committed decision must not be reported
+   * as failed by the thing that was only trying to make it faster.
+   */
   private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
     try {
       await ringFilingDoorbell(bridgeTx(ctx.db), mailboxId, ctx.now());
