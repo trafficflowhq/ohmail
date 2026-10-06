@@ -32,7 +32,7 @@ import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
 import { Segmented } from "./Segmented";
 import { usePosture } from "./posture";
-import { decisionPanelShape, SENDER_TITLE_LINES, senderTitleVariant } from "./sender-fit";
+import { DECISION_ROW_GAP, DECISION_ROW_PAD, decisionPanelShape, SENDER_TITLE_LINES, scopeFitsRow, senderTitleVariant } from "./sender-fit";
 import { useLocale } from "../i18n/LocaleProvider";
 
 export function SenderDetail({
@@ -272,6 +272,14 @@ function DecisionBar({
   const t = useTheme();
   const insets = useSafeAreaInsets();
   const shape = decisionPanelShape(usePosture().heightClass);
+  /* Widths only (the row, the capsules, the control), never the control's own position, so where
+     it stands cannot feed back into the decision. */
+  const [fit, setFit] = useState({ row: 0, capsules: 0, scope: 0 });
+  const measure = (k: "row" | "capsules" | "scope", width: number) => {
+    const v = Math.round(width);
+    setFit((f) => (f[k] === v ? f : { ...f, [k]: v }));
+  };
+  const scopeInRow = shape.scopeInRow && scopeFitsRow(fit.row, fit.capsules, fit.scope);
   const capsules = DESTINATIONS.map((dest) => (
     <DecisionCapsule
       key={dest}
@@ -284,16 +292,20 @@ function DecisionBar({
     />
   ));
   const scopeControl = (
-    <Segmented
-      fill={false}
-      style={shape.scopeInRow ? { alignSelf: "center" } : { marginTop: 12 }}
-      value={scope}
-      onChange={onScope}
-      segments={[
-        { value: "sender", label: Copy.scopeSender },
-        { value: "domain", label: Copy.scopeDomain },
-      ]}
-    />
+    <View
+      onLayout={(e) => measure("scope", e.nativeEvent.layout.width)}
+      style={scopeInRow ? { alignSelf: "center" } : { alignSelf: "flex-start", marginTop: shape.row === "scroll" ? 8 : 12, marginLeft: shape.row === "scroll" ? DECISION_ROW_PAD : 0 }}
+    >
+      <Segmented
+        fill={false}
+        value={scope}
+        onChange={onScope}
+        segments={[
+          { value: "sender", label: Copy.scopeSender },
+          { value: "domain", label: Copy.scopeDomain },
+        ]}
+      />
+    </View>
   );
   return (
     <View
@@ -322,16 +334,22 @@ function DecisionBar({
           horizontal
           showsHorizontalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ gap: 8, paddingHorizontal: 14, alignItems: "center" }}
+          onLayout={(e) => measure("row", e.nativeEvent.layout.width)}
+          contentContainerStyle={{ gap: DECISION_ROW_GAP, paddingHorizontal: DECISION_ROW_PAD, alignItems: "center" }}
         >
-          {capsules}
-          {shape.scopeInRow ? scopeControl : null}
+          <View
+            style={{ flexDirection: "row", gap: DECISION_ROW_GAP }}
+            onLayout={(e) => measure("capsules", e.nativeEvent.layout.width)}
+          >
+            {capsules}
+          </View>
+          {scopeInRow ? scopeControl : null}
         </ScrollView>
       ) : (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>{capsules}</View>
       )}
 
-      {shape.scopeInRow ? null : scopeControl}
+      {scopeInRow ? null : scopeControl}
 
       {shape.explainer ? (
         <Txt variant="hint" tone="ink3" style={{ marginTop: 10 }}>

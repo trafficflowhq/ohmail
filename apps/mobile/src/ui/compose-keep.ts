@@ -35,3 +35,12 @@ export function keepAct(o: {
   if (o.worth) return "keep";
   return o.files > 0 ? "ask" : "close";
 }
+
+/**
+ * A composer UNMOUNTED without a close (its route replaced or covered by a fold): an idle letter
+ * worth a row is kept quietly, as the close would have kept it. Files cannot ride a draft and there
+ * is nobody left to ask, so they go; a send in flight or a keep already running keeps its own.
+ */
+export function unmountKeep(o: { phase: ComposerPhase; worth: boolean; keeping: boolean }): "keep" | "nothing" {
+  return o.phase === "idle" && o.worth && !o.keeping ? "keep" : "nothing";
+}

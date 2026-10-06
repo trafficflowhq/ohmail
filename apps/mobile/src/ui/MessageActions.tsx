@@ -10,7 +10,7 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
+  Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
   type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -91,10 +91,10 @@ import {
 import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native";
 import { usePrefs } from "../state/store";
 import { afterWithdraw, cancelAct } from "./send-cancel";
-import { keepAct, worthKeeping } from "./compose-keep";
+import { keepAct, unmountKeep, worthKeeping } from "./compose-keep";
 import { editWhileIdle } from "./compose-edit";
 import { Segmented } from "./Segmented";
-import { Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
+import { Sheet, SheetBackdrop, SheetRow, useSheetPanelBounds } from "./Sheet";
 import { composeBodyMin, notesPinned, pinnedNotesMax } from "./compose-fit";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
@@ -1099,6 +1099,23 @@ export function ComposeSheet({
     if (!pinNotes) letterScroll.current?.scrollToEnd({ animated: false });
   }, [pinNotes, notesHeight]);
   const w = useWorld();
+  /* THE COMPOSER HOLDS THE READER'S MOVE, whatever opened it (the reader's sheet, the rail's pen, a
+     mailto in a body): a fold or unfold while it is open replaced or covered the New mail route and
+     unmounted it without a close. The move fires once the composer is gone (`reader-held.ts`). */
+  const holdToken = useRef(Symbol("composer")).current;
+  useEffect(() => {
+    holdReader(holdToken, true);
+    return () => holdReader(holdToken, false);
+  }, [holdToken]);
+  /* EVERY ROAD OUT IS A CLOSE: `leave` marks it. An unmount that did not come through one keeps what
+     a close would have kept (`unmountKeep`), so nothing typed goes with a screen that went. */
+  const closed = useRef(false);
+  const leave = () => {
+    closed.current = true;
+    onClose();
+  };
+  const atUnmount = useRef<() => void>(() => undefined);
+  useEffect(() => () => { if (!closed.current) atUnmount.current(); }, []);
   /** The composer never straddles a hinge and stays bounded on wide windows (`Sheet.tsx`). */
   const panelBounds = useSheetPanelBounds();
   /** The send-later day rows, named by `Intl` in the app's language. */
@@ -1276,7 +1293,7 @@ export function ComposeSheet({
     const settled = w.sendOutcome(queuedKey);
     const said = w.sendSettlement(queuedKey);
     // Confirmed: the flush already announced the send (kind-aware toast); this just closes.
-    if (settled === "confirmed") onClose();
+    if (settled === "confirmed") leave();
     else if (settled === "rolled_back") {
       // The queued copy is gone with the rollback — a fresh Send cannot double-deliver.
       setQueuedKey(null);
@@ -1391,7 +1408,7 @@ export function ComposeSheet({
       const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
       const act = keepAct({ phase, worth, files: attachments.length, armed: keepNote !== null });
       if (act === "close") {
-        onClose();
+        leave();
         return;
       }
       if (act === "ask") {
@@ -1408,7 +1425,7 @@ export function ComposeSheet({
           subject, body, files: attachments.length, draftId, ...(draft !== undefined ? { quiet: true } : {}),
         });
         keeping.current = false;
-        if (kept === "kept") onClose();
+        if (kept === "kept") leave();
         else setKeepNote("failed");
       })();
       return;
@@ -1418,9 +1435,18 @@ export function ComposeSheet({
       // The verdict is read AFTER the withdrawal answers, not before it: a flush can settle
       // under the await, and the fresher reading is the one this press is owed.
       const said = afterWithdraw(await w.actions.withdrawSend(key), w.sendOutcome(key));
-      if (said === "close") onClose();
+      if (said === "close") leave();
       else if (said === "already_sent") setAlreadySent(true);
     })();
+  };
+
+  atUnmount.current = () => {
+    const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
+    if (unmountKeep({ phase, worth, keeping: keeping.current }) !== "keep") return;
+    void w.actions.draftKeep({
+      mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
+      subject, body, files: attachments.length, draftId, quiet: true,
+    });
   };
 
   const send = async (sendAt: string | null = null, andDone = false) => {
@@ -1437,7 +1463,7 @@ export function ComposeSheet({
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
     // `superseded`: a newer press of this reply carries it and says its sentence.
     if (result.outcome === "sent" || result.outcome === "superseded") {
-      onClose();
+      leave();
       return;
     }
     if (result.outcome === "queued") {
@@ -1509,7 +1535,7 @@ export function ComposeSheet({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1, justifyContent: "flex-end", paddingBottom: keyboardLift }}
       >
-        <Pressable style={{ flex: 1 }} accessibilityLabel={Copy.replyCancel} onPress={closeComposer} />
+        <SheetBackdrop label={Copy.replyCancel} onPress={closeComposer} />
         <View
           style={[
             {

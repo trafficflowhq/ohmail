@@ -9,7 +9,7 @@
  */
 import type { ReactNode } from "react";
 import {
-  KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, useWindowDimensions, View, type ViewStyle,
+  KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View, type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
@@ -69,7 +69,7 @@ export function Sheet({
   if (!open) return null;
   const body = (
     <>
-      <Pressable style={{ flex: 1 }} accessibilityLabel={Copy.moveCancel} onPress={onClose} />
+      <SheetBackdrop label={Copy.moveCancel} onPress={onClose} />
       <View
         accessibilityViewIsModal
         accessibilityLabel={label}
@@ -110,6 +110,23 @@ export function Sheet({
         <View style={{ flex: 1, justifyContent: "flex-end" }}>{body}</View>
       )}
     </Modal>
+  );
+}
+
+/**
+ * THE SCRIM, over the whole window on every posture and in both themes: the Modal blocks every
+ * touch, so what stands beside a pane-anchored panel or above a thumb sheet is drawn as inert, and
+ * a press on it closes the sheet. Behind the panel (first child), never a flex spacer above it, so
+ * the band beside a panel on the detail pane is covered too. Shared with the composer's modal.
+ */
+export function SheetBackdrop({ label, onPress }: { label: string; onPress: () => void }) {
+  const t = useTheme();
+  return (
+    <Pressable
+      style={[StyleSheet.absoluteFill, { backgroundColor: t.c.scrim }]}
+      accessibilityLabel={label}
+      onPress={onPress}
+    />
   );
 }
 
