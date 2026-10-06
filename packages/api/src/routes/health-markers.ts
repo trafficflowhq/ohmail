@@ -1148,6 +1148,10 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
   // replaced under its name). Against a 0139 database a message past a store limit cannot be
   // recorded as written off, so the cursor of its folder holds and the cycle fails every pass.
   ["message_failures_code_closed", "data_too_large"],
+  // Mail 0145_press_decided_at — `superseded` joins the request refusals (0094's constraint,
+  // replaced under its name). Against a 0144 database the organizer's ack of an aged move behind a
+  // newer placement is refused by the old CHECK and the reader's row never settles.
+  ["organizer_requests_refused_reason_closed", "superseded"],
 ];
 
 /**

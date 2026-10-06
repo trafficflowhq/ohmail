@@ -4830,6 +4830,12 @@ export const REQUEST_REFUSAL_REASONS = [
    * is told, on `no_such_message`'s reasoning exactly.
    */
   "no_such_rule",
+  /**
+   * mail 0145. A move pressed a day or more before it reached the organizer, over a placement
+   * decided here after the press. The newer decision stands and owns the sentence, so the waiting
+   * list says nothing for it; `stale` keeps meaning a request older than the reader's window.
+   */
+  "superseded",
 ] as const;
 export type RequestRefusalReason = (typeof REQUEST_REFUSAL_REASONS)[number];
 
