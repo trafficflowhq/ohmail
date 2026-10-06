@@ -796,7 +796,7 @@ export function useScreenerState(
     /* NOTHING TO DO IS A REFUSAL — a press that can dispatch neither half cannot change what the
        reader sees, and one counted refusal is how that reaches the caller's own reading. */
     if (ruleMutations.length === 0 && moveIds.length === 0) {
-      return Promise.resolve({ applied: 0, queued: 0, refused: 1, firstRefusal: undefined, holder: null });
+      return Promise.resolve({ applied: 0, queued: 0, refused: 1, silent: 0, firstRefusal: undefined, holder: null });
     }
     const rules = Promise.all(
       ruleMutations.map((m) => engine.mutate(m).then(pressVerdict, () => PRESS_THREW)),
@@ -805,6 +805,7 @@ export function useScreenerState(
       applied: a.applied + b.applied,
       queued: a.queued + b.queued,
       refused: a.refused + b.refused,
+      silent: a.silent + b.silent,
       firstRefusal: a.firstRefusal ?? b.firstRefusal,
       holder: a.holder ?? b.holder,
     }));
@@ -1166,6 +1167,8 @@ export function useScreenerState(
           return r;
         })).then((key) => {
           done();
+          // Replaced by a newer press about this sender: that press says the sentence.
+          if (key === null) return;
           // THE SENTENCE IS UNCHANGED — `toastRuleFailed` says "… moved, but the rule couldn't be
           // made. Future mail is unchanged.", which is strictly more informative than a generic
           // refusal and is true: the mail moved, only the rule was lost. What was missing is the

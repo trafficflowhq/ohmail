@@ -2053,7 +2053,8 @@ const newestFirst = (a: EngineMessage, b: EngineMessage): number =>
  * the sentence never claims more than the least of them.
  */
 const oneVerdict = (vs: readonly PressVerdict[]): PressVerdict =>
-  vs.find((v) => v.kind === "refused") ?? vs.find((v) => v.kind === "queued") ?? vs[0] ?? { kind: "applied" };
+  vs.find((v) => v.kind === "refused") ?? vs.find((v) => v.kind === "queued")
+    ?? vs.find((v) => v.kind === "applied") ?? vs[0] ?? { kind: "applied" };
 
 /**
  * Does this rule match this sender, by the same test `core/src/rules.ts#matches` applies —
@@ -2242,7 +2243,9 @@ export async function dispatchHeldRouting(
   const answers = await Promise.all(sent.map((mu) =>
     engine.mutate(mu, intent.v === 1 && mu.kind === "move" ? { key: intent.id } : {}).catch(() => null)));
   const refused = answers.some((r) => r === null || r?.status === "rolled_back");
-  const made = sent.length === 0 ? "nothing" as const : true;
+  /* Every answer replaced by a newer press for the same thing: that press says the sentence. */
+  const silent = answers.length > 0 && answers.every((r) => r?.status === "superseded");
+  const made = sent.length === 0 || silent ? "nothing" as const : true;
   if (hooks.answered(answers)) return refused ? false : made;
   if (refused) { hooks.refused(); return false; }
   return made;
@@ -3290,6 +3293,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * A press on this client's own retry queue answers `true` — the intent stands under its key.
    */
   const said = (v: PressVerdict, done: RefusalArg | null, failed: RefusalArg, opts?: ToastOpts): boolean => {
+    // A newer press for the same field replaced this one: it owns the sentence.
+    if (v.kind === "silent") return true;
     if (v.kind === "refused") { toast(failed); return false; }
     if (v.kind === "queued" && v.wait === "organizer") {
       toast(v.holder ? refuse("pressQueuedForOrganizer", v.holder) : refuse("pressQueuedForOrganizerUnknown"));
@@ -3303,6 +3308,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const saidAll = (vs: readonly PressVerdict[], done: RefusalArg | null, failed: RefusalArg): boolean => {
     const t = tallyVerdicts(vs);
     if (t.refused > 0) { toast(failed); return false; }
+    if (vs.length > 0 && t.silent === vs.length) return true;
     if (t.queued > 0 && vs.some((v) => v.kind === "queued" && v.wait === "organizer")) {
       const holder = t.holder;
       toast(holder ? refuse("pressQueuedForOrganizer", holder) : refuse("pressQueuedForOrganizerUnknown"));
@@ -3619,6 +3625,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       const v = oneVerdict(own.map((r) => (r ? pressVerdict(r) : PRESS_THREW)));
       if (v.kind === "applied") deps.forgetWaiting?.({ address: row.address, scope });
       hold?.();
+      // A newer press about this sender replaced the decision: it owns the sentence.
+      if (v.kind === "silent") return;
       if (v.kind === "refused") { toast(refuse("liveDecideFailed", row.address)); return; }
       if (v.kind === "queued" && v.wait === "organizer") {
         deps.relayedHere?.({ address: row.address, scope });
@@ -4198,6 +4206,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("liveSaveFailed"));
       return false;
     }
+    /* A NEWER PRESS FOR THESE LETTERS REPLACED THIS ONE (on the wire, or refused stale behind a
+       newer decision): the newer press owns the sentence, so this one says nothing. */
+    if (answers.length > 0 && answers.every((r) => r?.status === "superseded")) return true;
     /* THE PRESS ASKS FOR THE WIRE: the organizer in this process drains now rather than at its
        next poll (`withPullKick`). Once per press, never awaited by the sentence; never throws. */
     if (unsent.length > 0) void engine.requestPull({ mailboxIds: [m.mailboxId] });
@@ -4307,6 +4318,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return true;
     }
     if (!res || res.status === "rolled_back") { toast(refuse("deleteFailed")); return false; }
+    // A newer press for this message replaced the delete: that press owns the sentence.
+    if (res.status === "superseded") return true;
     // `quiet` is the held window's commit (the pill said "Moved to Trash." at the press) — it
     // suppresses ONLY the confirmed sentence; refusal and queued speak above whatever happens.
     if (!opts?.quiet) toast(refuse("toastDeleted"));
@@ -4612,6 +4625,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         toast(reason ? refuse("draftsDiscardRefused", reason) : refuse("draftsDiscardRefusedUnnamed"));
         return "refused";
       }
+      case "silent":
+        /* A newer press about this draft owns the sentence; nothing is said, the row is left. */
+        return "queued";
       default: {
         /* The gate is the BINDING, evaluated by `tsc` — the webapp's own rule at this seam: a
            fourth verdict makes this line a type error rather than a silent fall-through. */
@@ -4981,6 +4997,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       }
       const verdicts = a.answers.map((x) => (x ? pressVerdict(x) : PRESS_THREW));
       const back = tallyVerdicts(verdicts);
+      // Every write replaced by a newer press: that press reads its own list back.
+      if (verdicts.length > 0 && back.silent === verdicts.length) return true;
       if (back.refused > 0 || back.queued > 0) {
         return saidAll(verdicts, refuse("liveDecided", place, p.target), refuse("liveDecideFailed", p.m.from.address));
       }

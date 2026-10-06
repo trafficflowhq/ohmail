@@ -1803,6 +1803,9 @@ export function useShellCompose({
             return;
           case "applied":
             break;
+          case "silent":
+            // A newer press about this draft owns the sentence.
+            return;
           default: {
             /* The gate is the BINDING, evaluated by `tsc`: a fourth `PressVerdict` makes this line
                a type error at this site. The toast is only the belt for a build that got past it,

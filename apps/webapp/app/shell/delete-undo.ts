@@ -429,6 +429,7 @@ async function attemptOne(
   } catch {
     return false;
   }
+  // `superseded` settles too: a newer press for this message owns it, and the record is done.
   if (res.status !== "rolled_back") return true;
   if ((res.error?.code ?? null) === ROW_ABSENT) return hydrated;
   return false;

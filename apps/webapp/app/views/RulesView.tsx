@@ -369,6 +369,8 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
    */
   const report = (res: RuleOutcome, ok: string, queued: string, failed: string, undo?: ToastOptions): void => {
     const v = pressVerdict(res);
+    // A newer press for this rule replaced this one: it owns the sentence.
+    if (v.kind === "silent") return;
     if (v.kind === "refused") { setRefusal({ lead: failed, why: whyOf(v.refusal) }); return; }
     if (v.kind === "queued") {
       /* THE TWO WAITS ARE DIFFERENT SENTENCES. `retry` is this browser's own queue, which the

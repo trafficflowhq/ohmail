@@ -131,6 +131,8 @@ export async function moveStayedInBatches(
   for (let at = 0; at < ids.length; at += STAYED_MOVE_BATCH) {
     const outs = await Promise.all(ids.slice(at, at + STAYED_MOVE_BATCH).map((messageId) => dispatch({ kind: "move", messageId, folder })));
     for (const o of outs) {
+      // A move a newer press for the same message replaced: that press owns the count.
+      if (o !== null && o.status === "superseded") continue;
       if (o === null || o.status === "rolled_back") tally.refused++;
       else if (o.status === "awaiting_organizer" || o.status === "queued") tally.waiting++;
       else tally.moved++;

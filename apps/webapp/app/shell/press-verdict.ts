@@ -180,6 +180,8 @@ export async function moveInBatches(
   for (let at = 0; at < ids.length; at += size) {
     const outs = await Promise.all(ids.slice(at, at + size).map((messageId) => dispatch({ kind: "move", messageId, folder })));
     for (const o of outs) {
+      // A move a newer press for the same message replaced: that press owns the count.
+      if (o.status === "superseded") continue;
       if (o.status === "rolled_back") tally.refused++;
       else if (o.status === "awaiting_organizer" || o.status === "queued") tally.waiting++;
       else tally.moved++;

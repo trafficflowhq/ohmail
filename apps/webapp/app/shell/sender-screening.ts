@@ -711,6 +711,11 @@ export function screeningToast(
  */
 export function worstStatus(results: readonly { status: MutationStatus }[]): MutationStatus | null {
   if (results.length === 0) return null;
+  /* A verb a newer press for the same thing replaced says nothing: it is neither done nor refused,
+     and a set made only of those is `superseded` — the reader says no sentence at all. */
+  const spoken = results.filter((r) => r.status !== "superseded");
+  if (spoken.length === 0) return "superseded";
+  results = spoken;
   if (results.some((r) => r.status === "rolled_back")) return "rolled_back";
   if (results.some((r) => r.status === "awaiting_organizer")) return "awaiting_organizer";
   if (results.some((r) => r.status === "queued")) return "queued";
@@ -732,7 +737,7 @@ export async function dispatchScreeningChange(
   /** The press's moves, dispatched after the rules and the decide — {@link movesAtLanding}'s. */
   pressMoves: readonly PressMove[],
   mutate: (m: EngineMutation) => Promise<{ status: MutationStatus }>,
-): Promise<ScreeningToastKey> {
+): Promise<ScreeningToastKey | null> {
   const rules = plan.ruleMutations.map((m) => mutate(m));
   /* …AND THE DECIDE, in the plan's own order: a refused decision is the answer the sentence owes.
      A refused move rolls its own row back and is not the sentence's status, but the answer waits
@@ -746,6 +751,8 @@ export async function dispatchScreeningChange(
   const moves = pressMoves.map((m) => mutate(m));
   const worst = worstStatus(await Promise.all([...rules, ...decides]));
   await Promise.allSettled(moves);
+  // Replaced by a newer press about this sender: that press says the sentence, this one none.
+  if (worst === "superseded") return null;
   return screeningToast(plan, worst, pressMoves.length);
 }
 

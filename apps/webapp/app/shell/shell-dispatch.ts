@@ -415,6 +415,8 @@ export function useShellDispatch({
         /* THE MAIL CAME BACK. Only a cancel that TOOK may add "and no rule was made" — past the
            window the rule is on its way and the honest sentence is the plain one. */
         if (tally.applied > 0) { toast(cancelled && held ? held.undone : t("ohbox.toastUndone")); return; }
+        // Every inverse replaced by a newer press for the same thing: that press says the sentence.
+        if (outs.length > 0 && tally.silent === outs.length) return;
         if (tally.refused === 0 && organizerWaits(outs) > 0) { toast(queuedSentence(tally.holder)); return; }
         toast(refusalSentence(tally.firstRefusal));
       });
@@ -428,6 +430,8 @@ export function useShellDispatch({
          Skipped on the silent paths (`okSentence === null`): no toast, nothing to carry Undo. */
       const inverses = okSentence !== null ? inverseMutations(engine.verbRead(), mutation) : [];
       return dispatchPress(mutation).then((out) => {
+        // A newer press for the same field replaced this one: it owns the sentence.
+        if (out.kind === "silent") return true;
         if (out.kind === "refused") { toast(refusalSentence(out.refusal)); return false; }
         if (out.kind === "queued" && out.wait === "organizer") { toast(queuedSentence(out.holder)); return false; }
         if (okSentence !== null) toastWithUndo(okSentence, inverses);
@@ -454,6 +458,8 @@ export function useShellDispatch({
         const tally = tallyVerdicts(outs);
         const waiting = organizerWaits(outs);
         if (tally.applied === 0 && outs.length > 0) {
+          // Every press replaced by a newer one for the same thing: that press says the sentence.
+          if (tally.silent === outs.length) return 0;
           if (tally.refused === 0 && waiting > 0) { toast(queuedSentence(tally.holder)); return 0; }
           toast(refusalSentence(tally.firstRefusal));
           return 0;

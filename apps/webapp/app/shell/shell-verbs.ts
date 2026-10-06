@@ -357,7 +357,8 @@ export function useShellVerbs({
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH. This one has not been since it
        shipped: the mail moved and the filing strip's count stayed stale until its next poll, up to
        thirty seconds later. Both Move arms already go through it. */
-    void dispatchScreeningChange(plan, pressMoves, (m) => fileAndRefresh(engine.mutate(m))).then(say);
+    void dispatchScreeningChange(plan, pressMoves, (m) => fileAndRefresh(engine.mutate(m)))
+      .then((key) => { if (key !== null) say(key); });
   });
 
   /**
@@ -429,6 +430,8 @@ export function useShellVerbs({
       makeRule: p.makeRule, applyRetro: p.applyRetro, resolution,
       shown: shown.map((r) => ({ id: r.id, fp: ruleFingerprint(r) })), moves: settled,
       after: (o) => {
+        // Replaced by a newer press about this sender: that press says the sentence.
+        if (o.worst === "superseded") return;
         if (o.worst === "rolled_back") {
           toast(t("screening.toastRuleFailed", { sender: p.who, place: p.place, count: p.gained() }));
           return;
@@ -713,6 +716,7 @@ export function useShellVerbs({
     if (decidesAtGate(planned.plan)) {
       void dispatchScreeningChange(planned.plan, planned.moves, (mu) => fileAndRefresh(engine.mutate(mu)))
         .then((key) => {
+          if (key === null) return;
           toast(t(`screening.${key}`, { sender: planned.who, place, count: planned.plan.moved }));
         });
       return;
@@ -815,6 +819,7 @@ export function useShellVerbs({
     }
     void Promise.all(rules).then((results) => {
       const key = subjectRuleToast(plan, worstStatus(results));
+      if (key === null) return;
       // The count is `matched`, not `outOfPlace`: the sentence is about the mail the rule NAMES,
       // which is what the confirm row showed. Reporting the smaller number afterwards would read
       // as the rule having done less than it said. The confirmed sentence names the FIELD the

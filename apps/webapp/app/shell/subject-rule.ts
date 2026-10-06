@@ -409,7 +409,9 @@ export type SubjectRuleToastKey =
 
 export function subjectRuleToast(
   plan: SubjectRulePlan, status: MutationStatus | null,
-): SubjectRuleToastKey {
+): SubjectRuleToastKey | null {
+  // A rule a newer press replaced says nothing: the newer press owns the sentence.
+  if (status === "superseded") return null;
   if (plan.already || plan.ruleMutations.length === 0) return "subjectAlready";
   if (status === "rolled_back") return "subjectRuleFailed";
   // The rule was recorded for the install that organizes the mailbox and written nowhere yet —
