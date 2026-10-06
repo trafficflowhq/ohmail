@@ -4582,6 +4582,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .mutate({ kind: "draft_schedule_cancel", draftId })
       .then((res) => res, () => null);
     const status = r?.status ?? "rolled_back";
+    // A newer press about this draft replaced the cancel: it owns the sentence.
+    if (status === "superseded") return false;
     /**
      * The too-late sentence is reserved for the server's own conflict — narrower than the
      * webapp twin. "This message is already being sent" is a claim about what the server is
@@ -4650,6 +4652,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .mutate({ kind: "draft_resolve", draftId, outcome })
       .then((res) => res, () => null);
     if (r?.status === "confirmed") return true;
+    // A newer answer about this row replaced this one: it owns the sentence.
+    if (r?.status === "superseded") return false;
     toast(refuse(r?.error?.code === "send_still_running" ? "draftsResolveStillRunning" : "draftsResolveFailed"));
     return false;
   };
@@ -4667,6 +4671,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const freed = await engine
       .mutate({ kind: "draft_resolve", draftId, outcome: "not_arrived" })
       .then((res) => res, () => null);
+    if (freed?.status === "superseded") return "superseded";
     if (freed?.status !== "confirmed") {
       return freed?.error?.code === "send_still_running" ? "stillRunning" : "notReached";
     }
@@ -4724,7 +4729,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       })
       .then((res) => res, () => null);
     if (r === null || r.status === "rolled_back") return "refused";
-    if (k.quiet === true) return "kept";
+    // A newer save of this row replaced this one: it owns the sentence.
+    if (k.quiet === true || r.status === "superseded") return "kept";
     const without = k.files > 0;
     if (r.status === "queued") {
       toast(refuse(without ? "composeKeptQueuedWithoutFiles" : "composeKeptQueued"));

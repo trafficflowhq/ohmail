@@ -1628,6 +1628,8 @@ export function useShellCompose({
   const editScheduled = useStableCallback(
     (d: EngineDraft) => {
       void engine.mutate({ kind: "draft_schedule_cancel", draftId: d.id }).then((res) => {
+        // A newer press about this row replaced the cancel: it owns the sentence.
+        if (res.status === "superseded") return;
         if (res.status !== "confirmed") {
           // NOT opened: adopting a row whose appointment may still stand would point autosave
           // at a frozen row (409 per PUT) and let edits race a send the user believes stopped.
@@ -1655,6 +1657,8 @@ export function useShellCompose({
   const resolveHeldSend = useStableCallback(
     (draftId: string, outcome: "arrived" | "not_arrived") => {
       void engine.mutate({ kind: "draft_resolve", draftId, outcome }).then((res) => {
+        // A newer answer about this row replaced this one: it owns the sentence.
+        if (res.status === "superseded") return;
         if (res.status !== "confirmed") {
           /* A resolve that did not land leaves the row held; the overlay has already rolled back,
              so the note above it still reads "not confirmed" and the verbs are still there. The
@@ -1695,6 +1699,7 @@ export function useShellCompose({
    */
   const sendAgain = useStableCallback((d: EngineDraft) => {
     void engine.mutate({ kind: "draft_resolve", draftId: d.id, outcome: "not_arrived" }).then((res) => {
+      if (res.status === "superseded") return;
       if (res.status !== "confirmed") {
         toast(t(res.error?.code === "send_still_running"
           ? "drafts.resolveStillRunning"
