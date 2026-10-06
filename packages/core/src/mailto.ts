@@ -1,13 +1,18 @@
 /**
- * A `mailto:` link, read into a compose prefill — RFC 6068, read defensively. The OS hands this
- * app whatever string the registered handler was invoked with, and any web page can compose one
- * — so the contract is what the OUTPUT can never contain. PLAIN STRINGS ONLY: five text fields;
- * `attach`, `content-type` and every other header a URI can carry are DROPPED — instructions
- * from a web page do not run in a mail client. NO CONTROL CHARACTERS in single-line fields
- * (CR/LF is the header-injection shape; the body keeps `\n` and `\t` only). BOUNDED:
- * recipients, subject and body are capped here, not discovered in a hang. Pinned by test: `+`
+ * A `mailto:` link, read into a compose prefill — RFC 6068, read defensively, and the ONE reading
+ * every surface takes: the desktop's OS handler and in-window links, the web shell's link seam and
+ * the phone's message frame. Any web page or sender can compose one, so the contract is what the
+ * OUTPUT can never contain. PLAIN STRINGS ONLY: five text fields; `attach`, `content-type` and every
+ * other header a URI can carry are DROPPED. NO CONTROL CHARACTERS in single-line fields (CR/LF is
+ * the header-injection shape; the body keeps `\n` and `\t` only). BOUNDED here, not in a hang. `+`
  * IS A PLUS (percent-encoding only); SPLIT FIRST, DECODE SECOND — `%26` is text, not a header.
+ * Imports nothing, so every graph compiles it from source (`package.json` `//mailto`).
  */
+
+/** Whether a string names the `mailto:` scheme — the one test every surface's link seam asks. */
+export function isMailto(raw: string): boolean {
+  return /^mailto:/i.test(raw);
+}
 
 export interface MailtoDraft {
   to: string[];
@@ -33,9 +38,8 @@ const MAX_BODY = 100_000;
 export function parseMailto(raw: unknown): MailtoDraft | null {
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
-  const scheme = /^mailto:/i.exec(trimmed);
-  if (!scheme) return null;
-  let rest = trimmed.slice(scheme[0].length);
+  if (!isMailto(trimmed)) return null;
+  let rest = trimmed.slice("mailto:".length);
   /* Not RFC 6068 — the RFC has no authority part — but `mailto://addr` is what some launchers
      and older apps produce, and refusing it would drop the address on exactly the clicks this
      handler exists for. Two literal slashes and nothing else is tolerated. */

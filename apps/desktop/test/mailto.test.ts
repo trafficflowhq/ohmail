@@ -2,10 +2,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { emptyDraft, parseMailto } from "../src/mailto.js";
+import { emptyDraft, isMailto, parseMailto } from "@trafficflow/core/mailto";
+import { MAILTO_SURFACE_CASES } from "./mailto-cases";
 
 /**
- * THE MAILTO PARSER, driven by the strings the OS will actually hand this app.
+ * THE ONE MAILTO PARSER (`@trafficflow/core/mailto`), driven by the strings the OS will actually hand
+ * this app. ONE set of cases for the parser every surface reads; each surface's adapter is driven by
+ * the table in `mailto-cases.ts`.
  *
  * The suite is organised around the parser's stated contract — plain bounded strings, no control
  * characters in single-line fields, no header a link author invents — because a mailto is the one
@@ -183,6 +186,42 @@ describe("parseMailto", () => {
   });
 });
 
+describe("emptyDraft", () => {
+  it("is true only when every field is empty", () => {
+    expect(emptyDraft({ to: [], cc: [], bcc: [], subject: "", body: "" })).toBe(true);
+    expect(emptyDraft({ to: ["a@x.example"], cc: [], bcc: [], subject: "", body: "" })).toBe(false);
+    expect(emptyDraft({ to: [], cc: [], bcc: [], subject: "s", body: "" })).toBe(false);
+    expect(emptyDraft({ to: [], cc: [], bcc: [], subject: "", body: "b" })).toBe(false);
+  });
+});
+
+describe("isMailto", () => {
+  it("is the parser's own scheme test, case-insensitive, on the bytes as given", () => {
+    expect(isMailto("mailto:a@x.example")).toBe(true);
+    expect(isMailto("MAILTO:a@x.example")).toBe(true);
+    expect(isMailto(" mailto:a@x.example"), "a caller trims first, as `parseMailto` does").toBe(false);
+    expect(isMailto("https://x.example/mailto:a")).toBe(false);
+  });
+});
+
+/**
+ * THE DESKTOP'S HALF OF THE ONE MAILTO PARSER. The cases of the parser itself are the ones
+ * (above); here the desktop's adapter: the gate parses with the leaf and hands the draft whole to
+ * the shell, whose seeder is held to all five fields in the web app's own tests.
+ */
+describe("the desktop's mailto adapter", () => {
+  const gate = readFileSync(resolve(__dirname, "../src/DesktopGate.tsx"), "utf8");
+  it("parses with the one leaf, and nothing else", () => {
+    expect(gate).toContain('from "@trafficflow/core/mailto"');
+    expect(gate).not.toMatch(/from "\.\/mailto(\.js)?"/);
+  });
+  for (const c of MAILTO_SURFACE_CASES) {
+    it(`carries every field: ${c.name}`, () => {
+      expect(parseMailto(c.link)).toEqual({ to: c.to, cc: c.cc, bcc: c.bcc, subject: c.subject, body: c.body });
+    });
+  }
+});
+
 /* THE BYTES THE SHELL'S DOOR HANDS OVER. A framed `mailto:` reaches compose as the raw string the
    Rust route table keeps byte-exact (`popup_rows` in `engine_tests.rs`); read from there, so the
    two halves are asked about one string. */
@@ -192,14 +231,5 @@ describe("the shell's new-window door", () => {
     const raw = /PopupRoute::Compose\("(mailto:[^"]*%26[^"]*)"/.exec(rust)?.[1];
     expect(raw, "the route table lost its encoded-ampersand row").toBe("mailto:x@y.test?subject=A%26B");
     expect(parseMailto(raw!)).toEqual({ to: ["x@y.test"], cc: [], bcc: [], subject: "A&B", body: "" });
-  });
-});
-
-describe("emptyDraft", () => {
-  it("is true only when every field is empty", () => {
-    expect(emptyDraft({ to: [], cc: [], bcc: [], subject: "", body: "" })).toBe(true);
-    expect(emptyDraft({ to: ["a@x.example"], cc: [], bcc: [], subject: "", body: "" })).toBe(false);
-    expect(emptyDraft({ to: [], cc: [], bcc: [], subject: "s", body: "" })).toBe(false);
-    expect(emptyDraft({ to: [], cc: [], bcc: [], subject: "", body: "b" })).toBe(false);
   });
 });

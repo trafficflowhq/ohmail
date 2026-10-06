@@ -1013,6 +1013,7 @@ export const DE: Deck = {
     `Diese Entscheidung ließ sich nicht speichern — ${sender} wartet weiter.`,
   liveDecideUndoLate: "Zu spät — diese Entscheidung ist schon raus.",
   undoReplaced: "Eine spätere Wahl für diesen Absender hat diese ersetzt, hier gibt es nichts rückgängig zu machen.",
+  undoReplacedLetterBack: "Die Post ist wieder da, wo sie war. Wohin die Post dieses Absenders geht, entscheidet eine spätere Wahl.",
   /*
    * ── THE DESTINATION LEADS, BECAUSE GERMAN CANNOT TAKE IT AFTER A PREPOSITION ────────────────
    *
@@ -1308,6 +1309,8 @@ export const DE: Deck = {
   forwardAskSensitive: "ohmail hat diese Nachricht als vertraulich markiert.",
   forwardAskQuestion: "Trotzdem weiterleiten?",
   forwardTo: "An",
+  composeCc: "Kopie",
+  composeBcc: "Blindkopie",
   forwardToPlaceholder: "name@beispiel.de, …",
   forwardNotePlaceholder: "Notiz hinzufügen (optional)",
   forwarded: "Weitergeleitet.",

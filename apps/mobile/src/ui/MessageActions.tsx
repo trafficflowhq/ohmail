@@ -93,6 +93,9 @@ import { usePrefs } from "../state/store";
 import { afterWithdraw, cancelAct } from "./send-cancel";
 import { keepAct, unmountKeep, worthKeeping } from "./compose-keep";
 import { editWhileIdle } from "./compose-edit";
+import { copiesShown, copiesToKeep, copiesToSend, type TypedCopies } from "./compose-copies";
+import { ComposeCopies } from "./ComposeCopies";
+import type { MailtoPrefill } from "./mailto";
 import { Segmented } from "./Segmented";
 import { Sheet, SheetBackdrop, SheetRow, useSheetPanelBounds } from "./Sheet";
 import { composeBodyMin, notesPinned, pinnedNotesMax } from "./compose-fit";
@@ -1079,7 +1082,7 @@ export function ComposeSheet({
   /** A draft opened from Drafts: the composer is bound to its row from the first keystroke. */
   draft?: { id: string; body: string } & WorldDraftEdit;
   /** A new mail's starting text — a `mailto:` pressed in a message (`app/compose.tsx`). */
-  prefill?: { to: string; subject: string; body: string };
+  prefill?: MailtoPrefill;
   onClose: () => void;
 }) {
   const t = useTheme();
@@ -1121,6 +1124,9 @@ export function ComposeSheet({
   const [to, setTo] = useState(draft?.to ?? prefill?.to ?? "");
   /** A parent-less mail's own subject. Reply and forward derive theirs; this one is typed. */
   const [subject, setSubject] = useState(draft?.subject ?? prefill?.subject ?? "");
+  /* A new mail's Cc and Bcc, where the letter arrived with them (`compose-copies.ts`). */
+  const [copies, setCopies] = useState<TypedCopies>({ cc: draft?.cc ?? prefill?.cc ?? "", bcc: draft?.bcc ?? prefill?.bcc ?? "" });
+  const [copiesOn] = useState(() => mode === "new" && copiesShown(draft ?? prefill));
   /**
    * The composer's send phase. `queued` is TERMINAL for this composer: the text stands on
    * the engine's retry queue under its Idempotency-Key (the reconnect flush retries it, the
@@ -1195,7 +1201,7 @@ export function ComposeSheet({
    */
   const [draftId, setDraftId] = useState<string | null>(draft?.id ?? null);
   /** What the bound row last held from this sheet — the seed until the first save. */
-  const saved = useRef<string | null>(draft ? JSON.stringify([draft.to, draft.subject, draft.body]) : null);
+  const saved = useRef<string | null>(draft ? JSON.stringify([draft.to, draft.subject, draft.body, draft.cc, draft.bcc]) : null);
   /** The last press was refused, and which sentence it earned — said in the sheet, see `send-failed.ts`. */
   const [failNote, setFailNote] = useState<FailedSendCopy | null>(null);
   /* The ONE shared bound (`composeAttachCap`) of the sending mailbox's announced `SIZE` —
@@ -1262,7 +1268,7 @@ export function ComposeSheet({
   /* A DRAFT OPENED HERE IS WRITTEN AS IT IS EDITED: two seconds after the last keystroke its row
      holds what is on screen, quietly, so leaving the app mid-sentence loses nothing. Only a bound
      sheet saves this way; a fresh one keeps on close. */
-  const onScreen = JSON.stringify([to, subject, body]);
+  const onScreen = JSON.stringify([to, subject, body, copies.cc, copies.bcc]);
   /* By presence, not identity: the route builds the seed per render, and a new object must not reset the timer. */
   const bound = draft !== undefined;
   useEffect(() => {
@@ -1272,7 +1278,7 @@ export function ComposeSheet({
       /* A forward draft is saved as a forward of its original, never as a new mail. */
       void w.actions.draftKeep({
         mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
-        mailboxId, to: keptRecipients(to), subject, body, files: 0, draftId, quiet: true,
+        mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,
       });
     }, DRAFT_AUTOSAVE_MS);
     return () => clearTimeout(timer);
@@ -1323,8 +1329,10 @@ export function ComposeSheet({
      except a forward (its content is the forwarded message). A signature never lights Send up
      on its own — the rule reads the body and the files, never the block. */
   const needsContent = phoneSendNeedsContent({ forward, body, attachmentCount: attachments.length });
+  const sendCopies = fresh ? copiesToSend(copies) : null;
   const canSend =
-    phase === "idle" && !needsContent && (addressed ? recipients !== null && recipients.length > 0 : true);
+    phase === "idle" && !needsContent && (addressed ? recipients !== null && recipients.length > 0 : true)
+    && (!fresh || sendCopies !== null);
   /* CONTENT IS THE ONE THING MISSING — the webapp's told refusal: Send stays pressable, dressed
      unlit, and the press earns the sentence instead of doing nothing. Every stronger lock
      (sending, queued, unverified) keeps the dead press. */
@@ -1422,7 +1430,7 @@ export function ComposeSheet({
            discard a row that existed before this sheet. */
         const kept = await w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-          subject, body, files: attachments.length, draftId, ...(draft !== undefined ? { quiet: true } : {}),
+          ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: attachments.length, draftId, ...(draft !== undefined ? { quiet: true } : {}),
         });
         keeping.current = false;
         if (kept === "kept") leave();
@@ -1458,7 +1466,7 @@ export function ComposeSheet({
     setFailNote(null);
     const files = toComposeAttachments(attachments);
     const result = fresh
-      ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files, draftId)
+      ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)
       : forward
         ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId)
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
@@ -1626,6 +1634,7 @@ export function ComposeSheet({
               />
             </View>
           ) : null}
+          {copiesOn ? <ComposeCopies value={copies} editable={phase === "idle"} onChange={editWhileIdle(phase, setCopies)} /> : null}
           {fresh ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <Txt variant="caption" tone="ink3">

@@ -7,6 +7,8 @@
  * doors end at the same gate (`external_url`) and the same opener.
  */
 
+import { isMailto } from "@trafficflow/core/mailto";
+
 /**
  * The scheme table, in one place. `http:`/`https:` — the shell's opener → the user's own browser,
  * never this window ({@link externalTargetOf} decides; `external_url` in `engine.rs` decides again,
@@ -59,7 +61,7 @@ export function externalTargetOf(href: string, base: string): string | null {
  * compose form from, or `null`. The header's rule ("http and https go out, everything else
  * cancelled") was wrong for `mailto:` in the one product where that is least excusable — this app
  * IS the mail client, and an address clicked in a newsletter got nothing, silently;
- * `apps/desktop/src/mailto.ts` and the gate's compose seam already existed, reachable only by a link
+ * the one parser (`@trafficflow/core/mailto`) and the gate's compose seam already existed, reachable only by a link
  * the OS delivered. The RAW href is returned, never `URL.href`: the WHATWG parser may re-encode a
  * mailto's opaque path, and two normalisations in a row is how `%26` in a subject becomes a new
  * header — `parseMailto` (RFC 6068, split-then-decode) reads the bytes the author wrote.
@@ -79,8 +81,9 @@ export function mailtoTargetOf(href: string, base: string): string | null {
   void base; // deliberately unused — a mailto is absolute or it is not a mailto. See the header.
   const raw = href.trim();
   // Case-insensitive because a scheme is, and on the RAW value so that the string this
-  // function approved is byte-for-byte the string its caller hands to `parseMailto`.
-  if (!/^mailto:/i.test(raw)) return null;
+  // function approved is byte-for-byte the string its caller hands to `parseMailto`, whose own
+  // scheme test this is.
+  if (!isMailto(raw)) return null;
   return raw;
 }
 

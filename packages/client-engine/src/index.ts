@@ -113,6 +113,9 @@ export {
   type PairLink,
 } from "./pair-link.js";
 
+/** THE ONE MAILTO PARSER — the phone's composer reads a link with it, as the desktop does. */
+export { emptyDraft as emptyMailtoDraft, isMailto, parseMailto, type MailtoDraft } from "./mailto.js";
+
 /**
  * The folder-name validator, re-exported from core's browser-safe leaf (the `/ics` rule above):
  * the honest sentence BEFORE the wire is the SERVER's own rules, and every client that offers

@@ -17,7 +17,7 @@ import { Gated } from "../src/ui/Gated";
 import { ComposeSheet, forwardAskSentence } from "../src/ui/MessageActions";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
-import { emptyDraft, parseMailto } from "../src/ui/mailto";
+import { mailtoPrefill } from "../src/ui/mailto";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function ComposeScreen() {
@@ -94,15 +94,5 @@ function ComposeBody() {
   /* THE SHEET IS THE PAGE: its own head is the one title, and the route is a transparent modal
      (`app/_layout.tsx`), so the screen it was opened over stands under it — the list and the rail
      on a two-pane posture, beside the detail pane the sheet rises over. */
-  return <ComposeSheet m={null} mode="new" onClose={leave} prefill={prefillOf(mailto)} />;
-}
-
-/**
- * `?mailto=<link>`: a `mailto:` pressed in a message, read by the one parser. The phone's composer
- * has To, Subject and the body; a link's Cc and Bcc are not carried (filed, PHONE-MAILTO-CC-BCC).
- */
-function prefillOf(raw: string | undefined): { to: string; subject: string; body: string } | undefined {
-  const d = typeof raw === "string" ? parseMailto(raw) : null;
-  if (d === null || emptyDraft(d)) return undefined;
-  return { to: d.to.join(", "), subject: d.subject, body: d.body };
+  return <ComposeSheet m={null} mode="new" onClose={leave} prefill={mailtoPrefill(mailto)} />;
 }

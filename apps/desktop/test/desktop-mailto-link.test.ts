@@ -2,6 +2,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseMailto } from "@trafficflow/core/mailto";
+import { MAILTO_SURFACE_CASES } from "./mailto-cases";
 
 /**
  * ═══ A `mailto:` LINK IS THE ONE LINK THIS APP ANSWERS ITSELF ══════════════════════════════
@@ -17,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * no error anywhere.
  *
  * It is not a missing capability and never was. The machinery has been here the whole time:
- * `src/mailto.ts` reads a mailto into a bounded compose prefill, and `DesktopGate` already
+ * `@trafficflow/core/mailto` reads a mailto into a bounded compose prefill, and `DesktopGate` already
  * seeds the compose form from it — but only for a link the OPERATING SYSTEM delivered
  * (`mailto_claim`, the take-once slot a cold-start activation lands in). A link clicked
  * INSIDE the window never reached that parser, because the click seam refused it two layers
@@ -116,6 +118,17 @@ describe("what counts as a compose this window opens", () => {
     expect(mailtoTargetOf("mailto:", BASE)).toBe("mailto:");
     // Case is not a scheme's business.
     expect(mailtoTargetOf("MAILTO:a@b.test", BASE)).toBe("MAILTO:a@b.test");
+  });
+
+  /* THE ONE TABLE every surface's adapter reads (`mailto-cases.ts`): the seam
+     hands the link's own bytes on, and the one parser reads all five fields out of them. */
+  it("hands every case's bytes to the one parser, which reads all five fields", async () => {
+    const { mailtoTargetOf } = await freshModule();
+    for (const c of MAILTO_SURFACE_CASES) {
+      const raw = mailtoTargetOf(c.link, BASE);
+      expect(raw, c.name).toBe(c.link);
+      expect(parseMailto(raw!), c.name).toEqual({ to: c.to, cc: c.cc, bcc: c.bcc, subject: c.subject, body: c.body });
+    }
   });
 
   it("nothing else is ever a compose — `cid:` least of all", async () => {

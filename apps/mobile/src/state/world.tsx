@@ -127,6 +127,7 @@ import {
   type WorldView,
   type ConnectionSay,
   type FirstSyncSay,
+  deleteReplayDispatch,
   liveFiles,
   liveUnscreened,
   mirrorNewestFirst,
@@ -1282,13 +1283,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       onReplayed: (replay) => { for (const say of sayRoutingReplay(replay)) showToast(say); },
     });
     /* THE DELETE WINDOW'S SESSION, beside it and on the same journal: the deletes a killed session
-       left commit here, before the first paint, re-read against the mirror — a message no longer
-       there is skipped, and one another device moved meanwhile is deleted as pressed. */
+       left commit here, before the first paint, re-read against the mirror and the outbox
+       (`deleteReplayDispatch`) — one another device moved meanwhile is deleted as pressed. */
     openDeleteSession({
       journal,
-      dispatch: (id) => (engine.read().get("message", id) === undefined
-        ? Promise.resolve("nothing" as const)
-        : acts?.deleteMessage(id, { quiet: true }) ?? Promise.resolve(false)),
+      dispatch: deleteReplayDispatch(engine, (id) => acts?.deleteMessage(id, { quiet: true }) ?? Promise.resolve(false)),
       onReplayed: (replay) => { for (const say of sayDeleteReplay(replay)) showToast(say); },
     });
     return () => { closeRoutingSession(); closeDeleteSession(); };

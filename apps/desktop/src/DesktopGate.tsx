@@ -93,7 +93,7 @@ import {
 } from "./native.js";
 import { decideNotices } from "@ohmail/client-engine";
 import { readChannels } from "../../webapp/app/shell/notification-settings";
-import { parseMailto, type MailtoDraft } from "./mailto.js";
+import { parseMailto, type MailtoDraft } from "@trafficflow/core/mailto";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
 import {
   createLocalEngine, onAccessRefused, waitingFor, type AccessRefusedFacts, type EngineStatus, type SignedOut,

@@ -12,6 +12,7 @@ import { AppState, Platform } from "react-native";
 
 import { Copy } from "../copy";
 import { nativeBackgroundService } from "./background-native";
+import { organizerNoticeBody } from "./organizer-notice";
 import { registerOrganizerTask } from "./organizer-task";
 import { startOrganizerSession } from "./organizer-session";
 import type { StandaloneEngine } from "./standalone-door";
@@ -70,7 +71,7 @@ export function startOrganizerSessionNative(
     /* RE-READ PER START, so a language switch between two backgrounds is picked up. */
     notice: () => ({
       channelName: Copy.stateOrganizing,
-      body: Copy.notifBody(address),
+      body: organizerNoticeBody(address, engine.runtimes().organizer),
       stopLabel: Copy.notifStop,
       /* AND THE BODY A STOP THAT COULD NOT COMPLETE LEAVES — composed here for the ordinary
          body's reason: the deck is the app's, the address is runtime data. */

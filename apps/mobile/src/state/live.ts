@@ -1102,6 +1102,9 @@ export interface WorldDraftEdit {
   mailboxId: string;
   /** To, as the composer's field types it: `Name <address>` entries, comma-separated. */
   to: string;
+  /** A new mail's copies, typed the same way; empty where it has none. */
+  cc: string;
+  bcc: string;
   /** The subject of record, empty where none — never the list's stand-in. */
   subject: string;
   /** The message a forward draft forwards; `null` for every other draft. */
@@ -1109,21 +1112,26 @@ export interface WorldDraftEdit {
 }
 
 /**
- * WHICH DRAFTS THE PHONE EDITS: a plain `draft` whose text this mirror holds, addressed in To
- * alone, with no markup. The composer has no Cc, Bcc or rich text, and a save or a send writes
- * the row whole, so opening any other draft here would drop part of it without a word.
+ * WHICH DRAFTS THE PHONE EDITS: a plain `draft` whose text this mirror holds, with no markup, and
+ * copies only on a new mail (the composer shows Cc and Bcc there). A save or a send writes the row
+ * whole, so opening any other draft here would drop part of it without a word.
  */
 export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
   const markup = (d as { html?: unknown }).html;
-  if (d.status !== "draft" || !draftBodyKnown(d) || d.cc.length > 0 || d.bcc.length > 0) return null;
+  const copies = d.cc.length > 0 || d.bcc.length > 0;
+  if (d.status !== "draft" || !draftBodyKnown(d)) return null;
+  if (copies && (d.inReplyToMessageId !== null || (d.forwardOfMessageId ?? null) !== null)) return null;
   if (typeof markup === "string" && markup !== "") return null;
   if (typeof d.mailboxId !== "string" || d.mailboxId === "") return null;
-  const typed = d.to.map((a) => {
+  const typed = (list: readonly EmailAddress[]) => list.map((a) => {
     const name = a.name?.trim() ?? "";
     if (name === "" || name.includes('"')) return a.address;
     return /[,;<>@]/.test(name) ? `"${name}" <${a.address}>` : `${name} <${a.address}>`;
-  });
-  return { mailboxId: d.mailboxId, to: typed.join(", "), subject: d.subject, forwardOf: d.forwardOfMessageId ?? null };
+  }).join(", ");
+  return {
+    mailboxId: d.mailboxId, to: typed(d.to), cc: typed(d.cc), bcc: typed(d.bcc), subject: d.subject,
+    forwardOf: d.forwardOfMessageId ?? null,
+  };
 }
 
 /**
@@ -2718,6 +2726,9 @@ export interface DraftKeep {
   messageId: string | null;
   mailboxId: string | null;
   to: EmailAddress[];
+  /** A new mail's copies; absent is none. */
+  cc?: EmailAddress[];
+  bcc?: EmailAddress[];
   subject: string;
   body: string;
   files: number;
@@ -3060,6 +3071,8 @@ export interface LiveWorldActions {
     sendAt?: string | null,
     attachments?: ComposeAttachment[],
     draftId?: string | null,
+    /** Cc and Bcc, as the composer parsed them; absent is none. */
+    copies?: { cc: EmailAddress[]; bcc: EmailAddress[] },
   ): Promise<SendResult>;
   /**
    * WITHDRAW A QUEUED SEND — Cancel, on the intent. `withdrawn` is the cancellation;
@@ -3416,8 +3429,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const members = threadOf(engine.read(), id);
     if (members.length > 0) void engine.hydrateThread(members.map((t) => t.id)).catch(() => undefined);
     // THE OPENED MESSAGE IS ASKED WHATEVER ITS FLAG SAYS, as the web asks: a PDF the html names
-    // by `cid:` is inline and clears `hasAttachments`. The flag budgets the members only.
-    holdLists(id, [id, ...withFiles(members.map((t) => t.id))]);
+    // by `cid:` is inline and clears `hasAttachments`. The flag budgets the members only, and the
+    // members are the panel's — the PRESENTED conversation where it holds the message
+    // (`liveMessage`), so a member the presentation holds back costs no list nobody is shown.
+    const presented = presentedReader();
+    const shown = presented.get<EngineMessage>("message", id) ? threadOf(presented, id) : members;
+    holdLists(id, [id, ...withFiles(shown.map((t) => t.id))]);
     // THE ROW KEEPS ITS PLACE WHILE IT IS READ, held BEFORE the read is saved so both reach the
     // list in one snapshot; a read row holds nothing. `leaveMessage` lets it go.
     engine.holdOpenRow(id);
@@ -3789,7 +3806,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       undo: () => {
         /* Replaced by a later press: nothing was sent, said so. Past the close: the rule has gone. */
         const outcome = undoRoutingPress(subject, pressId);
-        if (outcome === "superseded") { toast(refuse("undoReplaced")); return; }
+        if (outcome === "superseded") { undoReplaced(inv, wanted); return; }
         if (outcome !== "undone") { toast(refuse("liveDecideUndoLate")); return; }
         toast(refuse("toastRoutingUndone"));
         void Promise.all(inv.map((mu) => watched(engine.mutate(mu))));
@@ -3855,6 +3872,22 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
+   * A PRESS A LATER ONE REPLACED (PHONE-RULE-BRANCH-UNDO-SAYS-NOTHING-TO-UNDO): only its rule half was
+   * replaced, so Undo moves back each letter still where this press put it and says so. A letter a
+   * later press moved on is left where it is; with none left, there is nothing to undo.
+   */
+  const undoReplaced = (inv: readonly EngineMutation[], movedTo: string): void => {
+    const stayed = (id: string) => engine.read().get<EngineMessage>("message", id)?.folder === movedTo;
+    const back = inv.filter((mu) => "messageId" in mu && stayed(mu.messageId));
+    if (back.length === 0) { toast(refuse("undoReplaced")); return; }
+    toast(refuse("undoReplacedLetterBack"));
+    /* In each letter's order, as every Undo: a press on it still in its slot goes first. */
+    void Promise.all(back.map((mu) => dispatch(mu))).then((vs) => {
+      saidAll(vs, null, refuse("liveSaveFailed"));
+    });
+  };
+
+  /**
    * One triage write, stated in the webapp's own sentence. The toast is spoken on the
    * OPTIMISTIC apply (the webapp's shape — the sentence is the act), and a rollback overrides
    * it with the one failure sentence. The pill carries the way back: the inverse is read off
@@ -3906,20 +3939,24 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return gatedSaid(messageId, ms, painted(), leaving);
   };
 
+  /**
+   * THE TOGGLE IS READ OFF THE MEMBERS IT WRITES (PHONE-OWN-FACED-ROW-TOGGLE-READS-THE-OWN-REPLY):
+   * it switches off only where every one already holds the state, else on for those that do not,
+   * so the sentence names the change made. A row faced by the person's own reply never reads it,
+   * and the press holds the slot of the first letter it writes, never the reply's.
+   */
   const pileToggle = async (
     messageId: string, kind: "replyLater" | "setAside", members?: readonly string[],
   ): Promise<boolean> => {
-    const m = messageOf(messageId);
-    if (!m) return false;
-    const held = triageStateOf(engine.read(), m);
-    if (kind === "replyLater") {
-      return held === "reply_later"
-        ? triage(messageId, "none", refuse("toastUnqueued"), undefined, members)
-        : triage(messageId, "reply_later", refuse("toastQueued"), undefined, members);
-    }
-    return held === "set_aside"
-      ? triage(messageId, "none", refuse("toastUnparked"), undefined, members)
-      : triage(messageId, "set_aside", refuse("toastAside"), undefined, members);
+    const state = kind === "replyLater" ? "reply_later" : "set_aside";
+    const reader = engine.read();
+    const targets = membersOf(messageId, members).filter((id) => messageOf(id) !== undefined);
+    if (targets.length === 0) return false;
+    const holds = (id: string) => triageStateOf(reader, messageOf(id)!) === state;
+    const off = targets.every(holds);
+    const changed = off ? targets : targets.filter((id) => !holds(id));
+    const say = refuse(kind === "replyLater" ? (off ? "toastUnqueued" : "toastQueued") : (off ? "toastUnparked" : "toastAside"));
+    return triage(changed[0]!, off ? "none" : state, say, undefined, changed);
   };
 
   const resurfaceAt = (messageId: string, iso: string): Promise<boolean> =>
@@ -4220,8 +4257,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
            back by its rules' inverse, sent once the commit has answered. `cancelled` also picks
            the sentence, so a late press cannot say no rule was made over a rule that was. */
         const outcome = undoRoutingPress(subject, pressId);
-        /* A later press about this sender replaced this one: the latest rule wins, and says so. */
-        if (outcome === "superseded") { toast(refuse("undoReplaced")); return; }
+        /* A later press about this sender replaced this one: the latest rule wins, and says so. A
+           letter queued for the organizer has no way back from here (below). */
+        if (outcome === "superseded") {
+          if (queued) toast(refuse("undoReplaced"));
+          else undoReplaced(inv, folder);
+          return;
+        }
         const cancelled = outcome === "undone";
         const ruleBack = cancelled ? null : takeRoutingReversal(pressId);
         /* A LETTER QUEUED FOR THE ORGANIZER has no way back from here: its request stands, and
@@ -4662,7 +4704,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         kind: "draft_save", draftId: bound, mailboxId,
         ...(reply && parent ? { inReplyToMessageId: parent.id, threadId: parent.threadId ?? null } : {}),
         ...(k.mode === "forward" && parent ? { forwardOfMessageId: parent.id } : {}),
-        subject, body: k.body, to, cc: env ? env.cc : [], bcc: [],
+        subject, body: k.body, to, cc: env ? env.cc : (k.cc ?? []), bcc: env ? [] : (k.bcc ?? []),
       })
       .then((res) => res, () => null);
     if (r === null || r.status === "rolled_back") return "refused";
@@ -4723,6 +4765,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sendAt: string | null = null,
     attachments: ComposeAttachment[] = [],
     draftId: string | null = null,
+    copies: { cc: EmailAddress[]; bcc: EmailAddress[] } = { cc: [], bcc: [] },
   ): Promise<SendResult> => {
     const text = body.trim();
     // TOLD, all three arms — a return before `sent()` renders nothing, and a fresh mail has
@@ -4749,6 +4792,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         subject: subject.trim(),
         body: text,
         to,
+        ...(copies.cc.length > 0 ? { cc: copies.cc } : {}),
+        ...(copies.bcc.length > 0 ? { bcc: copies.bcc } : {}),
         ...(sendAt ? { sendAt } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(draftId ? { draftId } : {}),
@@ -5232,6 +5277,7 @@ export interface WorldActions {
     sendAt?: string | null,
     attachments?: ComposeAttachment[],
     draftId?: string | null,
+    copies?: { cc: EmailAddress[]; bcc: EmailAddress[] },
   ): Promise<SendResult>;
   /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
@@ -5311,8 +5357,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
       current().sendReply(id, body, all, sig, sendAt, attachments, andDone, draftId),
     sendForward: (id, to, body, sig, attachments, andDone, confirmed, draftId) =>
       current().sendForward(id, to, body, sig, attachments, andDone, confirmed, draftId),
-    sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments, draftId) =>
-      current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId),
+    sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies) =>
+      current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies),
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
@@ -5851,4 +5897,22 @@ export function liveBody(engine: OhmailEngine, id: string): Pick<WorldMail, "bod
   if (m === undefined) return null;
   const b = bodyOf(reader, m);
   return { body: b.text, bodyState: b.state, ...(b.state === "withheld" && b.withheld ? { bodyWithheld: b.withheld } : {}) };
+}
+
+/**
+ * THE QUIET COMMIT A KILLED SESSION'S DELETE IS REPLAYED THROUGH (`held-delete.ts`, opened by
+ * `world.tsx`): the delete as pressed where the mirror holds the message; `true` where it does not
+ * because the engine's outbox already carries this delete (a kill after the commit reached the outbox
+ * and before its record was forgotten: the tombstone hid it); `"nothing"`, said lost, otherwise.
+ */
+export function deleteReplayDispatch(
+  engine: Pick<OhmailEngine, "read" | "pendingMutations" | "inFlightMutations">,
+  del: (id: string) => Promise<boolean>,
+): (id: string) => Promise<boolean | "nothing"> {
+  return (id) => {
+    if (engine.read().get("message", id) !== undefined) return del(id);
+    const carried = [...engine.pendingMutations(), ...engine.inFlightMutations()]
+      .some((p) => p.mutation.kind === "message_delete" && p.mutation.messageId === id);
+    return Promise.resolve(carried ? true : ("nothing" as const));
+  };
 }

@@ -1594,6 +1594,8 @@ const TABLE = {
   liveDecideUndoLate: "Too late to undo — that decision has already been sent.",
   /* A later press about the same sender replaced this one before anything was sent. */
   undoReplaced: "A later choice for this sender replaced this one, so there is nothing to undo here.",
+  /* The same, where the replaced press moved letters: they come back, and the later choice stands. */
+  undoReplacedLetterBack: "The mail is back where it was. A later choice for this sender decides where their mail goes.",
   liveReleased: (n: number, dest: string) =>
     `Released ${n} held message${n === 1 ? "" : "s"} to ${dest}. No rule was changed.`,
   liveReleasedRuled: (n: number, dest: string) =>
@@ -1955,6 +1957,9 @@ const TABLE = {
   forwardAskSensitive: "ohmail flagged this message as sensitive.",
   forwardAskQuestion: "Forward it anyway?",
   forwardTo: "To",
+  /** A new mail's copies, shown where the letter carries them (a mailto link) — the web composer's words. */
+  composeCc: "Cc",
+  composeBcc: "Bcc",
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",
   forwarded: "Forwarded.",

@@ -7,7 +7,7 @@
  * refusal: on this surface an unknown navigation is an attack shape, never a feature.
  */
 
-import { SAFE_HREF } from "@ohmail/client-engine";
+import { SAFE_HREF, isMailto } from "@ohmail/client-engine";
 import { refuse, type RefusalArg } from "../refusal";
 import { PHONE_LINK_SCHEME } from "./sanitize";
 
@@ -33,7 +33,7 @@ export function frameNavDecision(url: string, links: readonly string[]): FrameNa
     if (target === undefined || !SAFE_HREF.test(target) || /^cid:/i.test(target)) {
       return { kind: "refuse" };
     }
-    if (/^mailto:/i.test(target)) return { kind: "compose", url: target };
+    if (isMailto(target)) return { kind: "compose", url: target };
     return { kind: "confirm", url: target };
   }
   return { kind: "refuse" };

@@ -353,6 +353,10 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   let inBackground = false;
   let disposed = false;
   let watch: ReturnType<typeof setInterval> | null = null;
+  /** The body the standing notification shows; `null` before this runtime posted one (a JS reload). */
+  let shownBody: string | null = null;
+  /** A stop that could not complete owns the notification's words until the next start. */
+  let stopFailedShown = false;
   /**
    * ONE TRANSITION AT A TIME, and it is not tidiness. A person who backgrounds the app and comes
    * straight back produces `background` then `active` within a few hundred milliseconds, and the
@@ -478,6 +482,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     if (deps.service === null) return;
     const notice = deps.notice();
     try {
+      stopFailedShown = true;
       await deps.service.start({ ...notice, body: notice.stopFailedBody });
     } catch (err) {
       log("organizer_stop_notice_failed", { err, why: "stopped_from_notification" });
@@ -619,7 +624,27 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       beatNow();
       gateNow();
       void serial(() => claimLostCheck());
+      void serial(() => noticeNow());
     }, every);
+  };
+
+  /**
+   * THE BODY FOLLOWS THE GATE while the service stands (`organizer-notice.ts`): re-posted under the
+   * same id when the words changed, so a gate refused after the background began is said there too,
+   * and a JS reload's first tick restores them. Never once the watch is disarmed (a stop in flight:
+   * the platform's running flag clears later), never over a failed stop's body; the body is not logged.
+   */
+  const noticeNow = async (): Promise<void> => {
+    if (deps.service === null || watch === null || stopFailedShown || !organizerRuns()) return;
+    try {
+      const notice = deps.notice();
+      if (shownBody !== null && notice.body === shownBody) return;
+      await deps.service.start(notice);
+      shownBody = notice.body;
+      log("organizer_notice_refreshed", { why: "gate_changed" });
+    } catch (err) {
+      log("organizer_notice_refresh_failed", { err });
+    }
   };
 
   /**
@@ -801,7 +826,10 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       /* RE-READ PER START — a language change between backgrounds re-posts the notice. On a
          service that is already standing this refreshes the words and nothing else; what it
          ANSWERS is not read, because the next line asks the service itself. */
-      await deps.service.start(deps.notice());
+      const notice = deps.notice();
+      await deps.service.start(notice);
+      shownBody = notice.body;
+      stopFailedShown = false;
     } catch (err) {
       log("organizer_service_start_failed", { err });
     }

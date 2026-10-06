@@ -127,6 +127,7 @@
          barrel. `packages/client-engine/src/pair-link.ts` re-exports it, and that file is in this
          bundle, so the specifier has to resolve here. */
       "@trafficflow/core/pair-link": ["../../packages/core/src/pair-link.ts"],
+      "@trafficflow/core/mailto": ["../../packages/core/src/mailto.ts"],
       "@trafficflow/core/sender-headers": ["../../packages/core/src/sender-headers.ts"],
       "@trafficflow/core/rule-order": ["../../packages/core/src/rule-order.ts"],
       "@trafficflow/core/conversation-fold": ["../../packages/core/src/conversation-fold.ts"],

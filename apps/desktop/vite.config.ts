@@ -893,6 +893,7 @@ export default defineConfig({
          (the sidecar's own one-pipeline census asserts it). Dependency-free source like the
          five above — no node builtin, no DOM, no store, no clock. */
       { find: "@trafficflow/core/pair-link", replacement: r("../../packages/core/src/pair-link.ts") },
+      { find: "@trafficflow/core/mailto", replacement: r("../../packages/core/src/mailto.ts") },
       { find: "@trafficflow/core/sender-headers", replacement: r("../../packages/core/src/sender-headers.ts") },
       { find: "@trafficflow/core/rule-order", replacement: r("../../packages/core/src/rule-order.ts") },
       { find: "@trafficflow/core/conversation-fold", replacement: r("../../packages/core/src/conversation-fold.ts") },

@@ -209,8 +209,8 @@ describe("the Linux desktop entry", () => {
    * The entry declares `x-scheme-handler/mailto`, which is what makes ohmail selectable as the
    * system mail app. Tauri's built-in template writes `Exec=ohmail` with no field code, so the
    * desktop environment launches the app with no argument and the address the person clicked is
-   * dropped — the app is wired to receive it (`mailto_link` in the shell, `src/mailto.ts` in the
-   * window) and simply never gets one. `%U` rather than `%u` because an activation may carry more
+   * dropped — the app is wired to receive it (`mailto_link` in the shell, `@trafficflow/core/mailto` in
+   * the window) and simply never gets one. `%U` rather than `%u` because an activation may carry more
    * than one URL and the shell answers each on its own.
    */
   it("hands the clicked address to the app", () => {
