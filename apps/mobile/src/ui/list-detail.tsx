@@ -15,6 +15,7 @@ import { router, useLocalSearchParams, usePathname } from "expo-router";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
+import { beginMark } from "../engine/ui-marks";
 import { Empty, Rule, Screen, Tap, Txt } from "./base";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { GlassRail, GlassSidebar } from "./glass";
@@ -45,6 +46,7 @@ export function useListDetail(toRoute: (id: string) => string): {
   return {
     open,
     openRow: (id: string) => {
+      beginMark("open", id); // ended by the reader's commit effect (MessageReader)
       if (plan.panes === 2) router.setParams({ open: id });
       else router.push(toRoute(id));
     },

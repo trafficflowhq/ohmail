@@ -16,6 +16,7 @@ import { ActivityIndicator, Platform, useWindowDimensions, View, type NativeScro
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useBodyStamp, useWorld } from "../state/world";
+import { endMark } from "../engine/ui-marks";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
 import { DetailBar, PaneTop } from "./chrome";
@@ -91,6 +92,12 @@ export function MessageReader({
   const hydrateMessage = w.actions.hydrateMessage;
   const leaving = m !== undefined && m !== null && junkLeaving(m);
   const shed = m?.bodyState === "snippet" || m?.bodyState === "loading";
+  /* THE OPEN MARK ENDS HERE: the first commit showing this message's body in a terminal state (the web's
+     `endOpen` rule) — a snippet or a body still loading is not the open a person waited for. */
+  const bodyState = m?.bodyState;
+  useEffect(() => {
+    if (bodyState !== undefined && bodyState !== "snippet" && bodyState !== "loading") endMark("open", id);
+  }, [id, bodyState]);
   const [refillExpired, setRefillExpired] = useState(false);
   const owedFor = useRef<string | null>(null);
   useEffect(() => {

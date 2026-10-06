@@ -11,6 +11,7 @@ import { router, Tabs } from "expo-router";
 import { useEffect, useState } from "react";
 import { Platform } from "react-native";
 import { useWorld } from "../../src/state/world";
+import { beginMark, endMark } from "../../src/engine/ui-marks";
 import { Gated } from "../../src/ui/Gated";
 import { ProfileImportCard } from "../../src/ui/ProfileImportCard";
 import { type IconName } from "../../src/ui/Icon";
@@ -109,6 +110,10 @@ function GlassNav({ state, navigation }: NavProps) {
     return () => publishFolded("dock", []);
   }, [foldedKey, docked]);
   const activeId = state.routes[state.index]?.name ?? null;
+  /* THE SWITCH MARK ENDS in the commit that made the pressed destination active (begun in `press`). */
+  useEffect(() => {
+    if (activeId !== null) endMark("switch", activeId);
+  }, [activeId]);
   /* More carries what folded: `on` while the active route is one of them, a quiet count of their new mail. */
   const foldedCount = fold.folded.reduce((n, id) => n + (badgeOf[id] ?? 0), 0);
   const items: DockItem[] = fold.kept.flatMap((name) => {
@@ -130,7 +135,10 @@ function GlassNav({ state, navigation }: NavProps) {
     const route = state.routes.find((r) => r.name === id);
     if (!route) return;
     const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
-    if (id !== activeId && !event.defaultPrevented) navigation.navigate(id);
+    if (id !== activeId && !event.defaultPrevented) {
+      beginMark("switch", id);
+      navigation.navigate(id);
+    }
   };
 
   /* Search, in the navigation on every posture — the pill opens the mirror-search screen

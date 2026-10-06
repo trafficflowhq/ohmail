@@ -19,6 +19,7 @@
  * rather than throwing, which is why the writer is a nullable slot and not an import.
  */
 
+import { takeUiMarks, type UiMarks } from "./ui-marks";
 import type { BackupExclusion } from "./backup-exclusion";
 
 /** What the engine is handed: one finished line, already redacted by its own logger. */
@@ -220,18 +221,20 @@ export function logPostureDerived(p: { width: number; height: number; folds: num
 
 /**
  * THE WORLD'S COST, ONCE A MINUTE — how many list derivations the phone ran, the worst one and the
- * p95 of the last hundred, and how many engine notifications there were. Numbers only, nothing to
- * redact; a device run reads its own cost here instead of inferring it.
+ * p95 of the last hundred, and how many engine notifications there were — and the app's own open and
+ * switch marks (`ui-marks.ts`), press to committed. Numbers only, nothing to redact; a device run reads
+ * its own cost here instead of inferring it.
  */
-export function logUiVitals(v: { derives: number; deriveMsMax: number; deriveMsP95: number | null; notifies: number }): void {
+export function logUiVitals(v: { derives: number; deriveMsMax: number; deriveMsP95: number | null; notifies: number }, marks?: UiMarks): void {
   engineLogSink()(JSON.stringify({
     service: "app", event: "ui_vitals",
     derives: v.derives, deriveMsMax: v.deriveMsMax, deriveMsP95: v.deriveMsP95, notifies: v.notifies,
+    ...(marks ?? {}),
   }));
 }
 
 /** The `ui_vitals` cadence: once a minute, from the moment a session's world exists. Answers its stop. */
 export function startUiVitals(take: () => { derives: number; deriveMsMax: number; deriveMsP95: number | null; notifies: number }): () => void {
-  const every = setInterval(() => logUiVitals(take()), 60_000);
+  const every = setInterval(() => logUiVitals(take(), takeUiMarks()), 60_000);
   return () => clearInterval(every);
 }
