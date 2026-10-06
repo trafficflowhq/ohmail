@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.16] — 2026-10-06
+
 ### A sign-in renewal that finishes after a reload no longer signs the browser out
 <!-- changes: fix-026-late-answer-repaired-by-the-live-tab.md -->
 
@@ -76,11 +83,6 @@ summary of every problem since the last one, those already mailed included. Wher
 by mail, an alert the six hours hold back is not recorded as sent, so it is mailed when they end.
 Webhook and Telegram alerts still receive every problem, at times one check later while an alert
 mail of the same kind is being sent.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.15] — 2026-10-05
 
@@ -11413,7 +11415,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.15...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.16...HEAD
+[0.25.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.16
 [0.25.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.15
 [0.25.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.14
 [0.25.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.13
