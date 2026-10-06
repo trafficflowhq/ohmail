@@ -6,6 +6,7 @@ import { DEFAULT_SSE } from "../deps.js";
 import { errorResponse } from "../responses.js";
 import { sseDisabledResponse } from "./sse-disabled.js";
 import type { Route } from "../router.js";
+import { accessFor } from "./shared.js";
 
 /**
  * ONE discrete statement per read (no transaction, no LISTEN, no connection held between reads):
@@ -72,12 +73,12 @@ export function sseLiveCounts(): { total: number; byAccount: Record<string, numb
 /**
  * Bounded SSE (raw): a `: ping` heartbeat and a content-free `event: sync` wake when the account's
  * max seq advances — the client pulls `GET /sync?since=cursor`; SSE is lossy by design. It ends at
- * a bounded lifetime, or at the first read that finds its session revoked or deleted. Push —
- * `deps.changeWake`, one session-mode LISTEN per instance (a transaction-mode pooler lands a LISTEN
- * on a backend the next statement has left); poll — always, the floor: a dead LISTEN degrades
- * latency to `pollMs`, nothing else. `sse.enabled === false` ⇒ 503 `sse_disabled` (a client-bundle
- * flag is not a control). `maxPerAccount` 429, `maxPerInstance` 503. One serialized, caught poll
- * loop (`setInterval` overlaps under load); a slow client is dropped at SSE_MAX_BUFFERED_FRAMES.
+ * a bounded lifetime, or at the first read that finds its session revoked or deleted, or its
+ * account refused by the entitlements port. Push — `deps.changeWake`, one session-mode LISTEN per
+ * instance (a transaction-mode pooler lands a LISTEN on a backend the next statement has left);
+ * poll — always, the floor: a dead LISTEN degrades latency to `pollMs`, nothing else. `sse.enabled
+ * === false` ⇒ 503 `sse_disabled` (a client-bundle flag is not a control). `maxPerAccount` 429,
+ * `maxPerInstance` 503. One serialized, caught poll loop (`setInterval` overlaps under load).
  */
 
 /**
@@ -163,13 +164,34 @@ export const eventsRoutes: Route[] = [
 
           send("retry: 3000\n\n");                       // EventSource reconnect hint
           let lastSeq: bigint;
-          // When the last read that found the session live was ISSUED: a pushed frame rides it.
+          // When the last read that found the session live and its account admitted was ISSUED: a
+          // pushed frame rides it.
           let liveReadAt = 0;
+          /** The door's own access question, asked as `withSpendGate` asks it for this class (no
+           *  options). `null` admits, as at the door; a throw is no answer and fails open, as the
+           *  port does, with one line carrying the error's class. */
+          const accessHolds = async (): Promise<boolean> => {
+            try {
+              const verdict = await accessFor(deps, accountId);
+              return !(verdict && !verdict.ok);
+            } catch (err) {
+              log.warn("sse_access_unreadable", { errorClass: describeError(err).errorClass });
+              return true;
+            }
+          };
+          // A refused account: the 30 s hint, then ONE ordinary wake, so the client's next `/sync`
+          // meets the door's 402 and stands the stream down before it re-dials; then the close.
+          const accessRefused = (): void => {
+            send(RETRY_AFTER_FAILURE);
+            send(`event: sync\ndata: {"seq":${lastSeq}}\n\n`);
+            finish();
+          };
           try {
             const issuedAt = Date.now();
             const first = await readSeqAndSession(deps.db, accountId, sessionId);
             if (!first.live) { finish(); return; }
             lastSeq = first.seq;                          // don't replay backlog: start at current max
+            if (!(await accessHolds())) { accessRefused(); return; }
             liveReadAt = issuedAt;
           } catch (err) {
             readFailed(err);
@@ -218,6 +240,7 @@ export const eventsRoutes: Route[] = [
                 const issuedAt = Date.now();
                 const t = await readSeqAndSession(deps.db, accountId, sessionId);
                 if (!t.live) { finish(); return; }        // the session ended: so does its stream
+                if (!(await accessHolds())) { accessRefused(); return; }   // so does a refused account's
                 liveReadAt = issuedAt;
                 if (t.seq > lastSeq) { lastSeq = t.seq; send(`event: sync\ndata: {"seq":${t.seq}}\n\n`); }
               } catch (err) {
