@@ -2127,6 +2127,7 @@ export function OhboxView({
            (the shell's flash after a search jump) must be able to match this row on any of
            them — `data-id` alone named only the lead. See MessageRow.memberIds. */
         memberIds={g.members.map((m) => m.id)}
+        stampId={shown.id}
         from={sentLeads ? sent.label : groupSenders(g)}
         {...(sentLeads ? sent.avatar : avatarOf(target))}
         /* The stamp is the newest member's, in whichever form the list is in — the same message

@@ -49,6 +49,11 @@ export interface MessageRowProps {
    */
   memberIds?: string[];
   /**
+   * THE MESSAGE THE STAMP NAMES, where it is not `id`: a folded row opens at its latest unread
+   * member and is stamped with its newest. Stamped as `data-stamp-id`; absent ⇒ no attribute.
+   */
+  stampId?: string;
+  /**
    * NEW SINCE YOU ASKED TO SEE THIS AGAIN — the whole face the host wrote ("2 new"), or absent.
    *
    * Copy, so it is the host's: this row language is shared by three surfaces and a count needs a
@@ -265,6 +270,7 @@ export function MessageRow(props: MessageRowProps) {
   const {
     id,
     memberIds,
+    stampId,
     newSinceLabel,
     newSinceTitle,
     windowIndex,
@@ -552,6 +558,7 @@ export function MessageRow(props: MessageRowProps) {
       data-id={id}
       data-index={windowIndex}
       data-ids={memberIds && memberIds.length > 0 ? memberIds.join(" ") : undefined}
+      data-stamp-id={stampId !== undefined && stampId !== id ? stampId : undefined}
       data-unseen={unread ? "1" : undefined}
       aria-label={`${from}: ${subject}`}
       aria-description={description}
