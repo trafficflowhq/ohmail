@@ -18,6 +18,152 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.25.17] — 2026-10-07
+
+### New mail, the rail and attachments fit an Android foldable
+<!-- changes: fix-026-android-fold-broken.md -->
+
+On an Android foldable's cover screen held sideways, and on any Android phone held sideways, the New
+mail sheet scrolls inside the window and Send and Cancel stay on screen. With a foldable open, flat
+or half open, Settings, Search, More and New mail start past the navigation rail instead of under
+it, and the message or sender beside the list starts below the status bar. A long attachment name
+in a message is shortened in the middle, so the end of the name and its size stay visible. Settings,
+History and the other pages with their own heading no longer repeat it in the bar above.
+
+### Sheets on an open Android foldable stand over the reading pane
+<!-- changes: fix-026-android-sheets-and-polish.md -->
+
+With an Android foldable open, the reader's More sheet and New mail rise over the reading pane, past
+the list, instead of standing across both panes; folded, they stay full-width sheets. Folding or
+unfolding with New mail open keeps what was typed. On every phone, Android and iPhone, New mail now
+opens as a sheet over the screen it was opened from and shows its title once, and every sheet dims
+the screen behind it. A message without a subject no longer leaves a blank line in the list. On a
+short window, such as the cover screen held sideways, the Screener's decision buttons stay on one
+row that scrolls, with the sender or whole-domain switch on a row of its own when the first row
+cannot hold it, so the held message keeps most of the screen. The last row of a list or message
+rests clear of the floating bars at the end of a scroll, the selected option of a segmented control
+stands out of its track in light and dark, and a sender's name on the Screener page takes a size
+that suits the pane.
+
+### Two panes on an unfolded foldable and a small tablet
+<!-- changes: fix-026-web-width-ladder.md -->
+
+Between 700 and 1023 pixels wide the web app shows the list beside the open message, under the top
+bar; below 700 it is the phone layout, from 1024 the three-pane desktop, both as before.
+
+### Folder names readable in the sidebar, and one title on a phone
+<!-- changes: fix-026-web-width-ladder.md -->
+
+Folder rows in the sidebar and in the phone's drawer keep their names at every width, the drawer is
+up to 320 pixels wide, and a screen's name is shown once, in the top bar; Settings on a phone is a
+list of sections, each opening on its own page with a way back.
+
+### The reader's menu stays on screen
+<!-- changes: fix-026-web-width-ladder.md -->
+
+On a phone the message menu opens downward or scrolls when it would leave the top of the screen, and
+Mark unread moves into that menu on narrow bars instead of standing as a bare dot.
+
+### Names and dates readable on every list row and card
+<!-- changes: fix-026-web-lists-and-cards.md -->
+
+On list rows, News and Receipts cards and the open message's header, the sender's name and the date
+are shown whole on one line at every width; the address gives way first and is left out where it
+would be cut to a few letters; where the open message's header leaves it out, it is shown on its own
+line under the sender. On a phone, which mailbox a News or Receipts card was delivered to is shown
+on the open card instead of beside the sender.
+
+### Short newsletters and receipts no longer hold an empty card
+<!-- changes: fix-026-web-lists-and-cards.md -->
+
+A collapsed News or Receipts card ends where its message ends, up to the usual height; Expand and
+the fade appear only on a card whose message is cut, and a short card still opens from the keyboard,
+which then lands on its first action. On a phone a designed newsletter is laid out at the card's
+width rather than shrunk, so its text stays readable.
+
+### Lists in the two-pane layout keep their words
+<!-- changes: fix-026-web-lists-and-cards.md -->
+
+In the narrow list beside an open message (an unfolded foldable, a small tablet), Screener rows show
+the sender and subject with Accept underneath, History rows keep their subject instead of where the
+message is filed, and the News suggestion shows its sentence across the card with Approve and
+Correct below it. On a touch screen the open message's close button sits on the sender's line.
+
+### Lists keep their rows clear
+<!-- changes: fix-026-web-lists-and-cards.md -->
+
+A scrolled list shows a thin line under its title and above the shortcuts strip while rows pass
+them. History's month rail no longer covers the first rows, a highlighted draft includes its Discard
+button, and on a phone the first-sync notice no longer covers the last row or control.
+
+### A sender you decided on stays decided
+<!-- changes: fix-026-person-decides.md -->
+
+Pausing or removing a rule ohmail learned now ends what it learned about that sender in every
+folder. A paused rule keeps ohmail's learning from filing that sender; after a removal it files
+them again only after as many approvals as the first time, through a rule you can see. On an
+install that has this release, a rule "Not junk, always allow" wrote there before it is your own
+rule too, unless ohmail itself had let that sender into the Inbox and you had not marked that
+address as spam or screened it out since. From this release on, re-running or undoing a HEY import
+leaves alone a rule you pause and a sender you allow or decide on in the Screener. Moving a message
+at the same moment as you pause a learned rule, or reject a proposal for the same sender, no longer
+fails.
+
+### Cancel asks the server
+<!-- changes: fix-026-send-cancel-asks-the-server.md -->
+
+On the web, the desktop app and the phone, Cancel on a message waiting to send asks the server
+first, with one case still open: a message sent from a browser window that had only just opened can
+still go after Cancel in another window, which closes without asking. A message that already went,
+or is being handed to your mail server, is reported as on its way, not as cancelled, and ends as
+sent, or as not sent if sending it then fails. If the server cannot be asked and the message may
+already have gone, it stays held and is not sent again while ohmail keeps asking; when the server
+answers without deciding, it is set aside as unconfirmed after a while. Cancel in another window of
+the same account asks the server too, except for a message a window still on an older version is
+sending, where Cancel says to reload that window. An identical reply sent again after the first went
+is judged by the server like any other send.
+
+### Live updates and conversation counts on the web
+<!-- changes: fix-026-wake-stream-and-row-count.md -->
+
+- On a self-hosted server, the web app opens its live connection on every page load, so a change
+  made on another device shows within seconds. Before, a page load after signing in checked for
+  changes every 8 seconds until the tab was hidden and shown again.
+- A conversation row in the Ohbox, on the web and on the phone, no longer counts a message from the
+  same thread that the Screener, screened-out mail or quarantine is holding on this device. Messages
+  of the conversation the device has not loaded are still counted.
+
+### Settings, compose and search fit a phone
+<!-- changes: fix-026-web-settings-polish.md -->
+
+On a phone, a settings switch stays beside its label, the new-tag colour is a small swatch beside
+the name field, the away responder's two choices stay side by side, and a mailbox's Sync now, Edit
+and Remove stay together beside or under its sync time and inside the settings page at every width.
+Account, Devices and Security are as wide as every other settings page. The formatting toolbar stays
+on one row in compose and in signatures, and under 300 px the To field's hint is just the example
+address. Search says its count and time once, and never splits a number from its word. In a dark
+theme, a held Screener message's Original button sits beside its date instead of over the message.
+
+### The phone says what a press did
+<!-- changes: fix-026-phone-press-rows.md -->
+
+On the phone, Later and Park on a conversation that holds your own reply act on the rest of the
+conversation and say what they did. Undo on a Move that a later choice for the same sender replaced
+puts the mail back. A delete that was still waiting to be sent when the app closed is no longer
+reported as not made the next time it starts. A `mailto:` link in a message opens the phone's
+composer with its Cc and Bcc. On Android, while ohmail organizes in the background, its notification
+says when the `ohmail/_meta` folder is full or cannot be cleaned, in the app's own words, instead of
+"Organizing".
+
+### A change is kept when another tab signs in or your sign-in cannot be renewed
+<!-- changes: fix-026-session-tabs-after-the-late-renewal.md -->
+
+If your sign-in could not be renewed, or another tab signed in to a different account, while a
+change was on its way, the change was undone. It is now kept and sent once that account is signed in
+again. A change on its way when another tab signs out is still undone, and so is one for a deleted
+account. On the desktop, a correct two-step code entered while the session renewed is no longer
+reported as wrong.
+
 ## [0.25.16] — 2026-10-06
 
 ### A sign-in renewal that finishes after a reload no longer signs the browser out
@@ -11415,7 +11561,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.16...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.17...HEAD
+[0.25.17]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.17
 [0.25.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.16
 [0.25.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.15
 [0.25.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.14
