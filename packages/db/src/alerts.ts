@@ -3043,7 +3043,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // Asked only where a `channel: "mail"` sink exists. A PAGE kind's window is a policy row: born
   // resolved, so no reader of open alerts sees it. Inside the key's claim transaction the policy
   // row is locked FIRST, then the key (both drivers, same order). A due key whose window holds
-  // an accepted mail is HELD: pushed to every pager, confirmed, mailed nobody.
+  // an accepted mail is HELD: pushed to every pager, mailed nobody, and confirmed only by a
+  // pager's accept; with no pager asked it is released and due again next pass.
   const mailSinks = sinks.filter((s) => s.channel === "mail");
   const policyKeys = new Set<string>();
   if (mailSinks.length > 0) {
@@ -3308,10 +3309,12 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // the retry re-fires by construction — the exact state an expired lease (a crashed pass)
   // leaves, which makes the crash path and the failed-delivery path one case.
   for (const { alert, peak } of claimed) {
-    // CONFIRM when a sink that was handed this alert accepted it, or when sinks exist and the
-    // policy handed it to none (a held mail): released, a hold would re-claim every pass.
+    // CONFIRM only when a sink that was handed this alert accepted it. A mail the policy held,
+    // with no pager asked, is RELEASED: confirmed, it read as told with nothing sent, and the row
+    // was not due again for the other driver's pager. Released, it is due next pass and mails
+    // when the window opens.
     const asked = attempted.filter((s) => listFor.get(s)!.includes(alert));
-    const confirmed = sinks.length > 0 && (asked.length === 0 || asked.some((s) => accepted.has(s)));
+    const confirmed = asked.some((s) => accepted.has(s));
     const settle = confirmed
       ? {
         notifiedAt: now,
