@@ -1454,7 +1454,7 @@ export function ComposeSheet({
     if (unmountKeep({ phase, worth, keeping: keeping.current }) !== "keep") return;
     void w.actions.draftKeep({
       mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-      subject, body, files: attachments.length, draftId, quiet: true,
+      ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: attachments.length, draftId, quiet: true,
     });
   };
 
