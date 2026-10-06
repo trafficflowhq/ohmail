@@ -37,6 +37,8 @@ export {
   type CostClass, type Route, type RouteOptions, type RouteParams, type Handler, type MatchResult,
 } from "./router.js";
 export { jsonResponse, errorResponse, type JsonResponseInit } from "./responses.js";
+// `/events` refusing while server-sent events are off; the phone engine's route twin answers it.
+export { sseDisabledResponse } from "./routes/sse-disabled.js";
 // THE SEND TRANSPORT, on the probe factories' own argument. The standalone engine used to build
 // its own, because it had no stored `smtp` row to read — its submission server was a process
 // setting. An install holding several mailboxes ends that: each mailbox stores its own credential

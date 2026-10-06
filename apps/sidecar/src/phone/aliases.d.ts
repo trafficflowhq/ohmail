@@ -33,6 +33,14 @@ export const PACKAGE_ALIASES: SubstitutionTable;
  * then by the specifier exactly as that file writes it.
  */
 export const PACKAGE_MODULE_SUBSTITUTES: Record<string, SubstitutionTable>;
+/**
+ * Modules inside a WORKSPACE package, keyed by the importer's workspace path with `src/`|`dist/`
+ * and the extension dropped (`packages/api/routes/health`), then by the specifier exactly as
+ * that file writes it.
+ */
+export const WORKSPACE_MODULE_SUBSTITUTES: Record<string, SubstitutionTable>;
+/** That key for a repository-relative path, or `null` for a file outside a workspace package. */
+export function workspaceModuleKey(relativePath: string): string | null;
 /** The desktop's own modules, keyed by the literal relative specifier written inside `src`. */
 export const SIDECAR_SUBSTITUTES: SubstitutionTable;
 /** `@trafficflow/api` entry points substituted for a phone-shaped twin. */
@@ -62,6 +70,8 @@ declare const aliases: {
   NODE_MODULES: SubstitutionTable;
   PACKAGE_ALIASES: SubstitutionTable;
   PACKAGE_MODULE_SUBSTITUTES: Record<string, SubstitutionTable>;
+  WORKSPACE_MODULE_SUBSTITUTES: Record<string, SubstitutionTable>;
+  workspaceModuleKey: (relativePath: string) => string | null;
   SIDECAR_SUBSTITUTES: SubstitutionTable;
   API_SUBSTITUTES: SubstitutionTable;
   SCHEMA_TWIN: { from: string; to: string };

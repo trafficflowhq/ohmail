@@ -248,7 +248,7 @@ export {
   type TagBody, type TagHue, type AssignResult,
 } from "./tags-service.js";
 export {
-  FolderOpsService, folderOpsService,
+  FolderOpsService,
   type FolderCreateBody, type FolderRenameBody, type FolderScopeSummary,
 } from "./folder-ops-service.js";
 export {

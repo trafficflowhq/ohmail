@@ -30,7 +30,7 @@ import {
   nodeRemoteFetch, nodeHostResolver, scryptHasher,
   syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
-  attachmentsService, kbService, tagsService, folderOpsService, draftsService, makeDraftingService, sendService,
+  attachmentsService, kbService, tagsService, FolderOpsService, draftsService, makeDraftingService, sendService,
   scheduleService,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES,
   makeAttachmentStagingPort,
@@ -194,7 +194,7 @@ function buildServices(cfg: HostConfig): ApiServices {
     attachments: attachmentsService,
     kb: kbService,
     tags: tagsService,
-    folderOps: folderOpsService,
+    folderOps: new FolderOpsService(),
     drafts: draftsService,
     // Send later's two verbs (mail 0077) — the worker's scheduled-send pass is the sender.
     schedules: scheduleService,

@@ -156,6 +156,31 @@ const PACKAGE_MODULE_SUBSTITUTES = {
 };
 
 /**
+ * MODULES INSIDE A WORKSPACE PACKAGE, substituted only where that package's own named file imports
+ * them — the workspace's twin of {@link PACKAGE_MODULE_SUBSTITUTES}.
+ *
+ * Keyed by the importer's path in the workspace with its `src/` or `dist/` and its extension
+ * dropped, because a workspace with build output bundles a package's compiled copy and a clean
+ * clone its `src/*.ts`: one key matches both. Then by the specifier exactly as that file writes
+ * it. Each twin refuses by name, or answers what the real module answers on every local install;
+ * the phone app's census over the built bundle proves the real modules are not in it.
+ */
+const WORKSPACE_MODULE_SUBSTITUTES = {
+  /* The Postgres schema markers, read only on the probe's Postgres arm (about 83 KB). */
+  "packages/api/routes/health": { "./health-markers.js": path.join(PHONE, "health-markers.ts") },
+  /* The Postgres dialect; the phone's one store is branded `sqlite` (about 15 KB). */
+  "packages/db/dialect/index": { "./pg.js": path.join(PHONE, "dialect-pg.ts") },
+  /* `/events`, which every local composition switches off: the twin answers that refusal. */
+  "packages/api/routes/local": { "./events.js": path.join(PHONE, "events.ts") },
+};
+
+/** The {@link WORKSPACE_MODULE_SUBSTITUTES} key of a file in the workspace, or null outside it. */
+function workspaceModuleKey(relativePath) {
+  const m = /^((?:packages|apps)\/[^/]+)\/(?:src|dist)\/(.+)\.[cm]?[jt]sx?$/.exec(relativePath);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/**
  * ONE COPY of the MIME libraries both mail parsers pin exactly. When `imapflow` and `mailparser`
  * pin different versions the bundle carries both — two charset tables of ~390 KB each. Every
  * importer resolves these as the ANCHOR does, whose pins are the newer ones, in a pnpm or an npm
@@ -261,11 +286,13 @@ function bareSpecifiers() {
 
 export {
   MOBILE, REPO, SHIMS, PHONE,
-  NODE_MODULES, PACKAGE_ALIASES, PACKAGE_MODULE_SUBSTITUTES, ONE_COPY, SIDECAR_SUBSTITUTES,
-  API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
+  NODE_MODULES, PACKAGE_ALIASES, PACKAGE_MODULE_SUBSTITUTES, WORKSPACE_MODULE_SUBSTITUTES,
+  ONE_COPY, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
+  workspaceModuleKey,
 };
 export default {
   MOBILE, REPO, SHIMS, PHONE,
-  NODE_MODULES, PACKAGE_ALIASES, PACKAGE_MODULE_SUBSTITUTES, ONE_COPY, SIDECAR_SUBSTITUTES,
-  API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
+  NODE_MODULES, PACKAGE_ALIASES, PACKAGE_MODULE_SUBSTITUTES, WORKSPACE_MODULE_SUBSTITUTES,
+  ONE_COPY, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
+  workspaceModuleKey,
 };

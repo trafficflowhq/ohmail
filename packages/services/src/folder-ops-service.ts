@@ -403,5 +403,3 @@ export class FolderOpsService {
     return { dto, seq: seq === null ? null : Number(seq) };
   }
 }
-
-export const folderOpsService = new FolderOpsService();

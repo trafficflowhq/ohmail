@@ -3,6 +3,7 @@ import { changeLog } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services/mail";
 import { DEFAULT_SSE } from "../deps.js";
 import { errorResponse } from "../responses.js";
+import { sseDisabledResponse } from "./sse-disabled.js";
 import type { Route } from "../router.js";
 
 /**
@@ -85,9 +86,7 @@ export const eventsRoutes: Route[] = [
       const cfg = { ...DEFAULT_SSE, ...(deps.sse ?? {}) };
       const enc = new TextEncoder();
 
-      if (cfg.enabled === false) {
-        return errorResponse("sse_disabled", 503, "server-sent events are disabled on this deployment; poll GET /sync");
-      }
+      if (cfg.enabled === false) return sseDisabledResponse();
       if (cfg.maxPerInstance != null && liveTotal >= cfg.maxPerInstance) {
         return errorResponse("sse_capacity", 503, "too many open event streams on this instance; poll GET /sync");
       }

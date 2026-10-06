@@ -25,7 +25,7 @@ import {
   syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
-  folderOpsService, scheduleService,
+  FolderOpsService, scheduleService,
   workflowsService, proposalsService, redeemInviteGrant,
   makeAttachmentStagingPort, MailService, SmtpMailer,
 } from "@trafficflow/services";
@@ -286,7 +286,7 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     // desktop's standalone door, not this one. Found missing by `bag-parity.test.ts` — the
     // verbs slice wired the managed bag and never this one, so a self-host user's folder
     // create/rename/delete answered 500 `folder ops service not configured`.
-    folderOps: folderOpsService,
+    folderOps: new FolderOpsService(),
     drafts: draftsService,
     // Send later's two verbs (mail 0077) — this host's own worker lane runs the sender pass.
     schedules: scheduleService,

@@ -60,17 +60,18 @@ async function apiHealthFor(req: Request, deps: ApiDeps): Promise<ApiHealth> {
   const checkedAt = deps.now().toISOString();
 
   // The same probe `/health` runs, from the same module — two copies would drift on the first
-  // schema marker added, silently, both endpoints still 200. Explicit marker lists, because
+  // schema marker added, silently, both endpoints still 200. An explicit census, because
   // `probeDatabase`'s default narrowed to the mail half when the Cloud marker list left
   // `health.ts` (that module ships in the desktop engine); the console is a hosted surface and
   // must measure against both journals — cloud 0011 is invisible to name-only probes, cloud
   // 0013's index name cannot live in `health.ts`, cloud 0014 is a replaced function body, and the
   // definition and function lists are both halves (mail 0100 widens a mail CHECK, mail 0140 adds a
   // mail trigger function).
-  const probe = await probeDatabase(
-    deps.db, CLOUD_TIER_MARKERS, CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS,
-    FUNCTION_DEFINITION_MARKERS, CLOUD_FK_MARKERS,
-  );
+  const probe = await probeDatabase(deps.db, {
+    markers: CLOUD_TIER_MARKERS, checkDefinitions: CHECK_DEFINITION_MARKERS,
+    indexMarkers: CLOUD_INDEX_MARKERS, functionDefinitions: FUNCTION_DEFINITION_MARKERS,
+    foreignKeys: CLOUD_FK_MARKERS,
+  });
   const base = {
     host,
     version,

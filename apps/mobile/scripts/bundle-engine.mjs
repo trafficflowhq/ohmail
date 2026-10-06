@@ -218,8 +218,10 @@ export function workspaceSourceAliases(repo = REPO) {
  *  4. the desktop's own modules are matched by their exact relative specifier AND by the importer
  *     being inside `apps/sidecar/src` — a bare specifier check would rewrite `./db.js` written
  *     anywhere in the graph, and several packages have a file of that name;
- *  5. a package in `aliases.ONE_COPY` is resolved from its anchor's directory, whoever imports it;
- *  6. a row of `aliases.PACKAGE_MODULE_SUBSTITUTES` applies only when the importer IS the named file
+ *  5. a row of `aliases.WORKSPACE_MODULE_SUBSTITUTES` applies only when the importer IS the named
+ *     workspace file (its `src/` or `dist/` copy alike) and the specifier matches whole;
+ *  6. a package in `aliases.ONE_COPY` is resolved from its anchor's directory, whoever imports it;
+ *  7. a row of `aliases.PACKAGE_MODULE_SUBSTITUTES` applies only when the importer IS the named file
  *     inside that package (the path after its last `node_modules/`) and the specifier matches whole.
  */
 function substitutions(extraBare = {}) {
@@ -347,14 +349,23 @@ function substitutions(extraBare = {}) {
           applied.push([args.path, target]);
           return { path: target };
         }
-        // 5 — one copy of a MIME library two parsers pin at different versions.
+        // 5 — a module inside a workspace package, only where that package's own named file imports it.
+        const wsKey = args.importer.startsWith(`${REPO}/`)
+          ? aliases.workspaceModuleKey(args.importer.slice(REPO.length + 1)) : null;
+        const wsRow = wsKey && Object.hasOwn(aliases.WORKSPACE_MODULE_SUBSTITUTES, wsKey)
+          ? aliases.WORKSPACE_MODULE_SUBSTITUTES[wsKey] : null;
+        if (wsRow && Object.hasOwn(wsRow, args.path)) {
+          applied.push([args.path, wsRow[args.path]]);
+          return { path: wsRow[args.path] };
+        }
+        // 6 — one copy of a MIME library two parsers pin at different versions.
         const pkg = args.path.startsWith("@") ? args.path.split("/").slice(0, 2).join("/") : args.path.split("/")[0];
         if (oneCopy.has(pkg)) {
           const resolved = await resolveFromAnchor(args.path, args.kind);
           applied.push([args.path, resolved]);
           return { path: resolved };
         }
-        // 6 — a module inside a package, only where that package's own named file requires it.
+        // 7 — a module inside a package, only where that package's own named file requires it.
         const inPackage = args.importer.match(/^.*\/node_modules\/((?:@[^/]+\/)?[^/]+\/.+)$/);
         const within = inPackage && Object.hasOwn(aliases.PACKAGE_MODULE_SUBSTITUTES, inPackage[1])
           ? aliases.PACKAGE_MODULE_SUBSTITUTES[inPackage[1]] : null;

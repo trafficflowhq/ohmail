@@ -19,7 +19,8 @@
     "./known-set": "./src/known-set.ts",
     "./rule-retro": "./src/rule-retro.ts",
     "./screener-correspondent-retro": "./src/screener-correspondent-retro.ts",
-    "./dead-letter": "./src/dead-letter.ts"
+    "./dead-letter": "./src/dead-letter.ts",
+    "./sender-check-backfill": "./src/sender-check-backfill.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

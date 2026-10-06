@@ -1,6 +1,6 @@
 import type {
   SchemaMarker, CheckDefinitionMarker, FunctionDefinitionMarker, ForeignKeyMarker, IndexMarker,
-} from "./health.js";
+} from "./health-markers.js";
 
 /**
  * Where the both-halves schema census is registered, and why registered rather than imported. The
@@ -21,7 +21,7 @@ export interface SchemaCensus {
   checkDefinitions: ReadonlyArray<CheckDefinitionMarker>;
   /**
    * Cloud INDEX names probed through `pg_indexes`, beyond the shared `SCHEMA_INDEX_MARKERS`
-   * list — which cannot hold them, because it lives in `health.ts` and ships in the desktop
+   * list — which cannot hold them, because it lives in `health-markers.ts` and ships in the desktop
    * engine while these entries name Cloud tables. Cloud `0013` (the trial-once partial unique
    * index) is why this field exists.
    */

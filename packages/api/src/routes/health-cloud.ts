@@ -3,7 +3,7 @@ import {
   MAIL_CHECK_DEFINITION_MARKERS, MAIL_FUNCTION_MARKERS, SCHEMA_FK_MARKERS, MAIL_COLUMN_TYPE_MARKERS,
   MAIL_SCHEMA_MARKER_JOURNAL_TAG, type SchemaMarker, type CheckDefinitionMarker,
   type FunctionDefinitionMarker, type ForeignKeyMarker, type IndexMarker,
-} from "./health.js";
+} from "./health-markers.js";
 import { registerSchemaCensus } from "./health-census.js";
 
 /**
@@ -226,8 +226,8 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
 /**
  * The CLOUD indexes probed by name through `pg_indexes` — the fourth marker class, and the
  * reason it is a HOST-SUPPLIED list rather than three more lines in `SCHEMA_INDEX_MARKERS`:
- * that list lives in `health.ts`, which ships in the desktop engine, and every entry here names
- * a table only a hosted deployment has.
+ * that list lives in `health-markers.ts`, which ships in the desktop engine, and every entry here
+ * names a table only a hosted deployment has.
  *
  * An index's absence is SILENT in the way this class exists for: no query is wrong, every suite
  * is green, and the only symptom is a scan where there should be a seek — or a uniqueness
