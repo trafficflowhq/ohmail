@@ -825,6 +825,10 @@ const sizeCache = new WeakMap<EntityReader, { v: number; sizes: Map<string, Thre
  * thread row, the members the mirror holds where it does not, and a flag saying which. A windowed
  * mirror holding three of nine would otherwise put "3" on a row standing for nine.
  *
+ * PLACED MEMBERS ONLY: a held member the mirror holds ({@link standsHeld}) is not in the
+ * conversation an Ohbox row opens, so it is not counted, and the thread row's ids are read less
+ * those. A conversation with no placed member is all held, and is counted whole.
+ *
  * One pass, memoized per version, in the shape {@link threadParticipantsIndex} already has for
  * the same reason: a per-row {@link threadOf} is O(mirror x rows) for a badge. Both surfaces read
  * it — the web row through {@link resurfacedThreads}, the phone through its own projection.
@@ -835,18 +839,29 @@ export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, Threa
     const hit = sizeCache.get(reader);
     if (hit && hit.v === v) return hit.sizes;
   }
-  const sizes = new Map<string, ThreadSize>();
+  const claims = winningStates(reader);
+  const heldIds = new Set<string>();
+  const tallies = new Map<string, { placed: number; all: number }>();
   for (const m of reader.list<EngineMessage>("message")) {
     if (!m.threadId) continue;
-    const held = sizes.get(m.threadId);
-    if (held) held.count += 1;
-    else sizes.set(m.threadId, { count: 1, fromThread: false });
+    const held = standsHeld(m, claims);
+    if (held) heldIds.add(m.id);
+    const t = tallies.get(m.threadId) ?? { placed: 0, all: 0 };
+    t.all += 1;
+    if (!held) t.placed += 1;
+    tallies.set(m.threadId, t);
   }
-  for (const [threadId, size] of sizes) {
+  const sizes = new Map<string, ThreadSize>();
+  for (const [threadId, t] of tallies) {
+    const allHeld = t.placed === 0;
+    const inHand = allHeld ? t.all : t.placed;
     const thread = reader.get<{ messageIds?: unknown }>("thread", threadId);
-    if (!Array.isArray(thread?.messageIds)) continue;
-    size.count = thread.messageIds.length;
-    size.fromThread = true;
+    if (!Array.isArray(thread?.messageIds)) {
+      sizes.set(threadId, { count: inHand, fromThread: false });
+      continue;
+    }
+    const ids = allHeld ? thread.messageIds : thread.messageIds.filter((id) => !heldIds.has(id as string));
+    sizes.set(threadId, { count: Math.max(ids.length, inHand), fromThread: true });
   }
   if (v !== null) sizeCache.set(reader, { v, sizes });
   return sizes;
