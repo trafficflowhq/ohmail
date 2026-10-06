@@ -8,6 +8,7 @@ import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
 import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, ruleMatchKey } from "@trafficflow/core/rule-order";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
+import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeRule } from "./dto/materialize.js";
@@ -563,6 +564,8 @@ export class RulesService {
         // The key's match as the store itself folds it, so the lookup below compares one
         // normaliser with itself (SQL `lower` and JS `toLowerCase` differ past ASCII on some stores).
         matchKey: sql<string>`${ruleMatchKeySql(rules.match)}`,
+        // A resent match, folded by the same store in the same statement — never by JavaScript.
+        sentKey: sql<string | null>`${patch.match === undefined ? sql`null` : ruleMatchKeySql(dialect(tx).castText(sql`${patch.match}`))}`,
       }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
 
@@ -570,6 +573,11 @@ export class RulesService {
       if (patch.match !== undefined && patch.kind === undefined && before !== undefined) {
         set.match = this.validMatch(patch.match, before.kind);
       }
+      /* THE SAME MATCH SENT AGAIN IS NOT A KEY MOVE: the store folds it to the row's own key, so
+         nothing is written to `match` and the stored spelling stays. JavaScript's folding would
+         read a capital past ASCII as a new key and leave the old key's twins standing. */
+      if (set.match !== undefined && before !== undefined && before.sentKey === before.matchKey
+        && (set.kind === undefined || set.kind === before.kind)) delete set.match;
       if (patch.subjectContains !== undefined) {
         set.subjectContains = this.validSubjectContains(
           patch.subjectContains,
