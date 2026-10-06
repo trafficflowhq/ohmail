@@ -74,6 +74,27 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.17" date="2026-10-07">
+      <description>
+        <ul>
+          <li>New mail, the rail and attachments fit an Android foldable</li>
+          <li>Sheets on an open Android foldable stand over the reading pane</li>
+          <li>Two panes on an unfolded foldable and a small tablet</li>
+          <li>Folder names readable in the sidebar, and one title on a phone</li>
+          <li>The reader's menu stays on screen</li>
+          <li>Names and dates readable on every list row and card</li>
+          <li>Short newsletters and receipts no longer hold an empty card</li>
+          <li>Lists in the two-pane layout keep their words</li>
+          <li>Lists keep their rows clear</li>
+          <li>A sender you decided on stays decided</li>
+          <li>Cancel asks the server</li>
+          <li>Live updates and conversation counts on the web</li>
+          <li>Settings, compose and search fit a phone</li>
+          <li>The phone says what a press did</li>
+          <li>A change is kept when another tab signs in or your sign-in cannot be renewed</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.16" date="2026-10-06">
       <description>
         <ul>
@@ -130,21 +151,6 @@
           <li>Undo puts a message back where it was in the Ohbox</li>
           <li>One rule per sender, and a rule change waits for every organizer</li>
           <li>A phone with less memory keeps a margin when it shows a long message's images</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.12" date="2026-10-03">
-      <description>
-        <ul>
-          <li>The sender sheet counts mail filed in another mail app where it is</li>
-          <li>A lost session renewal no longer signs the browser out</li>
-          <li>The address check refuses every IPv6 range that is not public internet</li>
-          <li>The engine log no longer writes a line per received message</li>
-          <li>The Rules page says what is waiting for your other computer</li>
-          <li>The desktop app stays signed in when a session renewal is interrupted</li>
-          <li>The organizer's log no longer names your mail server</li>
-          <li>A new rule reaches the computer that organizes your mail</li>
-          <li>A message that cannot be saved no longer holds up the rest of the mailbox</li>
         </ul>
       </description>
     </release>

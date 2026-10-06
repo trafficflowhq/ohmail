@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.17] — 2026-10-07
+
 ### New mail, the rail and attachments fit an Android foldable
 <!-- changes: fix-026-android-fold-broken.md -->
 
@@ -94,10 +101,10 @@ button, and on a phone the first-sync notice no longer covers the last row or co
 
 Pausing or removing a rule ohmail learned now ends what it learned about that sender in every
 folder. A paused rule keeps ohmail's learning from filing that sender; after a removal it files
-them again only after as many approvals as the first time, through a rule you can see. A rule
-"Not junk, always allow" wrote before this release is your own rule too, unless ohmail itself had
-let that sender into the Inbox and you had not marked that address as spam or screened it out
-since. From this release on, re-running or undoing a HEY import
+them again only after as many approvals as the first time, through a rule you can see. On an
+install that has this release, a rule "Not junk, always allow" wrote there before it is your own
+rule too, unless ohmail itself had let that sender into the Inbox and you had not marked that
+address as spam or screened it out since. From this release on, re-running or undoing a HEY import
 leaves alone a rule you pause and a sender you allow or decide on in the Screener. Moving a message
 at the same moment as you pause a learned rule, or reject a proposal for the same sender, no longer
 fails.
@@ -156,11 +163,6 @@ change was on its way, the change was undone. It is now kept and sent once that 
 again. A change on its way when another tab signs out is still undone, and so is one for a deleted
 account. On the desktop, a correct two-step code entered while the session renewed is no longer
 reported as wrong.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.16] — 2026-10-06
 
@@ -11559,7 +11561,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.16...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.17...HEAD
+[0.25.17]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.17
 [0.25.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.16
 [0.25.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.15
 [0.25.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.14
