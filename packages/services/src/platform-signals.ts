@@ -125,6 +125,21 @@ export const VERCEL_REQUEST_LOGS_URL = "https://vercel.com/api/logs/request-logs
  */
 export const VERCEL_PROJECT_URL = "https://api.vercel.com/v9/projects";
 
+/**
+ * A 5xx the deployment answers ON PURPOSE, which the 5xx count leaves out. Matched by method, path
+ * AND status, never by status alone; the request log carries no response body, so `code` is the
+ * deployment's statement of what that route answers there, and it is declared only while true.
+ */
+export interface DeliberateRefusal {
+  method: string;
+  path: string;
+  status: number;
+  code: string;
+}
+
+/** `GET /events` while the deployment's live connection is off: 503 `sse_disabled`, on every open. */
+export const SSE_DISABLED_REFUSAL: DeliberateRefusal = { method: "GET", path: "/events", status: 503, code: "sse_disabled" };
+
 /** The default project. See {@link PlatformSignalEnv.VERCEL_SIGNAL_PROJECTS}. */
 export const DEFAULT_SIGNAL_PROJECTS: readonly string[] = ["ohmail-api"];
 
@@ -224,6 +239,8 @@ export function makePlatformSignalPort(
   opts: {
     fetchImpl?: typeof fetch; timeoutMs?: number; pageBudget?: number;
     wallClockMs?: number; nowMs?: () => number;
+    /** The refusals this deployment answers on purpose; still requests, never 5xx errors. */
+    deliberate?: readonly DeliberateRefusal[];
   } = {},
 ): PlatformSignalPort {
   const doFetch = opts.fetchImpl ?? globalThis.fetch;
@@ -233,6 +250,10 @@ export function makePlatformSignalPort(
   // Injectable so the deadline is TESTABLE without a slow endpoint or a real clock. A guard whose
   // only trigger is "wait forty seconds" is a guard nobody watches fail.
   const nowMs = opts.nowMs ?? (() => Date.now());
+  const deliberate = opts.deliberate ?? [];
+  // A row without its method or path is not one of them: it counts, the direction that keeps an outage visible.
+  const onPurpose = (r: Record<string, unknown>, status: number): boolean =>
+    deliberate.some((d) => d.status === status && r.requestMethod === d.method && r.requestPath === d.path);
 
   // ── A SEPARATOR-ONLY SETTING IS NOT A CONFIGURATION, AND `every` ON [] IS TRUE ────────
   //
@@ -513,7 +534,7 @@ export function makePlatformSignalPort(
             }
             const status = Number(r.statusCode);
             if (!Number.isFinite(status)) return { failed: "unreadable_status" };
-            if (status >= 500 && status <= 599) errors5xx++;
+            if (status >= 500 && status <= 599 && !onPurpose(r, status)) errors5xx++;
             const ts = parseStamp(r.timestamp);
             if (ts === null) return { failed: "unparseable_timestamp" };
             if (ts < oldest) oldest = ts;

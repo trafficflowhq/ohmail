@@ -37,7 +37,7 @@ import {
   workflowsService, proposalsService,
   MailService, ResendMailer, mailAlertSink, dbRecipientLimiter, makeWaitlistService,
   type ServiceContext,
-  makePlatformSignalPort,
+  makePlatformSignalPort, SSE_DISABLED_REFUSAL,
 } from "@trafficflow/services";
 import {
   makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS, staffSigningKeyOf,
@@ -411,6 +411,9 @@ function buildServices(cfg: HostConfig): ApiServices {
     VERCEL_TOKEN: process.env.VERCEL_TOKEN,
     VERCEL_TEAM_ID: process.env.VERCEL_TEAM_ID,
     VERCEL_SIGNAL_PROJECTS: process.env.VERCEL_SIGNAL_PROJECTS,
+  }, {
+    // The stream refused while it is off is an answer, not an outage: the same flag `GET /events` reads.
+    deliberate: cfg.sse.enabled === false ? [SSE_DISABLED_REFUSAL] : [],
   }));
 
   // The live drafter. `POST /messages/:id/draft` calls this; absent, the route 500s cleanly.

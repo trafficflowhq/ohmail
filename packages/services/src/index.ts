@@ -390,10 +390,10 @@ export {
   // "5xx: not measured". A pass that wrote zeros would satisfy every test about the rule staying
   // quiet, and would put a measured-looking zero on a screen for a figure nobody ever asked for.
   makePlatformSignalPort, runPlatformSignalPass,
-  VERCEL_REQUEST_LOGS_URL, DEFAULT_SIGNAL_PROJECTS,
+  VERCEL_REQUEST_LOGS_URL, DEFAULT_SIGNAL_PROJECTS, SSE_DISABLED_REFUSAL,
   SIGNAL_PAGE_BUDGET, SIGNAL_WINDOW_MS, SIGNAL_RETENTION_MS,
   type SignalProvider, type PlatformSignalPort, type PlatformSignalFetch,
-  type PlatformSignalRow, type PlatformSignalEnv,
+  type PlatformSignalRow, type PlatformSignalEnv, type DeliberateRefusal,
   type PlatformSignalPassReport, type PlatformSignalPassOptions,
 } from "./platform-signals.js";
 // The ONE-TIME re-evaluation (mail 0030) of mail that `pipeline.ts:393`'s sensitivity
