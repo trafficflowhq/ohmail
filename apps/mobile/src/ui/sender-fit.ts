@@ -6,8 +6,9 @@
  * end, and no explainer sentence (the capsules carry it as their hint). At 905 x 403 dp the wrapped
  * panel stood ~230 dp tall and left the held message a 173 dp strip.
  *
- * THE SENDER'S NAME: 28 at a pane of 480 dp or more, 22 below, three lines at most. React Native
- * has no hyphenation, so a single word longer than the pane still breaks.
+ * THE SENDER'S NAME: the reader's title role (29) at a pane of 480 dp or more, the view title (22)
+ * below, three lines at most; the type scale holds no 28. React Native has no hyphenation, so a
+ * single word longer than the pane still breaks.
  */
 import type { SizeClass } from "./posture/derive";
 
@@ -28,10 +29,9 @@ export function decisionPanelShape(heightClass: SizeClass): DecisionPanelShape {
 
 export const SENDER_TITLE_WIDE_PANE = 480;
 
-/** The name's type at a measured pane width; an unmeasured pane (null) takes the narrow size. */
-export function senderTitleType(paneWidth: number | null): { fontSize: number; lineHeight: number } {
-  const size = paneWidth !== null && paneWidth >= SENDER_TITLE_WIDE_PANE ? 28 : 22;
-  return { fontSize: size, lineHeight: Math.round(size * 1.25) };
+/** The name's type role at a measured pane width; an unmeasured pane (null) takes the narrow one. */
+export function senderTitleVariant(paneWidth: number | null): "readerTitle" | "h1" {
+  return paneWidth !== null && paneWidth >= SENDER_TITLE_WIDE_PANE ? "readerTitle" : "h1";
 }
 
 export const SENDER_TITLE_LINES = 3;

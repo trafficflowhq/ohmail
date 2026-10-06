@@ -32,7 +32,7 @@ import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
 import { Segmented } from "./Segmented";
 import { usePosture } from "./posture";
-import { decisionPanelShape, SENDER_TITLE_LINES, senderTitleType } from "./sender-fit";
+import { decisionPanelShape, SENDER_TITLE_LINES, senderTitleVariant } from "./sender-fit";
 import { useLocale } from "../i18n/LocaleProvider";
 
 export function SenderDetail({
@@ -106,7 +106,7 @@ export function SenderDetail({
           style={{ paddingHorizontal: 12, paddingBottom: 14 }}
           onLayout={(e) => setPaneWidth(Math.round(e.nativeEvent.layout.width))}
         >
-          <Txt variant="h2" numberOfLines={SENDER_TITLE_LINES} style={senderTitleType(paneWidth)}>
+          <Txt variant={senderTitleVariant(paneWidth)} numberOfLines={SENDER_TITLE_LINES}>
             {row.name}
           </Txt>
           <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
