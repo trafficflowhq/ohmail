@@ -8,20 +8,23 @@ import type { Route } from "../router.js";
 
 /**
  * ONE discrete statement per read (no transaction, no LISTEN, no connection held between reads):
- * the account's highest `change_log` seq, and whether the session the stream was admitted on is
- * still live. Live is the row being present, this account's, with `revoked_at` null — never
- * `access_expires_at`: a refresh rotation updates this same row, and an expiry check would cut
- * every stream at the access TTL. Anything but a boolean `true` reads as not live.
+ * the account's highest `change_log` seq, and whether the admitted session is live — its row
+ * present, this account's, `revoked_at` null. Never `access_expires_at`: a refresh rotation updates
+ * this same row. Live is a boolean `true` or the integer 1 (SQLite's `exists`); anything else is
+ * not live. The subquery is a nested fragment so its columns render qualified: drizzle strips the
+ * table from a column at the top of a single-table select's field.
  */
 async function readSeqAndSession(
   db: Db, accountId: string, sessionId: string,
 ): Promise<{ seq: bigint; live: boolean }> {
+  const sessionLive = sql`exists (select 1 from ${sessions} where ${sessions.id} = ${sessionId} and ${sessions.accountId} = ${accountId} and ${sessions.revokedAt} is null)`;
   const rows = await db.select({
     max: sql<string | null>`max(${changeLog.seq})`,
-    live: sql<boolean>`exists (select 1 from ${sessions} where ${sessions.id} = ${sessionId} and ${sessions.accountId} = ${accountId} and ${sessions.revokedAt} is null)`,
+    live: sql<boolean | number>`${sessionLive}`,
   }).from(changeLog).where(eq(changeLog.accountId, accountId));
   const m = rows[0]?.max;
-  return { seq: m == null ? 0n : BigInt(m), live: rows[0]?.live === true };
+  const v = rows[0]?.live;
+  return { seq: m == null ? 0n : BigInt(m), live: v === true || v === 1 };
 }
 
 /**
@@ -148,17 +151,25 @@ export const eventsRoutes: Route[] = [
             stop();
             try { controller.close(); } catch { /* already closed */ }
           };
-
-          send("retry: 3000\n\n");                       // EventSource reconnect hint
-          let lastSeq: bigint;
-          try {
-            const first = await readSeqAndSession(deps.db, accountId, sessionId);
-            if (!first.live) { finish(); return; }
-            lastSeq = first.seq;                          // don't replay backlog: start at current max
-          } catch {
+          // A failed read: the 30 s hint, then the close.
+          const readFailed = (): void => {
             send(RETRY_AFTER_FAILURE);
             send("event: sync_failed\ndata: {}\n\n");
             finish();
+          };
+
+          send("retry: 3000\n\n");                       // EventSource reconnect hint
+          let lastSeq: bigint;
+          // When the last read that found the session live was ISSUED: a pushed frame rides it.
+          let liveReadAt = 0;
+          try {
+            const issuedAt = Date.now();
+            const first = await readSeqAndSession(deps.db, accountId, sessionId);
+            if (!first.live) { finish(); return; }
+            lastSeq = first.seq;                          // don't replay backlog: start at current max
+            liveReadAt = issuedAt;
+          } catch {
+            readFailed();
             return;
           }
 
@@ -168,12 +179,14 @@ export const eventsRoutes: Route[] = [
            * — the benign direction. The other order would deliver a wake into an uninitialized
            * `lastSeq`. Wrapped in a catch even though the hub's contract says it never throws,
            * because the hub is a HINT and a hint must not be able to kill the stream it hints at.
-           * The seq comes from the NOTIFY payload, so a pushed frame costs zero DB reads; its
-           * session is the poll's to recheck, which is the floor: within `pollMs` either way.
+           * The seq comes from the NOTIFY payload, so a pushed frame costs zero DB reads. Its
+           * session is the reads' to recheck: a frame goes out only within two poll intervals of
+           * the last read that found it live, so a read queued behind a busy pool holds frames back.
            */
           try {
             unhook = deps.changeWake?.subscribe(accountId, (seq) => {
               if (closed) return;
+              if (Date.now() - liveReadAt > 2 * cfg.pollMs) return;   // stale: the next read decides
               if (seq > lastSeq) {
                 lastSeq = seq;
                 send(`event: sync\ndata: {"seq":${seq}}\n\n`);
@@ -199,13 +212,13 @@ export const eventsRoutes: Route[] = [
               });
               if (closed) return;
               try {
+                const issuedAt = Date.now();
                 const t = await readSeqAndSession(deps.db, accountId, sessionId);
                 if (!t.live) { finish(); return; }        // the session ended: so does its stream
+                liveReadAt = issuedAt;
                 if (t.seq > lastSeq) { lastSeq = t.seq; send(`event: sync\ndata: {"seq":${t.seq}}\n\n`); }
               } catch {
-                send(RETRY_AFTER_FAILURE);
-                send("event: sync_failed\ndata: {}\n\n");
-                finish();
+                readFailed();
                 return;
               }
             }
