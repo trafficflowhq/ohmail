@@ -794,7 +794,7 @@
   .abar kbd { display: none; }
 }
 
-/* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
+/* ── THE 44px TOUCH TARGET UNDER A THUMB ────────────────────────────────────────────────────────
    44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE
    AREA, not of every control: a drawn 44 is right for a button, a list row and an icon button,
    and wrong for a selector — a segmented control drawn 44 with a 13px label stops reading as
@@ -812,9 +812,10 @@
    ROW-GAP grows; column gaps, widths and padding are untouched, so nothing wraps differently and
    no measured width moves.
 
-   Only under 640px: a pointer does not need this, and the desktop's density is a design the wider
-   layout was drawn around. */
-@media (max-width: 640px){
+   Under 640px, and on a coarse pointer at ANY width: a touch tablet or an unfolded phone holds a
+   two-pane layout and is still pressed by a thumb. A fine pointer does not need this, and the
+   desktop's density is a design the wider layout was drawn around. */
+@media (pointer: coarse), (max-width: 640px){
   .abar-b{min-height:44px}
   /* The disclosure a thumb hunts for most, and the read switch at its dot-only compact floor:
      both 44 wide. Unconditional here so the measurement's copy carries the same floor. */
