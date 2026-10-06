@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
   ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys, endGraduationOfRule,
-  type FoundRule, type OrganizedBy, type RuleKey, type Tx,
+  ruleKeyIsOwnAddress, type FoundRule, type OrganizedBy, type RuleKey, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
@@ -365,6 +365,12 @@ export class RulesService {
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
     return withAccountTx(ctx, async (tx) => {
+      /* NOT A RULE ABOUT THE ACCOUNT ITSELF: a sender rule naming one of its own addresses would
+         file or hold the person's own mail (`ruleKeyIsOwnAddress`). Refused before anything is
+         written here or travels, under the closed code every surface turns into its sentence. */
+      if (await ruleKeyIsOwnAddress(bridgeTx(tx), ctx.accountId, { kind, match })) {
+        throw new ServiceError("own_address", 400, "a rule cannot be about one of this account's own addresses");
+      }
       // One instant for the press: the local row's stamp and every leg's `decidedAt`.
       const at = ctx.now();
       const travelling = (): Record<string, unknown> => ruleCreatePayload({

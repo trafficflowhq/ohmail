@@ -12,6 +12,7 @@ import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } f
 import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 import { convergeRuleKey, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
+import { ruleKeyIsOwnAddress } from "./own-mail.js";
 
 /** The one bound, pinned beside the decide's lift in `screener-apply.ts` and re-exported here. */
 export { RULE_PRIORITY_MAX };
@@ -874,8 +875,12 @@ export interface ApplyRuleRequestInput {
   now: Date;
 }
 
-/** `no_such_rule` is the one outcome an update or a delete can legitimately not find. */
-export type RuleRefusal = "no_such_rule";
+/**
+ * The applier's closed set. `no_such_rule`: an update or a delete legitimately found nothing.
+ * `own_address`: a create keyed on one of the account's own addresses (`ruleKeyIsOwnAddress`),
+ * refused as every press door refuses it, so an older reader's request writes no such rule here.
+ */
+export type RuleRefusal = "no_such_rule" | "own_address";
 
 export type ApplyRuleRequestResult =
   | { applied: true; op: "create" | "update" | "delete"; ruleId: string; lastSeq: bigint }
@@ -1015,6 +1020,7 @@ export async function applyRuleRequest(
   const { key } = payload;
 
   if (payload.op === "create") {
+    if (await ruleKeyIsOwnAddress(tx, accountId, key)) return { applied: false, refusal: "own_address" };
     const out = await reconcileRuleCreate(tx, { accountId, create: payload, now });
     if (out.created) return { applied: true, op: "create", ruleId: out.ruleId, lastSeq: out.lastSeq };
     // The row was not written: `unchanged`, with the seq of the twins it collapsed if any went.

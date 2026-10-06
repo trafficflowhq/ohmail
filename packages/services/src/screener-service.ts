@@ -15,6 +15,7 @@ import {
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
+  ruleKeyIsOwnAddress,
   readRequestEligibility, decisionCanBeApplied,
   listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -1124,6 +1125,12 @@ export class ScreenerReadService {
         "unprocessable", 422,
         "this sender has no domain to rule on — decide on the address instead",
       );
+    }
+
+    // NOT A DECISION ABOUT THE ACCOUNT ITSELF: a sender rule on one of its own addresses would file or
+    // hold the person's own mail, so it is refused as `POST /rules` refuses it (`ruleKeyIsOwnAddress`).
+    if (scope === "sender" && await ruleKeyIsOwnAddress(asTx(ctx), ctx.accountId, { kind: "sender", match: address })) {
+      throw new ServiceError("own_address", 400, "a rule cannot be about one of this account's own addresses");
     }
 
     return { scope, decision, dest, target, address, domain, appliedFolder, applyRetro };

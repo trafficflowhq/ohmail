@@ -3,7 +3,7 @@ import { folderState, mailboxes, messages } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
 import type { Dialect } from "./dialect/index.js";
 import { CUTLINE_GATE_FOLDER } from "./screener-cutline.js";
-import { ruleNamesSenderSql } from "./rule-match-sql.js";
+import { ruleMatchKey, ruleNamesSenderSql } from "./rule-match-sql.js";
 
 /**
  * THE ACCOUNT'S OWN ADDRESSES, AS THE ORGANIZER READS THEM — every mailbox row of the account,
@@ -14,6 +14,22 @@ export async function readOwnAddresses(db: Tx, accountId: string): Promise<Set<s
   const rows = await db.select({ address: mailboxes.address }).from(mailboxes)
     .where(eq(mailboxes.accountId, accountId));
   return new Set(rows.map((r) => r.address.toLowerCase()).filter((a) => a !== ""));
+}
+
+/**
+ * DOES THIS RULE KEY NAME THE ACCOUNT ITSELF — a sender rule whose match is one of the account's
+ * own addresses ({@link readOwnAddresses}; the account sends only as its mailboxes). Every door
+ * that keys a rule on a press refuses it as `own_address`: the router lets a rule naming the author
+ * win over its own-mail branch, so such a rule would file or hold the person's own mail. A domain
+ * rule names other people too, and a header rule names nobody, so neither is this.
+ */
+export async function ruleKeyIsOwnAddress(
+  db: Tx, accountId: string, key: { kind: string; match: string },
+): Promise<boolean> {
+  if (key.kind !== "sender") return false;
+  const match = ruleMatchKey(key.match);
+  for (const a of await readOwnAddresses(db, accountId)) if (ruleMatchKey(a) === match) return true;
+  return false;
 }
 
 /** Own-address rows released per call — one page, bounded like `GATE_RELEASE_BATCH`. */

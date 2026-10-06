@@ -3,7 +3,7 @@ import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
   applyMessageMove, validateMovePayload, type MoveRefusal,
   applyProfileUpdate, validateProfileUpdatePayload,
-  applyRuleRequest, validateRulePayload, settleReaderRuleRows, type RuleRefusal,
+  applyRuleRequest, validateRulePayload, settleReaderRuleRows, ruleKeyIsOwnAddress, type RuleRefusal,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
   listStaleSentRequests, markRequestsExpired, markRequestsRefused, mailboxRowsHeld,
@@ -76,9 +76,14 @@ const MOVE_REFUSAL_REASON: Readonly<Record<MoveRefusal, RequestRefusalReason>> =
   stale_press: "superseded",
 };
 
-/** The rule applier's own word, mapped the same way and for the same reason. */
+/**
+ * The rule applier's own word, mapped the same way and for the same reason. `own_address` has no
+ * word of its own on the wire (a new one would widen the column's CHECK): the record is understood
+ * and not a decision this build applies, which is what `invalid_payload` says.
+ */
 const RULE_REFUSAL_REASON: Readonly<Record<RuleRefusal, RequestRefusalReason>> = {
   no_such_rule: "no_such_rule",
+  own_address: "invalid_payload",
 };
 
 /**
@@ -101,6 +106,12 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
     const decision = validateRequestPayload(payload);
     if (!decision) return null;
     return async (tx) => {
+      // An older reader's decision about one of the account's own addresses promotes no rule here,
+      // as the press door refuses it (`ruleKeyIsOwnAddress`); the applier's `own_address`, mapped.
+      if (decision.scope === "sender"
+        && await ruleKeyIsOwnAddress(tx, ctx.accountId, { kind: "sender", match: decision.address })) {
+        return { applied: false, reason: RULE_REFUSAL_REASON.own_address };
+      }
       // Account-wide since the 0.20 scope ruling: the apply re-routes every mailbox THIS install
       // organizes and returns the rest as `heldElsewhere`, which the drain deliberately drops —
       // the requesting install already queued to every holder it could name, and a drain that
