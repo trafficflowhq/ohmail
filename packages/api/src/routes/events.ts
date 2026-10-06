@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { changeLog } from "@trafficflow/db";
+import { changeLog, sessions } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services/mail";
 import { DEFAULT_SSE } from "../deps.js";
 import { errorResponse } from "../responses.js";
@@ -7,15 +7,21 @@ import { sseDisabledResponse } from "./sse-disabled.js";
 import type { Route } from "../router.js";
 
 /**
- * The account's highest `change_log` seq via a DISCRETE query (borrow-and-release,
- * no open transaction, no LISTEN). That is the whole primitive: the poll holds NO DB
- * connection between iterations, so an open `/events` tab never pins a pooled conn.
+ * ONE discrete statement per read (no transaction, no LISTEN, no connection held between reads):
+ * the account's highest `change_log` seq, and whether the session the stream was admitted on is
+ * still live. Live is the row being present, this account's, with `revoked_at` null — never
+ * `access_expires_at`: a refresh rotation updates this same row, and an expiry check would cut
+ * every stream at the access TTL. Anything but a boolean `true` reads as not live.
  */
-async function maxSeq(db: Db, accountId: string): Promise<bigint> {
-  const rows = await db.select({ max: sql<string | null>`max(${changeLog.seq})` })
-    .from(changeLog).where(eq(changeLog.accountId, accountId));
+async function readSeqAndSession(
+  db: Db, accountId: string, sessionId: string,
+): Promise<{ seq: bigint; live: boolean }> {
+  const rows = await db.select({
+    max: sql<string | null>`max(${changeLog.seq})`,
+    live: sql<boolean>`exists (select 1 from ${sessions} where ${sessions.id} = ${sessionId} and ${sessions.accountId} = ${accountId} and ${sessions.revokedAt} is null)`,
+  }).from(changeLog).where(eq(changeLog.accountId, accountId));
   const m = rows[0]?.max;
-  return m == null ? 0n : BigInt(m);
+  return { seq: m == null ? 0n : BigInt(m), live: rows[0]?.live === true };
 }
 
 /**
@@ -53,14 +59,14 @@ export function sseLiveCounts(): { total: number; byAccount: Record<string, numb
 }
 
 /**
- * Bounded SSE (raw): a `: ping` heartbeat and a content-free `event: sync` wake when the
- * account's max seq advances — the client pulls `GET /sync?since=cursor`; SSE is lossy by design.
- * Server-closes after a bounded lifetime. Push — `deps.changeWake`, one session-mode LISTEN per
- * instance (a transaction-mode pooler lands a LISTEN on a backend the next statement has left);
- * poll — always, the floor: a dead LISTEN degrades latency to `pollMs`, nothing else.
- * `sse.enabled === false` ⇒ 503 `sse_disabled` (a client-bundle flag is not a control).
- * `maxPerAccount` 429, `maxPerInstance` 503. One serialized, caught poll loop — `setInterval`
- * overlaps under load. A slow client is dropped at {@link SSE_MAX_BUFFERED_FRAMES} frames behind.
+ * Bounded SSE (raw): a `: ping` heartbeat and a content-free `event: sync` wake when the account's
+ * max seq advances — the client pulls `GET /sync?since=cursor`; SSE is lossy by design. It ends at
+ * a bounded lifetime, or at the first read that finds its session revoked or deleted. Push —
+ * `deps.changeWake`, one session-mode LISTEN per instance (a transaction-mode pooler lands a LISTEN
+ * on a backend the next statement has left); poll — always, the floor: a dead LISTEN degrades
+ * latency to `pollMs`, nothing else. `sse.enabled === false` ⇒ 503 `sse_disabled` (a client-bundle
+ * flag is not a control). `maxPerAccount` 429, `maxPerInstance` 503. One serialized, caught poll
+ * loop (`setInterval` overlaps under load); a slow client is dropped at SSE_MAX_BUFFERED_FRAMES.
  */
 
 /**
@@ -82,7 +88,7 @@ export const eventsRoutes: Route[] = [
     cost: "connection",
     options: { raw: true },   // reduced pipeline: no JSON envelope / CSRF / idempotency
     handler: async (_req, deps) => {
-      const accountId = deps.session!.accountId;   // raw pipeline still runs withSession (401 if none)
+      const { accountId, sessionId } = deps.session!;   // raw pipeline still runs withSession (401 if none)
       const cfg = { ...DEFAULT_SSE, ...(deps.sse ?? {}) };
       const enc = new TextEncoder();
 
@@ -139,7 +145,9 @@ export const eventsRoutes: Route[] = [
           send("retry: 3000\n\n");                       // EventSource reconnect hint
           let lastSeq: bigint;
           try {
-            lastSeq = await maxSeq(deps.db, accountId);   // don't replay backlog: start at current max
+            const first = await readSeqAndSession(deps.db, accountId, sessionId);
+            if (!first.live) { finish(); return; }
+            lastSeq = first.seq;                          // don't replay backlog: start at current max
           } catch {
             send("event: sync_failed\ndata: {}\n\n");
             finish();
@@ -147,12 +155,13 @@ export const eventsRoutes: Route[] = [
           }
 
           /**
-           * THE PUSHED WAKE. Subscribed AFTER the `maxSeq` read on purpose: a commit landing in
+           * THE PUSHED WAKE. Subscribed AFTER the first read on purpose: a commit landing in
            * the gap between the read and the subscription is missed here and caught by the poll
            * — the benign direction. The other order would deliver a wake into an uninitialized
            * `lastSeq`. Wrapped in a catch even though the hub's contract says it never throws,
            * because the hub is a HINT and a hint must not be able to kill the stream it hints at.
-           * The seq comes from the NOTIFY payload, so a pushed frame costs zero DB reads.
+           * The seq comes from the NOTIFY payload, so a pushed frame costs zero DB reads; its
+           * session is the poll's to recheck, which is the floor: within `pollMs` either way.
            */
           try {
             unhook = deps.changeWake?.subscribe(accountId, (seq) => {
@@ -182,8 +191,9 @@ export const eventsRoutes: Route[] = [
               });
               if (closed) return;
               try {
-                const m = await maxSeq(deps.db, accountId);
-                if (m > lastSeq) { lastSeq = m; send(`event: sync\ndata: {"seq":${m}}\n\n`); }
+                const t = await readSeqAndSession(deps.db, accountId, sessionId);
+                if (!t.live) { finish(); return; }        // the session ended: so does its stream
+                if (t.seq > lastSeq) { lastSeq = t.seq; send(`event: sync\ndata: {"seq":${t.seq}}\n\n`); }
               } catch {
                 send("event: sync_failed\ndata: {}\n\n");
                 finish();
