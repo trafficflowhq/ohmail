@@ -149,7 +149,7 @@ export {
 /* What the operator's mail carries: pages for what is down or at risk, a daily digest for the rest. */
 export {
   MAIL_POLICY, PAGE_ROUTE_PREFIXES, mailVerdictOf, mailCooldownMs, policyKeyOf, DIGEST_MAX_LINES,
-  renderDigestInput, type AlertDigest, type DigestLine, type MailVerdict,
+  SYNC_LAG_PAGE_ACCOUNTS, renderDigestInput, type AlertDigest, type DigestLine, type MailVerdict,
 } from "./alert-mail-policy.js";
 
 /* The API's own 5xx record (cloud 0033). CLOUD-ONLY — `index.ts` does not carry it, because the
