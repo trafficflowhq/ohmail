@@ -127,8 +127,15 @@ export interface FenceScope {
  * whatever existence check the caller already ran.
  */
 export async function fenceErased(tx: Tx, d: Dialect, scope: FenceScope): Promise<void> {
-  const erasedAt = await readAccountErasedAt(tx, d, scope.accountId, scope.lock);
-  if (erasedAt != null) throw new AccountErasedError(scope.accountId);
+  /* A TRANSACTION ALREADY FENCED FOR THIS ACCOUNT (the brand) holds its row FOR SHARE from its
+     first statement, and an erasure stamps that row only after taking it exclusively, so a second
+     shared read cannot answer differently and is not asked. A stronger lock is still taken. */
+  const asked = scope.lock ?? "share";
+  const held = fencedAccountOf(tx) === scope.accountId && (asked === "share" || asked === "key share");
+  if (!held) {
+    const erasedAt = await readAccountErasedAt(tx, d, scope.accountId, scope.lock);
+    if (erasedAt != null) throw new AccountErasedError(scope.accountId);
+  }
   if (scope.mailboxId === undefined) return;
   const mailboxErasedAt = await readMailboxErasedAt(tx, d, scope.mailboxId, scope.mailboxLock ?? scope.lock);
   if (mailboxErasedAt != null) throw new MailboxErasedError(scope.mailboxId);
