@@ -9,7 +9,8 @@
  */
 export type MarkKind = "open" | "switch";
 export const MARK_TIMEOUT_MS = 30_000;
-const RING = 100;
+/** The readings a percentile is taken over: the last hundred, so one slow afternoon does not stand for ever. */
+export const RING = 100;
 
 const rings: Record<MarkKind, number[]> = { open: [], switch: [] };
 const counts: Record<MarkKind, number> = { open: 0, switch: 0 };
@@ -47,11 +48,13 @@ export type UiMarks = {
   switchP50Ms: number | null; switchP95Ms: number | null; switchCount: number; switchTimeouts: number;
 };
 
-/** The marks for one report: percentiles over the ring, counts and timeouts since the last take. */
+/** The marks for one report: percentiles over the ring, counts and timeouts since the last take. A minute with no
+ *  reading of a kind logs `null` for it, never the previous minute's percentile repeated from the ring. */
 export function takeUiMarks(): UiMarks {
+  const p = (kind: MarkKind, q: number) => (counts[kind] === 0 ? null : percentile(rings[kind], q));
   const out: UiMarks = {
-    openP50Ms: percentile(rings.open, 50), openP95Ms: percentile(rings.open, 95), openCount: counts.open, openTimeouts: timeouts.open,
-    switchP50Ms: percentile(rings.switch, 50), switchP95Ms: percentile(rings.switch, 95), switchCount: counts.switch, switchTimeouts: timeouts.switch,
+    openP50Ms: p("open", 50), openP95Ms: p("open", 95), openCount: counts.open, openTimeouts: timeouts.open,
+    switchP50Ms: p("switch", 50), switchP95Ms: p("switch", 95), switchCount: counts.switch, switchTimeouts: timeouts.switch,
   };
   counts.open = counts.switch = timeouts.open = timeouts.switch = 0;
   return out;
