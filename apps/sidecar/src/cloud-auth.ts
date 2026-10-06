@@ -647,13 +647,14 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     /* A 401 HERE SAYS THE ACCESS TOKEN IS STALE, never that the session is over — only the
        refresh door says that — unless the route's 401 is the answer itself ({@link NEVER_RENEW}),
        which goes back as it came. So: a session already refused answers as it is; a token renewed
-       while this was in flight is simply used; a fault already being retried on its own clock
-       is not hurried by every request that meets it; anything else joins the one renewal. */
+       while this was in flight is simply used, on a factor route too (a rotation replaces the
+       access hash at once, so the session's door refused the press before its code was read); a
+       fault already being retried on its own clock is not hurried; anything else joins the one renewal. */
     if (erased()) {
       discard(res);
       return erasedResponse();
     }
-    if (reading.state === "refused" || !mayRenewFor(path)) return res;
+    if (reading.state === "refused") return res;
     // The server named the CREDENTIAL (a wrong code): the answer itself, read off a clone.
     if (await envelopeCode(res.clone()) === CREDENTIAL_REFUSED) return res;
     const again = async (): Promise<Response> =>
@@ -662,6 +663,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
       discard(res);
       return again();
     }
+    if (!mayRenewFor(path)) return res;
     if (timer !== null && timerIsRetry) {
       discard(res);
       return offlineResponse();
