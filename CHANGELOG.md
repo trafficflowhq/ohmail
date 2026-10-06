@@ -137,6 +137,26 @@ on one row in compose and in signatures, and under 300 px the To field's hint is
 address. Search says its count and time once, and never splits a number from its word. In a dark
 theme, a held Screener message's Original button sits beside its date instead of over the message.
 
+### The phone says what a press did
+<!-- changes: fix-026-phone-press-rows.md -->
+
+On the phone, Later and Park on a conversation that holds your own reply act on the rest of the
+conversation and say what they did. Undo on a Move that a later choice for the same sender replaced
+puts the mail back. A delete that was still waiting to be sent when the app closed is no longer
+reported as not made the next time it starts. A `mailto:` link in a message opens the phone's
+composer with its Cc and Bcc. On Android, while ohmail organizes in the background, its notification
+says when the `ohmail/_meta` folder is full or cannot be cleaned, in the app's own words, instead of
+"Organizing".
+
+### A change is kept when another tab signs in or your sign-in cannot be renewed
+<!-- changes: fix-026-session-tabs-after-the-late-renewal.md -->
+
+If your sign-in could not be renewed, or another tab signed in to a different account, while a
+change was on its way, the change was undone. It is now kept and sent once that account is signed in
+again. A change on its way when another tab signs out is still undone, and so is one for a deleted
+account. On the desktop, a correct two-step code entered while the session renewed is no longer
+reported as wrong.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
