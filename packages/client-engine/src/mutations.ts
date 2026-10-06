@@ -2,7 +2,7 @@ import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { replySubject } from "@trafficflow/core/reply-subject";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { domainOfAddress } from "./consent-cutline.js";
-import { twinWinner } from "./rule-twins.js";
+import { ruleKeyOf, twinWinner } from "./rule-twins.js";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { rulesList, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
@@ -942,9 +942,10 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
-     * REVOKE — a tombstone, and NOTHING ELSE. The absent effects are the specification. `screener_decide` produces
-     * one rule effect AND a `move` per held message, because deciding at the gate genuinely re-files mail. Revoking
-     * does not: `RulesService.remove` deletes the row and appends a `rule` delete, and never reads `folder_state`. If
+     * REVOKE — tombstones for the row and its key's twins, and NOTHING ELSE. The absent effects are the
+     * specification. `screener_decide` produces one rule effect AND a `move` per held message, because deciding at
+     * the gate genuinely re-files mail. Revoking does not: `RulesService.remove` deletes the row and its twins, one
+     * `rule` delete each, and never reads `folder_state`. If
      * this branch also emitted moves, the optimistic view would re-sort a backlog the server is not going to touch,
      * and the next drain would silently put it all back — the user watching a thousand rows move and then un-move. An
      * unknown id yields [] ⇒ the engine rejects locally with `not_found` and nothing goes on the wire, which is the
@@ -953,7 +954,11 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     case "rule_delete": {
       const rule = reader.get<RuleDTO>("rule", m.ruleId);
       if (!rule) return [];
-      return [{ type: "rule", id: rule.id, entity: null }];
+      // The row and every twin under its key, as the server's one-per-key DELETE takes them: a twin
+      // left standing here would show the sender in its old place until the next drain.
+      const key = ruleKeyOf(rule);
+      const twins = rulesList(reader).filter((r) => r.id !== rule.id && ruleKeyOf(r) === key);
+      return [rule, ...twins].map((r) => ({ type: "rule", id: r.id, entity: null }));
     }
 
     /**

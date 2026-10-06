@@ -50,6 +50,11 @@ export function twinWinner(twins: readonly RuleDTO[]): RuleDTO | null {
   return winner;
 }
 
+/** A rule's four-field key as the server's one-per-key writes compare it: kind, folded match, terms. */
+export function ruleKeyOf(r: Pick<RuleDTO, "kind" | "match" | "subjectContains" | "bodyContains">): string {
+  return JSON.stringify([r.kind, ruleMatchKey(r.match), r.subjectContains ?? null, r.bodyContains ?? null]);
+}
+
 /**
  * ONE ROW PER KEY, for a ladder that writes over a list of a sender's rules: the rows grouped by
  * their four-field key, the router's winner of each group (on before paused). The server converges
@@ -59,7 +64,7 @@ export function twinWinner(twins: readonly RuleDTO[]): RuleDTO | null {
 export function oneRowPerKey(rules: readonly RuleDTO[]): RuleDTO[] {
   const groups = new Map<string, RuleDTO[]>();
   for (const r of rules) {
-    const k = JSON.stringify([r.kind, ruleMatchKey(r.match), r.subjectContains ?? null, r.bodyContains ?? null]);
+    const k = ruleKeyOf(r);
     const g = groups.get(k);
     if (g) g.push(r); else groups.set(k, [r]);
   }
