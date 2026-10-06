@@ -603,7 +603,10 @@ export function useShellDerivations({
    * so a windowed mirror holding three of nine does not put "3" on a row standing for nine.
    */
   const threadSizes = useMemo(() => threadSizeIndex(presented), [presented, derived]);
-  const threadCountOf = useStableCallback((threadId: string) => threadSizes.get(threadId)?.count ?? 0);
+  const threadCountOf = useStableCallback((threadId: string, held = false) => {
+    const size = threadSizes.get(threadId);
+    return (held ? size?.whole : size?.count) ?? 0;
+  });
   /**
    * THE CONVERSATION'S STORED NAME, for the Ohbox's grouped rows — bound here for the same
    * reason `participantsOf` is: the view has no reader of its own. The mirror's thread row

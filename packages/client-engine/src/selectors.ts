@@ -813,8 +813,11 @@ const msOf = (iso: string | null): number | null => {
 
 /** How long one conversation is, and whether the server said so or the mirror was counted. */
 export interface ThreadSize {
+  /** The members an Ohbox row opens: placed ones, or every one where none is placed. */
   count: number;
-  /** True where the mirror holds the thread row and {@link count} is its `messageIds` length. */
+  /** Every member, held ones included: what a held row (the gate's, Quarantine's) opens. */
+  whole: number;
+  /** True where the mirror holds the thread row and {@link count} is read off its `messageIds`. */
   fromThread: boolean;
 }
 
@@ -822,16 +825,12 @@ const sizeCache = new WeakMap<EntityReader, { v: number; sizes: Map<string, Thre
 
 /**
  * HOW MANY MESSAGES EVERY CONVERSATION HOLDS — the server's own length where the mirror holds the
- * thread row, the members the mirror holds where it does not, and a flag saying which. A windowed
- * mirror holding three of nine would otherwise put "3" on a row standing for nine.
+ * thread row (a windowed mirror holding three of nine would say "3"), the members in hand where it
+ * does not. `count` leaves out a held member the mirror holds ({@link standsHeld}): it is not in
+ * the conversation an Ohbox row opens. `whole` counts it, which is what a held row opens.
  *
- * PLACED MEMBERS ONLY: a held member the mirror holds ({@link standsHeld}) is not in the
- * conversation an Ohbox row opens, so it is not counted, and the thread row's ids are read less
- * those. A conversation with no placed member is all held, and is counted whole.
- *
- * One pass, memoized per version, in the shape {@link threadParticipantsIndex} already has for
- * the same reason: a per-row {@link threadOf} is O(mirror x rows) for a badge. Both surfaces read
- * it — the web row through {@link resurfacedThreads}, the phone through its own projection.
+ * One pass, memoized per version: a per-row {@link threadOf} is O(mirror x rows) for a badge. The
+ * web row reads it through {@link resurfacedThreads}, the phone through its own projection.
  */
 export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, ThreadSize> {
   const v = typeof reader.version === "function" ? reader.version() : null;
@@ -857,11 +856,12 @@ export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, Threa
     const inHand = allHeld ? t.all : t.placed;
     const thread = reader.get<{ messageIds?: unknown }>("thread", threadId);
     if (!Array.isArray(thread?.messageIds)) {
-      sizes.set(threadId, { count: inHand, fromThread: false });
+      sizes.set(threadId, { count: inHand, whole: t.all, fromThread: false });
       continue;
     }
     const ids = allHeld ? thread.messageIds : thread.messageIds.filter((id) => !heldIds.has(id as string));
-    sizes.set(threadId, { count: Math.max(ids.length, inHand), fromThread: true });
+    const whole = Math.max(thread.messageIds.length, t.all);
+    sizes.set(threadId, { count: Math.max(ids.length, inHand), whole, fromThread: true });
   }
   if (v !== null) sizeCache.set(reader, { v, sizes });
   return sizes;
@@ -872,9 +872,13 @@ export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, Threa
  * here" contract {@link threadOf} and {@link threadParticipants} answer with, so a surface can
  * draw and speak the count off one read.
  */
-export function conversationSize(reader: EntityReader, m: Pick<EngineMessage, "threadId">): number {
+export function conversationSize(
+  reader: EntityReader, m: Pick<EngineMessage, "id" | "threadId" | "folder">,
+): number {
   if (!m.threadId) return 0;
-  const n = threadSizeIndex(reader).get(m.threadId)?.count ?? 0;
+  const size = threadSizeIndex(reader).get(m.threadId);
+  // A held row opens the whole thread (`threadOf`), so it says the whole length.
+  const n = (standsHeld(m, winningStates(reader)) ? size?.whole : size?.count) ?? 0;
   return n > 1 ? n : 0;
 }
 
