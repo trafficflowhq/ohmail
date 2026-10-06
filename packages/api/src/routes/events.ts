@@ -25,6 +25,13 @@ async function readSeqAndSession(
 }
 
 /**
+ * The reconnect hint after a FAILED read. A clean close makes the browser re-dial on the last
+ * `retry:` it was given, and the opening 3 s hint turned a database episode into a new invocation
+ * and a baseline read every 3 s per stream; the `/sync` poll the stream replaces backs off to 60 s.
+ */
+const RETRY_AFTER_FAILURE = "retry: 30000\n\n";
+
+/**
  * LIVE STREAM COUNTERS, per warm instance.
  *
  * Module scope on purpose: this is the only cheap place a serverless host can count its own
@@ -149,6 +156,7 @@ export const eventsRoutes: Route[] = [
             if (!first.live) { finish(); return; }
             lastSeq = first.seq;                          // don't replay backlog: start at current max
           } catch {
+            send(RETRY_AFTER_FAILURE);
             send("event: sync_failed\ndata: {}\n\n");
             finish();
             return;
@@ -195,6 +203,7 @@ export const eventsRoutes: Route[] = [
                 if (!t.live) { finish(); return; }        // the session ended: so does its stream
                 if (t.seq > lastSeq) { lastSeq = t.seq; send(`event: sync\ndata: {"seq":${t.seq}}\n\n`); }
               } catch {
+                send(RETRY_AFTER_FAILURE);
                 send("event: sync_failed\ndata: {}\n\n");
                 finish();
                 return;
