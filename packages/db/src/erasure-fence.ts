@@ -184,8 +184,10 @@ export async function fencedAccountWrite<T>(
   return handle.transaction(async (raw) => {
     const tx = carryDialect(db, raw as object) as unknown as Tx;
     await fenceErased(tx, d, scope);
-    // Branded only where the read WAS the first statement: not inside a transaction it did not open.
-    if (!inTransactionHandle(db) || fencedAccountOf(db) === scope.accountId) markFenced(tx, scope.accountId);
+    /* Branded only where the read WAS the first statement, not inside a transaction it did not open,
+       and only at a strength the erasure's stamp waits on: a plain UPDATE passes FOR KEY SHARE. */
+    if ((scope.lock ?? "share") !== "key share"
+      && (!inTransactionHandle(db) || fencedAccountOf(db) === scope.accountId)) markFenced(tx, scope.accountId);
     return fn(tx);
   });
 }
