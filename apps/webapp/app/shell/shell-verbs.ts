@@ -435,6 +435,7 @@ export function useShellVerbs({
         // Replaced by a newer press about this sender: that press says the sentence.
         if (o.worst === "superseded") return;
         if (o.worst === "rolled_back") {
+          // A rule press moves nothing before its answer (`movesAtLanding`), so this says no move away.
           toast(refusedAsOwnAddress(o.results) ? t("screening.toastOwnAddress")
             : t("screening.toastRuleFailed", { sender: p.who, place: p.place, count: p.gained() }));
           return;

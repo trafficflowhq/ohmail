@@ -300,7 +300,8 @@ export function isOwnSubject(
   return address === undefined && isOwnSent(seed);
 }
 
-/** Did the server refuse a rule or a decision of this press as being about our own address? */
+/** Did the server refuse a rule or a decision of this press as being about our own address? Said
+ *  only where the press moved nothing; otherwise the sentence that says what moved stands. */
 export const refusedAsOwnAddress = (results: readonly { error?: { code: string | null } }[]): boolean =>
   results.some((r) => r.error?.code === "own_address");
 
@@ -771,7 +772,8 @@ export async function dispatchScreeningChange(
   const moves = pressMoves.map((m) => mutate(m));
   const answers = await Promise.all([...rules, ...decides]);
   await Promise.allSettled(moves);
-  if (refusedAsOwnAddress(answers)) return "toastOwnAddress";
+  // Our own address, where nothing moved: a press that moved mail keeps the sentence saying so.
+  if (pressMoves.length === 0 && refusedAsOwnAddress(answers)) return "toastOwnAddress";
   const worst = worstStatus(answers);
   // Replaced by a newer press about this sender: that press says the sentence, this one none.
   if (worst === "superseded") return null;
