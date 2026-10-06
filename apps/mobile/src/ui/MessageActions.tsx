@@ -228,6 +228,8 @@ export function MessageActions({
     forwardOffered: forwardOffered(m),
     foldersEnabled: w.folders.enabled,
     junkOffered: moveTargetsFor(m).includes("spam"),
+    // No Screening press on the account's own mail: it would be a rule about our own address.
+    screeningOffered: m.ownMail !== true,
   };
   const placement = readerVerbPlacement(mode, facts);
 

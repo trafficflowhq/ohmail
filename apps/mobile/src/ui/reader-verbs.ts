@@ -37,6 +37,12 @@ export interface ReaderVerbFacts {
   foldersEnabled: boolean;
   /** Junk = the move panel's spam target — absent where the message already presents there. */
   junkOffered: boolean;
+  /**
+   * Screening only on mail somebody else sent: on the account's own mail (its Sent copy, or a
+   * sender among its addresses) the press would key a rule on our own address, which the server
+   * refuses (`own_address`).
+   */
+  screeningOffered: boolean;
 }
 
 export type ReaderVerbMode = "compact" | "bar" | "rail";
@@ -51,7 +57,8 @@ export function readerVerbMode(
 }
 
 const admits = (f: ReaderVerbFacts, id: ReaderVerbId): boolean =>
-  id === "replyAll" ? f.canReplyAll : id === "forward" ? f.forwardOffered : id === "delete" ? f.foldersEnabled : true;
+  id === "replyAll" ? f.canReplyAll : id === "forward" ? f.forwardOffered : id === "delete" ? f.foldersEnabled
+    : id === "screening" ? f.screeningOffered : true;
 
 const admit = (f: ReaderVerbFacts, ids: readonly ReaderVerbId[]): ReaderVerbId[] =>
   ids.filter((id) => admits(f, id));

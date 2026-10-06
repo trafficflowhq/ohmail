@@ -57,6 +57,8 @@ export interface Mail {
   from: Address;
   /** An own-sent row's face, "Me → recipient" (the web's words); absent on every other row. */
   sentTo?: string;
+  /** The account's own mail (its Sent copy, or a sender among its addresses); absent on others'. */
+  ownMail?: true;
   subject: string;
   time: string;
   body: string;

@@ -1591,6 +1591,8 @@ const TABLE = {
     `${count === 1 ? "1 is" : `${count} are`} in ${place}. ohmail is applying the rule to the rest of their mail in your mailbox.`,
   liveDecideFailed: (sender: string) =>
     `That decision could not be saved — ${sender} is still waiting.`,
+  /* A Screening press about one of the account's own addresses: refused here and by the server. */
+  liveOwnAddress: "That's your own address. Rules sort mail from other people.",
   liveDecideUndoLate: "Too late to undo — that decision has already been sent.",
   /* A later press about the same sender replaced this one before anything was sent. */
   undoReplaced: "A later choice for this sender replaced this one, so there is nothing to undo here.",

@@ -1011,6 +1011,7 @@ export const DE: Deck = {
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place}. Auf den Rest ihrer Post im Postfach wendet ohmail die Regel gerade an.`,
   liveDecideFailed: (sender: string) =>
     `Diese Entscheidung ließ sich nicht speichern — ${sender} wartet weiter.`,
+  liveOwnAddress: "Das ist deine eigene Adresse. Regeln sortieren Post von anderen.",
   liveDecideUndoLate: "Zu spät — diese Entscheidung ist schon raus.",
   undoReplaced: "Eine spätere Wahl für diesen Absender hat diese ersetzt, hier gibt es nichts rückgängig zu machen.",
   undoReplacedLetterBack: "Die Post ist wieder da, wo sie war. Wohin die Post dieses Absenders geht, entscheidet eine spätere Wahl.",

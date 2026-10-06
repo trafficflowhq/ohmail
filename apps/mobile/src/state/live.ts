@@ -627,6 +627,13 @@ function sentFaceOf(m: EngineMessage, own: readonly string[] | undefined): strin
   return to.length > 1 ? Copy.rowSentToMore(name, to.length - 1) : Copy.rowSentTo(name);
 }
 
+/** The account's own mail, as `isOwn` reads it: the Sent copy, or a sender among its addresses. */
+function ownMailOf(m: EngineMessage, physical: string, own: readonly string[] | undefined): boolean {
+  if (isOwnSent({ folder: physical as Folder })) return true;
+  const from = m.from.address.trim().toLowerCase();
+  return (own ?? []).some((a) => a.trim().toLowerCase() === from);
+}
+
 function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: MessageBody): WorldMail {
   const env = replyAllRecipients(m, v.ownAddresses ?? NO_OWN_ADDRESSES);
   const physical = physicalFolderOf(m);
@@ -659,6 +666,7 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     // their address, exactly as every list row already renders one.
     from: { name: m.from.name || m.from.address, address: m.from.address },
     ...((): { sentTo?: string } => { const f = sentFaceOf(m, v.ownAddresses); return f === null ? {} : { sentTo: f }; })(),
+    ...(ownMailOf(m, physical, v.ownAddresses) ? { ownMail: true as const } : {}),
     subject: m.subject,
     time: messageDisplayTime(m, v.now, v.zone, v.locale ?? "en"),
     body: body.text,
@@ -2348,6 +2356,11 @@ const LEAVE_SETTLE_DEADLINE_MS = 1_500;
  */
 function watched(p: Promise<MutationResult>): Promise<PressVerdict> {
   return p.then(pressVerdict, () => PRESS_THREW);
+}
+
+/** A Screening press the server refused as being about the account's own address says so. */
+function ownAddressOr(vs: readonly PressVerdict[], fallback: Refusal): Refusal {
+  return vs.some((v) => v.kind === "refused" && v.refusal?.code === "own_address") ? refuse("liveOwnAddress") : fallback;
 }
 
 /**
@@ -5006,7 +5019,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // Every write replaced by a newer press: that press reads its own list back.
       if (verdicts.length > 0 && back.silent === verdicts.length) return true;
       if (back.refused > 0 || back.queued > 0) {
-        return saidAll(verdicts, refuse("liveDecided", place, p.target), refuse("liveDecideFailed", p.m.from.address));
+        return saidAll(verdicts, refuse("liveDecided", place, p.target),
+          ownAddressOr(verdicts, refuse("liveDecideFailed", p.m.from.address)));
       }
       const lists = deps.presented?.() ?? presentedOf(engine.read(), now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
       const stay = pressReadBack(engine.read(), lists, p.ofSubject, p.wanted, place, p.applyRetro);
@@ -5079,6 +5093,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const raw = engine.read();
     const m = messageOf(messageId);
     if (!m) return false;
+    // Never a rule about the account itself: the server refuses it (`own_address`), and so does this.
+    if (isOwn(messageId)) { toast(refuse("liveOwnAddress")); return false; }
     const address = m.from.address.trim().toLowerCase();
     const domain = domainOf(address).toLowerCase();
     if (scope === "domain" && (domain === "" || !address.includes("@"))) return false;
@@ -5148,7 +5164,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return saidAll(
       verdicts,
       decidedUnsubscribes(waiting !== undefined, decision) ? refuse("liveAlsoUnsubscribing", pressSaid) : pressSaid,
-      refuse("liveDecideFailed", m.from.address),
+      ownAddressOr(verdicts, refuse("liveDecideFailed", m.from.address)),
     );
   };
 
