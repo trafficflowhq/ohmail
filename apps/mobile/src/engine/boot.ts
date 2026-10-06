@@ -28,6 +28,7 @@ import { faultDetail, refuse, type Refusal } from "../refusal";
 import { StoreFault } from "../state/servers";
 import type { NetworkState } from "../net/network-door";
 import { sendWaitsForNetwork } from "./send-waits";
+import { logWithdrawUnsupported } from "./engine-log";
 
 /** What the platform must provide — expo modules in the app, node modules in tests. */
 export interface MobileEngineDeps {
@@ -639,6 +640,8 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     // (which already runs after every successful drain) is the replay — restored entries
     // included, whose kinds the same ledger reads the same way.
     outboxAutoReplay: false,
+    // A server without the Cancel route (a desktop host not yet updated), said once per send.
+    onWithdrawUnsupported: logWithdrawUnsupported,
   });
   /**
    * RE-ARM THE DURABLE OUTBOX NOW, not at the first drive. The store loaded ABOVE the engine

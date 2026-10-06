@@ -49,5 +49,7 @@ export function createHostClientEngine(
     }),
     storePolicy: DESKTOP_WINDOW,
     outboxTransportIsUnreachable: true,
+    // A desktop host without the Cancel route, said once per send.
+    onWithdrawUnsupported: () => console.warn("ohmail: send_withdraw_unsupported — this server has no Cancel route"),
   });
 }

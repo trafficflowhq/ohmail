@@ -173,6 +173,14 @@ export function logNotice(key: string, undo: boolean): void {
 }
 
 /**
+ * ONE LINE PER SEND WHOSE CANCEL A SERVER WITHOUT THE ROUTE ANSWERED (a desktop host not yet
+ * updated): the engine calls it once per send. No field at all, so nothing to redact.
+ */
+export function logWithdrawUnsupported(): void {
+  engineLogSink()(JSON.stringify({ service: "app", event: "send_withdraw_unsupported" }));
+}
+
+/**
  * ONE LINE PER READING OF THE PHONE'S NETWORK, as the platform gave it to the door
  * (`net/network-door.ts`) — what a device run reads to tell a reader that never spoke from a
  * surface that ignored it. Three closed words, nothing to redact.

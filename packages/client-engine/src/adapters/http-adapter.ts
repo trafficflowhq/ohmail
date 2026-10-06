@@ -224,6 +224,9 @@ export const BODY_FETCH_TIMEOUT_MS = 12_000;
  */
 export const PULL_RING_TIMEOUT_MS = 8_000;
 
+/** How long a Cancel's question to the server may take before it is `unreachable` (asked again later). */
+export const WITHDRAW_SEND_TIMEOUT_MS = 12_000;
+
 /**
  * How long the client waits for `GET /messages/:id/body` — the same silence
  * as {@link ATTACHMENT_LIST_TIMEOUT_MS}, on the route that shows a reader
@@ -2773,23 +2776,40 @@ export class HttpAdapter implements EngineAdapter {
    * the server did not say.
    */
   async withdrawSend(key: string, draftId: string | null): Promise<WithdrawSendAnswer> {
+    try {
+      // UNDER A DEADLINE: a stalled request would hold the Cancel until a reload. Asking twice is safe.
+      return await this.withDeadline(WITHDRAW_SEND_TIMEOUT_MS, (signal) => this.askWithdraw(key, draftId, signal));
+    } catch {
+      return { outcome: "unreachable" };
+    }
+  }
+
+  private async askWithdraw(key: string, draftId: string | null, signal: AbortSignal | undefined): Promise<WithdrawSendAnswer> {
     let res: Response;
     try {
-      res = await this.request("POST", "/sends/withdraw", { idempotencyKey: key, body: { draftId } });
+      res = await this.request("POST", "/sends/withdraw", { idempotencyKey: key, body: { draftId }, ...(signal ? { signal } : {}) });
     } catch {
       return { outcome: "unreachable" };
     }
     if (res.status === 404) return { outcome: "unsupported" };
-    if (!res.ok) return { outcome: "unreachable" };
+    /* A server that answered and could not decide (a 5xx, a 429, a body that does not read) counts
+       toward the owed Cancel's ceiling; any other refusal (no session, a door that did not judge it)
+       is asked again later and counts nothing. */
+    const refused: WithdrawSendAnswer = { outcome: "unreachable", answered: true };
+    if (!res.ok) {
+      if (res.status < 500 && res.status !== 429) return { outcome: "unreachable" };
+      const after = retryAfterMsOf(res);
+      return after !== null ? { ...refused, retryAfterMs: after } : refused;
+    }
     let wire: { outcome?: unknown; firstSend?: { status?: unknown; at?: unknown } } | null;
     try {
       wire = (await res.json()) as typeof wire;
     } catch {
-      return { outcome: "unreachable" };
+      return refused;
     }
     const outcome = wire?.outcome;
     if (outcome !== "withdrawn" && outcome !== "already_sent" && outcome !== "unverified"
-      && outcome !== "in_flight" && outcome !== "failed") return { outcome: "unreachable" };
+      && outcome !== "in_flight" && outcome !== "failed") return refused;
     const first = wire?.firstSend;
     return typeof first?.status === "string" && typeof first.at === "string"
       ? { outcome, firstSend: { status: first.status, at: first.at } }

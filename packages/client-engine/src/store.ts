@@ -17,10 +17,12 @@ export type OutboxNotice =
 
 /**
  * THE ROW'S PROTOCOL: a row stamped with it is written by an engine that claims the row on disk
- * before every send, so another window's Cancel can be decided by the row alone. A row without
- * it (an older build's) is never marked from another window.
+ * before every send, so another window's Cancel can be decided by the row alone. 2: a mark means a
+ * Cancel the server decides (`withdrawOwed` until it answers) and the row carries the wire fact;
+ * a protocol-1 engine reads any mark as final. A row of another protocol is never marked from
+ * another window, in either direction.
  */
-export const OUTBOX_PROTOCOL = 1;
+export const OUTBOX_PROTOCOL = 2;
 
 /**
  * WHO WINS A WAITING SEND, decided on the disk row inside one write transaction: the owning engine's claim

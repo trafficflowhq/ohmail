@@ -214,19 +214,12 @@ export function refusedRowOf(res: MutationResult, aboutThisCompose: boolean): Re
  */
 export type CancelSaid = "close" | "already_sent" | "elsewhere" | "unknown" | "unreachable";
 
-/** Said once per session: a server that predates the withdraw route answered a Cancel. */
-let unsupportedSaid = false;
-
 /**
  * THE CANCEL'S WORD, with the server's reason behind an `unknown`: a server that could not be asked
  * about a send that may have left is `unreachable`; a disk that refused the Cancel stays `unknown`.
  */
 function cancelSaidOf(engine: OhmailEngine, key: string, outcome: "on_the_wire" | "unknown"): CancelSaid {
   const asked = typeof engine.withdrawAnswerOf === "function" ? engine.withdrawAnswerOf(key) : undefined;
-  if (asked === "unsupported" && !unsupportedSaid) {
-    unsupportedSaid = true;
-    console.warn("ohmail: send_withdraw_unsupported — this server has no withdraw; Cancel answered from this device");
-  }
   if (outcome === "on_the_wire") return "already_sent";
   return asked === "unreachable" || asked === "unsupported" ? "unreachable" : "unknown";
 }

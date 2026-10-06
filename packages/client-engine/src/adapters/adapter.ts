@@ -106,6 +106,10 @@ export interface WithdrawSendAnswer {
   outcome: WithdrawSendOutcome;
   /** The send this key already holds, on `already_sent`/`unverified` — shape-checked by the adapter. */
   firstSend?: { status: string; at: string };
+  /** On `unreachable`: a server answered (a 5xx, a 429, an unreadable body), so it counts as one. */
+  answered?: boolean;
+  /** The server's own `Retry-After`, in ms, when its refusal named one. */
+  retryAfterMs?: number;
 }
 
 /**

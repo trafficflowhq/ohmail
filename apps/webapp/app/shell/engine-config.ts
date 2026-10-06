@@ -247,6 +247,8 @@ export function createEngine(
        * demo returns above and never prefetches: its fixture rows already carry their bodies.
        */
       eagerBodies: true,
+      // A server without the Cancel route, said once per send on the console.
+      onWithdrawUnsupported: () => console.warn("ohmail: send_withdraw_unsupported — this server has no Cancel route"),
     }),
     gate,
   );
