@@ -507,7 +507,7 @@ export const DE: Deck = {
     `${n} ${n === 1 ? "Erstabsender wartet" : "Erstabsender warten"}, auf diesem Telefon gezählt`,
   metaItems: (n: number) => `${n} ${n === 1 ? "Eintrag" : "Einträge"}`,
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>
-    `${from}. ${subject}. ${time}.${unread ? " Ungelesen." : ""}`,
+    `${from}. ${subject.trim() === "" ? "" : `${subject}. `}${time}.${unread ? " Ungelesen." : ""}`,
   senderRowAria: (name: string, address: string, held: number) =>
     `${name}, ${address}, ${held} zurückgehalten`,
   deliveredTo: (label: string) => `Zugestellt an ${label}`,

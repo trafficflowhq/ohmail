@@ -825,7 +825,7 @@ const TABLE = {
   metaItems: (n: number) => `${n} item${n === 1 ? "" : "s"}`,
   /** A mail row, spoken. The trailing state is a clause rather than a word glued to a stop. */
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>
-    `${from}. ${subject}. ${time}.${unread ? " Unread." : ""}`,
+    `${from}. ${subject.trim() === "" ? "" : `${subject}. `}${time}.${unread ? " Unread." : ""}`,
   /** A Screener row, spoken — the only word in it is the one describing what is held. */
   senderRowAria: (name: string, address: string, held: number) =>
     `${name}, ${address}, ${held} held`,
