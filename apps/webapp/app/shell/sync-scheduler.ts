@@ -1900,7 +1900,13 @@ export function startSyncScheduler(
    * and nothing would ever notice, and only a test that confirms AFTER the first tick could
    * see it. `sync-owner-gate.test.ts` case 1 is that test.
    */
-  gate?.onOpen(wake);
+  gate?.onOpen(() => {
+    // AND A CONNECT: a warm load starts before the confirm, so the opener below is refused by
+    // identity and nothing asked again until a hide and show. It checks visibility, identity and
+    // a refused stream itself, so a flag-off server is still dialled once per session.
+    connectStream();
+    wake();
+  });
 
   /*
    * A RENEWED SESSION ANSWERS THE REFUSAL: a coded 401 waiting on its confirm was the lapsed access,
