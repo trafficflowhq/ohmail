@@ -1,0 +1,9 @@
+/* ONE RULE FOR AN ADDRESS IN TWO HALVES (AddressText), read by the Screener row, the reader header and
+   the Screener's held card. The local part is drawn at its own width, never padded; when the line is
+   short it gives way first but keeps its 3ch basis, so its ellipsis has room. The domain is never cut:
+   one too long for its line breaks between any two letters (`break-all`), and a hyphen is held to the
+   letter after it (`.addr-nb`), so a line never ends at the domain's hyphen as if it were hyphenation. */
+.addr-text{display:inline-flex;max-width:100%;min-width:0;vertical-align:top;overflow:visible}
+.addr-local{flex:1 1 3ch;min-width:0;max-width:max-content;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.addr-dom{flex:0 1 auto;min-width:0;max-width:100%;white-space:normal;word-break:break-all}
+.addr-nb{white-space:nowrap}

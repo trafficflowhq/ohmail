@@ -69,6 +69,8 @@ export type {
   TagHueName,
 } from "./primitives/Chip.js";
 export { Avatar } from "./primitives/Avatar.js";
+export { AddressText } from "./primitives/AddressText.js";
+export type { AddressTextProps } from "./primitives/AddressText.js";
 export type { AvatarProps } from "./primitives/Avatar.js";
 export { SegmentedControl } from "./primitives/SegmentedControl.js";
 export type { SegmentedControlProps, SegmentOption } from "./primitives/SegmentedControl.js";

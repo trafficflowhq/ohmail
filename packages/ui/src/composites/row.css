@@ -37,8 +37,20 @@
 .row-top .addr{flex:1 1 0;min-width:0;container:who-addr / inline-size;pointer-events:none;font-size:calc(11px + var(--type-up));color:var(--ink3);white-space:nowrap}
 /* The address TEXT is the handle on the sender; the grown box around it passes presses to the row. */
 .row-top .addr > span{pointer-events:auto;display:block;overflow:hidden;text-overflow:ellipsis}
-@container who-addr (max-width:13.98ch){.row-top .addr > span{clip-path:inset(50%)}}
-@container who-line (max-width:279.98px){.row-top .addr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
+@container who-addr (max-width:13.98ch){.row:not(.addr-first) .row-top .addr > span{clip-path:inset(50%)}}
+@container who-line (max-width:279.98px){.row:not(.addr-first) .row-top .addr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
+/* A SCREENED SENDER (`addressFirst`) IS THE EXCEPTION: the name is the sender's to choose, so the
+   address is never cut away. It has its own line under the name and time, at every width: the
+   name gives way on its line, the address's local part takes the ellipsis, and its domain is whole,
+   wrapping rather than cut on a line too narrow for it (address-text.css). The wrap takes no
+   row-gap and the subject two more pixels above it, so the address sits with the name it checks
+   and not with the subject. A nameless sender's name IS the address. */
+.row.addr-first .row-top{flex-wrap:wrap;row-gap:0}
+.row.addr-first .row-top .who{flex:1 1 0}
+.row.addr-first .row-top .who:has(> .addr-text){overflow:visible}
+.row.addr-first .row-top .addr{order:1;flex:1 0 100%;container:none}
+.row.addr-first .row-top .addr > .addr-text{display:inline-flex;overflow:visible}
+.row.addr-first .row-mid{margin-top:4px}
 .row-top .t{margin-left:auto;font-size:calc(11px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
 /* A STAMP THAT FLIPS THE LIST, and only where one is wired (`MessageRow`'s `onToggleTime`).
    Quiet at rest — a date is a fact on a row, not a button, and every row having a visible control

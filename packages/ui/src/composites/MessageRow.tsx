@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
+import { AddressText } from "../primitives/AddressText.js";
 import { Avatar } from "../primitives/Avatar.js";
 import { Badge, Chip, type TagHueName } from "../primitives/Chip.js";
 import { messageRowDescription, type MessageRowSpoken } from "./row-spoken.js";
@@ -85,6 +86,13 @@ export interface MessageRowProps {
   inSet?: { size: number; position: number };
   from: string;
   address?: string;
+  /**
+   * THE ADDRESS IS THE EVIDENCE — a sender being screened. The display name is the sender's to
+   * choose and can say anything, so on these rows the address has its own line under the name, is
+   * never cut away, and loses only its local part to an ellipsis; the domain stays whole. A
+   * nameless sender's `from` IS the address, and is drawn by the same rule.
+   */
+  addressFirst?: boolean;
   time?: string;
   /**
    * The stamp's hover title: the same instant in the other form. A row
@@ -277,6 +285,7 @@ export function MessageRow(props: MessageRowProps) {
     inSet,
     from,
     address,
+    addressFirst,
     time,
     timeTitle,
     timeSpoken,
@@ -399,6 +408,7 @@ export function MessageRow(props: MessageRowProps) {
   const cls = [
     "row",
     lead !== null ? "srow" : null,
+    addressFirst ? "addr-first" : null,
     seen ? "seen" : null,
     justSeen ? "justseen" : null,
     selected ? "sel" : null,
@@ -460,8 +470,8 @@ export function MessageRow(props: MessageRowProps) {
     <>
       <span className="row-top">
         {unread && !dotless ? <span className="dot-unread" /> : null}
-        <span className="who">{from}</span>
-        {address ? <span className="addr"><span>{address}</span></span> : null}
+        <span className="who">{addressFirst && !address ? <AddressText address={from} /> : from}</span>
+        {address ? <span className="addr">{addressFirst ? <AddressText address={address} /> : <span>{address}</span>}</span> : null}
         {/* See `onToggleTime`: `data-stamp` is the hit target the row's own press looks for, and
             it exists ONLY where a flip is wired — so an unwired stamp can never be routed to a
             handler that is not there. `tog` is the pressable styling, `title` is independent. */}

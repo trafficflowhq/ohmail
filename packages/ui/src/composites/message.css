@@ -145,9 +145,10 @@
   --msg-measure:621px;
   max-width:640px;width:100%;margin:0 auto;padding:26px 34px 12px;
 }
-/* The reader header keeps row.css's sacrifice order: the ⋯ and the time are fixed, the name stays
-   on one line, the address gives first. Under a 420px header the address leaves the line and the
-   card's own `.msg-from-line` (MessageCard) states it under the sender, so it is on screen at every
+/* The reader header: the ⋯ and the time are fixed and the name stays on one line. The address is
+   the evidence (the name is the sender's to choose), so it is never cut beside the name: where both do
+   not fit on one line it takes the line under the name. Under a 420px header the address leaves the
+   button and the card's own `.msg-from-line` (MessageCard) states it under the sender, on screen at every
    width. The header is the container, so a 1024px window's narrow reading column answers the same
    as a phone. A header with that line is a two-row grid: sender · cluster, then the line. */
 .msg-from{display:flex;align-items:center;gap:9px;font-size:calc(12.5px + var(--type-up));container:who-line / inline-size}
@@ -165,10 +166,13 @@
 .msg-sender:hover{background:var(--tint)}
 .msg-sender:hover small{color:var(--accent-ink)}
 /* The address sits inside the sender's button, which is as wide as its content: so it is not its
-   own container here (that would count it as zero wide) — it shrinks first, 100 to the name's 1,
-   and stops at its 14ch floor. */
-.msg-from small{white-space:nowrap;flex:0 100 auto;min-width:14ch}
-.msg-from small > span{display:block;overflow:hidden;text-overflow:ellipsis}
+   own container here (that would count it as zero wide). The button WRAPS: the address shares the
+   name's line where both fit and otherwise stands under the name, which the avatar, taken out of the
+   flow, leaves room for. Only an address longer than its own line is cut, in its local part
+   (address-text.css). */
+.msg-from .msg-sender{position:relative;flex-wrap:wrap;align-content:center;row-gap:1px;min-height:32px;padding-left:39px}
+.msg-from .msg-sender > .av{position:absolute;left:3px;top:3px;margin:0}
+.msg-from small{white-space:nowrap;flex:0 1 auto;min-width:0;max-width:100%}
 @container who-line (max-width:419.98px){
   .msg-from:has(> .msg-from-line) small{display:none}
   .msg-from-line{display:block}

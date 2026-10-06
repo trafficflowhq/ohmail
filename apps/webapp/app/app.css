@@ -1226,6 +1226,17 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
     padding-bottom: 10px;
   }
 }
+/* …and on a phone, whose list is wider than 340px but whose text beside Accept was 172px at 390: the
+   Screener row's address has a line of its own there, and an ordinary address must fit it whole. */
+@media (max-width: 699.98px) {
+  .view-screener .row-slot {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .view-screener .row-slot > .row-actions {
+    justify-content: flex-end;
+    padding-bottom: 10px;
+  }
+}
 
 /* ================= ohbox multi-select ============================
    THE PICKED-ROW MARKER, and that is all this block is now.
@@ -2034,6 +2045,35 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .hm-line b {
   font-weight: 600;
 }
+/* THE SENDER ON THE CARD A STRANGER'S MAIL IS JUDGED ON: the name is the sender's to choose, so the
+   address is never cut beside it. Name and address share a line where both fit; otherwise the address
+   takes the line under the name, as in the reader's header, and only an address longer than that line
+   is cut, in its local part (address-text.css). `.hm-name` is the plain line's wrapper, laid out as
+   the press is, and no press target. */
+.hm-line .hm-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.hm-line :is(.hm-who, .hm-name) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.hm-line :is(.hm-who, .hm-name) b {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hm-line :is(.hm-who, .hm-name) .addr {
+  flex: 0 1 auto;
+  max-width: 100%;
+  overflow: visible;
+}
+
 .hm-line .addr {
   /* THE ADDRESS ABSORBS THE ROOM — `flex-basis: 0` so its hypothetical size never breaks the line,
      then it grows into what the sender, the notice and the time leave and ellipsizes when that is
@@ -4654,14 +4694,6 @@ input.set-tag-input {
   .view.split {
     grid-template-columns: clamp(300px, 38%, 380px) minmax(0, 1fr);
     column-gap: var(--gap-tile);
-  }
-  /* THE SCREENER ROW AT THE BAND'S 300px LIST: the row's trailing action slot (Accept · ⌃) leaves
-     159px for name, address and time, and the names read "L…". The address gives first — the
-     sacrifice order DESIGN-FOLD-WIDTHS §6 rules below a 300px line, whose general form is the
-     lists lane's; this is the band's own case. The row's accessible name is "sender: subject"
-     (MessageRow's aria-label), which never carried the address, cut or not. */
-  .view-screener .row .row-top .addr {
-    display: none;
   }
 }
 /* THE WAY OUT OF THE INLINE READER UNDER A THUMB. A fine pointer keeps Esc and no button, as at

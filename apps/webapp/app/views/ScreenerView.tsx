@@ -20,6 +20,7 @@ import type {
 } from "@ohmail/client-engine";
 import { countWhen, listSurface, mirrorCountInput, saysEmpty, waitingSurfaceInput, type WaitingWhy } from "@ohmail/client-engine";
 import {
+  AddressText,
   AskWell,
   BulkProgress,
   BulkStrip,
@@ -1278,6 +1279,7 @@ export function ScreenerView({
           inSet={inSet}
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
+          addressFirst
           {...mailboxBadge(w, narrow)}
           time={newest?.time ?? w.time}
           subject={newest?.subject ?? ""}
@@ -1378,6 +1380,7 @@ export function ScreenerView({
              genuinely nameless sender still shows exactly one line. */
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
+          addressFirst
           {...mailboxBadge(w, narrow)}
           time={screenedDate(w)}
           subject={newestHeld(w)?.subject ?? ""}
@@ -2158,7 +2161,7 @@ export function HeldMail({
   const who = (
     <>
       <b>{from}</b>
-      {address ? <span className="addr">{address}</span> : null}
+      {address ? <span className="addr"><AddressText address={address} /></span> : null}
     </>
   );
   return (
@@ -2172,7 +2175,7 @@ export function HeldMail({
           <button type="button" className="hm-who" aria-label={ts("openFor", { sender: address || from })}>
             {who}
           </button>
-        ) : who}
+        ) : <span className="hm-name">{who}</span>}
         {/* Before the time, so the date keeps its corner and the notice leads into it — the stream
             card's order. */}
         {notice ? <BlockNoticeGloss notice={notice} /> : null}

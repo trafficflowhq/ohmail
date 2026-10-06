@@ -12,7 +12,7 @@
  */
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Avatar, Badge, Button, Icon } from "@ohmail/ui";
+import { AddressText, Avatar, Badge, Button, Icon } from "@ohmail/ui";
 import { forwardOffered, isForwardedByUs, isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
 import { MessageBody } from "../components/MessageBody";
@@ -175,7 +175,7 @@ export function MessageHeader({
         >
           <Avatar initials={initialsOf(name)} hue={avatarHue(message.from.address)} size="s" />
           <b>{forwardedTo !== null ? tm("forwardedTo", { name: forwardedTo }) : name}</b>
-          {address ? <small><span>{address}</span></small> : null}
+          {address ? <small><AddressText address={address} /></small> : null}
         </button>
         <span className="t num">
           {/* THE BLOCKING NOTICE LEADS THE CLUSTER — a fact before the controls, so the ⋯ menu
