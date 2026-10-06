@@ -1,14 +1,10 @@
 /**
- * The sender page's two size rules, as data so the suite drives them without a renderer.
- *
- * THE DECISION PANEL AT COMPACT HEIGHT (under 480 dp: a foldable's cover or a phone held sideways):
- * one row of destination capsules that scrolls sideways, the sender / whole-domain control at its
- * end, and no explainer sentence (the capsules carry it as their hint). At 905 x 403 dp the wrapped
- * panel stood ~230 dp tall and left the held message a 173 dp strip.
- *
- * THE SENDER'S NAME: the reader's title role (29) at a pane of 480 dp or more, the view title (22)
- * below, three lines at most; the type scale holds no 28. React Native has no hyphenation, so a
- * single word longer than the pane still breaks.
+ * The sender page's two size rules, as data the suite drives without a renderer. AT COMPACT HEIGHT
+ * (under 480 dp) the decision panel is one sideways row of capsules with the scope control at its
+ * end and no explainer (the capsules carry it as their hint): wrapped, it stood ~230 dp tall on the
+ * cover held sideways. THE NAME takes the reader's title role (29) on a pane of 480 dp or more, the
+ * view title (22) below, three lines at most; the type scale holds no 28, and React Native has no
+ * hyphenation, so one word longer than the pane still breaks.
  */
 import type { SizeClass } from "./posture/derive";
 
