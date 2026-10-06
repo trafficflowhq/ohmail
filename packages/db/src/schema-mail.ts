@@ -884,6 +884,13 @@ export const folderState = pgTable("folder_state", {
    * withdrawn by the pass's next full walk.
    */
   screenerFloorVersion: integer("screener_floor_version"),
+  /**
+   * When a DECISION about this message's placement was placed (mail 0145): the press's floor (the
+   * server clock minus the press age) when the request carried one, else the server's now. A press
+   * replayed past its idempotency record is refused when this is later than its floor. NULL admits
+   * (rows decided before the column). The worker's observations never write it.
+   */
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and
@@ -917,6 +924,8 @@ export const flagState = pgTable("flag_state", {
   attempts: integer("attempts").notNull().default(0),
   /** NULL ⇒ due now. See the block above `folderState`. */
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  /** When a read-state DECISION was placed (mail 0145) — `folder_state.decided_at`'s pair. */
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 export const rules = pgTable("rules", {
@@ -1268,6 +1277,8 @@ export const messageStates = pgTable("message_states", {
   bubbleUpAt: timestamp("bubble_up_at", { withTimezone: true }),
   setAt: timestamp("set_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /** When a triage DECISION was placed (mail 0145) — `folder_state.decided_at`'s pair. */
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   ix: index("message_states_account_state_idx").on(t.accountId, t.state),

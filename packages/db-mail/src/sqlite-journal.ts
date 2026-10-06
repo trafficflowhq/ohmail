@@ -417,5 +417,13 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "UPDATE \"rules\" SET \"person_decided_at\" = \"created_at\"\n WHERE \"kind\" = 'sender' AND \"provenance\" = 'promoted' AND \"person_decided_at\" IS NULL\n   AND \"subject_contains\" IS NULL AND \"body_contains\" IS NULL\n   AND \"destination\" IN ('INBOX', 'ohmail/News', 'ohmail/Reads', 'ohmail/Receipts')\n   AND EXISTS (SELECT 1 FROM \"learning_signals\" s\n                WHERE s.\"account_id\" = \"rules\".\"account_id\" AND s.\"kind\" = 'screener'\n                  AND lower(s.\"sender_address\") = trim(lower(\"rules\".\"match\"))\n                  AND s.\"triggering_action_id\" NOT LIKE 'screener:auto:%'\n                  AND (CASE WHEN s.\"destination\" = 'ohmail/Reads' THEN 'ohmail/News' ELSE s.\"destination\" END)\n                    = (CASE WHEN \"rules\".\"destination\" = 'ohmail/Reads' THEN 'ohmail/News' ELSE \"rules\".\"destination\" END));",
       "CREATE INDEX IF NOT EXISTS \"rules_account_key_idx\" ON \"rules\" (\"account_id\", trim(lower(\"match\")));"
     ]
+  },
+  {
+    "name": "0145_press_decided_at.sql",
+    "statements": [
+      "ALTER TABLE \"folder_state\" ADD COLUMN \"decided_at\" integer;",
+      "ALTER TABLE \"flag_state\" ADD COLUMN \"decided_at\" integer;",
+      "ALTER TABLE \"message_states\" ADD COLUMN \"decided_at\" integer;"
+    ]
   }
 ] as const;

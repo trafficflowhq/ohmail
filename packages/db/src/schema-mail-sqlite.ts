@@ -795,6 +795,8 @@ export const folderState = sqliteTable("folder_state", {
   autoFilingUndoneAt: integer("auto_filing_undone_at", { mode: "timestamp_ms" }),
   // Mail 0141: the auto-apply pass's floor verdict; no device runs that pass.
   screenerFloorVersion: integer("screener_floor_version"),
+  // Mail 0145: when a decision about the placement was placed — the stale-press floor's stamp.
+  decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and
@@ -828,6 +830,8 @@ export const flagState = sqliteTable("flag_state", {
   attempts: integer("attempts").notNull().default(0),
   /** NULL ⇒ due now. See the block above `folderState`. */
   nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
+  // Mail 0145: when a read-state decision was placed.
+  decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 export const rules = sqliteTable("rules", {
@@ -1148,6 +1152,8 @@ export const messageStates = sqliteTable("message_states", {
   bubbleUpAt: integer("bubble_up_at", { mode: "timestamp_ms" }),
   setAt: integer("set_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // Mail 0145: when a triage decision was placed.
+  decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   ix: index("message_states_account_state_idx").on(t.accountId, t.state),
