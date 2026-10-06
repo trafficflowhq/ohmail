@@ -26,10 +26,19 @@
 }
 /* …and the button inside a slot draws none of it, or the slot's tint would be laid twice. */
 .row-slot>.row:hover,.row-slot>.row.sel{background:none;box-shadow:none;transform:none}
-.row-top{display:flex;align-items:baseline;gap:8px}
-.row-top .who{font-weight:600;font-size:calc(13px + var(--type-up));letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0;max-width:58%}
+/* ONE SACRIFICE ORDER FOR "WHO · ADDRESS · TIME" (row, stream card head, reader header). The time
+   and an amount never give. The name never wraps and is never padded. The address gives first:
+   it takes only the room the name leaves, and when that room is under 14ch its text leaves (the
+   address is its own container, so the floor is measured in its own font); under a 280px line it
+   is not drawn at all. The row's accessible name (sender and subject) is unchanged by either cut. */
+.row-top{display:flex;align-items:baseline;gap:8px;container:who-line / inline-size}
+.row-top .who{font-weight:600;font-size:calc(13px + var(--type-up));letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
 .row.seen .who{font-weight:500;color:var(--ink2)}
-.row-top .addr{flex:1 1 auto;min-width:0;font-size:calc(11px + var(--type-up));color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-top .addr{flex:1 1 0;min-width:0;container:who-addr / inline-size;pointer-events:none;font-size:calc(11px + var(--type-up));color:var(--ink3);white-space:nowrap}
+/* The address TEXT is the handle on the sender; the grown box around it passes presses to the row. */
+.row-top .addr > span{pointer-events:auto;display:block;overflow:hidden;text-overflow:ellipsis}
+@container who-addr (max-width:13.98ch){.row-top .addr > span{clip-path:inset(50%)}}
+@container who-line (max-width:279.98px){.row-top .addr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
 .row-top .t{margin-left:auto;font-size:calc(11px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
 /* A STAMP THAT FLIPS THE LIST, and only where one is wired (`MessageRow`'s `onToggleTime`).
    Quiet at rest — a date is a fact on a row, not a button, and every row having a visible control
@@ -119,9 +128,11 @@
 .row.srow{display:flex;gap:11px;align-items:flex-start}
 .srow .av{margin-top:1px}
 .srow .sr-main{flex:1;min-width:0;display:block}
-.srow .row-top .who{max-width:52%}
 .srow .row-top,.srow .row-mid{display:flex}
 .sr-chips{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
+/* A suggestion is one line, cut at its end, never stacked word by word beside the row's verbs. */
+.sr-chips > .badge{display:block;white-space:nowrap;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sr-chips > .badge svg{display:inline-block;vertical-align:-1px;margin-right:3px}
 .srow.dull .who,.srow.dull .subj{color:var(--ink2);font-weight:500}
 
 /* decided row slides out; the list re-renders after the exit */
@@ -171,3 +182,11 @@
 .row-actions{display:flex;align-items:center;pointer-events:none}
 .row-actions-in{display:flex;align-items:center;gap:4px;padding:0 12px 0 8px}
 .row-actions-in:empty{display:none}
+
+/* THE PLACE BADGES LEAVE FIRST in a LIST COLUMN UNDER 380px (the two-pane band's 300-379, a phone's
+   up to 390): where a message lives, which mailbox, its state note go, so the subject keeps the
+   room. Wider, they stay whole (`flex:none`, as every badge) — an ellipsis there dropped letters
+   for no subject gained. The bounded members (count, faces, clip, protected) hold. */
+@container list-col (max-width:379.98px){
+  .row .badges > .bdg-tail > .badge.place{display:none}
+}

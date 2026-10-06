@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Icon } from "../icons.js";
 import { Badge } from "../primitives/Chip.js";
-import { estimateCardHeight } from "./stream-estimate.js";
+import { estimateCardHeight, estimateClipReserve } from "./stream-estimate.js";
 import { pageEnds } from "../format/long-text.js";
 import "./stream.css";
 
@@ -208,12 +208,14 @@ export function StreamCard({
    */
   const showViewer = bodySlot != null;
   /**
-   * `short` is a measured fact about the TEXT preview, and it hides the pill and the fade
-   * (`.scast.short` in `stream.css`). A viewer card must show neither hiding — it always has
-   * more than its clamp reveals and must always stay expandable — so the `short` path is
-   * skipped whenever a slot is present, which is exactly what gating on `!showViewer` does.
+   * THE PILL AND THE FADE ARE ONE CONDITION: THE CLIP OVERFLOWS. `short` hides both
+   * (`.scast.short` in `stream.css`). For the text preview it is measured in the layout effect
+   * below; for the rendered viewer, which sizes itself after it mounts, it is `viewerFits`,
+   * re-read whenever the viewer's box changes. A viewer that fits opens from its head like any
+   * card; one that does not is cut at the clamp with the fade and the pill under the cut.
    */
-  const isShort = short && !showViewer;
+  const [viewerFits, setViewerFits] = useState(false);
+  const isShort = showViewer ? viewerFits : short;
 
   // Clamp decisions need real layout — measure only once the card is
   // actually visible (offsetHeight > 0), like the prototype.
@@ -221,9 +223,9 @@ export function StreamCard({
     const clip = clipRef.current;
     if (!clip) return;
     /**
-     * A viewer card is never clamp-measured and never `short`: the iframe
-     * sizes itself and its clamp states are pure CSS (collapsed 348,
-     * `.scast.viewer.open` unclamped). JS only clears any inline
+     * A viewer card is not measured HERE: the iframe sizes itself after this
+     * runs, so its fit is `viewerFits` (the effect below), and its clamp states
+     * are CSS (collapsed at most 348, `.scast.viewer.open` unclamped). JS only clears any inline
      * `max-height` pin a text-phase toggle left on the clip — including
      * the snippet-height pin of a card expanded before its body hydrated,
      * which would otherwise beat the CSS and clip the viewer at two
@@ -250,6 +252,19 @@ export function StreamCard({
      */
     if (open) clip.style.maxHeight = `${clip.scrollHeight}px`;
   }, [clampHeight, shown, open, showViewer]);
+
+  useLayoutEffect(() => {
+    const clip = clipRef.current;
+    if (!showViewer || !clip) return;
+    // The clip's own threshold: `.scast.viewer:not(.open) .sc-clip{max-height:348px}` cuts anything
+    // taller, so a card is short only where nothing is cut (no 28px tolerance here, unlike text).
+    const read = () => setViewerFits(clip.scrollHeight > 0 && clip.scrollHeight <= clampHeight);
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(read);
+    for (const el of clip.children) ro.observe(el);
+    return () => ro.disconnect();
+  }, [showViewer, clampHeight]);
 
   /**
    * THE BODY IS NOT (YET) THE WHOLE MESSAGE.
@@ -304,14 +319,27 @@ export function StreamCard({
     clamped: showViewer || pending,
   });
 
+  /**
+   * FOCUS FOLLOWS A KEYBOARD OPEN OF A SHORT CARD. Its pill is removed on the open card, so the
+   * press that opened it hands focus to the card's first verb (Reply) once the caller has mounted
+   * the bar — it arrives on a later render, keyed on the open state the toggle reports.
+   */
+  const focusVerbs = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusVerbs.current || !open) return;
+    const first = cardRef.current?.querySelector<HTMLElement>(".sc-actions button:not([disabled])");
+    if (!first) return;
+    focusVerbs.current = false;
+    first.focus();
+  }, [open, actions]);
+
   const toggle = () => {
     const clip = clipRef.current;
     // `short` alone used to gate this, so a pill made reachable by `pending` would have been
-    // a button that did nothing when clicked. A card WITH a `bodySlot` always has more to
-    // show than its clamped preview (the rest of the rendered html), so it opens even when the
-    // preview is short — `isShort` is already false for it. A short card a click OPENED still
+    // a button that did nothing when clicked. A SHORT card opens through it too: its pill is drawn
+    // only under keyboard focus (stream.css), and the stream's Enter presses it — a card whose mail
+    // fits still has verbs and files that only the open card mounts. A short card a click OPENED
     // closes through it: that press is the stream's controlled close (Back out of a reading).
-    if (isShort && !pending && !open) return;
     const next = !open;
     if (clip) {
       if (showViewer) {
@@ -366,7 +394,11 @@ export function StreamCard({
       ref={cardRef}
       className={cls}
       /* `contain-intrinsic-size: auto var(--sc-est, 200px)` in `app.css` reads this. */
-      style={{ "--sc-est": `${est}px` } as CSSProperties}
+      style={
+        (pending
+          ? { "--sc-est": `${est}px`, "--sc-reserve": `${estimateClipReserve(estWidthPx ?? 0, shown)}px` }
+          : { "--sc-est": `${est}px` }) as unknown as CSSProperties
+      }
       data-sid={id}
       data-unseen={unread ? "1" : undefined}
       onClick={() => {
@@ -377,12 +409,12 @@ export function StreamCard({
       <div className="sc-head">
         <div className="sc-line">
           <b>{from}</b>
-          {address ? <span className="addr">{address}</span> : null}
+          {address ? <span className="addr"><span>{address}</span></span> : null}
           {amount ? <span className="amt num">{amount}</span> : null}
           {/* The delivery mailbox, beside the sender it arrived from — the head's one place for
               "whose mail is this", so the eye reads sender and recipient in one pass. */}
           {mailbox ? (
-            <Badge variant="place" title={mailboxTitle}>
+            <Badge variant="place" className="sc-place" title={mailboxTitle}>
               {mailbox}
             </Badge>
           ) : null}
@@ -400,6 +432,15 @@ export function StreamCard({
         {/* Under the subject, inside the head's padding — the same order the reading pane
             keeps (sender, subject, then who else), so a card and a panel read alike. */}
         {recipients ? <div className="sc-rcpts">{recipients}</div> : null}
+        {/* The delivered-to chip's home on a card under 600px, where the line has no room for it:
+            drawn on the OPEN card only (stream.css), so the collapsed skim carries the name. */}
+        {mailbox ? (
+          <div className="sc-place-alt">
+            <Badge variant="place" title={mailboxTitle}>
+              {mailboxTitle ?? mailbox}
+            </Badge>
+          </div>
+        ) : null}
       </div>
       <div className="sc-clip" ref={clipRef}>
         {showViewer ? (
@@ -453,6 +494,9 @@ export function StreamCard({
         aria-expanded={open}
         onClick={(e) => {
           e.stopPropagation();
+          // A short card's pill leaves once the card is open, so a keyboard press that opened it
+          // would drop focus to the page: it goes to the card's first verb instead (below).
+          if (!open && isShort && !pending && e.currentTarget === document.activeElement) focusVerbs.current = true;
           toggle();
         }}
       >

@@ -1,5 +1,8 @@
 /* list column — a white panel sculpted by light, no border */
+/* The list column is the container its rows, chips and cards ask about their room (`list-col`):
+   at 300-375px in the two-pane band the column, not the window, is what is narrow. */
 .list-col{
+  container:list-col / inline-size;
   display:flex;flex-direction:column;min-width:0;min-height:0;
   background:var(--panel);border-radius:var(--r-overlay);box-shadow:var(--lift-1);
 }
@@ -35,7 +38,9 @@
    nothing may move by a pixel, and 2px under ohmarchy, where the ring is 2px. One rule for
    every scroller rather than a margin per surface, because the clip belongs to the scroller and
    the next boxed surface put inside one must not repeat the defect. */
-.scroller{overflow-y:auto;flex:1;min-height:0;padding-top:calc(var(--focus-w) * var(--teach));padding-bottom:48px}
+/* `--pill-h` is the first-sync pill's height while it floats over the corner (SyncBar writes it,
+   0 where the pill is not drawn), so a scroller's last row rests clear of it at every width. */
+.scroller{overflow-y:auto;flex:1;min-height:0;padding-top:calc(var(--focus-w) * var(--teach));padding-bottom:calc(48px + var(--pill-h, 0px))}
 .grouplabel{font-size:calc(12px + var(--type-up));font-weight:600;color:var(--ink3);padding:16px 30px 6px}
 .rows{padding:0 16px} /* wide enough that a raised row's shadow isn't sheared at the pane edge */
 /* No-collapse rule: mail is never hidden behind a "+n more" affordance, so
@@ -52,6 +57,13 @@
 .list-hints{padding:10px 30px 14px;font-size:calc(11px + var(--type-up));color:var(--ink3);display:flex;gap:12px;align-items:center;flex:none;
   flex-wrap:nowrap;overflow:hidden;white-space:nowrap}
 .list-hints > *{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* THE SCROLLPORT'S EDGES ARE DRAWN, ONE HAIRLINE EACH, ONLY WHILE A ROW IS PASSING THEM: under the
+   head once the list has scrolled (`data-scrolled`), over the hints strip or foot while rows
+   continue below (`data-more-below`). ListPane sets both. Never a fade: decorative gradients
+   stay banned, and a hairline is the `.notice-shell` idiom. */
+.list-col[data-scrolled] > :has(+ .scroller){box-shadow:inset 0 -1px 0 var(--hair-soft)}
+.list-col[data-more-below] > .list-hints,
+.list-col[data-more-below] > .list-foot{box-shadow:inset 0 1px 0 var(--hair-soft)}
 /* THE FOOT — the hints strip's place, holding verbs instead of a teaching line.
    `flex:none` for the strip's reason: the scroller above owns every spare pixel, and a foot
    that could grow would take rows away from it as its contents wrapped.

@@ -5,6 +5,7 @@
  * {@link RAIL_MONTHS_MAX} months it lists every month; past that it lists years and opens the year
  * the window stands in into its months. A press places the list at that month's first message.
  */
+import { useLayoutEffect, useRef } from "react";
 import { useFormatter, useTranslations } from "next-intl";
 import type { TimelineSegment } from "@ohmail/client-engine";
 
@@ -64,9 +65,31 @@ export function HistoryRail({
     }
   }
 
+  /**
+   * THE RAIL NEVER COVERS A ROW: its own width is the scroller's `--history-gutter`, which the
+   * rows reserve on their right (history-rail.css). Measured, because the labels are the locale's
+   * ("Okt. 2026", "Ohne Datum"); taken back off when the rail unmounts.
+   */
+  const navRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const scroller = nav?.parentElement?.parentElement;
+    if (!nav || !scroller) return;
+    const write = (): void => {
+      scroller.style.setProperty("--history-gutter", `${Math.ceil(nav.offsetWidth)}px`);
+    };
+    write();
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
+    ro?.observe(nav);
+    return () => {
+      ro?.disconnect();
+      scroller.style.removeProperty("--history-gutter");
+    };
+  }, []);
+
   return (
     <div className="history-rail-anchor">
-      <nav className="history-rail" aria-label={t("railLabel")}>
+      <nav ref={navRef} className="history-rail" aria-label={t("railLabel")}>
         {entries.map((e) => (
           <button
             key={e.key}

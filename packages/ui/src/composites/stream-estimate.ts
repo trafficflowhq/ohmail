@@ -62,6 +62,8 @@ const PILL_POINTER_H = 27;
 const PILL_MARGINS = 22;
 /** `.sc-clip{max-height:348px}` — a collapsed preview can never be taller than the clamp. */
 const CLAMP = 348;
+/** The least a waiting card reserves for its body: a few lines, so a short letter barely moves. */
+export const STREAM_RESERVE_MIN_PX = 120;
 /** What a card with no width to reason from reserves — the value this file replaces. */
 export const STREAM_CARD_FALLBACK_PX = 200;
 
@@ -81,11 +83,10 @@ export interface StreamCardEstimateInput {
    */
   touch?: boolean;
   /**
-   * True when this card's preview will be the clamped body rather than the
+   * True when this card's preview will be the fetched body rather than the
    * snippet — in the reading streams that is every card: `onNear` hydrates
-   * a card as it approaches, so the layout the browser performs is the
-   * hydrated one. Estimating from the two-line snippet reserved such cards
-   * at snippet height (e.g. 353 → 545 before this flag existed).
+   * a card as it approaches. The body part is then {@link estimateClipReserve},
+   * the same number the card reserves in CSS.
    */
   clamped?: boolean;
 }
@@ -120,6 +121,18 @@ function recipientsHeight(inner: number): number {
 }
 
 /**
+ * WHAT A CARD WAITING FOR ITS BODY RESERVES FOR IT: its own preview's estimate, clamped to
+ * [120, 348]. 348 is a ceiling, not the height (`.scast.pend .sc-clip{min-height:var(--sc-reserve)}`):
+ * a short letter ends where it ends, and the body lands one viewport ahead of the reader, so the
+ * one settle a card makes happens off screen. No width ⇒ the floor.
+ */
+export function estimateClipReserve(width: number, preview: string): number {
+  const inner = width > 0 ? Math.max(1, width - HEAD_PAD_X * 2) : 0;
+  const text = inner > 0 ? BODY_PAD_Y + previewLines(preview, inner) * BODY_LINE_H : 0;
+  return Math.round(Math.min(CLAMP, Math.max(STREAM_RESERVE_MIN_PX, text)));
+}
+
+/**
  * The height to reserve for one collapsed stream card.
  *
  * It is the card's own CONTENT BOX and deliberately excludes `.scast`'s 20px bottom margin: the
@@ -138,7 +151,7 @@ export function estimateCardHeight(input: StreamCardEstimateInput): number {
   h += SUBJECT_MARGIN_TOP + wrap(subject.length, inner, SUBJECT_LINE_H / 1.3, SUBJECT_CHAR_EM) * SUBJECT_LINE_H;
   if (recipients) h += recipientsHeight(inner) + RCPTS_MARGIN;
 
-  h += clamped ? CLAMP : Math.min(CLAMP, BODY_PAD_Y + previewLines(preview, inner) * BODY_LINE_H);
+  h += clamped ? estimateClipReserve(width, preview) : Math.min(CLAMP, BODY_PAD_Y + previewLines(preview, inner) * BODY_LINE_H);
 
   if (pill) h += (touch ? PILL_TOUCH_H : PILL_POINTER_H) + PILL_MARGINS;
   return Math.round(h);

@@ -1201,6 +1201,31 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .reads-chip-row {
   padding: 2px 18px 14px;
 }
+/* IN A LIST COLUMN UNDER 340px the chip takes its compact shape: the chip wraps, so a sentence
+   that does not fit beside Approve · Correct takes the chip's whole width and the verbs the line
+   under it, instead of the sentence stacked word by word beside them. The sparkle goes — beside a
+   wrapping sentence it stood alone on a line, and the sentence says AI. */
+@container list-col (max-width: 339.98px) {
+  .reads-chip-row .chip.pending {
+    flex-wrap: wrap;
+    row-gap: 3px;
+    border-radius: calc(var(--r-card) * 12 / 14);
+  }
+  .reads-chip-row .chip.pending > svg {
+    display: none;
+  }
+}
+/* The Screener's verbs stand UNDER the row's text in a list column under 340px, so the name and
+   the subject keep the row's width (the band's 300px list left them ~110px beside Accept). */
+@container list-col (max-width: 339.98px) {
+  .view-screener .row-slot {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .view-screener .row-slot > .row-actions {
+    justify-content: flex-end;
+    padding-bottom: 10px;
+  }
+}
 
 /* ================= ohbox multi-select ============================
    THE PICKED-ROW MARKER, and that is all this block is now.
@@ -4464,12 +4489,15 @@ input.set-tag-input {
      `stream.css`) — the card's action pill is sticky against the scrollport, and bottom padding
      would push its resting edge up by exactly that much. So the phone's value goes to the
      variable the spacer is sized from, and the padding here stays 0. */
+  /* `--pill-h` is the first-sync pill's own height while it floats over the bottom-left corner
+     (`.sync-bar.busy`, measured and written by SyncBar, 0 when it is not drawn), so the last row
+     or control rests clear of it at scroll end. */
   .view .stream {
     padding: 0 6px 0;
-    --stream-tail: calc(48px + env(safe-area-inset-bottom, 0px));
+    --stream-tail: calc(48px + var(--pill-h, 0px) + env(safe-area-inset-bottom, 0px));
   }
   .view .scroller {
-    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(48px + var(--pill-h, 0px) + env(safe-area-inset-bottom, 0px));
   }
   /* The sent-mail seed review scrolls the whole card (`.view-seed { overflow:auto }`), and its
      Confirm / Not now actions sit at the bottom of it. */
@@ -4602,7 +4630,8 @@ input.set-tag-input {
   /* THE SCREENER ROW AT THE BAND'S 300px LIST: the row's trailing action slot (Accept · ⌃) leaves
      159px for name, address and time, and the names read "L…". The address gives first — the
      sacrifice order DESIGN-FOLD-WIDTHS §6 rules below a 300px line, whose general form is the
-     lists lane's; this is the band's own case — and stays in the row's spoken name (`row-spoken`). */
+     lists lane's; this is the band's own case. The row's accessible name is "sender: subject"
+     (MessageRow's aria-label), which never carried the address, cut or not. */
   .view-screener .row .row-top .addr {
     display: none;
   }
@@ -4616,8 +4645,12 @@ input.set-tag-input {
   display: none;
 }
 @media (min-width: 700px) and (max-width: 1023.98px) and (pointer: coarse) {
+  /* It stays in the column's top-left corner (the phone's thumb corner, the ladder's pin) AND shares
+     the header's row: a block 10px from the top whose negative bottom margin gives its whole height
+     back, so the message does not move; the panel's top padding is taken in so the 44px header row
+     is centred on it (10 + 19 − 22 = 7px); the header steps right by the button's width. */
   .read-col-close {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     justify-content: center;
     position: sticky;
@@ -4625,7 +4658,7 @@ input.set-tag-input {
     z-index: 2;
     width: 38px;
     height: 38px;
-    margin: 10px 10px -48px auto;
+    margin: 10px 0 -48px 10px;
     border-radius: var(--r-avatar);
     border: 0;
     padding: 0;
@@ -4636,6 +4669,12 @@ input.set-tag-input {
   }
   .read-col-close:active {
     transform: scale(.94);
+  }
+  .read-col:has(> .read-col-close) > .msg {
+    padding-top: calc(10px + 19px - 22px);
+  }
+  .read-col:has(> .read-col-close) > .msg > .msg-from {
+    margin-left: 22px;
   }
 }
 /* THE EMPTY COLUMN'S SENTENCE UNDER A THUMB, at every width: the keycap sentence names a key a
@@ -6545,7 +6584,14 @@ input.set-tag-input {
   align-items: flex-start;
   gap: 10px;
   min-width: 0;
+  border-radius: calc(var(--r-card) * 12 / 14);
+  transition: background .15s var(--swift);
 }
+/* THE ROW'S SURFACE IS THE WHOLE LINE, Discard included: the hover and keyboard-focus tint is
+   drawn on `.draft-row-main`, so the trailing control stands on the row and not beside it (the
+   `.row-slot` rule the lists keep, row.css). The two controls stay siblings. */
+.draft-row-main:hover,
+.draft-row-main:has(> .draft-open:focus-visible) { background: var(--tint); }
 /* WHILE THE QUESTION IS OPEN THE LINE MAY WRAP: the confirm sits at the trailing edge where the
    Discard control was, and where the pane is too narrow for both it drops to a second line, still
    right-aligned — the row expands, nothing is squeezed. Only then: an ordinary row never wraps. */
@@ -6599,7 +6645,6 @@ input.set-tag-input {
   background: transparent;
   transition: background .15s var(--swift);
 }
-.draft-open:hover { background: var(--tint); }
 .draft-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .draft-subject {
   font-size:calc(13px + var(--type-up));

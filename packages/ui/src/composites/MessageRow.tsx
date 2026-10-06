@@ -455,7 +455,7 @@ export function MessageRow(props: MessageRowProps) {
       <span className="row-top">
         {unread && !dotless ? <span className="dot-unread" /> : null}
         <span className="who">{from}</span>
-        {address ? <span className="addr">{address}</span> : null}
+        {address ? <span className="addr"><span>{address}</span></span> : null}
         {/* See `onToggleTime`: `data-stamp` is the hit target the row's own press looks for, and
             it exists ONLY where a flip is wired — so an unwired stamp can never be routed to a
             handler that is not there. `tog` is the pressable styling, `title` is independent. */}

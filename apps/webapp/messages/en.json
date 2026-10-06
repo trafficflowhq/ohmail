@@ -572,6 +572,7 @@
     "doorbellAria": "{count, plural, =0 {All clear, nobody waiting — open the Screener} one {1 first-time sender waiting — open the Screener} other {# first-time senders waiting — open the Screener}}",
     "threadMeta": "thread ({count})",
     "onServer": "on your server: {folder}",
+    "fromAddress": "from {address}",
     "loading": "Loading your mail.",
     "emptyPlain": "Nothing in your Ohbox.",
     "emptyScreenerTitle": "Nothing in your Ohbox yet.",

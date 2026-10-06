@@ -8,7 +8,7 @@
    WebKitGTK. A `::after` of the same height reserves the same space in flow, leaves the content
    box flush with the scrollport, and makes `bottom: 12px` mean 12px everywhere.
    `--stream-tail` so the phone breakpoint can add the safe area to it without restating the rule. */
-.stream{--stream-tail:48px;min-width:0;min-height:0;overflow-y:auto;padding:2px 12px 0;scroll-behavior:smooth}
+.stream{--stream-tail:calc(48px + var(--pill-h, 0px));min-width:0;min-height:0;overflow-y:auto;padding:2px 12px 0;scroll-behavior:smooth}
 .stream::after{content:"";display:block;height:var(--stream-tail)}
 /* One item, one line, at every width — the rule and the reason are `list-pane.css`'s
    `.list-hints`: the strip holds the `? shortcuts` affordance, and nowrap/overflow stand
@@ -20,23 +20,31 @@
   box-shadow:var(--lift-1);position:relative;
   transition:box-shadow .3s var(--swift)}
 .scast.cur{box-shadow:var(--lift-2)}
-.sc-head{padding:20px 26px 0}
+/* The head is the line's container (row.css states the sacrifice order): its content box IS the
+   line's width, and the delivered-to chip's second home below sits inside it. */
+.sc-head{padding:20px 26px 0;container:who-line / inline-size}
 .sc-line{display:flex;align-items:baseline;gap:8px;font-size:calc(12.5px + var(--type-up))}
-/* THE NAME YIELDS LAST — after the address has given up everything, and never before.
-   A Receipts head at 360px on the larger face carries a sender, an amount, the notice glyph
-   and a German relative time: the address is already at zero and the fixed items still
-   overflow. The amount and the time may not ellipsise (half a number or half a date is a
-   false statement) and the glyph is 13px, so the name is what gives. The shrink WEIGHT
-   orders the pair — the address (100) takes the whole deficit and freezes at `min-width:0`
-   before the name (1) loses a pixel. Same treatment as `row.css` `.row-top .who`. */
+/* The name never wraps; the address takes the room the name leaves and its text
+   leaves under 14ch (its own container) or on a line under 280px; the amount and the time are
+   `flex:none` — half a number or half a date is a false statement. The address TEXT is the handle
+   on the sender (the shell's one capture handler opens the screening sheet): the grown box passes
+   presses through to the card. */
 .sc-line b{font-weight:600;flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* The address is the handle on the SENDER — clicking it opens the screening sheet, the same
-   gesture the lists carry (the shell's one capture handler owns both). A grown, nowrap
-   ellipsis means the hit area is the visible text and no more, so it does not quietly eat
-   clicks meant for the card; the shrink weight is the block above. */
-.sc-line .addr{flex:1 100 auto;min-width:0;font-size:calc(11.5px + var(--type-up));color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  cursor:pointer;transition:color .15s}
-.sc-line .addr:hover{color:var(--ink2);text-decoration:underline;text-underline-offset:2px}
+.sc-line .addr{flex:1 1 0;min-width:0;container:who-addr / inline-size;pointer-events:none;font-size:calc(11.5px + var(--type-up));color:var(--ink3);white-space:nowrap}
+.sc-line .addr > span{pointer-events:auto;cursor:pointer;display:block;overflow:hidden;text-overflow:ellipsis;transition:color .15s}
+/* A hidden address is CLIPPED, not removed: the card has no label of its own, so its head's text is
+   what a screen reader hears, and the address stays in it. */
+@container who-addr (max-width:13.98ch){.sc-line .addr > span{clip-path:inset(50%)}}
+@container who-line (max-width:279.98px){.sc-line .addr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
+/* THE DELIVERED-TO CHIP STANDS ON THE LINE ONLY ON A CARD 600px WIDE (a 548px line): below that it
+   took the name's room on every card. It is then said once, on the open card, under the subject. */
+.sc-line .sc-place{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-place-alt{display:none;margin-top:6px}
+@container who-line (max-width:547.98px){
+  .sc-line .sc-place{display:none}
+  .scast.open .sc-place-alt{display:block}
+}
+.sc-line .addr > span:hover{color:var(--ink2);text-decoration:underline;text-underline-offset:2px}
 .sc-line .amt{flex:none;font-variant-numeric:tabular-nums;font-size:calc(12px + var(--type-up));font-weight:550}
 /* THE NOTICE SLOT — a fact about the message in the line's own voice: the time's size and ink,
    never the accent, because a block is the product doing what it says and not a fault. It takes
@@ -77,37 +85,13 @@
 .sc-art{margin:2px 26px 16px}
 .sc-art svg{display:block;width:100%;height:auto;border-radius:var(--r-card);color:var(--ink3)}
 .sc-art figcaption{font-size:calc(11px + var(--type-up));color:var(--ink3);margin-top:7px}
-/* THE FADE IS A FACT ABOUT CLIPPING, READ OFF THE CLIP ITSELF.
-   A collapsed card's box is the clamp however long the mail (`.scast.viewer:not(.open)
-   .sc-clip{height:348px}` below), so a two-sentence letter sits at the top of the same box a
-   forty-line one fills — and this gradient used to be painted over the bottom 88px of EVERY such
-   box. Over a mail that ends inside that band it veiled the last lines of a letter that was all
-   there, and said "more below" about nothing. The fade has one job, marking the cut; a box with
-   nothing cut has no cut to mark.
-
-   `.sc-clip` is `overflow:hidden`, which makes it a scroll container — never scrolled, but with
-   scrollable overflow exactly when its content is taller than it. A scroll-driven animation
-   timeline on that container is ACTIVE under precisely that condition and inactive otherwise,
-   and an animation whose timeline is inactive applies nothing. So the keyframes set one custom
-   property, `--sc-clipped`, and the fade's opacity reads it with a fallback of 0: painted while
-   the clip has something to hide, not painted while it has not, the browser's own layout as the
-   witness — no measurement, no class, no attribute, and it follows the content as it changes
-   (the mail landing in a waiting card, the card collapsing again). Inside `@supports`, so an
-   engine without scroll timelines keeps the rule it had — the fade on every clamped box — rather
-   than losing it on the clipped cards it belongs to.
-
-   The ground under a short mail is the card's own surface, and nothing is drawn on it: the room
-   is the same room every card reserves, and the pill sits at its foot as it does on every card.
-   The band's height and the token's stops are unchanged — they were drawn for the clipped case,
-   which is now the only case they paint. */
+/* THE FADE MARKS A CUT, AND ONLY A CUT. It and the pill are one condition: the clip overflows.
+   A card whose mail fits is `.short` (measured in StreamCard: the text preview in its layout
+   effect, the rendered viewer by `viewerFits`) and shows neither; it opens from its head. */
 .sc-fade{position:absolute;left:0;right:0;bottom:0;height:88px;pointer-events:none;
   /* the one functional gradient: a fade-out mask on clamped cards — decorative gradients stay banned */
   background:var(--sc-fade);
   transition:opacity .25s var(--swift)}
-@supports (animation-timeline: scroll()){
-  .sc-fade{opacity:var(--sc-clipped,0);animation:sc-clipped linear both;animation-timeline:scroll(nearest block)}
-  @keyframes sc-clipped{from,to{--sc-clipped:1}}
-}
 .scast.open .sc-fade{opacity:0}
 .scast.short .sc-fade{display:none}
 /* The pill's clearance. It used to hang at `margin-top:-12px`, riding up INTO the last line of
@@ -123,25 +107,20 @@
 .sc-x:active{transform:scale(.965)}
 .sc-x .chev{width:12px;height:12px;transition:transform .3s var(--spring);transform:rotate(90deg)}
 .scast.open .sc-x .chev{transform:rotate(-90deg)}
-.scast.short .sc-x{display:none}
+/* A CARD WHOSE MAIL FITS DRAWS NO PILL, BUT KEEPS IT FOR THE KEYBOARD: transparent and out of flow
+   until it takes keyboard focus, so Tab reaches it and the stream's Enter (which presses it) opens
+   the card and its verbs. An open short text card has none. */
+.scast.short:not(.open):not(.pend) .sc-x{position:absolute;left:50%;bottom:10px;translate:-50% 0;margin:0;opacity:0;pointer-events:none}
+.scast.short:not(.open):not(.pend) .sc-x:focus-visible{opacity:1;pointer-events:auto}
+/* While it is drawn, the card makes room under its text for it (the card is paint-contained, so the
+   pill cannot hang below it): it covers no line of the mail. */
+.scast.short:not(.open):not(.pend):has(> .sc-x:focus-visible){padding-bottom:calc(var(--sc-x-h, 27px) + 18px)}
+.scast.short.open .sc-x{display:none}
 /* A card that is short ONLY because its body has not arrived keeps the pill: the text being
-   short is the symptom, not the answer, so the affordance stays reachable.
-
-   It has no fade, and not by a rule of its own: `.scast.short .sc-fade{display:none}` above
-   reaches it, and under the rule the fade now follows — painted only over a clip with something
-   to hide — a two-line snippet in a reserved 348px box has nothing to hide either way. A second
-   rule hiding the waiting card's fade under its own two-class selector used to stand here and
-   was removed as redundant; the 16px the card lost at the moment its body arrived (`566 → 550`
-   at 1440) came
-   from the pill's extra margins below, not from the fade, which adds no height in any state.
-   One box, one height, before and after. */
+   short is the symptom, not the answer, so the affordance stays reachable. It has no fade —
+   `.scast.short .sc-fade{display:none}` reaches it, and nothing is cut. */
 .scast.short.pend .sc-x{display:flex}
-/* The pill sits under the clamp with a negative top margin, which reads well behind the
-   fade of a collapsed card. Where the fade is OFF — an expanded card, or a short-and-pending
-   one — that overlap crowds the text above it, so give the pill its own breathing room. */
-/* …and the same reasoning removes `.scast.short.pend` from this rule. The extra air was for a
-   card whose fade was off; a waiting card now keeps its fade and its clamp, so it keeps the
-   pill's ordinary margins and its height does not change when the mail lands. */
+/* An open card's pill (the collapse) gets its own air: no fade stands behind it to join it to the text. */
 .scast.open .sc-x{margin-top:16px;margin-bottom:22px}
 /* THE MESSAGE'S VERBS, at the foot of the card that is being read — AND THEY FLOAT WHILE IT IS
  * TALLER THAN THE ROOM.
@@ -176,43 +155,23 @@
 
 /* ── the rendered-message viewer ──────────────────────────────────────────────────────
    A card whose caller supplied a `bodySlot` renders the sanitized html viewer (the one the
-   reading pane uses) in BOTH states: COLLAPSED it stays clamped at 348 with the pill at its
-   foot — and the fade where the mail overruns the clamp — so every card in the stream is one
-   uniform height however tall the mail; OPEN it unclamps. The unclamp/fade-off/pill-force rules are therefore scoped to `.scast.viewer.open`
-   — a collapsed viewer keeps the base clamp. Placed after the `.short` rules above so
-   equal-specificity `.sc-x`/`.sc-fade` overrides win. */
+   reading pane uses) in BOTH states: COLLAPSED it is at most 348, with the fade and the pill only
+   where the mail overruns that; OPEN it unclamps. The unclamp/fade-off/pill-force rules are
+   scoped to `.scast.viewer.open`, placed after the `.short` rules so equal-specificity
+   `.sc-x`/`.sc-fade` overrides win. */
 .scast.viewer.open .sc-clip{max-height:none;overflow:visible}
 .scast.viewer.open .sc-fade{display:none}
 .scast.viewer.open .sc-x{display:flex}
-/* ── THE COLLAPSED CARD'S PREVIEW BOX IS THE CLAMP, NOT AT MOST THE CLAMP ─────────────────
-   This block used to reserve 132px for a card waiting for its viewer, on the reasoning that a
-   little height keeps the rendered message from popping the stream. It does not: the message
-   lands at the clamp, and 132 → 348 is a 216px pop on every card in the pile.
-
-   Measured on a 300-card fixture, one 40-step scroll with no expands, every card-height change
-   attributed to its cause: a body arriving moved cards `653 → 500`, `567 → 414`, `545 → 455`
-   (the snippet preview was TALLER than the clamped viewer, so the card shrank), and the viewer's
-   content then filling the clamp moved them `436 → 672`, `414 → 650`, `288 → 524`. Two changes
-   per card, in opposite directions, for every card the reader scrolls past.
-
-   Both are the same defect: `max-height` says "at most this tall", so the card's height is a
-   function of a document that has not arrived yet. The height this file already WANTS is the
-   clamp — `.sc-clip`'s own header, and the viewer block above, say so in as many words: "COLLAPSED
-   it stays clamped at 348 with the fade and the pill, so every card in the stream is one uniform
-   height however tall the mail". Uniform is the design; a maximum is not uniform.
-
-   So a card that has ASKED for a body reserves the clamp, and a card that HAS one keeps exactly
-   the clamp. Nothing about the arrival can change the card's height, so nothing below it moves.
-   The cost is a mail shorter than the clamp showing its remaining room — the card's own surface,
-   the same room every other card in the skim reserves. The fade does not paint over it: it
-   follows the clip's overflow (`.sc-fade` above), so a letter that fits ends where it ends and
-   the pill stands at the box's foot, as on every card.
-
-   The OPEN card is untouched (`.scast.viewer.open .sc-clip{max-height:none}` above releases it),
-   and so is a text-only card with no body to fetch: `.scast.short` still gives a genuinely short
-   mail its natural height. */
-.scast.pend .sc-clip{min-height:348px}
-.scast.viewer:not(.open) .sc-clip{height:348px}
+/* ── A COLLAPSED CARD ENDS WHERE ITS MAIL ENDS; 348 IS A CEILING ─────────────────────────────
+   It was the height: every card reserved the clamp so a body arriving could not move the stream,
+   and a phone paid 250-500px of empty card under every four-line letter for it. The stability is
+   kept where it matters instead. A waiting card reserves its OWN estimate (`--sc-reserve`, the
+   preview's estimate clamped to [120, 348], stream-estimate.ts), the body is asked for one
+   viewport ahead of the reader (StreamShell's approach observer), so a card settles once, on
+   arrival, off screen; the stream's own anchor (StreamShell) is the belt where WebKit has none.
+   The OPEN card is released by `.scast.viewer.open .sc-clip{max-height:none}` above. */
+.scast.pend .sc-clip{min-height:var(--sc-reserve,120px)}
+.scast.viewer:not(.open) .sc-clip{max-height:348px}
 .sc-viewer{padding:6px 22px 18px}
 .sc-files{padding:0 26px}
 .sc-files .att-strip{margin-top:4px}
@@ -248,4 +207,5 @@
    layout was drawn around. */
 @media (max-width: 640px){
   .sc-x{min-height:44px}
+  .scast{--sc-x-h:44px}
 }

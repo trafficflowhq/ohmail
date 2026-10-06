@@ -24,7 +24,7 @@
  * reader as one sentence and nothing after it. {@link SyncAnnouncer} says the whole sentence on a
  * throttle instead.
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { apiConfigured } from "../api-client";
@@ -244,9 +244,39 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
       ) : null}
       {s.link ? <a href={s.link.href}>{s.link.label}</a> : null}
       <SyncAnnouncer say={s.say ?? null} progress={s.progress ?? null} />
+      {s.tone === "busy" ? <PillReserve /> : null}
     </div>
   );
 }
+
+/**
+ * THE FLOATING PILL RESERVES ITS OWN ROOM. `.sync-bar.busy` is fixed over the bottom-left corner,
+ * so the last row or control of a phone view sat under it at scroll end. This writes the pill's
+ * drawn height plus its 18px offset to `--pill-h` on the document (0 while the bar is not drawn,
+ * which RO reports as a zero box), and every phone scroller's bottom reservation adds it (app.css).
+ */
+export function PillReserve() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const bar = ref.current?.parentElement;
+    if (!bar) return;
+    const root = document.documentElement;
+    const write = (): void => {
+      const h = bar.offsetHeight;
+      root.style.setProperty("--pill-h", h > 0 ? `${h + PILL_OFFSET_PX}px` : "0px");
+    };
+    write();
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
+    ro?.observe(bar);
+    return () => {
+      ro?.disconnect();
+      root.style.removeProperty("--pill-h");
+    };
+  }, []);
+  return <span ref={ref} hidden />;
+}
+/** `.sync-bar.busy{bottom:18px}` in app.css. */
+const PILL_OFFSET_PX = 18;
 
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 

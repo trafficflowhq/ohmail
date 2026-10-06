@@ -67,6 +67,7 @@ export function MessageHeader({
 }) {
   const tm = useTranslations("message");
   const tr = useTranslations("screening");
+  const tfrom = useTranslations("ohbox");
   const chrome = useMessageChrome();
   /* Null on a one-mailbox account and wherever the shell has no mailbox facts — the gate is inside
      the resolver, so this header asks for a label and takes silence for an answer. */
@@ -174,7 +175,7 @@ export function MessageHeader({
         >
           <Avatar initials={initialsOf(name)} hue={avatarHue(message.from.address)} size="s" />
           <b>{forwardedTo !== null ? tm("forwardedTo", { name: forwardedTo }) : name}</b>
-          {address ? <small>{address}</small> : null}
+          {address ? <small><span>{address}</span></small> : null}
         </button>
         <span className="t num">
           {/* THE BLOCKING NOTICE LEADS THE CLUSTER — a fact before the controls, so the ⋯ menu
@@ -237,6 +238,10 @@ export function MessageHeader({
             </button>
           ) : null}
         </span>
+        {/* THE ADDRESS IS NEVER OFF SCREEN. Under a 420px header the address leaves the sender's
+            line (message.css); this line, drawn only then, carries it on its own — whatever the
+            recipients block shows, because a display name alone is what a spoofed sender relies on. */}
+        {address ? <p className="msg-from-line">{tfrom("fromAddress", { address })}</p> : null}
       </div>
       {subjectLine}
       <MessageRecipients message={message} notice={notice} />

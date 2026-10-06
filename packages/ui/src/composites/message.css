@@ -145,8 +145,16 @@
   --msg-measure:621px;
   max-width:640px;width:100%;margin:0 auto;padding:26px 34px 12px;
 }
-.msg-from{display:flex;align-items:center;gap:9px;font-size:calc(12.5px + var(--type-up))}
-.msg-from b{font-weight:600}
+/* The reader header keeps row.css's sacrifice order: the ⋯ and the time are fixed, the name stays
+   on one line, the address gives first. Under a 420px header the address leaves the line and the
+   card's own `.msg-from-line` (MessageCard) states it under the sender, so it is on screen at every
+   width. The header is the container, so a 1024px window's narrow reading column answers the same
+   as a phone. A header with that line is a two-row grid: sender · cluster, then the line. */
+.msg-from{display:flex;align-items:center;gap:9px;font-size:calc(12.5px + var(--type-up));container:who-line / inline-size}
+.msg-from:has(> .msg-from-line){display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:9px}
+.msg-from:has(> .msg-from-line) > .msg-sender{justify-self:start;max-width:100%}
+.msg-from-line{display:none;grid-column:1 / -1;margin:2px 0 0 38px;font-size:calc(12px + var(--type-up));color:var(--ink3);overflow-wrap:anywhere}
+.msg-from b{font-weight:600;flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .msg-from small{color:var(--ink3);font-size:calc(12px + var(--type-up))}
 .msg-from .av{margin-right:1px}
 /* the from-line as a control — clicking the sender opens their screening */
@@ -156,7 +164,15 @@
   transition:background .15s var(--swift)}
 .msg-sender:hover{background:var(--tint)}
 .msg-sender:hover small{color:var(--accent-ink)}
-.msg-sender small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* The address sits inside the sender's button, which is as wide as its content: so it is not its
+   own container here (that would count it as zero wide) — it shrinks first, 100 to the name's 1,
+   and stops at its 14ch floor. */
+.msg-from small{white-space:nowrap;flex:0 100 auto;min-width:14ch}
+.msg-from small > span{display:block;overflow:hidden;text-overflow:ellipsis}
+@container who-line (max-width:419.98px){
+  .msg-from:has(> .msg-from-line) small{display:none}
+  .msg-from-line{display:block}
+}
 .msg-from .t{margin-left:auto;font-size:calc(11.5px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none;display:flex;gap:10px;align-items:center}
 .msg h2{font-size:24px;font-weight:600;letter-spacing:-.025em;margin:14px 0 14px;line-height:1.25}
 .chips{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 22px;align-items:center}

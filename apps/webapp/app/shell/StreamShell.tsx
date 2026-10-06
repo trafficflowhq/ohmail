@@ -355,12 +355,12 @@ export const StreamShell = forwardRef<
   }, []);
 
   /**
-   * HYDRATE ON VIEWPORT INTENT — one IntersectionObserver, bottom-only lookahead.
+   * HYDRATE ONE VIEWPORT AHEAD, BOTH WAYS — one IntersectionObserver.
    *
-   * `rootMargin: "0px 0px 50% 0px"` extends the root half a viewport DOWNWARD only, so a card
-   * fires `onNear` just before it would scroll into view and the rendered message is ready when
-   * it arrives. Fired once per id ever (`nearFired`), and never for the pile above the fold that
-   * a reader may never reach. Re-scanning happens on `contentKey` below; the fired set survives
+   * `rootMargin: "100% 0px"` extends the root a whole viewport up and down, so a card's body is
+   * asked for a screen before it can be seen. A collapsed card ends where its mail ends (348 is a
+   * ceiling, stream.css), so it settles once when its body lands — and that has to happen off
+   * screen, in either scroll direction. Fired once per id ever (`nearFired`). Re-scanning happens on `contentKey` below; the fired set survives
    * it, so a card already asked for is not asked again after a delta re-renders the stream.
    */
   const nearFired = useRef<Set<string>>(new Set());
@@ -381,7 +381,7 @@ export const StreamShell = forwardRef<
           }
         }
       },
-      { root: el, rootMargin: "0px 0px 50% 0px" },
+      { root: el, rootMargin: "100% 0px" },
     );
     nearIoRef.current = io;
     for (const c of el.querySelectorAll<HTMLElement>(".scast[data-sid]")) io.observe(c);

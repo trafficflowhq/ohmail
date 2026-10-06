@@ -106,7 +106,7 @@ export function ReadingPane({
         <Avatar initials={avatarInitial} hue={avatarHue} size="s" />
       ) : null}
       <b>{from}</b>
-      {address ? <small>{address}</small> : null}
+      {address ? <small><span>{address}</span></small> : null}
     </>
   );
   return (

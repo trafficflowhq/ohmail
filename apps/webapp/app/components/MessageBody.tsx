@@ -3092,6 +3092,18 @@ export const MAX_PARSE_ELEMENTS = MAX_RICH_NODES;
 export const MIN_FIT_SCALE = 0.6;
 
 /**
+ * THE COLUMN DECIDES BEFORE THE FIT DOES. 0.6 was chosen against a 390px READING column; a
+ * collapsed stream card at 390 is a ~320px column, where 0.6 of 15px is 8px text. So under
+ * {@link REFLOW_BELOW_PX} of column every mail is REFLOWED at scale 1 (`measure()` stamps
+ * `data-ohmail-reflow` on the live root whatever the classifier said; what still overflows
+ * scrolls inside the frame), from there to {@link WIDE_COLUMN_PX} the floor is
+ * {@link MID_FIT_SCALE}, and only a column that wide keeps {@link MIN_FIT_SCALE}.
+ */
+export const REFLOW_BELOW_PX = 480;
+export const WIDE_COLUMN_PX = 700;
+export const MID_FIT_SCALE = 0.75;
+
+/**
  * The uniform scale that fits `naturalPx` of content into `columnPx` of column — 1 when it
  * already fits, never below {@link MIN_FIT_SCALE}. Separated from {@link measure} on purpose:
  * jsdom performs no layout, so every number the measurement reads is 0 there and the fitting
@@ -3116,7 +3128,8 @@ export function fitScale(columnPx: number, naturalPx: number, reflow = false): n
   if (!Number.isFinite(columnPx) || !Number.isFinite(naturalPx)) return 1;
   if (columnPx <= 0 || naturalPx <= 0) return 1;
   if (naturalPx <= columnPx) return 1;
-  return Math.max(MIN_FIT_SCALE, columnPx / naturalPx);
+  if (columnPx < REFLOW_BELOW_PX) return 1;
+  return Math.max(columnPx < WIDE_COLUMN_PX ? MID_FIT_SCALE : MIN_FIT_SCALE, columnPx / naturalPx);
 }
 
 /**
@@ -3702,6 +3715,12 @@ export function MessageBody({
     // `buildMailDocument`, so the document itself carries the answer and this callback stays
     // dependency-free — which is what keeps it out of the ResizeObserver's teardown/rebuild
     // cycle. A reflowed mail is never fitted; see `fitScale`.
+    // A NARROW COLUMN REFLOWS WHATEVER THE CLASSIFIER SAID (see `REFLOW_BELOW_PX`). The baked
+    // answer is the value "1"; the column's own is "column", taken back off when the column widens.
+    if (root.getAttribute("data-ohmail-reflow") !== "1") {
+      if (frame.clientWidth > 0 && frame.clientWidth < REFLOW_BELOW_PX) root.setAttribute("data-ohmail-reflow", "column");
+      else root.removeAttribute("data-ohmail-reflow");
+    }
     const reflow = root.hasAttribute("data-ohmail-reflow");
     const scale = fitScale(frame.clientWidth, root.scrollWidth, reflow);
     // Measured BEFORE the transform is applied, then scaled by the same factor — a transform is

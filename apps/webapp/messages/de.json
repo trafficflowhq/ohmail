@@ -572,6 +572,7 @@
     "doorbellAria": "{count, plural, =0 {Alles klar, niemand wartet — Screener öffnen} one {1 Erstabsender wartet — Screener öffnen} other {# Erstabsender warten — Screener öffnen}}",
     "threadMeta": "Verlauf ({count})",
     "onServer": "auf deinem Server: {folder}",
+    "fromAddress": "von {address}",
     "loading": "Deine Post wird geladen.",
     "emptyPlain": "Nichts in deiner Ohbox.",
     "emptyScreenerTitle": "Noch nichts in deiner Ohbox.",

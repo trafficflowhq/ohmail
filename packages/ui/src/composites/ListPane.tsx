@@ -81,6 +81,47 @@ export function ListPane({
     if (rescanKey !== undefined) seen.observe();
   }, [seen, rescanKey]);
 
+  /**
+   * THE SCROLLER'S EDGES, said on the column: `data-scrolled` once rows have gone up under the
+   * head, `data-more-below` while rows continue under the foot. list-pane.css draws one hairline
+   * on each (never a fade), so a row sliced by the scrollport reads as passing an edge. Read on
+   * scroll (one frame at most) and whenever the scroller or a child of it changes size.
+   */
+  useEffect(() => {
+    const el = ref.current;
+    const col = el?.parentElement;
+    if (!el || !col) return;
+    let frame = 0;
+    const read = (): void => {
+      frame = 0;
+      const top = el.scrollTop > 0;
+      const below = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+      if (col.hasAttribute("data-scrolled") !== top) col.toggleAttribute("data-scrolled", top);
+      if (col.hasAttribute("data-more-below") !== below) col.toggleAttribute("data-more-below", below);
+    };
+    const ask = (): void => {
+      if (frame === 0) frame = requestAnimationFrame(read);
+    };
+    read();
+    el.addEventListener("scroll", ask, { passive: true });
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(ask);
+    const watch = (): void => {
+      if (!ro) return;
+      ro.disconnect();
+      ro.observe(el);
+      for (const c of el.children) ro.observe(c);
+    };
+    watch();
+    const mo = typeof MutationObserver === "undefined" ? null : new MutationObserver(() => { watch(); ask(); });
+    mo?.observe(el, { childList: true });
+    return () => {
+      el.removeEventListener("scroll", ask);
+      ro?.disconnect();
+      mo?.disconnect();
+      if (frame !== 0) cancelAnimationFrame(frame);
+    };
+  }, [ref]);
+
   const cls = ["list-col", solo ? "solo" : null, className].filter(Boolean).join(" ");
   return (
     <div className={cls}>

@@ -1,5 +1,8 @@
 /* History's month rail: a sticky, zero-height anchor at the top of the list scroller, so the
-   rail stays on the right edge while the rows scroll under it and takes no row's space. */
+   rail stays on the right edge while the list scrolls. The rows keep a gutter of the rail's own
+   width (`--history-gutter`, written by HistoryRail) plus its 4px inset and 6px of air, so the
+   rail never covers a row's time, its folder chip or its focus ring. */
+.view-history .scroller:has(> .history-rail-anchor) > .rows { padding-right: calc(var(--history-gutter, 0px) + 10px); }
 .view-history .history-rail-anchor {
   position: sticky;
   top: 0;
