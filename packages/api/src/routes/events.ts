@@ -179,8 +179,8 @@ export const eventsRoutes: Route[] = [
               return true;
             }
           };
-          // A refused account: the 30 s hint, then ONE ordinary wake, so the client's next `/sync`
-          // meets the door's 402 and stands the stream down before it re-dials; then the close.
+          // A refused account: the 30 s hint, then ONE ordinary wake so the client asks `/sync` now
+          // (where that read shares this process's verdict, it meets the 402 first); then the close.
           const accessRefused = (): void => {
             send(RETRY_AFTER_FAILURE);
             send(`event: sync\ndata: {"seq":${lastSeq}}\n\n`);
