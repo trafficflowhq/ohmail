@@ -405,6 +405,7 @@ export {
   // Exported because both surfaces put that number on a row: the web app through
   // `resurfacedThreads`, the phone through its own projection.
   conversationSize,
+  heldUnpinned,
   threadSizeIndex,
   threadSubject,
   THREAD_PARTICIPANTS_MAX,

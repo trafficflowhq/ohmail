@@ -495,8 +495,9 @@ export function pileOfState(
 const claimCache = new WeakMap<EntityReader, { v: number; claims: Map<string, MessageStateDTO> }>();
 
 export function winningStates(reader: EntityReader): Map<string, MessageStateDTO> {
-  const v = reader.version();
-  const hit = claimCache.get(reader);
+  // A hand-rolled reader with no `version()` gets the uncached answer (see `messagesByDateDesc`).
+  const v = typeof reader.version === "function" ? reader.version() : null;
+  const hit = v === null ? undefined : claimCache.get(reader);
   if (hit && hit.v === v) return hit.claims;
 
   const claimOf = new Map<string, MessageStateDTO>();
@@ -510,7 +511,7 @@ export function winningStates(reader: EntityReader): Map<string, MessageStateDTO
   for (const m of reader.list<EngineMessage>("message")) {
     if (m.triage) offer({ ...m.triage, messageId: m.id });
   }
-  claimCache.set(reader, { v, claims: claimOf });
+  if (v !== null) claimCache.set(reader, { v, claims: claimOf });
   return claimOf;
 }
 
@@ -522,8 +523,12 @@ export function winningStates(reader: EntityReader): Map<string, MessageStateDTO
  * folder, which is why the claim is asked and not the folder alone.
  */
 function standsHeld(m: Pick<EngineMessage, "id" | "folder">, claims: ReadonlyMap<string, MessageStateDTO>): boolean {
-  if (!isHeldFolder(m.folder)) return false;
-  const state = claims.get(m.id)?.state;
+  return heldUnpinned(m.folder, claims.get(m.id)?.state);
+}
+
+/** The rule {@link standsHeld} applies, over a folder and the claim a surface already holds. */
+export function heldUnpinned(folder: string | null | undefined, state: string | null | undefined): boolean {
+  if (!isHeldFolder(folder)) return false;
   return state !== "resurfaced" && state !== "bubbled_up";
 }
 
@@ -859,9 +864,12 @@ export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, Threa
       sizes.set(threadId, { count: inHand, whole: t.all, fromThread: false });
       continue;
     }
-    const ids = allHeld ? thread.messageIds : thread.messageIds.filter((id) => !heldIds.has(id as string));
+    // Held ids counted, never filtered: nothing is allocated per thread, and nothing is walked
+    // when the mirror holds no held member at all.
+    let heldListed = 0;
+    if (!allHeld && heldIds.size > 0) for (const id of thread.messageIds) if (heldIds.has(id as string)) heldListed += 1;
     const whole = Math.max(thread.messageIds.length, t.all);
-    sizes.set(threadId, { count: Math.max(ids.length, inHand), whole, fromThread: true });
+    sizes.set(threadId, { count: Math.max(thread.messageIds.length - heldListed, inHand), whole, fromThread: true });
   }
   if (v !== null) sizeCache.set(reader, { v, sizes });
   return sizes;
