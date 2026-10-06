@@ -3160,6 +3160,8 @@
     "unsavedSendAlreadyWent": "Diese Nachricht wurde bereits gesendet. Sie wurde nicht nochmal gesendet.",
     "unsavedPendingCount": "{count, plural, one {# \u00c4nderung ist noch nicht durch} other {# \u00c4nderungen sind noch nicht durch}}",
     "unsavedQueuedWhy": "Dieser Browser konnte dein Konto nicht erreichen. Er versucht es weiter.",
+    "keptSessionEnded": "Die Sitzung in diesem Browser ist beendet. Die Änderung bleibt erhalten und wird gesendet, sobald du dich wieder anmeldest.",
+    "keptAccountSwitched": "In einem anderen Tab hat sich ein anderes Konto angemeldet. Die Änderung bleibt erhalten und wird gesendet, sobald dieses Konto wieder angemeldet ist.",
     "unsavedSuperseded": "Inzwischen wurde eine neuere \u00c4nderung am selben Objekt gespeichert, daher kann diese nicht wiederholt werden.",
     "unsavedKindOther": "Eine \u00c4nderung an deinem Postfach",
     "unsavedKindMove": "Eine Nachricht einsortieren",

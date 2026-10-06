@@ -18,7 +18,7 @@ import { READING_ALONG_PREFIX } from "./shell/reading-along";
 import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 import {
-  SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch,
+  SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetSplashPresentation,
 } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
 import { postSignedOut } from "./signed-out-signal";
@@ -251,8 +251,9 @@ export async function forgetThisBrowser(
     deviceCeremonySwept = false;
     survivors.push(HANDOFF_KEY);
   }
-  // The tab's late-answer watch note (`session-refresh.ts`): an account id, a renewal's name, a time.
-  const watchLeft = forgetLateAnswerWatch();
+  // The tab's late-answer watch note and the splash's presentation note (`session-refresh.ts`): an
+  // account id, a renewal's name or the jar's mark, a time.
+  const watchLeft = [...forgetLateAnswerWatch(), ...forgetSplashPresentation()];
   if (watchLeft.length > 0) {
     deviceCeremonySwept = false;
     survivors.push(...watchLeft);

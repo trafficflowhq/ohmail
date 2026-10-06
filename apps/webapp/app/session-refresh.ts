@@ -299,6 +299,50 @@ export async function refreshSettled(): Promise<void> {
 }
 
 /**
+ * ANOTHER TAB'S RENEWAL, WAITED FOR. {@link refreshSettled} orders a request behind this tab's own
+ * renewal; another tab's holds the same lock, and its name stands in the shared record from just
+ * before it goes until its answer lands. A request beside it carries the access token that rotation
+ * replaces, is refused once, and its recovery rotates again. So it asks the lock in SHARED mode,
+ * granted once no renewal holds it, and lets go at once, within {@link SETTLE_DEADLINE_MS}. Answers
+ * whether it waited; with no record, no lock manager or this tab's own renewal out, it does not.
+ */
+export async function otherTabRenewalSettled(): Promise<boolean> {
+  if (inFlight !== null || !renewalOutElsewhere()) return false;
+  let locks: LockManager | undefined;
+  try {
+    locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  } catch {
+    return false;
+  }
+  if (!locks?.request) return false;
+  const ctl = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      locks.request(REFRESH_LOCK, { mode: "shared", signal: ctl.signal }, async () => undefined).catch(() => undefined),
+      new Promise<void>((resolve) => { timer = setTimeout(() => { ctl.abort(); resolve(); }, SETTLE_DEADLINE_MS); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+  return true;
+}
+
+/** A renewal's name in the shared record, young, over a jar its answer has not moved yet. */
+function renewalOutElsewhere(): boolean {
+  let owed: Partial<PendingAttempt> | null = null;
+  try {
+    const raw = window.localStorage.getItem(SESSION_ATTEMPT_KEY);
+    owed = raw === null ? null : (JSON.parse(raw) as Partial<PendingAttempt> | null);
+  } catch {
+    return false;
+  }
+  if (owed === null || typeof owed.csrf !== "string" || typeof owed.at !== "number") return false;
+  const age = Date.now() - owed.at;
+  return age >= 0 && age < SETTLE_DEADLINE_MS && owed.csrf === csrfMark(csrfToken());
+}
+
+/**
  * Try to turn the refresh cookie into a live session. Resolves `true` on success.
  *
  * Never throws and never rejects: every caller is on an error path already, and a refresh that
@@ -321,6 +365,51 @@ export interface ResumeOptions {
    * new name reads as a second holder. A presentation that names itself arms no watch.
    */
   attemptId?: string;
+  /**
+   * THE RESUME SPLASH'S PRESENTATION, which a reload of this tab can overtake: its keepalive request
+   * outlives the page and its answer lands in the jar after it. Noted for this tab while it is out;
+   * the next page's splash, finding the note young over a jar its answer has not moved, waits for
+   * that answer instead of presenting the same token again ({@link SPLASH_PRESENTATION_KEY}).
+   */
+  landing?: boolean;
+}
+
+/**
+ * THE SPLASH'S PRESENTATION OUT, for the next page of this tab: per tab (`sessionStorage`), holding
+ * its time, the jar's `tf_csrf` mark and the account, never a token. Taken back when the page hears
+ * an answer; a page that unloaded first leaves it for its successor.
+ */
+export const SPLASH_PRESENTATION_KEY = "ohmail.session.splashOut";
+const LANDING_POLL_MS = 100;
+
+interface PresentationOut { at: number; mark: string; owner: string | null }
+
+/** The previous page's presentation in this tab, young, over this jar unmoved and this account. */
+function presentationOut(): PresentationOut | null {
+  let out: Partial<PresentationOut> | null = null;
+  try {
+    const raw = window.sessionStorage.getItem(SPLASH_PRESENTATION_KEY);
+    out = raw === null ? null : (JSON.parse(raw) as Partial<PresentationOut> | null);
+  } catch {
+    return null;
+  }
+  if (out === null || typeof out.at !== "number" || typeof out.mark !== "string") return null;
+  const owner = typeof out.owner === "string" ? out.owner : null;
+  const age = Date.now() - out.at;
+  if (age < 0 || age >= SETTLE_DEADLINE_MS || out.mark !== csrfMark(csrfToken()) || owner !== readOwner()) return null;
+  return { at: out.at, mark: out.mark, owner };
+}
+
+/** Did that presentation's answer land: the jar moved off its mark, for the same account, within the bound? */
+async function presentationLanded(out: PresentationOut): Promise<boolean> {
+  const until = out.at + SETTLE_DEADLINE_MS;
+  for (;;) {
+    if (readOwner() !== out.owner) return false;
+    if (csrfMark(csrfToken()) !== out.mark) return true;
+    const left = until - Date.now();
+    if (left <= 0) return false;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(LANDING_POLL_MS, left)));
+  }
 }
 
 /**
@@ -418,6 +507,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
 
     const request = new AbortController();
     inFlightRequest = request;
+    let noted = false;
     try {
       // INSIDE the `try`, so the `finally` below clears `inFlight`. Outside it, one refusal
       // left the module's dedupe holding a settled promise for the life of the page and every
@@ -426,6 +516,22 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       if (opts.mayProceed && !opts.mayProceed()) {
         asked.refused = true;
         return "refused";
+      }
+      // A RELOADED SPLASH: the previous page's presentation of this jar is still out. Its answer is
+      // waited for; the wait gives the jar time to change hands, so the caller's question is asked again.
+      if (opts.landing === true && opts.attemptId === undefined) {
+        const out = presentationOut();
+        if (out !== null) {
+          const landed = await presentationLanded(out);
+          if (opts.mayProceed && !opts.mayProceed()) {
+            asked.refused = true;
+            return "refused";
+          }
+          if (landed) return landedFromThePreviousPage();
+        }
+        durableSessionSet(SPLASH_PRESENTATION_KEY,
+          JSON.stringify({ at: Date.now(), mark: csrfMark(csrfToken()), owner: readOwner() }), "session-splash");
+        noted = true;
       }
       /*
        * The CSRF header is required here — the old "none is needed" comment was wrong in production:
@@ -518,6 +624,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       });
       return "unavailable";
     } finally {
+      // Heard: the next page has nothing to wait for. A page that unloaded first never gets here.
+      if (noted) durableSessionRemove(SPLASH_PRESENTATION_KEY, "session-splash");
       if (inFlightRequest === request) inFlightRequest = null;
     }
   });
@@ -535,6 +643,21 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
   if (opts.attemptId !== undefined) inFlightRepair = { answer: started, asked };
   void started.finally(() => { inFlight = null; inFlightRepair = null; });
   return started;
+}
+
+/** The previous page's answer is this session: settled as this page's own 204 would be, nothing presented. */
+function landedFromThePreviousPage(): "resumed" {
+  settleAttempt();
+  durableSessionRemove(SPLASH_PRESENTATION_KEY, "session-splash");
+  recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
+  noteSessionMinted();
+  markSessionAlive();
+  return "resumed";
+}
+
+/** Sign-out's door for the splash's note. Answers what could not be removed. */
+export function forgetSplashPresentation(): string[] {
+  return durableSessionRemove(SPLASH_PRESENTATION_KEY, "session-splash") === "lost" ? [SPLASH_PRESENTATION_KEY] : [];
 }
 
 /** A sign-in minted past this refresh: nothing it learned is about the jar that holds now. */

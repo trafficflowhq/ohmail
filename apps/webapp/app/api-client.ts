@@ -11,8 +11,8 @@
 
 import { csrfToken as readCsrfToken } from "./csrf";
 import {
-  REFRESH_ENDPOINT, isRecoverable, mayRefreshFor, refreshInFlight, refreshSettled, resumeSession, retryAfterMsOf,
-  sessionMints, withSessionCookieLock,
+  REFRESH_ENDPOINT, isRecoverable, mayRefreshFor, otherTabRenewalSettled, refreshInFlight, refreshSettled, resumeSession,
+  retryAfterMsOf, sessionMints, withSessionCookieLock,
 } from "./session-refresh";
 import { sessionEndedResponse } from "@ohmail/client-engine";
 import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
@@ -23,7 +23,7 @@ import { RETURN_DEBOUNCE_MS, readStoredVerdict, storeVerdict } from "./shell/wal
 import { durableSessionRemove, durableSessionSet } from "./shell/durable";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
 import {
-  ACCOUNT_ERASED, ERASED_DECLARATION, clearAccountErased, erasedCapture, hearAccountErased,
+  ACCOUNT_ERASED, ERASED_DECLARATION, accountErasedOwner, clearAccountErased, erasedCapture, hearAccountErased,
 } from "./shell/account-erased";
 import { activeTranslator } from "./shell/locale";
 
@@ -466,12 +466,14 @@ let writesSent = 0;
  * and `res.json()` on an empty body throws.
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  // A renewal of this tab in flight is waited for first (bounded, never throws): a request beside it
-  // carries the access token the rotation replaces. Not on any `ceremony` request (the session read,
-  // the OAuth authorize calls; one overtaken is recovered below), a cookie-writing one (the lock
-  // orders those), nor a path that never renews. Everything after the wait reads the settled jar.
-  if (refreshInFlight() && opts.ceremony !== true && mayRefreshFor(path) && !writesSessionCookies(path)) {
-    await refreshSettled();
+  // A renewal of this tab in flight is waited for first (bounded, never throws), else one another tab
+  // is making (`otherTabRenewalSettled`): a request beside it carries the access token the rotation
+  // replaces. Not on any `ceremony` request (the session read, the OAuth authorize calls; one overtaken
+  // is recovered below), a cookie-writing one (the lock orders those), nor a path that never renews.
+  // Everything after the wait reads the settled jar.
+  if (opts.ceremony !== true && mayRefreshFor(path) && !writesSessionCookies(path)) {
+    if (refreshInFlight()) await refreshSettled();
+    else await otherTabRenewalSettled();
   }
   /*
    * NOTHING LEAVES A TAB WHOSE SESSION IS OVER, except what can end that state.
@@ -562,10 +564,12 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
      * then: a request this client may no longer make gets no recovery attempt on somebody else's credential.
      */
     mustHold();
-    // Renewed since this left (`sessionMints`): the new jar is the remedy, not another rotation.
-    const resumed = sessionMints() !== mintsAtSend ? "resumed" : await resumeSession();
+    // Renewed since this left (`sessionMints`): the new jar is the remedy, not another rotation. The
+    // same question rides into the lock: its wait is long enough for another account to sign in.
+    const whose = (): OwnerVerdict => apiOwnerVerdict(path, opts.ceremony === true ? { ceremony: true } : {});
+    const resumed = sessionMints() !== mintsAtSend ? "resumed" : await resumeSession({ mayProceed: () => whose() === "holds" });
     if (resumed === "unavailable") throw sessionUncheckedError();
-    if (resumed !== "resumed") throw err;
+    if (resumed !== "resumed") throw whose() === "mismatch" ? ownerRefusal("mismatch") : err;
     // The refresh rewrites the whole jar, so the question has to be asked again before the
     // retry: a refresh that landed as a different account must not be retried as this one.
     mustHold();
@@ -608,6 +612,49 @@ function renewalUnavailableResponse(): Response {
 }
 
 /**
+ * A PRESS NO SERVER JUDGED, KEPT FOR ITS OWN ACCOUNT: `not_signed_in`, which the engine keeps under
+ * its key and never counts (`UNJUDGED_WRITE_CODES`), with the reason in the reader's words — the
+ * `sync` catalogue's, the outbox's own, outside the first screen's cut. A renewal the server refused
+ * (the session may come back from another tab), or another tab's sign-in to a different account;
+ * never the renewal fault's sentence. A read keeps its own answer.
+ */
+const KEPT_PRESS = {
+  ended: ["keptSessionEnded", "This browser's session ended. The change is kept and sent once you sign in again."],
+  switched: ["keptAccountSwitched",
+    "Another tab signed in to a different account. The change is kept and sent once this account is signed in again."],
+} as const;
+
+function keptPressResponse(why: keyof typeof KEPT_PRESS): Response {
+  const [key, english] = KEPT_PRESS[why];
+  const message = activeTranslator("sync")?.(key) || english;
+  return new Response(JSON.stringify({ error: { code: "not_signed_in", message, retryable: true } }), {
+    status: 409, headers: { "content-type": "application/json" },
+  });
+}
+
+/** The server refused this browser's renewal, and the account was not erased: a sign-in can bring it back. */
+const sessionEnded = (): boolean => !sessionMayAsk() && accountErasedOwner() === null;
+
+/** The jar still names an account for this path: this client's own, or another's. */
+const namesAnAccount = (path: string): boolean => {
+  const verdict = apiOwnerVerdict(path);
+  return verdict === "holds" || verdict === "mismatch";
+};
+
+/** A press: anything but a read, which is the one request the adapter may ask twice. */
+const isPress = (init?: RequestInit): boolean => (init?.method ?? "GET").toUpperCase() !== "GET";
+
+/**
+ * A press refused for a jar that now names ANOTHER account was refused for that jar, before any handler
+ * ran (a 401 off the session, a 403 off the CSRF): kept for its own account. Anything else as it came.
+ */
+function refusedForAnotherAccount(first: Response, path: string, press: boolean): Response {
+  if (!press || apiOwnerVerdict(path) !== "mismatch") return first;
+  void first.body?.cancel().catch(() => undefined);
+  return keptPressResponse("switched");
+}
+
+/**
  * THE ENGINE'S CREDENTIAL DOOR ON THE WEB. Every press, `/sync` page and body read the mirror makes
  * leaves through the adapter `shell/engine-config.ts` builds on this, so it makes `api()`'s one
  * recovery: a refusal only the lapsed access explains renews through the single refresh and is sent
@@ -617,30 +664,49 @@ function renewalUnavailableResponse(): Response {
 async function sessionTransport(url: string, init?: RequestInit): Promise<Response> {
   const path = apiPathOf(url);
   const renews = path !== null && mayRefreshFor(path) && !writesSessionCookies(path);
-  // `api()`'s wait for a renewal in flight; a request that waited carries the renewed jar's token.
-  const waited = renews && refreshInFlight();
-  if (waited && path !== null) {
+  const press = isPress(init);
+  // `api()`'s wait for a renewal in flight, this tab's or another's; a request that waited carries
+  // the renewed jar's token. Another tab's wait that ended on a jar naming no account (a sign-out
+  // elsewhere) changes nothing: the request goes as it would have without it, refused as it came.
+  let waited = false;
+  if (renews && refreshInFlight()) {
     await refreshSettled();
+    waited = true;
+  } else if (renews && path !== null) {
+    waited = await otherTabRenewalSettled() && namesAnAccount(path);
+  }
+  if (waited && path !== null) {
     // A WAIT NEVER CHANGES WHICH ACCOUNT A REQUEST REACHES. Asked again after it, as `api()` asks
     // (`mustHold`): another tab may have signed in as somebody else meanwhile, and a press built for
-    // A sent on B's jar was applied on B and then, retried, on A. A moved jar is answered retryable
-    // (the press is kept for its own account), a refused renewal as the closed door; nothing is sent.
-    if (!sessionMayAsk() && !healablePath(path, false)) return sessionEndedResponse();
-    if (!apiOwnerHolds(path)) return renewalUnavailableResponse();
+    // A sent on B's jar was applied on B and then, retried, on A. Nothing is sent: a press is kept for
+    // its own account (a refused renewal, another account's jar), a read meets the closed door or the fault.
+    if (!sessionMayAsk() && !healablePath(path, false)) {
+      return press && sessionEnded() ? keptPressResponse("ended") : sessionEndedResponse();
+    }
+    if (!apiOwnerHolds(path)) {
+      return press && apiOwnerVerdict(path) === "mismatch" ? keptPressResponse("switched") : renewalUnavailableResponse();
+    }
   }
   const mintsAtSend = sessionMints();
   const first = await fetch(url, waited ? withFreshCsrf(init) : init);
   if (!renews || path === null) return first;
   if (!isRecoverable(first.status, await refusalCodeOf(first))) return first;
   // `api()`'s two questions around its refresh: never renew, nor re-send, on another account's jar.
-  if (!apiOwnerHolds(path)) return first;
-  const resumed = sessionMints() !== mintsAtSend ? "resumed" : await resumeSession();
+  if (!apiOwnerHolds(path)) return refusedForAnotherAccount(first, path, press);
+  // Asked again inside the lock, as `api()` asks: another account can sign in while it waits.
+  const resumed = sessionMints() !== mintsAtSend
+    ? "resumed" : await resumeSession({ mayProceed: () => apiOwnerHolds(path) });
   if (resumed === "unavailable") {
     void first.body?.cancel().catch(() => undefined);
     return renewalUnavailableResponse();
   }
-  if (resumed !== "resumed") return first;
-  if (!apiOwnerHolds(path)) return first;
+  if (resumed !== "resumed") {
+    // Its own renewal refused: kept as a press held across one is; any other refusal as it came.
+    if (!press || !sessionEnded()) return refusedForAnotherAccount(first, path, press);
+    void first.body?.cancel().catch(() => undefined);
+    return keptPressResponse("ended");
+  }
+  if (!apiOwnerHolds(path)) return refusedForAnotherAccount(first, path, press);
   void first.body?.cancel().catch(() => undefined);
   return fetch(url, withFreshCsrf(init));
 }

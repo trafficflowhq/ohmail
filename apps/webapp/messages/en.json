@@ -3160,6 +3160,8 @@
     "unsavedSendAlreadyWent": "This message had already been sent. It was not sent again.",
     "unsavedPendingCount": "{count, plural, one {# change has not gone through yet} other {# changes have not gone through yet}}",
     "unsavedQueuedWhy": "This browser could not reach your account. It keeps trying.",
+    "keptSessionEnded": "This browser's session ended. The change is kept and sent once you sign in again.",
+    "keptAccountSwitched": "Another tab signed in to a different account. The change is kept and sent once this account is signed in again.",
     "unsavedSuperseded": "A newer change to the same thing has since been saved, so this one cannot be retried.",
     "unsavedKindOther": "A change to your mailbox",
     "unsavedKindMove": "Filing a message",

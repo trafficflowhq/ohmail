@@ -108,10 +108,11 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
 
   /**
    * One pass of the ladder: ask, then act on the answer. `resumeSession` consults `stillMine` inside
-   * the lock, so no second check stands before the call.
+   * the lock, so no second check stands before the call. `landing`: a reload of this splash while
+   * its renewal was out waits for that renewal's answer rather than presenting the token again.
    */
   const attempt = useCallback(async (n: number): Promise<void> => {
-    const ok = await resumeSession({ mayProceed: stillMine }) === "resumed";
+    const ok = await resumeSession({ mayProceed: stillMine, landing: true }) === "resumed";
     // The jar changed while this waited for the lock: the browser holds somebody else's session.
     if (!ok && !stillMine()) { window.location.reload(); return; }
     const report = lastRefreshReport();
