@@ -11,8 +11,13 @@ import type { Diagnostic } from "./log.js";
  * {@link NEVER_CONNECTED_ATTEMPTS} then OFF; a drop AFTER success ⇒ reconnect on backoff for ever.
  */
 export const NEVER_CONNECTED_ATTEMPTS = 3;
-/** Reconnect after a CLEAN server close — the stream cycling, not failing. */
+/** Reconnect after a HEALTHY stream ends when the server named no `retry:` — the stream cycling. */
 export const WAKE_RECYCLE_DELAY_MS = 1_000;
+/** The bounds a server's `retry:` field is honoured within: a hint, not a command. */
+export const WAKE_RETRY_MIN_MS = 1_000;
+export const WAKE_RETRY_MAX_MS = 60_000;
+/** Open this long, or having delivered a frame, a stream was healthy: only that resets backoff. */
+export const WAKE_HEALTHY_STREAM_MS = 60_000;
 export const WAKE_BACKOFF_BASE_MS = 1_000;
 export const WAKE_BACKOFF_MAX_MS = 300_000;
 /** The floor under a 429 redial — the server said LATER, and later is at most once a minute. */
@@ -36,14 +41,15 @@ export interface CloudWake {
 }
 
 /**
- * Parse an SSE byte stream, invoking `onEvent` per dispatched event name. Minimal by intent:
- * the protocol's `data:`/`id:` fields are deliberately dropped (our frames are content-free
- * wake signals; a client that read data out of them would be building the dependency this
- * channel must never become).
+ * Parse an SSE byte stream, invoking `onEvent` per dispatched event name and `onRetry` per valid
+ * `retry:` field. Minimal by intent: the protocol's `data:`/`id:` fields are deliberately dropped
+ * (our frames are content-free wake signals; a client that read data out of them would be
+ * building the dependency this channel must never become).
  */
 async function readEvents(
   body: ReadableStream<Uint8Array>,
   onEvent: (name: string) => void,
+  onRetry: (ms: number) => void,
   isStopped: () => boolean,
 ): Promise<void> {
   const reader = body.getReader();
@@ -66,8 +72,12 @@ async function readEvents(
           eventName = "";
         } else if (line.startsWith("event:")) {
           eventName = line.slice(6).trim();
+        } else if (line.startsWith("retry:")) {
+          // The field's value, one leading space dropped; only ASCII digits are a value.
+          const value = line.slice(6).replace(/^ /, "");
+          if (/^[0-9]+$/.test(value)) onRetry(Number(value));
         }
-        // `: ping` comments, `retry:` hints and `data:` lines all fall through, read and unused.
+        // `: ping` comments and `data:` lines fall through, read and unused.
       }
     }
   } finally {
@@ -89,6 +99,8 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
   let everConnected = false;
   let failedDials = 0;
   let backoffMs = backoffBaseMs;
+  /** The last `retry:` the server sent, clamped; `null` until one arrives. */
+  let retryMs: number | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Aborts the held request on `stop()`. Without it a stop would leave the reader parked on a
@@ -115,6 +127,27 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
     (timer as { unref?: () => void }).unref?.();
   };
 
+  const honourRetry = (ms: number): void => {
+    retryMs = Math.min(Math.max(ms, WAKE_RETRY_MIN_MS), WAKE_RETRY_MAX_MS);
+  };
+
+  /**
+   * AFTER AN OPEN STREAM ENDS, cleanly or mid-read. A healthy one (open WAKE_HEALTHY_STREAM_MS or
+   * a frame delivered) resets the backoff and redials on the server's `retry:`. Any other grows
+   * the backoff and waits the longer of the two, so a server that answers 200 and closes at once,
+   * or a failed read's `retry: 30000`, is never redialled every second. A bare 200 resets nothing.
+   */
+  const afterStream = (openedAt: number, frames: number): void => {
+    if (frames > 0 || Date.now() - openedAt >= WAKE_HEALTHY_STREAM_MS) {
+      backoffMs = backoffBaseMs;
+      scheduleReconnect(retryMs ?? recycleDelayMs);
+      return;
+    }
+    const waitMs = Math.max(retryMs ?? 0, backoffMs);
+    backoffMs = Math.min(backoffMs * 2, backoffMaxMs);
+    scheduleReconnect(waitMs);
+  };
+
   const connect = async (): Promise<void> => {
     if (stopped) return;
     let res: Response;
@@ -130,7 +163,7 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
         // A drop on a channel that has worked: a blip. Reconnect on backoff, forever — the
         // stream is how mail becomes prompt, and the poll bounds what a long outage costs.
         backoffMs = Math.min(backoffMs * 2, backoffMaxMs);
-        scheduleReconnect(backoffMs);
+        scheduleReconnect(Math.max(retryMs ?? 0, backoffMs));
         return;
       }
       failedDials += 1;
@@ -201,20 +234,17 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
           "within about a second instead of on the poll cadence",
       });
     }
-    backoffMs = backoffBaseMs;
-
+    const openedAt = Date.now();
+    let frames = 0;
     try {
-      await readEvents(res.body, wake, () => stopped);
-      // A clean end: the server cycles streams on a fixed lifetime by design. Reconnect
-      // promptly (the gap is a window where frames are lost — the first pull after
-      // reconnecting is NOT forced, because the poll bounds the loss and a forced pull per
-      // cycle would be a scheduled cost, which is the poll's job, not the stream's).
-      scheduleReconnect(recycleDelayMs);
+      await readEvents(res.body, () => { frames += 1; wake(); }, honourRetry, () => stopped);
+      // A clean end: the server cycles streams on a fixed lifetime by design. The first pull
+      // after reconnecting is NOT forced: the poll bounds the loss, and a forced pull per cycle
+      // would be a scheduled cost, which is the poll's job, not the stream's.
+      afterStream(openedAt, frames);
     } catch {
-      // The stream died mid-read: a blip on a proven channel (or the abort on stop, which
-      // `scheduleReconnect` refuses). Backoff and redial.
-      backoffMs = Math.min(backoffMs * 2, backoffMaxMs);
-      scheduleReconnect(backoffMs);
+      // The stream died mid-read (or the abort on stop, which `scheduleReconnect` refuses).
+      afterStream(openedAt, frames);
     }
   };
 
