@@ -2,7 +2,7 @@ import { parseMessageIds } from "./threading.js";
 import type { AuthVerdict } from "./sender-headers.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 import {
-  compareRules, effectForDestination as effectOfDestination, namesAuthor, placingRule, type RuleEffect,
+  compareRules, effectForDestination as effectOfDestination, namesAuthor, placingRule, ruleMatchKey, type RuleEffect,
 } from "./rule-order.js";
 
 export type RuleKind = "sender" | "domain" | "header";
@@ -1150,9 +1150,17 @@ function policyDemotion(
  * allow-side piles only; its `matchedRuleId` is `null` so the learning path is taught no consent.
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
-  const { msg, rules, knownSenders, auth, ohboxPolicy, ownAddresses } = input;
+  const { msg, knownSenders, auth, ohboxPolicy, ownAddresses } = input;
 
   const author = authorAddress(msg);
+  /* A RULE ABOUT THE ACCOUNT ITSELF NEVER DECIDES ITS OWN MAIL (the own-mail rulings, HAND BACK 1
+     HIGH-2): for authenticated own mail a sender rule naming one of the account's own addresses is
+     read as if it did not exist, so the mail takes the own-mail branch below. A forged own From that
+     fails authentication is not own mail and keeps every rule. */
+  const ownMail = author !== null && auth !== "fail" && ownAddresses.has(author.toLowerCase());
+  const rules = ownMail
+    ? input.rules.filter((r) => !(r.kind === "sender" && ownAddresses.has(ruleMatchKey(r.match))))
+    : input.rules;
   const screened: RuleDecision = { destination: "ohmail/Screener", matchedRuleId: null, source: "screener" };
 
   const winner = winningRule(rules, msg, author);
@@ -1181,9 +1189,7 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
        (`destination: null`, `source: "own"` — no pile, no AI question), where every other mail
        program and a person who has left ohmail expect it. `fail` still screens: a forged own
        `From` is not the account's mail. */
-    if (author !== null && ownAddresses.has(author.toLowerCase()) && auth !== "fail") {
-      return { destination: null, matchedRuleId: null, source: "own" };
-    }
+    if (ownMail) return { destination: null, matchedRuleId: null, source: "own" };
     return screened;
   }
   if (auth === "fail") return screened;
