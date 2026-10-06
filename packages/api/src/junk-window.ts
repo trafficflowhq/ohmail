@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole, fenceErased,
+  assertOrganizerRole, fenceErased, fenceErasedMailbox, fencedAccountOf,
   contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages,
   lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl,
   writeRuleUnderKey, type LedgerTx, type RuleRowWrite, type Tx,
@@ -431,8 +431,11 @@ async function allowSender(
   tx: LedgerTx, accountId: string, address: string, nowAt: Date,
 ): Promise<AllowSenderOutcome> {
   // `dialect(tx)` and not the caller's handle: the brand travels to a transaction object, and
-  // reading it from the tx is what keeps this true on a device store as well as a server.
-  await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Parameters<typeof dialect>[0]), { accountId });
+  // reading it from the tx is what keeps this true on a device store as well as a server. A
+  // transaction whose opener already fenced this account holds the row: it is not read again.
+  if (fencedAccountOf(tx) !== accountId) {
+    await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Parameters<typeof dialect>[0]), { accountId });
+  }
   const addr = normalizeAllowAddress(address);
   // The rule-key lock before the first `rules` statement, every rules writer's order.
   await lockAccountRuleKeys(tx as unknown as Tx, accountId);
@@ -530,7 +533,7 @@ export async function rescueJunk(
   const nowAt = deps.now?.() ?? ctx.now();
 
   /* THE MAILBOX ARM TOO, not the account alone: `junk_rescues` is keyed by mailbox and a mailbox
-     erasure leaves the account standing. The account is fenced as the transaction opens; the
+     erasure leaves the account standing. The account is fenced once, as the transaction opens; the
      second verb then takes the rule-key lock, and only then the mailbox row, FOR UPDATE: the
      doorbell below updates that row, and two presses holding it shared would each wait on the
      other's share at their UPDATE. Taken exclusively here, the second press queues at the fence. */
@@ -539,10 +542,10 @@ export async function rescueJunk(
     let allowed: AllowSenderOutcome | undefined;
     if (sender !== null) {
       await lockAccountRuleKeys(tx as unknown as Tx, accountId);
-      await fenceErased(tx as unknown as Tx, d, { accountId, mailboxId: args.mailboxId, mailboxLock: "update" });
+      await fenceErasedMailbox(tx as unknown as Tx, d, args.mailboxId, "update");
       allowed = await allowSender(tx, accountId, sender, nowAt);
     } else {
-      await fenceErased(tx as unknown as Tx, d, { accountId, mailboxId: args.mailboxId, mailboxLock: "update" });
+      await fenceErasedMailbox(tx as unknown as Tx, d, args.mailboxId, "update");
     }
     const [row] = await tx.insert(junkRescues).values({
       accountId,
