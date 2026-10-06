@@ -1,4 +1,4 @@
-import type { Alert, AlertKind } from "./alerts.js";
+import type { Alert, AlertKind } from "./alert-types.js";
 import { ENTITLEMENTS_FAULT_ROUTE_PREFIX } from "./api-faults.js";
 
 /**
