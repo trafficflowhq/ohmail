@@ -664,6 +664,8 @@ export {
   OUTBOX_WITHDRAWN_CODE,
   // Which queued or wire entry a new send press may join — both surfaces' lookups.
   joinableStandingSend,
+  PRESS_AGE_KINDS,
+  STALE_PRESS_CODE,
   // The two structural capabilities an adapter WRAPPER has to forward by hand. Exported so a
   // wrapper can name the types rather than re-derive them — see `SnapshotCapableAdapter` and
   // `ListMessagesCapableAdapter` in engine.ts.

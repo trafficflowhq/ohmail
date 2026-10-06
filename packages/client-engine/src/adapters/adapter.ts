@@ -341,6 +341,11 @@ export interface EngineAdapter {
       createAttempted?: boolean;
       createdRow?: CreatedDraftRow;
       onDraftRow?: (row: CreatedDraftRow) => Promise<void>;
+      /**
+       * How long ago the press was made, in ms, measured by the ENGINE from the entry's persisted
+       * press instant — a state verb's `x-ohmail-press-age`. Absent for every other kind.
+       */
+      pressAgeMs?: number;
     },
   ): Promise<MutationAnswer>;
   /**

@@ -126,14 +126,18 @@ const withheldMarkerOf = (w: unknown): WithheldMarker | null => (isWithheldMarke
  * `queued` is THIS client's retry queue (the wire failed, the intent stands under its
  * Idempotency-Key, a drive will send it again), `awaiting_organizer` is the SERVER's — the
  * request is recorded and the install that organizes the mailbox will carry it out, so nothing
- * here retries and nothing here may report it done. `superseded` is a send re-pressed under its
- * key while on the wire, whichever way it then settled: the newer press carries the key and says its
- * one sentence; this one says nothing (a confirmation waits with the newer press, see `oneSpeaker`).
+ * here retries and nothing here may report it done. `superseded` is a verb a newer verb for the same
+ * field replaced on the wire, or the server refused as stale behind a newer decision (`stale_press`);
+ * the newer press owns the sentence and this one says nothing. A send re-pressed under its key is the
+ * same case (a confirmation waits with the newer press, see `oneSpeaker`).
  */
 /** Ids per `GET /screener/stayed` — the route's own ceiling (`WHY_STAYED_IDS_MAX`). */
 export const WHY_STAYED_PAGE = 100;
 
 export type MutationStatus = "confirmed" | "queued" | "awaiting_organizer" | "rolled_back" | "superseded";
+
+/** The server's refusal of a press replayed after the field it sets was decided elsewhere. */
+export const STALE_PRESS_CODE = "stale_press";
 
 /**
  * WHAT A WITHDRAWAL FOUND — {@link OhmailEngine.withdrawQueued}'s answer. `withdrawn` is the
@@ -738,9 +742,12 @@ function retiresAbandoned(newer: EngineMutation, older: EngineMutation): boolean
 function supersedeKey(m: EngineMutation): string | null {
   switch (m.kind) {
     case "triage_set":
+      return `${m.kind}:${m.messageId}`;
+    // ONE DECISION PER FIELD PER OUTBOX: a move and a delete both set the message's placement, so
+    // a later delete retires a queued move rather than both replaying onto one field in one flush.
     case "move":
     case "message_delete":
-      return `${m.kind}:${m.messageId}`;
+      return `placement:${m.messageId}`;
     case "tag_assign":
       // PER TAG, not per message: the enriched `labels` union is optimistic-only — the WIRE is
       // `{ tagId, assigned }`, so two queued assignments of different tags on one message are
@@ -773,6 +780,21 @@ function supersedeKey(m: EngineMutation): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * THE STATE VERBS THAT CARRY THEIR PRESS'S AGE (`x-ohmail-press-age`): each sets one field of one
+ * message, and the server refuses it `stale_press` when that field was decided after the press.
+ * Sends, Screener decisions and rule verbs take none. `press-age-route-census.test.ts` holds this
+ * set equal to the routes flagged `pressAge`.
+ */
+export const PRESS_AGE_KINDS: ReadonlySet<string> = new Set([
+  "move", "message_delete", "triage_set", "tag_assign", "mark_seen", "feed_mark_seen",
+]);
+
+/** The press age of an entry at dispatch: the engine clock minus the persisted press instant, never negative. */
+function pressAgeOf(m: EngineMutation, at: number, now: number): { pressAgeMs?: number } {
+  return PRESS_AGE_KINDS.has(m.kind) ? { pressAgeMs: Math.max(0, now - at) } : {};
 }
 
 /** Why a create past {@link pastCreateDedupe}'s horizon is never sent again — the retry's and the boot's. */
@@ -4694,6 +4716,9 @@ export class OhmailEngine {
     for (const w of this.waitingServer ?? []) {
       listed.add(w.id);
       if (w.state === "applied" || w.state === "expired") continue;
+      // Refused as stale: older than the reader's own window, or behind a newer decision on the
+      // organizer. Either way a newer press, or nobody, owns the sentence; the row says nothing.
+      if (w.state === "refused" && w.refusedReason === "stale") continue;
       const t = w.target as Record<string, unknown>;
       const rule = (t.rule ?? null) as { kind: string; match: string; subjectContains: string | null; bodyContains: string | null } | null;
       out.push({
@@ -7899,6 +7924,7 @@ export class OhmailEngine {
       }
       const outcome = await this.adapter.mutate(p.mutation, {
         idempotencyKey: p.key,
+        ...pressAgeOf(p.mutation, p.at, this.now().getTime()),
         ...(p.createAttempted === true ? { createAttempted: true } : {}),
         ...(p.mutation.kind === "mail_send" ? {
           ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
@@ -8151,10 +8177,9 @@ export class OhmailEngine {
           this.overlays.delete(p.id);
           this.overlayRev++;
           this.notify();
-          // A send is marked only by the same send re-pressed under its key (`supersedeQueued`): the
-          // newer press owns the key's sentence — see `MutationStatus`.
-          if (p.mutation.kind === "mail_send") return { id: p.id, key: p.key, status: "superseded", seq: null };
-          return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
+          // Every kind: the newer press for the same field owns the sentence — see `MutationStatus`.
+          // A wire failure here is not this press's refusal; its overlay and row are gone above.
+          return { id: p.id, key: p.key, status: "superseded", seq: null };
         }
         this.queue.push(p);
         // NAMED, not adopted — see {@link MutationResult.entityId}. The adapter created a row for
@@ -8178,6 +8203,15 @@ export class OhmailEngine {
       // the surface to say.
       this.overlays.delete(p.id);
       this.awaitingEcho.delete(p.id);
+      /* STALE BEHIND A NEWER DECISION: the server refused a press replayed after the field it sets
+         was decided elsewhere. The mirror's drain already carries the newer state, so the overlay
+         and the row go and the press settles silent — never a refusal record, never a sentence. */
+      if (rejection.code === STALE_PRESS_CODE) {
+        await this.dropOutbox(p.id);
+        this.overlayRev++;
+        this.notify();
+        return { id: p.id, key: p.key, status: "superseded", seq: null };
+      }
       // THE SERVER TOMBSTONED THIS KEY (a Cancel, here or in another window): the withdrawn ending,
       // never a refusal record — nothing was sent and nothing will be.
       if (p.mutation.kind === "mail_send" && rejection.code === OUTBOX_WITHDRAWN_CODE) {

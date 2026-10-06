@@ -467,7 +467,10 @@ export class HttpAdapter implements EngineAdapter {
    * Exactly one caller passes a signal today: {@link HttpAdapter.listAttachments}, via {@link
    * HttpAdapter.withDeadline}.
    */
-  private async request(method: string, path: string, init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<Response> {
+  private async request(
+    method: string, path: string,
+    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number } = {},
+  ): Promise<Response> {
     /*
      * THE GATE, AHEAD OF EVERY DOOR AND AHEAD OF EVERY HEADER. A client whose session is
      * confirmed over answers itself with the 401 the server would have sent (`sessionEndedResponse`,
@@ -480,6 +483,8 @@ export class HttpAdapter implements EngineAdapter {
     const headers: Record<string, string> = { ...this.extraHeaders() };
     if (init.body !== undefined) headers["content-type"] = "application/json";
     if (init.idempotencyKey) headers["idempotency-key"] = init.idempotencyKey;
+    // The press's age, whole ms, never negative: the server's floor is its own clock minus this.
+    if (init.pressAgeMs !== undefined) headers["x-ohmail-press-age"] = String(Math.max(0, Math.floor(init.pressAgeMs)));
     if (method !== "GET") {
       const csrf = this.getCookie(this.csrfCookieName);
       if (csrf) headers["x-csrf-token"] = csrf;
@@ -1031,11 +1036,14 @@ export class HttpAdapter implements EngineAdapter {
    * honest reading of a missing field here is "the mail server has not done it yet", never "it is done".
    */
   async restoreFromTrash(
-    messageId: string, opts: { idempotencyKey?: string } = {},
+    messageId: string, opts: { idempotencyKey?: string; pressAgeMs?: number } = {},
   ): Promise<RestoreFromTrashWire | null> {
     const res = await this.request(
       "POST", `/messages/${encodeURIComponent(messageId)}/restore`,
-      opts.idempotencyKey === undefined ? {} : { idempotencyKey: opts.idempotencyKey },
+      {
+        ...(opts.idempotencyKey === undefined ? {} : { idempotencyKey: opts.idempotencyKey }),
+        ...(opts.pressAgeMs === undefined ? {} : { pressAgeMs: opts.pressAgeMs }),
+      },
     );
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as { restoreTo?: string; pending?: boolean };
@@ -1383,13 +1391,16 @@ export class HttpAdapter implements EngineAdapter {
     opts: {
       idempotencyKey: string; createAttempted?: boolean;
       createdRow?: CreatedDraftRow; onDraftRow?: (row: CreatedDraftRow) => Promise<void>;
+      pressAgeMs?: number;
     },
   ): Promise<MutationAnswer> {
+    /* The state verbs' press age, beside their key; `undefined` sends no header (every other kind). */
+    const age = opts.pressAgeMs === undefined ? {} : { pressAgeMs: opts.pressAgeMs };
     switch (m.kind) {
       case "move": {
         const res = await this.request("POST", `/messages/${m.messageId}/move`, {
           body: { folder: m.folder },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1408,7 +1419,7 @@ export class HttpAdapter implements EngineAdapter {
 
       case "message_delete": {
         const res = await this.request("DELETE", `/messages/${m.messageId}`, {
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1430,7 +1441,7 @@ export class HttpAdapter implements EngineAdapter {
       case "triage_set": {
         const res = await this.request("POST", `/messages/${m.messageId}/triage`, {
           body: { state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}) },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         // The triage endpoint returns the MessageStateDTO without an X-Sync-Seq
@@ -1516,7 +1527,7 @@ export class HttpAdapter implements EngineAdapter {
         const changes: SyncChange[] = [];
         let seq: number | null = null;
         for (const id of m.messageIds ?? []) {
-          const res = await this.request("PATCH", `/messages/${id}`, { body: { unread: false, via: "glance" } });
+          const res = await this.request("PATCH", `/messages/${id}`, { body: { unread: false, via: "glance" }, ...age });
           if (!res.ok) throw await this.rejectionOf(res);
           const s = this.noteSeq(res);
           const dto = (await res.json()) as EngineMessage;
@@ -1543,7 +1554,7 @@ export class HttpAdapter implements EngineAdapter {
         // answering pins exactly as before.
         const res = await this.request("PATCH", "/messages", {
           body: { ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}) },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         return { changes: [], seq: this.noteSeq(res) };
@@ -1576,7 +1587,7 @@ export class HttpAdapter implements EngineAdapter {
             // TAG-OR-CREATE: the name the user typed, plus the id to mint it under, so the
             // optimistic paint and the stored row agree. An existing name wins over the id.
             : { tagId: m.tagId, name: m.createName, assigned: m.assigned },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         return { changes: [], seq: this.noteSeq(res) };

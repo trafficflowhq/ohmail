@@ -12,7 +12,9 @@ import type { MutationRejectedError } from "./types.js";
 export type PressVerdict =
   | { kind: "applied" }
   | { kind: "queued"; wait: "retry" | "organizer"; holder: string | null }
-  | { kind: "refused"; refusal: MutationRejectedError | undefined };
+  | { kind: "refused"; refusal: MutationRejectedError | undefined }
+  /** A newer press for the same field owns the sentence: this one says nothing at all. */
+  | { kind: "silent" };
 
 /**
  * A press that never reached a verdict — `mutate` resolves for every outcome it models, so a
@@ -45,9 +47,9 @@ export function pressVerdict(res: PressAnswer): PressVerdict {
     case "rolled_back":
       return { kind: "refused", refusal: res.error };
     case "superseded":
-      // A send only: its key is still going under the newer press, which is the wait this names.
-      // The one send reader (`mail-send.ts`'s refusal read) takes it, rightly, as no refusal.
-      return { kind: "queued", wait: "retry", holder: null };
+      // Replaced on the wire by a newer press for the same field, or refused stale behind a newer
+      // decision — and a send re-pressed under its key. The newer press says the one sentence.
+      return { kind: "silent" };
     default: {
       /* The belt for a build that got past the type error: the most conservative of the three
          answers, never a fourth nobody can reach. */
@@ -58,11 +60,15 @@ export function pressVerdict(res: PressAnswer): PressVerdict {
   }
 }
 
-/** What a SET of presses answered — three counts that sum to the number dispatched. */
+/**
+ * What a SET of presses answered — four counts that sum to the number dispatched. `silent` is never
+ * folded into the other three: a press a newer one replaced is neither done, waiting nor refused.
+ */
 export interface PressTally {
   applied: number;
   queued: number;
   refused: number;
+  silent: number;
   /** The first refusal's own error, for the sentence a wholly refused set says. */
   firstRefusal: MutationRejectedError | undefined;
   /** The first named holder among the queued, where the server named one. */
@@ -75,10 +81,11 @@ export interface PressTally {
  * alone leaves four messages unaccounted for on screen.
  */
 export function tallyVerdicts(verdicts: readonly PressVerdict[]): PressTally {
-  const tally: PressTally = { applied: 0, queued: 0, refused: 0, firstRefusal: undefined, holder: null };
+  const tally: PressTally = { applied: 0, queued: 0, refused: 0, silent: 0, firstRefusal: undefined, holder: null };
   let sawRefusal = false;
   for (const v of verdicts) {
-    if (v.kind === "applied") tally.applied += 1;
+    if (v.kind === "silent") tally.silent += 1;
+    else if (v.kind === "applied") tally.applied += 1;
     else if (v.kind === "queued") {
       tally.queued += 1;
       if (tally.holder === null) tally.holder = v.holder;
