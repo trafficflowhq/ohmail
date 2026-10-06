@@ -128,7 +128,7 @@ export function SegmentedControl<T extends string = string>({
       /**
        * So the wait is replaced by an explicit re-measure on the next frame.
        */
-      if (!el.hasAttribute("data-stack")) {
+      if (!el.hasAttribute("data-stack") && !el.hasAttribute("data-fill")) {
         naturalRef.current = segNaturalWidth(el);
       } else if (naturalRef.current == null) {
         // Stand in row form for one frame so the row can be measured at all, then come back.
@@ -175,8 +175,19 @@ export function SegmentedControl<T extends string = string>({
   const cls = ["seg", counted ? "counted" : null, variant === "scope" ? "scope" : null, className]
     .filter(Boolean)
     .join(" ");
+  /* A PAIR NEVER STACKS. Two options one above the other read as a list, not as a choice between
+     two; when a pair's row overflows it takes the full width in two equal halves whose labels may
+     wrap (`seg.css`, `data-fill`). Three or more options stack as before. */
+  const pair = options.length === 2;
   return (
-    <div ref={ref} className={cls} role={role} aria-label={ariaLabel} data-stack={stack ? "" : undefined}>
+    <div
+      ref={ref}
+      className={cls}
+      role={role}
+      aria-label={ariaLabel}
+      data-stack={stack && !pair ? "" : undefined}
+      data-fill={stack && pair ? "" : undefined}
+    >
       {options.map((o) => {
         const on = o.id === value;
         return (

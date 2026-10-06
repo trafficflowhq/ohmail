@@ -41,6 +41,10 @@
 .set-row > .lab ~ *{flex:0 0 auto}
 /* a text control IS the flexible thing in its row (the away responder's subject line) */
 .set-row > .lab ~ :is(input,textarea,.set-tag-input){flex:1 1 200px;min-width:0}
+/* A SWITCH KEEPS ITS ROW. It is 44px wide at most, so the label block gives way to it at every
+   width (basis 0) rather than claiming its 200-300px floor and pushing the switch under the text. */
+.set-row:has(> .switch) > .lab{flex:1 1 0}
+.set-row > .switch{flex:0 0 auto}
 .set-val{margin-left:auto;font-size:calc(12.5px + var(--type-up));color:var(--ink2);flex:none;text-align:right}
 .set-sub{font-size:calc(12px + var(--type-up));font-weight:600;color:var(--ink3);padding:24px 0 2px}
 .set-sub:first-child{padding-top:12px}

@@ -652,6 +652,21 @@ export function SearchView({
    * or the server did not answer. Under it, while the store is still indexing, its progress;
    * on the last relevance page of a cut set, where the date orders walk everything.
    */
+  /* A COUNT IS NEVER CUT FROM ITS WORD, NOR A TIME FROM ITS UNIT. On a phone the line broke as
+     "109" / "ms" and "936" / "matched". The phrase after the sentence's dash ("936 matched",
+     "about 690 matched") and the time go in one unbreakable span; the sentence before it wraps.
+     A time is always said: the store's, else this device's own pass (`tookMs`). */
+  const countWhole = (sentence: string, ms: string | null) => {
+    const cut = sentence.lastIndexOf(" — ");
+    const head = cut < 0 ? "" : sentence.slice(0, cut + 3);
+    const tail = cut < 0 ? sentence : sentence.slice(cut + 3);
+    return <>{head}<span className="nobr">{tail}{ms !== null ? ` · ${ms}` : null}</span></>;
+  };
+  /* The verdict carries the count and the time whenever the archive answered, and then the bare
+     "N results · M ms" line above it would say the same numbers twice: it stands only where the
+     verdict has no count (searching, no archive, no answer) or a facet filters what is shown. */
+  const verdictCounts = !!result && trimmed.length >= 2 && passState !== "idle" && passState !== "searching"
+    && passState !== "unavailable" && passState !== "unanswered" && ready !== null;
   const device = indexing ? <>{t("scopeIndexing")} </> : null;
   const verdict = !result ? null : trimmed.length < 2 ? device : passState === "idle" || passState === "searching" ? (
     <>
@@ -675,10 +690,12 @@ export function SearchView({
     /* A desktop paired with ohmail Cloud whose account did not answer: its mirror did, and the
        sentence says whose mail that is. The retry asks the account again. */
     <>
-      {ready.totalExact ? t("scopeMirror", { total: ready.total })
-        : ready.about !== null ? t("scopeMirrorAbout", { total: ready.about })
-          : t("scopeMirrorAtLeast", { total: ready.total })}
-      {ready.ms !== null ? <> · {t("scopeServerMs", { ms: ready.ms })}</> : null}{" "}
+      {countWhole(
+        ready.totalExact ? t("scopeMirror", { total: ready.total })
+          : ready.about !== null ? t("scopeMirrorAbout", { total: ready.about })
+            : t("scopeMirrorAtLeast", { total: ready.total }),
+        t("scopeServerMs", { ms: ready.ms ?? tookMs }),
+      )}{" "}
       <button type="button" className="btn ghost" onClick={() => setRetryTick((n) => n + 1)}>
         {t("scopeWholeRetry")}
       </button>
@@ -686,18 +703,22 @@ export function SearchView({
   ) : ready.importing ? (
     /* The store has not taken in the whole mailbox (a first sync): the line says what it searched. */
     <>
-      {ready.totalExact ? t("scopeSynced", { total: ready.total })
-        : ready.about !== null ? t("scopeSyncedAbout", { total: ready.about })
-          : t("scopeSyncedAtLeast", { total: ready.total })}
-      {ready.ms !== null ? <> · {t("scopeServerMs", { ms: ready.ms })}</> : null}
+      {countWhole(
+        ready.totalExact ? t("scopeSynced", { total: ready.total })
+          : ready.about !== null ? t("scopeSyncedAbout", { total: ready.about })
+            : t("scopeSyncedAtLeast", { total: ready.total }),
+        t("scopeServerMs", { ms: ready.ms ?? tookMs }),
+      )}
     </>
   ) : (
     <>
       {/* Exact, else the estimate's "about N" (replaced in place by the summary), else the page's bound. */}
-      {ready.totalExact ? t("scopeWhole", { total: ready.total })
-        : ready.about !== null ? t("scopeWholeAbout", { total: ready.about })
-          : t("scopeWholeAtLeast", { total: ready.total })}
-      {ready.ms !== null ? <> · {t("scopeServerMs", { ms: ready.ms })}</> : null}
+      {countWhole(
+        ready.totalExact ? t("scopeWhole", { total: ready.total })
+          : ready.about !== null ? t("scopeWholeAbout", { total: ready.about })
+            : t("scopeWholeAtLeast", { total: ready.total }),
+        t("scopeServerMs", { ms: ready.ms ?? tookMs }),
+      )}
     </>
   );
   const scope = verdict === null ? null : (
@@ -848,12 +869,16 @@ export function SearchView({
             </div>
           ) : (
             <>
-              <div className="results-head num">
-                <b>{t("resultsHead", { count: found })}</b>
-                {/* The time of the pass whose rows these are: the store's, once it answered. */}
-                {t("resultsMeta", { ms: ready?.ms ?? tookMs })}
-                {filter ? <> · {t("filtered")}</> : null}
-              </div>
+              {verdictCounts && !filter ? null : (
+                <div className="results-head num">
+                  {/* The time of the pass whose rows these are: the store's, once it answered. */}
+                  <span className="nobr">
+                    <b>{t("resultsHead", { count: found })}</b>
+                    {t("resultsMeta", { ms: ready?.ms ?? tookMs })}
+                  </span>
+                  {filter ? <> · {t("filtered")}</> : null}
+                </div>
+              )}
               {/* `.results-head` again rather than a new class: `app/app.css` and
                   `packages/ui` both belong to other slices right now, so this line takes the
                   12px/--ink2 treatment that already exists instead of shipping unstyled text.

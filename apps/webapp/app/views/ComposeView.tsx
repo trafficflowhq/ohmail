@@ -61,6 +61,10 @@ const MATCH_HINT_ID = "compose-from-match";
  */
 const SEND_LATER_MIN_LEAD_MS = 3 * 60 * 1000;
 
+/** Under this many px of To input the placeholder is the bare example address. */
+export const TO_PLACEHOLDER_SHORT_BELOW_PX = 300;
+export const toPlaceholderIsShort = (inputWidthPx: number): boolean => inputWidthPx < TO_PLACEHOLDER_SHORT_BELOW_PX;
+
 export function ComposeView({
   engine,
   draft,
@@ -352,6 +356,22 @@ export function ComposeView({
       ?.focus();
     // Mount-only by design — see the decision above; a re-render must not steal the caret.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* THE TO PLACEHOLDER FITS ITS FIELD. Under 300px of input the long hint ("…, separated by
+     commas") was sliced mid-letter against the Cc/Bcc button; there the bare example address
+     stands instead. Measured, never assumed: with no reading (no ResizeObserver, no layout) the
+     long hint stays. */
+  const [toNarrow, setToNarrow] = useState(false);
+  useEffect(() => {
+    const el = rootRef.current?.querySelector<HTMLElement>("#compose-to");
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const w = el.getBoundingClientRect().width;
+      if (w > 0) setToNarrow(toPlaceholderIsShort(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   /**
@@ -694,7 +714,7 @@ export function ComposeView({
                 onChange={(next) => onFields({ ...fields, to: next })}
                 book={book}
                 disabled={inFlight}
-                placeholder={t("toPlaceholder")}
+                placeholder={t(toNarrow ? "toPlaceholderShort" : "toPlaceholder")}
                 /* The error line below is the accessible name's partner: a field that is wrong
                    must SAY which entry is wrong, not merely refuse to enable Send. */
                 invalid={shownInvalid.length > 0}

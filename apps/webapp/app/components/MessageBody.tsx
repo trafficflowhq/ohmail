@@ -13,6 +13,7 @@
 
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BODY_PAGE_CHARS, useOptionalTheme } from "@ohmail/ui";
 import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
 import {
@@ -3380,6 +3381,13 @@ export interface MessageBodyProps {
    * three strings changes, so a host that stores it re-renders once per real change.
    */
   onNotice?: (notice: BlockNotice | null) => void;
+  /**
+   * WHERE THE DARK TOGGLE STANDS when the host has a header row for it. Present (even `null` while the host's ref is
+   * still unset) means the host takes the toggle: "Original" renders into this element through a portal, in flow
+   * beside the host's date, and leaves the bar. A held Screener card passes it — above a narrow framed mail the
+   * toggle otherwise sat on the card's corner. Absent, the toggle stays in the bar.
+   */
+  adaptSlot?: HTMLElement | null;
 }
 
 /**
@@ -3402,6 +3410,7 @@ export function MessageBody({
   onCidImages,
   onRenderMode,
   onNotice,
+  adaptSlot,
 }: MessageBodyProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -3975,13 +3984,25 @@ export function MessageBody({
    * after the body, so a plain letter with nothing to report shows no bar at all.
    */
   const controlsOnly = hostTakesNotice && hasBlocked && canLoad;
-  const showBar = barSaysIt || canAdapt || controlsOnly;
+  const hostTakesAdapt = adaptSlot !== undefined;
+  const showBar = barSaysIt || (canAdapt && !hostTakesAdapt) || controlsOnly;
   /**
    * IS WHAT THE READER IS LOOKING AT DARK? Not the same question as `dark`, which is only
    * whether the FILTER is on. A mail the sender drew dark is dark on screen with no filter at
    * all, and the surround has to match that too or a dark newsletter sits in a light frame.
    */
   const surfaceDark = themeDark && (dark || !adaptable);
+  const adaptToggle = (
+    <button
+      type="button"
+      className="mb-bar-btn"
+      aria-pressed={original}
+      title={original ? COPY.darkAdaptTitle : COPY.darkOriginalTitle}
+      onClick={() => setOriginal(!original)}
+    >
+      {original ? COPY.darkAdapt : COPY.darkOriginal}
+    </button>
+  );
 
   return (
     <div className="mb" ref={shellRef}>
@@ -4036,19 +4057,10 @@ export function MessageBody({
           {/* The dark-viewer toggle. Only meaningful in a dark theme — in light there is
               nothing to adapt — so it is absent otherwise. `aria-pressed` reports whether the
               reader has forced the original light rendering for this message. */}
-          {canAdapt ? (
-            <button
-              type="button"
-              className="mb-bar-btn"
-              aria-pressed={original}
-              title={original ? COPY.darkAdaptTitle : COPY.darkOriginalTitle}
-              onClick={() => setOriginal(!original)}
-            >
-              {original ? COPY.darkAdapt : COPY.darkOriginal}
-            </button>
-          ) : null}
+          {canAdapt && !hostTakesAdapt ? adaptToggle : null}
         </div>
       ) : null}
+      {canAdapt && adaptSlot ? createPortal(adaptToggle, adaptSlot) : null}
 
       {proseView ? (
         /* A LETTER, in the app's own type — no frame, no sheet, no measurement pass, and NEVER

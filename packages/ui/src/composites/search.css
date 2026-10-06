@@ -9,6 +9,8 @@
 .search-box input::placeholder{color:var(--ink2)}
 .results-head{font-size:calc(12px + var(--type-up));color:var(--ink2);padding:16px 4px 10px;font-variant-numeric:tabular-nums}
 .results-head b{color:var(--ink)}
+/* a count and its word, a time and its unit: never split across a line (SearchView `countWhole`) */
+.view-search .nobr{white-space:nowrap}
 .hit{display:block;width:100%;text-align:left;padding:14px 18px;border-radius:calc(var(--r-card) * 16 / 14);margin-bottom:6px;border:0;cursor:pointer;
   background:none;font:inherit;color:inherit;
   transition:background .16s var(--swift), box-shadow .2s var(--swift), transform .2s var(--swift)}

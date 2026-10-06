@@ -2135,6 +2135,8 @@ export function HeldMail({
      in the air, so the record stays `loading` and a clock keyed on the message alone kept saying
      "Couldn't load" over a live re-ask until it landed. */
   const [asks, setAsks] = useState(0);
+  /* The header row's slot for the dark toggle ("Original"): in flow right of the date, never over the mail. */
+  const [adaptSlot, setAdaptSlot] = useState<HTMLElement | null>(null);
   const stalled = useBodyStalled(`${messageId ?? subject}:${asks}`, waiting);
   const retry = onRetry
     ? () => {
@@ -2175,6 +2177,7 @@ export function HeldMail({
             card's order. */}
         {notice ? <BlockNoticeGloss notice={notice} /> : null}
         <span className="t num">{time ?? ""}</span>
+        <span className="hm-adapt" ref={setAdaptSlot} />
       </div>
       <h2>{subject}</h2>
       {trackerNote ? (
@@ -2205,6 +2208,7 @@ export function HeldMail({
           onLoadRemote={onLoadRemote}
           loadTrackingPixels={loadTrackingPixels ?? false}
           onNotice={setNotice}
+          adaptSlot={adaptSlot}
         />
       </div>
       {/* A held message's files, through the one holder every reader uses. Only a row the mirror

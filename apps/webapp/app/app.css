@@ -2107,6 +2107,18 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .hm-line .mb-notice + .t {
   margin-left: 0;
 }
+/* THE DARK TOGGLE'S SLOT (`MessageBody`'s `adaptSlot`): a header control right of the date, in
+   flow and on the date's line, so "Original" never sits on the corner of the mail below it.
+   Empty — a light theme, a plain-text mail — it takes no room. */
+.hm-line .hm-adapt {
+  flex: none;
+  /* Baseline, not centre: centred on a line the 23px pill itself makes taller, it hung 5-6px
+     below the date. On the line's baseline its label stands on the date's line. */
+  align-self: baseline;
+}
+.hm-line .hm-adapt:empty {
+  display: none;
+}
 .hmail h2 {
   font-size: 17px;
   font-weight: 600;
@@ -3124,12 +3136,18 @@ textarea.c-input:read-only {
   color: var(--ink);
 }
 /* The input takes the rest of the line and never shrinks below a typeable width — mid-list
-   it wraps to its own line instead. */
+   it wraps to its own line instead. The floor is capped at the box: where the whole row has less
+   than 120px (German "Kopie/Blindkopie" beside it at 360) the input fits the box and its hint
+   ends in an ellipsis, rather than running under the Cc/Bcc button. */
 input.rcp-input { /* by element: the floor outranks the line shape's `flex: 1` in either load order */
   flex: 1 1 120px;
-  min-width: 120px;
+  min-width: min(120px, 100%);
   width: auto;
 }
+/* The belt under the measured short hint (`ComposeView`): a hint that still does not fit ends in an
+   ellipsis rather than a letter cut in half. On the INPUT: Chromium ignores it on `::placeholder`,
+   and draws none while the field has focus. */
+input.rcp-input { text-overflow: ellipsis; }
 
 /* ── The located row ───────────────────────────────────────────────────────────────────
    Opening a search result moves the cursor and navigates; this is what says WHICH row you
@@ -3180,6 +3198,16 @@ input.set-tag-input {
   display: inline-flex;
   gap: 7px;
   flex: 0 0 auto;
+}
+/* THE COLOUR DOT IN A NAMING ROW IS A 12px SWATCH, NEVER A BAR. Under 480px of pane the settings
+   ladder stacks a row with a text input and stretches every child, which drew the dot as a
+   full-width green bar over the field. The dot and its field stay on one line; the verbs go under. */
+.set-tag-edit > .tdot { flex: none; width: 12px; height: 12px; }
+@container set-pane (max-width: 480px) {
+  .set-row.set-tag-edit:has(> .set-tag-input) { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .set-row.set-tag-edit:has(> .set-tag-input) > .tdot { width: 12px; }
+  .set-row.set-tag-edit:has(> .set-tag-input) > .set-tag-input { flex: 1 1 0; width: auto; }
+  .set-row.set-tag-edit:has(> .set-tag-input) > .set-tag-acts { flex-basis: 100%; }
 }
 
 /* The coloured dot doubles as the recolour trigger: a bare button so the dot sits exactly where a
@@ -4729,9 +4757,8 @@ input.set-tag-input {
    and the destructive button is ink-on-canvas with a hairline rather than a red fill: a
    red slab would be the loudest thing on the surface and this pane is meant to be read
    before it is used. */
-.acct {
-  max-width: 620px;
-}
+/* No width of its own: every settings pane shares `.set-layout`'s 760px column and its cards fill
+   it. A 620px cap here drew Account, Devices, Security and Invites narrower than the tab row. */
 .acct-h {
   font-size:calc(15px + var(--type-up));
   font-weight: 600;
@@ -5206,6 +5233,36 @@ input.set-tag-input {
   /* Wrap is inherited from the base rule, which is what makes this work at a 320px pane:
      the status sentence takes a line, the buttons take the next, and no capsule squishes. */
   .mbx-state { width: 100%; justify-content: space-between; }
+}
+/* ── THE STATE AND ITS VERBS, BY THE CARD'S WIDTH ─────────────────────────────────────────
+   From 480px of card: the stamp, then Sync now · Edit · Remove (`.mbx-verbs`, one item). The
+   stamp's text is kept out of the column's sizes (`contain: inline-size`), so the column ASKS
+   for its verbs plus an 8ch stamp (its `auto` basis) and NEEDS only its verbs, because it
+   wraps. It stands beside the address and the
+   Organizing box when what it asks for fits there, else it goes under them at the full width.
+   There the stamp ellipsises down to 8ch; below that it takes its own line and the verbs stay
+   together under it, so no verb leaves the card in any locale or face. Under 480px of card that
+   last shape is the rule: the status on its own line, the verbs one row under it, flush left,
+   8px apart — "Remove" never stands alone on a line. */
+.mbx-row { flex-wrap: wrap; }
+/* The address is read first, so it gives way last: the address column asks for its own width
+   (`auto` basis), and the state column goes under it before the address is cut. */
+.mbx-row > .mbx-main { flex: 1 1 auto; }
+.mbx-state { flex: 1 1 auto; flex-wrap: wrap; }
+/* The stamp ellipsises (its title carries the whole time); a refusal or a wait is a sentence that
+   must be read whole, so it wraps inside its own share of the line instead. */
+.mbx-state > :is(.mbx-ok, .mbx-bad, .mbx-wait) { flex: 1 1 0; min-width: 0; }
+.mbx-state > .mbx-ok {
+  min-width: 8ch; contain: inline-size; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mbx-verbs { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 8px 10px; max-width: 100%; }
+@container set-pane (max-width: 480px) {
+  .mbx-row { flex-direction: column; align-items: stretch; gap: 9px; }
+  .mbx-row > .mbx-main { flex: 1; }
+  .mbx-state { flex: none; width: 100%; justify-content: flex-start; gap: 8px; }
+  .mbx-state > :is(.mbx-ok, .mbx-bad, .mbx-wait) { flex: 1 0 100%; white-space: normal; text-align: left; }
+  .mbx-verbs { justify-content: flex-start; gap: 8px; }
 }
 /* ── WHO ORGANIZES THIS MAILBOX, UNDER ITS ROW — AND THE HANDOVER ───────────────────────────
    The row answers "is my mail coming down?"; this block answers the other question a person
@@ -6076,13 +6133,21 @@ input.set-tag-input {
 }
 .rte-bar {
   /* The link popover is the bar's own absolutely-positioned child, so `top: 100%` clears the
-     row wherever it wraps to — a fixed offset would be wrong at 390px, where the bar is two
-     rows tall. */
+     row under the bar. ONE ROW, ALWAYS: a wrapped bar left Quote alone on a second line at 360
+     and 390. The bar is its own size container so the buttons can read its width (below). */
   position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
+  flex-wrap: nowrap;
   padding: 8px 8px 3px;
+  container: rte-bar / inline-size;
+}
+/* The gap is a margin, because a container query styles the bar's children and never the bar. */
+.rte-bar > .rte-b + .rte-b { margin-left: 3px; }
+/* UNDER 400px OF BAR: 32px buttons 2px apart, 8 x 32 + 7 x 2 = 270, which fits a 300px card; a
+   narrower bar shrinks them rather than wrapping or running past its edge. */
+@container rte-bar (max-width: 399.98px) {
+  .rte-bar > .rte-b { flex: 0 1 32px; min-width: 0; width: 32px; height: 32px; padding: 0; }
+  .rte-bar > .rte-b + .rte-b { margin-left: 2px; }
 }
 /* THE FORMATTING HANDS, SCALED UP ONCE FOR ALL THREE SURFACES — compose, the inline reply and the
    Reply Run share this block because the grammar they offer is one decision (see the header). The

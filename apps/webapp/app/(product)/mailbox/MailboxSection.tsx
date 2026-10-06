@@ -2364,7 +2364,9 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                 <span className="mbx-ok" title={stamp.abs}>{t("syncedAgo", { when: stamp.rel })}</span>
               )}
               {m.status === "disabled" ? null : (
-                <>
+                /* The verbs are ONE item of the state column, so when they and the stamp do not fit
+                   one line the stamp takes its own line and the verbs stay together under it. */
+                <span className="mbx-verbs">
                   <Button
                     className="mbx-btn"
                     onClick={() => resync(m.id)}
@@ -2428,7 +2430,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                   >
                     {t("remove")}
                   </Button>
-                </>
+                </span>
               )}
             </div>
           </div>

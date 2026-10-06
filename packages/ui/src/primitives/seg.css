@@ -34,6 +34,13 @@
   border-radius:calc(var(--r-card) * 10 / 14)}
 .seg[data-stack] button{text-align:left;white-space:normal;border-radius:calc(var(--r-card) * 8 / 14);padding:6px 12px}
 .seg[data-stack].counted button{justify-content:space-between}
+/* ── the filled pair ── `data-fill`, a two-option control whose row would overflow: still one
+   row, the container's full width in two equal halves, a label wrapping inside its half when it
+   must, a word longer than its half included. Card radii as in the stacked form, because a
+   wrapped half is taller than a capsule. */
+.seg[data-fill]{display:flex;width:100%;border-radius:calc(var(--r-card) * 10 / 14)}
+.seg[data-fill] button{flex:1 1 0;min-width:0;white-space:normal;text-wrap:balance;text-align:center;
+  overflow-wrap:anywhere;border-radius:calc(var(--r-card) * 8 / 14)}
 
 /* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
    44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE

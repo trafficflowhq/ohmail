@@ -1200,6 +1200,7 @@
     "toSuggestions": "Address suggestions",
     "toWroteToYou": "wrote to you",
     "toPlaceholder": "name@example.com, separated by commas",
+    "toPlaceholderShort": "name@example.com",
     "toInvalid": "Not an address: {entries}",
     "chipListAria": "Recipients",
     "chipAria": "{recipient} — Backspace removes, Alt with an arrow key moves",
