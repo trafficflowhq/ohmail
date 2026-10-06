@@ -157,6 +157,21 @@ function decodeSendAttachments(
 }
 
 /**
+ * A SEND'S KEY, AS THE CLIENTS MINT IT: a UUID, or a short tag in front of one. Required, and refused
+ * past {@link SEND_KEY_MAX} characters: the reservation and a Cancel's tombstone keep it in a row
+ * that is never pruned, so an unbounded header would be storage any session could grow.
+ */
+export const SEND_KEY_MAX = 64;
+function sendKeyOf(req: Request): string {
+  const key = req.headers.get("idempotency-key");
+  if (!key) throw new ServiceError("validation_failed", 400, "Idempotency-Key header is required");
+  if (key.length > SEND_KEY_MAX) {
+    throw new ServiceError("validation_failed", 400, `Idempotency-Key is longer than ${SEND_KEY_MAX} characters`);
+  }
+  return key;
+}
+
+/**
  * §5 /drafts — manual compose drafts. create/update/delete emit a
  * `draft` change (X-Sync-Seq echoed from the emitted seq, §3.4) so drafts flow
  * through /sync; `materializeDraft` keeps them from tombstoning. A draft
@@ -299,8 +314,7 @@ export const draftsRoutes: Route[] = [
     relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
-      const key = req.headers.get("idempotency-key");
-      if (!key) throw new ServiceError("validation_failed", 400, "Idempotency-Key header is required");
+      const key = sendKeyOf(req);
       const firstSend = await sends(deps).attemptUnderKey(serviceContext(deps, req), params.id!, key);
       /* `found` is the answer and `firstSend` rides only with it: absent means "nothing has been
          sent under this key", which is the one reading that licenses staging and sending. */
@@ -321,8 +335,7 @@ export const draftsRoutes: Route[] = [
     cost: "connection",
     replay: "state",
     handler: async (req, deps) => {
-      const key = req.headers.get("idempotency-key");
-      if (!key) throw new ServiceError("validation_failed", 400, "Idempotency-Key header is required");
+      const key = sendKeyOf(req);
       const body = (await readBody<{ draftId?: unknown } | null>(req)) ?? {};
       const draftId = body.draftId === undefined || body.draftId === null ? null : requireUuid(body.draftId, "draftId");
       const openSendAdapter = deps.services?.sendAdapter ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId));
@@ -347,8 +360,7 @@ export const draftsRoutes: Route[] = [
     // cost one.
     cost: "connection",
     handler: async (req, deps, params) => {
-      const key = req.headers.get("idempotency-key");
-      if (!key) throw new ServiceError("validation_failed", 400, "Idempotency-Key header is required");
+      const key = sendKeyOf(req);
       // Attachment bytes ride here — decoded to raw and handed to the service, never persisted. An
       // ordinary send carries no body, so `readBody` answers `{}` and this is `undefined`.
       const body = await readBody<SendRequestBody>(req);
