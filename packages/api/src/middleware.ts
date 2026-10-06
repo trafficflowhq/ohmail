@@ -3,6 +3,7 @@ import {
   ServiceError, IdempotencyRaceLost, resolveSession, sha256, isAllowedOrigin,
 } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
+import { PRESS_AGE_MAX_MS, pressIsAged } from "@trafficflow/db";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
 // cannot live beside `ServiceError`.
 import { jarCookie } from "./cookies.js";
@@ -640,10 +641,13 @@ export const withPressAge: Middleware = (next, route) => async (req, deps, param
   if (!route.options?.pressAge) return next(req, deps, params);
   const raw = req.headers.get(PRESS_AGE_HEADER);
   if (raw === null) return next(req, deps, params);
-  if (!PRESS_AGE_SHAPE.test(raw)) {
-    return errorResponse("validation_failed", 400, `${PRESS_AGE_HEADER} must be a non-negative integer of milliseconds`, undefined, false);
+  if (!PRESS_AGE_SHAPE.test(raw) || Number(raw) > PRESS_AGE_MAX_MS) {
+    return errorResponse("validation_failed", 400, `${PRESS_AGE_HEADER} must be a non-negative integer of milliseconds, at most a year`, undefined, false);
   }
-  deps.press = { floor: new Date(deps.now().getTime() - Number(raw)) };
+  const now = deps.now();
+  const floor = new Date(now.getTime() - Number(raw));
+  // Only an AGED press is compared; every press is stamped with its floor.
+  deps.press = { floor, aged: pressIsAged(floor, now) };
   return next(req, deps, params);
 };
 

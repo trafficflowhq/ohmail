@@ -351,6 +351,8 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   adoptFolderState(
     messageId: string, s: FolderStateRow, expectDesiredFolder: string,
+    /** A lower bound of when the person made the move (`folder_state.decided_at`); NULL = none. */
+    decidedAt: Date | null,
   ): Promise<boolean>;
   /**
    * The read-state completion, and why it is not {@link RepoPort.upsertFlagState}: `reconcileFlags`
@@ -363,7 +365,11 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   completeFlagState(messageId: string, c: FlagCompletion): Promise<boolean>;
   /** `foldersOff`: switched off under "Use folders" at this read — a per-press pass asks it fresh. */
   getMailbox(mailboxId: string): Promise<
-    { id: string; accountId: string; address: string; kickstartAt: Date | null; foldersOff: boolean } | null
+    {
+      id: string; accountId: string; address: string; kickstartAt: Date | null; foldersOff: boolean;
+      /** The last successful cycle's start (`last_sync_at`); absent from a double that states none. */
+      lastSyncAt?: Date | null;
+    } | null
   >;
   /**
    * This mailbox's `status`, HELD at `share` strength for the rest of the caller's transaction —
@@ -1732,12 +1738,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * already re-route with.
    */
   async adoptFolderState(
-    messageId: string, s: FolderStateRow, expectDesiredFolder: string,
+    messageId: string, s: FolderStateRow, expectDesiredFolder: string, decidedAt: Date | null,
   ): Promise<boolean> {
     const reconcileStatus = reconcileStatusFor(s);
-    // An adopted external move is the person's DECISION, made in their own mail client and
-    // observed now: it stamps `decided_at`, so a stale ohmail press replayed later is refused.
-    const decidedAt = new Date();
+    // An adopted external move is the person's decision in their own mail client, stamped with a
+    // LOWER bound of when they made it (never the observation's now): an aged ohmail press made
+    // before it is refused, one made between the bound and the move is admitted. NULL stamps none.
     const [row] = await this.db.insert(folderState).values({
       messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
       lastSetBy: s.lastSetBy, reconcileStatus, conflict: false, decidedAt,
@@ -1745,7 +1751,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       target: folderState.messageId,
       set: {
         desiredFolder: s.desiredFolder, observedFolder: s.observedFolder, lastSetBy: s.lastSetBy,
-        reconcileStatus, conflict: false, updatedAt: decidedAt, decidedAt,
+        reconcileStatus, conflict: false, updatedAt: new Date(), decidedAt,
         attempts: 0, nextAttemptAt: null,
       },
       setWhere: eq(folderState.desiredFolder, expectDesiredFolder),
@@ -2362,6 +2368,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       ? {
         id: rows[0].id, accountId: rows[0].accountId, address: rows[0].address,
         kickstartAt: rows[0].kickstartAt ?? null, foldersOff: rows[0].foldersDisabledAt != null,
+        lastSyncAt: rows[0].lastSyncAt ?? null,
       }
       : null;
   }

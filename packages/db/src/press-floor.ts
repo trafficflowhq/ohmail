@@ -1,6 +1,7 @@
 import { and, eq, gt, inArray, isNotNull } from "drizzle-orm";
 import { flagState, folderState, messageStates, messageTags } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
+import { IDEMPOTENCY_TTL_MS } from "./idempotency.js";
 
 /**
  * THE STALE-PRESS FLOOR — was the field a press sets decided AFTER the press was made? A state
@@ -10,6 +11,26 @@ import type { Tx } from "./change-log.js";
  * the worker's observations bump. NULL admits: a row decided before the column existed.
  * In `packages/db` because `applyMessageMove` asks the same question on the organizer's store.
  */
+
+/**
+ * A press this old is COMPARED; a younger one is a first arrival and lands in arrival order. One
+ * hour under the idempotency TTL: a same-key retry inside the day is answered from its stored row,
+ * and the margin covers a client clock that under-reads the age.
+ */
+export const PRESS_AGED_MS = IDEMPOTENCY_TTL_MS - 60 * 60 * 1000;
+
+/** The oldest press age a request may state; beyond it the header is refused, never compared. */
+export const PRESS_AGE_MAX_MS = 366 * 24 * 60 * 60 * 1000;
+
+/** Is a press made at `pressedAt` old enough, by `now`, for its field to be compared? */
+export function pressIsAged(pressedAt: Date, now: Date): boolean {
+  return now.getTime() - pressedAt.getTime() >= PRESS_AGED_MS;
+}
+
+/** A press instant from another install's clock, bounded by this store's: never ahead of `now`. */
+export function clampPressInstant(d: Date, now: Date): Date {
+  return new Date(Math.min(Math.max(d.getTime(), now.getTime() - PRESS_AGE_MAX_MS), now.getTime()));
+}
 
 /** The instant a decision is stamped with: the press's floor when it carried one, else now. */
 export function decisionInstant(floor: Date | null | undefined, now: Date): Date {

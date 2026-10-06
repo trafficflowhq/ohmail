@@ -52,7 +52,8 @@ export { ringFilingDoorbell, FILING_DOORBELL_MIN_GAP_MS } from "./filing-doorbel
 // runtime). Reaches `schema-mail.js` alone, so the closure rule above holds.
 export { upsertDesiredSeen, upsertDesiredSeenMany } from "./flag-intent.js";
 export {
-  decisionInstant, placementDecidedAfter, readDecidedAfter, tagAssignedAfter, triageDecidedAfter,
+  PRESS_AGED_MS, PRESS_AGE_MAX_MS, clampPressInstant, decisionInstant, placementDecidedAfter, pressIsAged,
+  readDecidedAfter, tagAssignedAfter, triageDecidedAfter,
 } from "./press-floor.js";
 
 // The ONE spelling of "record a learning signal, bump the graduation counter" — same argument as

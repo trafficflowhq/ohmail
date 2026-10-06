@@ -1064,6 +1064,7 @@ export class MessageService {
     /* THE PRESS'S FLOOR, per half: a half whose field was decided after the press is dropped, and
        a request whose every half is stale answers `409 stale_press`. Read before any write. */
     const floor = ctx.pressFloor ?? null;
+    const aged = floor !== null && ctx.pressAged === true;
     const seq = await withAccountTx(ctx, async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, unread: messages.unread, nativeLocator: messages.nativeLocator,
@@ -1079,8 +1080,8 @@ export class MessageService {
       let last: bigint | null = null;
       let read = false;
       let movedFrom: string | null = null;
-      const staleRead = floor !== null && body.unread !== undefined
-        && (await readDecidedAfter(bridgeTx(tx), [id], floor)).has(id);
+      const staleRead = aged && body.unread !== undefined
+        && (await readDecidedAfter(bridgeTx(tx), [id], floor!)).has(id);
       let staleFolder = false;
 
       if (body.unread !== undefined && !staleRead) {
@@ -1123,15 +1124,18 @@ export class MessageService {
           pending = await writeReaderRequest(bridgeTx(tx), ctx, {
             mailboxId: msg.mailboxId,
             kind: "message.move",
-            payload: { dedupKey: msg.dedupKey, destination: moveDestinationWord(folder) },
+            // The press instant rides in the payload (see `requestMove`), never as the record's stamp.
+            payload: {
+              dedupKey: msg.dedupKey, destination: moveDestinationWord(folder),
+              ...(floor !== null ? { pressedAt: floor.toISOString() } : {}),
+            },
             holder: route.holder,
-            ...(floor !== null ? { decidedAt: floor } : {}),
           });
         } else {
           // The locked re-check, on `move`'s argument exactly — the routing read above takes no
           // lock, so a demotion can commit between the two.
           await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
-          staleFolder = floor !== null && await placementDecidedAfter(bridgeTx(tx), id, floor);
+          staleFolder = aged && await placementDecidedAfter(bridgeTx(tx), id, floor!);
         }
         if (route.route !== "request" && !staleFolder) {
           const observed = await this.observedFolder(tx, id, msg.nativeLocator);
@@ -1228,6 +1232,7 @@ export class MessageService {
     const ids = [...new Set(body.ids as string[])];
 
     const floor = ctx.pressFloor ?? null;
+    const aged = floor !== null && ctx.pressAged === true;
     const seq = await asTx(ctx).transaction(async (tx) => {
       const owned = await tx.select({ id: messages.id, unread: messages.unread })
         .from(messages)
@@ -1241,7 +1246,7 @@ export class MessageService {
       const observedById = new Map(owned.map((m) => [m.id, !m.unread]));
       /* PER ID: an id whose read state was decided after this press keeps it; the rest apply. A
          batch with no id left is the stale press itself, refused before any write. */
-      const stale = floor === null ? new Set<string>() : await readDecidedAfter(tx, ids, floor);
+      const stale = !aged ? new Set<string>() : await readDecidedAfter(tx, ids, floor!);
       const live = ids.filter((id) => !stale.has(id));
       if (live.length === 0) {
         const current = await materializeMessagesInOrder(asDb(tx), ctx.accountId, ids, { deleted: "include" });
@@ -1306,6 +1311,7 @@ export class MessageService {
     /** The route this move's override demoted: switched off after the commit, never inside it. */
     let owedDemotion: string | null = null;
     const floor = ctx.pressFloor ?? null;
+    const aged = floor !== null && ctx.pressAged === true;
     // Fenced at the top, as every writer under a sender's key opens.
     const answer = await withAccountTx(ctx, async (tx) => {
       const [msg] = await tx.select({
@@ -1347,7 +1353,7 @@ export class MessageService {
        * a reader crossing the door. See `assertOrganizerRole`'s own header for the interleaving. */
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
       // THE STALE PRESS, before any write: a placement decided after this press stands.
-      if (floor !== null && await placementDecidedAfter(bridgeTx(tx), id, floor)) return this.stalePress(tx, ctx, id);
+      if (aged && await placementDecidedAfter(bridgeTx(tx), id, floor!)) return this.stalePress(tx, ctx, id);
 
       // Write DESIRED state only. observedFolder is the worker's truth — read
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
@@ -1444,6 +1450,7 @@ export class MessageService {
        that does not exist. */
     let filed: string | null = null;
     const floor = ctx.pressFloor ?? null;
+    const aged = floor !== null && ctx.pressAged === true;
     const answer = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
@@ -1474,7 +1481,7 @@ export class MessageService {
       // The locked re-check — see `move`'s note on why the plain read above does not replace it.
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
       // THE STALE PRESS, before any write: a placement decided after this press (a restore, a move).
-      if (floor !== null && await placementDecidedAfter(bridgeTx(tx), id, floor)) return this.stalePress(tx, ctx, id);
+      if (aged && await placementDecidedAfter(bridgeTx(tx), id, floor!)) return this.stalePress(tx, ctx, id);
 
       const hasCopy = (msg.nativeLocator as NativeLocator | null) !== null;
       let trash: string | null = null;
@@ -1578,7 +1585,8 @@ export class MessageService {
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
       // THE STALE PRESS, before the state check: a placement decided after it owns the sentence.
       const floor = ctx.pressFloor ?? null;
-      if (floor !== null && await placementDecidedAfter(bridgeTx(tx), id, floor)) return this.stalePress(tx, ctx, id);
+      const aged = floor !== null && ctx.pressAged === true;
+      if (aged && await placementDecidedAfter(bridgeTx(tx), id, floor!)) return this.stalePress(tx, ctx, id);
 
       const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
         .where(eq(mailboxes.id, msg.mailboxId)).limit(1);
@@ -1652,6 +1660,7 @@ export class MessageService {
     if (ids.length === 0) return null;
     // A pin placed after the press that spends it stands: the floor is the press's, when it named one.
     const floor = ctx.pressFloor ?? null;
+    const aged = floor !== null && ctx.pressAged === true;
     const cleared = await tx
       .update(messageStates)
       .set({ state: "none", bubbleUpAt: null, updatedAt: ctx.now(), decidedAt: decisionInstant(floor, ctx.now()) })
@@ -1659,7 +1668,7 @@ export class MessageService {
         inArray(messageStates.messageId, ids),
         eq(messageStates.accountId, ctx.accountId),
         eq(messageStates.state, "resurfaced"),
-        ...(floor === null ? [] : [or(isNull(messageStates.decidedAt), lte(messageStates.decidedAt, floor))!]),
+        ...(!aged ? [] : [or(isNull(messageStates.decidedAt), lte(messageStates.decidedAt, floor!))!]),
       ))
       .returning({ id: messageStates.id });
     // One append for every pin cleared; none cleared appends nothing and names no seq.
@@ -1841,11 +1850,14 @@ export class MessageService {
       // EXACTLY what `validateMovePayload` re-checks on the other side, and nothing else. The
       // payload crosses an install boundary through a header another machine wrote, so the
       // organizer validates it again independently — this is the door's half of that pair.
-      payload: { dedupKey: r.dedupKey, destination: r.destination },
+      // The press instant rides in the payload; the record keeps its creation instant, which the
+      // request windows age by. The organizer compares it only when it is aged.
+      payload: {
+        dedupKey: r.dedupKey, destination: r.destination,
+        ...(ctx.pressFloor ? { pressedAt: ctx.pressFloor.toISOString() } : {}),
+      },
       holder: r.holder,
       requestId,
-      // The press's floor travels with the record: the organizer refuses it behind a newer decision.
-      ...(ctx.pressFloor ? { decidedAt: ctx.pressFloor } : {}),
     });
 
     const dto = await materializeMessage(asDb(tx), ctx.accountId, r.messageId);

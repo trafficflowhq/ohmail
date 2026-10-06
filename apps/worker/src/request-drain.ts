@@ -71,9 +71,9 @@ class ApplierRefusedError extends Error {
 const MOVE_REFUSAL_REASON: Readonly<Record<MoveRefusal, RequestRefusalReason>> = {
   no_such_message: "no_such_message",
   no_trash_folder: "no_trash_folder",
-  /* A placement decided here after the reader's press: the wire's existing `stale`, which every
-     reader already knows and lists as over, never a new word an older install cannot parse. */
-  stale_press: "stale",
+  /* A placement decided here after an aged reader press: its own word, so `stale` keeps its
+     meaning. An older install's ack parser reads it as no reason and lists the row for a day. */
+  stale_press: "superseded",
 };
 
 /** The rule applier's own word, mapped the same way and for the same reason. */

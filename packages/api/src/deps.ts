@@ -691,6 +691,8 @@ export interface IdempotencyContext {
  */
 export interface PressContext {
   floor: Date;
+  /** Old enough (`PRESS_AGED_MS`) for its field to be compared; younger lands in arrival order. */
+  aged: boolean;
 }
 
 /**

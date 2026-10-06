@@ -119,8 +119,9 @@ export class TriageService {
        */
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
       // THE STALE PRESS, before any write: a triage decided after this press stands, silent.
+      // Only an aged press is compared; a fresher one lands in arrival order, stamped with its floor.
       const floor = ctx.pressFloor ?? null;
-      if (floor !== null && await triageDecidedAfter(bridgeTx(tx), messageId, floor)) {
+      if (floor !== null && ctx.pressAged === true && await triageDecidedAfter(bridgeTx(tx), messageId, floor)) {
         const [held] = await tx.select({ id: messageStates.id }).from(messageStates)
           .where(and(eq(messageStates.messageId, messageId), eq(messageStates.accountId, ctx.accountId))).limit(1);
         const current = held ? await materializeMessageState(asDb(tx), ctx.accountId, held.id) : null;

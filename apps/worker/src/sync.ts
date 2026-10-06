@@ -239,6 +239,11 @@ export interface SyncDeps {
    */
   fence?: SyncWriteFence;
   /**
+   * A lower bound of any external move this cycle adopts: the previous successful cycle's start
+   * (`last_sync_at` read at this cycle's start). Absent ⇒ `runSyncCycle` reads it; NULL ⇒ none.
+   */
+  observedSince?: Date | null;
+  /**
    * TOLD AFTER THIS CYCLE COMMITS A HOLD — a NEW message this organizer routed to the Screener.
    * The hosted worker passes it to write the suggest-owed mark (cloud 0039), so its cycle serves
    * this account's suggest pass FIRST instead of at the cadence tail. ABSENT ⇒ nothing is noted,
@@ -852,9 +857,21 @@ async function fencedLiveGroup<T>(deps: LiveScope, fn: (repo: WorkerRepo) => Pro
  * rather than a delay. They are separate because ONE also means "the first import is finished":
  * `stampInitialImportComplete` fires on `!hasBacklog`, and a filing queue holding the flag high would read a mid-triage mailbox as permanently partial for a reason that has nothing to do with importing.
  */
+/** `last_sync_at` as this cycle begins, or NULL when no cycle completed or it cannot be read. */
+async function lastSuccessBound(input: SyncDeps): Promise<Date | null> {
+  if (typeof input.repo.getMailbox !== "function") return null;
+  try {
+    return (await input.repo.getMailbox(input.mailboxId))?.lastSyncAt ?? null;
+  } catch {
+    return null; // the safe direction: an unstamped adoption admits every later press
+  }
+}
+
 export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
   const at = freshCyclePages();
   try {
+    // Read once, before anything this cycle stamps: the bound an adopted external move is stamped with.
+    if (input.observedSince === undefined) input = { ...input, observedSince: await lastSuccessBound(input) };
     return await cycleWithKnownSet(input, at);
   } catch (err) {
     // ── THE CYCLE'S VERDICT WHEN THE MAILBOX CHANGED HANDS UNDER IT ────────────────────────────
@@ -1385,7 +1402,7 @@ async function syncCycleWithin(
         // the gap a removal lands in. See {@link commitFenced} for which statement carries the
         // question and {@link assertMailboxStillHere} for what it is.
         commitFenced(plan, txRepo, {
-          repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
+          repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap, observedSince: deps.observedSince ?? null,
         }, deps.fence !== undefined));
       await runOwedDemotions(repo, accountId, mailboxId, committed, log);
       // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
@@ -1778,7 +1795,7 @@ async function retryFailedMessages(
         const committed = await fencedIngest(deps, (txRepo) =>
           commitFenced(
             plan, txRepo,
-            { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap },
+            { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap, observedSince: deps.observedSince ?? null },
             deps.fence !== undefined,
           ),
         );
@@ -2299,6 +2316,7 @@ async function voidGoneFiling(
       p.messageId,
       { desiredFolder: p.observedFolder, observedFolder: p.observedFolder, lastSetBy: p.lastSetBy },
       p.desiredFolder,
+      null, // a voided restore is an observation, not a decision
     );
     /* `reconcile.move.voided` and not a word of its own: `audit_log.action` is a CLOSED SET
        (`auditAction` refuses anything outside it, which is how this arm was caught writing one),

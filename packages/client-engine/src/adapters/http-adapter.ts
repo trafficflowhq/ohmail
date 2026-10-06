@@ -1526,9 +1526,18 @@ export class HttpAdapter implements EngineAdapter {
         // thing the overlay paints (`mutations.ts#feed_mark_seen`).
         const changes: SyncChange[] = [];
         let seq: number | null = null;
+        // PER ID: an id refused stale behind a newer read decision is skipped and the rest go on;
+        // only a glance whose every id was stale is refused (the engine settles it silent).
+        let stale: MutationRejectedError | null = null;
+        let applied = 0;
         for (const id of m.messageIds ?? []) {
           const res = await this.request("PATCH", `/messages/${id}`, { body: { unread: false, via: "glance" }, ...age });
-          if (!res.ok) throw await this.rejectionOf(res);
+          if (!res.ok) {
+            const rejection = await this.rejectionOf(res);
+            if (rejection.code === "stale_press") { stale = rejection; continue; }
+            throw rejection;
+          }
+          applied += 1;
           const s = this.noteSeq(res);
           const dto = (await res.json()) as EngineMessage;
           if (s !== null) {
@@ -1536,6 +1545,7 @@ export class HttpAdapter implements EngineAdapter {
             seq = s;
           }
         }
+        if (applied === 0 && stale !== null) throw stale;
         return { changes, seq };
       }
 

@@ -136,6 +136,8 @@ export interface ServiceContext {
    * was decided after it. Absent = the request named no age, and the verb decides at `now`.
    */
   pressFloor?: Date | null;
+  /** The press is at least `PRESS_AGED_MS` old: only then is its field compared. Absent = fresh. */
+  pressAged?: boolean;
 }
 
 /**

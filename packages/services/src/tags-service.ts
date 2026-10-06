@@ -318,7 +318,7 @@ export class TagsService {
          refused silent. The assignment's row is stamped with its own press's floor, so two
          devices' replays order by press. An assignment over a present row is a no-op already. */
       const floor = ctx.pressFloor ?? null;
-      if (!assigned && floor !== null && await tagAssignedAfter(bridgeTx(tx), ctx.accountId, messageId, resolved, floor)) {
+      if (!assigned && floor !== null && ctx.pressAged === true && await tagAssignedAfter(bridgeTx(tx), ctx.accountId, messageId, resolved, floor)) {
         const rows = await tx.select({ tagId: messageTags.tagId }).from(messageTags)
           .where(and(eq(messageTags.messageId, messageId), eq(messageTags.accountId, ctx.accountId)));
         throw new ServiceError("stale_press", 409, "a newer decision about this tag stands",

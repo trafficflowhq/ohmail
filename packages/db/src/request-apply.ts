@@ -7,7 +7,7 @@ import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, listPressLegs, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
 import { accountWritesHere } from "./organizer-role.js";
-import { decisionInstant, placementDecidedAfter } from "./press-floor.js";
+import { clampPressInstant, placementDecidedAfter, pressIsAged } from "./press-floor.js";
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
@@ -64,6 +64,8 @@ export interface ValidatedMovePayload {
   dedupKey: string;
   /** A {@link MOVE_DESTINATIONS} key. NOT a folder path. */
   destination: string;
+  /** When the reader's press was made (mail 0145), on the reader API's clock; absent = not stated. */
+  pressedAt?: Date;
 }
 
 /**
@@ -83,7 +85,11 @@ export function validateMovePayload(payload: unknown): ValidatedMovePayload | nu
   const destination = o.destination;
   if (typeof dedupKey !== "string" || dedupKey.length === 0 || dedupKey.length > MOVE_DEDUP_KEY_MAX) return null;
   if (typeof destination !== "string" || !MOVE_DESTINATIONS.has(destination)) return null;
-  return { dedupKey, destination };
+  // Optional, and refused when present and unreadable: our own API writes it, so it fails loud.
+  if (o.pressedAt === undefined) return { dedupKey, destination };
+  const pressedAt = typeof o.pressedAt === "string" ? new Date(o.pressedAt) : null;
+  if (pressedAt === null || Number.isNaN(pressedAt.getTime())) return null;
+  return { dedupKey, destination, pressedAt };
 }
 
 /**
@@ -104,9 +110,8 @@ export interface ApplyMessageMoveInput {
   payload: ValidatedMovePayload;
   now: Date;
   /**
-   * When the reader's press was made (`organizer_requests.decided_at`, the record's own stamp).
-   * A placement decided on this store after it stands: the request is refused `stale_press` and
-   * nothing is written. Absent = applied at `now`, as before.
+   * The record's own `decided_at`: when the reader's door WROTE the request (its creation, which
+   * the request windows age by). Stamps the placement when the payload states no press instant.
    */
   decidedAt?: Date | null;
 }
@@ -138,7 +143,12 @@ export async function applyMessageMove(
   tx: Tx, input: ApplyMessageMoveInput,
 ): Promise<ApplyMessageMoveResult> {
   const { accountId, mailboxId, payload, now } = input;
-  const decidedAt = input.decidedAt ?? null;
+  /* THE PRESS INSTANT, on this organizer's clock: clamped to `now`, so a reader clock ahead reads
+     fresh and stamps `now`. Only an AGED press is compared; every one is stamped. No press stated
+     is applied as at base, stamped with the record's own (clamped) instant. */
+  const stated = payload.pressedAt ?? null;
+  const pressed = stated !== null ? clampPressInstant(stated, now)
+    : input.decidedAt != null ? clampPressInstant(input.decidedAt, now) : now;
 
   /* THE NATURAL KEY, AND IT IS SCOPED BY ACCOUNT AS WELL AS BY MAILBOX.
      `messages_mailbox_dedup_uq` is `(mailbox_id, dedup_key)`, so the mailbox predicate alone
@@ -180,8 +190,8 @@ export async function applyMessageMove(
     if (to === null) return { applied: false, refusal: "no_trash_folder" };
   }
 
-  // THE STALE PRESS, before any write: a placement decided here after the reader's press stands.
-  if (decidedAt !== null && await placementDecidedAfter(tx, msg.id, decidedAt)) {
+  // THE STALE PRESS, before any write: a placement decided here after an aged press stands.
+  if (stated !== null && pressIsAged(pressed, now) && await placementDecidedAfter(tx, msg.id, pressed)) {
     return { applied: false, refusal: "stale_press" };
   }
 
@@ -206,13 +216,13 @@ export async function applyMessageMove(
   await tx.insert(folderState).values({
     messageId: msg.id, desiredFolder: to, observedFolder: from,
     lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom,
-    decidedAt: decisionInstant(decidedAt, now),
+    decidedAt: pressed,
   }).onConflictDoUpdate({
     target: folderState.messageId,
     // `observedFolder` deliberately omitted → preserved. The worker owns it.
     set: {
       desiredFolder: to, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom,
-      decidedAt: decisionInstant(decidedAt, now),
+      decidedAt: pressed,
     },
   });
 

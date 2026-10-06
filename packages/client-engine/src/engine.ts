@@ -4716,9 +4716,9 @@ export class OhmailEngine {
     for (const w of this.waitingServer ?? []) {
       listed.add(w.id);
       if (w.state === "applied" || w.state === "expired") continue;
-      // Refused as stale: older than the reader's own window, or behind a newer decision on the
-      // organizer. Either way a newer press, or nobody, owns the sentence; the row says nothing.
-      if (w.state === "refused" && w.refusedReason === "stale") continue;
+      // Refused behind a newer decision on the organizer: that decision owns the sentence. A
+      // `stale` refusal (the request outlived the window) is still listed, as it always was.
+      if (w.state === "refused" && w.refusedReason === "superseded") continue;
       const t = w.target as Record<string, unknown>;
       const rule = (t.rule ?? null) as { kind: string; match: string; subjectContains: string | null; bodyContains: string | null } | null;
       out.push({

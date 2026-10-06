@@ -84,6 +84,8 @@ export interface ReconcileApplyDeps extends Omit<PipelineDeps, "repo"> {
 export type AdoptDeps = {
   repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
   accountId: string;
+  /** A lower bound of the external move: this cycle's previous success start. Absent = none. */
+  observedSince?: Date | null;
 };
 
 /**
@@ -103,7 +105,7 @@ export async function adoptWithWitness(
   const next: FolderStateRow = {
     desiredFolder: adopted, observedFolder: adopted, lastSetBy: "external",
   };
-  const matched = await repo.adoptFolderState(messageId, next, witness);
+  const matched = await repo.adoptFolderState(messageId, next, witness, deps.observedSince ?? null);
   if (!matched) {
     // A newer decision owns the row, and the PLACEMENT is still a fact the row is owed — the
     // person moved this message and the server holds it there. The witness is stale by
@@ -667,6 +669,8 @@ export interface CommitDeps {
    * fold is sound only where the message INSERT's foreign key has already taken the mailbox row.
    */
   mailboxMustBeLive?: MailboxMustBeLive;
+  /** {@link AdoptDeps.observedSince}, for the `adopt_external` arm. */
+  observedSince?: Date | null;
 }
 
 /**
@@ -1389,7 +1393,8 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     await repo.updateLocator(c.messageId, c.arrivalLocator, c.storedLocator);
     await repo.recordInstance(c.messageId, c.storedLocator);
     const placed = { desiredFolder: inbox, observedFolder: inbox, lastSetBy: c.state.lastSetBy };
-    if (!(await repo.adoptFolderState(c.messageId, placed, c.state.desiredFolder))) {
+    // An observation of our own copy, not a decision: no stamp.
+    if (!(await repo.adoptFolderState(c.messageId, placed, c.state.desiredFolder, null))) {
       await repo.completeFolderState(c.messageId, {
         expectDesiredFolder: c.state.desiredFolder, observedFolder: inbox,
         lastSetBy: c.state.lastSetBy, physicalObservation: true,
@@ -1766,7 +1771,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // observation is older than it. A miss records where the message IS and leaves the desire
       // to the newer press. The three writes below stand either way — the person's hand landing
       // somewhere is a fact whichever desire won.
-      await adoptWithWitness({ repo, accountId }, e.messageId, to, e.state.desiredFolder);
+      await adoptWithWitness({ repo, accountId, observedSince: deps.observedSince ?? null }, e.messageId, to, e.state.desiredFolder);
       // The tombstone was already cleared before the switch (every arrival shape clears it, not
       // only this arm — see the block above); the `move` change below carries the live entity,
       // so this arm needs no separate resurrection delta.
