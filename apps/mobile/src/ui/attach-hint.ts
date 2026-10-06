@@ -1,12 +1,17 @@
 /**
  * Where the composer's "Up to … total" hint stands. Beside the attach buttons it ends the row on the
- * right; when the row is too narrow it wraps, and a lone right-aligned fragment under the buttons
- * read as a stray (353 dp). Wrapped, it starts the next line on the left, under the buttons it
- * explains. `y` is the hint's top inside the wrapping row, from its own layout.
+ * right; when the row cannot hold it, it wraps, and a lone right-aligned fragment under the buttons
+ * read as a stray (353 dp). Wrapped, it starts its line on the left, under the buttons it explains.
+ * Decided from WIDTHS (the row's, each button's, the hint's), which the hint's margin never moves,
+ * so the decision cannot feed back on itself; an unmeasured row keeps the hint inline.
  */
-export const attachHintWrapped = (y: number): boolean => y > 4;
+export const ATTACH_ROW_GAP = 8;
 
-/** Only the margin moves, never the hint's size, so the wrap the row decides stays the same wrap. */
-export function attachHintStyle(wrapped: boolean): { marginLeft: "auto" | 0 } {
-  return wrapped ? { marginLeft: 0 } : { marginLeft: "auto" };
+export function attachHintFits(rowWidth: number, itemWidths: readonly number[], hintWidth: number): boolean {
+  if (!(rowWidth > 0) || !(hintWidth > 0) || itemWidths.some((w) => !(w > 0))) return true;
+  return itemWidths.reduce((s, w) => s + w + ATTACH_ROW_GAP, 0) + hintWidth <= rowWidth;
+}
+
+export function attachHintStyle(fits: boolean): { marginLeft: "auto" | 0 } {
+  return fits ? { marginLeft: "auto" } : { marginLeft: 0 };
 }

@@ -99,7 +99,7 @@ import { composeBodyMin, notesPinned, pinnedNotesMax } from "./compose-fit";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
 import { holdReader } from "./reader-held";
-import { attachHintStyle, attachHintWrapped } from "./attach-hint";
+import { ATTACH_ROW_GAP, attachHintFits, attachHintStyle } from "./attach-hint";
 import { failedSendLine } from "./send-failed";
 import type { StayedWhy } from "../state/sender-stayed";
 import { stayedRows } from "./sender-stayed-lines";
@@ -1089,7 +1089,11 @@ export function ComposeSheet({
   const windowHeight = useWindowDimensions().height;
   const letterScroll = useRef<null | ScrollView>(null);
   const [notesHeight, setNotesHeight] = useState<number | null>(null);
-  const [hintWrapped, setHintWrapped] = useState(false);
+  const [attachRow, setAttachRow] = useState({ row: 0, files: 0, photos: 0, hint: 0 });
+  const measureAttach = (k: "row" | "files" | "photos" | "hint", width: number) => {
+    const w = Math.round(width);
+    setAttachRow((m) => (m[k] === w ? m : { ...m, [k]: w }));
+  };
   const pinNotes = notesPinned(notesHeight, pinnedNotesMax(windowHeight));
   useEffect(() => {
     if (!pinNotes) letterScroll.current?.scrollToEnd({ animated: false });
@@ -1735,25 +1739,32 @@ export function ComposeSheet({
                   </Tap>
                 </View>
               ))}
-              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 8, rowGap: 4 }}>
-                <Button
-                  label={Copy.attachFile}
-                  icon="clip"
-                  variant="quiet"
-                  disabled={phase !== "idle"}
-                  onPress={() => void pick("files")}
-                />
-                <Button
-                  label={Copy.attachPhoto}
-                  variant="quiet"
-                  disabled={phase !== "idle"}
-                  onPress={() => void pick("photos")}
-                />
+              <View
+                style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: ATTACH_ROW_GAP, rowGap: 4 }}
+                onLayout={(e) => measureAttach("row", e.nativeEvent.layout.width)}
+              >
+                <View onLayout={(e) => measureAttach("files", e.nativeEvent.layout.width)}>
+                  <Button
+                    label={Copy.attachFile}
+                    icon="clip"
+                    variant="quiet"
+                    disabled={phase !== "idle"}
+                    onPress={() => void pick("files")}
+                  />
+                </View>
+                <View onLayout={(e) => measureAttach("photos", e.nativeEvent.layout.width)}>
+                  <Button
+                    label={Copy.attachPhoto}
+                    variant="quiet"
+                    disabled={phase !== "idle"}
+                    onPress={() => void pick("photos")}
+                  />
+                </View>
                 <Txt
                   variant="caption"
                   tone="ink3"
-                  style={attachHintStyle(hintWrapped)}
-                  onLayout={(e) => setHintWrapped(attachHintWrapped(e.nativeEvent.layout.y))}
+                  style={attachHintStyle(attachHintFits(attachRow.row, [attachRow.files, attachRow.photos], attachRow.hint))}
+                  onLayout={(e) => measureAttach("hint", e.nativeEvent.layout.width)}
                 >
                   {Copy.attachCap(sizeLabel(attachCap))}
                 </Txt>
