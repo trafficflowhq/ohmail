@@ -63,6 +63,7 @@ import {
   senderScreening,
   splitRoutingPlan,
   withResolution,
+  isOwnSubject,
   refusedAsOwnAddress,
   worstStatus,
   type PressMove,
@@ -768,6 +769,8 @@ export function useShellVerbs({
    */
   const openSubjectRule = useStableCallback((messageId: string, anchor: HTMLElement | null = null) => {
     setSenderMenu(null);
+    // A subject rule is a rule about its sender: on our own mail the sentence stands in for the sheet.
+    if (isOwnSubject(engine.verbRead(), messageId, undefined, ownAddresses)) { toast(t("screening.toastOwnAddress")); return; }
     setSubjectRule({ messageId, ...placePicker(anchor) });
   });
 
