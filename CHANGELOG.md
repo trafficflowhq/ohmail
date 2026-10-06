@@ -39,7 +39,8 @@ so you stay signed in; only a tab that renewed within that minute does this.
 <!-- changes: fix-026-meta-folder-residue.md -->
 
 ohmail now cleans its `ohmail/_meta` folder once a day, or when the folder nears its limit, instead
-of on every pass, and dates that cleanup by the mail server's clock rather than the computer's. When
+of on every pass, and dates that cleanup by the mail server's clock rather than the computer's. A
+mailbox another of your devices sends requests through is still cleaned on every pass. When
 that folder is full on a server that also refuses deletes, the mailbox asks for delete permission
 instead of asking you to move mail. On the phone, a full or undeletable `ohmail/_meta` now shows the
 same sentence as the desktop, in place of "Organizing" or "Nothing organizes this mailbox"; Stop
@@ -71,7 +72,9 @@ again, checks its signature and starts the installer once more.
 
 The operator alert mail sends one message per kind of problem at most every six hours, sooner only
 when the problem gets more severe. It mails nothing when a problem clears, and sends a daily
-summary of the rest. Webhook and Telegram alerts are unchanged.
+summary of every problem since the last one, those already mailed included. An alert the six hours
+hold back is not recorded as sent, so it is mailed when they end. Webhook and Telegram alerts still
+receive every problem, at times one check later while an alert mail of the same kind is being sent.
 
 ### Still to come
 
