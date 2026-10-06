@@ -14,19 +14,18 @@ export interface App {
   handle(req: Request, deps: ApiDeps): Promise<Response>;
 }
 
-// Outermost → inner: requestId → errorEnvelope → requestGuard → session → stepUp → spendGate
-// → csrf → idempotency → handler. There is deliberately no in-app `withRateLimit`: a 429 a
-// middleware returns costs the same invocation as the read it refuses, so the control is a
+// Outermost → inner: requestId → errorEnvelope → requestGuard → session → stepUp → spendGate →
+// csrf → pressAge → idempotency → handler. There is deliberately no in-app `withRateLimit`: a 429
+// a middleware returns costs the same invocation as the read it refuses, so the control is a
 // per-IP limit at the platform edge, keyed on the trusted client IP `context.ts` derives; this
 // module is also compiled into the standalone local build, which has no accounts to rate-limit.
 // `withRequestGuard` sits before `withSession` because it is the only guard the public
 // cookie-minting auth routes get, so it must not depend on a session existing. `withSpendGate`
 // sits directly after `withStepUp`: both judge a privilege the resolved session carries or does
 // not, and a caller missing both should hear about the step-up first — the cheaper fix.
-// `withPressAge` sits before `withIdempotency`: a replay inside the key's day is answered from
-// the stored row and never reaches the floor, which is read only once the key is gone.
 const FULL_PIPELINE: Middleware[] = [
   withRequestId, withErrorEnvelope, withRequestGuard, withSession, withStepUp, withSpendGate,
+  // A replay inside its key's day is answered from the stored row and never meets the floor.
   withCsrf, withPressAge, withIdempotency,
 ];
 
