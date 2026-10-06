@@ -46,7 +46,7 @@ import { hideMessages } from "./delete-undo";
 import { folderTailVerdict, folderUnreadCounts } from "./folders";
 import { avatarHue, initialsOf } from "./format";
 import { mailboxLabelKey, mailboxLabelResolver } from "./mailbox-label";
-import type { MailboxFacts } from "./mail-state";
+import { ownAddressesOf, type MailboxFacts } from "./mail-state";
 import { useOlderMail } from "./older-mail";
 import { ohboxSurfaceMessages } from "./ohbox-surface";
 import { readOwner } from "./owner-cookie";
@@ -76,10 +76,10 @@ const OWN_ADDRESSES_BOOT_SCOPE = "own-addresses";
  * one string, and every byte of the result is printable.
  */
 function ownAddressKey(
-  facts: ReadonlyArray<{ address: string }> | null,
+  facts: ReadonlyArray<Pick<MailboxFacts, "address" | "addressIsOwn">> | null,
   remembered: readonly string[] | null,
 ): string {
-  const list = facts?.map((m) => m.address) ?? remembered ?? [];
+  const list = (facts ? ownAddressesOf(facts) : null) ?? remembered ?? [];
   return JSON.stringify([...list].map((a) => a.trim().toLowerCase()).sort());
 }
 
@@ -175,7 +175,7 @@ export function useShellDerivations({
     const owner = readOwner();
     if (owner === null) return;
     if (facts) {
-      writeBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, facts.map((m) => m.address));
+      writeBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, ownAddressesOf(facts));
       return;
     }
     const cached = readBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, acceptAddressList);
@@ -191,7 +191,7 @@ export function useShellDerivations({
    * value keeps the server's order and case; nothing downstream may see a folded address.
    */
   const ownAddresses = useMemo(
-    () => facts?.map((m) => m.address) ?? rememberedOwn ?? [],
+    () => (facts ? ownAddressesOf(facts) : null) ?? rememberedOwn ?? [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ownAddressKey(facts, rememberedOwn)],
   );

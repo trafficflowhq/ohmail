@@ -106,6 +106,8 @@ interface MailboxWire {
   takeoverAuthorizedAt?: string | null;
   /** `false` while this engine has not read the lease for a reader row yet; absent otherwise. */
   organizerChecked?: boolean;
+  /** The server's answer to whether this address is the account's own (`MailboxDTO.addressIsOwn`). */
+  addressIsOwn?: boolean;
   /** Whether a decision made here would be accepted by whoever organizes this mailbox. */
   organizerAcceptsRequests?: boolean;
   /** How this mailbox is signed in — it decides one sentence about why a refusal is permanent. */
@@ -263,6 +265,7 @@ export async function readMailboxFactsVia(
     ...("releaseRefusal" in m ? { releaseRefusal: m.releaseRefusal } : {}),
     ...("takeoverAuthorizedAt" in m ? { takeoverAuthorizedAt: m.takeoverAuthorizedAt } : {}),
     ...("organizerChecked" in m ? { organizerChecked: m.organizerChecked } : {}),
+    ...("addressIsOwn" in m ? { addressIsOwn: m.addressIsOwn } : {}),
     ...("organizerAcceptsRequests" in m ? { organizerAcceptsRequests: m.organizerAcceptsRequests } : {}),
     ...("authKind" in m ? { authKind: m.authKind } : {}),
     ...("pendingMoves" in m ? { pendingMoves: m.pendingMoves } : {}),

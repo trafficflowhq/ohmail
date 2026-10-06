@@ -1173,6 +1173,8 @@ export interface MailboxDTO {
    * then "not looked", not "nobody". Absent is a host older than the field, which reads as yes.
    */
   organizerChecked?: boolean;
+  /** Is this address the account's own — the server's one set (not erased, not removed). Absent reads as yes. */
+  addressIsOwn?: boolean;
   /**
    * Is the claim on this mailbox this install's own — the SERVER's comparison, not a client's.
    *

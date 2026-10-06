@@ -646,6 +646,14 @@ export interface StoreRefusals {
  * Anything the Cloud client can see and this interface does not name is a fact the copy may
  * not assert.
  */
+/**
+ * THE ACCOUNT'S OWN ADDRESSES, as the server counts them (`addressIsOwn`), in the server's order and
+ * case: the one set every own-mail question on this surface reads. A row without the field counts.
+ */
+export function ownAddressesOf(facts: readonly Pick<MailboxFacts, "address" | "addressIsOwn">[]): string[] {
+  return facts.filter((m) => m.addressIsOwn !== false).map((m) => m.address);
+}
+
 export interface MailboxFacts {
   /**
    * WHICH mailbox this is — added for the From seam, NOT for the ladder.
@@ -794,6 +802,11 @@ export interface MailboxFacts {
    * door that cannot say. Setup waits on it before offering Agree.
    */
   organizerChecked?: boolean;
+  /**
+   * IS THIS ADDRESS THE ACCOUNT'S OWN — the server's one set (`MailboxDTO.addressIsOwn`: neither erased
+   * nor removed). `ownAddressesOf` reads it; absent is a server older than the field and reads as yes.
+   */
+  addressIsOwn?: boolean;
   /**
    * Would a decision made here be accepted by whoever organizes this
    * mailbox? `true` only where a press has somewhere to go. Absent and

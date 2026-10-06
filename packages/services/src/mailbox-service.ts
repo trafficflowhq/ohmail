@@ -7,7 +7,7 @@ import {
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
   hasCapability, CAPABILITY_REQUESTS,
-  standDownMemory,
+  standDownMemory, mailboxCountsAsOwn,
   closeRemovedMailboxAppointments,
   filingDue, filingDeferred, filingStuck, ourOutstandingFiling, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
@@ -2872,6 +2872,9 @@ export class MailboxService {
       id: m.id,
       provider: m.provider,
       address: m.address,
+      // The server's answer to "is this address the account's own" (`mailboxCountsAsOwn`), so the
+      // surfaces read the one set the router and the rule refusal read rather than re-deriving it.
+      addressIsOwn: mailboxCountsAsOwn(m),
       displayName: m.displayName,
       status: m.status as MailboxDTO["status"],
       authKind: m.authKind as MailboxDTO["authKind"],

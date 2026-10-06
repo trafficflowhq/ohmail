@@ -409,6 +409,7 @@ export {
  */
 export {
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
+  mailboxCountsAsOwn, mailboxCountsAsOwnSql,
   heldSortKey,
   cutlineInstant,
   CUTLINE_PRESENTED_FOLDERS, CUTLINE_DEFAULT_DORMANCY_DAYS, CUTLINE_ALLOW_DESTINATIONS,

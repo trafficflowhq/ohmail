@@ -1,4 +1,4 @@
-import { sql, type SQL } from "drizzle-orm";
+import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER } from "./screener-apply.js";
 import { ruleMatchKeySql, ruleNamesSenderSql } from "./rule-match-sql.js";
@@ -260,15 +260,32 @@ export function senderScreenedOutByPersonSql(
 }
 
 /**
- * IS THIS SENDER THE ACCOUNT ITSELF — one of its own mailbox addresses. The account is never one
- * of its own correspondents, so its mail is never a Screener decision: the count leaves it out and
- * the queue's page and the auto-suggest set never list it. The client's twin is
- * `client-engine#ownAddressKeys`, which presents such mail at the gate in the INBOX.
+ * A MAILBOX WHOSE ADDRESS IS THE ACCOUNT'S OWN: neither erased (`erasure_done_at`) nor removed (the
+ * tombstone, `disabled` with no stand-down reason; a stood-down mailbox keeps its reason and stays the
+ * account's). The ONE definition the router's own test, the rule refusal, the Screener and both
+ * surfaces read; {@link mailboxCountsAsOwn} is its twin over a row in hand, `MailboxDTO.addressIsOwn`.
+ */
+export function mailboxCountsAsOwnSql(m: { status: SQL | AnyColumn; disabledReason: SQL | AnyColumn; erasureDoneAt: SQL | AnyColumn }): SQL {
+  return sql`(${m.erasureDoneAt} is null and (${m.status} <> 'disabled' or ${m.disabledReason} is not null))`;
+}
+
+/** {@link mailboxCountsAsOwnSql} over a row already read — the same three columns, the same answer. */
+export function mailboxCountsAsOwn(m: { status: string; disabledReason: string | null; erasureDoneAt: Date | string | null }): boolean {
+  return m.erasureDoneAt === null && (m.status !== "disabled" || m.disabledReason !== null);
+}
+
+/**
+ * IS THIS SENDER THE ACCOUNT ITSELF — one of its own mailbox addresses ({@link mailboxCountsAsOwnSql}).
+ * The account is never one of its own correspondents, so its mail is never a Screener decision: the
+ * count leaves it out and the queue's page and the auto-suggest set never list it. The client's twin
+ * is `client-engine#ownAddressKeys`, which presents such mail at the gate in the INBOX.
  */
 export function senderIsOwnSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
+  const own = mailboxCountsAsOwnSql({ status: sql`mo.status`, disabledReason: sql`mo.disabled_reason`, erasureDoneAt: sql`mo.erasure_done_at` });
   return sql`exists (
     select 1 from mailboxes mo
      where mo.account_id = ${d.castUuid(accountId)}
        and lower(mo.address) = ${senderExpr}
+       and ${own}
   )`;
 }

@@ -648,6 +648,13 @@ export interface MailboxDTO {
   id: string;
   provider: string;              // 'imap' today; 'exchange' planned
   address: string;
+  /**
+   * IS THIS ADDRESS THE ACCOUNT'S OWN: the mailbox is neither erased nor removed (a stood-down one is
+   * still the account's). The one set the router, the rule refusal (`own_address`) and both surfaces
+   * read (`@trafficflow/db#mailboxCountsAsOwn`). Optional: a door older than the field sends nothing,
+   * which a client reads as yes.
+   */
+  addressIsOwn?: boolean;
   displayName: string | null;
   status: "connected" | "error" | "disabled";
   authKind: "password" | "oauth";

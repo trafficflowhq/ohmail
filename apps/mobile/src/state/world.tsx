@@ -36,7 +36,7 @@ import {
   writeThemeFace,
   type FoldersConsent,
 } from "../net/consent";
-import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
+import { ownAddressesOf, readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { junkFolderSaid } from "./folders";
 import { readRelayedDecisions, readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
 import { withSentHere, type RelayedDecision } from "./relay";
@@ -959,7 +959,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const addressesNow = useRef<readonly string[]>([]);
   addressesNow.current = useMemo(
-    () => (mailboxes ?? []).map((b) => b.address),
+    () => ownAddressesOf(mailboxes ?? []),
     [mailboxes],
   );
   /**

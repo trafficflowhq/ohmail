@@ -57,6 +57,8 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     organizerState: m.organizerState ?? null,
     // SPREAD: absent is a host that cannot say, which setup reads as looked (`holderAnswered`).
     ...("organizerChecked" in m ? { organizerChecked: m.organizerChecked } : {}),
+    // SPREAD: absent is a server older than the field, whose every listed address reads as own.
+    ...("addressIsOwn" in m ? { addressIsOwn: m.addressIsOwn } : {}),
     // FORWARDED UNTOUCHED, and the missing `?? null` is the point — the rule
     // `initialImportCompletedAt` below states, applied to a control rather than to a strip.
     // `null` is "nobody has agreed to this mailbox" and makes the claim offer eligible; ABSENT

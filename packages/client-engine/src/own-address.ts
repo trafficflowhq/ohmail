@@ -39,8 +39,9 @@ export function ownAddressKeys(
   reader: EntityReader, opts: OwnAddressOptions = {},
 ): ReadonlySet<string> {
   const explicit = opts.ownAddresses;
-  const source = explicit ?? reader.list<{ address?: unknown }>("mailbox")
-    .map((m) => (typeof m.address === "string" ? m.address : ""));
+  // A mirrored row the server does not count as own (`addressIsOwn: false`) is not one.
+  const source = explicit ?? reader.list<{ address?: unknown; addressIsOwn?: unknown }>("mailbox")
+    .map((m) => (typeof m.address === "string" && m.addressIsOwn !== false ? m.address : ""));
   const out = new Set<string>();
   for (const a of source) {
     const key = senderKey(String(a));

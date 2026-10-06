@@ -16,10 +16,20 @@ import { requestBase } from "./request-base";
  */
 
 /** One mailbox, reduced to the facts this phone can actually use. */
+/** The account's own addresses as the server counts them — the one set every own-mail question here reads. */
+export function ownAddressesOf(rows: readonly Pick<PhoneMailbox, "address" | "addressIsOwn">[]): string[] {
+  return rows.filter((r) => r.addressIsOwn !== false).map((r) => r.address);
+}
+
 export interface PhoneMailbox {
   id: string;
   /** The mailbox's own address — what makes the reader recognisable in a To/Cc list. */
   address: string;
+  /**
+   * `false` where the server does not count this address as the account's own
+   * (`MailboxDTO.addressIsOwn`: erased or removed). Absent is yes, as from a server older than it.
+   */
+  addressIsOwn?: false;
   /**
    * The mailbox's user-facing label — `MailboxDTO.displayName`, nullable on the wire and ABSENT
    * where an older server sent none. Read so that a mailbox this phone names is the one the
@@ -175,6 +185,7 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
       out.push({
         id: r.id,
         address: r.address,
+        ...(r.addressIsOwn === false ? { addressIsOwn: false as const } : {}),
         ...(typeof r.displayName === "string" && r.displayName !== ""
           ? { displayName: r.displayName }
           : {}),

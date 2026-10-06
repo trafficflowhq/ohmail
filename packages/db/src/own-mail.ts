@@ -2,17 +2,17 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { folderState, mailboxes, messages } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
 import type { Dialect } from "./dialect/index.js";
-import { CUTLINE_GATE_FOLDER } from "./screener-cutline.js";
+import { CUTLINE_GATE_FOLDER, mailboxCountsAsOwnSql } from "./screener-cutline.js";
 import { ruleMatchKey, ruleNamesSenderSql } from "./rule-match-sql.js";
 
 /**
- * THE ACCOUNT'S OWN ADDRESSES, AS THE ORGANIZER READS THEM — every mailbox row of the account,
- * case-folded: the set {@link senderIsOwnSql} tests in SQL, read whole for the router's gate,
- * which decides in memory (`core/rules.ts#evaluateRules`, `ownAddresses`).
+ * THE ACCOUNT'S OWN ADDRESSES, AS THE ORGANIZER READS THEM — its mailboxes neither erased nor removed
+ * (`mailboxCountsAsOwnSql`, the one definition), case-folded: the set {@link senderIsOwnSql} tests in
+ * SQL, read whole for the router's gate, which decides in memory (`core/rules.ts#evaluateRules`).
  */
 export async function readOwnAddresses(db: Tx, accountId: string): Promise<Set<string>> {
   const rows = await db.select({ address: mailboxes.address }).from(mailboxes)
-    .where(eq(mailboxes.accountId, accountId));
+    .where(and(eq(mailboxes.accountId, accountId), mailboxCountsAsOwnSql(mailboxes)));
   return new Set(rows.map((r) => r.address.toLowerCase()).filter((a) => a !== ""));
 }
 
