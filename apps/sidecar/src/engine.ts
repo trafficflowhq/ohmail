@@ -5886,6 +5886,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            reports — 13.7 minutes of a 47.4-minute import on the reference rig, which the reported
            duration used to leave out. `performance.now()`, matching the reporter's own clock. */
         const passStartedAt = performance.now();
+        // The same instant on the store's clock, for `last_sync_at` (see `stampSynced`).
+        const passStartedWall = now();
         // Per-cycle wall durations, summarized into one `sync_drain` line below — the read that
         // attributes desktop CPU and quit lag to the pipeline. `Date.now()` deliberately, not the
         // injected `now()`: a test may freeze that clock, and a frozen clock would report every
@@ -6191,7 +6193,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              stamp. See `sync-stamp.ts`. */
           tail.phase("stamp");
           if (cycles > 0) {
-            const stamps = await upkeep(() => stampSynced(db, mb.id, now(), inboundDrained));
+            const stamps = await upkeep(() => stampSynced(db, mb.id, now(), inboundDrained, passStartedWall));
             /* HOW LONG THE FIRST IMPORT TOOK, from the stamps that just decided it — the number
                nobody could read off a log before. The count is a thunk so a settled mailbox's pass
                pays nothing for it; see `first-sync.ts`. */

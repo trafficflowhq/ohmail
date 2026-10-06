@@ -33,7 +33,7 @@ interface HandlerContext {
   mailboxId: string;
   requestId: string;
   now: Date;
-  /** The record's own `decided_at`: when the reader's press was made. */
+  /** The record's own `decided_at`: when the reader's door wrote it (the press is `payload.pressedAt`). */
   decidedAt: Date;
 }
 

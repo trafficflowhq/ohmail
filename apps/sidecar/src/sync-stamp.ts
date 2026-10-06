@@ -42,12 +42,18 @@ export async function stampSynced(
   mailboxId: string,
   now: Date,
   drained: boolean,
+  /**
+   * When this pass BEGAN, for `last_sync_at` — never its end: an adopted external move is stamped
+   * with this column as a lower bound of the move (mail 0145), and a pass's end can postdate a move
+   * its scans missed. Absent = `now` (the Cloud mirror, which adopts nothing).
+   */
+  passStartedAt: Date = now,
 ): Promise<SyncStamps> {
   const progress = sql`case when ${mailboxes.initialImportCompletedAt} is null then ${dialect(db).ts(now)}
     else ${mailboxes.syncProgressAt} end`;
   const passed = await db
     .update(mailboxes)
-    .set(drained ? { lastSyncAt: now } : { lastSyncAt: now, syncProgressAt: progress })
+    .set(drained ? { lastSyncAt: passStartedAt } : { lastSyncAt: passStartedAt, syncProgressAt: progress })
     .where(eq(mailboxes.id, mailboxId))
     .returning({ importCompletedAt: mailboxes.initialImportCompletedAt });
   // No row ⇒ the mailbox was removed while this pass ran. There is no import to report either way.

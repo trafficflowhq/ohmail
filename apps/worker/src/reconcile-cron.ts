@@ -432,6 +432,8 @@ export async function runReconcileCron(
     /* The sweep's failure is HELD rather than propagated, for exactly as long as it takes the
      * request drain below to run — see that block, and the fence note inside it. */
     let cycleError: unknown = null;
+    /** When the first cycle began: the stamp below claims that instant, never the pass's end. */
+    let passStartedMs = Date.now();
     try {
       // The hold is EVALUATED from the current facts before each pass — never cached (see
       // `importHoldNow`): an answer landing between the preflight and the first pass,
@@ -440,6 +442,7 @@ export async function runReconcileCron(
       // cron executes authorized takeovers) is seen by the evaluation, marker or no marker. A
       // faulted read costs one stale cycle, retried at the second pass.
       await permit.check();
+      passStartedMs = Date.now();
       await runSyncCycle({
         ...deps, writeAuthority: cycleWriteAuthority(deps.role, permit),
         importHold: await profileSync.importHoldNow(),
@@ -564,9 +567,9 @@ export async function runReconcileCron(
       // The DB-clock variant — this stamp participates in the same `last_sync_at` the pull
       // affordance settles on, and a host-clock `new Date()` here was the one writer left that
       // could plant a future value for `stampMailboxSyncNow`'s GREATEST to preserve (2026-08-26
-      // review, round 4). Backdate 0: the backstop's per-mailbox pass is a single bounded
-      // reconcile, not a rotation.
-      await stampMailboxSyncNow(db, [mailboxId]);
+      // review, round 4). Backdated to the first cycle's start: an adopted external move is
+      // stamped with this column as a lower bound of the move (mail 0145).
+      await stampMailboxSyncNow(db, [mailboxId], Date.now() - passStartedMs);
     } catch (err) {
       log.error(cronEvent("reconcile", "stamp_failed"), { mailboxId, err });
     }
