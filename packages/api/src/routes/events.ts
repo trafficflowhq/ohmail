@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import { describeError, silentLogger } from "@trafficflow/core/mail";
 import { changeLog, sessions } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services/mail";
 import { DEFAULT_SSE } from "../deps.js";
@@ -100,6 +101,7 @@ export const eventsRoutes: Route[] = [
     handler: async (_req, deps) => {
       const { accountId, sessionId } = deps.session!;   // raw pipeline still runs withSession (401 if none)
       const cfg = { ...DEFAULT_SSE, ...(deps.sse ?? {}) };
+      const log = deps.logger ?? silentLogger;
       const enc = new TextEncoder();
 
       if (cfg.enabled === false) return sseDisabledResponse();
@@ -151,8 +153,9 @@ export const eventsRoutes: Route[] = [
             stop();
             try { controller.close(); } catch { /* already closed */ }
           };
-          // A failed read: the 30 s hint, then the close.
-          const readFailed = (): void => {
+          // A failed read: one line with the error's class and nothing else, the 30 s hint, the close.
+          const readFailed = (err: unknown): void => {
+            log.warn("sse_read_failed", { errorClass: describeError(err).errorClass });
             send(RETRY_AFTER_FAILURE);
             send("event: sync_failed\ndata: {}\n\n");
             finish();
@@ -168,8 +171,8 @@ export const eventsRoutes: Route[] = [
             if (!first.live) { finish(); return; }
             lastSeq = first.seq;                          // don't replay backlog: start at current max
             liveReadAt = issuedAt;
-          } catch {
-            readFailed();
+          } catch (err) {
+            readFailed(err);
             return;
           }
 
@@ -217,8 +220,8 @@ export const eventsRoutes: Route[] = [
                 if (!t.live) { finish(); return; }        // the session ended: so does its stream
                 liveReadAt = issuedAt;
                 if (t.seq > lastSeq) { lastSeq = t.seq; send(`event: sync\ndata: {"seq":${t.seq}}\n\n`); }
-              } catch {
-                readFailed();
+              } catch (err) {
+                readFailed(err);
                 return;
               }
             }
