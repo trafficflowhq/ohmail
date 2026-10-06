@@ -98,7 +98,7 @@ import { Sheet, SheetBackdrop, SheetRow, useSheetPanelBounds } from "./Sheet";
 import { composeBodyMin, notesPinned, pinnedNotesMax } from "./compose-fit";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
-import { holdReader } from "./reader-held";
+import { holdReader, holdWhileOpen } from "./reader-held";
 import { ATTACH_ROW_GAP, attachHintFits, attachHintStyle } from "./attach-hint";
 import { failedSendLine } from "./send-failed";
 import type { StayedWhy } from "../state/sender-stayed";
@@ -1103,10 +1103,7 @@ export function ComposeSheet({
      mailto in a body): a fold or unfold while it is open replaced or covered the New mail route and
      unmounted it without a close. The move fires once the composer is gone (`reader-held.ts`). */
   const holdToken = useRef(Symbol("composer")).current;
-  useEffect(() => {
-    holdReader(holdToken, true);
-    return () => holdReader(holdToken, false);
-  }, [holdToken]);
+  useEffect(() => holdWhileOpen(holdToken), [holdToken]);
   /* EVERY ROAD OUT IS A CLOSE: `leave` marks it. An unmount that did not come through one keeps what
      a close would have kept (`unmountKeep`), so nothing typed goes with a screen that went. */
   const closed = useRef(false);

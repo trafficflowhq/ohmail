@@ -20,7 +20,7 @@ import { scaffoldPlan } from "../../src/ui/scaffold/plan";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { DevRenderErrorTrigger } from "../../src/dev/render-error-trigger-door";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
-import { readerHeldNow, subscribeReaderHeld } from "../../src/ui/reader-held";
+import { readerHeldNow, readerMoveDue, subscribeReaderHeld } from "../../src/ui/reader-held";
 
 /**
  * Gated like the tabs: a deep link (`ohmail://message/<id>`) can mount this route with the
@@ -56,7 +56,7 @@ function MessageRoute() {
   /* An open sheet or composer holds the move; it fires when the last one closes. */
   const held = useSyncExternalStore(subscribeReaderHeld, readerHeldNow);
   useEffect(() => {
-    if (targetPath !== null && target !== null && !held) {
+    if (targetPath !== null && target !== null && readerMoveDue(targetPath, held)) {
       router.replace({ pathname: targetPath, params: target.params });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

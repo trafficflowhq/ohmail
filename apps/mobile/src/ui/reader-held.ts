@@ -25,3 +25,16 @@ export function subscribeReaderHeld(fn: () => void): () => void {
 export function readerHeldNow(): boolean {
   return held;
 }
+
+/**
+ * A composer's hold for as long as it is open: taken now, given back by the returned function (an
+ * effect's cleanup). The route composer and the reader's own composer both take it, so a fold or an
+ * unfold never replaces or covers a letter being written (`compose-route-holds-the-reader.test.ts`).
+ */
+export function holdWhileOpen(token: symbol): () => void {
+  holdReader(token, true);
+  return () => holdReader(token, false);
+}
+
+/** Whether the pushed reader moves to the pair's pane now: a pane to move to, and nothing holding it. */
+export const readerMoveDue = (targetPath: string | null, held: boolean): boolean => targetPath !== null && !held;
