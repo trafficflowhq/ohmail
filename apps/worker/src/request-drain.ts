@@ -33,6 +33,8 @@ interface HandlerContext {
   mailboxId: string;
   requestId: string;
   now: Date;
+  /** The record's own `decided_at`: when the reader's press was made. */
+  decidedAt: Date;
 }
 
 /** Applied, or not applied for a named reason the reader is told. */
@@ -69,6 +71,9 @@ class ApplierRefusedError extends Error {
 const MOVE_REFUSAL_REASON: Readonly<Record<MoveRefusal, RequestRefusalReason>> = {
   no_such_message: "no_such_message",
   no_trash_folder: "no_trash_folder",
+  /* A placement decided here after the reader's press: the wire's existing `stale`, which every
+     reader already knows and lists as over, never a new word an older install cannot parse. */
+  stale_press: "stale",
 };
 
 /** The rule applier's own word, mapped the same way and for the same reason. */
@@ -128,6 +133,7 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
     return async (tx) => {
       const r = await applyMessageMove(tx, {
         accountId: ctx.accountId, mailboxId: ctx.mailboxId, payload: move, now: ctx.now,
+        decidedAt: ctx.decidedAt,
       });
       if (r.applied) return { applied: true };
       /* The applier's two outcomes are not refusals OF THE RECORD — the record was valid and
@@ -827,7 +833,7 @@ export async function applyMetaRequests(
      */
     const runApply = handler(
       (decoded as RequestRecord).payload,
-      { accountId: rt.accountId, mailboxId: rt.mailboxId, requestId: e.requestId, now },
+      { accountId: rt.accountId, mailboxId: rt.mailboxId, requestId: e.requestId, now, decidedAt: e.decidedAt },
     );
     if (!runApply) {
       settle(e, "refused", "invalid_payload");

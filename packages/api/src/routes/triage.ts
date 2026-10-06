@@ -26,7 +26,7 @@ export const triageRoutes: Route[] = [
     pattern: "/messages/:id/triage",
     relay: true,
     cost: "work",
-    options: { idempotent: true },
+    options: { idempotent: true, pressAge: true },
     handler: async (req, deps, params) => {
       const body = await readBody<TriageWireBody>(req);
       const setBody: TriageSetBody = { state: body.state, bubbleUpAt: body.bubbleUpAt ?? body.untilTs };

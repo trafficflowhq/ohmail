@@ -1735,14 +1735,17 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     messageId: string, s: FolderStateRow, expectDesiredFolder: string,
   ): Promise<boolean> {
     const reconcileStatus = reconcileStatusFor(s);
+    // An adopted external move is the person's DECISION, made in their own mail client and
+    // observed now: it stamps `decided_at`, so a stale ohmail press replayed later is refused.
+    const decidedAt = new Date();
     const [row] = await this.db.insert(folderState).values({
       messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
-      lastSetBy: s.lastSetBy, reconcileStatus, conflict: false,
+      lastSetBy: s.lastSetBy, reconcileStatus, conflict: false, decidedAt,
     }).onConflictDoUpdate({
       target: folderState.messageId,
       set: {
         desiredFolder: s.desiredFolder, observedFolder: s.observedFolder, lastSetBy: s.lastSetBy,
-        reconcileStatus, conflict: false, updatedAt: new Date(),
+        reconcileStatus, conflict: false, updatedAt: decidedAt, decidedAt,
         attempts: 0, nextAttemptAt: null,
       },
       setWhere: eq(folderState.desiredFolder, expectDesiredFolder),

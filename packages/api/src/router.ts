@@ -217,6 +217,13 @@ export interface RouteOptions {
   /** Honors `Idempotency-Key` (`withIdempotency`). */
   idempotent?: boolean;
   /**
+   * A STATE VERB that reads the press's age (`withPressAge`, `x-ohmail-press-age`): its service
+   * refuses `409 stale_press` when the field it sets was decided after the press. Absent, a replay
+   * past its idempotency record re-runs unconditionally — `press-age-route-census.test.ts` derives
+   * the set from the client's state verbs and refuses a drift either way.
+   */
+  pressAge?: true;
+  /**
    * A replay of this request is safe by the route's OWN construction, not by `withIdempotency`, so a
    * busy 503 may say `retryable: true`. Only a route whose handler deduplicates its own retries may
    * claim it: the refresh door, whose rotation re-answers the same attempt id and converges a cookie

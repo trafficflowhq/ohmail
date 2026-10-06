@@ -74,7 +74,8 @@ export async function bubbleUpPass(
         // SETS `resurfaced` — a row scheduled at t1 and fired at t2 must sync setAt = t2, or
         // the DTO's timestamp differs by transition path (the direct `resurface_now` stamps
         // its own instant). `spendResurface` stays the one deliberate preserver.
-        .set({ state: "resurfaced", bubbleUpAt: null, setAt: now, updatedAt: now })
+        // `decidedAt`: the pin is a decision placed now, so a triage press older than it is stale.
+        .set({ state: "resurfaced", bubbleUpAt: null, setAt: now, updatedAt: now, decidedAt: now })
         .where(and(eq(messageStates.id, row.id), eq(messageStates.state, "bubbled_up")))
         .returning({ id: messageStates.id });
       if (updated.length === 0) return false;

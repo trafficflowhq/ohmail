@@ -624,6 +624,29 @@ export function canonicalQuery(url: URL): string {
   return new URLSearchParams(params).toString();
 }
 
+/** The press's age, integer milliseconds the client measured from the press to this send. */
+export const PRESS_AGE_HEADER = "x-ohmail-press-age";
+const PRESS_AGE_SHAPE = /^\d{1,15}$/;
+
+/**
+ * THE PRESS AGE, read once. On a `pressAge` route a well-formed header sets `deps.press.floor` =
+ * the server's now minus the age, so client and server clocks never meet; absent leaves `null`
+ * (an older client: today's behaviour). Malformed is 400, non-retryable — only our own client
+ * sends it. Outside the request hash on purpose: a same-key replay inside the day is answered
+ * from the stored row whatever age it carries.
+ */
+export const withPressAge: Middleware = (next, route) => async (req, deps, params) => {
+  deps.press = null;
+  if (!route.options?.pressAge) return next(req, deps, params);
+  const raw = req.headers.get(PRESS_AGE_HEADER);
+  if (raw === null) return next(req, deps, params);
+  if (!PRESS_AGE_SHAPE.test(raw)) {
+    return errorResponse("validation_failed", 400, `${PRESS_AGE_HEADER} must be a non-negative integer of milliseconds`, undefined, false);
+  }
+  deps.press = { floor: new Date(deps.now().getTime() - Number(raw)) };
+  return next(req, deps, params);
+};
+
 /**
  * Idempotency. On an idempotent route carrying `Idempotency-Key`: hash
  * `method\npath\ncanonicalQuery\nrawBody`; the same stored hash replays verbatim; a different

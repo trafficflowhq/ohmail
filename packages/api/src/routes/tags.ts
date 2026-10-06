@@ -71,6 +71,7 @@ export const tagsRoutes: Route[] = [
     relay: true,
     cost: "work",
     replay: "guarded",
+    options: { pressAge: true },
     handler: async (req, deps, params) => {
       const body = await readBody<{ tagId: string; assigned: boolean; name?: string }>(req);
       const { labels, tagId, seq } = await tags(deps).assign(

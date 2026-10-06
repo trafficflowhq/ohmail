@@ -685,6 +685,15 @@ export interface IdempotencyContext {
 }
 
 /**
+ * Set by `withPressAge` on a `pressAge` route that carried `x-ohmail-press-age`: the instant the
+ * press was made, on the SERVER's clock (now minus the age). Absent header ⇒ `null`, today's
+ * behaviour (an older client).
+ */
+export interface PressContext {
+  floor: Date;
+}
+
+/**
  * The per-request container handed to every handler and middleware. It is
  * MUTABLE: `withRequestId` fills `requestId`, `withSession` sets `session`, and
  * `withIdempotency` sets `idempotency`. Tests construct one directly around a
@@ -720,6 +729,8 @@ export interface ApiDeps {
   oauth?: OAuthTokenProvider;
   /** Set by `withIdempotency`; consumed by the handler's service. */
   idempotency?: IdempotencyContext | null;
+  /** Set by `withPressAge`; threaded onto the service context as `pressFloor`. */
+  press?: PressContext | null;
   /**
    * The platform scheduler's own credential (`CRON_SECRET`), independent of the alerting block.
    * Absent or `null` ⇒ this host has no cron credential; a scheduled route then falls back to

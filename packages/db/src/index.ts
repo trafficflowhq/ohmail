@@ -51,6 +51,9 @@ export { ringFilingDoorbell, FILING_DOORBELL_MIN_GAP_MS } from "./filing-doorbel
 // (both the services and the worker write it, and the worker may not import services at
 // runtime). Reaches `schema-mail.js` alone, so the closure rule above holds.
 export { upsertDesiredSeen, upsertDesiredSeenMany } from "./flag-intent.js";
+export {
+  decisionInstant, placementDecidedAfter, readDecidedAfter, tagAssignedAfter, triageDecidedAfter,
+} from "./press-floor.js";
 
 // The ONE spelling of "record a learning signal, bump the graduation counter" — same argument as
 // the line above, moved for 0.14.1 (0.14.1): the organizer's request drain applies a

@@ -1,6 +1,9 @@
 import { and, asc, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
-import { assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
+import {
+  assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange,
+  decisionInstant, triageDecidedAfter, type Tx,
+} from "@trafficflow/db";
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
@@ -115,6 +118,14 @@ export class TriageService {
        * the message in front of it.
        */
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      // THE STALE PRESS, before any write: a triage decided after this press stands, silent.
+      const floor = ctx.pressFloor ?? null;
+      if (floor !== null && await triageDecidedAfter(bridgeTx(tx), messageId, floor)) {
+        const [held] = await tx.select({ id: messageStates.id }).from(messageStates)
+          .where(and(eq(messageStates.messageId, messageId), eq(messageStates.accountId, ctx.accountId))).limit(1);
+        const current = held ? await materializeMessageState(asDb(tx), ctx.accountId, held.id) : null;
+        throw new ServiceError("stale_press", 409, "a newer decision about this message stands", { current }, false);
+      }
 
       // The state being LEFT — read before the upsert overwrites it (serialized by the message
       // row lock above). Only the `none` transition consumes it (the re-homing below).
@@ -124,8 +135,9 @@ export class TriageService {
         .where(eq(messageStates.messageId, messageId)).limit(1);
 
       const now = ctx.now();
+      const decidedAt = decisionInstant(floor, now);
       const [row] = await tx.insert(messageStates).values({
-        accountId: ctx.accountId, messageId, state: b.state, bubbleUpAt, setAt: now, updatedAt: now,
+        accountId: ctx.accountId, messageId, state: b.state, bubbleUpAt, setAt: now, updatedAt: now, decidedAt,
       }).onConflictDoUpdate({
         target: messageStates.messageId,
         // `setAt` REFRESHES with every transition: it is "when THIS state was set", and the
@@ -135,7 +147,7 @@ export class TriageService {
         // written a fresh `setAt` per transition; this makes the server agree. The one writer
         // that deliberately PRESERVES `setAt` is `spendResurface` — a release, not a
         // transition into a state — on both sides of the wire.
-        set: { state: b.state, bubbleUpAt, setAt: now, updatedAt: now },
+        set: { state: b.state, bubbleUpAt, setAt: now, updatedAt: now, decidedAt },
       }).returning({ id: messageStates.id });
 
       /**

@@ -5,7 +5,7 @@ import { errorResponse } from "./responses.js";
 import { firstMisshapenQuery } from "./query-bounds.js";
 import { matchRoute, type Handler, type Route, type RouteParams } from "./router.js";
 import {
-  withCsrf, withErrorEnvelope, withIdempotency, withRequestGuard, withRequestId,
+  withCsrf, withErrorEnvelope, withIdempotency, withPressAge, withRequestGuard, withRequestId,
   withSession, withSpendGate, withStepUp,
   type Middleware,
 } from "./middleware.js";
@@ -23,9 +23,11 @@ export interface App {
 // cookie-minting auth routes get, so it must not depend on a session existing. `withSpendGate`
 // sits directly after `withStepUp`: both judge a privilege the resolved session carries or does
 // not, and a caller missing both should hear about the step-up first — the cheaper fix.
+// `withPressAge` sits before `withIdempotency`: a replay inside the key's day is answered from
+// the stored row and never reaches the floor, which is read only once the key is gone.
 const FULL_PIPELINE: Middleware[] = [
   withRequestId, withErrorEnvelope, withRequestGuard, withSession, withStepUp, withSpendGate,
-  withCsrf, withIdempotency,
+  withCsrf, withPressAge, withIdempotency,
 ];
 
 // Reduced pipeline for `raw` routes (SSE, /oauth/authorize): no JSON envelope coercion, no

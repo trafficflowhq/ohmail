@@ -130,6 +130,12 @@ export interface ServiceContext {
    * second admits a cursor issued before the field existed. See `SyncService.decodeCursor`.
    */
   storeGeneration?: number | null;
+  /**
+   * WHEN THE PRESS THIS REQUEST CARRIES WAS MADE, on this server's clock (`x-ohmail-press-age`):
+   * a state verb stamps it as the field's `decided_at` and refuses `409 stale_press` when the field
+   * was decided after it. Absent = the request named no age, and the verb decides at `now`.
+   */
+  pressFloor?: Date | null;
 }
 
 /**

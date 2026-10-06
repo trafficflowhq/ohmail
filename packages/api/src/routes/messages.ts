@@ -123,7 +123,7 @@ export const messageRoutes: Route[] = [
     pattern: "/messages",
     relay: true,
     cost: "work",
-    options: { idempotent: true },
+    options: { idempotent: true, pressAge: true },
     handler: async (req, deps) => {
       const body = await readBody<MarkSeenBody>(req);
       const { items, seq } = await message(deps).markSeen(serviceContext(deps, req), body);
@@ -136,6 +136,7 @@ export const messageRoutes: Route[] = [
     relay: true,
     cost: "work",
     replay: "state",
+    options: { pressAge: true },
     handler: async (req, deps, params) => {
       const body = await readBody<MessagePatchBody>(req);
       const { dto, seq, pending } = await message(deps).patch(serviceContext(deps, req), params.id!, body);
@@ -199,7 +200,7 @@ export const messageRoutes: Route[] = [
     pattern: "/messages/:id/move",
     relay: true,
     cost: "work",
-    options: { idempotent: true },
+    options: { idempotent: true, pressAge: true },
     handler: async (req, deps, params) => {
       const body = await readBody<MoveBody>(req);
       const result = await message(deps).move(serviceContext(deps, req), params.id!, body, {
@@ -228,7 +229,7 @@ export const messageRoutes: Route[] = [
     pattern: "/messages/:id/restore",
     relay: true,
     cost: "work",
-    options: { idempotent: true },
+    options: { idempotent: true, pressAge: true },
     handler: async (req, deps, params) => {
       const { restoreTo, pending, seq } = await message(deps).restore(
         serviceContext(deps, req), params.id!,
@@ -245,7 +246,7 @@ export const messageRoutes: Route[] = [
     pattern: "/messages/:id",
     relay: true,
     cost: "work",
-    options: { idempotent: true },
+    options: { idempotent: true, pressAge: true },
     handler: async (req, deps, params) => {
       const result = await message(deps).delete(serviceContext(deps, req), params.id!, {
         idempotency: deps.idempotency ?? null,

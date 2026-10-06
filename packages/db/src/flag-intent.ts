@@ -15,8 +15,10 @@ import type { Tx } from "./change-log.js";
  */
 export async function upsertDesiredSeen(
   tx: Tx, id: string, observedSeen: boolean, desiredSeen: boolean, now: Date,
+  /** When the decision was placed (`flag_state.decided_at`): a press's floor, else `now`. */
+  decidedAt: Date = now,
 ): Promise<void> {
-  await upsertDesiredSeenMany(tx, [{ id, observedSeen }], desiredSeen, now);
+  await upsertDesiredSeenMany(tx, [{ id, observedSeen }], desiredSeen, now, decidedAt);
 }
 
 /**
@@ -26,16 +28,17 @@ export async function upsertDesiredSeen(
  */
 export async function upsertDesiredSeenMany(
   tx: Tx, rows: ReadonlyArray<{ id: string; observedSeen: boolean }>, desiredSeen: boolean, now: Date,
+  decidedAt: Date = now,
 ): Promise<void> {
   if (rows.length === 0) return;
   await tx.insert(flagState).values(rows.map((r) => ({
     messageId: r.id, desiredSeen, observedSeen: r.observedSeen,
     lastSetBy: "us", reconcileStatus: desiredSeen === r.observedSeen ? "reconciled" : "pending",
-    conflict: false,
+    conflict: false, decidedAt,
   }))).onConflictDoUpdate({
     target: flagState.messageId,
     set: {
-      desiredSeen, lastSetBy: "us", conflict: false, updatedAt: now,
+      desiredSeen, lastSetBy: "us", conflict: false, updatedAt: now, decidedAt,
       // A literal, not a bound boolean: the device store's test driver refuses one by position.
       reconcileStatus: sql`case when ${flagState.observedSeen} = ${boolLiteral(desiredSeen)} then 'reconciled' else 'pending' end`,
     },

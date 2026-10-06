@@ -5,7 +5,8 @@ import {
   mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
   recordChange, recordChanges, recordRouteOverride, demoteRoute, routeOverrideActionId,
   senderPatternFromAddress,
-  upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell, type ChangeInput, type LedgerTx, type OrganizedBy, type Tx,
+  upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell,
+  decisionInstant, placementDecidedAfter, readDecidedAfter, type ChangeInput, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
@@ -1060,6 +1061,9 @@ export class MessageService {
     /* ONE LOCK ORDER WITH THE MOVE AND THE APPROVAL: fenced at the top, the message's rows, then the
        change-log counter. Both halves' changes are recorded after the rows, so a patch never holds
        the counter while it waits for a `folder_state` row another writer holds. */
+    /* THE PRESS'S FLOOR, per half: a half whose field was decided after the press is dropped, and
+       a request whose every half is stale answers `409 stale_press`. Read before any write. */
+    const floor = ctx.pressFloor ?? null;
     const seq = await withAccountTx(ctx, async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, unread: messages.unread, nativeLocator: messages.nativeLocator,
@@ -1075,8 +1079,11 @@ export class MessageService {
       let last: bigint | null = null;
       let read = false;
       let movedFrom: string | null = null;
+      const staleRead = floor !== null && body.unread !== undefined
+        && (await readDecidedAfter(bridgeTx(tx), [id], floor)).has(id);
+      let staleFolder = false;
 
-      if (body.unread !== undefined) {
+      if (body.unread !== undefined && !staleRead) {
         // ONE instant for this decision, read once. The reading stamp, the row's `updated_at`
         // and the `\Seen` intent are one event; three `ctx.now()` calls made them three times
         // that disagree whenever the calls cross a millisecond, and a client then reads a row
@@ -1094,7 +1101,7 @@ export class MessageService {
         }).where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
         // The read model AND the intent, in the same transaction. Writing only `messages.unread`
         // was the original bug: the flag never reached the mailbox, so it survived nothing.
-        await upsertDesiredSeen(bridgeTx(tx), id, !msg.unread, !body.unread, at);
+        await upsertDesiredSeen(bridgeTx(tx), id, !msg.unread, !body.unread, at, decisionInstant(floor, at));
         read = true;
       }
 
@@ -1118,20 +1125,29 @@ export class MessageService {
             kind: "message.move",
             payload: { dedupKey: msg.dedupKey, destination: moveDestinationWord(folder) },
             holder: route.holder,
+            ...(floor !== null ? { decidedAt: floor } : {}),
           });
         } else {
           // The locked re-check, on `move`'s argument exactly — the routing read above takes no
           // lock, so a demotion can commit between the two.
           await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
+          staleFolder = floor !== null && await placementDecidedAfter(bridgeTx(tx), id, floor);
+        }
+        if (route.route !== "request" && !staleFolder) {
           const observed = await this.observedFolder(tx, id, msg.nativeLocator);
           // The mailbox that now owes a move, rung AFTER this transaction commits.
           filed = msg.mailboxId;
           // `null` — a filing is not a delete, and this write CLEARS any origin the row carried
           // from an earlier delete. See `upsertDesired`'s own parameter block. The request branch
           // above writes no `folder_state` row, so there is nothing there to clear.
-          await this.upsertDesired(tx, id, observed, folder, ctx.now(), null);
+          await this.upsertDesired(tx, id, observed, folder, ctx.now(), null, decisionInstant(floor, ctx.now()));
           movedFrom = observed;
         }
+      }
+      // Every half this request asked for was decided after its press: nothing was written.
+      if ((body.unread === undefined || staleRead) && (folder === undefined || staleFolder)
+          && (staleRead || staleFolder)) {
+        return this.stalePress(tx, ctx, id);
       }
 
       // The counter, after every row this patch writes (the read first, then the move, as before).
@@ -1156,7 +1172,8 @@ export class MessageService {
       // so spending the pin would be a local write about a move that has not happened, leaving
       // the row unpinned if the organizer refuses. `move`'s request path spends nothing for the
       // same reason.
-      if ((body.unread === false && !glance) || (folder !== undefined && pending === undefined)) {
+      if ((body.unread === false && !glance && !staleRead)
+          || (folder !== undefined && pending === undefined && !staleFolder)) {
         const spent = await this.spendResurface(tx, ctx, [id]);
         if (spent !== null) last = spent;
       }
@@ -1210,6 +1227,7 @@ export class MessageService {
     // the caller's order is the order the deltas land in.
     const ids = [...new Set(body.ids as string[])];
 
+    const floor = ctx.pressFloor ?? null;
     const seq = await asTx(ctx).transaction(async (tx) => {
       const owned = await tx.select({ id: messages.id, unread: messages.unread })
         .from(messages)
@@ -1221,6 +1239,14 @@ export class MessageService {
         throw new ServiceError("not_found", 404, "message not found");
       }
       const observedById = new Map(owned.map((m) => [m.id, !m.unread]));
+      /* PER ID: an id whose read state was decided after this press keeps it; the rest apply. A
+         batch with no id left is the stale press itself, refused before any write. */
+      const stale = floor === null ? new Set<string>() : await readDecidedAfter(tx, ids, floor);
+      const live = ids.filter((id) => !stale.has(id));
+      if (live.length === 0) {
+        const current = await materializeMessagesInOrder(asDb(tx), ctx.accountId, ids, { deleted: "include" });
+        throw new ServiceError("stale_press", 409, "a newer read decision about these messages stands", { current }, false);
+      }
 
       let last: bigint | null = null;
       // ONE instant for the whole batch, read once HERE rather than per row inside the loop. A
@@ -1235,11 +1261,12 @@ export class MessageService {
       // intents, then the account's seq row, taken last and held to commit. One change per message
       // still, allocated in one block in the caller's order.
       await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: at })
-        .where(and(inArray(messages.id, ids), eq(messages.accountId, ctx.accountId)));
+        .where(and(inArray(messages.id, live), eq(messages.accountId, ctx.accountId)));
       await upsertDesiredSeenMany(
-        tx, ids.map((id) => ({ id, observedSeen: observedById.get(id) ?? false })), !unread, at,
+        tx, live.map((id) => ({ id, observedSeen: observedById.get(id) ?? false })), !unread, at,
+        decisionInstant(floor, at),
       );
-      const seqs = await recordChanges(tx, ids.map((id): ChangeInput => ({
+      const seqs = await recordChanges(tx, live.map((id): ChangeInput => ({
         accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
       })));
       last = seqs[seqs.length - 1] ?? null;
@@ -1250,7 +1277,7 @@ export class MessageService {
       // answered by dealing with the row, and nobody pressed anything to get here. Marking
       // unread must not touch triage either way.
       if (!unread && !glance) {
-        const spent = await this.spendResurface(tx, ctx, ids);
+        const spent = await this.spendResurface(tx, ctx, live);
         if (spent !== null) last = spent;
       }
       return last;
@@ -1278,6 +1305,7 @@ export class MessageService {
     let filed: string | null = null;
     /** The route this move's override demoted: switched off after the commit, never inside it. */
     let owedDemotion: string | null = null;
+    const floor = ctx.pressFloor ?? null;
     // Fenced at the top, as every writer under a sender's key opens.
     const answer = await withAccountTx(ctx, async (tx) => {
       const [msg] = await tx.select({
@@ -1318,6 +1346,8 @@ export class MessageService {
        * demotion between the two, so the share lock is what actually stands between this write and
        * a reader crossing the door. See `assertOrganizerRole`'s own header for the interleaving. */
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      // THE STALE PRESS, before any write: a placement decided after this press stands.
+      if (floor !== null && await placementDecidedAfter(bridgeTx(tx), id, floor)) return this.stalePress(tx, ctx, id);
 
       // Write DESIRED state only. observedFolder is the worker's truth — read
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
@@ -1326,7 +1356,7 @@ export class MessageService {
       filed = msg.mailboxId;
       // `null` — see the `patch` arm above and `upsertDesired`'s parameter block: a move CLEARS
       // the delete origin, which is what makes a second delete from a new folder honest.
-      await this.upsertDesired(tx, id, observed, folder, ctx.now(), null);
+      await this.upsertDesired(tx, id, observed, folder, ctx.now(), null, decisionInstant(floor, ctx.now()));
       // The auto-apply pass's sixth exclusion: a message put back is never filed automatically again.
       if (opts.putBackAutoFiling === true) {
         // scoped-by: the message row was read above under eq(messages.accountId, ctx.accountId)
@@ -1413,6 +1443,7 @@ export class MessageService {
        `null` when this request wrote no desired folder, so the organizer is not woken for work
        that does not exist. */
     let filed: string | null = null;
+    const floor = ctx.pressFloor ?? null;
     const answer = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
@@ -1442,6 +1473,8 @@ export class MessageService {
       }
       // The locked re-check — see `move`'s note on why the plain read above does not replace it.
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      // THE STALE PRESS, before any write: a placement decided after this press (a restore, a move).
+      if (floor !== null && await placementDecidedAfter(bridgeTx(tx), id, floor)) return this.stalePress(tx, ctx, id);
 
       const hasCopy = (msg.nativeLocator as NativeLocator | null) !== null;
       let trash: string | null = null;
@@ -1472,7 +1505,7 @@ export class MessageService {
         filed = msg.mailboxId;
         await this.upsertDesired(
           tx, id, observed, trash as Folder, now,
-          observed === trash ? null : observed,
+          observed === trash ? null : observed, decisionInstant(floor, now),
         );
       }
       await tx.update(messages).set({ deletedAt: now, updatedAt: now })
@@ -1543,6 +1576,9 @@ export class MessageService {
 
       // A READER RESTORES NOTHING — see the header. First, so the sentence is the true one.
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      // THE STALE PRESS, before the state check: a placement decided after it owns the sentence.
+      const floor = ctx.pressFloor ?? null;
+      if (floor !== null && await placementDecidedAfter(bridgeTx(tx), id, floor)) return this.stalePress(tx, ctx, id);
 
       const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
         .where(eq(mailboxes.id, msg.mailboxId)).limit(1);
@@ -1567,7 +1603,7 @@ export class MessageService {
       /* `trashed_from: null` — the origin has been spent. A message restored and deleted again
          records its NEW origin at that delete; leaving this set would let the second delete
          inherit the first one's answer. Passed explicitly because `upsertDesired` requires it. */
-      await this.upsertDesired(tx, id, trash, target, now, null);
+      await this.upsertDesired(tx, id, trash, target, now, null, decisionInstant(floor, now));
       const seq = Number(await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
         meta: { from: trash, to: target },
@@ -1613,13 +1649,17 @@ export class MessageService {
    */
   // `LedgerTx`, not `Tx`: this writes the change log, and only a real transaction may.
   private async spendResurface(tx: LedgerTx, ctx: ServiceContext, ids: string[]): Promise<bigint | null> {
+    if (ids.length === 0) return null;
+    // A pin placed after the press that spends it stands: the floor is the press's, when it named one.
+    const floor = ctx.pressFloor ?? null;
     const cleared = await tx
       .update(messageStates)
-      .set({ state: "none", bubbleUpAt: null, updatedAt: ctx.now() })
+      .set({ state: "none", bubbleUpAt: null, updatedAt: ctx.now(), decidedAt: decisionInstant(floor, ctx.now()) })
       .where(and(
         inArray(messageStates.messageId, ids),
         eq(messageStates.accountId, ctx.accountId),
         eq(messageStates.state, "resurfaced"),
+        ...(floor === null ? [] : [or(isNull(messageStates.decidedAt), lte(messageStates.decidedAt, floor))!]),
       ))
       .returning({ id: messageStates.id });
     // One append for every pin cleared; none cleared appends nothing and names no seq.
@@ -1680,20 +1720,32 @@ export class MessageService {
      * caller cannot write the desired folder without saying what this becomes.
      */
     trashedFrom: string | null,
+    /** When this decision was placed (`decided_at`): the press's floor, else `now`. Required. */
+    decidedAt: Date,
   ): Promise<void> {
 
     // scoped-by: every caller passes an id it loaded by (id, accountId) in this transaction
     await tx.insert(folderState).values({
       messageId: id, desiredFolder: folder, observedFolder: observed,
-      lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom,
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom, decidedAt,
     }).onConflictDoUpdate({
       target: folderState.messageId,
       // observedFolder deliberately omitted → preserved (worker owns it).
       // `trashedFrom` is deliberately NOT omitted: it is written on every conflict, which is
       // what makes "every non-trash write clears it" true of an existing row and not only of a
       // fresh one. See the parameter's own block.
-      set: { desiredFolder: folder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom },
+      set: { desiredFolder: folder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom, decidedAt },
     });
+  }
+
+  /**
+   * `409 stale_press` — the field this press sets was decided after it. Thrown before any write, so
+   * the transaction rolls back nothing; the body carries the message as it stands, and the client
+   * settles the press silent (the newer decision owns the sentence). Not retryable.
+   */
+  private async stalePress(tx: Tx, ctx: ServiceContext, id: string): Promise<never> {
+    const current = await materializeMessage(asDb(tx), ctx.accountId, id);
+    throw new ServiceError("stale_press", 409, "a newer decision about this message stands", { current }, false);
   }
 
   /**
@@ -1792,6 +1844,8 @@ export class MessageService {
       payload: { dedupKey: r.dedupKey, destination: r.destination },
       holder: r.holder,
       requestId,
+      // The press's floor travels with the record: the organizer refuses it behind a newer decision.
+      ...(ctx.pressFloor ? { decidedAt: ctx.pressFloor } : {}),
     });
 
     const dto = await materializeMessage(asDb(tx), ctx.accountId, r.messageId);

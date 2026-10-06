@@ -7,6 +7,7 @@ import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, listPressLegs, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
 import { accountWritesHere } from "./organizer-role.js";
+import { decisionInstant, placementDecidedAfter } from "./press-floor.js";
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
@@ -94,7 +95,7 @@ export function validateMovePayload(payload: unknown): ValidatedMovePayload | nu
  * destination was `trash` and this mailbox has no discovered Trash path — ohmail never expunges,
  * so there is nowhere to put it and nothing to guess.
  */
-export type MoveRefusal = "no_such_message" | "no_trash_folder";
+export type MoveRefusal = "no_such_message" | "no_trash_folder" | "stale_press";
 
 export interface ApplyMessageMoveInput {
   accountId: string;
@@ -102,6 +103,12 @@ export interface ApplyMessageMoveInput {
   mailboxId: string;
   payload: ValidatedMovePayload;
   now: Date;
+  /**
+   * When the reader's press was made (`organizer_requests.decided_at`, the record's own stamp).
+   * A placement decided on this store after it stands: the request is refused `stale_press` and
+   * nothing is written. Absent = applied at `now`, as before.
+   */
+  decidedAt?: Date | null;
 }
 
 export type ApplyMessageMoveResult =
@@ -131,6 +138,7 @@ export async function applyMessageMove(
   tx: Tx, input: ApplyMessageMoveInput,
 ): Promise<ApplyMessageMoveResult> {
   const { accountId, mailboxId, payload, now } = input;
+  const decidedAt = input.decidedAt ?? null;
 
   /* THE NATURAL KEY, AND IT IS SCOPED BY ACCOUNT AS WELL AS BY MAILBOX.
      `messages_mailbox_dedup_uq` is `(mailbox_id, dedup_key)`, so the mailbox predicate alone
@@ -172,6 +180,11 @@ export async function applyMessageMove(
     if (to === null) return { applied: false, refusal: "no_trash_folder" };
   }
 
+  // THE STALE PRESS, before any write: a placement decided here after the reader's press stands.
+  if (decidedAt !== null && await placementDecidedAfter(tx, msg.id, decidedAt)) {
+    return { applied: false, refusal: "stale_press" };
+  }
+
   /* WHERE IT IS NOW — the worker's truth, or the message's own locator when no `folder_state` row
      exists yet. `MessageService.observedFolder`'s exact fallback, deliberately: two answers to
      "where is this message" would show up as a `change_log` `from` that disagrees with the row. */
@@ -193,10 +206,14 @@ export async function applyMessageMove(
   await tx.insert(folderState).values({
     messageId: msg.id, desiredFolder: to, observedFolder: from,
     lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom,
+    decidedAt: decisionInstant(decidedAt, now),
   }).onConflictDoUpdate({
     target: folderState.messageId,
     // `observedFolder` deliberately omitted → preserved. The worker owns it.
-    set: { desiredFolder: to, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom },
+    set: {
+      desiredFolder: to, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom,
+      decidedAt: decisionInstant(decidedAt, now),
+    },
   });
 
   const lastSeq = await recordChange(ledger(tx), {

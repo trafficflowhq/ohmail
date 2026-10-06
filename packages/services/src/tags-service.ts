@@ -1,6 +1,9 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
-import { assertOrganizerRole, assertAccountOrganizes, readIdempotencyKey, tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
+import {
+  assertOrganizerRole, assertAccountOrganizes, readIdempotencyKey, tags, messages, messageTags, recordChange,
+  decisionInstant, tagAssignedAfter, type Tx,
+} from "@trafficflow/db";
 import { bridgeTx, claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeTag, tagRowToDTO } from "./dto/materialize.js";
@@ -311,9 +314,19 @@ export class TagsService {
         if (!tag) throw new ServiceError("not_found", 404, "tag not found");
       }
 
+      /* THE STALE PRESS, before any write: a removal pressed before the tag was (re)assigned is
+         refused silent. The assignment's row is stamped with its own press's floor, so two
+         devices' replays order by press. An assignment over a present row is a no-op already. */
+      const floor = ctx.pressFloor ?? null;
+      if (!assigned && floor !== null && await tagAssignedAfter(bridgeTx(tx), ctx.accountId, messageId, resolved, floor)) {
+        const rows = await tx.select({ tagId: messageTags.tagId }).from(messageTags)
+          .where(and(eq(messageTags.messageId, messageId), eq(messageTags.accountId, ctx.accountId)));
+        throw new ServiceError("stale_press", 409, "a newer decision about this tag stands",
+          { current: { labels: rows.map((r) => r.tagId), tagId: resolved } }, false);
+      }
       if (assigned) {
         await tx.insert(messageTags)
-          .values({ accountId: ctx.accountId, messageId, tagId: resolved, createdAt: ctx.now() })
+          .values({ accountId: ctx.accountId, messageId, tagId: resolved, createdAt: decisionInstant(floor, ctx.now()) })
           .onConflictDoNothing();
       } else {
         await tx.delete(messageTags).where(and(
