@@ -233,6 +233,7 @@ import {
   planScreeningChange,
   autoUnsubscribeDoor,
   screeningToast,
+  isOwnSubject,
   senderScreening,
   splitRoutingPlan,
   worstStatus,
@@ -3635,6 +3636,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           rulesFor={(scope) => screeningRules(senderMenu!.messageId, senderMenu!.address, scope)}
           organizer={otherOrganizerOf(facts, new Set(senderMenuFor.messages.map((m) => m.mailboxId)))}
           backRef={senderMenuBack}
+          // Our own address: the sheet says why it offers no press (`isOwnSubject`).
+          own={isOwnSubject(engine.verbRead(), senderMenu!.messageId, senderMenu!.address, ownAddresses)}
           autoUnsubscribe={autoUnsubscribeDiscloses}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope, senderMenu!.address)}
           // The subject sheet resolves the message's SENDER (`subjectRuleContext`), so under an

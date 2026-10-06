@@ -15,6 +15,7 @@ import {
   consentIndex,
   decidedDestination,
   folderLeaf,
+  isOwnSent,
   isPersonsOwnFolder,
   mailboxProfiles,
   oneRowPerKey,
@@ -283,6 +284,25 @@ export function senderScreening(
 }
 
 
+
+/**
+ * IS THE SHEET'S SUBJECT THE ACCOUNT ITSELF — one of its own addresses, or the sender of its own
+ * Sent copy where no chip names somebody else. The sheet offers no Screening press about it: a rule
+ * on our own address is refused by the server (`own_address`).
+ */
+export function isOwnSubject(
+  reader: EntityReader, messageId: string, address: string | undefined, ownAddresses: readonly string[],
+): boolean {
+  const seed = reader.get<EngineMessage>("message", messageId);
+  if (!seed) return false;
+  const subject = senderKey(address ?? seed.from.address);
+  if (ownAddresses.some((a) => senderKey(a) === subject)) return true;
+  return address === undefined && isOwnSent(seed);
+}
+
+/** Did the server refuse a rule or a decision of this press as being about our own address? */
+export const refusedAsOwnAddress = (results: readonly { error?: { code: string | null } }[]): boolean =>
+  results.some((r) => r.error?.code === "own_address");
 
 /** The `match` a rule at this scope carries — normalized ONCE, for the overlay and the wire. */
 export function ruleMatchOf(s: SenderScreening, scope: ScreeningScope): string {
@@ -645,7 +665,7 @@ export type ScreeningToastKey =
   | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled" | "toastAlreadyRuledRetro"
   | "toastClaimed" | "toastClaimedRetro"
   | "toastRuledFuture" | "toastRuledMoved" | "toastRuleQueued" | "toastRuleFailed" | "toastMoved"
-  | "toastRuleOrganizer" | "toastDecideRefused";
+  | "toastRuleOrganizer" | "toastDecideRefused" | "toastOwnAddress";
 
 export function screeningToast(
   plan: ScreeningPlan,
@@ -736,21 +756,23 @@ export async function dispatchScreeningChange(
   plan: ScreeningPlan,
   /** The press's moves, dispatched after the rules and the decide — {@link movesAtLanding}'s. */
   pressMoves: readonly PressMove[],
-  mutate: (m: EngineMutation) => Promise<{ status: MutationStatus }>,
+  mutate: (m: EngineMutation) => Promise<{ status: MutationStatus; error?: { code: string | null } }>,
 ): Promise<ScreeningToastKey | null> {
   const rules = plan.ruleMutations.map((m) => mutate(m));
   /* …AND THE DECIDE, in the plan's own order: a refused decision is the answer the sentence owes.
      A refused move rolls its own row back and is not the sentence's status, but the answer waits
      for every move to settle: the caller reads the list back, and an unsettled move is still
      painted at the place it was sent to. */
-  const decides: Array<Promise<{ status: MutationStatus }>> = [];
+  const decides: Array<Promise<{ status: MutationStatus; error?: { code: string | null } }>> = [];
   for (const m of plan.mutations) {
     if (plan.ruleMutations.includes(m)) continue;
     decides.push(mutate(m));
   }
   const moves = pressMoves.map((m) => mutate(m));
-  const worst = worstStatus(await Promise.all([...rules, ...decides]));
+  const answers = await Promise.all([...rules, ...decides]);
   await Promise.allSettled(moves);
+  if (refusedAsOwnAddress(answers)) return "toastOwnAddress";
+  const worst = worstStatus(answers);
   // Replaced by a newer press about this sender: that press says the sentence, this one none.
   if (worst === "superseded") return null;
   return screeningToast(plan, worst, pressMoves.length);

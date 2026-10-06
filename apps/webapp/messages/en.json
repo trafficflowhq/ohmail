@@ -3237,6 +3237,7 @@
     "toastRuleFailed": "{place} — {count, plural, =0 {mail already here stays where it is} one {1 message from {sender} moved} other {# messages from {sender} moved}}, but the rule couldn't be made. Future mail is unchanged.",
     "toastRuleOrganizer": "Queued for the organizer — mail from {sender} goes to {place} on its next pass, and the rule is made then.",
     "toastDecideRefused": "{place} — nothing moved: the decision was refused, so {sender} is still waiting in the Screener.",
+    "toastOwnAddress": "That's your own address. Rules sort mail from other people.",
     "verdictKept": "{count, plural, one {1 is} other {# are}} in {place} · {kept, plural, one {1 stays} other {# stay}} in {keptPlace} by your rule »{term}«.",
     "verdictKeptDomain": "{count, plural, one {1 is} other {# are}} in {place} · {kept, plural, one {1 stays} other {# stay}} in {keptPlace} by your rule for everyone at {domain}, subject contains »{term}«.",
     "verdictMoved": "{place} — {count, plural, one {1 message} other {# messages}} moved.",

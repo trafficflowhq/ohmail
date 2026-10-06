@@ -28,6 +28,7 @@ import {
   type EntityReader,
   type Folder,
   type JarIntent,
+  type MutationRejectedError,
   type MutationStatus,
   type ReleaseIntent,
   type RoutingIntent,
@@ -123,7 +124,11 @@ export interface ScreenCommitOutcome {
   changed: readonly string[];
 }
 
-export type RoutingSendResult = { status: MutationStatus; entityId?: string; queuedWith?: { name: string | null } };
+export type RoutingSendResult = {
+  status: MutationStatus; entityId?: string; queuedWith?: { name: string | null };
+  /** The refusal, where the server named one (`own_address` has its own sentence). */
+  error?: MutationRejectedError;
+};
 
 /** A sender-sheet press: the v2 intent's answers, and the press's own in-memory follow-up. */
 export interface ScreenPressInput extends RoutingPressInput {

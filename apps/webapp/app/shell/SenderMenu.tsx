@@ -139,10 +139,16 @@ export function SenderMenu({
   rulesFor,
   organizer,
   backRef,
+  own = false,
   onClose,
 }: {
   state: SenderMenuState;
   sender: SenderScreening;
+  /**
+   * THE SUBJECT IS THE ACCOUNT ITSELF (`isOwnSubject`): no destination, rule switch or subject
+   * split is offered, since each would be a rule on our own address, which the server refuses.
+   */
+  own?: boolean;
   onChoose: (
     dest: ScreeningDest,
     scope: ScreeningScope,
@@ -351,6 +357,33 @@ export function SenderMenu({
   const { style, full } = useOverlayFit(rootRef, state);
   useFocusFollows(rootRef);
 
+  const head = (
+    <div className="sm-head">
+      <Avatar initials={initialsOf(label)} hue={avatarHue(sender.address)} size="s" />
+      <span className="sm-who">
+        <b>{label}</b>
+        {sender.name ? <small>{who}</small> : null}
+      </span>
+    </div>
+  );
+  // Our own address: the sentence instead of the press, and the ways onward that write nothing.
+  if (own) {
+    return (
+      <div ref={rootRef} id={SENDER_SHEET_ID} className={full ? "senderm sm-full" : "senderm"} role="dialog"
+        aria-modal="true" aria-label={t("aria", { sender: who })} style={style}>
+        <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
+        {head}
+        <div className="sm-now">{t("toastOwnAddress")}</div>
+        <div className="sm-links">
+          <button type="button" className="sm-detail" onClick={() => onOpenDetail("sender")}>
+            {t("auditOpen", { count: sender.scopes.sender.messages.length })}
+          </button>
+          <a className="sm-detail" href={addressHref(sender.address)} onClick={onClose}>{t("addressOpen")}</a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={rootRef}
@@ -366,13 +399,7 @@ export function SenderMenu({
           stays in its corner while the sheet scrolls. A sheet with room around it keeps its
           face; it is dismissed by the page around it. */}
       <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
-      <div className="sm-head">
-        <Avatar initials={initialsOf(label)} hue={avatarHue(sender.address)} size="s" />
-        <span className="sm-who">
-          <b>{label}</b>
-          {sender.name ? <small>{who}</small> : null}
-        </span>
-      </div>
+      {head}
 
       {canScope ? (
         <>

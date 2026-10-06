@@ -63,6 +63,7 @@ import {
   senderScreening,
   splitRoutingPlan,
   withResolution,
+  refusedAsOwnAddress,
   worstStatus,
   type PressMove,
   type ScreeningDest,
@@ -433,7 +434,8 @@ export function useShellVerbs({
         // Replaced by a newer press about this sender: that press says the sentence.
         if (o.worst === "superseded") return;
         if (o.worst === "rolled_back") {
-          toast(t("screening.toastRuleFailed", { sender: p.who, place: p.place, count: p.gained() }));
+          toast(refusedAsOwnAddress(o.results) ? t("screening.toastOwnAddress")
+            : t("screening.toastRuleFailed", { sender: p.who, place: p.place, count: p.gained() }));
           return;
         }
         if (o.worst === "awaiting_organizer") {
