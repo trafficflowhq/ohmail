@@ -24,7 +24,7 @@ import { InPaneContext, PaneChromeContext } from "./pane-chrome";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
 import { readerHeldNow, subscribeReaderHeld } from "./reader-held";
-import { paneFootSearch, paneSplit, railHome, scaffoldPlan, RAIL_W } from "./scaffold/plan";
+import { pairPadding, paneFootSearch, paneSplit, railHome, scaffoldPlan } from "./scaffold/plan";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -114,7 +114,7 @@ export function ListDetail({
   }
 
   const split = box === null || holding ? null : paneSplit(posture, plan, box.w, box.h);
-  const railPad = plan.nav === "rail" ? RAIL_W : 0;
+  const pad = pairPadding(plan);
 
   const listPane = (
     <InPaneContext.Provider value>
@@ -204,8 +204,8 @@ export function ListDetail({
     />
   );
 
-  /* On a two-pane posture the pair pays the rail once, in its padding below, never its Screen. While a
-     fold holds the pair open behind a sheet, one-pane rules pay it on every Screen too (filed). */
+  /* The rail is paid once: on a two-pane posture in the pair's padding, while a fold holds the pair
+     open behind a sheet on this Screen by the one-pane rule; a pane's own Screen never pays it. */
   return (
     <Screen fullWindow={false}>
       <View style={{ flex: 1 }} onLayout={measure}>
@@ -214,9 +214,10 @@ export function ListDetail({
             style={{
               flex: 1,
               flexDirection: axis,
-              padding: plan.gutter,
-              paddingLeft: plan.gutter + (plan.navSide === "left" ? railPad : 0),
-              paddingRight: plan.gutter + (plan.navSide === "right" ? railPad : 0),
+              paddingTop: pad.top,
+              paddingBottom: pad.bottom,
+              paddingLeft: pad.left,
+              paddingRight: pad.right,
             }}
           >
             <View style={split === null ? (axis === "column" ? { flex: 1 } : { display: "none" }) : axis === "row" ? { width: split.first } : { height: split.first }}>
@@ -257,7 +258,7 @@ export function ListDetail({
           style={[
             StyleSheet.absoluteFill,
             split !== null && plan.paneAxis === "row"
-              ? { right: undefined, width: plan.gutter + split.first + (plan.navSide === "left" ? railPad : 0) }
+              ? { right: undefined, width: pad.left + split.first }
               : null,
           ]}
         >

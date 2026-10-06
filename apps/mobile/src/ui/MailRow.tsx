@@ -20,6 +20,7 @@ import { faceLabel, rowActionVerb, rowActions, type RowActionVerb } from "./row-
 import {
   readFaceOf, swipeClaims, swipeOffset, swipeVerbFor, SWIPE_FIRE_DX,
 } from "./row-swipe";
+import { rowSubjectLine } from "./row-subject";
 
 export function MailRow({
   m,
@@ -158,21 +159,23 @@ export function MailRow({
         </Txt>
       </View>
 
-      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10, marginTop: 2 }}>
-        <Txt
-          variant={seen ? "rowSubjectSeen" : "rowSubject"}
-          tone={seen ? "ink2" : "ink"}
-          numberOfLines={1}
-          style={{ flexShrink: 1 }}
-        >
-          {m.subject}
-        </Txt>
-        {m.amount ? (
-          <Txt variant="button" tone={seen ? "ink2" : "ink"} tabular style={{ marginLeft: "auto" }}>
-            {m.amount}
+      {rowSubjectLine(m.subject, m.amount) ? (
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10, marginTop: 2 }}>
+          <Txt
+            variant={seen ? "rowSubjectSeen" : "rowSubject"}
+            tone={seen ? "ink2" : "ink"}
+            numberOfLines={1}
+            style={{ flexShrink: 1 }}
+          >
+            {m.subject}
           </Txt>
-        ) : null}
-      </View>
+          {m.amount ? (
+            <Txt variant="button" tone={seen ? "ink2" : "ink"} tabular style={{ marginLeft: "auto" }}>
+              {m.amount}
+            </Txt>
+          ) : null}
+        </View>
+      ) : null}
 
       {preview ? (
         <Txt variant="meta" tone="ink3" numberOfLines={1} style={{ marginTop: 1 }}>

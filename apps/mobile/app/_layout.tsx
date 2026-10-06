@@ -110,6 +110,11 @@ function Screens() {
           }}
         >
           <Stack.Screen name="(tabs)" />
+          {/* New mail is a sheet over the screen it was opened from, never a page of its own. */}
+          <Stack.Screen
+            name="compose"
+            options={{ presentation: "transparentModal", animation: "none", contentStyle: { backgroundColor: "transparent" } }}
+          />
         </Stack>
         {/* The vertical rail, once, over every screen of the postures that own it (the closed
             Duo, a split); the tab bar keeps the dock and yields the rail to this. */}

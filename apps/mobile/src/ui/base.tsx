@@ -27,7 +27,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { listInsets, type ListInsets } from "./list-insets";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import { usePosture } from "./posture";
-import { listNavClearance, scaffoldPlan, screenFillsWindow, screenRailClearance } from "./scaffold/plan";
+import { listNavClearance, scaffoldPlan, screenFillsWindow, screenRailClearance, screenSideInsets } from "./scaffold/plan";
 import { useInPane } from "./pane-chrome";
 import { topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
@@ -102,15 +102,18 @@ export function Screen({ children, style, fullWindow }: {
   const t = useTheme();
   const insets = useSafeAreaInsets();
   /* THE RAIL OWNS ITS COLUMN: a screen beside it starts past it — the title, the reader, its bar,
-     the composer. A pane of the pair pays nothing here; the pair pays the rail once. */
+     the composer. A pane of the pair pays nothing here, neither the rail nor the side insets: the
+     pair's own Screen paid both, and a side cutout pushed a pane's content in twice. */
   const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
-  const rail = screenRailClearance(plan, screenFillsWindow(fullWindow, useInPane()));
+  const inPane = useInPane();
+  const rail = screenRailClearance(plan, screenFillsWindow(fullWindow, inPane), inPane);
+  const side = screenSideInsets(insets, inPane);
   return (
     <View
       style={[
         {
           flex: 1, backgroundColor: t.c.canvas,
-          paddingLeft: insets.left + rail.left, paddingRight: insets.right + rail.right,
+          paddingLeft: side.left + rail.left, paddingRight: side.right + rail.right,
         },
         style,
       ]}

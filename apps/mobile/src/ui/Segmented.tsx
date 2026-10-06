@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Platform, View, type LayoutChangeEvent } from "react-native";
 import { useTheme } from "../theme";
-import { SEGMENT_PAD, segmentFace } from "./segment-face";
+import { SEGMENT_PAD, segmentFace, segmentPaint } from "./segment-face";
 import { a11yRole } from "./a11y-role";
 import { Tap, Txt } from "./base";
 
@@ -48,6 +48,7 @@ export function Segmented<T extends string>({
   };
   const labelW = (i: number) => sizes[`l${i}`] ?? 0;
   const countW = (i: number) => (segments[i]!.count === undefined ? 0 : (sizes[`c${i}`] ?? 0) + 5);
+  const paint = segmentPaint(t.scheme);
   const face = fill ? segmentFace(width, segments.map((_, i) => labelW(i) + countW(i))) : "equal";
   const stacked = face === "stacked";
   return (
@@ -60,7 +61,7 @@ export function Segmented<T extends string>({
         {
           flexDirection: "row",
           alignSelf: fill ? "auto" : "flex-start",
-          backgroundColor: t.c.tint2,
+          backgroundColor: t.c[paint.track],
           borderRadius: t.radius.pill,
           padding: 3,
           gap: 2,
@@ -107,9 +108,10 @@ export function Segmented<T extends string>({
                 gap: stacked ? 0 : 5,
                 borderRadius: t.radius.pill,
                 paddingHorizontal: 8,
-                backgroundColor: on ? t.c.float : "transparent",
+                backgroundColor: on ? t.c[paint.selected] : "transparent",
               },
-              on ? t.lift("l0") : null,
+              on ? t.lift("l1") : null,
+              on && paint.ring ? { borderWidth: 1, borderColor: t.c.hair } : null,
             ]}
           >
             <Txt variant={on ? "settingsLabel" : "navLabel"} tone={on ? "ink" : "ink3"} numberOfLines={1}>

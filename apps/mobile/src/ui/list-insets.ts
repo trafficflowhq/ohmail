@@ -30,8 +30,12 @@ export interface ListSpace {
   tabClearance: number;
 }
 
-/** The gap a list keeps above whatever stands at the foot — `bottom-chrome.ts`'s `TOAST_GAP`. */
-export const CHROME_GAP = 12;
+/**
+ * The gap a list keeps above a floating bar at scroll end — the dock, the reader's verb bar. The
+ * bars are glass over the content and carry no scrim, so the last row or paragraph must REST clear
+ * of them: the bar's height plus 16 dp (it was the toast's 12, and the last line sat on the bar).
+ */
+export const CHROME_GAP = 16;
 
 /**
  * The gutters are the deck's alone: a one-pane rail's side is paid by `Screen` for every screen at

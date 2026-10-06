@@ -103,11 +103,20 @@ export function readerBarClearance(plan: ScaffoldPlan, inPane: boolean): { left:
  * posture, a screen that still fills the window (a full-window reader beside the rail) pays it too —
  * the same clearance its floating bar takes, from the same source.
  */
-export function screenRailClearance(plan: ScaffoldPlan, fullWindow: boolean): { left: number; right: number } {
-  if (plan.nav !== "rail" || !(plan.panes === 1 || fullWindow)) return { left: 0, right: 0 };
+export function screenRailClearance(
+  plan: ScaffoldPlan, fullWindow: boolean, inPane = false,
+): { left: number; right: number } {
+  /* A pane of the pair never pays: the pair pays once, on a two-pane posture in its padding and
+     while a fold holds it open on its own Screen (`pairPadding`). */
+  if (plan.nav !== "rail" || inPane || !(plan.panes === 1 || fullWindow)) return { left: 0, right: 0 };
   const { left, right } = listNavClearance(plan, 0);
   return { left, right };
 }
+
+/** The side safe-area insets a `Screen` pays: all of them, except inside a pane, whose pair paid them. */
+export const screenSideInsets = (
+  insets: { left: number; right: number }, inPane: boolean,
+): { left: number; right: number } => (inPane ? { left: 0, right: 0 } : { left: insets.left, right: insets.right });
 
 /**
  * Whether a `Screen` fills the window, and so pays the rail's column on a two-pane posture: what
@@ -148,6 +157,42 @@ export function paneSplit(
      list, clamped 280–340; the iPad and the Android tablets keep the canonical ~42 %. */
   if (p.hasFold) return { first: clamp(Math.round(inner * 0.46), 280, 340), gap: plan.gutter };
   return { first: clamp(Math.round(inner * 0.42), 280, 400), gap: plan.gutter };
+}
+
+/**
+ * The list-detail pair's own padding: the gutter on every side, and the rail's column on its side
+ * only on a two-pane posture. While a fold holds the pair open (one pane), the pair's `Screen` pays
+ * the rail by the one-pane rule, so the padding does not pay it again.
+ */
+export function pairPadding(plan: ScaffoldPlan): { left: number; right: number; top: number; bottom: number } {
+  const rail = plan.nav === "rail" && plan.panes === 2 ? RAIL_W : 0;
+  return {
+    left: plan.gutter + (plan.navSide === "left" ? rail : 0),
+    right: plan.gutter + (plan.navSide === "right" ? rail : 0),
+    top: plan.gutter,
+    bottom: plan.gutter,
+  };
+}
+
+/**
+ * THE DETAIL PANE'S RECT in window dp, from the same `paneSplit` and `pairPadding` the pair renders
+ * with — where a sheet stands on a two-pane posture (the More sheet, the composer). The pair's
+ * `Screen` pays the horizontal insets, so the pair's box is the window less those. Null in one pane,
+ * and in tabletop, where the sheet keeps the lower segment.
+ */
+export function detailPaneRect(
+  p: Posture,
+  plan: ScaffoldPlan,
+  win: { w: number; h: number },
+  insets: { left: number; right: number },
+): { x: number; w: number } | null {
+  if (plan.panes !== 2 || plan.paneAxis !== "row") return null;
+  const boxW = win.w - insets.left - insets.right;
+  const split = paneSplit(p, plan, boxW, win.h);
+  if (split === null) return null;
+  const pad = pairPadding(plan);
+  const lead = pad.left + split.first + split.gap;
+  return { x: insets.left + lead, w: Math.max(0, boxW - lead - pad.right) };
 }
 
 export function scaffoldPlan(p: Posture, platform: PlatformName): ScaffoldPlan {

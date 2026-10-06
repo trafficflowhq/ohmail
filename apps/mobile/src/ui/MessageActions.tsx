@@ -99,6 +99,7 @@ import { composeBodyMin, notesPinned, pinnedNotesMax } from "./compose-fit";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { sendPressAct } from "./send-press";
 import { holdReader } from "./reader-held";
+import { attachHintStyle, attachHintWrapped } from "./attach-hint";
 import { failedSendLine } from "./send-failed";
 import type { StayedWhy } from "../state/sender-stayed";
 import { stayedRows } from "./sender-stayed-lines";
@@ -1088,6 +1089,7 @@ export function ComposeSheet({
   const windowHeight = useWindowDimensions().height;
   const letterScroll = useRef<null | ScrollView>(null);
   const [notesHeight, setNotesHeight] = useState<number | null>(null);
+  const [hintWrapped, setHintWrapped] = useState(false);
   const pinNotes = notesPinned(notesHeight, pinnedNotesMax(windowHeight));
   useEffect(() => {
     if (!pinNotes) letterScroll.current?.scrollToEnd({ animated: false });
@@ -1747,7 +1749,12 @@ export function ComposeSheet({
                   disabled={phase !== "idle"}
                   onPress={() => void pick("photos")}
                 />
-                <Txt variant="caption" tone="ink3" style={{ marginLeft: "auto" }}>
+                <Txt
+                  variant="caption"
+                  tone="ink3"
+                  style={attachHintStyle(hintWrapped)}
+                  onLayout={(e) => setHintWrapped(attachHintWrapped(e.nativeEvent.layout.y))}
+                >
                   {Copy.attachCap(sizeLabel(attachCap))}
                 </Txt>
               </View>

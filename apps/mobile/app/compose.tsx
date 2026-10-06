@@ -3,8 +3,9 @@
  * own composer with no parent: the same editor, the same attachments, the same signature
  * block, the same Idempotency-Key and the same Send later, asking only the two facts a reply
  * already knows — who it goes to and what it is about. It opens with To focused. The sheet is
- * a Modal over whatever was on screen, so leaving it is the same act everywhere: closing goes
- * back, and over a queued send the close withdraws it first (`ComposeSheet.closeComposer`).
+ * a Modal over whatever was on screen (the route is a transparent modal and draws no bar), so
+ * leaving it is the same act everywhere: closing goes back, and over a queued send the close
+ * withdraws it first (`ComposeSheet.closeComposer`).
  */
 import { useState } from "react";
 import { router, useLocalSearchParams } from "expo-router";
@@ -84,21 +85,16 @@ function ComposeBody() {
       );
     }
     return (
-      <Screen>
-        <DetailBar title={Copy.draftsTitle} />
-        <ComposeSheet
-          m={original ?? null} mode={original ? "forward" : "new"} forwardConfirmed={confirmed}
-          draft={{ id: row.id, body: row.body, ...row.edit }} onClose={leave}
-        />
-      </Screen>
+      <ComposeSheet
+        m={original ?? null} mode={original ? "forward" : "new"} forwardConfirmed={confirmed}
+        draft={{ id: row.id, body: row.body, ...row.edit }} onClose={leave}
+      />
     );
   }
-  return (
-    <Screen>
-      <DetailBar title={Copy.composeNew} />
-      <ComposeSheet m={null} mode="new" onClose={leave} prefill={prefillOf(mailto)} />
-    </Screen>
-  );
+  /* THE SHEET IS THE PAGE: its own head is the one title, and the route is a transparent modal
+     (`app/_layout.tsx`), so the screen it was opened over stands under it — the list and the rail
+     on a two-pane posture, beside the detail pane the sheet rises over. */
+  return <ComposeSheet m={null} mode="new" onClose={leave} prefill={prefillOf(mailto)} />;
 }
 
 /**

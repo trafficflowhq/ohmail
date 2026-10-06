@@ -16,23 +16,24 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useKeyboardLift } from "./keyboard-lift";
 import { usePosture } from "./posture";
+import { detailPaneRect, scaffoldPlan } from "./scaffold/plan";
 import { sheetPanelBounds } from "./sheet-bounds";
 import { Tap, Txt } from "./base";
 import { Icon, type IconName } from "./Icon";
 
 /**
- * WHERE A SHEET'S PANEL MAY STAND, per posture: a menu never straddles the hinge (Apple moves
- * "alerts and menus … away from the bend"; Microsoft: never across the seam). Beside a
- * VERTICAL two-pane hinge the panel rises over the reading half — the side the verbs live
- * on — its left edge past the fold; over a HORIZONTAL one (tabletop) it stays inside the
- * lower half. On any other wide window it is bounded and centered (the form-sheet shape);
- * compact keeps the full-width thumb sheet, unchanged. Shared with the composer's own modal.
+ * WHERE A SHEET'S PANEL MAY STAND, per posture: a menu never straddles the hinge or the panes
+ * (Apple moves "alerts and menus … away from the bend"; Microsoft: never across the seam). On a
+ * two-pane posture the panel rises over the DETAIL PANE — the side the verbs belong to — whose
+ * rect comes from the pair's own split (`detailPaneRect`); over a HORIZONTAL hinge (tabletop) it
+ * stays inside the lower half. One pane keeps the thumb sheet. Shared with the composer's modal.
  */
 export function useSheetPanelBounds(): ViewStyle {
   const { width: w, height: h } = useWindowDimensions();
   const posture = usePosture();
-  const top = useSafeAreaInsets().top;
-  return sheetPanelBounds(w, h, top, posture.panes === 2 ? posture.hinge : null);
+  const insets = useSafeAreaInsets();
+  const pane = detailPaneRect(posture, scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android"), { w, h }, insets);
+  return sheetPanelBounds(w, h, insets.top, pane, posture.panes === 2 ? posture.hinge : null);
 }
 
 /**

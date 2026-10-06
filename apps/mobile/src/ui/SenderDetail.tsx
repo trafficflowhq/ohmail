@@ -9,7 +9,7 @@
  * Decisions and releases go through `engine.mutate`, optimistic and watched.
  */
 import { useEffect, useState } from "react";
-import { View } from "react-native";
+import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
@@ -31,6 +31,8 @@ import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
 import { Segmented } from "./Segmented";
+import { usePosture } from "./posture";
+import { decisionPanelShape, SENDER_TITLE_LINES, senderTitleType } from "./sender-fit";
 import { useLocale } from "../i18n/LocaleProvider";
 
 export function SenderDetail({
@@ -51,6 +53,7 @@ export function SenderDetail({
   const t = useTheme();
   const w = useWorld();
   const bodies = useBodies();
+  const [paneWidth, setPaneWidth] = useState<number | null>(null);
 
   const rows =
     seg === "waiting" ? w.screener.waiting : seg === "screened" ? w.screener.screened : w.screener.spam;
@@ -99,8 +102,13 @@ export function SenderDetail({
     <Screen>
       {inPane ? <PaneTop /> : <DetailBar title={Copy.screener} />}
       <Scroller contentStyle={{ paddingBottom: 40 }}>
-        <View style={{ paddingHorizontal: 12, paddingBottom: 14 }}>
-          <Txt variant="h2">{row.name}</Txt>
+        <View
+          style={{ paddingHorizontal: 12, paddingBottom: 14 }}
+          onLayout={(e) => setPaneWidth(Math.round(e.nativeEvent.layout.width))}
+        >
+          <Txt variant="h2" numberOfLines={SENDER_TITLE_LINES} style={senderTitleType(paneWidth)}>
+            {row.name}
+          </Txt>
           <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
             {row.address}
           </Txt>
@@ -263,6 +271,30 @@ function DecisionBar({
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  const shape = decisionPanelShape(usePosture().heightClass);
+  const capsules = DESTINATIONS.map((dest) => (
+    <DecisionCapsule
+      key={dest}
+      dest={dest}
+      ai={dest === suggested}
+      quiet={dest === "screened" || dest === "spam"}
+      hint={Copy.decideRule(target)}
+      onFile={() => onDecide(dest, false)}
+      onFileRead={() => onDecide(dest, true)}
+    />
+  ));
+  const scopeControl = (
+    <Segmented
+      fill={false}
+      style={shape.scopeInRow ? { alignSelf: "center" } : { marginTop: 12 }}
+      value={scope}
+      onChange={onScope}
+      segments={[
+        { value: "sender", label: Copy.scopeSender },
+        { value: "domain", label: Copy.scopeDomain },
+      ]}
+    />
+  );
   return (
     <View
       style={[
@@ -273,7 +305,7 @@ function DecisionBar({
           backgroundColor: t.c.float,
           borderTopLeftRadius: t.radius.panel,
           borderTopRightRadius: t.radius.panel,
-          paddingHorizontal: 14,
+          paddingHorizontal: shape.row === "scroll" ? 0 : 14,
           paddingTop: 14,
           paddingBottom: 12 + insets.bottom,
         },
@@ -285,33 +317,27 @@ function DecisionBar({
         t.liftUp("barEdge"),
       ]}
     >
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {DESTINATIONS.map((dest) => (
-          <DecisionCapsule
-            key={dest}
-            dest={dest}
-            ai={dest === suggested}
-            quiet={dest === "screened" || dest === "spam"}
-            onFile={() => onDecide(dest, false)}
-            onFileRead={() => onDecide(dest, true)}
-          />
-        ))}
-      </View>
+      {shape.row === "scroll" ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ gap: 8, paddingHorizontal: 14, alignItems: "center" }}
+        >
+          {capsules}
+          {shape.scopeInRow ? scopeControl : null}
+        </ScrollView>
+      ) : (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>{capsules}</View>
+      )}
 
-      <Segmented
-        fill={false}
-        style={{ marginTop: 12 }}
-        value={scope}
-        onChange={onScope}
-        segments={[
-          { value: "sender", label: Copy.scopeSender },
-          { value: "domain", label: Copy.scopeDomain },
-        ]}
-      />
+      {shape.scopeInRow ? null : scopeControl}
 
-      <Txt variant="hint" tone="ink3" style={{ marginTop: 10 }}>
-        {Copy.decideRule(target)}
-      </Txt>
+      {shape.explainer ? (
+        <Txt variant="hint" tone="ink3" style={{ marginTop: 10 }}>
+          {Copy.decideRule(target)}
+        </Txt>
+      ) : null}
     </View>
   );
 }
@@ -325,12 +351,15 @@ function DecisionCapsule({
   dest,
   ai,
   quiet,
+  hint,
   onFile,
   onFileRead,
 }: {
   dest: Destination;
   ai: boolean;
   quiet: boolean;
+  /** What the scope does — the explainer sentence, said here where the panel cannot show it. */
+  hint: string;
   onFile: () => void;
   onFileRead: () => void;
 }) {
@@ -356,6 +385,7 @@ function DecisionCapsule({
       <Tap
         accessibilityRole="button"
         accessibilityLabel={Copy.decideAria(destDone(dest), !!ai)}
+        accessibilityHint={hint}
         onPress={onFile}
         onPressIn={() => setPressed("main")}
         onPressOut={() => setPressed("none")}

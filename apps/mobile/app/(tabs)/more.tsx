@@ -15,7 +15,7 @@ import { Copy } from "../../src/copy";
 import { useWorld, type World } from "../../src/state/world";
 import { foldedNow, subscribeFolded } from "../../src/ui/nav-fold";
 import { phoneBannerLines } from "../../src/state/live";
-import { Panel, Screen, Scroller, Txt } from "../../src/ui/base";
+import { Panel, Rule, Screen, Scroller, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MoreNav, Nav } from "../../src/ui/MoreNav";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -65,17 +65,15 @@ function MoreBody() {
         </View>
 
         {/* WHAT THE DOCK OR THE RAIL FOLDED, reachable here: the same fold result, so "into
-            More" is never "gone". Absent while nothing folded. */}
-        {folded.length > 0 ? (
-          <Panel style={{ paddingVertical: 8, marginBottom: 12 }}>
-            {folded.map((id) => {
-              const d = FOLDABLE[id];
-              if (!d) return null;
-              return <Nav key={id} label={d.label()} count={d.count(w)} onPress={() => router.navigate(d.path)} />;
-            })}
-          </Panel>
-        ) : null}
-        <Panel style={{ paddingBottom: 8 }}>
+            More" is never "gone". It heads the one card, above the piles, never a card of its
+            own (one folded destination stood as a lone one-row card). Absent while nothing folded. */}
+        <Panel style={{ paddingTop: folded.length > 0 ? 8 : 0, paddingBottom: 8 }}>
+          {folded.map((id) => {
+            const d = FOLDABLE[id];
+            if (!d) return null;
+            return <Nav key={id} label={d.label()} count={d.count(w)} onPress={() => router.navigate(d.path)} />;
+          })}
+          {folded.length > 0 ? <Rule inset={20} /> : null}
           <MoreNav />
         </Panel>
       </Scroller>
