@@ -138,6 +138,23 @@ read too, and so are the last ones once you reach the end of the conversation an
   says so.
 - The desktop app shows why a paused account stopped syncing, instead of saying it is offline.
 
+### A change made during an ohmail Cloud outage waits for the service
+<!-- changes: fix-026-sse-after-the-wall.md -->
+
+The desktop app keeps a change made while ohmail Cloud cannot be reached and sends it when the
+service returns, also when the service's host answers with an error page of its own. A check that
+meets an error in the middle of an outage no longer marks the app connected and sends the next
+change into the outage.
+
+### A message you open and read moves to the top of Earlier
+<!-- changes: fix-026-earlier-top-after-read.md -->
+
+A message you open and read moves to the top of Earlier when you move on; everything else stays in
+arrival order. Mail you mark read all at once, mail the Screener lets in as read, mail you read in
+another app and anything you mark Done after resurfacing keep their place. Marking a message unread
+puts it back in New. A desktop or phone that runs on its own, without an ohmail account, remembers
+only what you read on that device.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
