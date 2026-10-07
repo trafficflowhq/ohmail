@@ -19,6 +19,91 @@ See [Status](README.md#status--read-this-first).
 The mail engine inside the phone app no longer carries the server-only parts of the health check,
 the database layer and the live event stream. Nothing a phone does changes.
 
+### Signing out ends that session's live updates within seconds
+<!-- changes: fix-026-sse-auth-4.md -->
+
+Signing out, removing a device, signing out everywhere or deleting the account now stops that
+session's live updates within two polls, on ohmail.app and on a self-hosted server, in the browser
+and in the desktop app in Cloud mode. They ran on for up to four and a half minutes.
+
+### Live updates on the web
+<!-- changes: fix-026-sse-stream-liveness.md -->
+
+- A web tab whose live connection goes quiet behind a proxy goes back to checking every few seconds
+  instead of waiting up to a minute and a half.
+
+### The buttons in an open message are easier to tap on a tablet
+<!-- changes: fix-026-history-821-restore-capsule.md -->
+
+On an unfolded phone or a tablet, Reply, Restore and the other buttons under an open message take
+the same 44 px height they have on a phone. With a mouse the bar keeps its desktop size.
+
+### The sender's address stays on screen in the Screener and the open message
+<!-- changes: fix-026-review-02517-lows.md -->
+
+A Screener row shows the sender's address on its own line under the name, at every width. In the
+open message's header and on the messages the Screener shows, the address is never cut beside a long
+display name: where the two do not fit on one line, the address takes the line under the name, and
+its domain is never cut.
+
+### A draft kept by folding the phone keeps its Cc and Bcc
+<!-- changes: fix-026-review-02517-lows.md -->
+
+When New mail on a phone is closed by a fold or an unfold rather than by Cancel, the draft it keeps
+now includes its Cc and Bcc.
+
+### Lists keep their subjects readable on fold-width screens, and tabs stay in one row
+<!-- changes: fix-026-web-ladder-polish.md -->
+
+On an unfolded phone or any window from 700 to about 900 px wide, the list beside the reader keeps
+at least 16 characters of every subject: tag chips and state notes leave the row first, and the
+protected mark shows its shield alone. Tabs (Screener, Answer Later and the others) stay in one row
+there, and where a tab strip cannot fit it wraps onto a second row instead of becoming a list. The
+AI draft's source line wraps at words, and the Tags settings keep Add beside the new tag's name.
+
+### Enter after narrowing the window keeps the message open
+<!-- changes: fix-026-web-ladder-polish.md -->
+
+With a message open beside the list, narrowing the window below 700 px brings it up full-screen;
+pressing Enter there now keeps it open instead of closing it.
+
+### The desktop app opens its mailbox faster
+<!-- changes: fix-026-desktop-launch-store-open.md -->
+
+The desktop app opens its mailbox faster, by skipping maintenance it did not need at every start.
+
+### A move or delete pressed offline no longer lands over a newer one a day later
+<!-- changes: fix-026-state-verb-replay-age.md -->
+
+A move, delete, read, triage or tag change sent more than a day after it was made no longer undoes a
+newer move, delete, restore, read, triage or tag change made in ohmail, or a move made in another
+mail client. Screener decisions and approvals, a read change made in another mail client, and a tag
+put back after it was later removed are not covered. A change replaced by a newer one no longer says
+it could not be saved.
+
+### Senders you allowed stay yours in settings an older ohmail saved
+<!-- changes: fix-026-person-decides-import.md -->
+
+Settings an older ohmail saved to the mailbox bring a sender you allowed from Junk or let in through
+the Screener as your own rule, unless this ohmail already had its own rule for that sender. A rule
+such settings brought in before this release is your own too, unless this ohmail had screened or
+learned that sender itself. A sender you allowed from Junk after marking their whole domain as spam
+or screening it out is your own rule too.
+
+### Your own mail is never filed by a rule about your own address
+<!-- changes: fix-026-own-mail-and-the-rules-door.md -->
+
+A rule naming one of your own addresses no longer decides where your own mail goes, whenever it was
+made. Screening is no longer offered on a message you sent, on the phone or the web, nor a rule by
+its subject on the web, and the rules and the Screener refuse a new rule about your own address. A
+rule about the address of a mailbox you removed or erased files its mail as for anyone else.
+
+### A removed rule leaves at once
+<!-- changes: fix-026-own-mail-and-the-rules-door.md -->
+
+Removing a rule whose sender had a second copy of it takes both off the screen at once rather than
+at the next sync.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
@@ -73,11 +158,11 @@ Mark unread moves into that menu on narrow bars instead of standing as a bare do
 ### Names and dates readable on every list row and card
 <!-- changes: fix-026-web-lists-and-cards.md -->
 
-On list rows, News and Receipts cards and the open message's header, the sender's name and the date
-are shown whole on one line at every width; the address gives way first and is left out where it
-would be cut to a few letters; where the open message's header leaves it out, it is shown on its own
-line under the sender. On a phone, which mailbox a News or Receipts card was delivered to is shown
-on the open card instead of beside the sender.
+On list rows outside the Screener, News and Receipts cards and the open message's header, the
+sender's name and the date are shown whole on one line at every width; the address gives way first
+and is left out where it would be cut to a few letters; where the open message's header leaves it
+out, it is shown on its own line under the sender. On a phone, which mailbox a News or Receipts card
+was delivered to is shown on the open card instead of beside the sender.
 
 ### Short newsletters and receipts no longer hold an empty card
 <!-- changes: fix-026-web-lists-and-cards.md -->
