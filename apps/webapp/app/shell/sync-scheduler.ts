@@ -139,10 +139,10 @@ export const HIDDEN_POLL_MS = 60_000;
  * The SAFETY cadence while a wake stream is open and healthy.
  *
  * Not a data path — the stream's `sync` frames are what make mail prompt — and not
- * decorative either: a stream can die silently (a proxy buffering, a suspended instance whose
- * LISTEN went with it), and the server's own push source is explicitly lossy. This poll bounds
- * how stale that worst case can get to ninety seconds, for ~40 requests/hour. It is what
- * makes the push a HINT rather than a dependency.
+ * decorative either: the server's push source is explicitly lossy (a suspended instance whose
+ * LISTEN went with it). This poll bounds how stale that worst case can get to ninety seconds,
+ * for ~40 requests/hour. A stream that stops delivering FRAMES is a different case and is not
+ * left here: {@link WAKE_STREAM_SILENCE_MS} returns it to {@link POLL_MS}.
  */
 export const WAKE_SAFETY_POLL_MS = 90_000;
 /** First retry ceiling. Doubles per consecutive failure. */
@@ -1087,20 +1087,30 @@ interface OnlineSource {
 /**
  * What the scheduler needs of an `EventSource`, and nothing it does not — a browser `EventSource` satisfies this
  * structurally, and a test drives a hand-made one with fake timers, which is the only way "no stream held while
- * hidden" can be believed. The three events read are the protocol's own: `open` (the stream is live — relax the poll,
- * and drain once to cover whatever committed while disconnected), `sync` (the server's content-free wake frame: drain
+ * hidden" can be believed. The events read are the protocol's own: `open` (headers arrived — drain once to cover
+ * whatever committed while disconnected; it relaxes nothing, a buffering proxy sends headers and holds every frame),
+ * `ready` and `ping` (frames that prove the stream delivers), `sync` (the server's content-free wake frame: drain
  * now), and `error`, whose meaning splits on `readyState` — {@link WAKE_STREAM_CLOSED} is a terminal refusal
  * (`EventSource` stops reconnecting on any non-200, and so does this module, permanently for the session), anything
  * else is a transient the browser is already retrying natively.
  */
 export interface WakeStreamLike {
   readonly readyState: number;
-  addEventListener(type: "open" | "sync" | "error", listener: () => void): void;
+  addEventListener(type: "open" | "ready" | "ping" | "sync" | "error", listener: () => void): void;
   close(): void;
 }
 
 /** `EventSource.CLOSED` — the readyState after a terminal (non-200) failure. */
 export const WAKE_STREAM_CLOSED = 2;
+/** `EventSource.OPEN`. */
+export const WAKE_STREAM_OPEN = 1;
+
+/**
+ * How long an OPEN stream may deliver no frame before it is closed as silent: twice the server's
+ * heartbeat (`DEFAULT_SSE.heartbeatMs`, 15 s; each half pinned by its package's liveness test). A
+ * buffering proxy or a half-open TCP keeps a stream open with nothing arriving.
+ */
+export const WAKE_STREAM_SILENCE_MS = 30_000;
 
 export interface SyncSchedulerOptions {
   /** Called on every settled tick and on the first one, with the value the UI renders. */
@@ -1139,6 +1149,8 @@ export interface SyncSchedulerOptions {
   hiddenPollMs?: number;
   /** The safety cadence under a healthy stream; {@link WAKE_SAFETY_POLL_MS} unless a test shrinks it. */
   wakeSafetyPollMs?: number;
+  /** {@link WAKE_STREAM_SILENCE_MS} unless a test shrinks it. */
+  wakeStreamSilenceMs?: number;
   /**
    * Hear every renewed session (a `204` from the refresh). Defaults to `session-truth.ts`'s
    * revivals, which only the Cloud build publishes; `null` hears none.
@@ -1239,6 +1251,7 @@ export function startSyncScheduler(
   const pollMs = options.pollMs ?? POLL_MS;
   const hiddenPollMs = options.hiddenPollMs ?? HIDDEN_POLL_MS;
   const wakeSafetyPollMs = options.wakeSafetyPollMs ?? WAKE_SAFETY_POLL_MS;
+  const wakeStreamSilenceMs = options.wakeStreamSilenceMs ?? WAKE_STREAM_SILENCE_MS;
   const wakeFactory = options.wake ?? null;
   const base = options.backoffBaseMs ?? BACKOFF_BASE_MS;
   const cap = options.backoffCapMs ?? BACKOFF_CAP_MS;
@@ -1385,8 +1398,19 @@ export function startSyncScheduler(
 
   /** The wake stream, when this build has one and the tab is visible. */
   let stream: WakeStreamLike | null = null;
-  /** The stream has OPENED and not since errored — the state that relaxes the poll. */
+  /**
+   * The stream has DELIVERED A FRAME (ready, ping or sync) and has not since errored or gone
+   * silent — the state that relaxes the poll. Never set by `open` alone.
+   */
   let streamOpen = false;
+  /** Closes an OPEN stream that has delivered nothing for {@link WAKE_STREAM_SILENCE_MS}. */
+  let streamWatchdog: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Watchdog re-dials since the last visibility flip or `online`, whether or not the stream had
+   * delivered; at most one. A proxy that holds frames, or passes one and then holds the rest, makes
+   * the re-dial silent too, and each dial is a drain and a server invocation.
+   */
+  let watchdogRedials = 0;
   /**
    * The stream was refused TERMINALLY (`readyState` CLOSED after `error`: any non-200 — the
    * flag off, capacity, an auth refusal; `EventSource` exposes no status so they are one case
@@ -1412,6 +1436,10 @@ export function startSyncScheduler(
     const s = stream;
     stream = null;
     streamOpen = false;
+    if (streamWatchdog !== null) {
+      clearTimeout(streamWatchdog);
+      streamWatchdog = null;
+    }
     try {
       s?.close();
     } catch {
@@ -1434,6 +1462,31 @@ export function startSyncScheduler(
     try {
       const s = wakeFactory();
       stream = s;
+      const watch = (): void => {
+        if (streamWatchdog !== null) clearTimeout(streamWatchdog);
+        streamWatchdog = setTimeout(() => {
+          streamWatchdog = null;
+          // A reconnect in flight (CONNECTING after `error`) is the error arm's to judge.
+          if (stream !== s || stopped || s.readyState !== WAKE_STREAM_OPEN) return;
+          closeStream();
+          armFloor();
+          if (watchdogRedials >= 1) return;
+          watchdogRedials += 1;
+          connectStream();
+        }, wakeStreamSilenceMs);
+      };
+      /** A delivered frame: the stream is listening and the poll may relax. False when it was refused. */
+      const onFrame = (): boolean => {
+        if (stream !== s || stopped) return false;
+        // A frame can arrive on a connection the browser re-established under a jar that has
+        // since changed; the open check below is the first line and this is the second.
+        if (!identityHolds()) { closeStream(); return false; }
+        if (s.readyState === WAKE_STREAM_OPEN) {
+          streamOpen = true;
+          watch();
+        }
+        return true;
+      };
       s.addEventListener("open", () => {
         if (stream !== s || stopped) return;
         /*
@@ -1446,18 +1499,17 @@ export function startSyncScheduler(
          * nothing in this window requested.
          */
         if (!identityHolds()) { closeStream(); return; }
-        streamOpen = true;
+        // Headers only: the poll relaxes on the first FRAME, and the watchdog waits for one.
+        watch();
         // Drain once on every open, not only the first: a reconnect (the server cycles streams
         // before its platform ceiling; a network blip) is a window in which wakes were missed,
         // and this is what closes it. Bounded by the server's retry hint, so it cannot storm.
         wake();
       });
+      s.addEventListener("ready", () => { onFrame(); });
+      s.addEventListener("ping", () => { onFrame(); });
       s.addEventListener("sync", () => {
-        if (stream !== s || stopped) return;
-        // A frame can arrive on a connection the browser re-established under a jar that has
-        // since changed; the open check above is the first line and this is the second.
-        if (!identityHolds()) { closeStream(); return; }
-        wake();
+        if (onFrame()) wake();
       });
       s.addEventListener("error", () => {
         if (stream !== s || stopped) return;
@@ -1866,6 +1918,7 @@ export function startSyncScheduler(
    * terminal tab holds no timer whatever the visibility does.
    */
   const onVisibility = (): void => {
+    watchdogRedials = 0;
     if (visible()) {
       connectStream();
       wake();
@@ -1890,8 +1943,15 @@ export function startSyncScheduler(
   };
   REVIVERS.add(revive);
 
+  /** Back online: the network changed, so a stream that was silent before may not be now. */
+  const onOnline = (): void => {
+    watchdogRedials = 0;
+    connectStream();
+    wake();
+  };
+
   visibility?.addEventListener("visibilitychange", onVisibility);
-  online?.addEventListener("online", wake);
+  online?.addEventListener("online", onOnline);
   /*
    * THE GATE OPENING IS A WAKE, and it is registered HERE rather than beside the `claim` above
    * for one mechanical reason: `wake` is a `const` declared further down, so a registration at
@@ -1938,6 +1998,6 @@ export function startSyncScheduler(
     // behalf of nobody is exactly the cost shape the gate exists to prevent on the sync side.
     engine.stopEagerBodies();
     visibility?.removeEventListener("visibilitychange", onVisibility);
-    online?.removeEventListener("online", wake);
+    online?.removeEventListener("online", onOnline);
   };
 }
