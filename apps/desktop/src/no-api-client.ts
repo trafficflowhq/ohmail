@@ -209,6 +209,8 @@ export interface MailboxDTO {
     organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
     organizerState?: "held" | "stopped" | null;
     organizerChecked?: boolean;
+    /** Is this address the account's own — the server's one set (not erased, not removed). Absent reads as yes. */
+    addressIsOwn?: boolean;
     organizeConsentedAt?: string | null;
     organizerEventAt?: string | null;
     organizerEventSeenAt?: string | null;
