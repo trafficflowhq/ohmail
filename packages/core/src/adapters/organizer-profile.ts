@@ -15,7 +15,7 @@ import { epochOf, uidRefsAtEpoch } from "../epoch.js";
 import {
   MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, effectForDestination, ruleMatchKey,
 } from "../rule-order.js";
-import { DESTINATIONS, NEWS_FOLDER, canonicalDestination, type Destination } from "../types.js";
+import { DESTINATIONS, canonicalDestination, isConsentingDestination, type Destination } from "../types.js";
 import type { Rule } from "../rules.js";
 
 /**
@@ -286,9 +286,6 @@ export function applicableProfileRule(r: ProfileRuleEntry): ApplicableProfileRul
   };
 }
 
-/** The places an allow admits a sender to: the Ohbox, News and Receipts. */
-const ARRIVES_DECIDED_PLACES: ReadonlySet<string> = new Set(["INBOX", NEWS_FOLDER, "ohmail/Receipts"]);
-
 /**
  * DOES THIS RULE ARRIVE AS THE PERSON'S — the import's stamp for a copy whose producer did not state
  * `producer.stamped`. Such a copy carries no stamp for a decision made before stamps travelled, so a
@@ -302,7 +299,7 @@ export function arrivesDecided(
 ): boolean {
   return !o.stamped && want.kind === "sender" && want.provenance === "promoted"
     && want.personDecidedAt === null && want.subjectContains === null && want.bodyContains === null
-    && ARRIVES_DECIDED_PLACES.has(canonicalDestination(want.destination))
+    && isConsentingDestination(want.destination)
     && o.admitted.has(ruleMatchKey(want.match));
 }
 
