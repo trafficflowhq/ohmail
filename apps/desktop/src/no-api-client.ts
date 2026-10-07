@@ -211,6 +211,8 @@ export interface MailboxDTO {
     organizerChecked?: boolean;
     /** Is this address the account's own — the server's one set (not erased, not removed). Absent reads as yes. */
     addressIsOwn?: boolean;
+    /** Messages this mailbox set aside — the desktop's and phone's own sentence. Absent: an older server. */
+    setAside?: number;
     organizeConsentedAt?: string | null;
     organizerEventAt?: string | null;
     organizerEventSeenAt?: string | null;
