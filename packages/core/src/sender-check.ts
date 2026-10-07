@@ -189,21 +189,39 @@ function names(hay: string, needle: string): boolean {
 }
 
 /** A short needle claims only with a service word as the word before or after it. */
-function namesBesideServiceWord(hay: string, needle: string): boolean {
-  return namedAt(hay, needle).some((i) => {
-    const before = /([\p{L}\p{N}]+)[^\p{L}\p{N}]*$/u.exec(hay.slice(0, i))?.[1];
-    const after = /^[^\p{L}\p{N}]*([\p{L}\p{N}]+)/u.exec(hay.slice(i + needle.length))?.[1];
-    return (before !== undefined && SERVICE_WORDS.has(before)) || (after !== undefined && SERVICE_WORDS.has(after));
-  });
+function besideServiceWord(hay: string, i: number, needle: string): boolean {
+  const before = /([\p{L}\p{N}]+)[^\p{L}\p{N}]*$/u.exec(hay.slice(0, i))?.[1];
+  const after = /^[^\p{L}\p{N}]*([\p{L}\p{N}]+)/u.exec(hay.slice(i + needle.length))?.[1];
+  return (before !== undefined && SERVICE_WORDS.has(before)) || (after !== undefined && SERVICE_WORDS.has(after));
 }
 
 /**
- * Letters and digits only, the four digits a sender swaps for a letter folded back: the form
- * `Post-Finance`, `P.o.s.t.F.i.n.a.n.c.e`, `P0stFinance` and `MyPostFinance` share with the needle.
+ * Letters and digits only, each kept with the span of the hay it came from, and the swaps a
+ * sender makes for a letter folded back: `0 3 5` for `o e s`, `1 l i` as one letter, `rn` as `m`.
+ * `Post-Finance`, `P.o.s.t.F.i.n.a.n.c.e`, `P0stFinance`, `PostF1nance`, `PostFlnance`,
+ * `MyPostFinance` and `Arnazon` share their skeleton with the needle they imitate.
  */
-const SKELETON_DIGITS: Readonly<Record<string, string>> = { "0": "o", "1": "l", "3": "e", "5": "s" };
-function skeleton(s: string): string {
-  return s.replace(/[^\p{L}\p{N}]/gu, "").replace(/[0135]/g, (c) => SKELETON_DIGITS[c] ?? c);
+const SKELETON_SWAPS: Readonly<Record<string, string>> = { "0": "o", "1": "i", "l": "i", "3": "e", "5": "s" };
+interface Skeleton { text: string; start: number[]; end: number[] }
+function skeletonOf(s: string): Skeleton {
+  const kept: Array<{ c: string; start: number; end: number }> = [];
+  let at = 0;
+  for (const cp of s) {
+    if (/[\p{L}\p{N}]/u.test(cp)) kept.push({ c: cp, start: at, end: at + cp.length });
+    at += cp.length;
+  }
+  const out: Skeleton = { text: "", start: [], end: [] };
+  const push = (c: string, start: number, end: number): void => {
+    out.text += c;
+    for (let k = 0; k < c.length; k++) { out.start.push(start); out.end.push(end); }
+  };
+  for (let k = 0; k < kept.length; k++) {
+    const ch = kept[k]!;
+    const next = kept[k + 1];
+    if (ch.c === "r" && next?.c === "n") { push("m", ch.start, next.end); k++; continue; }
+    push(SKELETON_SWAPS[ch.c] ?? ch.c, ch.start, ch.end);
+  }
+  return out;
 }
 const letters = (s: string): number => (s.match(/\p{L}/gu) ?? []).length;
 
@@ -217,17 +235,23 @@ const GATED: readonly GatedBrand[] = BRANDS.flatMap((b) => {
   const gate = (b.gate ?? []).map(fold);
   const gateShort = (b.gateShort ?? []).map(fold);
   if (gate.length === 0 && gateShort.length === 0) return [];
-  const skeletons = gate.filter((n) => letters(n) >= SKELETON_MIN_LETTERS).map(skeleton);
+  const skeletons = gate.filter((n) => letters(n) >= SKELETON_MIN_LETTERS).map((n) => skeletonOf(n).text);
   return [{ brand: b, gate, skeletons, gateShort }];
 });
 
-function claims(hay: string, g: GatedBrand): boolean {
-  if (g.gate.some((n) => names(hay, n))) return true;
-  if (g.skeletons.length > 0) {
-    const bare = skeleton(hay);
-    if (g.skeletons.some((n) => bare.includes(n))) return true;
+/** Every span of the hay at which it claims the brand: a needle, its skeleton, a short needle by a service word. */
+function claimSpans(hay: string, g: GatedBrand, bare: Skeleton): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const n of g.gate) for (const i of namedAt(hay, n)) spans.push([i, i + n.length]);
+  for (const n of g.skeletons) {
+    for (let i = bare.text.indexOf(n); i >= 0; i = bare.text.indexOf(n, i + 1)) {
+      spans.push([bare.start[i]!, bare.end[i + n.length - 1]!]);
+    }
   }
-  return g.gateShort.some((n) => namesBesideServiceWord(hay, n));
+  for (const n of g.gateShort) {
+    for (const i of namedAt(hay, n)) if (besideServiceWord(hay, i, n)) spans.push([i, i + n.length]);
+  }
+  return spans;
 }
 
 /** A shared provider owns nothing: anyone can register an address there, whichever row lists it. */
@@ -249,48 +273,64 @@ export interface IdentityInput {
 }
 
 /**
- * The lead-in a service notification wears, for the FACT: {@link LEAD_IN}'s shape, read after
- * NFKC and with invisibles removed, and admitting a digit after the first letter so `P0stFinance:`
- * reaches the skeleton. Only the capture is read, never the rest of the subject.
+ * The lead-in a service notification wears, for the FACT: `Brand: …`, `Brand - …` or `Brand | …` in
+ * any case, read after NFKC with invisibles removed, past `Re:`/`AW:`/`WG:`/`Fwd:`, leading symbols
+ * and an opening quote; or a bracketed tag, `[Brand] …`, which claims only when the brand is all it
+ * says beside service words (`[owner/repo]` names a repository, not a sender). A digit after the
+ * first letter is admitted so `P0stFinance:` reaches the skeleton. Only the capture is read.
  */
-const LEAD_IN_FACT = /^\s*([\p{Lu}][\p{L}\p{N}&.\- ]{2,30}?)\s*[:\u2013\u2014-]\s+\S/u;
-function leadInOf(subject: string): string | undefined {
-  const s = subject.normalize("NFKC").replace(INVISIBLE, "").replace(SOFT_HYPHEN, "");
-  return LEAD_IN_FACT.exec(s)?.[1]?.trim() || undefined;
+const LEAD_IN_FACT = /^([\p{L}][\p{L}\p{N}&.\- ]{2,30}?)\s*["'\u2019\u201C\u201D\u00BB]?\s*[:|\u2013\u2014-]\s+\S/u;
+const REPLY_PREFIX = /^(?:re|aw|wg|fwd?)\s*:\s*/iu;
+const LEAD_SYMBOLS = /^[^\p{L}\p{N}[]+/u;
+const BRACKET_TAG = /^\[([^\]]{2,40})\]/u;
+function leadInOf(subject: string): { text: string; tag: boolean } | undefined {
+  let s = subject.normalize("NFKC").replace(INVISIBLE, "").replace(SOFT_HYPHEN, "");
+  for (let i = 0; i < 4; i++) {
+    const next = s.replace(LEAD_SYMBOLS, "").replace(REPLY_PREFIX, "");
+    if (next === s) break;
+    s = next;
+  }
+  const tag = BRACKET_TAG.exec(s)?.[1]?.trim();
+  if (tag) return { text: tag, tag: true };
+  const lead = LEAD_IN_FACT.exec(s)?.[1]?.trim();
+  return lead ? { text: lead, tag: false } : undefined;
+}
+
+/** Outside `[start, end)` the hay says nothing but service words: `[PostFinance Sicherheit]`. */
+function onlyServiceWordsOutside(hay: string, start: number, end: number): boolean {
+  const rest = `${hay.slice(0, start)} ${hay.slice(end)}`.split(/[^\p{L}\p{N}]+/u).filter((w) => w !== "");
+  return rest.every((w) => SERVICE_WORDS.has(w));
 }
 
 /**
  * THE IDENTITY FACT — the one definition, read by the gate (`rules.ts`), stored on the row
  * (`messages.sender_check`) and capping every suggestion ({@link senderCheckAll}). The claim is
- * read from the display name, or the address's local part when there is no name, and from the
- * subject's lead-in; it holds when the address owns NONE of the brands those name. Pure.
+ * read from the display name, the address's local part and the subject's lead-in, each on its
+ * own; it holds when the address owns a brand a source names and no brand the address does own
+ * overlaps that match ("Migros Bank" at migrosbank.ch). A relay's own brand beside a user-chosen
+ * name ("PostFinance (via Google Drive)") excuses nothing. First claim wins. Pure.
  */
 export function claimedIdentity(input: IdentityInput): IdentityFact | undefined {
-  const sources: Array<[IdentityFact["via"], string]> = [];
-  const name = input.fromName !== null && input.fromName.trim() !== "" ? input.fromName : null;
-  if (name !== null) {
-    sources.push(["name", fold(name)]);
-  } else {
-    const at = input.fromAddress.lastIndexOf("@");
-    const local = at < 0 ? input.fromAddress : input.fromAddress.slice(0, at);
-    if (local.trim() !== "") sources.push(["local_part", fold(local)]);
-  }
+  const sources: Array<{ via: IdentityFact["via"]; hay: string; tag: boolean }> = [];
+  const name = input.fromName === null ? "" : fold(input.fromName);
+  if (/[\p{L}\p{N}]/u.test(name)) sources.push({ via: "name", hay: name, tag: false });
+  const at = input.fromAddress.lastIndexOf("@");
+  const local = fold(at < 0 ? input.fromAddress : input.fromAddress.slice(0, at));
+  if (local !== "") sources.push({ via: "local_part", hay: local, tag: false });
   const lead = leadInOf(input.subject);
-  if (lead !== undefined) sources.push(["subject_lead", fold(lead)]);
+  if (lead !== undefined) sources.push({ via: "subject_lead", hay: fold(lead.text), tag: lead.tag });
 
-  let first: IdentityFact | undefined;
-  const claimed: Brand[] = [];
-  for (const [via, hay] of sources) {
-    for (const g of GATED) {
-      if (!claims(hay, g)) continue;
-      claimed.push(g.brand);
-      first ??= { brand: g.brand.name, via };
-    }
-  }
-  if (first === undefined) return undefined;
-  // A name that carries two brands (a subsidiary beside its parent) holds unless the address owns one.
   const domain = senderDomainOf(input.fromAddress);
-  return claimed.some((b) => owns(b, domain)) ? undefined : first;
+  for (const { via, hay, tag } of sources) {
+    const bare = skeletonOf(hay);
+    const hits = GATED.flatMap((g) => claimSpans(hay, g, bare)
+      .filter(([s, e]) => !tag || onlyServiceWordsOutside(hay, s, e))
+      .map(([s, e]) => ({ brand: g.brand, s, e })));
+    const owned = hits.filter((h) => owns(h.brand, domain));
+    const claim = hits.find((h) => !owns(h.brand, domain) && !owned.some((o) => o.s < h.e && h.s < o.e));
+    if (claim) return { brand: claim.brand.name, via };
+  }
+  return undefined;
 }
 
 /** A stored row as the passes hold it: the fact's inputs and the column the ingest wrote. */

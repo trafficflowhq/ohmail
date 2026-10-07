@@ -44,15 +44,22 @@ export const SHARED_PROVIDER_DOMAINS: readonly string[] = [
   "proton.me", "protonmail.com", "pm.me", "tuta.io", "tuta.com", "tutanota.com", "tutanota.de",
   "zoho.com", "laposte.net", "free.fr", "orange.fr", "wanadoo.fr", "aon.at", "a1.net",
   "vodafonemail.de", "online.de", "arcor.de", "yandex.com", "yandex.ru", "mail.ru", "aol.com",
+  "protonmail.ch", "posteo.ch", "posteo.at", "posteo.net", "keemail.me", "green.ch", "netplus.ch", "quickline.ch",
+  "magenta.de", "mail.de", "email.de", "kabelmail.de", "aol.de", "freenetmail.de", "o2online.de",
 ];
 const SHARED = new Set(SHARED_PROVIDER_DOMAINS);
 
-/** The twin of core's `sharedProviderAllowRefusal`: an allow rule for everyone at a shared provider. */
+/**
+ * The twin of core's `sharedProviderAllowRefusal`: an allow rule for everyone at a shared provider.
+ * It reads `effect` as core does — a deny names everyone, by its effect or by its destination — so
+ * a request carrying both is answered the same at the API and at the drain. `rules` has no effect
+ * column, so the SQL arm below reads the destination, which is the effect every stored row has.
+ */
 export function sharedProviderAllowRefusal(
-  r: { kind: string; match: string; destination: string },
+  r: { kind: string; match: string; destination: string; effect?: string },
 ): "shared_provider_domain" | null {
   if (r.kind !== "domain" || !SHARED.has(ruleMatchKey(r.match))) return null;
-  return HOLDING.has(r.destination) ? null : "shared_provider_domain";
+  return r.effect === "deny" || HOLDING.has(r.destination) ? null : "shared_provider_domain";
 }
 
 /** Thrown by a rules write door asked for a rule {@link sharedProviderAllowRefusal} refuses. */

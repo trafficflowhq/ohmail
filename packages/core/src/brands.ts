@@ -37,7 +37,7 @@ export const BRANDS: readonly Brand[] = [
   { name: "Salt", aliases: ["salt mobile"], domains: ["salt.ch"], gate: ["salt mobile"], gateShort: ["salt"] },
   { name: "Telekom", aliases: ["telekom", "deutsche telekom", "t-mobile"], domains: ["telekom.de", "t-online.de", "telekom.com", "t-mobile.com"], gate: ["telekom", "deutsche telekom", "t-mobile"] },
   { name: "Vodafone", aliases: ["vodafone"], domains: ["vodafone.de", "vodafone.com", "vodafone.co.uk"], gate: ["vodafone"] },
-  { name: "O2", aliases: ["o2 telefonica", "telefonica"], domains: ["o2online.de", "telefonica.de"], gate: ["o2 telefonica", "telefonica"], gateShort: ["o2"] },
+  { name: "O2", aliases: ["o2 telefonica", "telefonica"], domains: ["telefonica.de"], gate: ["o2 telefonica", "telefonica"], gateShort: ["o2"] },
   { name: "1&1", aliases: ["1und1", "1&1"], domains: ["1und1.de", "1and1.com"], gateShort: ["1&1"] },
   { name: "Orange", aliases: ["orange"], domains: ["orange.fr", "orange.com"] },
   { name: "A1", aliases: ["a1 telekom"], domains: ["a1.net"], gate: ["a1 telekom"], gateShort: ["a1"] },
@@ -81,7 +81,7 @@ export const BRANDS: readonly Brand[] = [
   { name: "Viseca", aliases: ["viseca"], domains: ["viseca.ch"], gate: ["viseca"] },
 
   // ── Parcel and post ──
-  { name: "Die Post", aliases: ["schweizerische post", "die post", "swiss post"], domains: ["post.ch"], gate: ["die post", "schweizerische post", "swiss post"] },
+  { name: "Die Post", aliases: ["schweizerische post", "die post", "swiss post", "post ch"], domains: ["post.ch"], gate: ["die post", "schweizerische post", "swiss post", "post ch"] },
   { name: "DHL", aliases: ["dhl"], domains: ["dhl.com", "dhl.de"], gateShort: ["dhl"] },
   { name: "Deutsche Post", aliases: ["deutsche post"], domains: ["deutschepost.de"], gate: ["deutsche post"] },
   { name: "DPD", aliases: ["dpd"], domains: ["dpd.com", "dpd.de", "dpd.ch"], gateShort: ["dpd"] },
@@ -101,7 +101,7 @@ export const BRANDS: readonly Brand[] = [
 
   // ── Platforms and shops ──
   { name: "Microsoft", aliases: ["microsoft", "office 365", "microsoft 365"], domains: ["microsoft.com", "office.com", "microsoftonline.com", "outlook.com"], gate: ["microsoft", "office 365", "microsoft 365"] },
-  { name: "Apple", aliases: ["apple", "icloud"], domains: ["apple.com", "icloud.com"], gate: ["icloud"] },
+  { name: "Apple", aliases: ["apple", "icloud", "apple support", "apple id"], domains: ["apple.com", "icloud.com"], gate: ["icloud", "apple support", "apple id"] },
   { name: "Google", aliases: ["google"], domains: ["google.com", "youtube.com"], gate: ["google"] },
   { name: "Amazon", aliases: ["amazon"], domains: ["amazon.com", "amazon.de", "amazon.co.uk"], gate: ["amazon"] },
   { name: "Netflix", aliases: ["netflix"], domains: ["netflix.com"], gate: ["netflix"] },

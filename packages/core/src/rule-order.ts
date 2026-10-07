@@ -76,6 +76,8 @@ export const SHARED_PROVIDER_DOMAINS: ReadonlySet<string> = new Set([
   "proton.me", "protonmail.com", "pm.me", "tuta.io", "tuta.com", "tutanota.com", "tutanota.de",
   "zoho.com", "laposte.net", "free.fr", "orange.fr", "wanadoo.fr", "aon.at", "a1.net",
   "vodafonemail.de", "online.de", "arcor.de", "yandex.com", "yandex.ru", "mail.ru", "aol.com",
+  "protonmail.ch", "posteo.ch", "posteo.at", "posteo.net", "keemail.me", "green.ch", "netplus.ch", "quickline.ch",
+  "magenta.de", "mail.de", "email.de", "kabelmail.de", "aol.de", "freenetmail.de", "o2online.de",
 ]);
 
 /** Is `domain` (a registrable domain, any case) one where anyone can register an address? */
