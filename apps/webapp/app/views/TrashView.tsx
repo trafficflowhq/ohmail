@@ -27,6 +27,7 @@ import {
   avatarHue, avatarOf, agoStamp, displayTime, hueOf, initialsOf, placeLabel, rowAddress,
   senderName, tagsOfMessage,
 } from "../shell/format";
+import { useSenderCheckWords } from "../shell/sender-check";
 import { displayAddressee, displayAddressUnder } from "../shell/idn";
 import { BodyText } from "../shell/BodyText";
 import { useZoneNav } from "../shell/zone-nav";
@@ -119,6 +120,7 @@ export function TrashView({
   const tRail = useTranslations("rail");
   const tReader = useTranslations("reader");
   const rowBadge = useRowBadgeCopy();
+  const { row: senderCheckRow } = useSenderCheckWords();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** The live section's pick, by its epoch-scoped key. Null means the reader is in the mirror. */
   const [liveKey, setLiveKey] = useState<string | null>(null);
@@ -280,6 +282,7 @@ export function TrashView({
                   inSet={{ size: rows.length, position: win.start + k + 1 }}
                   from={senderName(m)}
                   address={rowAddress(m)}
+                  {...senderCheckRow(m)}
                   {...avatarOf(m)}
                   participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
                   {...trashStamp(m, nowMs, (when) => t("deletedAt", { when }))}

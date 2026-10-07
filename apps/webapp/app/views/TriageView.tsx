@@ -24,6 +24,7 @@ import {
   SegmentedControl,
 } from "@ohmail/ui";
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
+import { useSenderCheckWords } from "../shell/sender-check";
 import { useKeyBindings } from "../shell/keymap";
 import { useMessageChrome } from "../shell/message-chrome";
 import { pressResurfaceKey } from "../shell/message-verbs";
@@ -146,6 +147,7 @@ export function TriageView({
 }) {
   const t = useTranslations("triage");
   const rowBadge = useRowBadgeCopy();
+  const { row: senderCheckRow } = useSenderCheckWords();
   /* The message verbs' own labels, shared with the global map — the `?` sheet must read one
      sentence for `a` whether the Ohbox's binding answers or this view's does. */
   const ts = useTranslations("shortcuts");
@@ -336,6 +338,7 @@ export function TriageView({
         inSet={{ size: entries.length, position: index + 1 }}
         from={senderName(m)}
         address={rowAddress(m)}
+        {...senderCheckRow(m)}
         {...avatarOf(m)}
         participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
         /* A resurface row's stamp is the instant it COMES BACK — the pile's whole subject, and a

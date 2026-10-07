@@ -1263,6 +1263,15 @@ export function ScreenerView({
     return state.notApplied.find((d) => d.sender.id === x.id)?.decision;
   }
 
+  /* THE IDENTITY CHIP ON THE SENDER'S ROW (`ScreenerSenderDTO.checked`), the list rows' face and
+     sentence: one of their held messages claims a company their address does not belong to. */
+  const chipOf = (s: ScreenerSenderDTO): { senderCheckLabel?: string; senderCheckTitle?: string } => (s.checked ? {
+    senderCheckLabel: t("senderCheck.chip", { brand: s.checked.brand }),
+    senderCheckTitle: s.checked.domainShared
+      ? t("senderCheck.impersonationShared", { brand: s.checked.brand, domain: s.checked.domain })
+      : t("senderCheck.impersonation", { brand: s.checked.brand }),
+  } : {});
+
   const row = (x: ScreenerSenderDTO | SpamRow, windowIndex: number, inSet: { size: number; position: number }) => {
     if (segment === "waiting") {
       const w = x as ScreenerSenderDTO;
@@ -1281,6 +1290,7 @@ export function ScreenerView({
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
           addressFirst
+          {...chipOf(w)}
           {...mailboxBadge(w, narrow)}
           time={newest?.time ?? w.time}
           subject={newest?.subject ?? ""}
@@ -1382,6 +1392,7 @@ export function ScreenerView({
           from={displayAddressee(w.from.name, w.from.address)}
           address={displayAddressUnder(w.from.name, w.from.address)}
           addressFirst
+          {...chipOf(w)}
           {...mailboxBadge(w, narrow)}
           time={screenedDate(w)}
           subject={newestHeld(w)?.subject ?? ""}
@@ -1415,6 +1426,7 @@ export function ScreenerView({
         inSet={inSet}
         from={displayAddressee(r.sender.from.name, r.sender.from.address)}
         address={displayAddressUnder(r.sender.from.name, r.sender.from.address)}
+        {...chipOf(r.sender)}
         {...mailboxBadge(r.sender, narrow)}
         time={newestHeld(r.sender)?.time ?? r.sender.time}
         subject={newestHeld(r.sender)?.subject ?? ""}
