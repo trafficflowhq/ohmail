@@ -481,6 +481,9 @@ export function senderActivity(
     // row with no instant read "not recent" and its sender retired under the one setting that
     // means "retire nobody". Every dated row reaches the same answer either way.
     if (allTime) { out.set(key, "active"); continue; }
+    // A claim the gate holds keeps its sender active however old its Date (mail 0147): the server's
+    // `senderHasHeldClaimSql` term, so the queue, the counts and this partition agree.
+    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation") { out.set(key, "active"); continue; }
     const ms = messageMs(m);
     const recent = ms !== null && ms >= cutoff;
     // Baselined ⇒ unread only counts inside the window. Absent ⇒ unread outranks age, exactly as

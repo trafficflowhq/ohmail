@@ -3,8 +3,8 @@ import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, type ScreeningScope } from "
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
-  activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, resolveCutline, ruleMatchKeySql,
-  senderIsDecidedSql, senderIsOwnSql,
+  activeSenderExpr, anyOf, CUTLINE_GATE_FOLDER, cutlineInstant, destinationIsDecisionSql, resolveCutline,
+  ruleMatchKeySql, senderIsDecidedSql, senderIsOwnSql,
 } from "@trafficflow/db";
 
 /**
@@ -177,7 +177,11 @@ export async function cutlineCounts(
              -- Does this sender have ANY mail still sitting where no decision has been made?
              -- Activity is measured over all six presented folders (above); membership in the
              -- undecided counts is not. See UNDECIDED_RESIDENCES.
-             ${anyOf(sql`fs.desired_folder in ${undecidedResidences}`)} as undecided_residence
+             ${anyOf(sql`fs.desired_folder in ${undecidedResidences}`)} as undecided_residence,
+             -- A claim the gate holds keeps its sender active however old its Date (mail 0147),
+             -- the queue's own term (senderHasHeldClaimSql), so the count and the list agree.
+             ${anyOf(sql`fs.desired_folder = ${CUTLINE_GATE_FOLDER} and m.deleted_at is null and m.sender_check = 'impersonation'`)}
+               as held_claim
         from messages m
         join folder_state fs on fs.message_id = m.id
        where m.account_id = ${d.castUuid(ctx.accountId)}
@@ -199,11 +203,11 @@ export async function cutlineCounts(
                   and exists (select 1 from decided_domain dd
                                where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))
               or ${senderIsDecidedSql(d, ctx.accountId, sql`i.addr`)}) as decided,
-             ${activeSenderExpr(d, resolved, {
+             (${activeSenderExpr(d, resolved, {
                anyUnread: sql`i.any_unread`,
                anyUnreadInWindow: sql`i.any_unread_in_window`,
                newest: sql`i.newest`,
-             })} as active
+             })} or i.held_claim) as active
         from inbound i
     )
     select count(*) filter (where decided)                        as decided,
