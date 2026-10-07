@@ -667,8 +667,9 @@ export class DeadLetterLedger {
     const exhausted = fault.deterministic || item.attempts >= this.maxAttempts;
     if (!exhausted) return "retry";
     /* A READ-BOUND OVERRUN names one known message the server will not send within its size, so
-       the backstop's nothing-stored run neither refuses it nor counts it: a hold over it would
-       strand the folder it stopped. The per-cycle cap still applies. */
+       a standing hold does not refuse it (that would strand the folder it stopped) and this
+       cycle's run does not count it. The run reloaded from the store at the next cycle does
+       (`writeOffRun` counts every row), so the hold can still engage. The per-cycle cap applies. */
     const exempt = opts.holdExempt === true;
     if (!exempt && this.heldSince !== null) return "retry"; // the local backstop holds
     if (this.thisCycle >= this.perCycleCap) return "retry";  // the safety valve, above
