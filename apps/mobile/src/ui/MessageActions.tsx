@@ -19,7 +19,6 @@ import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme } from "../theme";
 import { useBottomChromeSlot } from "./bottom-chrome";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
-import { isSharedProviderDomain } from "@ohmail/client-engine";
 import {
   calendarDayLabel,
   DAY_OFFSETS,
@@ -59,6 +58,7 @@ import {
   connectionSaid,
   type FailedSendCopy,
   ruleMatchKey,
+  isSharedProviderDomain,
 } from "../state/live";
 import { useWorld } from "../state/world";
 import { BAR, PILL, compactFit } from "./action-bar-layout";

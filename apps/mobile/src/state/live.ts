@@ -401,6 +401,8 @@ export { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
 // Which side failed for a file that could not be fetched — the web reader's own class table.
 export { attachmentFaultClass, type AttachmentFaultClass } from "@ohmail/client-engine";
 export { ruleMatchKey } from "@ohmail/client-engine";
+// The shared-provider list, for the Screening sheet: a domain there is never offered as a scope.
+export { isSharedProviderDomain } from "@ohmail/client-engine";
 export type { WaitingOnOrganizerView } from "@ohmail/client-engine";
 /** Forward's one predicate and its ask, for the reader — the engine's own, through this seam. */
 export { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
