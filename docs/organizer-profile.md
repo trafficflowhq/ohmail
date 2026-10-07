@@ -54,7 +54,8 @@ One RFC822 message in `ohmail/_meta`:
   "updatedAt": "<ISO 8601>",       // when this copy was written, by the writer's clock
   "producer": {                    // which kind of organizer wrote it — provenance, not identity
     "kind": "local" | "cloud" | …, // an open set; readers must tolerate unknown kinds
-    "version": "<build label>"
+    "version": "<build label>",
+    "stamped": true                // optional: this copy's rules carry who decided them
   },
   "screener": [                    // senders this mailbox has SCREENED IN (admitted)
     { "address": "<sender email, lowercased>", "name": "<display name, optional>" }
@@ -98,7 +99,7 @@ The envelope:
 | --- | --- | --- |
 | `v` | integer ≥ 1 | Format version. Required. This page documents version 2; ohmail reads version 1 as well, and always will. The number names the field set **and** the canonical ordering the document is written in — see versioning. |
 | `updatedAt` | ISO 8601 string | When this copy was written, by the writer's clock. Readers coalesce duplicate messages by it — newest wins. |
-| `producer` | object | Provenance, never identity: `kind` is an open set (`"local"`, `"cloud"`, a future value — readers must tolerate unknown kinds), `version` is the writer's build label. |
+| `producer` | object | Provenance, never identity: `kind` is an open set (`"local"`, `"cloud"`, a future value — readers must tolerate unknown kinds), `version` is the writer's build label. `stamped`, optional, is `true` when the copy's rules carry the date you decided them (`personDecidedAt`) wherever ohmail knows it. A copy written by an older ohmail has no `stamped`, so an import treats a promoted rule there that files a sender listed in that copy's `screener` into `INBOX`, `ohmail/News` or `ohmail/Receipts` as decided by you. Only the value `true` counts. |
 
 **`screener`** — an array of senders this mailbox has screened **in**:
 
@@ -201,7 +202,8 @@ The format: versioned JSON, documented in ohmail's published source
   "updatedAt": "2026-08-27T09:30:00.000Z",
   "producer": {
     "kind": "local",
-    "version": "0.11.1"
+    "version": "0.11.1",
+    "stamped": true
   },
   "screener": [
     {
