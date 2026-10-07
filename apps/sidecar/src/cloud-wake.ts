@@ -5,8 +5,8 @@ import type { Diagnostic } from "./log.js";
  * `GET /events` emits a content-free `event: sync` frame whenever the account's `change_log`
  * advances; this holds ONE stream over `authedFetch` and answers every frame with `mirror.kick()`.
  * IT IS A HINT, NEVER A DEPENDENCY — the mirror's poll is the reliability floor, so every failure
- * degrades to silence. Any non-200 except 429 ⇒ OFF for the process's life (the production default
- * until the deploy flips the flag, and what a refusing endpoint answers); a 429 means LATER, redialed
+ * degrades to silence. Any non-200 except 429 ⇒ OFF for the process's life (a host with streaming
+ * off answers 503, a refusing endpoint another code); a 429 means LATER, redialed
  * on `Retry-After` (floored at {@link WAKE_THROTTLE_RETRY_MS}); a THROW before any success ⇒ up to
  * {@link NEVER_CONNECTED_ATTEMPTS} then OFF; a drop AFTER success ⇒ reconnect on backoff for ever.
  */
@@ -77,7 +77,7 @@ async function readEvents(
           const value = line.slice(6).replace(/^ /, "");
           if (/^[0-9]+$/.test(value)) onRetry(Number(value));
         }
-        // `: ping` comments and `data:` lines fall through, read and unused.
+        // `ready` and `ping` frames, comments and `data:` lines fall through, read and unused.
       }
     }
   } finally {
@@ -213,8 +213,8 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
         scheduleReconnect(waitMs);
         return;
       }
-      // Every OTHER refusal is permanent for the process, zero retries: the server's own flag
-      // being off (503) until the deploy flips it, an unknown route (404), an auth refusal —
+      // Every OTHER refusal is permanent for the process, zero retries: a host with streaming
+      // off (503), an unknown route (404), an auth refusal —
       // see the header for why redialing a refusing endpoint is the storm this must never start.
       cfg.log?.("cloud_wake_off", {
         status: res.status,

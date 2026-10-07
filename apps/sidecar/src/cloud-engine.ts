@@ -905,8 +905,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        * THE PUSH CHANNEL, beside the poll it accelerates. The SIDECAR holds the stream — it is
        * the process with the session (`authedFetch`), and the webapp inside the desktop window
        * talks only to this local engine, which serves no `/events`. Every `sync` frame kicks
-       * one bounded pull; with the stream refused (the hosted flag's default until the deploy
-       * flips it) the mirror's own poll carries the door exactly as before this existed.
+       * one bounded pull; with the stream refused (a host with streaming off answers 503) the
+       * mirror's own poll carries the door exactly as before this existed.
        */
       const wake = startCloudWake({
         auth,
