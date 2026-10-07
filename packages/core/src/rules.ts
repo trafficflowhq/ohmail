@@ -1,5 +1,6 @@
 import { parseMessageIds } from "./threading.js";
 import type { AuthVerdict } from "./sender-headers.js";
+import type { IdentityFact } from "./sender-check.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 import {
   compareRules, effectForDestination as effectOfDestination, namesAuthor, placingRule, ruleMatchKey, type RuleEffect,
@@ -197,11 +198,29 @@ export function screenerAdmits(input: ScreenerAdmission): boolean {
   return input.arrivedAt.getTime() >= input.cutoff.getTime();
 }
 
+/**
+ * The account's contacts as the gate reads them (`drizzle-repo.ts#knownSenders`), lower-cased:
+ * every address it knows, and the subset an AUTOMATIC writer taught (`contacts.source =
+ * 'inferred'` — a pass's admission, a reply-arm correspondent). A NULL source reads as a
+ * person's, the permissive default for every row written before the column existed.
+ */
+export interface KnownSenders {
+  addresses: ReadonlySet<string>;
+  inferred: ReadonlySet<string>;
+}
+
 export interface EvaluateRulesInput {
   msg: NormalizedMessage;
   rules: readonly Rule[];
-  /** `contacts` for the account, lowercased (`drizzle-repo.ts#knownSenders`). */
-  knownSenders: ReadonlySet<string>;
+  /** `contacts` for the account — see {@link KnownSenders}. */
+  knownSenders: KnownSenders;
+  /**
+   * REQUIRED, on `auth`'s discipline: the identity fact for this message — `claimedIdentity` at
+   * ingest, the stored column through `identityOfRow` in a pass — or `null` for none. A pass that
+   * rebuilt the message from a row with `name: null` cannot compute it, which is why it is an
+   * input and never derived here. Only a person's address-level consent outranks it.
+   */
+  identity: IdentityFact | null;
   /**
    * REQUIRED. Read for exactly one value — `"fail"` — and for nothing else.
    * See {@link AuthVerdict} before touching this, and never turn it into a precondition.
@@ -243,6 +262,11 @@ export interface RuleDecision {
    * WHAT was overridden without recording it as the decision itself.
    */
   overriddenRuleId?: string | null;
+  /**
+   * The identity fact the decision was made beside: on a hold it is the reason, on an admission
+   * by a person's address-level consent it rides along. Absent when the input had none.
+   */
+  identity?: IdentityFact;
 }
 
 /**
@@ -428,6 +452,23 @@ export function gateAuthor(msg: NormalizedMessage): string | null {
  */
 function isKnownAuthor(author: string | null, knownSenders: ReadonlySet<string>): boolean {
   return author !== null && knownSenders.has(author);
+}
+
+/**
+ * CONSENT GIVEN BY A PERSON ABOUT THIS ADDRESS — the only thing the identity fact yields to: an
+ * enabled allow `sender` rule naming the author, or a contact a person's act wrote. A domain or
+ * header rule, an inferred contact and the account's own address are inference. For an author
+ * that is one of the account's own addresses only the rule half counts: a contacts row for your
+ * own address is not consent to be impersonated.
+ */
+function addressLevelConsent(
+  author: string | null, rules: readonly Rule[], known: KnownSenders, own: boolean,
+): boolean {
+  if (author === null) return false;
+  const byRule = rules.some((r) => r.enabled && r.kind === "sender" && r.effect !== "deny"
+    && effectForDestination(r.destination) === "allow" && namesAuthor(r, author));
+  if (byRule) return true;
+  return !own && known.addresses.has(author) && !known.inferred.has(author);
 }
 
 /**
@@ -1145,12 +1186,14 @@ function policyDemotion(
  * {@link standingRule} for this sender, whether or not a term claimed THIS message; (3) a POSITIVE
  * authenticated-known check; (4) fail closed to `ohmail/Screener` for an unknown, absent, unparseable
  * or ambiguous sender, never an own address; (5) THEN {@link headerHeuristic}, refinement only.
+ * The identity fact ({@link EvaluateRulesInput.identity}) holds every admission in (1)-(3) that a
+ * person did not give at the address level, below every denial and the `"fail"` screen.
  * `"fail"` — the only thing `input.auth` does — screens a message otherwise allowed: a DENY rule
  * is never weakened, nothing is ever REQUIRED. One refinement, {@link policyDemotion}, between
  * allow-side piles only; its `matchedRuleId` is `null` so the learning path is taught no consent.
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
-  const { msg, knownSenders, auth, ohboxPolicy, ownAddresses } = input;
+  const { msg, knownSenders, auth, ohboxPolicy, ownAddresses, identity } = input;
 
   const author = authorAddress(msg);
   /* A RULE ABOUT THE ACCOUNT ITSELF NEVER DECIDES ITS OWN MAIL (the own-mail rulings, HAND BACK 1
@@ -1162,15 +1205,23 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
     ? input.rules.filter((r) => !(r.kind === "sender" && ownAddresses.has(ruleMatchKey(r.match))))
     : input.rules;
   const screened: RuleDecision = { destination: "ohmail/Screener", matchedRuleId: null, source: "screener" };
+  /* THE IDENTITY FACT HOLDS WHAT ONLY INFERENCE ADMITTED. A name claiming a brand from an address
+     the brand does not own waits at the Screener unless a PERSON consented to this address; the
+     hold is the gate's own verdict (`source: "screener"`, no rule), so the backlog cutoff and the
+     import hold read it as they read any hold. Denials stand above it. */
+  const own = author !== null && ownAddresses.has(author.toLowerCase());
+  const hold = identity !== null && !addressLevelConsent(author, rules, knownSenders, own);
+  const rides = identity !== null ? { identity } : {};
 
   const winner = winningRule(rules, msg, author);
   if (winner) {
     const denies = winner.effect === "deny" || effectForDestination(winner.destination) === "deny";
     if (denies) return { destination: winner.destination, matchedRuleId: winner.id, source: "rule" };
     if (auth === "fail") return screened;
+    if (hold) return { ...screened, ...rides };
     const demoted = policyDemotion(msg, winner, ohboxPolicy);
-    if (demoted) return demoted;
-    return { destination: winner.destination, matchedRuleId: winner.id, source: "rule" };
+    if (demoted) return { ...demoted, ...rides };
+    return { destination: winner.destination, matchedRuleId: winner.id, source: "rule", ...rides };
   }
 
   /* A RULE THAT DID NOT CLAIM THIS MESSAGE STILL DECIDED ABOUT THIS PERSON ({@link standingRule}).
@@ -1184,7 +1235,9 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   if (standing && effectForDestination(standing.destination) === "deny") {
     return { destination: standing.destination, matchedRuleId: standing.id, source: "rule" };
   }
-  if (standing === null && !isKnownAuthor(author, knownSenders)) {
+  // One line for a standing allow, an inferred contact, the account's own address and a stranger.
+  if (hold) return { ...screened, ...rides };
+  if (standing === null && !isKnownAuthor(author, knownSenders.addresses)) {
     /* THE ACCOUNT ITSELF IS NOT FIRST CONTACT: its own mail keeps the place the mailbox gave it
        (`destination: null`, `source: "own"` — no pile, no AI question), where every other mail
        program and a person who has left ohmail expect it. `fail` still screens: a forged own
@@ -1192,10 +1245,10 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
     if (ownMail) return { destination: null, matchedRuleId: null, source: "own" };
     return screened;
   }
-  if (auth === "fail") return screened;
+  if (auth === "fail") return { ...screened, ...rides };
 
   const heur = headerHeuristic(msg);
-  if (heur) return heur;
+  if (heur) return { ...heur, ...rides };
 
-  return { destination: null, matchedRuleId: null, source: "unclear" };
+  return { destination: null, matchedRuleId: null, source: "unclear", ...rides };
 }

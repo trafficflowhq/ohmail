@@ -199,6 +199,9 @@ import {
   CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
 } from "@trafficflow/worker/screener-correspondent-retro";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
+/* THE IDENTITY BACKFILL (mail 0147), the worker's pass for the name repair's reason: this store is
+   the authority nothing else will ever check, and one fact function decides every row. */
+import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfill";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
 // argument. The values it writes have to be the ones ingest would have written from the same
@@ -2677,6 +2680,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * visit; no resume state — the pass writes only unset columns (`namesCursor` is a per-launch
      * walk position, `namesDone` ends the scans); one `message` update per row repaints the window.
      */
+    /** The identity backfill answered empty in THIS launch: later drains skip it at no cost. */
+    let senderCheckDone = false;
+    /**
+     * THE IDENTITY FACT FOR ROWS OLDER THAN mail 0147, one page per drain, the worker's own pass:
+     * the Ohbox's and the Screener's rows get the sentence a fresh arrival carries. It writes the
+     * fact and a `message` update for a marked row, never a move. Contained like the name repair.
+     */
+    const backfillSenderChecks = async (): Promise<void> => {
+      if (senderCheckDone || stopping) return;
+      try {
+        const r = await senderCheckBackfillPass(db as unknown as Tx, { accountId: world.accountId });
+        if (r.done) senderCheckDone = true;
+        if (r.marked > 0) log("sender_check_backfill", { checked: r.checked, marked: r.marked });
+      } catch (err) {
+        log("sender_check_backfill_failed", {
+          err,
+          reason: "some older held or Ohbox messages carry no identity sentence yet; nothing is marked " +
+            "and no position is kept, so the next drain asks the store again",
+        });
+      }
+    };
     const backfillStoredNames = async (): Promise<void> => {
       // Both guards before any query. A quitting engine must not open a transaction it may not
       // finish, and a finished repair must cost nothing at all.
@@ -6173,6 +6197,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              of the mail somebody is waiting for, every launch, to correct a display name they have
              been reading past for months. Before the checkpoint below for `suggestNew`'s reason: the
              rows it writes belong in the same fold. */
+          tail.phase("sender-check-backfill");
+          await upkeep(() => onceForTheAccount(backfillSenderChecks));
           tail.phase("name-repair");
           await upkeep(() => onceForTheAccount(backfillStoredNames));
           /* REJOIN THE CONVERSATIONS A FORWARD SPLIT, the same pass the hosted worker runs

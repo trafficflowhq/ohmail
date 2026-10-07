@@ -23,6 +23,14 @@ export interface RuleInputRow {
    * rules passes `""` because that is the truth there, not a shortcut.
    */
   bodyText: string;
+  /**
+   * The identity fact's inputs and its column (mail 0147): `messages.from_name`, `sender_check`
+   * and `sender_check_brand`. REQUIRED: `ruleInputOf` hands the gate `name: null`, so a pass reads
+   * the fact through `identityOfRow` from these, the column when checked and the function when not.
+   */
+  fromName: string | null;
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
 }
 
 /**

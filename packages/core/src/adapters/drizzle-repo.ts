@@ -1,13 +1,13 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql } from "@trafficflow/db";
+import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   FolderAttribution,
   Rule, NativeLocator, EmailAddress,
   MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
-  ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput,
+  ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput, KnownSenders, ContactSource,
   // `../mail.js`, not `../index.js`: the repository adapter needs the mail vocabulary, and the
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
@@ -946,6 +946,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // writes nothing. That is the correct outcome — both computed the same verdict from the
       // same bytes — and it is why this needs no conflict clause of its own.
       authVerdict: input.authVerdict ?? null,
+      // The identity fact `planChange` computed: `'none'` for checked-and-clean. A caller the type
+      // could not reach (untyped JS) leaves NULL — "never checked", the backfill's question.
+      senderCheck: input.senderCheck === undefined ? null : input.senderCheck === null ? "none" : "impersonation",
+      senderCheckBrand: input.senderCheck ? input.senderCheck.brand : null,
     }).onConflictDoNothing({ target: [messages.mailboxId, messages.dedupKey] }).returning();
     if (inserted[0]) {
       // Every message row gets its primary instance here, and only here:
@@ -1931,9 +1935,20 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
-  async knownSenders(accountId: string): Promise<Set<string>> {
-    const rows = await this.db.select({ address: contactsTbl.address }).from(contactsTbl).where(eq(contactsTbl.accountId, accountId));
-    return new Set(rows.map((r) => r.address.toLowerCase()));
+  async knownSenders(accountId: string): Promise<KnownSenders> {
+    const rows = await this.db.select({ address: contactsTbl.address, source: contactsTbl.source })
+      .from(contactsTbl).where(eq(contactsTbl.accountId, accountId));
+    const addresses = new Set<string>();
+    const inferred = new Set<string>();
+    for (const r of rows) {
+      const address = r.address.toLowerCase();
+      addresses.add(address);
+      // Only the written word counts: NULL (a row older than the column) reads as a person's.
+      if (r.source === "inferred") inferred.add(address);
+    }
+    // Two rows folding to one address: a person's row wins, so `inferred` never outvotes it.
+    for (const r of rows) if (r.source !== "inferred") inferred.delete(r.address.toLowerCase());
+    return { addresses, inferred };
   }
 
   /** {@link RepoPort.ownAddresses} — the set `senderIsOwnSql` tests, read whole. */
@@ -2406,17 +2421,20 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /** Known correspondents, deduped and lowercased. Returns the count of genuinely NEW rows. */
-  async upsertContacts(accountId: string, addresses: readonly string[]): Promise<number> {
+  async upsertContacts(accountId: string, addresses: readonly string[], source: ContactSource): Promise<number> {
     // An address no transport delivers to is no correspondent, and it would not fit the index.
     const unique = [...new Set(addresses.map((a) => a.trim().toLowerCase())
       .filter((a) => a.includes("@") && a.length <= MAX_STORED_ADDRESS_CHARS))];
     let created = 0;
     for (let at = 0; at < unique.length; at += MESSAGE_ROWS_CHUNK) {
+      const chunk = unique.slice(at, at + MESSAGE_ROWS_CHUNK);
       const rows = await this.db.insert(contactsTbl)
-        .values(unique.slice(at, at + MESSAGE_ROWS_CHUNK).map((address) => ({ accountId, address })))
+        .values(chunk.map((address) => ({ accountId, address, source })))
         .onConflictDoNothing({ target: [contactsTbl.accountId, contactsTbl.address] })
         .returning({ id: contactsTbl.id });
       created += rows.length;
+      // A person's act upgrades a row an automatic writer made; nothing ever downgrades one.
+      if (source === "person") await upgradeContactsToPerson(this.db as unknown as Tx, accountId, chunk);
     }
     return created;
   }

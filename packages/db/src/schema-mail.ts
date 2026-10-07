@@ -721,11 +721,20 @@ export const messages = pgTable("messages", {
    * so a message opened, read and left takes the top. ONE non-null writer: `MessageService.markSeen`
    * with `openRead`, on rows that were unread, one conversation only. Every unread clears it (the
    * batch, the single PATCH, `applyExternalFlag`). NULL = arrival; no backfill, never from `lastReadAt`.
-   * LAST in the literal, where the migration's ALTER appends it — twin parity compares order.
+   * After `arrived_at` in the literal, where its migration's ALTER appends it — twin parity compares order.
    */
   openReadAt: timestamp("open_read_at", { withTimezone: true }),
+  /**
+   * THE IDENTITY FACT (mail 0148), written once at ingest by `commitChange`: NULL = never checked
+   * (the backfill's question), `'none'` = checked and nothing found, `'impersonation'` = the name
+   * claims a dictionary brand the address does not own, which `sender_check_brand` names. Closed by
+   * `messages_sender_check_closed`. Appended after `open_read_at`, where the ALTER puts them.
+   */
+  senderCheck: text("sender_check"),
+  senderCheckBrand: text("sender_check_brand"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
+  ckSenderCheck: check("messages_sender_check_closed", sql`${t.senderCheck} in ('none', 'impersonation')`),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),
   ixThread: index("messages_account_thread_idx").on(t.accountId, t.threadId),
   // ── Mail 0026 — the THREADING key ──
@@ -1040,6 +1049,12 @@ export const contacts = pgTable("contacts", {
   // address the pipeline recorded; the user may later name it. ──
   name: text("name"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  /**
+   * Who made the row (mail 0147): `'person'` for a person's act (a send, a press, Not junk, a
+   * Sent copy), `'inferred'` for an automatic admission (a pass, a reply-arm correspondent).
+   * NULL is every row older than the column and reads as `'person'`, the permissive default.
+   */
+  source: text("source"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("contacts_id_account_uq").on(t.id, t.accountId),
   uq: unique().on(t.accountId, t.address) }));

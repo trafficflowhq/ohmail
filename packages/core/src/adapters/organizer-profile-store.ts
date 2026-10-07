@@ -4,7 +4,7 @@ import {
   rules as rulesTbl, tags as tagsTbl,
   fenceErased, lockAccountRuleKeys, recordChanges, recordProfileImportResolution, rerouteOwnHeldBag,
   resolveImportAsk, ruleDelta,
-  type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx,
+  type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "../rule-order.js";
@@ -260,12 +260,14 @@ export async function applyOrganizerProfile(
     byAddress.set(address, name);
   }
   for (const [address, name] of byAddress) {
+    // A person's own list, carried from their other install: a person's contact (mail 0147).
     await tx.insert(contacts)
-      .values({ accountId: o.accountId, address, name })
+      .values({ accountId: o.accountId, address, name, source: "person" })
       .onConflictDoUpdate({
         target: [contacts.accountId, contacts.address],
         set: { name },
       });
+    await upgradeContactsToPerson(tx, o.accountId, [address]);
   }
 
   // ── rules, merged per natural key ──────────────────────────────────────────────────

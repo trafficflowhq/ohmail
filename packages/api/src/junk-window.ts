@@ -4,7 +4,7 @@ import {
   assertOrganizerRole, fenceErased,
   contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages,
   lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl,
-  writeRuleUnderKey, type LedgerTx, type RuleRowWrite, type Tx,
+  writeRuleUnderKey, type LedgerTx, type RuleRowWrite, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, epochOf, sameEpoch,
@@ -451,8 +451,9 @@ async function allowSender(
   await recordRuleDelta(tx, accountId, disabled.map((r) => r.id), "update");
 
   // 2. The admission — the yes-decision's `contacts` row, idempotent.
-  await tx.insert(contacts).values({ accountId, address: addr })
+  await tx.insert(contacts).values({ accountId, address: addr, source: "person" })
     .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
+  await upgradeContactsToPerson(tx, accountId, [addr]);
 
   /* 3. ONE RULE PER KEY: the sender's bare key converges onto its ACTING row. An enabled row on
      the allow side already admits them and keeps its place (both News spellings count); anything

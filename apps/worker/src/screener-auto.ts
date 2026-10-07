@@ -7,6 +7,7 @@ import {
   STRONG_BULK_FLOOR_VERSION, migrationBulkPlacement, silentLogger,
   type Destination, type Logger, type NormalizedMessage,
 } from "@trafficflow/core";
+import { identityOfRow } from "@trafficflow/core/mail";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleInputOf, upsertDesired } from "./rule-pass.js";
 
@@ -122,6 +123,8 @@ export interface ScreenerAutoResult {
    * how much was deliberately left at the gate for a human rather than filed to Reads/Receipts.
    */
   sensitivityExcluded: number;
+  /** Movers held back BECAUSE the identity fact marks them (mail 0147): never filed by a pass. */
+  identityExcluded: number;
   /** True ⇒ the per-cycle write budget ran out; the rest is swept next cycle. */
   capped: boolean;
   /**
@@ -151,11 +154,15 @@ interface AutoRow {
   noAi: boolean;
   /** A `message_bodies` row exists — an absent one reads `{}` and its floor is not yet known. */
   bodyPresent: boolean;
+  /** The identity fact's inputs and column — see `rule-pass.ts#RuleInputRow`. */
+  fromName: string | null;
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
 }
 
 const EMPTY = (): ScreenerAutoResult => ({
   ran: false, examined: 0, moved: 0, kept: 0, marked: 0, destinations: {}, sensitivityExcluded: 0,
-  capped: false, revoked: false, mode: "full",
+  identityExcluded: 0, capped: false, revoked: false, mode: "full",
 });
 
 /** Change kinds that can make a KEPT row a candidate again without touching its `folder_state`. */
@@ -180,6 +187,15 @@ function ownWritingChanged(own: readonly string[]): SQL {
 /** True ⇒ sensitivity-flagged (`sensitivity_category` set OR `no_ai`) — never auto-moved. */
 function isSensitivityFlagged(row: AutoRow): boolean {
   return row.sensitivityCategory !== null || row.noAi;
+}
+
+/**
+ * True ⇒ the identity fact marks the row: its name claims a brand its address does not own. Never
+ * auto-moved — a newsletter's headers are the sender's to write, and News is a pile a person reads.
+ * The column when checked, the fact function when the row predates it.
+ */
+function isIdentityFlagged(row: AutoRow): boolean {
+  return identityOfRow(row) !== null;
 }
 
 /**
@@ -267,7 +283,7 @@ export async function screenerAutoApplyPass(
       if (!live?.autoApplyAt) {
         return {
           revoked: true, held: 0, lastHeld: null, rows: 0, moved: 0, kept: 0, marked: 0, sensitivityExcluded: 0,
-          capped: false, destinations: {} as Record<string, number>,
+          identityExcluded: 0, capped: false, destinations: {} as Record<string, number>,
         };
       }
 
@@ -281,6 +297,7 @@ export async function screenerAutoApplyPass(
       let moved = 0;
       let kept = 0;
       let sensitivityExcluded = 0;
+      let identityExcluded = 0;
       // Rows read with NO strong-bulk floor and a body row present: the floor is a pure function of
       // headers written once, so the row is kept on every later walk too — mark it, skip it after.
       const toMark: string[] = [];
@@ -300,6 +317,8 @@ export async function screenerAutoApplyPass(
         // ── SENSITIVITY KEEP — this is `pipeline.ts:563-567`. Drop it and a flagged strong-bulk row
         // moves; keeping it means a stranger's login code stays at the gate for a human. ──────────
         if (isSensitivityFlagged(c)) { sensitivityExcluded++; kept++; continue; }
+        // ── IDENTITY KEEP — a name claiming a brand from somebody else's address waits for a person.
+        if (isIdentityFlagged(c)) { identityExcluded++; kept++; continue; }
 
         await upsertDesired(tx, c, to, now());
         // The optimistic, user-wins `move` delta the client mirror converges on, carrying the TRUE
@@ -327,7 +346,7 @@ export async function screenerAutoApplyPass(
 
       return {
         revoked: false, held: held.length, lastHeld: held[held.length - 1] ?? null,
-        rows: candidates.length, moved, kept, marked, sensitivityExcluded, capped, destinations,
+        rows: candidates.length, moved, kept, marked, sensitivityExcluded, identityExcluded, capped, destinations,
       };
     });
 
@@ -348,6 +367,7 @@ export async function screenerAutoApplyPass(
     result.kept += outcome.kept;
     result.marked += outcome.marked;
     result.sensitivityExcluded += outcome.sensitivityExcluded;
+    result.identityExcluded += outcome.identityExcluded;
     for (const [to, n] of Object.entries(outcome.destinations)) {
       result.destinations[to] = (result.destinations[to] ?? 0) + n;
     }
@@ -371,7 +391,7 @@ export async function screenerAutoApplyPass(
     log.info("screener_auto_apply", {
       accountId, examined: result.examined, moved: result.moved, kept: result.kept,
       destinations: result.destinations, sensitivityExcluded: result.sensitivityExcluded,
-      capped: result.capped,
+      identityExcluded: result.identityExcluded, capped: result.capped,
     });
   }
   return result;
@@ -589,6 +609,9 @@ async function selectCandidates(
     ))`,
     sensitivityCategory: messages.sensitivityCategory,
     noAi: messages.noAi,
+    fromName: messages.fromName,
+    senderCheck: messages.senderCheck,
+    senderCheckBrand: messages.senderCheckBrand,
     // Whether the LEFT JOIN found a body row: `{}` headers from an absent one are not a verdict.
     bodyPresent: sql<boolean>`${messageBodies.messageId} is not null`,
   }).from(folderState)
@@ -609,6 +632,9 @@ async function selectCandidates(
     desiredFolder: r.desiredFolder,
     sensitivityCategory: r.sensitivityCategory,
     noAi: r.noAi,
+    fromName: r.fromName,
+    senderCheck: r.senderCheck,
+    senderCheckBrand: r.senderCheckBrand,
     // Only a TRUE reading marks; a projection the driver hands back as anything else reads absent.
     bodyPresent: r.bodyPresent === true,
   }));

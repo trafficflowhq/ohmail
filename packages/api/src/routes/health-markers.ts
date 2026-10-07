@@ -812,6 +812,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["folder_state", "decided_at"],
   ["flag_state", "decided_at"],
   ["message_states", "decided_at"],
+  // mail 0148_messages_sender_check — who made a contact (the gate's read of `contacts` selects it)
+  // and the identity fact on every message (the ingest commit writes it), so a worker ahead of the
+  // migration 42703s on both. Deploy order migration → API → worker.
+  ["contacts", "source"],
+  ["messages", "sender_check"],
 ] as const;
 
 /**
@@ -1206,7 +1211,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0147_messages_open_read_at";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0148_messages_sender_check";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

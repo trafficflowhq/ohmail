@@ -9,6 +9,7 @@ export const TAIL_SECTION_PLAN = [
   { name: "bubble_up", passes: ["bubble_up"] },
   { name: "workflow", passes: ["workflow_time_scan", "workflow_drain"] },
   { name: "gate_release", passes: ["gate_release"] },
+  { name: "sender_check_backfill", passes: ["sender_check_backfill"] },
   { name: "rule_retro", passes: ["rule_retro"] },
   { name: "ohbox_tidy", passes: ["ohbox_tidy"] },
   { name: "thread_join_heal", passes: ["thread_join_heal"] },

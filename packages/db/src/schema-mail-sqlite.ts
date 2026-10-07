@@ -659,8 +659,11 @@ export const messages = sqliteTable("messages", {
    *  LAST, where mail 0119's ALTER appends it: the baseline test compares column ORDER. */
   arrivedAt: integer("arrived_at", { mode: "timestamp_ms" }),
   /** The open read, the pg column's twin — see `schema-mail.ts` for the one writer and
-   *  the clears. LAST, where its migration's ALTER appends it: the baseline test compares column ORDER. */
+   *  the clears. After `arrived_at`, where its migration's ALTER appends it: the baseline test compares column ORDER. */
   openReadAt: integer("open_read_at", { mode: "timestamp_ms" }),
+  /** The identity fact (mail 0148), the pg columns' twins — see `schema-mail.ts`. */
+  senderCheck: text("sender_check"),
+  senderCheckBrand: text("sender_check_brand"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),
@@ -697,6 +700,7 @@ export const messages = sqliteTable("messages", {
     sql`substr(lower(${t.fromAddress}), instr(lower(${t.fromAddress}), '@') + 1)`,
     t.id,
   ),
+  ckSenderCheck: check("messages_sender_check_closed", sql`${t.senderCheck} in ('none', 'impersonation')`),
 }));
 
 /**
@@ -922,6 +926,8 @@ export const contacts = sqliteTable("contacts", {
   // address the pipeline recorded; the user may later name it. ──
   name: text("name"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  /** Who made the row (mail 0147) — see `schema-mail.ts`. NULL reads as `'person'`. */
+  source: text("source"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("contacts_id_account_uq").on(t.id, t.accountId),
   uq: unique().on(t.accountId, t.address) }));

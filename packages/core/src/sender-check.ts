@@ -1,5 +1,7 @@
 import { DESTINATIONS, isConsentingDestination, type Destination } from "./types.js";
 import { BRANDS, type Brand } from "./brands.js";
+import { foldForMatch, INVISIBLE, SOFT_HYPHEN } from "./text-fold.js";
+import { isSharedProviderDomain } from "./rule-order.js";
 
 /**
  * WHO IS THIS MAIL REALLY FROM — a deterministic check that runs BEFORE the model and bounds what
@@ -32,8 +34,6 @@ export interface SenderCheckInput {
   fromAddress: string;
   /** The display name the sender chose, when one was parsed. */
   fromName?: string | null;
-  /** `Reply-To`, when the message carried one and it differs from `From`. */
-  replyToAddress?: string | null;
   subject: string;
   snippet: string;
   /** `messages.auth_verdict`. NULL/absent ⇒ permissive — see the column's own docblock. */
@@ -45,10 +45,16 @@ export interface SenderSignals {
   /** The sender's registrable domain — empty when the address has none to read. */
   senderDomain: string;
   /**
-   * The mail NAMES a brand in the dictionary and comes from an address that is not the brand's.
-   * The strongest signal here, and the only one that names a specific company.
+   * The identity fact ({@link claimedIdentity}): the sender's name, or its local part, or the
+   * subject's lead-in claims a dictionary brand and the address is not the brand's. Set from the
+   * fact and from nothing else, so the gate and this cap can never disagree about one message.
    */
   impersonation?: { brand: string; brandDomains: readonly string[] };
+  /**
+   * A brand named elsewhere — mid-subject, or in the preview beside urgency — by an address that
+   * is not the brand's. Advice only: it bounds an admitting suggestion like `brandMismatch` does.
+   */
+  brandMention?: { brand: string; brandDomains: readonly string[] };
   /** A brand-shaped claim OUTSIDE the dictionary. A fact for the prompt; never a cap alone. */
   brandMismatch?: { claimed: string };
   /** How many DIFFERENT first-time sender domains carried this same subject in one pass. */
@@ -152,47 +158,168 @@ const GENERIC_NAME_TOKENS = new Set([
   "office", "kontakt", "contact", "shop", "store", "sales", "verkauf", "marketing",
 ]);
 
-/** Everything this file compares is folded the same way: lower case, accents kept, one space. */
-function fold(s: string): string {
-  return s.toLowerCase().replace(/\s+/g, " ").trim();
-}
+/** The service words a short gate needle must stand beside to claim a brand ("UBS Sicherheit"). */
+const SERVICE_WORDS: ReadonlySet<string> = new Set([
+  ...GENERIC_NAME_TOKENS,
+  "paket", "sendung", "lieferung", "zustellung", "versand", "karte", "card", "bank", "zahlung",
+  "payment", "login", "anmeldung",
+]);
 
-/** Does `hay` name `needle` on word boundaries? `.` and `&` are part of brand tokens, not breaks. */
-function names(hay: string, needle: string): boolean {
-  const i = hay.indexOf(needle);
-  if (i < 0) return false;
-  const before = i === 0 ? "" : hay[i - 1] ?? "";
-  const after = hay[i + needle.length] ?? "";
-  const boundary = (c: string): boolean => c === "" || !/[\p{L}\p{N}]/u.test(c);
-  return boundary(before) && boundary(after);
-}
+/** Everything this file compares is folded one way — `text-fold.ts#foldForMatch`. */
+const fold = foldForMatch;
 
-/** Every token of a brand, as the domain test reads them: letters and digits only, 4+ long. */
-function brandTokens(b: Brand): string[] {
-  const out: string[] = [];
-  for (const a of [b.name, ...b.aliases]) {
-    for (const t of fold(a).split(/[^\p{L}\p{N}]+/u)) if (t.length >= 4) out.push(t);
+const isWordChar = (c: string): boolean => c !== "" && /[\p{L}\p{N}]/u.test(c);
+
+/**
+ * Every position at which `hay` names `needle` on word boundaries — from EACH hit, so
+ * `PostFinanceCard | PostFinance` is read past its first, glued occurrence. `.` and `&` may sit
+ * inside a needle; they are boundaries in the hay.
+ */
+function namedAt(hay: string, needle: string): number[] {
+  const at: number[] = [];
+  if (needle === "") return at;
+  for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + 1)) {
+    if (!isWordChar(hay[i - 1] ?? "") && !isWordChar(hay[i + needle.length] ?? "")) at.push(i);
   }
-  return out;
+  return at;
 }
 
-/** True ⇒ the sender's own domain carries the brand's token, so the claim is not a mismatch. */
-function domainCarriesBrand(domain: string, b: Brand): boolean {
-  const bare = domain.replace(/[^a-z0-9]/g, "");
-  return brandTokens(b).some((t) => bare.includes(t.replace(/[^a-z0-9]/g, "")));
+function names(hay: string, needle: string): boolean {
+  return namedAt(hay, needle).length > 0;
 }
 
-/** Where a brand's name was found. The display name and the subject CLAIM; a snippet mentions. */
+/** A short needle claims only with a service word as the word before or after it. */
+function namesBesideServiceWord(hay: string, needle: string): boolean {
+  return namedAt(hay, needle).some((i) => {
+    const before = /([\p{L}\p{N}]+)[^\p{L}\p{N}]*$/u.exec(hay.slice(0, i))?.[1];
+    const after = /^[^\p{L}\p{N}]*([\p{L}\p{N}]+)/u.exec(hay.slice(i + needle.length))?.[1];
+    return (before !== undefined && SERVICE_WORDS.has(before)) || (after !== undefined && SERVICE_WORDS.has(after));
+  });
+}
+
+/**
+ * Letters and digits only, the four digits a sender swaps for a letter folded back: the form
+ * `Post-Finance`, `P.o.s.t.F.i.n.a.n.c.e`, `P0stFinance` and `MyPostFinance` share with the needle.
+ */
+const SKELETON_DIGITS: Readonly<Record<string, string>> = { "0": "o", "1": "l", "3": "e", "5": "s" };
+function skeleton(s: string): string {
+  return s.replace(/[^\p{L}\p{N}]/gu, "").replace(/[0135]/g, (c) => SKELETON_DIGITS[c] ?? c);
+}
+const letters = (s: string): number => (s.match(/\p{L}/gu) ?? []).length;
+
+/** A gate needle this long is also matched by skeleton, anywhere in the hay. */
+const SKELETON_MIN_LETTERS = 6;
+
+interface GatedBrand { brand: Brand; gate: string[]; skeletons: string[]; gateShort: string[] }
+
+/** The rows that count for the fact, their needles folded once. A row without needles is advice. */
+const GATED: readonly GatedBrand[] = BRANDS.flatMap((b) => {
+  const gate = (b.gate ?? []).map(fold);
+  const gateShort = (b.gateShort ?? []).map(fold);
+  if (gate.length === 0 && gateShort.length === 0) return [];
+  const skeletons = gate.filter((n) => letters(n) >= SKELETON_MIN_LETTERS).map(skeleton);
+  return [{ brand: b, gate, skeletons, gateShort }];
+});
+
+function claims(hay: string, g: GatedBrand): boolean {
+  if (g.gate.some((n) => names(hay, n))) return true;
+  if (g.skeletons.length > 0) {
+    const bare = skeleton(hay);
+    if (g.skeletons.some((n) => bare.includes(n))) return true;
+  }
+  return g.gateShort.some((n) => namesBesideServiceWord(hay, n));
+}
+
+/** A shared provider owns nothing: anyone can register an address there, whichever row lists it. */
+function owns(b: Brand, domain: string): boolean {
+  return domain !== "" && b.domains.includes(domain) && !isSharedProviderDomain(domain);
+}
+
+/** A claimed identity the sender's address does not back. `via` is where the claim was read. */
+export interface IdentityFact {
+  brand: string;
+  via: "name" | "local_part" | "subject_lead";
+}
+
+/** What the fact reads, and nothing else: no Reply-To, no snippet, no body. */
+export interface IdentityInput {
+  fromName: string | null;
+  fromAddress: string;
+  subject: string;
+}
+
+/**
+ * The lead-in a service notification wears, for the FACT: {@link LEAD_IN}'s shape, read after
+ * NFKC and with invisibles removed, and admitting a digit after the first letter so `P0stFinance:`
+ * reaches the skeleton. Only the capture is read, never the rest of the subject.
+ */
+const LEAD_IN_FACT = /^\s*([\p{Lu}][\p{L}\p{N}&.\- ]{2,30}?)\s*[:\u2013\u2014-]\s+\S/u;
+function leadInOf(subject: string): string | undefined {
+  const s = subject.normalize("NFKC").replace(INVISIBLE, "").replace(SOFT_HYPHEN, "");
+  return LEAD_IN_FACT.exec(s)?.[1]?.trim() || undefined;
+}
+
+/**
+ * THE IDENTITY FACT — the one definition, read by the gate (`rules.ts`), stored on the row
+ * (`messages.sender_check`) and capping every suggestion ({@link senderCheckAll}). The claim is
+ * read from the display name, or the address's local part when there is no name, and from the
+ * subject's lead-in; it holds when the address owns NONE of the brands those name. Pure.
+ */
+export function claimedIdentity(input: IdentityInput): IdentityFact | undefined {
+  const sources: Array<[IdentityFact["via"], string]> = [];
+  const name = input.fromName !== null && input.fromName.trim() !== "" ? input.fromName : null;
+  if (name !== null) {
+    sources.push(["name", fold(name)]);
+  } else {
+    const at = input.fromAddress.lastIndexOf("@");
+    const local = at < 0 ? input.fromAddress : input.fromAddress.slice(0, at);
+    if (local.trim() !== "") sources.push(["local_part", fold(local)]);
+  }
+  const lead = leadInOf(input.subject);
+  if (lead !== undefined) sources.push(["subject_lead", fold(lead)]);
+
+  let first: IdentityFact | undefined;
+  const claimed: Brand[] = [];
+  for (const [via, hay] of sources) {
+    for (const g of GATED) {
+      if (!claims(hay, g)) continue;
+      claimed.push(g.brand);
+      first ??= { brand: g.brand.name, via };
+    }
+  }
+  if (first === undefined) return undefined;
+  // A name that carries two brands (a subsidiary beside its parent) holds unless the address owns one.
+  const domain = senderDomainOf(input.fromAddress);
+  return claimed.some((b) => owns(b, domain)) ? undefined : first;
+}
+
+/** A stored row as the passes hold it: the fact's inputs and the column the ingest wrote. */
+export interface IdentityRow extends IdentityInput {
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
+}
+
+/**
+ * The fact for a stored row: the column when it was checked, the function when it never was —
+ * so no window exists in which an unchecked row reads as "nothing found". A value outside the
+ * closed set reads as unchecked.
+ */
+export function identityOfRow(row: IdentityRow): IdentityFact | null {
+  if (row.senderCheck === "none") return null;
+  const fresh = claimedIdentity(row) ?? null;
+  if (row.senderCheck !== "impersonation") return fresh;
+  return { brand: row.senderCheckBrand || fresh?.brand || "", via: fresh?.via ?? "name" };
+}
+
+/** Where a brand's name was found outside the fact. The subject claims; a snippet mentions. */
 type Claim = "strong" | "mention";
 
 /**
- * WHICH BRAND THIS MAIL CLAIMS TO BE, and how loudly. The display name and the subject are the
- * sender asserting an identity; the snippet's first 300 characters may simply MENTION a company
- * ("I switched to Swisscom last year"), which is why a mention alone is not impersonation — it is
- * promoted only when the urgency lexicon fires beside it. First match wins; the dictionary is
- * ordered by sector and no message honestly claims two brands.
+ * A BRAND NAMED OUTSIDE THE FACT'S SOURCES — anywhere in the name or the whole subject, or in the
+ * preview's first 300 characters. Advice for the suggestion and the prompt, never a hold. First
+ * match wins; the dictionary is ordered by sector and no message honestly claims two brands.
  */
-function claimedBrand(input: SenderCheckInput): { brand: Brand; claim: Claim } | undefined {
+function mentionedBrand(input: SenderCheckInput): { brand: Brand; claim: Claim } | undefined {
   const strong = fold(`${input.fromName ?? ""} ${input.subject}`);
   const mention = fold(input.snippet.slice(0, 300));
   let weak: Brand | undefined;
@@ -273,25 +400,21 @@ export function senderCheckAll(inputs: readonly SenderCheckInput[]): SenderSigna
     const count = key ? domainsBySubject.get(key)?.size ?? 0 : 0;
     if (count >= 2) out.campaign = { count };
 
-    // THE CLAIM AGAINST THE ADDRESS. `Reply-To` is read beside `From` because a forged mail often
-    // signs its reply path with the domain that actually collects the answer: a claim is a
-    // mismatch only when NEITHER address belongs to the brand. A sender domain carrying the
-    // brand's own token is not a mismatch either — `swisscom-billing.example` is someone else's
-    // problem to judge, and this check refuses to call it forgery.
-    const replyDomain = input.replyToAddress ? senderDomainOf(input.replyToAddress) : "";
-    const claimed = claimedBrand(input);
-    if (claimed && senderDomain) {
-      const b = claimed.brand;
-      const owns = (d: string): boolean => d !== "" && b.domains.includes(d);
-      const mismatch = !owns(senderDomain) && !owns(replyDomain)
-        && !domainCarriesBrand(senderDomain, b)
-        && !(replyDomain !== "" && domainCarriesBrand(replyDomain, b));
-      // A snippet MENTION is promoted to a claim only with urgency beside it — see `claimedBrand`.
-      if (mismatch && (claimed.claim === "strong" || out.urgency)) {
-        out.impersonation = { brand: b.name, brandDomains: b.domains };
+    // THE CLAIM AGAINST THE ADDRESS: the identity fact, and nothing else, decides `impersonation`.
+    const fact = claimedIdentity({
+      fromName: input.fromName ?? null, fromAddress: input.fromAddress, subject: input.subject,
+    });
+    const factBrand = fact ? BRANDS.find((b) => b.name === fact.brand) : undefined;
+    if (factBrand) {
+      out.impersonation = { brand: factBrand.name, brandDomains: factBrand.domains };
+    } else if (senderDomain) {
+      // A snippet MENTION counts only with urgency beside it — see `mentionedBrand`.
+      const named = mentionedBrand(input);
+      if (named && !owns(named.brand, senderDomain) && (named.claim === "strong" || out.urgency)) {
+        out.brandMention = { brand: named.brand.name, brandDomains: named.brand.domains };
       }
     }
-    if (!out.impersonation && senderDomain) {
+    if (!out.impersonation && !out.brandMention && senderDomain) {
       const token = claimedOrgToken(input, senderDomain);
       if (token) out.brandMismatch = { claimed: token };
     }
@@ -310,15 +433,16 @@ export function senderCheck(input: SenderCheckInput): SenderSignals {
  * WHICH FACT DECIDES, when more than one fired. Ordered by how much it says about THIS sender:
  * having been written to by this account first (short of a failed authentication), then the
  * forged identity, the sender's own authentication, the crowd, the unverifiable claim. Only
- * those three cap hard; `brand_mismatch` needs urgency beside it, checked here so
- * `capSuggestion` and the rendered reason can never disagree.
+ * those three cap hard; `brand_mismatch` is a brand named outside the fact, or an unmatched
+ * lead-in with urgency beside it, checked here so `capSuggestion` and the rendered reason can
+ * never disagree.
  */
 function decideReason(s: SenderSignals): SenderReasonCode | undefined {
   if (s.correspondent && s.auth !== "fail") return "correspondent";
   if (s.impersonation) return "impersonation";
   if (s.auth === "fail") return "auth_fail";
   if (s.campaign && s.campaign.count >= 2) return "campaign";
-  if (s.brandMismatch && s.urgency) return "brand_mismatch";
+  if (s.brandMention || (s.brandMismatch && s.urgency)) return "brand_mismatch";
   return undefined;
 }
 
@@ -387,13 +511,16 @@ export function senderFacts(s: SenderSignals): string | undefined {
   // a block on every mail that says "renew" would change the question for a large share of
   // ordinary mail for no added fact. The block appears only where ohmail checked something the
   // model cannot see; urgency then rides along inside it.
-  if (!s.impersonation && !s.brandMismatch && !s.campaign && !s.auth && !s.correspondent) return undefined;
+  if (!s.impersonation && !s.brandMention && !s.brandMismatch && !s.campaign && !s.auth && !s.correspondent) {
+    return undefined;
+  }
   const lines: string[] = [];
   if (s.senderDomain) lines.push(`- the sender's address is at ${s.senderDomain}`);
   if (s.correspondent) lines.push("- this account wrote to this sender, or their mail answers a message it sent");
-  if (s.impersonation) {
-    lines.push(`- the mail names ${s.impersonation.brand}, whose own addresses are at `
-      + `${s.impersonation.brandDomains.join(", ")}`);
+  const named = s.impersonation ?? s.brandMention;
+  if (named) {
+    lines.push(`- the mail names ${named.brand}, whose own addresses are at `
+      + `${named.brandDomains.join(", ")}`);
   } else if (s.brandMismatch) {
     // THE MISMATCH, NEVER THE SENDER'S OWN WORDS. `claimed` is a fragment of the RAW subject, and
     // the subject the model receives has been through `redactForModel` — quoting it here would

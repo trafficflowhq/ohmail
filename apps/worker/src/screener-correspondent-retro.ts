@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
   auditAction, auditLog, contacts, fencedAccountWrite, folderState, learningSignals, lockAccountRuleKeys, messages,
   recordChange, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, SCREENER_FOLDER, admitsDestination,
-  SCREENER_ACT_TRIGGER_PREFIX, type LedgerTx, type Tx,
+  SCREENER_ACT_TRIGGER_PREFIX, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -69,11 +69,13 @@ export async function screenerCorrespondentRetroPass(
       let learned = 0;
       for (let i = 0; i < fresh.length; i += 500) {
         const part = fresh.slice(i, i + 500);
+        // The account WROTE to them: a person's act (mail 0147).
         const inserted = await tx.insert(contacts)
-          .values(part.map((address) => ({ accountId, address })))
+          .values(part.map((address) => ({ accountId, address, source: "person" })))
           .onConflictDoNothing({ target: [contacts.accountId, contacts.address] })
           .returning({ id: contacts.id });
         learned += inserted.length;
+        await upgradeContactsToPerson(tx, accountId, part);
       }
       return learned;
     });
@@ -139,8 +141,11 @@ async function release(
 ): Promise<number> {
   return fencedAccountWrite(db, { accountId }, async (tx) => {
     await lockAccountRuleKeys(tx, accountId);
-    await tx.insert(contacts).values({ accountId, address })
+    // A Sent copy TO them is the person writing; a reply citing one is the reply arm's inference.
+    const source = evidence.via === "wrote" ? "person" : "inferred";
+    await tx.insert(contacts).values({ accountId, address, source })
       .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
+    if (source === "person") await upgradeContactsToPerson(tx, accountId, [address]);
     const rows = await dialect(tx).forUpdate(tx.select({
       messageId: messages.id, mailboxId: messages.mailboxId, observedFolder: folderState.observedFolder,
     }).from(folderState)

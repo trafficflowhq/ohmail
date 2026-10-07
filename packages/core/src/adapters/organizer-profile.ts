@@ -16,7 +16,7 @@ import {
   MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, effectForDestination, ruleMatchKey,
 } from "../rule-order.js";
 import { DESTINATIONS, canonicalDestination, isConsentingDestination, type Destination } from "../types.js";
-import type { Rule } from "../rules.js";
+import type { KnownSenders, Rule } from "../rules.js";
 
 /**
  * The portable organizer profile — how a mailbox carries its own organizer configuration. The
@@ -321,9 +321,12 @@ export function oversizedProfileList(
   return null;
 }
 
-/** What the gate reads of a document: the `contacts` and `rules` an import would write. */
+/**
+ * What the gate reads of a document: the `contacts` and `rules` an import would write. The import
+ * writes its contacts as a person's (`organizer-profile-store.ts`), so `inferred` is empty here.
+ */
 export interface ProfileGateView {
-  knownSenders: ReadonlySet<string>;
+  knownSenders: KnownSenders;
   rules: readonly Rule[];
 }
 
@@ -334,10 +337,10 @@ export interface ProfileGateView {
  * `listRules` does; the ids are positional and never stored.
  */
 export function profileGateView(doc: OrganizerProfilePayload): ProfileGateView {
-  const knownSenders = new Set<string>();
+  const addresses = new Set<string>();
   for (const s of doc.screener) {
     const address = profileScreenerAddress(s);
-    if (address !== null) knownSenders.add(address);
+    if (address !== null) addresses.add(address);
   }
   const rules: Rule[] = [];
   doc.rules.forEach((entry, i) => {
@@ -351,7 +354,7 @@ export function profileGateView(doc: OrganizerProfilePayload): ProfileGateView {
       subjectContains: a.subjectContains, bodyContains: a.bodyContains,
     });
   });
-  return { knownSenders, rules };
+  return { knownSenders: { addresses, inferred: new Set<string>() }, rules };
 }
 
 /**

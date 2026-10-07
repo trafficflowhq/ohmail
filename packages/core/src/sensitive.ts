@@ -1,4 +1,5 @@
 import type { NormalizedMessage } from "./types.js";
+import { CONFUSABLES, CONFUSABLE_RE, INVISIBLE, INVISIBLE_CLASS, SOFT_HYPHEN } from "./text-fold.js";
 
 /**
  * Sensitivity detection: the upstream half of "sensitive mail never reaches a model".
@@ -63,49 +64,11 @@ export interface SensitivityResult {
  * ════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Zero-width, bidi-override and other invisible format characters used to split a word. Written
- * as `\u` escapes and NEVER as the literal characters: a source file containing the invisible
- * characters it defends against is a file nobody can review, and a diff deleting one is invisible
- * too. 200B ZWSP, 200C ZWNJ, 200D ZWJ, 200E/200F LRM/RLM, 202A–202E bidi embedding/override,
- * 2060–2064 word joiner and invisible operators, 2066–2069 bidi isolates, FEFF BOM, 061C Arabic
- * letter mark, 180E Mongolian vowel separator.
+ * The invisible class, the soft hyphen and the homoglyph table live in the import-free
+ * `text-fold.ts` leaf, which the brand check folds with too. The obfuscation SHAPE stays here:
+ * an invisible character wedged between two letters.
  */
-const INVISIBLE_CLASS = "\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF\\u061C\\u180E";
-const INVISIBLE = new RegExp(`[${INVISIBLE_CLASS}]`, "g");
-const SOFT_HYPHEN = /\u00AD/g;
-/** The obfuscation SHAPE: an invisible character wedged between two letters. */
 const INVISIBLE_IN_WORD = new RegExp(`\\p{L}[${INVISIBLE_CLASS}]\\p{L}`, "u");
-
-/**
- * Homoglyph folding. NFKC already handles full-width, mathematical-alphanumeric and circled
- * forms; it does NOT touch Cyrillic/Greek lookalikes or the Latin phonetic small-capital block,
- * which is exactly what `ᴠerification` and `раssword` are built from. Folding can only ADD
- * matches, never remove one, so a wrong entry here costs precision and never safety — and the
- * script census below runs on the UNFOLDED text so that folding Cyrillic to Latin cannot hide
- * the fact that the message was Cyrillic.
- */
-const CONFUSABLES: Record<string, string> = {
-  // Cyrillic → Latin
-  "а": "a", "б": "b", "в": "b", "г": "r", "д": "d", "е": "e", "ё": "e", "ж": "x", "з": "3",
-  "и": "u", "й": "u", "к": "k", "л": "n", "м": "m", "н": "h", "о": "o", "п": "n", "р": "p",
-  "с": "c", "т": "t", "у": "y", "ф": "o", "х": "x", "ц": "u", "ч": "y", "ш": "w", "щ": "w",
-  "ъ": "b", "ы": "bi", "ь": "b", "э": "e", "ю": "o", "я": "r", "і": "i", "ї": "i", "ј": "j",
-  "ѕ": "s", "ѐ": "e", "ӏ": "l", "ԁ": "d", "ԛ": "q", "ԝ": "w", "һ": "h", "ѵ": "v",
-  // Greek → Latin
-  "α": "a", "β": "b", "γ": "y", "δ": "d", "ε": "e", "ζ": "z", "η": "n", "θ": "o", "ι": "i",
-  "κ": "k", "λ": "l", "μ": "u", "ν": "v", "ξ": "e", "ο": "o", "π": "n", "ρ": "p", "ς": "s",
-  "σ": "o", "τ": "t", "υ": "y", "φ": "o", "χ": "x", "ψ": "w", "ω": "w",
-  // Latin phonetic small capitals / letterlike residue NFKC leaves alone
-  "ᴀ": "a", "ʙ": "b", "ᴄ": "c", "ᴅ": "d", "ᴇ": "e", "ꜰ": "f", "ғ": "f", "ɢ": "g", "ʜ": "h",
-  "ɪ": "i", "ᴊ": "j", "ᴋ": "k", "ʟ": "l", "ᴍ": "m", "ɴ": "n", "ᴏ": "o", "ᴘ": "p", "ǫ": "q",
-  "ʀ": "r", "ᴛ": "t", "ᴜ": "u", "ᴠ": "v", "ᴡ": "w", "ʏ": "y", "ᴢ": "z", "ɩ": "i", "ɭ": "l",
-  "ɿ": "r", "ʅ": "s", "ʞ": "k", "ǀ": "l",
-  // Armenian lookalikes that show up in real homoglyph attacks
-  "օ": "o", "ո": "n", "ս": "u", "ա": "w", "գ": "q", "ђ": "h",
-  // Roman-numeral and half/full-width residue
-  "ⅼ": "l", "ⅰ": "i", "ⅴ": "v", "ⅹ": "x",
-};
-const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLES).join("")}]`, "gu");
 
 /** A word containing letters from two different scripts — the classic homoglyph signal. */
 const NON_LATIN_LETTER = /[^\P{L}\p{Script=Latin}]/u;

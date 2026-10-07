@@ -6,10 +6,11 @@ import {
 
 /**
  * The hot-path indexes, built CONCURRENTLY outside the migrator — `concurrent-index.ts` owns the
- * how, this file owns the WHICH. Six are built at any size: the profile-import "already resolved?"
+ * how, this file owns the WHICH. Most are built at any size: the profile-import "already resolved?"
  * probe on `audit_log`, the storage-eviction victim read and the newest-first list walk on
- * `messages` (each a Sort without its index), the two retention prunes' age keys, and the Screener
- * auto-apply held page on `folder_state`. Each was measured scanning with `EXPLAIN`.
+ * `messages` (each a Sort without its index), the two retention prunes' age keys, the Screener
+ * auto-apply held page on `folder_state` and the identity backfill's never-checked rows. Each was
+ * measured scanning with `EXPLAIN` but the last, which serves a pass that did not exist before it.
  */
 
 /**
@@ -95,6 +96,16 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
     name: "messages_account_arrival_order_idx",
     table: "messages",
     ddl: ARRIVAL_ORDER_INDEX_DDL,
+  },
+  {
+    // THE IDENTITY BACKFILL'S NEVER-CHECKED ROWS (mail 0147), by account then id. Every row is NULL
+    // when the column lands, so the build is a pass over all of `messages`: here, CONCURRENTLY,
+    // never inside the journal's transaction. The device store builds its twin in its own 0147.
+    name: "messages_sender_check_owed_idx",
+    table: "messages",
+    requiresColumn: "sender_check",
+    ddl: sql`create index concurrently if not exists "messages_sender_check_owed_idx"
+      on public.messages using btree ("account_id","id") where "sender_check" is null`,
   },
   {
     // THE DEFERRED ONE, and the deferral is now a condition rather than a note: it builds itself

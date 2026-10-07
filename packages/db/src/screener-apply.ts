@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
 import { recordChanges, type ChangeInput, type LedgerTx, type Tx } from "./change-log.js";
+import { upgradeContactsToPerson } from "./contact-source.js";
 import { dialect } from "./dialect/index.js";
 import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { readOrganizerRole } from "./organizer-role.js";
@@ -183,19 +184,21 @@ export interface AppliedScreenerRow {
   updatedAt: Date;
   /** The server's current `\Seen`, `!unread`, as the mirror last recorded it. */
   unread: boolean;
+  /** `messages.sender_check` (mail 0147): `'impersonation'` holds the row from a pass's admission. */
+  senderCheck: string | null;
 }
 
 const HELD_COLUMNS = {
   messageId: messages.id, mailboxId: messages.mailboxId, threadId: messages.threadId,
   fromAddress: messages.fromAddress, subject: messages.subject, snippet: messages.snippet,
   date: messages.date, nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
-  updatedAt: messages.updatedAt, unread: messages.unread,
+  updatedAt: messages.updatedAt, unread: messages.unread, senderCheck: messages.senderCheck,
 } as const;
 
 function toAppliedScreenerRow(r: {
   messageId: string; mailboxId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
-  updatedAt: Date; unread: boolean;
+  updatedAt: Date; unread: boolean; senderCheck: string | null;
 }): AppliedScreenerRow {
   return {
     messageId: r.messageId, mailboxId: r.mailboxId, threadId: r.threadId ?? null, fromAddress: r.fromAddress,
@@ -207,6 +210,7 @@ function toAppliedScreenerRow(r: {
     // site can at least fail predictably on; `undefined` is not a value that column ever holds and
     // has no business surviving this row's own construction. Same defensive shape as `threadId`.
     nativeLocator: r.nativeLocator ?? null, updatedAt: r.updatedAt, unread: r.unread,
+    senderCheck: r.senderCheck ?? null,
   };
 }
 
@@ -466,8 +470,12 @@ export interface ApplyScreenerDecisionResult {
   createdRuleId: string | null;
   /** Always empty since the decision converges the key: kept for the wire shape callers answer with. */
   retargetedRuleIds: string[];
-  /** `ruled`: `overExisting: "skip"` met a key with a rule, and nothing was written or filed. */
-  skipped?: "ruled";
+  /**
+   * `ruled`: `overExisting: "skip"` met a key with a rule, and nothing was written or filed.
+   * `identity`: a pass's yes met held mail carrying the identity fact (mail 0147), and nothing was
+   * written or filed — only a person's press admits that sender.
+   */
+  skipped?: "ruled" | "identity";
   /** The subset of the held bag this decision ACTUALLY re-routed — see `decide`'s own `desired=Screener` guard. */
   rerouted: AppliedScreenerRow[];
   /** The LAST `change_log` seq this call emitted — an HTTP caller re-emits it as `X-Sync-Seq` on an idempotent replay. `null` when it emitted none. */
@@ -503,6 +511,7 @@ export async function applyScreenerDecision(
   const erasedAt = await readAccountErasedAt(tx, dialect(tx), accountId);
   if (erasedAt != null) throw new AccountErasedError(accountId);
 
+
   // The screening baseline, stamped on the first decide and never again — see `decide`'s own
   // header  for the full argument; `setWhere: isNull(...)` is what makes a later decide
   // a no-op here rather than a re-stamp that drags the cutoff forward. `stampBaseline` false skips
@@ -521,6 +530,20 @@ export async function applyScreenerDecision(
      mailbox lock the held bag takes below: every rules writer keeps that order. The contact row
      follows it, as on "Not junk, always allow", so the two never wait on each other crosswise. */
   await lockAccountRuleKeys(tx, accountId);
+
+  /* THE ACT NEVER ADMITS A MARKED SENDER (mail 0147), asked of the bag before the first rules,
+     contacts or move statement: a pass's yes over held mail whose name claims a brand its address
+     does not own leaves the sender waiting and writes nothing of the decision. A person's press
+     stands; the row told them. The act stamps no baseline (`stampBaseline: false`). */
+  const passAdmits = decidedBy === "pass" && decision === "yes";
+  if (passAdmits) {
+    const bag = scope === "domain"
+      ? await heldRowsForDomain(tx, accountId, domain, undefined, { skipPutBack: true })
+      : await heldRowsForSender(tx, accountId, address, undefined, { skipPutBack: true });
+    if (bag.some((r) => r.senderCheck === "impersonation")) {
+      return { createdRuleId: null, retargetedRuleIds: [], rerouted: [], lastSeq: null, heldElsewhere: [], skipped: "identity" };
+    }
+  }
 
   // Read inside the decide's own transaction, so the priority answers the rules this write sees.
   const priority = scope === "sender" && liftOverDomain && domain !== ""
@@ -572,8 +595,12 @@ export async function applyScreenerDecision(
   let lastSeq = wrote.lastSeq;
 
   if (decision === "yes") {
-    await tx.insert(contacts).values({ accountId, address })
+    // A person's press is a person's contact; the act's is inferred (mail 0147), and the identity
+    // fact still holds what only inference admitted.
+    const source = decidedBy === "person" ? "person" : "inferred";
+    await tx.insert(contacts).values({ accountId, address, source })
       .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
+    if (source === "person") await upgradeContactsToPerson(tx, accountId, [address]);
   }
 
   const held = { skipPutBack: decidedBy === "pass" };
@@ -581,7 +608,9 @@ export async function applyScreenerDecision(
     ? await heldRowsForDomain(tx, accountId, domain, undefined, held)
     : await heldRowsForSender(tx, accountId, address, undefined, held);
 
-  const moved = await rerouteHeldBag(tx, accountId, heldMail, appliedFolder, now);
+  // …and a marked row that arrived between the two reads stays at the gate too.
+  const moved = await rerouteHeldBag(tx, accountId,
+    passAdmits ? heldMail.filter((r) => r.senderCheck !== "impersonation") : heldMail, appliedFolder, now);
   if (moved.lastSeq !== null) lastSeq = moved.lastSeq;
   const { rerouted, heldElsewhere } = moved;
 

@@ -1037,6 +1037,13 @@
       "when": 1791602600051,
       "tag": "0147_messages_open_read_at",
       "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1791602600052,
+      "tag": "0148_messages_sender_check",
+      "breakpoints": true
     }
   ]
 }

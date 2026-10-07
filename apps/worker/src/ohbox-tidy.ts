@@ -6,9 +6,10 @@ import {
 import {
   authVerdictFromHeaders, evaluateRules,
   migrationBulkPlacement, resolveOhboxPolicy, silentLogger,
-  type Destination, type Logger, type NormalizedMessage, type OhboxPolicy, type Rule,
+  type Destination, type KnownSenders, type Logger, type NormalizedMessage, type OhboxPolicy, type Rule,
   type RuleDecision,
 } from "@trafficflow/core";
+import { identityOfRow } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
 import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "./rule-pass.js";
@@ -145,6 +146,10 @@ interface TidyRow {
   headers: Record<string, string[]>;
   observedFolder: string;
   desiredFolder: string;
+  /** The identity fact's inputs and column — see `rule-pass.ts#RuleInputRow`. */
+  fromName: string | null;
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
   /**
    * The sensitivity verdict, read so the caller's single sensitivity KEEP guard can hold a flagged
    * row in the Ohbox: a category or `no_ai` makes the message `sensitive-rescreen.ts`'s jurisdiction,
@@ -355,7 +360,7 @@ export async function ohboxTidyPass(
           carryDialect(db, tx) as unknown as Parameters<typeof makeDrizzleRepo>[0],
         );
         const rules: Rule[] = await pageRepo.listRules(accountId);
-        const known: ReadonlySet<string> = await pageRepo.knownSenders(accountId);
+        const known: KnownSenders = await pageRepo.knownSenders(accountId);
 
         const candidates = await selectCandidates(tx, { accountId, ownAddresses, limit: batch, afterId });
         // Asked again, in a statement of its own, over exactly the rows now locked — see
@@ -383,7 +388,7 @@ export async function ohboxTidyPass(
           const decision = evaluateRules({
             msg, rules, knownSenders: known, ownAddresses: ownSet,
             auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
-            ohboxPolicy: livePolicy,
+            ohboxPolicy: livePolicy, identity: identityOfRow(c),
           });
           lastId = c.messageId;
 
@@ -556,6 +561,9 @@ async function selectCandidates(
     mailboxId: messages.mailboxId,
     fromAddress: messages.fromAddress,
     subject: messages.subject,
+    fromName: messages.fromName,
+    senderCheck: messages.senderCheck,
+    senderCheckBrand: messages.senderCheckBrand,
     observedFolder: folderState.observedFolder,
     desiredFolder: folderState.desiredFolder,
     headers: messageBodies.headers,
@@ -576,6 +584,9 @@ async function selectCandidates(
     mailboxId: r.mailboxId,
     fromAddress: r.fromAddress,
     subject: r.subject,
+    fromName: r.fromName,
+    senderCheck: r.senderCheck,
+    senderCheckBrand: r.senderCheckBrand,
     bodyText: r.bodyText ?? "",
     headers: (r.headers as Record<string, string[]> | null) ?? {},
     observedFolder: r.observedFolder,

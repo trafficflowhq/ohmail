@@ -10,6 +10,7 @@ import {
 import { JUNK_RESCUE_STATUSES, isJunkRescueStatus } from "./junk-rescue-status.js";
 import { SEARCH_SOURCES, isSearchSource } from "./search-sources.js";
 import { SCREENER_ACT_REFUSALS, isScreenerActRefusal } from "./screener-act-refusal.js";
+import { SENDER_CHECKS, isSenderCheck } from "./sender-check-values.js";
 
 /**
  * THE CLOSED SETS THE TWO STORES CARRY, AND WHICH OF THEM MAY BE A CHECK ON A DEVICE.
@@ -130,6 +131,15 @@ export const CLOSED_SETS: readonly ClosedSet[] = [
     why: "why the act on suggestions could not file a sender; `store_fault` is the catch-all, so a "
       + "new failure already has a member and the Screener says one sentence for all of them. NULL "
       + "is every row the act never tried or has since filed.",
+  },
+  {
+    constraint: "messages_sender_check_closed",
+    table: "messages", column: "sender_check", nullable: true,
+    members: SENDER_CHECKS, isMember: isSenderCheck,
+    kind: "immutable",
+    why: "the identity fact about one message: its name claims a brand its address does not own, "
+      + "or it does not. A second kind of finding would be a second column with its own reader, not "
+      + "a wider set. NULL is a row the ingest never checked, which is the backfill's question.",
   },
 ];
 

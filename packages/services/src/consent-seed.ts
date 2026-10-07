@@ -4,7 +4,7 @@ import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
   accountSettings, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
   lockAccountRuleKeys, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, PROFILE_SIGNATURE_MAX,
-  TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx,
+  TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -585,10 +585,11 @@ export async function confirmSeed(
     let contactsCreated = 0;
     for (const part of chunked(contactAddresses, WRITE_CHUNK)) {
       const inserted = await tx.insert(contacts)
-        .values(part.map((address) => ({ accountId: ctx.accountId, address })))
+        .values(part.map((address) => ({ accountId: ctx.accountId, address, source: "person" })))
         .onConflictDoNothing()
         .returning({ id: contacts.id });
       contactsCreated += inserted.length;
+      await upgradeContactsToPerson(tx, ctx.accountId, part);
     }
 
     let lastSeq: bigint | null = null;

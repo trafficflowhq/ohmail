@@ -6,8 +6,8 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  DEFAULT_OHBOX_POLICY, evaluateRules,
-  type Destination, type NormalizedMessage, type Rule,
+  DEFAULT_OHBOX_POLICY, evaluateRules, identityOfRow,
+  type Destination, type NormalizedMessage, type Rule, type KnownSenders,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ServiceError } from "./errors.js";
@@ -84,6 +84,10 @@ interface UnscreenedRow {
   observedFolder: string;
   /** The arrival instant, `date` where the header carried one and the ingest stamp otherwise. */
   at: Date;
+  /** The identity fact's inputs and its column (mail 0147) — `identityOfRow` reads them. */
+  fromName: string | null;
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
 }
 
 /**
@@ -120,7 +124,7 @@ function asRuleInput(row: UnscreenedRow): NormalizedMessage {
  * make an answer `screener` or unmake one.
  */
 function gateWouldScreen(
-  row: UnscreenedRow, rules: readonly Rule[], known: ReadonlySet<string>, own: ReadonlySet<string>,
+  row: UnscreenedRow, rules: readonly Rule[], known: KnownSenders, own: ReadonlySet<string>,
 ): boolean {
   return evaluateRules({
     msg: asRuleInput(row),
@@ -129,6 +133,8 @@ function gateWouldScreen(
     ownAddresses: own,
     auth: "unavailable",
     ohboxPolicy: DEFAULT_OHBOX_POLICY,
+    // The gate's own fact for the row, so a claim it holds at arrival is offered here too.
+    identity: identityOfRow(row),
   }).source === "screener";
 }
 
@@ -147,7 +153,7 @@ async function unscreenedWalk(
   /* THE KNOWLEDGE THE GATE DECIDES ON, READ ONCE PER CALL. A read is one answer about one moment;
      a press reads it inside its own transaction, so what it acts on is as fresh as its writes. */
   const rules: Rule[] = await repo.listRules(accountId);
-  const known: ReadonlySet<string> = await repo.knownSenders(accountId);
+  const known: KnownSenders = await repo.knownSenders(accountId);
   // Every address the account has a mailbox for — what "not from myself" excludes, and the reply
   // predicate's list (a reply sent from a removed mailbox is still the person's). The router reads
   // the one set (`readOwnAddresses`), so what is offered stays a subset of what the gate screens.
@@ -249,6 +255,9 @@ async function selectCandidates(
     messageId: messages.id,
     fromAddress: messages.fromAddress,
     subject: messages.subject,
+    fromName: messages.fromName,
+    senderCheck: messages.senderCheck,
+    senderCheckBrand: messages.senderCheckBrand,
     observedFolder: folderState.observedFolder,
     /* THE TWO WIDE COLUMNS, OR WHAT THE GATE WOULD HAVE SEEN WITHOUT THEM — and each placeholder
        is its own EXPRESSION, never the same cast twice. This module is loaded by the PHONE
@@ -280,6 +289,9 @@ async function selectCandidates(
     headers: (r.headers as Record<string, string[]> | null) ?? {},
     observedFolder: r.observedFolder,
     at: new Date(r.at),
+    fromName: r.fromName,
+    senderCheck: r.senderCheck,
+    senderCheckBrand: r.senderCheckBrand,
   }));
 }
 

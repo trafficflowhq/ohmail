@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import {
   attachments, CERT_CODES, contacts, drafts, mailboxes, messageBodies, messages, outboundSends,
   outboundSendFingerprints, readAccountErasedAt, recordChange, SERVER_UNAVAILABLE_RESPONSE_CODES,
-  threads, type LedgerTx, type Tx,
+  threads, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
   createLogger, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime, prepareHtmlForStorage, recordSentMessage,
@@ -2494,8 +2494,9 @@ export class SendService {
       const learned = erasedAt == null ? await this.recipientsOf(tx, ctx, draftId) : [];
       if (learned.length > 0) {
         await tx.insert(contacts)
-          .values(learned.map((address) => ({ accountId: ctx.accountId, address })))
+          .values(learned.map((address) => ({ accountId: ctx.accountId, address, source: "person" })))
           .onConflictDoNothing();
+        await upgradeContactsToPerson(tx, ctx.accountId, learned);
       }
       // See the note above: the doorbell is skipped rather than waited on, because waiting
       // strands a message already sent. `SKIP LOCKED` needs the row selected, so the update is

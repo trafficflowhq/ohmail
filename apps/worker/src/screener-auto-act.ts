@@ -131,11 +131,17 @@ export interface ScreenerAutoActResult {
   revoked: boolean;
   /** Senders left waiting because this account wrote to them — counted inside {@link kept}. */
   correspondents: number;
+  /**
+   * Senders left waiting because a held message of theirs claims a brand its address does not own
+   * (`messages.sender_check`, mail 0147) while the advice would let them through — counted inside
+   * {@link kept}. A denying plan still files.
+   */
+  identity: number;
 }
 
 const EMPTY = (): ScreenerAutoActResult => ({
   ran: false, examined: 0, filed: 0, kept: 0, failed: 0, destinations: {}, capped: false,
-  revoked: false, correspondents: 0,
+  revoked: false, correspondents: 0, identity: 0,
 });
 
 /** A waiting sender and the decision their stored advice amounts to. */
@@ -247,6 +253,14 @@ export async function screenerAutoActPass(
     }
     const plan = plannedDecision(sender.address, advice.get(sender.address), bars);
     if (!plan) { result.kept++; continue; }
+    /* THE IDENTITY FACT, ABOVE THE BARS: advice bought on a benign message never lets through a
+       sender whose other held mail claims a brand from an address the brand does not own. The
+       act gains a refusal here and never a filing; the person's own press still decides. */
+    if (sender.identityHeld && plan.decision === "yes") {
+      result.kept++;
+      result.identity++;
+      continue;
+    }
     if (planned++ > 0 && deps.until?.()) { result.capped = true; break; }
 
     // Could a decision land on the mailbox this sender waits in — the shared question the suggest
@@ -306,6 +320,8 @@ export async function screenerAutoActPass(
       }
       // A sender who has a rule under their key is not this pass's: nothing was written or filed.
       if (applied.skipped === "ruled") { result.kept++; continue; }
+      // The door's own refusal of a marked sender — the belt under the selection's flag above.
+      if (applied.skipped === "identity") { result.kept++; result.identity++; continue; }
       result.filed++;
       result.destinations[plan.appliedFolder] = (result.destinations[plan.appliedFolder] ?? 0) + 1;
     } catch (err) {
@@ -338,6 +354,13 @@ export async function screenerAutoActPass(
       accountId, skipped: result.correspondents,
       reason: "these senders were not filed: this account wrote to them, and no suggestion "
         + "outranks that however confident it is",
+    });
+  }
+  if (result.identity > 0) {
+    log.info("screener_auto_act_identity_kept", {
+      accountId, skipped: result.identity,
+      reason: "these senders were not let through: a held message names a company their address "
+        + "does not belong to, and only a person's press admits that",
     });
   }
   // FIELD NAMES THE HARDENED LOGGER KEEPS, asked of it rather than guessed: `filed`, `kept` and
@@ -411,6 +434,8 @@ async function clearActRefusal(tx: Tx, accountId: string, suggestionId: string, 
 interface WaitingSender {
   address: string;
   mailboxId: string;
+  /** A non-deleted held message of this sender carries `sender_check = 'impersonation'`. */
+  identityHeld: boolean;
 }
 
 /**
@@ -454,6 +479,17 @@ async function selectWaitingSenders(
   const rows = await db.select({
     mailboxId: reps.mailboxId,
     fromAddress: reps.fromAddress,
+    // ANY held message of the sender, not the representative: advice is bought on one message, and
+    // the newest may be the benign one (mail 0147).
+    identityHeld: sql<boolean | number>`exists (
+      select 1 from ${messages} im
+        join ${folderState} ifs on ifs.message_id = im.id
+       where im.account_id = ${opts.accountId}
+         and lower(im.from_address) = lower(${reps.fromAddress})
+         and ifs.desired_folder = ${SCREENER_FOLDER}
+         and im.deleted_at is null
+         and im.sender_check = 'impersonation'
+    )`,
   }).from(reps)
     .where(and(
       eq(reps.rank, 1),
@@ -465,5 +501,9 @@ async function selectWaitingSenders(
     .orderBy(asc(reps.createdAt), asc(reps.messageId))
     .limit(opts.limit);
 
-  return rows.map((r) => ({ address: r.fromAddress.toLowerCase(), mailboxId: r.mailboxId }));
+  return rows.map((r) => ({
+    address: r.fromAddress.toLowerCase(), mailboxId: r.mailboxId,
+    // Both stores' spellings of true: a pg boolean, a sqlite integer.
+    identityHeld: r.identityHeld === true || r.identityHeld === 1,
+  }));
 }

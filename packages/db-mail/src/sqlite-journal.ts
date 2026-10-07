@@ -438,5 +438,14 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"messages\" ADD COLUMN \"open_read_at\" integer;"
     ]
+  },
+  {
+    "name": "0148_messages_sender_check.sql",
+    "statements": [
+      "ALTER TABLE \"messages\" ADD COLUMN \"sender_check\" text CONSTRAINT \"messages_sender_check_closed\" CHECK (\"sender_check\" in ('none', 'impersonation'));",
+      "ALTER TABLE \"messages\" ADD COLUMN \"sender_check_brand\" text;",
+      "ALTER TABLE \"contacts\" ADD COLUMN \"source\" text;",
+      "CREATE INDEX IF NOT EXISTS \"messages_sender_check_owed_idx\" ON \"messages\" (\"account_id\", \"id\") WHERE \"sender_check\" IS NULL;"
+    ]
   }
 ] as const;

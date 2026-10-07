@@ -9,8 +9,9 @@ import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
   NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, autoReplySuppression,
   dsnVerdict, effectForDestination, evaluateRules, gateAuthor, screenerAdmits, type AuthVerdict,
-  type OhboxPolicy, type Rule,
+  type KnownSenders, type OhboxPolicy, type Rule,
 } from "./rules.js";
+import { claimedIdentity, type IdentityFact } from "./sender-check.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // The leaf predicate, not `adapters/imap.js`: this module is the model layer and naming the
 // adapter here would pull `imapflow` into the desktop engine. `gone.ts` carries the rule this
@@ -336,6 +337,13 @@ export interface NewPlan {
    */
   authVerdict: AuthVerdict;
   /**
+   * The identity fact (`sender-check.ts#claimedIdentity`), computed ONCE per ingest on every arm —
+   * reader and passive included — and persisted to `messages.sender_check`; `null` is "checked,
+   * nothing found". REQUIRED for {@link authVerdict}'s reason: the value the gate was handed is the
+   * value on the row. The Sent copy states `null` without computing: nobody impersonates you to you.
+   */
+  senderCheck: IdentityFact | null;
+  /**
    * This placement was made by somebody other than this organizer — the customer's own hand, or
    * the previous organizer an import hold has not yet asked about. It decides ONE thing at
    * commit, the third of the three structural gates: the `folder_state` row is written
@@ -602,7 +610,7 @@ export interface PlanDeps {
  * only by `OrganizerProfileSync.importHoldNow` (a census refuses it anywhere else).
  */
 export type ImportHold =
-  | { kind: "document"; knownSenders: ReadonlySet<string>; rules: readonly Rule[] }
+  | { kind: "document"; knownSenders: KnownSenders; rules: readonly Rule[] }
   | { kind: "unreadable" };
 
 /**
@@ -613,10 +621,12 @@ export type ImportHold =
  */
 function documentKeeps(
   hold: ImportHold, msg: NormalizedMessage, auth: AuthVerdict, ohboxPolicy: OhboxPolicy, arrival: string,
-  ownAddresses: ReadonlySet<string>,
+  ownAddresses: ReadonlySet<string>, identity: IdentityFact | null,
 ): boolean {
   if (hold.kind === "unreadable") return true;
-  const verdict = evaluateRules({ msg, rules: hold.rules, knownSenders: hold.knownSenders, auth, ohboxPolicy, ownAddresses });
+  const verdict = evaluateRules({
+    msg, rules: hold.rules, knownSenders: hold.knownSenders, auth, ohboxPolicy, ownAddresses, identity,
+  });
   if (verdict.source === "screener") return false;
   if (verdict.destination !== null && canonicalDestination(verdict.destination) === canonicalDestination(arrival)) return true;
   return !(verdict.destination !== null && effectForDestination(verdict.destination) === "deny");
@@ -776,12 +786,15 @@ function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
  */
 async function correspondentAtGate(
   repo: RepoPort, accountId: string, msg: NormalizedMessage,
-  decision: { source: string; matchedRuleId: string | null }, auth: AuthVerdict,
-  known: ReadonlySet<string>,
+  decision: { source: string; matchedRuleId: string | null; identity?: IdentityFact }, auth: AuthVerdict,
+  known: KnownSenders,
 ): Promise<{ author: string; evidence: CorrespondentEvidence } | null> {
-  if (decision.source !== "screener" || decision.matchedRuleId !== null || auth === "fail") return null;
+  // A held identity claim is not an unanswered stranger: a reply citing your Sent copy does not
+  // make "PostFinance" at gmail.com PostFinance, and nothing is taught.
+  if (decision.source !== "screener" || decision.matchedRuleId !== null || auth === "fail"
+    || decision.identity !== undefined) return null;
   const author = gateAuthor(msg)?.toLowerCase() ?? null;
-  if (author === null || known.has(author)) return null;
+  if (author === null || known.addresses.has(author)) return null;
   const refs = threadKeyOf(msg.canonical.messageIdHeader, msg.headers).candidates;
   if (refs.length === 0) return null;
   const evidence = await repo.isCorrespondent(accountId, author, refs);
@@ -941,10 +954,18 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
           // call at all, so the user's own Sent mail cannot be demoted by its own provider's
           // report no matter what that report says.
           authVerdict,
+          senderCheck: null,
           ...(learn.length > 0 ? { learnCorrespondents: learn } : {}),
         },
       };
     }
+
+    // THE IDENTITY FACT, read once, HERE: below the Sent return and above the reader and passive
+    // returns, so every plan that stores an inbound message stores the fact, and the gate below is
+    // handed the same value the row records. Pure: name, local part and the subject's lead-in.
+    const senderCheck = claimedIdentity({
+      fromName: normalized.from.name, fromAddress: normalized.from.address, subject: normalized.subject,
+    }) ?? null;
 
     // Mail the customer FILED THEMSELVES leaves the pipeline here too. `Change.passive` means the
     // adapter read this out of a folder the customer made; the reasoning is the `ownAuthored`
@@ -979,6 +1000,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
           arrivedAt: change.internalDate ?? null,
           seen: change.seen ?? false,
           authVerdict,
+          senderCheck,
           passive: true,
           ...readerAdoption(arrivalLocator.folder),
         },
@@ -998,6 +1020,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
           arrivedAt: change.internalDate ?? null,
           seen: change.seen ?? false,
           authVerdict,
+          senderCheck,
           passive: true,
         },
       };
@@ -1008,6 +1031,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     const ownAddresses = deps.ownAddresses ?? await repo.ownAddresses(accountId);
     let decision = evaluateRules({
       msg: normalized, rules, knownSenders: known, auth: authVerdict, ohboxPolicy, ownAddresses,
+      identity: senderCheck,
     });
     /* A CORRESPONDENT IS NEVER FIRST CONTACT. Asked only where the gate would hold for want of a
        known author — a rule, a standing denial and a failed authentication all stand — and
@@ -1015,9 +1039,14 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
        the author known, so rules and the header heuristic still place it. */
     const correspondent = await correspondentAtGate(repo, accountId, normalized, decision, authVerdict, known);
     if (correspondent !== null) {
+      // Taught as INFERRED (`commitChange`), so it is inferred here too: the gate reads one shape.
       decision = evaluateRules({
-        msg: normalized, rules, knownSenders: new Set([...known, correspondent.author]),
-        auth: authVerdict, ohboxPolicy, ownAddresses,
+        msg: normalized, rules,
+        knownSenders: {
+          addresses: new Set([...known.addresses, correspondent.author]),
+          inferred: new Set([...known.inferred, correspondent.author]),
+        },
+        auth: authVerdict, ohboxPolicy, ownAddresses, identity: senderCheck,
       });
     }
 
@@ -1048,7 +1077,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
       awayReplyBounce = dsn.originalMessageIds.length > 0
         && await repo.isOwnAwayReply(accountId, dsn.originalMessageIds);
       ownBounce = awayReplyBounce ||
-        dsn.failedRecipients.some((a) => known.has(a)) ||
+        dsn.failedRecipients.some((a) => known.addresses.has(a)) ||
         (dsn.originalMessageIds.length > 0 &&
           (await repo.findThreadParent(accountId, dsn.originalMessageIds)) !== null);
     }
@@ -1096,7 +1125,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     const heldForImport = deps.importHold !== undefined
       && decision.source === "screener"
       && authVerdict !== "fail"
-      && documentKeeps(deps.importHold, normalized, authVerdict, ohboxPolicy, change.locator.folder, ownAddresses);
+      && documentKeeps(deps.importHold, normalized, authVerdict, ohboxPolicy, change.locator.folder, ownAddresses, senderCheck);
 
     /* AHEAD OF `sensitive`, which is the one ordering choice here worth stating. A sensitivity
        reading is a heuristic over text; this is a lookup that says what the failed message WAS.
@@ -1197,6 +1226,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
         // at commit is what makes "the verdict on the row is the verdict that routed" a
         // property of the code and not of two call sites staying in step.
         authVerdict,
+        senderCheck,
         // A placement adopted under the import hold — mail the travelling document admits — is the
         // standing state of the user's mailbox, not this organizer's decision: `passive` commits
         // `'external'`, out of every retro pass's reach once the import lands. Only where the hold
@@ -1477,6 +1507,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // until this line; the unsubscribe service is the only other writer, from the same parser
       // and the same stored headers.
       authVerdict: p.authVerdict,
+      senderCheck: p.senderCheck,
       // The fence the allocation below is already carrying — see `InsertMessageInput`: the write
       // door asks nothing of its own when this commit's own statement asks for it.
       mailboxMustBeLive: deps.mailboxMustBeLive,
@@ -1597,10 +1628,11 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
        the recipients of a Sent copy past the consent point, or the correspondent the gate just
        admitted. `contacts` is what every re-screening pass reads, so they all agree with this
        routing. The admission's audit row is what the Screener shows the reason from. */
-    const learned = [...(p.learnCorrespondents ?? [])];
+    // A Sent copy is the person writing (`person`); the reply arm's admission is ours (`inferred`).
+    const learned = p.learnCorrespondents ?? [];
+    if (learned.length > 0) await repo.upsertContacts(accountId, learned, "person");
     const author = p.correspondentAdmission ? gateAuthor(p.normalized) : null;
-    if (author) learned.push(author);
-    if (learned.length > 0) await repo.upsertContacts(accountId, learned);
+    if (author) await repo.upsertContacts(accountId, [author], "inferred");
     if (p.correspondentAdmission) {
       await repo.recordAudit(accountId, "screener.correspondent_admitted", {
         messageId: stored.id, via: p.correspondentAdmission.via,

@@ -1,10 +1,14 @@
 import type { MailboxMustBeLive, SpendOutcome, SpendPort } from "@trafficflow/db";
 import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress, MimeStructure } from "./types.js";
-import type { AuthVerdict, Rule } from "./rules.js";
+import type { AuthVerdict, KnownSenders, Rule } from "./rules.js";
+import type { IdentityFact } from "./sender-check.js";
 import type { ClassifierPort } from "./classifier-port.js";
 import type { CorrespondentEvidence } from "./correspondent.js";
 import type { MessageSearchInput } from "./message-search.js";
 import type { WriteDoor } from "./adapters/imap-types.js";
+
+/** `contacts.source`: who made the row. NULL (a row older than the column) reads as `person`. */
+export type ContactSource = "person" | "inferred";
 
 export interface NativeLocator { folder: string; ref: string; } // IMAP ref = `${uidvalidity}:${uid}`
 
@@ -208,6 +212,13 @@ export interface InsertMessageInput {
    * behaviour. `planChange` always states it; nothing else inserts messages.
    */
   authVerdict?: AuthVerdict;
+  /**
+   * `messages.sender_check` / `sender_check_brand` — the identity fact `planChange` computed once
+   * for this message (`sender-check.ts#claimedIdentity`), `null` for "checked, nothing found".
+   * REQUIRED: a NULL column means "never checked" and is the backfill's question, so no insert
+   * may leave it NULL by omission.
+   */
+  senderCheck: IdentityFact | null;
   /**
    * The fence this commit is already sending — {@link MailboxMustBeLive}, handed to the erasure
    * fence at the write door. Present, the door asks nothing of its own: the caller's allocation
@@ -477,7 +488,8 @@ export interface RepoPort {
    */
   setFolderConflict(messageId: string, s: FolderStateRow): Promise<void>;
   listRules(accountId: string): Promise<Rule[]>;
-  knownSenders(accountId: string): Promise<Set<string>>;
+  /** `contacts`, lower-cased, with the subset an automatic writer taught — see {@link KnownSenders}. */
+  knownSenders(accountId: string): Promise<KnownSenders>;
   /** The account's own mailbox addresses, lower-cased — `@trafficflow/db#readOwnAddresses`. */
   ownAddresses(accountId: string): Promise<Set<string>>;
   /**
@@ -491,9 +503,11 @@ export interface RepoPort {
   ): Promise<CorrespondentEvidence | null>;
   /**
    * Upsert known correspondents. Returns how many rows were genuinely NEW, which is what makes
-   * "a second connect does not re-import" observable rather than merely asserted.
+   * "a second connect does not re-import" observable rather than merely asserted. `source` is
+   * REQUIRED (`contacts.source`): `person` for a contact a person's act made, `inferred` for one an
+   * automatic admission taught. A person's write upgrades an inferred row; nothing downgrades one.
    */
-  upsertContacts(accountId: string, addresses: readonly string[]): Promise<number>;
+  upsertContacts(accountId: string, addresses: readonly string[], source: ContactSource): Promise<number>;
   recordAudit(accountId: string, action: string, payload: unknown, inverse: unknown): Promise<void>;
   /** Append a client-visible change to the delta log in the ambient transaction. */
   recordChange(input: RepoChangeInput): Promise<bigint>;

@@ -53,6 +53,36 @@ export function ruleMatchKey(match: string): string {
   return match.slice(a, b).toLowerCase();
 }
 
+/**
+ * SHARED MAIL PROVIDERS — domains where anyone can register an address, so the domain says nothing
+ * about who wrote. One set, two readers: the identity fact's ownership (`sender-check.ts#owns`, a
+ * shared domain owns no brand) and an ALLOW domain rule, which admits nobody on one. Exact
+ * registrable domains, never a pattern: `namesAuthor` compares exact domains. Seven of these are
+ * also a brand's own (bluewin.ch, sunrise.ch, t-online.de, orange.fr, a1.net, outlook.com,
+ * icloud.com); the brands test pins that overlap by name. `@trafficflow/db` holds a pinned copy.
+ */
+export const SHARED_PROVIDER_DOMAINS: ReadonlySet<string> = new Set([
+  "gmail.com", "googlemail.com",
+  "outlook.com", "outlook.de", "outlook.fr", "outlook.it", "outlook.es", "outlook.at", "outlook.be",
+  "hotmail.com", "hotmail.co.uk", "hotmail.de", "hotmail.fr", "hotmail.it", "hotmail.es", "hotmail.ch",
+  "live.com", "live.co.uk", "live.de", "live.fr", "live.it", "live.nl", "live.at", "live.be", "msn.com",
+  "icloud.com", "me.com", "mac.com",
+  "yahoo.com", "yahoo.co.uk", "yahoo.de", "yahoo.fr", "yahoo.it", "yahoo.es", "yahoo.ca",
+  "yahoo.com.au", "ymail.com", "rocketmail.com",
+  "gmx.net", "gmx.de", "gmx.ch", "gmx.at", "gmx.com", "gmx.fr", "gmx.co.uk",
+  "fastmail.com", "fastmail.fm", "ik.me", "ikmail.com",
+  "bluewin.ch", "sunrise.ch", "hispeed.ch", "swissonline.ch", "vtxmail.ch", "bluemail.ch",
+  "web.de", "t-online.de", "freenet.de", "mail.com", "posteo.de", "mailbox.org",
+  "proton.me", "protonmail.com", "pm.me", "tuta.io", "tuta.com", "tutanota.com", "tutanota.de",
+  "zoho.com", "laposte.net", "free.fr", "orange.fr", "wanadoo.fr", "aon.at", "a1.net",
+  "vodafonemail.de", "online.de", "arcor.de", "yandex.com", "yandex.ru", "mail.ru", "aol.com",
+]);
+
+/** Is `domain` (a registrable domain, any case) one where anyone can register an address? */
+export function isSharedProviderDomain(domain: string): boolean {
+  return SHARED_PROVIDER_DOMAINS.has(domain.trim().toLowerCase());
+}
+
 /** Among rules of one kind, deny outranks allow: the user's "no" never loses a tie. */
 const EFFECT_RANK: Readonly<Record<string, number>> = { deny: 0, allow: 1 };
 /** Specificity: one mailbox, then a set of them, then a statement about a message. */

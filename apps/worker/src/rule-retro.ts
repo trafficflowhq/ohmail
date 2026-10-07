@@ -7,7 +7,8 @@ import {
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, authVerdictFromHeaders, canonicalDestination, evaluateRules,
-  silentLogger, type Destination, type Logger, type NormalizedMessage, type Rule,
+  identityOfRow, silentLogger, type Destination, type KnownSenders, type Logger, type NormalizedMessage,
+  type Rule,
   /* The mail leaf, never the barrel: the local engines bundle this pass, and a value import from
      the barrel carries the model half into them (the engine census refuses the build). */
 } from "@trafficflow/core/mail";
@@ -156,6 +157,10 @@ interface RetroRow {
   headers: Record<string, string[]>;
   observedFolder: string;
   desiredFolder: string;
+  /** The identity fact's inputs and column — see `rule-pass.ts#RuleInputRow`. */
+  fromName: string | null;
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
 }
 
 /** The owed rule, as read under its own row lock. */
@@ -330,7 +335,7 @@ export async function ruleRetroPass(
         // a repo built straight from `tx` refuses its first locking statement.
         const pageRepo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
         const rules: Rule[] = await pageRepo.listRules(rule.accountId);
-        const known: ReadonlySet<string> = await pageRepo.knownSenders(rule.accountId);
+        const known: KnownSenders = await pageRepo.knownSenders(rule.accountId);
 
         // The act on suggestions' own rule, read exactly (`rulesTheActWrote`: its decision, and none
         // from anybody else) — a "Not junk" rescue and a promotion also leave `person_decided_at` NULL.
@@ -352,6 +357,9 @@ export async function ruleRetroPass(
 
           const decision = evaluateRules({
             msg: ruleInputOf(c), rules, knownSenders: known, ownAddresses: ownSet,
+            // The fact from the row's column, or computed when it was never checked — never the
+            // rebuilt message, whose name is null (`rule-pass.ts`). A held claim stays held.
+            identity: identityOfRow(c),
             auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
             // LENIENT here, and deliberately: this pass acts ONLY on `source === "rule"` (below),
             // so the `people_only` demotion — which answers `source: "policy"` — could never change
@@ -686,6 +694,9 @@ async function selectCandidates(
     mailboxId: messages.mailboxId,
     fromAddress: messages.fromAddress,
     subject: messages.subject,
+    fromName: messages.fromName,
+    senderCheck: messages.senderCheck,
+    senderCheckBrand: messages.senderCheckBrand,
     observedFolder: folderState.observedFolder,
     desiredFolder: folderState.desiredFolder,
     headers: messageBodies.headers,
@@ -704,6 +715,9 @@ async function selectCandidates(
     mailboxId: r.mailboxId,
     fromAddress: r.fromAddress,
     subject: r.subject,
+    fromName: r.fromName,
+    senderCheck: r.senderCheck,
+    senderCheckBrand: r.senderCheckBrand,
     bodyText: r.bodyText ?? "",
     headers: (r.headers as Record<string, string[]> | null) ?? {},
     observedFolder: r.observedFolder,

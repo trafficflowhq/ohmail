@@ -95,6 +95,7 @@ import { inboundQuietPass } from "./inbound-quiet.js";
 import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { gateReleasePass } from "./gate-release.js";
+import { senderCheckBackfillPass } from "./sender-check-backfill.js";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { retentionPrunePass, signInRetentionPass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
@@ -4665,6 +4666,22 @@ export async function startWorkerWithLock(
               reason: "no account was marked swept, so the next cycle starts it again; a rule this " +
                 "pass already armed is in flight and drops out of its own selection, and a row it " +
                 "already released is desired into the Ohbox and no longer at the gate",
+            });
+          }
+        },
+      },
+      sender_check_backfill: {
+        // The identity fact for the Ohbox and Screener rows ingested before mail 0147, one page per
+        // account per tail. Once the set answers empty the call is one indexed read. Contained: a
+        // failure leaves the rows unchecked and the page sentence-less until the next tail.
+        run: async (accountId) => {
+          try {
+            await senderCheckBackfillPass(db as unknown as Tx, { accountId, log });
+          } catch (err) {
+            log.error("sender_check_backfill_failed", {
+              accountId, err,
+              reason: "these rows keep no identity fact yet; the Screener page computes it for a held " +
+                "representative meanwhile, and the next tail tries the same page again",
             });
           }
         },
