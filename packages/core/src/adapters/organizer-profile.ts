@@ -13,9 +13,9 @@ import {
 } from "./meta-memo.js";
 import { epochOf, uidRefsAtEpoch } from "../epoch.js";
 import {
-  MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, effectForDestination,
+  MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, effectForDestination, ruleMatchKey,
 } from "../rule-order.js";
-import { DESTINATIONS, canonicalDestination, type Destination } from "../types.js";
+import { DESTINATIONS, NEWS_FOLDER, canonicalDestination, type Destination } from "../types.js";
 import type { Rule } from "../rules.js";
 
 /**
@@ -199,7 +199,17 @@ export interface OrganizerProfilePayload {
 export interface OrganizerProfileDoc extends OrganizerProfilePayload {
   v: number;
   updatedAt: string;
-  producer: { kind: string; version: string };
+  producer: {
+    kind: string;
+    version: string;
+    /**
+     * THE PRODUCER STATES THAT ITS RULES CARRY EVERY STAMP: `true` from each build whose store ran
+     * mail 0146 and whose import stamps on arrival, absent from every older one. It describes the
+     * write, so it stays out of the fingerprint. An older copy cannot carry a stamp its producer
+     * never wrote, so its import reads the copy's own Screener instead ({@link arrivesDecided}).
+     */
+    stamped?: true;
+  };
 }
 
 /** A payload with nothing in it — what a mailbox with no configuration serializes to. */
@@ -274,6 +284,26 @@ export function applicableProfileRule(r: ProfileRuleEntry): ApplicableProfileRul
     enabled: r.enabled === true, provenance, subjectContains, bodyContains,
     personDecidedAt: stamp !== null && Number.isFinite(stamp.getTime()) ? stamp : null,
   };
+}
+
+/** The places an allow admits a sender to: the Ohbox, News and Receipts. */
+const ARRIVES_DECIDED_PLACES: ReadonlySet<string> = new Set(["INBOX", NEWS_FOLDER, "ohmail/Receipts"]);
+
+/**
+ * DOES THIS RULE ARRIVE AS THE PERSON'S — the import's stamp for a copy whose producer did not state
+ * `producer.stamped`. Such a copy carries no stamp for a decision made before stamps travelled, so a
+ * promoted, unstamped, bare sender rule admitting the sender to the Inbox, News or Receipts is the
+ * person's when the copy's own Screener lists the address: "Not junk, always allow" and a Screener
+ * yes write that contact, a learned promotion never does. Never a screen-out: that stamp also
+ * licenses unsubscribing.
+ */
+export function arrivesDecided(
+  want: ApplicableProfileRule, o: { stamped: boolean; admitted: { has(address: string): boolean } },
+): boolean {
+  return !o.stamped && want.kind === "sender" && want.provenance === "promoted"
+    && want.personDecidedAt === null && want.subjectContains === null && want.bodyContains === null
+    && ARRIVES_DECIDED_PLACES.has(canonicalDestination(want.destination))
+    && o.admitted.has(ruleMatchKey(want.match));
 }
 
 /** A screener entry's address as the import writes it into `contacts`, or `null` (skipped). */
@@ -597,7 +627,8 @@ export function makeProfileDoc(
   return {
     v: version,
     updatedAt: meta.updatedAt.toISOString(),
-    producer: { kind: meta.producer.kind, version: meta.producer.version },
+    // Every copy this build writes is one whose rules carry their stamps — see `producer.stamped`.
+    producer: { kind: meta.producer.kind, version: meta.producer.version, stamped: true },
     screener: canonical.screener,
     rules: canonical.rules,
     notifyRules: canonical.notifyRules,
@@ -957,6 +988,8 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
     producer: {
       kind: asString(producerRaw.kind) ?? "unknown",
       version: asString(producerRaw.version) ?? "",
+      // Only the literal `true` states complete stamps; anything else reads as an older copy.
+      ...(producerRaw.stamped === true ? { stamped: true as const } : {}),
     },
     ...payload,
   };

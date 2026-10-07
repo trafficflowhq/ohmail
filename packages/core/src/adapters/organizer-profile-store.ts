@@ -11,7 +11,7 @@ import { ruleMatchKey } from "../rule-order.js";
 import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type AwayThrottle } from "../away-eligibility.js";
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
-  PROFILE_LIST_MAX, applicableProfileRule, oversizedProfileList, profileFingerprint, profileScreenerAddress,
+  PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileFingerprint, profileScreenerAddress,
   type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileReadResult,
 } from "./organizer-profile.js";
 
@@ -320,13 +320,16 @@ export async function applyOrganizerProfile(
         }).where(and(eq(rulesTbl.id, have.id), eq(rulesTbl.accountId, o.accountId)));
         changes.push(ruleDelta(o.accountId, have.id, "update"));
       } else if (want) {
+        // An older copy's allow of a sender its own Screener lists arrives as the person's: stamped
+        // at the import, provenance kept. A row already held under the key takes the arm above.
+        const decided = arrivesDecided(want, { stamped: o.doc.producer.stamped === true, admitted: byAddress });
         const [row] = await tx.insert(rulesTbl).values({
           accountId: o.accountId,
           kind: want.kind, match: want.kind === "header" ? want.match : ruleMatchKey(want.match),
           destination: want.destination,
           priority: want.priority, enabled: want.enabled, provenance: want.provenance,
           subjectContains: want.subjectContains, bodyContains: want.bodyContains,
-          personDecidedAt: want.personDecidedAt,
+          personDecidedAt: decided ? o.now : want.personDecidedAt,
           retroRequestedAt: null,
         }).returning({ id: rulesTbl.id });
         changes.push(ruleDelta(o.accountId, row!.id, "create"));
