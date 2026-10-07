@@ -79,7 +79,7 @@ export async function bubbleUpPass(
         .where(and(eq(messageStates.id, row.id), eq(messageStates.state, "bubbled_up")))
         .returning({ id: messageStates.id });
       if (updated.length === 0) return false;
-      // The pin ends any open read, as `TriageService.setState` does for every pile and pin.
+      // A belt, guarded by read-stamp-census: the row was cleared entering bubbled_up, so this never changes it.
       await tx.update(messages).set({ openReadAt: null })
         .where(and(eq(messages.id, row.messageId), eq(messages.accountId, row.accountId), isNotNull(messages.openReadAt)));
       await recordChange(tx, {

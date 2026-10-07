@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, notExists, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
@@ -1294,8 +1294,16 @@ export class MessageService {
         .filter((r) => r.unread && !stale.has(r.id) && (r.triage == null || r.triage === "none")).map((r) => r.id);
       const oneConversation = new Set(owned.map((r) => r.threadId ?? `msg:${r.id}`)).size === 1;
       if (!unread && openRead && oneConversation && wasUnread.length > 0) {
+        // Asked AT THE STATEMENT, not from the select above: a park committed in between leaves the row unstamped.
         await tx.update(messages).set({ openReadAt: at })
-          .where(and(inArray(messages.id, wasUnread), eq(messages.accountId, ctx.accountId)));
+          .where(and(
+            inArray(messages.id, wasUnread), eq(messages.accountId, ctx.accountId),
+            notExists(tx.select({ id: messageStates.id }).from(messageStates)
+              .where(and(
+                eq(messageStates.messageId, messages.id), eq(messageStates.accountId, ctx.accountId),
+                ne(messageStates.state, "none"),
+              ))),
+          ));
       }
       await upsertDesiredSeenMany(
         tx, live.map((id) => ({ id, observedSeen: observedById.get(id) ?? false })), !unread, at,
