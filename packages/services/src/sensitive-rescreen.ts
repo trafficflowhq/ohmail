@@ -1,7 +1,8 @@
 import { and, asc, eq, gt, inArray, sql, type SQL } from "drizzle-orm";
 import {
   mailboxes, messages, messageBodies, folderState, messageStates, drafts, approvals,
-  rules as rulesTbl, auditLog, changeLog, recordChange, ruleNamesSenderSql, type Tx, auditAction, weAnsweredThisSenderWhere,} from "@trafficflow/db";
+  rules as rulesTbl, auditLog, changeLog, recordChange, ruleNamesSenderSql, type Tx, auditAction, weAnsweredThisSenderWhere,
+  readOwnAddresses,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, evaluateRules,
@@ -241,11 +242,9 @@ export async function runSensitiveRescreen(
   const rules: Rule[] = await repo.listRules(accountId);
   const known: ReadonlySet<string> = await repo.knownSenders(accountId);
 
-  // Every address this ACCOUNT sends from. Used by the "the user replied" predicate below; read
-  // here rather than in SQL so the candidate query stays one indexable statement.
-  const ownRows = await tx.select({ address: mailboxes.address }).from(mailboxes)
-    .where(eq(mailboxes.accountId, accountId));
-  const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  // The account's own addresses, the one set (`readOwnAddresses`). Used by the "the user replied"
+  // predicate below; read here rather than in SQL so the candidate query stays one indexable statement.
+  const ownAddresses = [...await readOwnAddresses(tx, accountId)];
   const ownSet: ReadonlySet<string> = new Set(ownAddresses);
 
   let examined = 0;

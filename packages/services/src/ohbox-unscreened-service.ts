@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import {
   approvals, auditAction, auditLog, drafts, folderState, mailboxes,
-  messageBodies, messageStates, messages, recordChange, weAnsweredThisSenderWhere,
+  messageBodies, messageStates, messages, readOwnAddresses, recordChange, weAnsweredThisSenderWhere,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -148,10 +148,9 @@ async function unscreenedWalk(
      a press reads it inside its own transaction, so what it acts on is as fresh as its writes. */
   const rules: Rule[] = await repo.listRules(accountId);
   const known: ReadonlySet<string> = await repo.knownSenders(accountId);
-  // The account's own addresses — what "not from myself" excludes, and the reply predicate's list.
-  const ownRows = await t.select({ address: mailboxes.address }).from(mailboxes)
-    .where(eq(mailboxes.accountId, accountId));
-  const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  // The account's own addresses, the one set (`readOwnAddresses`) — what "not from myself" excludes,
+  // and the reply predicate's list.
+  const ownAddresses = [...await readOwnAddresses(t, accountId)];
   const ownSet: ReadonlySet<string> = new Set(ownAddresses);
   /* THE TWO WIDE COLUMNS ARE READ ONLY WHERE A RULE READS THEM, and which rule reads which is the
      whole of the condition. `headers` is read by ONE arm of the gate that can precede a `screener`

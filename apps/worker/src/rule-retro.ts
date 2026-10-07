@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import {
   approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies,
-  messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl, rulesTheActWrote,
+  messageStates, messages, readOwnAddresses, recordChange, recordRuleDelta, rules as rulesTbl, rulesTheActWrote,
   weAnsweredThisSenderWhere,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -259,9 +259,8 @@ export async function ruleRetroPass(
     return async (accountId: string): Promise<string[]> => {
       const hit = cache.get(accountId);
       if (hit) return hit;
-      const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
-        .where(eq(mailboxes.accountId, accountId));
-      const fresh = ownRows.map((r) => r.address.toLowerCase());
+      // The one own-address set (`readOwnAddresses`): a removed mailbox's address is a stranger's.
+      const fresh = [...await readOwnAddresses(db, accountId)];
       cache.set(accountId, fresh);
       return fresh;
     };
