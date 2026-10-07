@@ -499,6 +499,8 @@ export class DeadLetterLedger {
   /** Write-offs since the last stored message: as the store said at cycle start, and this cycle's. */
   private runBefore = 0;
   private runThisCycle = 0;
+  /** Write-offs taken exempt from the hold ({@link record}'s `holdExempt`), for {@link revoke}. */
+  private readonly holdExemptKeys = new Set<string>();
   /**
    * THE LOCAL BACKSTOP. The per-cycle cap assumes a failing cycle quarantines the mailbox; a local
    * engine has none, so a defect refusing every message would write the mail off as it arrives, at
@@ -625,10 +627,13 @@ export class DeadLetterLedger {
    */
   revoke(locator: NativeLocator): void {
     const { uidValidity, uid } = parseRef(locator.ref);
-    const item = this.items.get(keyOf(locator.folder, uidValidity, uid));
+    const key = keyOf(locator.folder, uidValidity, uid);
+    const item = this.items.get(key);
     if (!item?.terminal) return;
     item.terminal = false;
     if (this.thisCycle > 0) this.thisCycle--;
+    // An exempt write-off never joined the run, so its revoke leaves the run alone.
+    if (this.holdExemptKeys.delete(key)) return;
     if (this.runThisCycle > 0) this.runThisCycle--;
   }
 
@@ -642,7 +647,10 @@ export class DeadLetterLedger {
    * continue past it and the folder cursor may cross it — or `"retry"` when it is not, in which
    * case the caller must hold that folder's cursor and fail the cycle.
    */
-  record(locator: NativeLocator, fault: { code: MessageFailureCode; deterministic: boolean }): "skip" | "retry" {
+  record(
+    locator: NativeLocator, fault: { code: MessageFailureCode; deterministic: boolean },
+    opts: { holdExempt?: boolean } = {},
+  ): "skip" | "retry" {
     const { uidValidity, uid } = parseRef(locator.ref);
     const key = keyOf(locator.folder, uidValidity, uid);
     const now = new Date();
@@ -658,10 +666,15 @@ export class DeadLetterLedger {
     if (item.terminal) return "skip";                       // already written off; do not re-count
     const exhausted = fault.deterministic || item.attempts >= this.maxAttempts;
     if (!exhausted) return "retry";
-    if (this.heldSince !== null) return "retry";            // the local backstop holds
+    /* A READ-BOUND OVERRUN names one known message the server will not send within its size, so
+       the backstop's nothing-stored run neither refuses it nor counts it: a hold over it would
+       strand the folder it stopped. The per-cycle cap still applies. */
+    const exempt = opts.holdExempt === true;
+    if (!exempt && this.heldSince !== null) return "retry"; // the local backstop holds
     if (this.thisCycle >= this.perCycleCap) return "retry";  // the safety valve, above
     this.thisCycle++;
     item.terminal = true;
+    if (exempt) { this.holdExemptKeys.add(key); return "skip"; }
     if (this.holdsAtCap) {
       this.runThisCycle++;
       if (this.runBefore + this.runThisCycle >= this.perCycleCap) this.heldSince ??= now;

@@ -919,6 +919,16 @@ function structureField(bodyStructure: unknown): { structure?: MimeStructure } {
 }
 interface InternalDelete { folder: string; uidValidity: bigint; uid: number; messageId: string | null; }
 
+/** One folder's capped fetch — see {@link ImapAdapter.fetchCapped}. */
+interface CappedFetch {
+  fetched: InternalCreate[]; truncated: boolean; unanswered: number[];
+  oversize: Array<{ uid: number; size: number }>;
+  /** The PASS budget was already spent when this folder was asked; nothing here was fetched. */
+  budgetSpent: boolean;
+  /** One message's own bytes crossed its cap: `fetched` is what arrived before it. */
+  overrun?: ImapBoundExceeded;
+}
+
 /**
  * The `Message-ID` of a raw message (RFC 5322), read from the HEADER BLOCK ONLY — for messages
  * whose envelope the server will not produce (the recovery fetch in {@link
@@ -990,6 +1000,17 @@ export function statesMailboxNonexistent(err: unknown): boolean {
  * instead of a row with half its headers.
  */
 export const OVERSIZE_HEAD_MAX_BYTES = 256 * 1024;
+
+/**
+ * THE PER-MESSAGE CAP on what one body may stream. Against a stated RFC822.SIZE it is the overrun
+ * factor's ({@link bodyOverrunCeiling}); a server that states none (absent, or 0) is capped at the
+ * MIME ceiling instead, so ordinary large mail from it is stored rather than set aside.
+ */
+export function messageOverrunCeiling(declared: number | undefined): number {
+  return typeof declared === "number" && Number.isFinite(declared) && declared > 0
+    ? bodyOverrunCeiling(declared)
+    : MAX_RAW_MESSAGE_BYTES;
+}
 
 /**
  * The header section as a message with an empty body, or null when it may have been cut. Cut at
@@ -2687,13 +2708,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     folder: string,
     curUidValidity: bigint,
     budget: { messages: number; bytes: number },
-  ): Promise<{
-    fetched: InternalCreate[]; truncated: boolean; unanswered: number[];
-    oversize: Array<{ uid: number; size: number }>;
-    /** The PASS budget was already spent when this folder was asked; nothing here was fetched. */
-    budgetSpent: boolean;
-  }> {
+  ): Promise<CappedFetch> {
+    /* ONE MESSAGE'S OVERRUN KEEPS WHAT ARRIVED BEFORE IT. The connection is retired, so the fetch
+       ends here; the messages already read are handed back with the breach, newest first, and
+       the caller stores them before setting the liar aside. Any other refusal is thrown. */
     const fetched: InternalCreate[] = [];
+    try {
+      return await this.fetchCappedInto(fetched, uids, folder, curUidValidity, budget);
+    } catch (err) {
+      if (!(err instanceof ImapBoundExceeded) || err.bound !== "body_overrun"
+        || err.site === undefined || err.folder !== folder) throw err;
+      fetched.sort((a, b) => b.uid - a.uid);
+      return { fetched, truncated: true, unanswered: [], oversize: [], budgetSpent: false, overrun: err };
+    }
+  }
+
+  private async fetchCappedInto(
+    fetched: InternalCreate[],
+    uids: number[],
+    folder: string,
+    curUidValidity: bigint,
+    budget: { messages: number; bytes: number },
+  ): Promise<CappedFetch> {
     if (uids.length === 0) {
       return { fetched, truncated: false, unanswered: [], oversize: [], budgetSpent: false };
     }
@@ -2752,9 +2788,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // behind — a first scan that could not finish). Skipping keeps filling the batch with what
       // fits: the pass stays truncated, the unknown set strictly shrinks, and the skipped message
       // is admitted the moment it reaches the front.
-      if (take.length > 0 && bytes + size > budget.bytes) { truncated = true; continue; }
+      /* A SIZE THE SERVER DID NOT STATE is charged at the most it may be, so such a message is
+         fetched alone and its own cap ({@link messageOverrunCeiling}) bounds what it costs. */
+      const charged = size > 0 ? size : MAX_RAW_MESSAGE_BYTES;
+      if (take.length > 0 && bytes + charged > budget.bytes) { truncated = true; continue; }
       take.push(uid);
-      bytes += size;
+      bytes += charged;
     }
     // A message refused on size still arrives as its header block, so it is listed and routed;
     // only a UID whose block did not come back whole stays the caller's `oversize` obligation.
@@ -2778,7 +2817,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      * un-buffer the liar itself. {@link IMAP_BODY_OVERRUN_FACTOR} carries the numbers.
      */
     const declaredTotal = take.reduce((sum, uid) => sum + (sizes.get(uid) ?? 0), 0);
-    const batchCeiling = bodyOverrunCeiling(declaredTotal);
+    const undeclared = take.filter((uid) => (sizes.get(uid) ?? 0) <= 0).length;
+    const batchCeiling = bodyOverrunCeiling(declaredTotal) + undeclared * MAX_RAW_MESSAGE_BYTES;
     let streamedBytes = 0;
     const bodyDeadline = this.readDeadline();
 
@@ -2791,9 +2831,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const arrived = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
       const declared = sizes.get(m.uid);
       // Throwing out of a `for await` leaves the FETCH outstanding — see `retireConnection`.
-      if (arrived > bodyOverrunCeiling(declared)) {
+      if (arrived > messageOverrunCeiling(declared)) {
         const because = new ImapBoundExceeded(
-          "body_overrun", bodyOverrunCeiling(declared), arrived, folder,
+          "body_overrun", messageOverrunCeiling(declared), arrived, folder,
           { uidValidity: String(curUidValidity), uid: m.uid },
         );
         this.retireConnection(because);
@@ -2868,9 +2908,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         bodyDeadline.check(folder);
         const arrivedRetry = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
         const declaredRetry = sizes.get(m.uid);
-        if (arrivedRetry > bodyOverrunCeiling(declaredRetry)) {
+        if (arrivedRetry > messageOverrunCeiling(declaredRetry)) {
           const becauseRetry = new ImapBoundExceeded(
-            "body_overrun", bodyOverrunCeiling(declaredRetry), arrivedRetry, folder,
+            "body_overrun", messageOverrunCeiling(declaredRetry), arrivedRetry, folder,
             { uidValidity: String(curUidValidity), uid: m.uid },
           );
           this.retireConnection(becauseRetry);
@@ -3350,26 +3390,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         const unknownUids = currentUids.filter(
           (u) => u >= createFloorUid && !effectiveKnown.has(u) && !asideHere.has(u),
         );
-        let capped: Awaited<ReturnType<ImapAdapter["fetchCapped"]>>;
-        try {
-          capped = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
-        } catch (err) {
-          /* ONE MESSAGE'S OVERRUN ENDS THE PASS HERE AND DISCARDS NOTHING BEFORE IT: the
-             connection is retired, so the pass returns what the earlier folders produced, and
-             this folder and every later one keep their stored cursor. */
-          if (!(err instanceof ImapBoundExceeded) || err.bound !== "body_overrun"
-            || err.site === undefined || err.folder !== folder) throw err;
-          overrun = { folder, uidValidity: err.site.uidValidity, uid: err.site.uid, breach: err };
+        const {
+          fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize, budgetSpent,
+          overrun: breach,
+        } = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
+        creates.push(...fetched);
+        budget.messages -= fetched.length;
+        for (const f of fetched) budget.bytes -= f.raw.length;
+        /* ONE MESSAGE'S OVERRUN ENDS THE PASS HERE AND DISCARDS NOTHING BEFORE IT: the connection
+           is retired, so the pass returns the earlier folders' work and this folder's mail read
+           before the breach; this folder and every later one keep their stored cursor. */
+        if (breach !== undefined && breach.site !== undefined) {
+          overrun = { folder, uidValidity: breach.site.uidValidity, uid: breach.site.uid, breach };
           hasBacklog = true;
           createsOwed = true;
           break;
         }
-        const {
-          fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize, budgetSpent,
-        } = capped;
-        creates.push(...fetched);
-        budget.messages -= fetched.length;
-        for (const f of fetched) budget.bytes -= f.raw.length;
         if (truncated) { hasBacklog = true; createsOwed = true; }
         // Spent before this folder was asked: nothing was fetched here and nothing further can
         // be, so the pass ends with what it has. Every folder from here keeps its STORED cursor —
@@ -3752,7 +3788,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
          ceiling retires the connection and names its message, in both body loops below. */
       const overrunGuard = (m: FetchMessageObject): void => {
         const arrived = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
-        const ceiling = bodyOverrunCeiling(sizes.get(m.uid));
+        const ceiling = messageOverrunCeiling(sizes.get(m.uid));
         if (arrived <= ceiling) return;
         const because = new ImapBoundExceeded(
           "body_overrun", ceiling, arrived, folder, { uidValidity: String(curUidValidity), uid: m.uid },

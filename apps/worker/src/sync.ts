@@ -1237,10 +1237,11 @@ async function syncCycleWithin(
    */
   async function writeOff(
     locator: NativeLocator, fault: { code: MessageFailureCode; deterministic: boolean }, err: unknown,
+    opts: { holdExempt?: boolean } = {},
   ): Promise<void> {
     const { uidValidity: siteEpoch, uid: siteUid } = parseRef(locator.ref);
     const site = { folder: locator.folder, uidValidity: siteEpoch, uid: siteUid };
-    const verdict = deadLetters.record(locator, fault);
+    const verdict = deadLetters.record(locator, fault, opts);
     if (verdict === "retry") {
       deferred.add(site.folder);
       if (firstDeferredError === null) firstDeferredError = err;
@@ -1464,7 +1465,7 @@ async function syncCycleWithin(
     if (!isImapBoundExceeded(overrun.breach) || overrun.breach.bound !== "body_overrun") throw overrun.breach;
     await writeOff(
       { folder: overrun.folder, ref: makeRef(overrun.uidValidity, overrun.uid) },
-      { code: "mime_too_large", deterministic: true }, overrun.breach,
+      { code: "mime_too_large", deterministic: true }, overrun.breach, { holdExempt: true },
     );
   }
 
