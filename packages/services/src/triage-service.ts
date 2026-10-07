@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange,
@@ -150,6 +150,13 @@ export class TriageService {
         // transition into a state — on both sides of the wire.
         set: { state: b.state, bubbleUpAt, setAt: now, updatedAt: now, decidedAt },
       }).returning({ id: messageStates.id });
+
+      // A PILE OR A PIN ENDS THE OPEN READ (`open_read_at`): another act has handled the row, so
+      // leaving the pile — Done, un-park — files it at arrival, never at the old read's slot.
+      if (b.state !== "none") {
+        await tx.update(messages).set({ openReadAt: null })
+          .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId), isNotNull(messages.openReadAt)));
+      }
 
       /**
        * UN-PARKING DISOWNS THE PARKED INTERLUDE'S READING STAMP. Since the arrival ruling

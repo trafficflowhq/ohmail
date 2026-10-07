@@ -377,18 +377,40 @@ function derivedScreenerEffects(
  * state. Unknown targets yield [] — the caller decides whether that is a no-op
  * or a rejection.
  */
+/** In a pile or pinned: not in Earlier and not on screen, so a read of it is never an open read. */
+function parkedOrPinned(msg: EngineMessage): boolean {
+  const s = msg.triage?.state;
+  return s != null && s !== "none";
+}
+
+/** The newest open read a mirror holds, keyed on its message stamp: one scan per mirror version. */
+const newestOpenRead = new WeakMap<EntityReader, { v: number; newest: number }>();
+let openReadFloorScans = 0;
+/** How many whole-mirror scans the floor has made — the cost arm reads it; nothing else may. */
+export function openReadFloorScanCount(): number {
+  return openReadFloorScans;
+}
+
 /**
- * The instant an open read paints: `now`, or 1 ms above the newest open read the mirror holds, once per
- * effect computation. A reader that cannot list refuses rather than painting `now` unchecked.
+ * The instant an open read paints: `now`, or 1 ms above the newest open read the mirror holds. The
+ * scan runs once per mirror version. A reader that cannot list refuses rather than painting `now`.
  */
 function openReadFloor(reader: EntityReader, now: Date): string {
   if (typeof reader.list !== "function") throw new Error("an open read needs a reader that can list messages");
-  let newest = Number.NEGATIVE_INFINITY;
-  for (const msg of reader.list<EngineMessage>("message")) {
-    const t = msg.openReadAt == null ? Number.NaN : Date.parse(msg.openReadAt);
-    if (Number.isFinite(t) && t > newest) newest = t;
+  const v = typeof reader.stampOf === "function" ? reader.stampOf("message")
+    : typeof reader.version === "function" ? reader.version() : null;
+  let hit = v === null ? undefined : newestOpenRead.get(reader);
+  if (!hit || hit.v !== v) {
+    openReadFloorScans++;
+    let newest = Number.NEGATIVE_INFINITY;
+    for (const msg of reader.list<EngineMessage>("message")) {
+      const t = msg.openReadAt == null ? Number.NaN : Date.parse(msg.openReadAt);
+      if (Number.isFinite(t) && t > newest) newest = t;
+    }
+    hit = { v: v ?? 0, newest };
+    if (v !== null) newestOpenRead.set(reader, hit);
   }
-  return new Date(Math.max(now.getTime(), newest + 1)).toISOString();
+  return new Date(Math.max(now.getTime(), hit.newest + 1)).toISOString();
 }
 
 export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: EffectContext): MutationEffect[] {
@@ -475,9 +497,11 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // force `unread: true` + `lastReadAt: null` for `resurfaced` — wire parity with a server
       // arm that has been removed for making pins arrive bold whatever their real state. The
       // pin is the attention signal; the message keeps its genuine read state on both sides.
+      // A pile or a pin ENDS the open read (wire parity with `TriageService.setState`): another act
+      // has handled the row, and leaving the pile files it at arrival.
       return [
         { type: "message_state", id: recordId, entity: state },
-        { type: "message", id: msg.id, entity: { ...msg, triage: state, updatedAt: iso } },
+        { type: "message", id: msg.id, entity: { ...msg, triage: state, openReadAt: null, updatedAt: iso } },
       ];
     }
 
@@ -764,7 +788,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           id,
           entity: {
             ...msg, unread: m.unread, lastReadAt: m.unread ? null : iso,
-            openReadAt: m.unread ? null : (paintedAt !== null && msg.unread ? paintedAt : (msg.openReadAt ?? null)),
+            openReadAt: m.unread ? null
+              : (paintedAt !== null && msg.unread && !parkedOrPinned(msg) ? paintedAt : (msg.openReadAt ?? null)),
             ...(spent ? { triage: spent } : {}), updatedAt: iso,
           },
         });

@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lte, type SQL } from "drizzle-orm";
 import { messages, messageStates, recordChange, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 
@@ -79,6 +79,9 @@ export async function bubbleUpPass(
         .where(and(eq(messageStates.id, row.id), eq(messageStates.state, "bubbled_up")))
         .returning({ id: messageStates.id });
       if (updated.length === 0) return false;
+      // The pin ends any open read, as `TriageService.setState` does for every pile and pin.
+      await tx.update(messages).set({ openReadAt: null })
+        .where(and(eq(messages.id, row.messageId), eq(messages.accountId, row.accountId), isNotNull(messages.openReadAt)));
       await recordChange(tx, {
         accountId: row.accountId, entityType: "message_state", entityId: row.id, op: "update", meta: null,
       });

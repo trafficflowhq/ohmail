@@ -1250,8 +1250,11 @@ export class MessageService {
     const floor = ctx.pressFloor ?? null;
     const aged = floor !== null && ctx.pressAged === true;
     const seq = await asTx(ctx).transaction(async (tx) => {
-      const owned = await tx.select({ id: messages.id, unread: messages.unread, threadId: messages.threadId })
+      const owned = await tx.select({
+        id: messages.id, unread: messages.unread, threadId: messages.threadId, triage: messageStates.state,
+      })
         .from(messages)
+        .leftJoin(messageStates, eq(messageStates.messageId, messages.id))
         .where(and(inArray(messages.id, ids), eq(messages.accountId, ctx.accountId)));
       // The scoping predicate above is the whole of account scoping here. If the count does not match, at
       // least one id is missing or belongs to someone else — throw, and the transaction takes
@@ -1284,10 +1287,11 @@ export class MessageService {
       await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: at, ...(unread ? { openReadAt: null } : {}) })
         .where(and(inArray(messages.id, live), eq(messages.accountId, ctx.accountId)));
       // THE OPEN READ: the rows that WERE unread, one conversation only, at this same instant. A
-      // row already read is never restamped, which is what makes a re-execution stamp nothing.
-      // Over several conversations the read above stands and nothing is placed.
+      // row already read is never restamped (a re-execution stamps nothing), and a parked or pinned
+      // member is not in Earlier, so it is never stamped. Over several conversations nothing is placed.
       // Only an id whose read landed here: one a newer read decision kept is neither read nor stamped.
-      const wasUnread = owned.filter((r) => r.unread && !stale.has(r.id)).map((r) => r.id);
+      const wasUnread = owned
+        .filter((r) => r.unread && !stale.has(r.id) && (r.triage == null || r.triage === "none")).map((r) => r.id);
       const oneConversation = new Set(owned.map((r) => r.threadId ?? `msg:${r.id}`)).size === 1;
       if (!unread && openRead && oneConversation && wasUnread.length > 0) {
         await tx.update(messages).set({ openReadAt: at })
