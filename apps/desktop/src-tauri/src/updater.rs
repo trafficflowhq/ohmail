@@ -1024,15 +1024,18 @@ fn write_line(line: &str) {
     crate::frame::note_line(line);
 }
 
-/// Every line [`emit`] wrote, so `updater_tests.rs` reads back what the shipping code composed
-/// rather than a copy of it. Test-only, and the sink still runs beside it.
+// Every line [`emit`] wrote ON THIS THREAD, so `updater_tests.rs` reads back what the shipping code
+// composed rather than a copy of it, and a neighbouring case's line never lands in its window.
+// Test-only, and the sink still runs beside it.
 #[cfg(test)]
-pub(crate) static WROTE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+thread_local! {
+    pub(crate) static WROTE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 /// Write one line. Every log site in this module goes through here.
 fn emit(text: String) {
     #[cfg(test)]
-    lock(&WROTE).push(text.clone());
+    WROTE.with(|w| w.borrow_mut().push(text.clone()));
     write_line(&text);
 }
 

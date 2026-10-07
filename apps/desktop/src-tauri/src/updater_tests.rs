@@ -1662,16 +1662,29 @@ fn the_reader_answers_one_stable_kind_for_this_process() {
  * What they cannot drive is `run`, which holds an `AppHandle`. The four call sites in it, and the
  * two on the install, are held by `desktop-shell.test.ts` reading this crate's source. */
 
-/// One case at a time reads the buffer, and each one starts it empty.
-static LOG_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
+/// The lines `write` emitted on this case's own thread; the buffer is per thread, so it starts empty.
 fn captured(write: impl FnOnce()) -> Vec<String> {
-    let _serial = LOG_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    WROTE.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    WROTE.with(|w| w.borrow_mut().clear());
     write();
-    let lines = WROTE.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    WROTE.lock().unwrap_or_else(|p| p.into_inner()).clear();
-    lines
+    WROTE.with(|w| std::mem::take(&mut *w.borrow_mut()))
+}
+
+/// UPDATER-TEST-LOG-CAPTURE-TAKES-A-NEIGHBOURS-LINE: the install-flow cases write `updater_hook` from
+/// their stub's install, outside `captured()`, and a line written on another thread while a window
+/// is open read as that case's own (120 of 121 once at K102 and at K103). The window is this case's.
+#[test]
+fn a_line_another_thread_writes_inside_the_window_is_not_this_cases() {
+    let (done, wrote) = std::sync::mpsc::channel();
+    let lines = captured(|| {
+        log_check("https://example.invalid/own.json", "0.16.2");
+        std::thread::spawn(move || {
+            log_verdict(Verdict::Installed, None);
+            done.send(()).unwrap();
+        });
+        wrote.recv().unwrap();
+    });
+    assert_eq!(lines.len(), 1, "a neighbour's line read as this case's: {lines:?}");
+    assert!(lines[0].contains("own.json"), "{}", lines[0]);
 }
 
 fn as_json(line: &str) -> serde_json::Value {
