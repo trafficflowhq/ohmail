@@ -2703,7 +2703,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * a bounded RFC822.SIZE pre-fetch; the byte cap and anti-stall rule are untouched; at least one
    * message is always taken.
    */
-  private async fetchCapped(
+  private async fetchCappedKeeping(
     uids: number[],
     folder: string,
     curUidValidity: bigint,
@@ -2714,7 +2714,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
        the caller stores them before setting the liar aside. Any other refusal is thrown. */
     const fetched: InternalCreate[] = [];
     try {
-      return await this.fetchCappedInto(fetched, uids, folder, curUidValidity, budget);
+      return await this.fetchCapped(fetched, uids, folder, curUidValidity, budget);
     } catch (err) {
       if (!(err instanceof ImapBoundExceeded) || err.bound !== "body_overrun"
         || err.site === undefined || err.folder !== folder) throw err;
@@ -2723,7 +2723,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
   }
 
-  private async fetchCappedInto(
+  private async fetchCapped(
     fetched: InternalCreate[],
     uids: number[],
     folder: string,
@@ -3393,7 +3393,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         const {
           fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize, budgetSpent,
           overrun: breach,
-        } = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
+        } = await this.fetchCappedKeeping(unknownUids, folder, curUidValidity, budget);
         creates.push(...fetched);
         budget.messages -= fetched.length;
         for (const f of fetched) budget.bytes -= f.raw.length;
