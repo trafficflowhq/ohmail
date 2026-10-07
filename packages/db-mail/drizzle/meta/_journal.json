@@ -1023,6 +1023,13 @@
       "when": 1791602600049,
       "tag": "0145_press_decided_at",
       "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1791602600050,
+      "tag": "0146_rule_person_decided_followup",
+      "breakpoints": true
     }
   ]
 }

@@ -1198,6 +1198,8 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
+// mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
+// decision left owed) is two UPDATEs and adds no object: no marker, and the tag stays.
 export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0145_press_decided_at";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
