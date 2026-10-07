@@ -58,7 +58,7 @@ One RFC822 message in `ohmail/_meta`:
     "stamped": true                // optional: this copy's rules carry who decided them
   },
   "screener": [                    // senders this mailbox has SCREENED IN (admitted)
-    { "address": "<sender email, lowercased>", "name": "<display name, optional>" }
+    { "address": "<sender email, lowercased>", "name": "<display name, optional>", "source": "person" }
   ],
   "rules": [                       // where mail from matched senders is filed
     {
@@ -107,6 +107,7 @@ The envelope:
 | --- | --- | --- |
 | `address` | string | The sender's email address, lowercased. The natural key. |
 | `name` | string, optional | The display name, when one was kept. Omitted rather than null. |
+| `source` | `"person"`, optional | Present when a person screened the sender in. Absent means the sender was let in on inference (a reply to your mail, or acting on suggestions) or the document predates the field; a reader imports such an entry as inferred, which still lets ordinary mail through but never a name claiming a company the address does not belong to. A reader never upgrades a contact it already holds as inferred. The canonical form writes only `"person"`, so a document without the key keeps its fingerprint. |
 
 **`rules`** — an array of filing rules, where mail from matched senders goes:
 

@@ -4,7 +4,7 @@ import {
   rules as rulesTbl, tags as tagsTbl,
   fenceErased, lockAccountRuleKeys, recordChanges, recordProfileImportResolution, rerouteOwnHeldBag,
   resolveImportAsk, ruleDelta,
-  type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx, upgradeContactsToPerson,
+  type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "../rule-order.js";
@@ -62,7 +62,7 @@ export async function serializeOrganizerProfileCounted(
     return [
       // Each list is the newest PROFILE_LIST_MAX of its kind, so the import on another machine
       // takes what this one publishes; automatic (promoted) rules are the first to stay behind.
-      await tx.select({ address: contacts.address, name: contacts.name })
+      await tx.select({ address: contacts.address, name: contacts.name, source: contacts.source })
         .from(contacts).where(eq(contacts.accountId, accountId))
         .orderBy(desc(contacts.createdAt), desc(contacts.id)).limit(PROFILE_LIST_MAX.screener + 1),
       await tx.select({
@@ -116,7 +116,11 @@ export async function serializeOrganizerProfileCounted(
   notifyRows.splice(PROFILE_LIST_MAX.notifyRules);
   tagRows.splice(PROFILE_LIST_MAX.tagNames);
   const payload: OrganizerProfilePayload = {
-    screener: contactRows.map((c) => (c.name === null ? { address: c.address } : { address: c.address, name: c.name })),
+    // A person's contact says so (NULL is a person's, mail 0147); an inferred one travels unstated.
+    screener: contactRows.map((c) => ({
+      address: c.address, ...(c.name === null ? {} : { name: c.name }),
+      ...(c.source === "inferred" ? {} : { source: "person" as const }),
+    })),
     rules: ruleRows.map((r) => ({
       kind: r.kind, match: r.match, destination: r.destination,
       priority: r.priority, enabled: r.enabled, provenance: r.provenance,
@@ -252,22 +256,23 @@ export async function applyOrganizerProfile(
   // ── screener → contacts, keyed by address ──────────────────────────────────────────
   // Last entry wins within the document (the reader does not deduplicate), lowercased as
   // the format specifies; the row becomes the entry, display name included.
-  const byAddress = new Map<string, string | null>();
+  const byAddress = new Map<string, { name: string | null; source: "person" | "inferred" }>();
   for (const s of o.doc.screener) {
     const address = profileScreenerAddress(s);
     if (address === null) continue;
     const name = s.name !== undefined && !hasNul(s.name) ? s.name : null;
-    byAddress.set(address, name);
+    byAddress.set(address, { name, source: s.source === "person" ? "person" : "inferred" });
   }
-  for (const [address, name] of byAddress) {
-    // A person's own list, carried from their other install: a person's contact (mail 0147).
+  for (const [address, { name, source }] of byAddress) {
+    /* The entry's source as the document states it, absent read as inferred (mail 0147): an
+       older document fails closed for the identity fact. A document never upgrades a row this
+       install holds, so an inferred contact stays inferred whatever a document says. */
     await tx.insert(contacts)
-      .values({ accountId: o.accountId, address, name, source: "person" })
+      .values({ accountId: o.accountId, address, name, source })
       .onConflictDoUpdate({
         target: [contacts.accountId, contacts.address],
         set: { name },
       });
-    await upgradeContactsToPerson(tx, o.accountId, [address]);
   }
 
   // ── rules, merged per natural key ──────────────────────────────────────────────────

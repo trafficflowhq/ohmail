@@ -109,6 +109,13 @@ export interface ProfileScreenerEntry {
   address: string;
   /** The display name the user gave the contact, if any. */
   name?: string;
+  /**
+   * WHO MADE THE CONTACT (mail 0147): `person` for a person's own decision. ABSENT is inferred — a
+   * reply or the act's admission, or a document written before the key — so an older document
+   * fails closed for the identity fact while its senders still pass the gate. The canonical form
+   * keeps `person` and drops `inferred`, so a document without the key keeps its fingerprint.
+   */
+  source?: "person" | "inferred";
 }
 
 /** One filing rule, by natural keys — the folder NAME, never a folder id. */
@@ -325,8 +332,9 @@ export function oversizedProfileList(
 }
 
 /**
- * What the gate reads of a document: the `contacts` and `rules` an import would write. The import
- * writes its contacts as a person's (`organizer-profile-store.ts`), so `inferred` is empty here.
+ * What the gate reads of a document: the `contacts` and `rules` an import would write. An entry's
+ * `source` decides which: a person's contact, or an inferred one (absent included), which admits
+ * ordinary mail and never a name claiming a company.
  */
 export interface ProfileGateView {
   knownSenders: KnownSenders;
@@ -341,10 +349,15 @@ export interface ProfileGateView {
  */
 export function profileGateView(doc: OrganizerProfilePayload): ProfileGateView {
   const addresses = new Set<string>();
+  // The last entry for an address wins, as the import writes it.
+  const person = new Map<string, boolean>();
   for (const s of doc.screener) {
     const address = profileScreenerAddress(s);
-    if (address !== null) addresses.add(address);
+    if (address === null) continue;
+    addresses.add(address);
+    person.set(address, s.source === "person");
   }
+  const inferred = new Set([...person].filter(([, p]) => !p).map(([a]) => a));
   const rules: Rule[] = [];
   doc.rules.forEach((entry, i) => {
     const a = applicableProfileRule(entry);
@@ -357,7 +370,7 @@ export function profileGateView(doc: OrganizerProfilePayload): ProfileGateView {
       subjectContains: a.subjectContains, bodyContains: a.bodyContains,
     });
   });
-  return { knownSenders: { addresses, inferred: new Set<string>() }, rules };
+  return { knownSenders: { addresses, inferred }, rules };
 }
 
 /**
@@ -426,7 +439,12 @@ function totalSort<T>(xs: readonly T[], cmp: (a: T, b: T) => number): T[] {
 const emptyIfAbsent = (v: string | undefined | null): string => v ?? "";
 
 function normalizeScreener(s: ProfileScreenerEntry): ProfileScreenerEntry {
-  return s.name === undefined || s.name === null ? { address: s.address } : { address: s.address, name: s.name };
+  return {
+    address: s.address,
+    ...(s.name === undefined || s.name === null ? {} : { name: s.name }),
+    // Present only for a person's contact: inferred and absent are one state, and v1 keeps its bytes.
+    ...(s.source === "person" ? { source: "person" as const } : {}),
+  };
 }
 
 function normalizeRule(r: ProfileRuleEntry): ProfileRuleEntry {
@@ -683,7 +701,7 @@ const PREAMBLE = [
  * field is escaped until someone adds it here. Keys, numbers and booleans are plain.
  */
 const PLAIN_STRING_VALUES: ReadonlySet<string> = new Set([
-  "updatedAt", "producer.kind", "producer.version", "rules[].kind", "rules[].provenance", "rules[].personDecidedAt",
+  "updatedAt", "producer.kind", "producer.version", "screener[].source", "rules[].kind", "rules[].provenance", "rules[].personDecidedAt",
   "notifyRules[].kind", "awayResponder.audience", "awayResponder.throttle",
   "awayResponder.startsAt", "awayResponder.endsAt", "awayResponder.piles[]",
 ]);
@@ -821,7 +839,9 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
       const address = asString((e as Record<string, unknown>).address)?.trim();
       if (!address) continue;
       const name = asString((e as Record<string, unknown>).name);
-      screener.push(name === null ? { address } : { address, name });
+      // Only a person's contact is stated; anything else, absent included, reads as inferred.
+      const person = (e as Record<string, unknown>).source === "person";
+      screener.push({ address, ...(name === null ? {} : { name }), ...(person ? { source: "person" as const } : {}) });
     }
   }
   const rules: ProfileRuleEntry[] = [];
