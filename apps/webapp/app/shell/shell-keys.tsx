@@ -183,6 +183,7 @@ export interface ShellKeysInput {
   mirrorHolds: ShellOpenState["mirrorHolds"];
   picker: ShellOpenState["picker"];
   railOpen: ShellOpenState["railOpen"];
+  readerCrossed: ShellOpenState["readerCrossed"];
   readerFor: ShellOpenState["readerFor"];
   readerMessage: ShellOpenState["readerMessage"];
   readerGone: boolean;
@@ -233,7 +234,7 @@ export function useShellKeys({
   allOhbox, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
   ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
   trashPage,
-  barPanel, focused, fr, frValues, picker, railOpen, readerFor, readerMessage, readerGone,
+  barPanel, focused, fr, frValues, picker, railOpen, readerCrossed, readerFor, readerMessage, readerGone,
   selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
   setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
   shortcutsOpen, startFR, subjectRule,
@@ -436,7 +437,10 @@ export function useShellKeys({
   const railRef = useRef<HTMLElement | null>(null);
   useFocusFollows(railRef, { active: railOpen && railNow.drawer, trap: true });
   const readerRef = useRef<HTMLDivElement | null>(null);
-  useFocusFollows(readerRef, { active: (readerMessage != null || readerGone) && narrowNow && !pushTier });
+  useFocusFollows(readerRef, {
+    active: (readerMessage != null || readerGone) && narrowNow && !pushTier,
+    enter: readerCrossed ? "root" : true,
+  });
   const paletteRef = useRef<HTMLDivElement | null>(null);
   useFocusFollows(paletteRef, { active: palette.open, enter: false });
 

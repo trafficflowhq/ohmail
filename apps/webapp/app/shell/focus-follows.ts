@@ -64,8 +64,8 @@ function tryFocus(el: HTMLElement | null | undefined, preventScroll = false): bo
 }
 
 /** Into a surface: its first control, else the surface itself. */
-function enterInto(root: HTMLElement): boolean {
-  if (tryFocus(tabbables(root)[0])) return true;
+function enterInto(root: HTMLElement, atRoot = false): boolean {
+  if (!atRoot && tryFocus(tabbables(root)[0])) return true;
   if (!root.hasAttribute("tabindex")) root.setAttribute("tabindex", "-1");
   return tryFocus(root);
 }
@@ -162,8 +162,9 @@ export interface FocusFollowsOptions {
   /** Open while truthy; default `true`, for a surface mounted only while it is open. A new
    *  value is a new surface (the same confirm, opened under another row). */
   active?: boolean | string | null;
-  /** Take focus on open. `false` where the surface places focus itself (a composer, a strip). */
-  enter?: boolean;
+  /** Take focus on open. `false` where the surface places focus itself (a composer, a strip);
+   *  `"root"` on the surface itself, never its first control (a sheet the width raised). */
+  enter?: boolean | "root";
   /** Close on Escape, pressed inside it or on the control that opened it. Only for a surface
    *  the shell's Escape ladder does not own. */
   onEscape?: () => void;
@@ -186,7 +187,7 @@ export function useFocusFollows(ref: RefObject<HTMLElement | null>, opts: FocusF
     open.push(surface);
     if (enter) {
       queueMicrotask(() => {
-        if (root.isConnected && !root.contains(document.activeElement)) enterInto(root);
+        if (root.isConnected && !root.contains(document.activeElement)) enterInto(root, enter === "root");
       });
     }
     const onTab = (e: KeyboardEvent): void => {

@@ -1674,7 +1674,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const {
     absoluteTime, barPanel, chipState, closeCard, commitReadsSeen, commitReceiptsSeen, enterReader,
     focused, fr, frDone, frValues, jump, markAllRead, markSeen, mirrorHolds, verbHolds, ohboxGone, openMessage,
-    picker, pickerIds, previewFor, railOpen, readerFor, readerGone, readerMessage, readsCur,
+    picker, pickerIds, previewFor, railOpen, readerCrossed, readerFor, readerGone, readerMessage, readsCur,
     readsMarkSeen, reportPick, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
     searchQuery, selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setChipState, setCloseCard,
     setFr, setFrDone, setFrPending, setFrValues, setJump, setOhboxArmedRead, setOhboxSel, setPicker,
@@ -1927,7 +1927,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
     ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
     trashPage,
-    barPanel, focused, forwardTargetFor, fr, frValues, mirrorHolds, picker, railOpen, readerFor, readerMessage, readerGone,
+    barPanel, focused, forwardTargetFor, fr, frValues, mirrorHolds, picker, railOpen, readerCrossed, readerFor, readerMessage, readerGone,
     selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
     setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
     shortcutsOpen, startFR, subjectRule,

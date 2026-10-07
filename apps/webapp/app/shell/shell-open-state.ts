@@ -288,6 +288,10 @@ export function useShellOpenState({
    * tracking read state, tags and triage the moment the reader is open.
    */
   const [readerFor, setReaderFor] = useState<string | null>(null);
+  /* The sheet the WIDTH raised (`crossNarrow` below), not a press: it takes focus at its own root,
+     never on its back control, so the ↵ that would open the message does not close it. */
+  const [crossedFor, setCrossedFor] = useState<string | null>(null);
+  const readerCrossed = readerFor !== null && readerFor === crossedFor;
   /**
    * An open that has to SURVIVE the route transition it travels with (the `frPending`
    * shape, and for the same reason).
@@ -374,9 +378,10 @@ export function useShellOpenState({
     if (readerFor !== null) return;
     const id = route.view === "ohbox" ? ohboxSel
       : COLUMN_VIEWS.has(route.view) && viewPick?.place === placeOf(route) ? viewPick.id : null;
-    if (id !== null) setReaderFor(id);
+    if (id !== null) { setCrossedFor(id); setReaderFor(id); }
   });
   useEffect(() => watchNarrow(crossNarrow), [crossNarrow]);
+  useEffect(() => { if (readerFor === null) setCrossedFor(null); }, [readerFor]);
   const [railOpen, setRailOpen] = useState(false);
   /**
    * THE QUICK-LOOK PREVIEW — a message id and the attachment on screen, or `null`.
@@ -1289,6 +1294,7 @@ export function useShellOpenState({
     previewFor,
     railOpen,
     readerFor,
+    readerCrossed,
     readerGone,
     readerMessage,
     readsCur,
