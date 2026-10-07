@@ -134,6 +134,8 @@ export interface CloudSidecarConfig {
   operatorCaFile?: string;
   pageLimit?: number;
   pollIntervalMs?: number;
+  /** Test-only, the mirror's wait after a refused account's pull; production takes its minute. */
+  walledPollMs?: number;
   /** How long `/search` waits for the account before the mirror answers; absent, `ACCOUNT_FIRST_BOUND_MS`. */
   accountFirstBoundMs?: number;
   /**
@@ -878,6 +880,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       });
       setHostedSession(auth.session());
 
+      /* The wake is started below the mirror, so the mirror's served hook reads it through this
+         binding when it fires, never a value captured here (that would be `undefined` for good). */
+      let wake: CloudWake | undefined;
       const mirror: CloudMirror = createCloudMirror({
         db,
         world,
@@ -888,6 +893,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         now,
         ...(config.pageLimit !== undefined ? { pageLimit: config.pageLimit } : {}),
         ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
+        ...(config.walledPollMs !== undefined ? { walledPollMs: config.walledPollMs } : {}),
+        onServed: () => { wake?.rearm(); },
       });
 
       const proxy: WriteThroughProxy = createWriteThroughProxy({
@@ -906,15 +913,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        * the process with the session (`authedFetch`), and the webapp inside the desktop window
        * talks only to this local engine, which serves no `/events`. Every `sync` frame kicks
        * one bounded pull; with the stream refused (a host with streaming off answers 503) the
-       * mirror's own poll carries the door exactly as before this existed.
+       * mirror's own poll carries the door exactly as before this existed, and a refused ACCOUNT
+       * (402) parks it until the mirror's next served pull re-arms it.
        */
-      const wake = startCloudWake({
+      const started = startCloudWake({
         auth,
         onWake: () => { mirror.kick(); },
         ...(log ? { log } : {}),
       });
+      wake = started;
 
-      authed = { auth, mirror, proxy, wake };
+      authed = { auth, mirror, proxy, wake: started };
       return authed;
     };
 

@@ -1,14 +1,13 @@
 import type { Diagnostic } from "./log.js";
 
 /**
- * The cloud door's wake subscription — the sidecar's half of the realtime wake channel. The hosted
- * `GET /events` emits a content-free `event: sync` frame whenever the account's `change_log`
- * advances; this holds ONE stream over `authedFetch` and answers every frame with `mirror.kick()`.
- * IT IS A HINT, NEVER A DEPENDENCY — the mirror's poll is the reliability floor, so every failure
- * degrades to silence. Any non-200 except 429 ⇒ OFF for the process's life (a host with streaming
- * off answers 503, a refusing endpoint another code); a 429 means LATER, redialed
- * on `Retry-After` (floored at {@link WAKE_THROTTLE_RETRY_MS}); a THROW before any success ⇒ up to
- * {@link NEVER_CONNECTED_ATTEMPTS} then OFF; a drop AFTER success ⇒ reconnect on backoff for ever.
+ * The cloud door's wake subscription: ONE `GET /events` stream over `authedFetch`, every `sync` frame
+ * answered with `mirror.kick()`. A HINT, NEVER A DEPENDENCY: the mirror's poll is the floor. A 402
+ * (the account refused, not the channel) PARKS it with no timer until the mirror is served again
+ * ({@link CloudWake.rearm}); any other non-200 but 429 ⇒ OFF for the process's life (a host with
+ * streaming off answers 503); a 429 means LATER, redialed on `Retry-After` (floored at
+ * {@link WAKE_THROTTLE_RETRY_MS}); a THROW before any success ⇒ up to {@link NEVER_CONNECTED_ATTEMPTS}
+ * then OFF; a drop AFTER success ⇒ reconnect on backoff for ever.
  */
 export const NEVER_CONNECTED_ATTEMPTS = 3;
 /** Reconnect after a HEALTHY stream ends when the server named no `retry:` — the stream cycling. */
@@ -22,6 +21,8 @@ export const WAKE_BACKOFF_BASE_MS = 1_000;
 export const WAKE_BACKOFF_MAX_MS = 300_000;
 /** The floor under a 429 redial — the server said LATER, and later is at most once a minute. */
 export const WAKE_THROTTLE_RETRY_MS = 60_000;
+/** The floor under a walled redial: however often the mirror is served, at most one dial a minute. */
+export const WAKE_WALLED_REDIAL_MIN_MS = 60_000;
 
 export interface CloudWakeConfig {
   auth: { authedFetch(path: string, init?: RequestInit): Promise<Response> };
@@ -38,6 +39,12 @@ export interface CloudWakeConfig {
 export interface CloudWake {
   /** Close the stream and stop reconnecting. Idempotent. */
   stop(): void;
+  /**
+   * The mirror's pull was SERVED: the account answers again. A wake parked on a 402 dials once,
+   * at most once per {@link WAKE_WALLED_REDIAL_MIN_MS}, and that dial meets the door's own
+   * admission, so a still-refused account parks again. A no-op on any other state.
+   */
+  rearm(): void;
 }
 
 /**
@@ -102,6 +109,11 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
   /** The last `retry:` the server sent, clamped; `null` until one arrives. */
   let retryMs: number | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  /** Parked on a 402: no timer, and only {@link CloudWake.rearm} dials again. */
+  let walled = false;
+  /** A 402 episode is open: the wall is said once, and the next 200 is said again. */
+  let wallEpisode = false;
+  let lastWalledDial = Number.NEGATIVE_INFINITY;
   /**
    * Aborts the held request on `stop()`. Without it a stop would leave the reader parked on a
    * `read()` that resolves only when the server next says something — a quit waiting on a
@@ -213,8 +225,19 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
         scheduleReconnect(waitMs);
         return;
       }
+      // THE ACCOUNT, NOT THE CHANNEL: parked with no timer. The mirror's served pull re-arms it.
+      if (res.status === 402) {
+        walled = true;
+        if (!wallEpisode) {
+          wallEpisode = true;
+          cfg.log?.("cloud_wake_walled", {
+            reason: "the hosted account is refused; the wake waits for the mirror to be served again",
+          });
+        }
+        return;
+      }
       // Every OTHER refusal is permanent for the process, zero retries: a host with streaming
-      // off (503), an unknown route (404), an auth refusal —
+      // off (503), an unknown route (404), a 403 (an unverified account buys no invocation) —
       // see the header for why redialing a refusing endpoint is the storm this must never start.
       cfg.log?.("cloud_wake_off", {
         status: res.status,
@@ -225,10 +248,11 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
       return;
     }
 
-    if (!everConnected) {
+    if (!everConnected || wallEpisode) {
       everConnected = true;
-      // Once, and worth a line: this is the fact a deploy verification reads to know the
-      // realtime channel is live end-to-end for the desktop's Cloud door.
+      wallEpisode = false;
+      // Once, and again after each wall, and worth a line: the fact a deploy verification
+      // reads to know the realtime channel is live end-to-end for the desktop's Cloud door.
       cfg.log?.("cloud_wake_connected", {
         reason: "the hosted events stream is live; commits on the account now pull the mirror " +
           "within about a second instead of on the poll cadence",
@@ -251,6 +275,14 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
   void connect();
 
   return {
+    rearm() {
+      if (stopped || !walled) return;
+      const now = Date.now();
+      if (now - lastWalledDial < WAKE_WALLED_REDIAL_MIN_MS) return;
+      walled = false;
+      lastWalledDial = now;
+      void connect();
+    },
     stop() {
       stopped = true;
       if (timer) {

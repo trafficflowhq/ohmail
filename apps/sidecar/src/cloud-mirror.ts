@@ -411,6 +411,13 @@ export interface CloudMirrorConfig {
   overflowMax?: number;
   /** How long to wait between full pulls when caught up. */
   pollIntervalMs?: number;
+  /** Test-only: production waits {@link WALLED_POLL_MS} after a refused account's pull. */
+  walledPollMs?: number;
+  /**
+   * The drain came back: Cloud answered this account's `/sync` (the wake's re-arm). Fired at the
+   * one point a pull knows that, scheduled or kicked; never throws into the pull.
+   */
+  onServed?: () => void;
   /** The follow-up chain's backoff and cap; production takes {@link FOLLOW_UP_STEPS_MS} and {@link FOLLOW_UP_CAP_MS}. */
   followUpStepsMs?: readonly number[];
   followUpCapMs?: number;
@@ -581,10 +588,17 @@ export const HOSTED_COUNTS_MIN_GAP_MS = 60_000;
 /**
  * Reconnect backoff. A pull that fails (dropped network, spent token) retries soon and then backs
  * off exponentially to a ceiling, rather than waiting a full poll interval or hammering every tick.
- * A success resets it and returns to the steady poll cadence.
+ * A success resets it and returns to the steady poll cadence. A refused ACCOUNT is not on this
+ * ladder: see {@link WALLED_POLL_MS}.
  */
 export const RECONNECT_BASE_MS = 1_000;
 export const RECONNECT_MAX_MS = 300_000;
+
+/**
+ * After a pull the hosted account refused (`402`): a flat minute, never the ladder, so a payment
+ * is pulled within one, the web wall's own read cadence. One refused ask a minute while it stands.
+ */
+export const WALLED_POLL_MS = 60_000;
 
 const asDate = (iso: string | null | undefined): Date | null => (iso ? new Date(iso) : null);
 
@@ -2447,9 +2461,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let horizonAsk = 0;
   let boxesAsk = 0;
   let quietUntil = 0;
+  /** The last refused answer at any door was the account's `402`; cleared when the drain is served. */
+  let walled = false;
   const waiters = new Set<() => void>();
   const progressed = (): void => { for (const w of [...waiters]) w(); };
+  /** The account's wall, read at every door a pull can meet it first (a first import's included). */
+  const noteWall = (res: Response): void => { walled = res.status === 402; };
   const noteRetryAfter = (res: Response): void => {
+    noteWall(res);
     if (res.status !== 429 && res.status !== 503) return;
     const ms = retryAfterMs(res, Date.now());
     if (ms !== null) quietUntil = Math.max(quietUntil, Date.now() + ms);
@@ -2704,7 +2723,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (aborted) return { applied, cut: true };
       const q = new URLSearchParams({ since, limit: String(pageLimit), types: "rule" });
       const res = await fetchCloud(`/sync?${q.toString()}`);
-      if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status} to the rules-first pass`);
+      if (!res.ok) {
+        noteWall(res);
+        throw new Error(`the hosted /sync answered HTTP ${res.status} to the rules-first pass`);
+      }
       const body = (await res.json()) as SyncResponse;
       applied += await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes);
       gen?.flush();
@@ -2887,6 +2909,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
            page 1. Counting a 410 instead would let the restart's landed page 1 reset the count, and
            the drain would restart → page 1 → 410 → fail on every pull without ever reaching the
            replay. */
+        noteWall(res);
         windowRefusals = res.status === 404 || res.status === 410 ? WINDOW_REFUSALS_MAX : windowRefusals + 1;
         if (windowRefusals < WINDOW_REFUSALS_MAX) {
           throw new Error(`the hosted /sync/snapshot answered HTTP ${res.status} to the opening window`);
@@ -3852,6 +3875,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // time. Writes forward correctly from here too: the proxy's gate is this flag, and Cloud
       // is the thing that just answered.
       reachable = true;
+      // SERVED: the account answers again, so a walled cadence ends and a parked wake may dial.
+      walled = false;
+      try { cfg.onServed?.(); } catch { /* the hook is a hint; the pull goes on */ }
       if (cut) {
         cfg.log?.("cloud_pull_stopped", {
           count: applied,
@@ -4143,13 +4169,17 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   /**
    * Schedule the next pull. A SUCCESS resets the backoff and polls at the steady cadence; a FAILURE
    * retries on an exponential backoff bounded by {@link RECONNECT_MAX_MS}, so a dropped network or a
-   * spent token reconnects promptly without hammering. Either way the next drain RESUMES FROM THE
-   * CURSOR FILE — the last committed page already wrote it — so no progress is re-fetched.
+   * spent token reconnects promptly without hammering, except a refused account's, which asks again
+   * every {@link WALLED_POLL_MS}. Either way the next drain RESUMES FROM THE CURSOR FILE — the last
+   * committed page already wrote it — so no progress is re-fetched.
    */
   const scheduleAfter = (failed: boolean): void => {
     if (stopped || accountErased) return;
     let delay: number;
-    if (failed) {
+    if (failed && walled) {
+      delay = Math.max(cfg.walledPollMs ?? WALLED_POLL_MS, quietUntil - Date.now());
+      backoffMs = RECONNECT_BASE_MS;
+    } else if (failed) {
       delay = Math.max(backoffMs, quietUntil - Date.now());
       backoffMs = Math.min(backoffMs * 2, RECONNECT_MAX_MS);
     } else {
