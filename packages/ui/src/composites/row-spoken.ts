@@ -91,7 +91,7 @@ export interface MessageRowFacts {
   heldLabel?: string;
   newSinceLabel?: string;
   newSinceTitle?: string;
-  /** The identity chip's sentence ("Its name says PostFinance; …"), or its face where no sentence was given. */
+  /** The identity chip's sentence ("The name says PostFinance; …"), or its face where no sentence was given. */
   senderCheck?: string;
   stateNote?: string;
   aiReason?: string;

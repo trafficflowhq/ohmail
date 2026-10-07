@@ -2280,9 +2280,9 @@ const TABLE = {
    * claims a company this address does not belong to. Rendered outside any AI advice.
    */
   senderCheckImpersonation: (brand: string): string =>
-    `Its name says ${brand}; the address isn't one ${brand} sends from.`,
+    `The name says ${brand}; the address isn't one ${brand} sends from.`,
   senderCheckImpersonationShared: (brand: string, domain: string): string =>
-    `Its name says ${brand}, but anyone can register a ${domain} address.`,
+    `The name says ${brand}, but anyone can register a ${domain} address.`,
   senderCheckChip: (brand: string): string => `Not ${brand}`,
   /** A shared provider's domain is never a scope: the sentence in the place of the choice. */
   screeningScopeShared: (domain: string): string =>

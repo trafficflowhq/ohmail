@@ -155,10 +155,11 @@
 .msg-from:has(> .msg-from-line){display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:9px}
 .msg-from:has(> .msg-from-line) > .msg-sender{justify-self:start;max-width:100%}
 .msg-from-line{display:none;grid-column:1 / -1;margin:2px 0 0 38px;font-size:calc(12px + var(--type-up));color:var(--ink3);overflow-wrap:anywhere}
-/* The identity fact under the sender (`MessageCard`): always drawn, on its own line, in the danger ink. */
+/* The identity fact under the sender (`MessageCard`): always drawn, on its own line, in body ink behind the shield. */
 .msg-from:has(> .msg-from-check){display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:9px}
 .msg-from:has(> .msg-from-check) > .msg-sender{justify-self:start;max-width:100%}
-.msg-from-check{grid-column:1 / -1;margin:4px 0 0 38px;font-size:calc(12px + var(--type-up));font-weight:550;color:var(--danger-ink,var(--ink));overflow-wrap:anywhere}
+.msg-from-check{grid-column:1 / -1;margin:4px 0 0 38px;font-size:calc(12px + var(--type-up));font-weight:550;color:var(--ink);overflow-wrap:anywhere;display:flex;gap:6px;align-items:flex-start}
+.msg-from-check svg{color:var(--accent-ink);flex:none;margin-top:3px}
 .msg-from b{font-weight:600;flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .msg-from small{color:var(--ink3);font-size:calc(12px + var(--type-up))}
 .msg-from .av{margin-right:1px}

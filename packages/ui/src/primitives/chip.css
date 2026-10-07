@@ -39,7 +39,7 @@
 .badge{font-size:calc(10.5px + var(--type-up));color:var(--ink2);background:var(--tint2);border-radius:var(--r-pill);
   padding:1px 7px;display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums;font-weight:500}
 .badge svg{width:10px;height:10px}
-.badge.shield{color:var(--accent-ink);background:var(--accent-soft)}
+.badge.shield{color:var(--accent-ink);background:var(--accent-soft);font-weight:550}
 .badge.place{background:var(--tint);font-weight:550}
 .badge.ai{color:var(--accent-ink);background:var(--accent-soft);font-weight:550}
 /* the only SOLID badge: "new since you asked to see this again" has to be tellable apart

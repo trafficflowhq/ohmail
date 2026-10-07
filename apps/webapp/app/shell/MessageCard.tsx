@@ -252,7 +252,7 @@ export function MessageHeader({
         {address ? <p className="msg-from-line">{tfrom("fromAddress", { address })}</p> : null}
         {/* THE IDENTITY FACT, under the address it is about: the name claims a company this address
             does not belong to (`MessageDTO.senderCheck`). Not a block notice — nothing is withheld. */}
-        {checkLine ? <p className="msg-from-check" data-reason="identity">{checkLine}</p> : null}
+        {checkLine ? <p className="msg-from-check" data-reason="identity"><Icon name="shield" size={12} /><span>{checkLine}</span></p> : null}
       </div>
       {subjectLine}
       <MessageRecipients message={message} notice={notice} />

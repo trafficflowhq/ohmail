@@ -220,13 +220,19 @@ export function MessageReader({
               {m.from.address}
             </Txt>
           ) : null}
-          {/* THE IDENTITY FACT, under the address it is about — always drawn, never folded away. */}
+          {/* THE IDENTITY FACT, under the address it is about — always drawn, never folded away, behind
+              the shield the sender detail and the web draw. */}
           {m.senderCheck ? (
-            <Txt variant="note" tone="ink" style={{ marginTop: 6 }} testID="reader-sender-check">
-              {m.senderCheck.domainShared
-                ? Copy.senderCheckImpersonationShared(m.senderCheck.brand, m.senderCheck.domain)
-                : Copy.senderCheckImpersonation(m.senderCheck.brand)}
-            </Txt>
+            <View style={{ flexDirection: "row", gap: 6, marginTop: 6, alignItems: "flex-start" }}>
+              <View style={{ marginTop: 2 }}>
+                <Icon name="shield" size={13} color={t.c.accentInk} />
+              </View>
+              <Txt variant="note" tone="ink" style={{ flex: 1 }} testID="reader-sender-check">
+                {m.senderCheck.domainShared
+                  ? Copy.senderCheckImpersonationShared(m.senderCheck.brand, m.senderCheck.domain)
+                  : Copy.senderCheckImpersonation(m.senderCheck.brand)}
+              </Txt>
+            </View>
           ) : null}
 
           <Txt variant="h2" style={{ marginTop: 14, marginBottom: 14 }}>

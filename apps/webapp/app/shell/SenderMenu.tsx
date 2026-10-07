@@ -45,13 +45,14 @@ import {
 } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
-import { Avatar, InfoNote, Kbd } from "@ohmail/ui";
+import { Avatar, Icon, InfoNote, Kbd } from "@ohmail/ui";
 import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf, placeLabel } from "./format";
 import { displayAddress, displayAddressee, displayDomain } from "./idn";
 import { useOverlayFit } from "./overlay-clamp";
 import { useFocusFollows } from "./focus-follows";
 import { addressHref } from "./address-view";
+import { useSenderCheckWords } from "./sender-check";
 import "./sender-sheet.css";
 import {
   DECISION_OF_DEST,
@@ -208,6 +209,9 @@ export function SenderMenu({
   /* The five pile names, from the Screener's namespace — the same words the rail and the
      decision bar use. See `decision-copy.ts`. */
   const piles = usePileNames();
+  // The identity fact off the newest marked message the sheet's subject sent (mail 0147).
+  const checkWords = useSenderCheckWords();
+  const checkLine = sender.messages.map(checkWords.line).find((l) => l !== null) ?? null;
   const rootRef = useRef<HTMLDivElement>(null);
   const [scope, setScope] = useState<ScreeningScope>("sender");
   /** The sheet's step: the list, the resolve step over rules that disagree, or the unsubscribe
@@ -412,6 +416,11 @@ export function SenderMenu({
           face; it is dismissed by the page around it. */}
       <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
       {head}
+      {/* THE IDENTITY FACT before any choice: the name claims a company this address does not
+          belong to, said as the reader and the Screener row say it. */}
+      {checkLine ? (
+        <p className="sm-check" data-reason="identity"><Icon name="shield" size={12} /><span>{checkLine}</span></p>
+      ) : null}
 
       {canScope ? (
         <>
