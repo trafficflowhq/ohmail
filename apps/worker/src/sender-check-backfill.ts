@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
-  fencedAccountWrite, folderState, messages, recordChanges, type ChangeInput, type LedgerTx, type Tx,
+  contacts, fencedAccountWrite, folderState, messages, recordChanges, SCREENER_ACT_TRIGGER_PREFIX,
+  type ChangeInput, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 /* The mail leaf, never the barrel: the local engines bundle this pass, and a value import from the
    barrel carries the model half into them (the engine census refuses the build). */
@@ -74,6 +75,40 @@ export async function writeSenderChecks(
 /** The two places a banner is read when a person decides. Archive and Sent rows stay unchecked. */
 const IN_SCOPE = ["INBOX", "ohmail/Screener"] as const;
 
+/** Contacts one call reads for {@link markLegacyActContacts}. */
+export const LEGACY_ACT_CONTACTS_BATCH = 500;
+
+/**
+ * THE ACT'S CONTACTS FROM BEFORE THE COLUMN (mail 0147): a contact the act on suggestions wrote
+ * before `contacts.source` existed is NULL, which reads as a person's. One whose every Screener
+ * decision on record came from the act (`screener:auto:`) and none from anybody else is marked
+ * inferred. Bounded per call, logged, and it moves no mail; the NULL set is the cursor.
+ */
+export async function markLegacyActContacts(
+  db: Tx, deps: { accountId: string; batch?: number },
+): Promise<number> {
+  // A literal, not a parameter: the sidecar names this statement, and a generic plan over a bound
+  // pattern loses the (account, trigger) index its custom plan uses.
+  const act = sql.raw(`'${SCREENER_ACT_TRIGGER_PREFIX.replace(/'/g, "''")}%'`);
+  const decided = (by: SQL) => sql`exists (
+    select 1 from learning_signals ls
+     where ls.account_id = ${contacts.accountId} and ls.kind = 'screener'
+       and lower(ls.sender_address) = lower(${contacts.address}) and ${by})`;
+  return fencedAccountWrite(db, { accountId: deps.accountId }, async (tx) => {
+    const rows = await tx.select({ id: contacts.id }).from(contacts)
+      .where(and(
+        eq(contacts.accountId, deps.accountId), isNull(contacts.source),
+        decided(sql`ls.triggering_action_id like ${act}`),
+        sql`not ${decided(sql`ls.triggering_action_id not like ${act}`)}`,
+      ))
+      .limit(deps.batch ?? LEGACY_ACT_CONTACTS_BATCH);
+    if (rows.length === 0) return 0;
+    await tx.update(contacts).set({ source: "inferred" })
+      .where(and(eq(contacts.accountId, deps.accountId), inArray(contacts.id, rows.map((r) => r.id)), isNull(contacts.source)));
+    return rows.length;
+  });
+}
+
 export async function senderCheckBackfillPass(
   db: Tx, deps: SenderCheckBackfillDeps,
 ): Promise<SenderCheckBackfillResult> {
@@ -112,5 +147,7 @@ export async function senderCheckBackfillPass(
     // The logger's own field names: `scanned` is the rows given a fact this call.
     log.info("sender_check_backfill", { accountId: deps.accountId, scanned: result.checked, marked: result.marked });
   }
+  const inferred = await markLegacyActContacts(db, { accountId: deps.accountId });
+  if (inferred > 0) log.info("act_contacts_inferred", { accountId: deps.accountId, count: inferred });
   return result;
 }
