@@ -13,6 +13,12 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The phone app's download is smaller
+<!-- changes: perf-026-phone-engine-trim.md -->
+
+The mail engine inside the phone app no longer carries the server-only parts of the health check,
+the database layer and the live event stream. Nothing a phone does changes.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
