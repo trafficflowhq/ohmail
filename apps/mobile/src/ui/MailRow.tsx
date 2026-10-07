@@ -49,7 +49,7 @@ export function MailRow({
      came back rendered for no row on this phone. `test/mail-row-badges-spoken.test.ts` reads
      this condition against the badges below rather than trusting the next person to remember. */
   const badges = !!m.protected || !!m.trackerNote || thread > 1 || !!m.historyPlace || !!m.newSince
-    || !!m.tags;
+    || !!m.tags || !!m.senderCheck;
 
   /* THE READ SLOT'S FACE, from the one rule the reader's bar uses (`row-swipe.ts#readFaceOf`):
      Done on a resurfaced row, otherwise Mark as read / Mark unread. The swipe must press the
