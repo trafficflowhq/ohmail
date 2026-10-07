@@ -262,20 +262,17 @@ export const sniServername = (host: string): string | undefined =>
   isIpLiteral(host) ? undefined : host;
 
 /**
- * Why `host` is the local test harness and therefore exempt from the floor, or `null` — the
- * `transactionPoolerReason` shape: a guard that only says no teaches the operator nothing.
- * GreenMail (`:3143`/`:3025`) and the dovecot CONDSTORE fallback (`:3144`) speak plaintext only,
- * and the exemption is so narrow production cannot reach it: keyed on the host being LOOPBACK,
- * the one address family that cannot carry a packet off the machine. Deliberately mean —
- * `0.0.0.0`, `::ffff:127.0.0.1`, `localhost.evil.com` and an empty string all fail CLOSED (the
- * connection gets harder, never softer); `*.localhost` is admitted because RFC 6761 §6.3 reserves
- * it for loopback.
+ * Why `host` is on THIS COMPUTER and therefore exempt from the floor, or `null` — the
+ * `transactionPoolerReason` shape: a guard that only says no teaches the operator nothing. This
+ * computer is an address that IS loopback (127.0.0.0/8, ::1) and the exact name `localhost`, which
+ * every dial pins to 127.0.0.1 ({@link loopbackDialPin}) so no resolver is asked; the bracketed
+ * `[::1]` is pinned to ::1 the same way, never resolved as a name. Deliberately mean:
+ * `0.0.0.0`, `::ffff:127.0.0.1`, `localhost.evil.com`, an empty string and every `*.localhost` name
+ * fail CLOSED — a name under `.localhost` is still a name, and a resolver can answer it anywhere.
  */
 export function loopbackHarnessReason(host: string): string | null {
-  // A trailing dot is the fully-qualified form of the same name; anything else is
-  // normalised only for case, never for content.
+  if (loopbackDialPin(host) !== undefined) return "the host is localhost, which ohmail always dials at 127.0.0.1";
   const h = host.trim().toLowerCase().replace(/\.$/, "");
-  if (h === "localhost" || h.endsWith(".localhost")) return "the host is the reserved name localhost (RFC 6761)";
   // Bracketed IPv6 literal, as it appears in a URL authority.
   const v6 = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
   // ::1 in its collapsed and fully-written forms. Not ::ffff:127.0.0.1 — see above.
@@ -289,6 +286,21 @@ export function loopbackHarnessReason(host: string): string | null {
     }
   }
   return null;
+}
+
+/** The one address the name `localhost` is dialled at, on both legs. */
+export const LOCALHOST_DIAL_ADDRESS = "127.0.0.1";
+
+/**
+ * The pin for a host the exemption above admits by its SPELLING rather than as an address the
+ * socket can take: the name `localhost` (a trailing dot and case aside) is dialled at 127.0.0.1,
+ * the bracketed `[::1]` at ::1 — never a resolver's answer. `undefined` for every other host.
+ */
+export function loopbackDialPin(host: string): readonly string[] | undefined {
+  const h = host.trim().toLowerCase().replace(/\.$/, "");
+  if (h === "localhost") return [LOCALHOST_DIAL_ADDRESS];
+  if (h === "[::1]" || h === "[0:0:0:0:0:0:0:1]") return ["::1"];
+  return undefined;
 }
 
 /** The TLS-relevant slice of `ImapFlowOptions`, and nothing else. */

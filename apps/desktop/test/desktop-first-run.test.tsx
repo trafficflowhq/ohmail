@@ -963,3 +963,146 @@ describe("adding a further mailbox to a standalone install", () => {
     expect(connected).toEqual(["mbx-for-second@example.org"]);
   });
 });
+
+describe("a mail server on this computer — the wait's own line and the server's own refusal", () => {
+  const FACTS: OnboardingFacts = {
+    door: "local", mailbox: null,
+    account: { onboardingCompletedAt: "2026-08-01T09:00:00.000Z" }, ai: "on", queuedSenders: 0,
+  };
+  const button = (el: HTMLElement, label: string): HTMLButtonElement | undefined =>
+    [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
+  const set = (input: HTMLInputElement, value: string): void => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  /** The add form on the manual preset, with `imapHost` typed and Test pressed once. */
+  async function pressTest(
+    imapHost: string, probe: FirstRunHost["probe"], over: Partial<FirstRunHost> = {},
+  ): Promise<HTMLElement> {
+    const made = (await makeHost())!;
+    const host: FirstRunHost = { ...made, probe, ...over };
+    const el = document.createElement("div");
+    document.body.append(el);
+    const root = createRoot(el);
+    mounted = root;
+    await act(async () => {
+      root.render(
+        h(ThemeProvider, null,
+          h(NextIntlClientProvider, {
+            locale: "en", messages: en as never,
+            children: h(KeymapProvider, null,
+              h(FirstRun, {
+                host, facts: FACTS, mailboxId: null, add: true, onConnected: () => {},
+                pull: { screened: 0, history: 0, pulled: 0 }, decide: null,
+                onRefresh: () => {}, onLeave: () => {},
+              })),
+          })));
+    });
+    await act(async () => {
+      (el.querySelector('input[type="radio"][value="imap"]') as HTMLInputElement).click();
+    });
+    await act(async () => {
+      set(el.querySelector('input[type="email"]') as HTMLInputElement, "me@gateway.test");
+      set(el.querySelector('input[type="password"]') as HTMLInputElement, "pw");
+      set(el.querySelector('input[id$="-imap"]') as HTMLInputElement, imapHost);
+    });
+    await act(async () => {
+      button(el, "Test connection")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    return el;
+  }
+  /* A held request is answered when its case ends, as the bridge's deadline ends a real one: the hold
+     lives beyond the form (LOW 2), so a request left out for ever would shut every later case's Test. */
+  const outstanding: Array<() => void> = [];
+  const pending = (): Promise<never> => new Promise((_resolve, reject) => {
+    outstanding.push(() => reject(new LocalWireError("cleanup", "mailbox_probe_failed", { reason: "timeout" })));
+  });
+  afterEach(async () => {
+    await act(async () => {
+      for (const end of outstanding.splice(0)) end();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+  });
+  const refusal = (details: Record<string, unknown>) => async (): Promise<never> => {
+    throw new LocalWireError("refused", "mailbox_probe_failed", { reason: "auth", transport: "imap", ...details });
+  };
+
+  it("while the engine is asked, 127.0.0.1 gets the local line and a remote host the plain one", async () => {
+    const local = await pressTest("127.0.0.1", pending);
+    expect(local.textContent).toContain(en.onboarding.testingLocal);
+    expect(button(local, "Test")?.disabled, "Test stays disabled for the wait").toBe(true);
+    // The held request answers before the remote one is asked: the hold outlives the form (LOW 2).
+    await act(async () => { for (const end of outstanding.splice(0)) end(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
+    await act(async () => { mounted?.unmount(); mounted = null; });
+    document.body.innerHTML = "";
+    const remote = await pressTest("imap.example.com", pending);
+    expect(remote.textContent).toContain("Asking imap.example.com");
+    expect(remote.textContent).not.toContain(en.onboarding.testingLocal);
+  });
+
+  it("a refusal the engine stamped localServer says the local server's sentence, not the app-password one", async () => {
+    const el = await pressTest("127.0.0.1", refusal({ localServer: true }));
+    expect(el.textContent).toContain(en.mailboxes.probe_auth_local);
+    expect(el.textContent).not.toContain(en.mailboxes.probe_auth);
+  });
+
+  it("LOW 1: a door without the long wait says the plain line for 127.0.0.1, never the two minutes", async () => {
+    const el = await pressTest("127.0.0.1", pending, { localServerWait: undefined });
+    expect(el.textContent).toContain("Asking 127.0.0.1");
+    expect(el.textContent).not.toContain(en.onboarding.testingLocal);
+  });
+
+  it("LOW 2: while the server on this computer holds a Test, an edit keeps Test shut until it answers", async () => {
+    let answer: (e: unknown) => void = () => {};
+    const held = (): Promise<never> => new Promise((_resolve, reject) => { answer = reject; });
+    const el = await pressTest("127.0.0.1", held);
+    expect(button(el, "Test")?.disabled, "Test is shut while the gateway holds the sign-in").toBe(true);
+    await act(async () => { set(el.querySelector('input[type="password"]') as HTMLInputElement, "pw-edited"); });
+    expect(button(el, "Test")?.disabled, "an edit re-opened Test under a held sign-in").toBe(true);
+    expect(el.textContent, "the wait is still said").toContain(en.onboarding.testingLocal);
+    await act(async () => {
+      answer(new LocalWireError("refused", "mailbox_probe_failed", { reason: "timeout", transport: "imap", localServer: true }));
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(button(el, "Test")?.disabled, "Test opens again once the held request answered").toBe(false);
+    expect(el.textContent, "the retired request's answer is not shown").not.toContain(en.mailboxes.probe_timeout_local);
+  });
+
+  it("LOW 2 (verify): leave setup during a held Test and open it again — no second Test is sent while the first is held", async () => {
+    let calls = 0;
+    let answer: (e: unknown) => void = () => {};
+    const held = (): Promise<never> => { calls++; return new Promise((_resolve, reject) => { answer = reject; }); };
+    const first = await pressTest("127.0.0.1", held);
+    expect(calls).toBe(1);
+    await act(async () => { button(first, en.onboarding.cancel)?.click(); });
+    await act(async () => {
+      [...first.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === en.onboarding.cancelConfirm)?.click();
+    });
+    // The shell answers onLeave by closing the stage: the form unmounts; the engine's request runs on.
+    await act(async () => { mounted?.unmount(); mounted = null; });
+    document.body.innerHTML = "";
+    const again = await pressTest("127.0.0.1", held);
+    expect(calls, "a second sign-in went to the gateway while the first was held").toBe(1);
+    expect(button(again, "Test")?.disabled, "the reopened form offers Test under a held sign-in").toBe(true);
+    expect(again.textContent, "the reopened form says what it is waiting for").toContain(en.onboarding.testingLocal);
+    await act(async () => {
+      answer(new LocalWireError("refused", "mailbox_probe_failed", { reason: "timeout", transport: "imap", localServer: true }));
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(button(again, "Test")?.disabled, "Test opens once the held request answered").toBe(false);
+  });
+
+  it("the same refusal without the stamp keeps the app-password sentence (positive control)", async () => {
+    const el = await pressTest("127.0.0.1", refusal({}));
+    expect(el.textContent).toContain(en.mailboxes.probe_auth);
+    expect(el.textContent).not.toContain(en.mailboxes.probe_auth_local);
+  });
+
+  it("an outgoing-leg timeout from it keeps the plain sentence: the two minutes are the incoming leg's", async () => {
+    const el = await pressTest("127.0.0.1", refusal({ reason: "timeout", transport: "smtp", localServer: true }));
+    expect(el.textContent).toContain(en.mailboxes.probe_timeout);
+    expect(el.textContent).not.toContain(en.mailboxes.probe_timeout_local);
+  });
+});

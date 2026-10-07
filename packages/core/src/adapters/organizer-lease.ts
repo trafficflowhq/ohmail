@@ -97,6 +97,39 @@ export interface MetaFolderLocation {
   readonly path: string;
   /** The LIST row that matched, or `null` when no such folder exists on this server. */
   readonly row: MetaFolderRow | null;
+  /**
+   * When the folder is absent: its parent `ohmail`, in the root spelling (`bare`) and the create
+   * spelling (`path`), and whether the LIST names it at either. See {@link createParentFirst}.
+   */
+  readonly parent?: { readonly bare: string; readonly path: string; readonly listed: boolean } | null;
+}
+
+/** Does this connection's greeting name DavMail — the one server the two workarounds are for. */
+export function greetsAsDavMail(client: unknown): boolean {
+  const greeting = (client as { greeting?: unknown } | null | undefined)?.greeting;
+  return typeof greeting === "string" && /\bDavMail\b/.test(greeting);
+}
+
+/**
+ * ON DAVMAIL, CREATE `ohmail` BEFORE ANYTHING UNDER IT, when the LIST names it nowhere. DavMail
+ * answers a CREATE under a missing parent `BAD … Folder 'ohmail' not found` and ends the connection
+ * (EWS and Graph createFolder split on the last `/` and need the parent, so the hierarchy form
+ * `ohmail/` fails the same way; their folders hold mail and subfolders alike, so the bare name is
+ * right). Every other server keeps the child CREATE alone: on mbox-format storage a bare `ohmail`
+ * would be a mailbox that cannot hold children. Returns whether a CREATE was sent.
+ */
+export async function createParentFirst(
+  client: { mailboxCreate(path: string): Promise<unknown> },
+  parent: MetaFolderLocation["parent"],
+  spelling: "bare" | "path",
+): Promise<boolean> {
+  if (!parent || parent.listed || !greetsAsDavMail(client)) return false;
+  try {
+    await client.mailboxCreate(parent[spelling]);
+  } catch (err) {
+    if (!/already ?exists/i.test(String((err as Error).message))) throw err;
+  }
+  return true;
 }
 
 /**
@@ -259,7 +292,15 @@ export function resolveOhmailFolder(input: {
   if (hits.length > 1) throw new AmbiguousMetaFolderError(hits.map((f) => f.path));
   const hit = hits[0];
   if (hit !== undefined) return { path: hit.path, row: hit };
-  return { path: `${primary}${bare}`, row: null };
+  // The parent's spelling is the child's minus its last segment: one alphabet for both.
+  const tail = `${delimiter}${input.canonical.slice(input.canonical.lastIndexOf("/") + 1)}`;
+  const parentBare = bare.endsWith(tail) ? bare.slice(0, bare.length - tail.length) : "";
+  const parent = parentBare === "" ? null : {
+    bare: parentBare,
+    path: `${primary}${parentBare}`,
+    listed: list.some((f) => f.path === parentBare || f.path === `${primary}${parentBare}`),
+  };
+  return { path: `${primary}${bare}`, row: null, parent };
 }
 
 /** The minimum a client has to be for {@link makeMetaFolderRef} to resolve against it. */
@@ -3207,6 +3248,7 @@ export function makeLeaseIo(
       const at = await meta.locate();
       const found = at.row;
       if (!found) {
+        await createParentFirst(client, at.parent, "path");
         try {
           const info = await client.mailboxCreate(at.path);
           // THE SERVER'S OWN ANSWER, where it gives one — `ImapAdapter.createFolder` follows the
@@ -3576,6 +3618,25 @@ interface GateRead {
 const clockSkewReported = new WeakSet<object>();
 
 /**
+ * WHICH IOs HAVE SAID THE SERVER GAVE OUR OWN CLAIM NO INTERNALDATE — so the clock-skew check above
+ * cannot run (DavMail omits it where Exchange stores none). Organizing continues and says so, once
+ * per episode.
+ */
+const serverClockMissingReported = new WeakSet<object>();
+
+/** Our own records are there, and not one carries the server's clock. */
+function ownRecordsHaveNoServerClock(records: readonly RawClaimMessage[], installId: string): boolean {
+  let own = 0;
+  for (const r of records) {
+    const c = parseClaim(r.raw, r.ref);
+    if (c === null || isMalformed(c) || c.installId !== installId) continue;
+    if (r.internalDate instanceof Date) return false;
+    own += 1;
+  }
+  return own > 0;
+}
+
+/**
  * THE OWN CLAIM A BLOCKED GATE PROBES: the one already remembered while it still stands, else the
  * oldest own claim this process wrote or one older than the stale window by the server's clock.
  * Never a younger claim under our id that this process did not write — a shared-id sibling's.
@@ -3709,6 +3770,17 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     log("lease_window_above_skew_cutoff", { staleAfterMs: staleWindowMs, effectiveMs: MAX_FUTURE_SKEW_MS });
   }
   const clockReading = ownClockReading(messages, self.installId);
+  if (clockReading === null && ownRecordsHaveNoServerClock(messages, self.installId)) {
+    if (!serverClockMissingReported.has(io)) {
+      serverClockMissingReported.add(io);
+      log("lease_server_clock_unavailable", {
+        reason: "the mail server gave this install's own claim no INTERNALDATE, so this computer's "
+          + "clock cannot be checked against the server's; organizing continues without that check",
+      });
+    }
+  } else {
+    serverClockMissingReported.delete(io);
+  }
   /**
    * A DISCREPANCY ON A RECORD THIS PROCESS DID NOT WRITE COSTS ONE RENEWAL, NOT THE MAILBOX.
    *

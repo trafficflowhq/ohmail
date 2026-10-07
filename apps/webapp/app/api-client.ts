@@ -1240,6 +1240,8 @@ export interface MailboxDTO {
    */
   errorCode?: "auth" | "connect" | "tls" | "timeout" | "storage" | "sync" | "unknown" | null;
   errorDetail?: string | null;
+  /** Beside `auth`/`timeout`: the server that refused or went quiet is on this computer (the desktop's door). */
+  errorLocalServer?: boolean;
   /**
    * The Cloud-paired desktop's count of rows its copy could not store, beside `errorCode:
    * "storage"` — see `MailboxFacts.storeRefusals`. Absent means "not stated"; no server sends it.

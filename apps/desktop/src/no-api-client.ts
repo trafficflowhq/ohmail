@@ -221,6 +221,7 @@ export interface MailboxDTO {
     organizerAcceptsRequests?: boolean;
     errorCode?: "auth" | "connect" | "tls" | "timeout" | "storage" | "sync" | "unknown" | null;
     errorDetail?: string | null;
+    errorLocalServer?: boolean;
     storeRefusals?: { count: number; retrying: number; exact: boolean };
     failedAt?: string | null;
     retryCount?: number;

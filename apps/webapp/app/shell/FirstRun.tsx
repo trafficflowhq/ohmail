@@ -11,7 +11,7 @@
  * one Escape binding (`overlay` scope).
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import {
@@ -23,6 +23,7 @@ import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
 import { useDecisionBarCopy } from "./decision-copy";
 import { useKeyBindings } from "./keymap";
 import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset } from "./providers";
+import { isLocalServerHost, probeCopyKey, refusalTransport } from "./local-server-host";
 import { noPortProbeKey } from "./no-port-sentence";
 import { PlaintextConsent } from "./PlaintextConsent";
 import {
@@ -93,6 +94,23 @@ const SETTLE_MS = 4_000;
  * past it Agree is offered and the press is a join, which yields to a live claim at the fence.
  */
 export const HOLDER_CHECK_MS = 60_000;
+
+/**
+ * TESTS A SERVER ON THIS COMPUTER IS STILL HOLDING, on the long-wait door: kept outside the form,
+ * as the desktop pane's Sign in again guard is, because leaving setup and opening it again must
+ * not send a gateway holding one sign-in a second LOGIN. Each ends when its request answers or
+ * the bridge gives it up; while any is out, Test stays shut and the wait is still said.
+ */
+let heldLocalTests = 0;
+const heldLocalListeners = new Set<() => void>();
+const tellHeld = (): void => { for (const tell of heldLocalListeners) tell(); };
+const heldLocalTestStarted = (): void => { heldLocalTests += 1; tellHeld(); };
+const heldLocalTestEnded = (): void => { heldLocalTests = Math.max(0, heldLocalTests - 1); tellHeld(); };
+const subscribeHeld = (tell: () => void): (() => void) => {
+  heldLocalListeners.add(tell);
+  return () => { heldLocalListeners.delete(tell); };
+};
+const useHeldLocalTests = (): number => useSyncExternalStore(subscribeHeld, () => heldLocalTests, () => 0);
 
 /** The history-depth options. `365` is the default and wears the word for it. */
 const WINDOWS = ["90", "180", "365", "all"] as const;
@@ -742,8 +760,13 @@ export function FirstRun({
   const [imapPort, setImapPort] = useState(String(PROVIDERS[0]!.imap.port));
   const [smtpHost, setSmtpHost] = useState(PROVIDERS[0]!.smtp.host);
   const [smtpPort, setSmtpPort] = useState(String(PROVIDERS[0]!.smtp.port));
-  const [verdict, setVerdict] = useState<null | { ok: FirstRunProbeOk } | { reason: string | null; message: string | null }>(null);
+  const [verdict, setVerdict] = useState<
+    | null | { ok: FirstRunProbeOk }
+    | { reason: string | null; message: string | null; localServer: boolean; transport: "imap" | "smtp" }
+  >(null);
   const [testing, setTesting] = useState(false);
+  /* A Test a server on this computer is still holding — kept beyond this form, see `heldLocalTests`. */
+  const heldTest = useHeldLocalTests();
   /**
    * WHICH TEST IS THE NEWEST. Clearing the verdict when a field changes is only half the rule —
    * a test already IN FLIGHT resolves later and does not know the form has moved. Start a test
@@ -848,18 +871,25 @@ export function FirstRun({
 
   const test = useCallback(async () => {
     const mine = ++testSeq.current;
+    const input = mailboxInput();
+    const holds = host.localServerWait === true && isLocalServerHost(input.imap.host);
     setTesting(true);
     setVerdict(null);
+    if (holds) heldLocalTestStarted();
     try {
-      const ok = await host.probe(mailboxInput());
+      const ok = await host.probe(input);
       if (testSeq.current !== mine) return;
       setVerdict({ ok });
     } catch (err) {
       if (testSeq.current !== mine) return;
       openOffer(err);
-      setVerdict({ reason: host.probeReason(err), message: host.probeMessage(err) });
+      setVerdict({
+        reason: host.probeReason(err), message: host.probeMessage(err),
+        localServer: host.probeLocalServer?.(err) === true, transport: refusalTransport(err),
+      });
     } finally {
       if (testSeq.current === mine) setTesting(false);
+      if (holds) heldLocalTestEnded();
     }
   }, [host, mailboxInput, openOffer]);
 
@@ -1278,13 +1308,16 @@ export function FirstRun({
               <SettingsActions>
                 {/* NOT a submit: this button asks the mail server a question and the form's ↵
                     belongs to the step's forward verb. */}
-                <Button type="button" onClick={() => void test()} disabled={testing || busy}>
+                <Button type="button" onClick={() => void test()} disabled={testing || heldTest !== 0 || busy}>
                   {verdict === null ? t("test") : t("testAgain")}
                 </Button>
               </SettingsActions>
-              {testing ? (
-                <SettingsVerdict state="wait" headline={t("testing", { host: imapHost.trim() })} />
-              ) : null}
+              {/* A SERVER ON THIS COMPUTER may hold the sign-in while it signs in elsewhere (a
+                  gateway such as DavMail); on the door that waits for it, the line says so for as
+                  long as that request is out, an edit or not. The answer's sentences are the engine's. */}
+              {heldTest !== 0 ? <SettingsVerdict state="wait" headline={t("testingLocal")} />
+                : testing ? <SettingsVerdict state="wait" headline={t("testing", { host: imapHost.trim() })} />
+                : null}
               {!testing && verdict !== null && "ok" in verdict ? (
                 <SettingsVerdict
                   state="ok"
@@ -1324,7 +1357,7 @@ export function FirstRun({
                     const noPort = preset.manual ? null : noPortProbeKey(verdict.reason, false);
                     if (noPort) return tm(noPort, { field: "none" });
                     return verdict.reason
-                      ? tm(`probe_${verdict.reason}` as "probe_auth")
+                      ? tm(probeCopyKey(verdict.reason, verdict.localServer, verdict.transport) as "probe_auth")
                       : verdict.message ?? tm("probe_unknown");
                   })()}
                 />

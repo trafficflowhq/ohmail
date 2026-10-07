@@ -680,6 +680,8 @@ export interface MailboxFacts {
   errorCode: string | null;
   /** The allowlisted token beside it; one of them changes the sentence (`mailboxErrorKey`). */
   errorDetail?: string | null;
+  /** Beside `auth`/`timeout`: the server is on this computer, said as its own (`mailboxErrorKey`). */
+  errorLocalServer?: boolean;
   /**
    * WHEN THIS INSTALL LAST FOUND THE MAIL SERVER UNREACHABLE, from the outage's first observation —
    * the local door's own socket, overlaid on `GET /mailboxes`; absent on every other door and
@@ -1409,6 +1411,8 @@ export interface MailState {
   errorCode: string | null;
   /** `mailboxError` only — the detail token beside it, for `mailboxErrorKey`. */
   errorDetail?: string | null;
+  /** `mailboxError` only — the failure is a server on this computer's own (`mailboxErrorKey`). */
+  errorLocalServer?: boolean;
   /** `mailboxError` only — the mailbox's server cannot be reached from here right now. */
   unreachable?: boolean;
   /** `mailboxError` only — the refused-row count beside `errorCode: "storage"`, when stated. */
@@ -2116,6 +2120,7 @@ function climb(input: MailStateInputs): MailState {
       count: mirrored,
       errorCode: failed.errorCode ?? (unreachable ? "connect" : "unknown"),
       ...(failed.errorDetail ? { errorDetail: failed.errorDetail } : {}),
+      ...(failed.errorLocalServer === true ? { errorLocalServer: true } : {}),
       address: failed.address,
       ...(unreachable ? { unreachable } : {}),
       ...(failed.storeRefusals ? { storeRefusals: failed.storeRefusals } : {}),

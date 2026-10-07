@@ -407,11 +407,15 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, m
 
     case "mailboxError": {
       const said = mailboxErrorKey(state.errorCode, state.errorDetail, state.storeRefusals,
-        (r) => storeRefusalsFigure(r, (figure) => tm("storeRefusalsFloor", { count: figure })));
+        (r) => storeRefusalsFigure(r, (figure) => tm("storeRefusalsFloor", { count: figure })),
+        state.errorLocalServer);
+      /* A server on this computer that went quiet mid-sign-in is not one this install cannot
+         reach: its own sentence outranks the outage line. */
+      const localSaid = state.errorLocalServer === true && said.key.endsWith("_local");
       return {
         tone: "warn", role: "status", warn: true, busy: false,
         // One sentence for a server this install cannot reach, from the outage's first minute.
-        title: state.unreachable ? t("unreachable") : tm(said.key, said.values),
+        title: state.unreachable && !localSaid ? t("unreachable") : tm(said.key, said.values),
         detail: readable(state.address),
         link: settings,
       };

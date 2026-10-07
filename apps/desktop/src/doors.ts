@@ -22,6 +22,7 @@ import { originNeedsPin, parsePairLink, type PairLink } from "@ohmail/client-eng
 
 import { BUILD_PLATFORM } from "./platform.js";
 import { hostLabelOf } from "./host-label.js";
+import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
 import {
   AT_HOST_WAIT_MS,
   bridgeAvailable,
@@ -1414,6 +1415,7 @@ async function sealLocalPassword(
     const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(mailboxId)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
+      deadlineMs: LOCAL_SERVER_CALL_DEADLINE_MS,
       body: JSON.stringify({
         /* `smtpUnsettled: ""` SETTLES IT, and it is stated on every seal that carries a submission
            block. The engine's local route retries without that block when the submission dial is

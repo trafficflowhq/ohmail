@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { resolveCname as dnsResolveCname } from "node:dns/promises";
 import { type MailboxErrorCode } from "@trafficflow/db";
 import {
-  ImapAdapter, buildImapAuth, verifySmtpLogin,
-  type ImapConfig, type SmtpLoginProof,
+  ImapAdapter, buildImapAuth, loopbackHarnessReason, verifySmtpLogin,
+  type ImapConfig, type NetTimeouts, type SmtpLoginProof,
 } from "@trafficflow/core/adapters/imap";
 import { MAIL_DIAL_PORTS, MAX_PINNED_ADDRESSES, MailDialRefusal, clearMailDial } from "@trafficflow/core/net";
 import {
@@ -150,7 +150,8 @@ export function probeHostGuardFor(deps: ApiDeps): ProbeHostGuard {
 export type ImapProbeVerdict =
   | { verdict: "ok"; proven?: ProvenEndpoint; folders?: number }
   | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
-  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail };
+  /** `localServer`: refused by a server on this computer, dialled under the local wait. */
+  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail; localServer?: true };
 
 /**
  * What the probe is asked to try — a union, because there are two kinds of credential. `pass` is
@@ -613,6 +614,13 @@ export interface ImapProbeOptions {
    * sentence, and a resolver outage degrades to the plain refusal.
    */
   resolveCname?: (host: string) => Promise<string | null>;
+  /**
+   * A SERVER ON THIS COMPUTER GETS THE SYNC DIAL'S WAIT: for a host `loopbackHarnessReason` admits,
+   * the IMAP leg dials with these timeouts and the call's deadline is their sum, derived here and
+   * never a second number. A local gateway (DavMail) holds the LOGIN while its own sign-in runs.
+   * The desktop's local door passes it, nothing else does (a census pins the one caller).
+   */
+  localServerDial?: NetTimeouts;
 }
 
 /**
@@ -629,7 +637,8 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
 
   const hostGuard = probeHostGuardFor(deps);
 
-  return async (input: ImapProbeInput): Promise<ImapProbeVerdict> => {
+  const probeOnce = async (input: ImapProbeInput, local: NetTimeouts | null): Promise<ImapProbeVerdict> => {
+    const callDeadlineMs = local ? local.connectionMs + local.greetingMs + local.socketMs : deadlineMs;
     // SSRF/port gate BEFORE admission and before any socket: on the hosted deployment this refuses
     // a host that resolves to a private/loopback/link-local address and a non-mail port, closing
     // the connect oracle and the cert-identity disclosure at the network layer. No-op on a local
@@ -652,7 +661,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
     if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
 
     const startedAt = Date.now();
-    const budgetLeft = (): number => deadlineMs - (Date.now() - startedAt);
+    const budgetLeft = (): number => callDeadlineMs - (Date.now() - startedAt);
 
     // Two arms, one dialler. The password arm goes through the shared builder with no token
     // source: it yields `{ user, pass }` here, and an oauth2 `authType` — were one ever to arrive
@@ -684,7 +693,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
         ...(allowInsecure ? { allowInsecure: true } : {}),
         ...(dialPin ? { pin: dialPin } : {}),
         auth,
-        timeouts: PROBE_TIMEOUTS,
+        timeouts: local ?? PROBE_TIMEOUTS,
       });
       /** Every failing ending: destroy, then close, then the caller may release the slot. */
       const putDown = async (): Promise<void> => {
@@ -837,6 +846,16 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
         deps.logger?.warn?.("imap_probe_slot_release_failed", { err });
       }
     }
+  };
+
+  /* THE ENGINE'S OWN READING: a refusal this call dialled under the local wait says so, and only
+     that one — a door without the option, or a remote host, answers exactly as before. */
+  return async (input: ImapProbeInput): Promise<ImapProbeVerdict> => {
+    /* The wait for THIS call, decided once from the typed host. */
+    const local = opts.localServerDial && loopbackHarnessReason(input.imap.host) !== null
+      ? opts.localServerDial : null;
+    const verdict = await probeOnce(input, local);
+    return local !== null && verdict.verdict === "refuse" ? { ...verdict, localServer: true } : verdict;
   };
 }
 

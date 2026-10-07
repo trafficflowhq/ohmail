@@ -375,7 +375,8 @@ export type MailboxProbeVerdict =
     folders?: number;
   }
   | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
-  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail };
+  /** `localServer`: the desktop door's probe dialled a server on this computer under its long wait. */
+  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail; localServer?: true };
 
 /**
  * The SMTP sibling of {@link MailboxProbeInput} — same discipline (plaintext password, so the
@@ -613,9 +614,25 @@ const tlsRefusalMessage = (tls: ProbeTlsDetail, transport: ProbeTransport): stri
 /** Which transport a probe refusal is about — the webapp uses it to blame the right field. */
 export type ProbeTransport = "imap" | "smtp";
 
-const probeRefused = (code: MailboxErrorCode, tls?: ProbeTlsDetail, transport: ProbeTransport = "imap"): ServiceError => {
+/**
+ * A SERVER ON THIS COMPUTER (a loopback host, dialled under the desktop door's long wait) is a
+ * gateway or a local server, never a provider: its NO is its own sign-in refusing, and its silence
+ * is that sign-in still running. Said only where the probe's verdict carries the reading, so a door
+ * without the wait (Cloud, self-host) answers its loopback refusals exactly as before.
+ */
+const LOCAL_PROBE_REFUSAL: Partial<Record<MailboxErrorCode, string>> = {
+  auth: "The server on this computer refused the sign-in. It runs here, so its own window or log "
+    + "says why. If it is a gateway such as DavMail, finish its sign-in there, then test again.",
+  timeout: "The server on this computer did not answer in time. If it is a gateway such as DavMail, "
+    + "finish what its own window asks for, then test again.",
+};
+
+const probeRefused = (
+  code: MailboxErrorCode, tls?: ProbeTlsDetail, transport: ProbeTransport = "imap", localServer = false,
+): ServiceError => {
   const r = PROBE_REFUSAL[code];
-  let message = code === "tls" && tls ? tlsRefusalMessage(tls, transport) : r.message;
+  let message = code === "tls" && tls ? tlsRefusalMessage(tls, transport)
+    : (localServer ? LOCAL_PROBE_REFUSAL[code] : undefined) ?? r.message;
   // The base sentences were written for the connect (IMAP) flow; an SMTP refusal must not tell
   // the user to check an IMAP field that is fine.
   if (transport === "smtp" && !(code === "tls" && tls)) {
@@ -625,7 +642,7 @@ const probeRefused = (code: MailboxErrorCode, tls?: ProbeTlsDetail, transport: P
   }
   return new ServiceError(
     "mailbox_probe_failed", r.status, message,
-    { reason: code, transport, ...(tls ? { tls } : {}) },
+    { reason: code, transport, ...(tls ? { tls } : {}), ...(localServer ? { localServer: true } : {}) },
     r.retryable,
   );
 };
@@ -635,7 +652,8 @@ const probeRefused = (code: MailboxErrorCode, tls?: ProbeTlsDetail, transport: P
  * probe before it — the local door's "Sign in again" on a mailbox that never dialled. One sentence
  * per cause, so the field shows what a refused probe would have shown.
  */
-export const launchRefused = (code: "auth" | "tls"): ServiceError => probeRefused(code);
+export const launchRefused = (code: "auth" | "tls", localServer = false): ServiceError =>
+  probeRefused(code, undefined, "imap", localServer);
 
 /**
  * A credential write reached a write path with no probe to try it with.
@@ -1090,7 +1108,7 @@ export class MailboxService {
       },
     });
 
-    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true);
     // `store_unverified` is reported as a FAILURE here — the one place this method parts company
     // with `create`. There, the verdict means "the server was reached and declined to serve right
     // now" — positive evidence about host, port and TLS, none about the password — so the
@@ -1218,7 +1236,7 @@ export class MailboxService {
           allowInsecure: body.imap.allowInsecure === true ? true : undefined,
         },
       });
-      if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
+      if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true);
       // WHAT IS STORED IS WHAT WAS PROVED. The ladder may have succeeded on a different
       // port/TLS mode than the body carried (or the body carried none), and storing the
       // body's guess would hand the worker a config nobody tried. A probe fake that answers
@@ -1402,7 +1420,7 @@ export class MailboxService {
         user, accessToken: o.accessToken,
       },
     });
-    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true);
 
     /**
      * The non-secret half of the credential, and every field here is read by a named consumer:
@@ -2511,7 +2529,7 @@ export class MailboxService {
         allowInsecure: patch.imap?.allowInsecure === true ? true : undefined,
       },
     });
-    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true);
     /**
      * The PROVEN combination overrides the merge, exactly as on create — see
      * {@link mergedTransportMeta}, which is where that arithmetic lives now so the in-transaction

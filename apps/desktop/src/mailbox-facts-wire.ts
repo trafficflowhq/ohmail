@@ -26,6 +26,8 @@ interface MailboxWire {
   errorCode?: string | null;
   /** The allowlisted token beside it — one of them changes the row's sentence. */
   errorDetail?: string | null;
+  /** Beside `auth`/`timeout`: that server is on this computer (the engine's overlay says so). */
+  errorLocalServer?: boolean;
   /** The Cloud mirror's refused-row count beside `errorCode: "storage"` (`decorateStoreStuck`). */
   storeRefusals?: { count: number; retrying: number; exact: boolean };
   /** The local door's outage clock (`MailboxFacts.unreachableSince`); absent while it answers. */
@@ -168,6 +170,7 @@ export async function readMailboxFactsVia(
     status: m.status,
     errorCode: m.errorCode ?? null,
     errorDetail: m.errorDetail ?? null,
+    ...(m.errorLocalServer === true ? { errorLocalServer: true } : {}),
     // Forwarded only in its whole shape: a partial one would state a count nobody measured.
     ...(isStoreRefusals(m.storeRefusals) ? { storeRefusals: m.storeRefusals } : {}),
     ...(typeof m.unreachableSince === "string" ? { unreachableSince: m.unreachableSince } : {}),

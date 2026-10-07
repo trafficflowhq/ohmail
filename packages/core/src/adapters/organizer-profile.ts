@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
-  DEFAULT_STALE_AFTER_MS, META_FOLDER, MetaEnumRefusedError, enumerateMetaFolder, isMalformed,
-  makeMetaFolderRef, metaReadBudget, parseClaim, withServerClock,
+  DEFAULT_STALE_AFTER_MS, META_FOLDER, MetaEnumRefusedError, createParentFirst, enumerateMetaFolder,
+  isMalformed, makeMetaFolderRef, metaReadBudget, parseClaim, withServerClock,
   type MetaEnumCode, type MetaFolderClient,
 } from "./organizer-lease.js";
 import type { ImapDeadline } from "./imap-bounds.js";
@@ -1265,6 +1265,7 @@ export function makeProfileIo(
       const at = await meta.locate();
       const found = at.row;
       if (!found) {
+        await createParentFirst(client, at.parent, "path");
         try {
           const info = await client.mailboxCreate(at.path);
           const landed = (info as { path?: string } | undefined)?.path;

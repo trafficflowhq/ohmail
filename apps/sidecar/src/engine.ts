@@ -7,7 +7,8 @@ import {
 } from "@trafficflow/core/mail";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
-  isImapBoundExceeded, type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
+  isImapBoundExceeded, loopbackHarnessReason, type ImapConfig, type MailboxAdapter, type CredMetaAuth,
+  type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The release refusal's OWN class, from the one module that throws it: `releaseOwnClaim` tells a
@@ -1391,6 +1392,19 @@ export function certificateRefused(err: unknown): boolean {
 }
 
 /**
+ * THE SERVER WENT QUIET MID-DIAL: imapflow's socket-inactivity timer (`ETIMEOUT`), the one a held
+ * sign-in ends on — two minutes of silence on the sync dial. On a server on this computer that is
+ * a gateway still running its own sign-in: said apart, never a stop, the ladder re-dials.
+ */
+export function dialWentQuiet(err: unknown): boolean {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    if ((e as { code?: unknown }).code === "ETIMEOUT") return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
  * Did the server reject our credentials — one bit, deliberately narrower than the worker's.
  * `classifyMailboxError` is the real taxonomy and this is not a second copy: it answers one question
  * where that answers six, and importing it would bring `@trafficflow/db/cloud`'s hosted Postgres pool
@@ -1560,6 +1574,8 @@ export async function discloseLocalSyncFailures(
     mailboxId: string;
     connection: {
       unreachableSince: Date | null; signInRefused: boolean; plaintextRefused?: boolean;
+      /** A server on this computer, and whether its last dial ended on its silence. */
+      localServer?: boolean; signInWentQuiet?: boolean;
       /** Absent on a caller that cannot say, which overlays nothing and leaves the outage arm. */
       credentialBlocked?: { state: "unreadable" | "foreign-host"; confirmed: boolean } | null;
       /** No password on this install, and since when — both, or the arm overlays nothing. */
@@ -1596,8 +1612,14 @@ export async function discloseLocalSyncFailures(
   /* NO PASSWORD STORED, from the moment the runtime entered that state: nothing refused it and
      nothing dials it, so it is a block (the strip's "Not syncing") and never an error or a clock. */
   const awaiting = new Map<string, string>();
+  /* A SERVER ON THIS COMPUTER behind an `auth` or `timeout` failure: the row says it was that
+     server's own sign-in, beside the code and never as a new member of the taxonomy. */
+  const local = new Set<string>();
   for (const r of states) {
-    if (r.connection.signInRefused) failures.set(r.mailboxId, "auth");
+    if (r.connection.signInRefused) {
+      failures.set(r.mailboxId, "auth");
+      if (r.connection.localServer === true) local.add(r.mailboxId);
+    }
     else if (r.connection.plaintextRefused === true) {
       /* Settled at once: nothing was dialled, and the sentence is not "can't reach the server". */
       failures.set(r.mailboxId, "connect");
@@ -1614,7 +1636,11 @@ export async function discloseLocalSyncFailures(
       }
     } else if (r.connection.unreachableSince !== null) {
       outages.set(r.mailboxId, r.connection.unreachableSince.toISOString());
-      if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
+      if (r.connection.localServer === true && r.connection.signInWentQuiet === true) {
+        /* Settled at once: the dial already waited the two minutes this names. */
+        failures.set(r.mailboxId, "timeout");
+        local.add(r.mailboxId);
+      } else if (at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
         failures.set(r.mailboxId, "connect");
       }
     } else if (r.connection.writeOffsHeldSince instanceof Date || r.connection.storeFaultSince instanceof Date) {
@@ -1664,6 +1690,7 @@ export async function discloseLocalSyncFailures(
       ...(row as object),
       ...checked,
       ...(code !== undefined ? { status: "error", errorCode: code } : {}),
+      ...(code !== undefined && id !== null && local.has(id) ? { errorLocalServer: true } : {}),
       ...(detail !== undefined ? { errorDetail: detail } : {}),
       ...(since !== undefined ? { unreachableSince: since } : {}),
       ...(blocked !== undefined
@@ -2129,9 +2156,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * unaffected: `config.adapterFactory` is absent there and both probe factories fall through
      * to a real `ImapAdapter`.
      */
-    const probeOpts = config.adapterFactory
-      ? { adapterFactory: (cfg: ImapConfig) => config.adapterFactory!(cfg, ONE_SHOT_DIAL) as unknown as ProbeDialer }
-      : {};
+    const probeOpts = {
+      /* A server on this computer gets the sync dial's own wait (`ImapProbeOptions.localServerDial`):
+         ONE key outside the seam's ternary, so the tested branch and production cannot differ. */
+      localServerDial: SIDECAR_NET_TIMEOUTS,
+      ...(config.adapterFactory
+        ? { adapterFactory: (cfg: ImapConfig) => config.adapterFactory!(cfg, ONE_SHOT_DIAL) as unknown as ProbeDialer }
+        : {}),
+    };
     /**
      * …and the submission leg, on the same condition and for the same reason. A mailbox has two
      * servers and adding one probes both; intercepting the incoming dial while the outgoing one
@@ -2832,7 +2864,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           + "just stored was removed again, from the store and from this mailbox's memory, and "
           + "the press is answered with the refusal",
       });
-      throw launchRefused(refused);
+      // This engine dials every mailbox with the long wait, so a loopback host's refusal is said as its own.
+      throw launchRefused(refused, loopbackHarnessReason(rt.imap.host) !== null);
     };
 
     /**
@@ -3323,6 +3356,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * and `test/credential-paths-clear-refusal.test.ts` is the census over which path reaches which.
        */
       let signInRefused = false;
+      /** The last failed dial ended on the server's silence ({@link dialWentQuiet}); a dial or a served cycle clears it. */
+      let wentQuiet = false;
       /**
        * THE SERVER'S CERTIFICATE WAS REFUSED — see {@link certificateRefused}. Stops the automatic
        * ladder (a certificate does not heal in five seconds, and a phone that keeps dialling says
@@ -3946,6 +3981,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (stopped) return;
         leaseUnavailableSince = null;
         leaseUnavailableCycles = 0;
+        wentQuiet = false;
         if (connectionDeadBy === "bound") {
           connectionDeadSince = null;
           connectionDeadBy = null;
@@ -7187,6 +7223,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * saying "unreachable since" the ORIGINAL instant — the outage is not over. */
           connectionDeadSince = null;
           connectionDeadBy = null;
+          wentQuiet = false;
           redialAttempts = 0;
           redialNotBefore = 0;
           /* The handshake went through, so the certificate is no longer the answer. */
@@ -7240,6 +7277,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              its clock starts; any other death already armed it and keeps its first instant. */
           outageSince ??= connectionDeadSince;
           if (err instanceof PlaintextDialRefused) plaintextRefusedNow = true;
+          wentQuiet = dialWentQuiet(err);
           if (certificateRefused(err)) {
             /* No password was sent: the platform refused the handshake before LOGIN. Force or
                not, the press floor rations the next ask; the automatic ladder stops here. */
@@ -7415,6 +7453,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                answered and said no is the wrong sentence: it sends somebody to look at their
                network when the answer is their password. */
             signInRefused,
+            /* A SERVER ON THIS COMPUTER (a gateway such as DavMail): its NO and its silence are its
+               own sign-in's, said apart. From the host this runtime dials NOW, which moves. */
+            localServer: loopbackHarnessReason(imapConfig.host) !== null,
+            signInWentQuiet: wentQuiet,
             /* THE CERTIFICATE, named apart from an outage: nothing is re-dialling it. */
             certificateRefused: certificateRefusedNow,
             /* THE PLAINTEXT SERVER OFF THE PERSON'S NETWORK, named apart from an outage too. */
@@ -7571,6 +7613,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           let launched: { leaseRead: boolean; drainError?: unknown };
           try {
             launched = await dialAndGate();
+            wentQuiet = false;
           } catch (err) {
             /* A launch that could not dial is an OUTAGE, not a dead mailbox. `connect()` can reject
              * with the adapter emitting nothing (refused TCP, TLS failure, no greeting), so no
@@ -7581,6 +7624,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * catch has ALREADY closed it (`connection-release.e2e.test.ts`), and a second close
              * here closed the login twice. */
             noteConnectionDead(err, generation, null);
+            wentQuiet = dialWentQuiet(err);
             if (certificateRefused(err)) certificateRefusedNow = true;
             if (err instanceof PlaintextDialRefused) plaintextRefusedNow = true;
             if (credentialsRefused(err)) {
@@ -8658,6 +8702,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               reachable: r.connection.reachable,
               unreachableSince: r.connection.unreachableSince?.toISOString() ?? null,
               signInRefused: r.connection.signInRefused,
+              /* A SERVER ON THIS COMPUTER: whose refusal or silence the row is saying. */
+              localServer: r.connection.localServer === true,
+              signInWentQuiet: r.connection.signInWentQuiet === true,
               /* A PLAINTEXT SERVER OFF THE PERSON'S OWN NETWORK — nothing was dialled. */
               plaintextRefused: r.connection.plaintextRefused === true,
               /* NO PASSWORD FOR THIS MAILBOX ON THIS COMPUTER — a flat boolean, because there is

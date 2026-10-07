@@ -70,7 +70,7 @@ import {
   DEFAULT_SENT_HISTORY_MESSAGES,
   DEFAULT_SYNC_BATCH_MAX_MESSAGES, DEFAULT_SYNC_BATCH_MAX_BYTES, DEFAULT_SYNC_BATCH_MAX_FLAGS,
   DEFAULT_PASSIVE_FOLDERS_MAX, PASSIVE_FOLDERS_MAX_NO_STATUS, passiveFolderExclusion,
-  imapTlsFloor, smtpTlsFloor,
+  imapTlsFloor, smtpTlsFloor, loopbackDialPin, LOCALHOST_DIAL_ADDRESS,
   type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter,
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
   type BudgetStop, type MessageSite,
@@ -95,7 +95,7 @@ import { pinnedLookup } from "../net/pinned-lookup.js";
 import {
   AmbiguousMetaFolderError,
   makeLeaseIo, makeLeasePeekIo, makeRequestReaderIo, makeRequestOrganizerIo, personalNamespacesOf,
-  resolveOhmailFolder,
+  greetsAsDavMail, resolveOhmailFolder,
   type LeaseImapClient, type LeaseIo, type LeasePeekIo, type MetaNamespaceSource,
   type RequestReaderIo, type RequestOrganizerIo,
 } from "./organizer-lease.js";
@@ -307,7 +307,8 @@ export function imapFlowOptions(
 ): ImapFlowOptions {
   const t: NetTimeouts = { ...DEFAULT_NET_TIMEOUTS, ...(config.timeouts ?? {}) };
   const floor = imapTlsFloor(config.host, config.secure, config.allowInsecure === true).options;
-  const pin = dialPin(config.pin);
+  // `localhost` is exempt from the floor by name, so it is dialled at 127.0.0.1 whatever is pinned.
+  const pin = loopbackDialPin(config.host) ?? dialPin(config.pin);
   return {
     // `config.auth` is the RESOLVED wire form: `{ user, pass }` or `{ user, accessToken }`. This
     // function stays pure/sync — the OAuth CALLBACK is awaited by `connect()` BEFORE it reaches here,
@@ -393,10 +394,14 @@ export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options 
   const smtp = config.smtp;
   if (!smtp) throw new Error("smtpTransportOptions(): ImapConfig.smtp is not configured");
   const t: NetTimeouts = { ...DEFAULT_NET_TIMEOUTS, ...(config.timeouts ?? {}) };
-  const pin = dialPin(smtp.pin);
+  const loop = loopbackDialPin(smtp.host);
+  const pin = loop ?? dialPin(smtp.pin);
+  const named = loop?.[0] === LOCALHOST_DIAL_ADDRESS;
   return {
     host: pin ? pin[0]! : smtp.host, port: smtp.port,
     ...smtpTlsFloor(smtp.host, smtp.secure, smtp.allowInsecure === true).options,
+    // The pinned `localhost` keeps its name for the certificate, as the floor's own pin does.
+    ...(named ? { servername: "localhost" } : {}),
     auth: smtp.auth,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
     // A send passes bytes, so no field may name a file or URL (nodemailer-transport-access-census).
@@ -1089,6 +1094,45 @@ function leadWith(folders: readonly string[], lead: string | undefined): string[
   return at <= 0 ? [...folders] : [folders[at]!, ...folders.filter((f) => f !== lead)];
 }
 
+/**
+ * DAVMAIL ADVERTISES UIDPLUS AND NEVER ANSWERS `UID EXPUNGE` (its 7.0.0 `uid` branch handles FETCH,
+ * SEARCH, STORE, COPY and MOVE only), so every `messageDelete(…, { uid: true })` waited out the socket
+ * timeout and lost the connection. On a DavMail-greeted connection a removal in `ohmail/_meta`, where
+ * every message is a record of ours, is `UID STORE \Deleted` and a plain EXPUNGE (UIDPLUS withheld
+ * for the call). In every other folder — `ohmail/Screener` and its siblings hold a person's mail —
+ * it is the STORE alone: a plain EXPUNGE would also take what another client flagged and left.
+ */
+export function withholdUidExpunge(client: unknown): boolean {
+  const c = client as {
+    capabilities?: Map<string, unknown>;
+    mailbox?: { path?: unknown; delimiter?: unknown } | false | null;
+    messageDelete?: (range: unknown, options?: unknown) => Promise<unknown>;
+    messageFlagsAdd?: (range: unknown, flags: string[], options?: unknown) => Promise<unknown>;
+  };
+  if (!greetsAsDavMail(client)) return false;
+  if (typeof c.messageDelete !== "function" || typeof c.messageFlagsAdd !== "function") return false;
+  const original = c.messageDelete.bind(client);
+  const flag = c.messageFlagsAdd.bind(client);
+  c.messageDelete = async (range: unknown, options?: unknown): Promise<unknown> => {
+    if (!isMetaFolder(c.mailbox)) return await flag(range, ["\\Deleted"], options);
+    const had = c.capabilities?.get("UIDPLUS");
+    c.capabilities?.delete("UIDPLUS");
+    try {
+      return await original(range, options);
+    } finally {
+      if (had !== undefined) c.capabilities?.set("UIDPLUS", had);
+    }
+  };
+  return true;
+}
+
+/** Is the SELECTED folder `ohmail/_meta`, the one folder whose every message is ohmail's own record? */
+function isMetaFolder(mailbox: { path?: unknown; delimiter?: unknown } | false | null | undefined): boolean {
+  if (!mailbox || typeof mailbox.path !== "string") return false;
+  const d = typeof mailbox.delimiter === "string" && mailbox.delimiter.length === 1 ? mailbox.delimiter : "/";
+  return mailbox.path === `ohmail${d}_meta`;
+}
+
 export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private client!: ImapFlow;
   private transporter: Transporter | null = null;
@@ -1455,6 +1499,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       this.guardAsyncErrors();
       await this.client.connect();
     }
+    withholdUidExpunge(this.client);
     const list = await this.listBounded();
     /**
      * One alphabet for the whole adapter, and the NAMESPACE wins. Reading the LIST alone let the
@@ -1652,6 +1697,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      * spelling; `connect()` reads the namespace delimiter first for the same reason.
      */
     const namespaces = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
+    /* On DavMail only, `ohmail` before the first child CREATE where the LIST names it nowhere, once
+       per call, asked at the door like the child. Why, and why DavMail alone: `createParentFirst`. */
+    let parentAsked = !greetsAsDavMail(this.client);
     for (const canonical of OHMAIL_FOLDERS) {
       // The pile still lives at the legacy name (the rename above was refused): creating
       // `ohmail/News` beside it would fork the tree. The resolver reaches Reads meanwhile.
@@ -1660,8 +1708,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
          A mutable binding here is the shape the defect had — `path = at.path` — so the next
          person to reach for it has to change the declaration first and think about why. */
       const path = this.toServerPath(canonical);
+      let parent: ReturnType<typeof resolveOhmailFolder>["parent"] = null;
       try {
         const at = resolveOhmailFolder({ list, bare: path, namespaces, canonical });
+        parent = at.parent ?? null;
         /**
          * A match is not enough to skip a CREATE — whose folder is it? The resolution's
          * no-NAMESPACE branch accepts a prefix whose parent the server merely LISTs (a customer's
@@ -1685,6 +1735,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
            create-if-absent, and refusing to connect over it would be a worse answer than the
            behaviour this replaced. Fall through to the root-named CREATE the server will file
            under its own prefix anyway, and let "already exists" absorb it as it always did. */
+      }
+      if (!parentAsked && parent !== null) {
+        parentAsked = true;
+        if (!parent.listed) {
+          this.admitWrite(door, "folder_create");
+          try {
+            // The child's own spelling, unprefixed: the server files both under its prefix alike.
+            await this.client.mailboxCreate(parent.bare);
+          } catch (err) {
+            if (!/already ?exists/i.test(String((err as Error).message))) throw err;
+          }
+        }
       }
       this.admitWrite(door, "folder_create");
       try {

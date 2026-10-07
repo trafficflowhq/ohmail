@@ -76,6 +76,8 @@ describe("the desktop mailbox-facts seam", () => {
       status: "connected",
       errorCode: null,
       errorDetail: "MAILBOX_PLAINTEXT_REFUSED",
+      /* Beside `auth`/`timeout` the engine says the server is on this computer (a gateway). */
+      errorLocalServer: true,
       /* The local door's outage clock, overlaid on the row from the first failed dial: the list's
          status line and a Pull press say "can't reach the mail server" from it. */
       unreachableSince: "2026-09-02T10:45:00.000Z",
@@ -167,6 +169,7 @@ describe("the desktop mailbox-facts seam", () => {
     expect(got!.hostedMessageCount).toBe(4200);
     expect(got!.messageCount).toBe(4210);
     expect(got!.pendingMoves).toBe(4);
+    expect(got!.errorLocalServer).toBe(true);
     /* Untouched, path and all: the rail and search derive the leaf themselves, and a seam that
        normalised it here would put two spellings of one folder into the product. */
     expect(got!.junkFolder).toBe("INBOX/Junk");

@@ -15,7 +15,7 @@ AGPL-3.0, no account.
 
 Any IMAP mailbox, Gmail and Microsoft 365 / Exchange\*.
 
-\* Microsoft 365 and Exchange connect with your Microsoft sign-in on ohmail Cloud and on self-hosted servers set up for it; some organizations require an admin to approve ohmail first.
+\* Microsoft 365 and Exchange connect with your Microsoft sign-in on ohmail Cloud and on self-hosted servers set up for it; some organizations require an admin to approve ohmail first. On the desktop app, a local gateway that speaks IMAP can be added — see [Local mail gateway](docs/local-mail-gateway.md).
 
 [**Download the latest release**](https://github.com/trafficflowhq/ohmail/releases/latest) ·
 [try the demo in your browser](https://ohmail.app/demo) ·

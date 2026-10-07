@@ -367,6 +367,8 @@ interface BridgeInit {
   headers?: unknown;
   body?: unknown;
   signal?: AbortSignal;
+  /** This call's own deadline (`local-server-deadline.ts`); absent is the one minute. */
+  deadlineMs?: number;
 }
 
 /**
@@ -399,7 +401,12 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
       headers: headerPairs(options.headers),
       body: bodyBytes(options.body),
     }),
-    options.signal ? { signal: options.signal } : {},
+    {
+      ...(options.signal ? { signal: options.signal } : {}),
+      /* Only when present: `withDeadline` refuses `{ ms: undefined }` by name, so forwarding an
+         absent field would refuse every call that names none. */
+      ...(options.deadlineMs !== undefined ? { ms: options.deadlineMs } : {}),
+    },
   );
   return toResponse(asBytes(bytes), url);
 };

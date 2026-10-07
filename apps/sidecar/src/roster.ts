@@ -125,6 +125,13 @@ export interface MailboxConnectionState {
    */
   signInRefused: boolean;
   /**
+   * The server is on this computer (a loopback host): its refusal and its silence are its own
+   * sign-in's. Optional, absent reads `false`: a producer older than the field said nothing.
+   */
+  localServer?: boolean;
+  /** The last failed dial ended on the server's silence (`ETIMEOUT`); cleared by a dial or a served cycle. */
+  signInWentQuiet?: boolean;
+  /**
    * THIS DEVICE REFUSED THE SERVER'S CERTIFICATE, so no password was sent. Not an outage: the
    * automatic re-dial stops (a person's retry or a foreground resume asks again) and the surface
    * names the certificate rather than promising a reconnect.

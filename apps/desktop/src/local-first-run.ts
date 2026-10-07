@@ -16,9 +16,11 @@ import type {
   FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeIntent, FirstRunOrganizeOutcome, FirstRunProbeOk,
 } from "../../webapp/app/shell/first-run-host";
 import type { OnboardingAi } from "../../webapp/app/shell/onboarding";
+import { refusedByLocalServer } from "../../webapp/app/shell/local-server-host";
 import { durableSet, type DurableWrite } from "@ohmail/client-engine/durable";
 import { bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { CONSENT_SETTINGS_PATH } from "./local-consent.js";
+import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
 import type { LocalAiStatus } from "./local-ai.js";
 import {
   enterLocalDoor, firstRunDoorFor, localProblem, standingEngine, type LocalDoorFields,
@@ -310,6 +312,7 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
       await bridgeFetch(PROBE_PATH, {
         method: "POST",
         headers: JSON_HEADERS,
+        deadlineMs: LOCAL_SERVER_CALL_DEADLINE_MS,
         body: JSON.stringify({
           address: input.address,
           imap: input.imap,
@@ -346,6 +349,7 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
         await bridgeFetch(LOCAL_MAILBOXES_PATH, {
           method: "POST",
           headers: JSON_HEADERS,
+          deadlineMs: LOCAL_SERVER_CALL_DEADLINE_MS,
           body: JSON.stringify(addMailboxBody(input)),
         }),
       );
@@ -469,6 +473,9 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
       setAiEnabled,
       forgetMailbox,
       probeReason: localProbeReason,
+      probeLocalServer: refusedByLocalServer,
+      // This engine gives a server on this computer the sync dial's wait (`localServerDial`).
+      localServerWait: true,
       probeMessage: localProbeMessage,
       plaintextOffer: localPlaintextOffer,
       providerForm,

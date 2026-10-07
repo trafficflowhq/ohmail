@@ -181,6 +181,16 @@ export interface FirstRunHost {
   probeReason: (err: unknown) => string | null;
   /** The server's own sentence for an error, for the fallback the line above describes. */
   probeMessage: (err: unknown) => string | null;
+  /**
+   * WHETHER THE REFUSAL CAME FROM A SERVER ON THIS COMPUTER — the engine's `details.localServer`.
+   * Absent on a door that cannot be told, which reads as "no" and keeps the provider sentences.
+   */
+  probeLocalServer?: (err: unknown) => boolean;
+  /**
+   * THIS DOOR GIVES A SERVER ON THIS COMPUTER THE LONG WAIT (the desktop's local engine, up to two
+   * minutes). Only then does the pending line say so, and does a held Test keep the form shut.
+   */
+  localServerWait?: boolean;
 
   /**
    * THE PLAINTEXT CONSENT A REFUSAL OFFERS — the protocol whose line may render, or `null`. The

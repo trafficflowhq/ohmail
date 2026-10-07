@@ -103,6 +103,8 @@ let bridged: { url: string; method: string }[] = [];
  * to exactly one press, and it matters completely there: the password is the request.
  */
 let sentBodies: { url: string; body: string }[] = [];
+/** The per-call bridge deadline each request named, by URL and method (absent: none named). */
+let sentDeadlines: { url: string; method: string; deadlineMs?: number }[] = [];
 
 /**
  * THE PANE'S REQUESTS MINUS ITS STANDING POLL — what a PRESS did, which is what these cases judge.
@@ -170,8 +172,12 @@ vi.mock("../src/bridge-fetch.js", async () => {
   );
   return {
     ...real,
-    bridgeFetch: async (url: string, init?: { method?: string; body?: unknown }) => {
+    bridgeFetch: async (url: string, init?: { method?: string; body?: unknown; deadlineMs?: number }) => {
       bridged.push({ url, method: init?.method ?? "GET" });
+      sentDeadlines.push({
+        url, method: init?.method ?? "GET",
+        ...(init?.deadlineMs !== undefined ? { deadlineMs: init.deadlineMs } : {}),
+      });
       if (typeof init?.body === "string") sentBodies.push({ url, body: init.body });
       return bridgeReply();
     },
@@ -330,6 +336,7 @@ beforeEach(() => {
   refreshed = 0;
   bridged = [];
   sentBodies = [];
+  sentDeadlines = [];
   bridgeReply = () => new Response(null, { status: 202 });
   logoutFails = null;
   SHELL_SINK = true;
@@ -4990,5 +4997,95 @@ describe("a mailbox connected without encryption whose server's address left the
     const el = await render("local");
     expect(el.textContent).toContain(copy.desktopStatePlaintextRefused!);
     expect(el.textContent).not.toContain(copy.desktopStateUnreachable!);
+  });
+});
+
+describe("a mail server on this computer is said as its own", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const reachOf = (over: Record<string, unknown>) => () => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: false, unreachableSince: "2026-08-07T09:00:00.000Z", ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  it("a refusal from it names the gateway, not the password", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "auth" }];
+    bridgeReply = reachOf({ reachable: true, unreachableSince: null, signInRefused: true, localServer: true });
+    const el = await render("local");
+    expect(el.textContent).toContain(copy.desktopStateSignInRefusedLocal!);
+    expect(el.textContent).not.toContain(copy.desktopStateSignInRefused!);
+  });
+
+  it("its silence mid-sign-in says the gateway is still signing in, not that it cannot be reached", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "timeout" }];
+    bridgeReply = reachOf({ localServer: true, signInWentQuiet: true });
+    const el = await render("local");
+    expect(el.textContent).toContain(copy.err_timeout_local!);
+    expect(el.textContent).not.toContain(copy.desktopStateUnreachable!);
+  });
+
+  it("CONTROL: a remote server's silence still reads the generic unreachable line", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "connect" }];
+    bridgeReply = reachOf({ localServer: false, signInWentQuiet: true });
+    const el = await render("local");
+    expect(el.textContent).toContain(copy.desktopStateUnreachable!);
+    expect(el.textContent).not.toContain(copy.err_timeout_local!);
+  });
+});
+
+describe("H1: Sign in again on a server on this computer — the long wait, and one sign-in at a time", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const named = (el: HTMLElement, label: string): HTMLButtonElement[] =>
+    [...el.querySelectorAll("button")].filter((b) => (b.textContent ?? "").trim() === label);
+  function type(input: HTMLInputElement, value: string): void {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  const reach = (): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null, signInRefused: true, localServer: true }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  /** The poll answers at once; the seal is held until the case lets it go. */
+  let release: () => void = () => {};
+  const heldSeal = (): Response | Promise<Response> => (bridged.at(-1)?.method === "PATCH"
+    ? new Promise<Response>((done) => { release = () => done(new Response("{}", { status: 200 })); })
+    : reach());
+  const press = async (el: HTMLElement): Promise<void> => {
+    await act(async () => { named(el, copy.signInAgainAction!)[0]!.click(); });
+    await act(async () => { type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, "the-new-one"); });
+    await act(async () => {
+      el.querySelector("form.acct-confirm")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  };
+  const seals = (): number => bridged.filter((c) => c.method === "PATCH").length;
+
+  it("the seal rides the local deadline, as the Test and the add do", async () => {
+    const { LOCAL_SERVER_CALL_DEADLINE_MS } = await import("../src/local-server-deadline.js");
+    FACTS = [MAILBOX];
+    bridgeReply = heldSeal;
+    const el = await render("local");
+    await press(el);
+    expect(sentDeadlines.filter((c) => c.method === "PATCH")).toEqual([
+      { url: "/local/mailboxes/mbx-1", method: "PATCH", deadlineMs: LOCAL_SERVER_CALL_DEADLINE_MS },
+    ]);
+    await act(async () => { release(); });
+  });
+
+  it("while it is held, no second sign-in can be sent — not even from the pane opened again", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = heldSeal;
+    const first = await render("local");
+    await press(first);
+    expect(seals()).toBe(1);
+    const confirm = named(first, copy.signInAgainWorking!)[0] ?? named(first, copy.signInAgainConfirm!)[0];
+    expect(confirm?.disabled, "the form's own press is shut while its sign-in is held").toBe(true);
+    // Away and back: the pane is mounted afresh while the first sign-in is still held.
+    await act(async () => { root!.unmount(); });
+    mountPoint?.remove();
+    const again = await render("local");
+    await press(again);
+    expect(seals(), "a second sign-in was sent while the first was held").toBe(1);
+    await act(async () => { release(); });
+    // Once it has answered, the next press is sent: the hold ends with the request it guarded.
+    bridgeReply = () => (bridged.at(-1)?.method === "PATCH" ? new Response("{}", { status: 200 }) : reach());
+    await press(again);
+    expect(seals(), "the hold outlived the sign-in it guarded").toBe(2);
   });
 });

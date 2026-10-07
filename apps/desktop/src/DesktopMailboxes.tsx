@@ -53,6 +53,7 @@ import {
   askFor, incomingFromAsk, knownIncoming, readServerUnknown, type ServerAsk,
 } from "./sign-in-again-server.js";
 import { LocalWireError, localPlaintextOffer } from "./local-first-run.js";
+import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
 import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
 import { openServerMailboxes, openWeb } from "./native.js";
 
@@ -70,6 +71,13 @@ export interface MailboxReach {
   reachable: boolean;
   /** The server answered and refused the sign-in — a different fact with a different remedy. */
   signInRefused: boolean;
+  /**
+   * THE SERVER IS ON THIS COMPUTER (a gateway such as DavMail): its refusal and its silence are its
+   * own sign-in's, and `signInWentQuiet` is its last dial ending on that silence. Absent reads
+   * as `false`, an engine older than the fields saying nothing.
+   */
+  localServer?: boolean;
+  signInWentQuiet?: boolean;
   /**
    * A MAILBOX CONNECTED WITHOUT TLS WHOSE SERVER'S NAME NO LONGER RESOLVES TO THE PERSON'S OWN
    * NETWORK: nothing was dialled, so "can't reach the mail server" would be the wrong sentence.
@@ -395,6 +403,7 @@ export async function readMailboxReachVia(
   for (const raw of items) {
     const it = (typeof raw === "object" && raw !== null ? raw : {}) as {
       mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
+      localServer?: unknown; signInWentQuiet?: unknown;
       credentialBlocked?: unknown; profileBlocked?: unknown; needsCredential?: unknown;
       settingsLeft?: unknown;
       plaintextRefused?: unknown;
@@ -423,6 +432,8 @@ export async function readMailboxReachVia(
          cannot have refused a sign-in, and the dangerous default is the other one — telling
          somebody their password was rejected because their app is out of date. */
       signInRefused: it.signInRefused === true,
+      localServer: it.localServer === true,
+      signInWentQuiet: it.signInWentQuiet === true,
       plaintextRefused: it.plaintextRefused === true,
       /* THE EXACT BOOLEAN, on this file's standing rule: an engine older than the field says
          nothing about it, and "this mailbox needs its password" is not a sentence to invent
@@ -633,6 +644,18 @@ function statusOf(door?: string | null): EngineStatus | null {
     ? ({ state: "serving", mode: door } as EngineStatus)
     : null;
 }
+
+/**
+ * SIGN-INS IN FLIGHT, BY MAILBOX, outliving the pane. A gateway holding a sign-in (DavMail, up to
+ * two minutes) would meet a second LOGIN from a press made after the pane closed and opened again,
+ * so a press for a mailbox already here is not sent, and the open panes re-render when one ends.
+ */
+const signInsInFlight = new Set<string>();
+const signInListeners = new Set<() => void>();
+const signInEnded = (id: string): void => {
+  signInsInFlight.delete(id);
+  for (const tell of signInListeners) tell();
+};
 
 /**
  * ── `servedMailboxId` IS GONE, AND ITS ABSENCE IS THE POINT ────────────────────────────────
@@ -946,6 +969,14 @@ export function DesktopMailboxes(
   const [newPassword, setNewPassword] = useState("");
   /** True while the seal is in flight, so one password is never sent twice. */
   const [signInBusy, setSignInBusy] = useState(false);
+  /* A sign-in this pane did not start (an earlier pane's, still held) keeps the form shut too. */
+  const [, setSignInsSeen] = useState(0);
+  useEffect(() => {
+    const tell = (): void => setSignInsSeen((n) => n + 1);
+    signInListeners.add(tell);
+    return () => { signInListeners.delete(tell); };
+  }, []);
+  const signInHeld = signInBusy || (signingIn !== null && signInsInFlight.has(signingIn.id));
   /** The mailbox this pane just re-sealed — the sentence saying the press landed. */
   const [signedIn, setSignedIn] = useState<string | null>(null);
   /**
@@ -1024,6 +1055,8 @@ export function DesktopMailboxes(
    * no server: a provider fact places it and the press is sent again with it, else the form asks.
    */
   const signInAgain = (m: MailboxFacts, password: string): void => {
+    if (signInsInFlight.has(m.id)) return;
+    signInsInFlight.add(m.id);
     setProblem(null);
     setSignInBusy(true);
     const asking = serverAsk?.id === m.id ? incomingFromAsk(serverAsk.ask) : null;
@@ -1033,11 +1066,13 @@ export function DesktopMailboxes(
         imap: consent?.imap ? { ...imap, allowInsecure: true } : imap,
         ...(consent?.smtp ? { smtp: { pass: password, allowInsecure: true } } : {}),
       });
+      // The seal probes before it stores: a server on this computer gets its long wait here too.
       const seal = (imap: Record<string, unknown>): Promise<Response> =>
         bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: sealBody(imap),
+          deadlineMs: LOCAL_SERVER_CALL_DEADLINE_MS,
         });
       try {
         let res = await seal(asking ? { ...asking, pass: password } : { pass: password });
@@ -1076,6 +1111,7 @@ export function DesktopMailboxes(
         setProblem(err instanceof Error ? err.message : String(err));
       } finally {
         setSignInBusy(false);
+        signInEnded(m.id);
       }
     })();
   };
@@ -1509,7 +1545,9 @@ export function DesktopMailboxes(
     /* THE SERVER ANSWERED AND SAID NO — above the unreachable arm, because it is a MORE specific
        answer to the same question and the generic one would send somebody to check a network
        that is working perfectly. */
-    if (r?.signInRefused) return say(t("desktopStateSignInRefused"));
+    if (r?.signInRefused) {
+      return say(t(r.localServer ? "desktopStateSignInRefusedLocal" : "desktopStateSignInRefused"));
+    }
     /* NOTHING WAS DIALLED: the consented server's name left the person's own network. */
     if (r?.plaintextRefused) return say(t("desktopStatePlaintextRefused"));
     /* ── THE PASSWORD ON THIS COMPUTER, NOT THE SERVER — and it outranks the outage arm below.
@@ -1559,6 +1597,9 @@ export function DesktopMailboxes(
     /* A RUNTIME THAT DIALLED NOTHING falls through: nothing was tried, nothing failed, and the
        mirror's age below is the true sentence. */
     if (r && !r.reachable && r.dialled) {
+      /* A SERVER ON THIS COMPUTER that went quiet mid-sign-in is a gateway still signing in, not a
+         network fault: said so, with nothing for the person to fix here. */
+      if (r.localServer && r.signInWentQuiet) return say(t("err_timeout_local"));
       /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
          `day` stamp is deliberately date-only because the sentences it serves are standing facts
          somebody reads once. "Unreachable since 5 Sep 2026" tells a person nothing about an
@@ -2299,7 +2340,7 @@ export function DesktopMailboxes(
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, host } } : a));
                         setPlaintextAsk(null);
                       }}
-                      disabled={signInBusy}
+                      disabled={signInHeld}
                     />
                   </SettingsField>
                   <SettingsField htmlFor="mbx-server-port" label={t("signInAgainAskPort")}>
@@ -2314,7 +2355,7 @@ export function DesktopMailboxes(
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, port } } : a));
                         setPlaintextAsk(null);
                       }}
-                      disabled={signInBusy}
+                      disabled={signInHeld}
                     />
                   </SettingsField>
                   <SettingsField htmlFor="mbx-server-user" label={t("signInAgainAskUser")}>
@@ -2329,7 +2370,7 @@ export function DesktopMailboxes(
                         setServerAsk((a) => (a ? { ...a, ask: { ...a.ask, user } } : a));
                         setPlaintextAsk(null);
                       }}
-                      disabled={signInBusy}
+                      disabled={signInHeld}
                     />
                   </SettingsField>
                 </>
@@ -2346,7 +2387,7 @@ export function DesktopMailboxes(
                   spellCheck={false}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  disabled={signInBusy}
+                  disabled={signInHeld}
                 />
               </SettingsField>
               {plaintextAsk?.id === shown.id ? (
@@ -2361,7 +2402,7 @@ export function DesktopMailboxes(
               <div className="acct-actions">
                 <Button
                   type="button"
-                  disabled={signInBusy}
+                  disabled={signInHeld}
                   onClick={() => {
                     setSigningIn(null); setNewPassword(""); setServerAsk(null); setPlaintextAsk(null);
                   }}
@@ -2371,10 +2412,10 @@ export function DesktopMailboxes(
                 <Button
                   variant="primary"
                   type="submit"
-                  disabled={signInBusy || newPassword === ""
+                  disabled={signInHeld || newPassword === ""
                     || (serverAsk?.id === shown.id && incomingFromAsk(serverAsk.ask) === null)}
                 >
-                  {signInBusy ? t("signInAgainWorking") : t("signInAgainConfirm")}
+                  {signInHeld ? t("signInAgainWorking") : t("signInAgainConfirm")}
                 </Button>
               </div>
             </form>
