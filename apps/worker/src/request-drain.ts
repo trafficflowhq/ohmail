@@ -3,7 +3,7 @@ import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
   applyMessageMove, validateMovePayload, type MoveRefusal,
   applyProfileUpdate, validateProfileUpdatePayload,
-  applyRuleRequest, validateRulePayload, settleReaderRuleRows, ruleKeyIsOwnAddress, type RuleRefusal,
+  applyRuleRequest, validateRulePayload, settleReaderRuleRows, ruleKeyIsOwnAddress, OwnAddressesPerPass, type RuleRefusal,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
   listStaleSentRequests, markRequestsExpired, markRequestsRefused, mailboxRowsHeld,
@@ -35,6 +35,8 @@ interface HandlerContext {
   now: Date;
   /** The record's own `decided_at`: when the reader's door wrote it (the press is `payload.pressedAt`). */
   decidedAt: Date;
+  /** The account's own set, read once for this drain. */
+  ownAddresses: OwnAddressesPerPass;
 }
 
 /** Applied, or not applied for a named reason the reader is told. */
@@ -95,7 +97,7 @@ const ruleHandler = (kind: string): KindHandler => (payload, ctx) => {
   const req = validateRulePayload(kind, payload);
   if (!req) return null;
   return async (tx) => {
-    const r = await applyRuleRequest(tx, { accountId: ctx.accountId, payload: req, now: ctx.now });
+    const r = await applyRuleRequest(tx, { accountId: ctx.accountId, payload: req, now: ctx.now, ownAddresses: ctx.ownAddresses });
     if (r.applied) return { applied: true };
     return { applied: false, reason: RULE_REFUSAL_REASON[r.refusal] };
   };
@@ -109,7 +111,7 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
       // An older reader's decision about one of the account's own addresses promotes no rule here,
       // as the press door refuses it (`ruleKeyIsOwnAddress`); the applier's `own_address`, mapped.
       if (decision.scope === "sender"
-        && await ruleKeyIsOwnAddress(tx, ctx.accountId, { kind: "sender", match: decision.address })) {
+        && await ruleKeyIsOwnAddress(tx, ctx.accountId, { kind: "sender", match: decision.address }, ctx.ownAddresses)) {
         return { applied: false, reason: RULE_REFUSAL_REASON.own_address };
       }
       // Account-wide since the 0.20 scope ruling: the apply re-routes every mailbox THIS install
@@ -693,6 +695,7 @@ export async function applyMetaRequests(
   }
 
   const startedAt = Date.now();
+  const ownAddresses = new OwnAddressesPerPass();
 
   for (const e of takeWellFormed) {
     // Checked BETWEEN records, never inside one: a record already begun finishes, because a
@@ -844,7 +847,7 @@ export async function applyMetaRequests(
      */
     const runApply = handler(
       (decoded as RequestRecord).payload,
-      { accountId: rt.accountId, mailboxId: rt.mailboxId, requestId: e.requestId, now, decidedAt: e.decidedAt },
+      { accountId: rt.accountId, mailboxId: rt.mailboxId, requestId: e.requestId, now, decidedAt: e.decidedAt, ownAddresses },
     );
     if (!runApply) {
       settle(e, "refused", "invalid_payload");

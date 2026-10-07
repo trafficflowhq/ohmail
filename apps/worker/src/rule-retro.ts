@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import {
   approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies,
-  messageStates, messages, readOwnAddresses, recordChange, recordRuleDelta, rules as rulesTbl, rulesTheActWrote,
+  messageStates, messages, OwnAddressesPerPass, recordChange, recordRuleDelta, rules as rulesTbl, rulesTheActWrote,
   weAnsweredThisSenderWhere,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -267,6 +267,8 @@ export async function ruleRetroPass(
     };
   })();
 
+  // The router's one set, read once per account for this pass (`OwnAddressesPerPass`).
+  const ownPerPass = new OwnAddressesPerPass();
   for (const row of owed) {
     if (result.moved >= budget) { result.capped = true; break; }
     result.rules++;
@@ -274,7 +276,7 @@ export async function ruleRetroPass(
     // a reply sent from a mailbox the person later removed is still their reply. The router reads the
     // one set (`readOwnAddresses`), where a removed mailbox's address is a stranger's.
     const own = await ownFor(row.accountId);
-    const ownSet: ReadonlySet<string> = await readOwnAddresses(db, row.accountId);
+    const ownSet: ReadonlySet<string> = await ownPerPass.ownAddresses(db, row.accountId);
 
     let pages = 0;
     let exhausted = false;

@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { folderState, mailboxes, messages } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
 import type { Dialect } from "./dialect/index.js";
-import { CUTLINE_GATE_FOLDER, mailboxCountsAsOwnSql } from "./screener-cutline.js";
+import { CUTLINE_GATE_FOLDER, mailboxCountsAsOwn, mailboxCountsAsOwnSql } from "./screener-cutline.js";
 import { ruleMatchKey, ruleNamesSenderSql } from "./rule-match-sql.js";
 
 /**
@@ -16,6 +16,38 @@ export async function readOwnAddresses(db: Tx, accountId: string): Promise<Set<s
   return new Set(rows.map((r) => r.address.toLowerCase()).filter((a) => a !== ""));
 }
 
+/** An account's mailbox row as a pass already read it, with the three columns the own test reads. */
+export interface OwnMailboxRow {
+  address: string; status: string; disabledReason: string | null; erasureDoneAt: Date | string | null;
+}
+
+/**
+ * THE ONE SET, READ ONCE PER ACCOUNT PER PASS. A pass makes one at its entry and drops it at its end:
+ * never module-level, so no pass decides under another pass's read, and keyed by account, so one
+ * account's set never decides another's. A mailbox removed mid-pass stays own until the pass ends,
+ * as if the removal had committed a moment later: own mail is the branch no rule moves, and the
+ * removed mailbox's rows are guarded by their own status and the erasure fence, never by this set.
+ */
+export class OwnAddressesPerPass {
+  readonly #byAccount = new Map<string, ReadonlySet<string>>();
+
+  /** Seeded from rows the pass already read, so the set costs no statement of its own. */
+  static fromRows(accountId: string, rows: readonly OwnMailboxRow[]): OwnAddressesPerPass {
+    const pass = new OwnAddressesPerPass();
+    const own = rows.filter(mailboxCountsAsOwn).map((r) => r.address.toLowerCase()).filter((a) => a !== "");
+    pass.#byAccount.set(accountId, new Set(own));
+    return pass;
+  }
+
+  async ownAddresses(db: Tx, accountId: string): Promise<ReadonlySet<string>> {
+    const held = this.#byAccount.get(accountId);
+    if (held !== undefined) return held;
+    const read = await readOwnAddresses(db, accountId);
+    this.#byAccount.set(accountId, read);
+    return read;
+  }
+}
+
 /**
  * DOES THIS RULE KEY NAME THE ACCOUNT ITSELF — a sender rule whose match is one of the account's
  * own addresses ({@link readOwnAddresses}; the account sends only as its mailboxes). Every door
@@ -24,11 +56,12 @@ export async function readOwnAddresses(db: Tx, accountId: string): Promise<Set<s
  * rule names other people too, and a header rule names nobody, so neither is this.
  */
 export async function ruleKeyIsOwnAddress(
-  db: Tx, accountId: string, key: { kind: string; match: string },
+  db: Tx, accountId: string, key: { kind: string; match: string }, pass?: OwnAddressesPerPass,
 ): Promise<boolean> {
   if (key.kind !== "sender") return false;
   const match = ruleMatchKey(key.match);
-  for (const a of await readOwnAddresses(db, accountId)) if (ruleMatchKey(a) === match) return true;
+  const own = pass ? await pass.ownAddresses(db, accountId) : await readOwnAddresses(db, accountId);
+  for (const a of own) if (ruleMatchKey(a) === match) return true;
   return false;
 }
 

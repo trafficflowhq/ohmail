@@ -12,7 +12,7 @@ import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } f
 import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 import { convergeRuleKey, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
-import { ruleKeyIsOwnAddress } from "./own-mail.js";
+import { ruleKeyIsOwnAddress, type OwnAddressesPerPass } from "./own-mail.js";
 
 /** The one bound, pinned beside the decide's lift in `screener-apply.ts` and re-exported here. */
 export { RULE_PRIORITY_MAX };
@@ -873,6 +873,8 @@ export interface ApplyRuleRequestInput {
   accountId: string;
   payload: ValidatedRuleRequest;
   now: Date;
+  /** The drain's own set for this pass; absent, the create reads it itself. */
+  ownAddresses?: OwnAddressesPerPass;
 }
 
 /**
@@ -1020,7 +1022,7 @@ export async function applyRuleRequest(
   const { key } = payload;
 
   if (payload.op === "create") {
-    if (await ruleKeyIsOwnAddress(tx, accountId, key)) return { applied: false, refusal: "own_address" };
+    if (await ruleKeyIsOwnAddress(tx, accountId, key, input.ownAddresses)) return { applied: false, refusal: "own_address" };
     const out = await reconcileRuleCreate(tx, { accountId, create: payload, now });
     if (out.created) return { applied: true, op: "create", ruleId: out.ruleId, lastSeq: out.lastSeq };
     // The row was not written: `unchanged`, with the seq of the twins it collapsed if any went.
