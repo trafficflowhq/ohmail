@@ -104,6 +104,40 @@ rule about the address of a mailbox you removed or erased files its mail as for 
 Removing a rule whose sender had a second copy of it takes both off the screen at once rather than
 at the next sync.
 
+### A mailbox keeps syncing after the server sends a message ohmail cannot read
+<!-- changes: fix-026-local-runtime-redial.md -->
+
+When the mail server sends more for one message than ohmail accepts, that message is set aside and
+the rest of the mailbox syncs over a new connection, in every folder, on the desktop, the phone and
+a self-hosted server. Many such messages are set aside one at a time, so newer mail in that folder
+can wait behind them. The mailbox's settings row says how many messages were set aside. Before, a
+desktop or phone mailbox stopped syncing until the app was restarted, and ohmail asked for the same
+message again on every attempt.
+
+### Messages set aside no longer slow a mailbox or show a storage error
+<!-- changes: fix-026-overrun-hold-and-ladder.md -->
+
+When the mail server sends more of a message than it declared, ohmail sets that message aside and
+reconnects after a short wait, without reporting the server as unreachable, so newer mail behind it
+arrives within seconds per message rather than hours. Such messages no longer make the desktop or
+phone say that ohmail could not store mail, and no longer hold other messages back. A self-hosted
+server no longer pauses the mailbox for each one.
+
+### Mark read in the Ohbox marks the whole conversation read, and messages you scroll through are marked read
+<!-- changes: fix-026-thread-read.md -->
+
+In the Ohbox's reader, and on the phone, Mark read marks every unread message of the open
+conversation read, with one Undo. Messages you scroll past, or stop on for two seconds, are marked
+read too, and so are the last ones once you reach the end of the conversation and stay there.
+
+### Paused accounts
+<!-- changes: fix-026-sse-after-the-wall.md -->
+
+- Live updates come back by themselves after a paused account is resumed or paid.
+- On ohmail Cloud, live updates stop within about a minute of an account being paused, and the page
+  says so.
+- The desktop app shows why a paused account stopped syncing, instead of saying it is offline.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
