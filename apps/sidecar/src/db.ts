@@ -22,6 +22,7 @@ import {
   outsideStoreLanes, scheduleStoreLanes, type StoreLaneCensus,
 } from "./store-lanes.js";
 import { LocalStoreFs } from "./pglite-transport.js";
+import { afterFirstPage } from "./first-page-gate.js";
 import { makeStoreInMemory } from "./fresh-store.js";
 import { keepIngestPlans } from "./pglite-plans.js";
 import { markStoreStatement } from "@trafficflow/core/mail";
@@ -446,7 +447,7 @@ export interface OpenTimings {
   adoptBaselineMs: number;
   /** The migrator. Zero new migrations still costs a read of the journal and of the ledger table. */
   migrateMs: number;
-  /** {@link reclaimBodyBloat} — ~a millisecond of ANALYZE on a healthy store, minutes ONCE on a bloated one. */
+  /** {@link reclaimBodyBloat} — one catalog read on a healthy store, minutes ONCE on a bloated one. */
   compactMs: number;
   /** {@link setUpLocalSearch} — the extensions plus any trigram index not built yet; once per index. */
   searchSetupMs: number;
@@ -833,7 +834,6 @@ export async function reclaimBodyBloat(
   const ratio = gate.ratio ?? BLOAT_COMPACT_RATIO;
   const none = { ran: false, beforeBytes: 0, afterBytes: 0 };
   try {
-    await client.exec(`ANALYZE message_bodies`);
     const measure = async (): Promise<{ bytes: number; rows: number }> => {
       const r = await client.query<{ bytes: string; rows: string }>(
         `SELECT pg_total_relation_size(c.oid)::text AS bytes, greatest(c.reltuples, 0)::bigint::text AS rows
@@ -844,9 +844,13 @@ export async function reclaimBodyBloat(
       const row = r.rows[0];
       return row ? { bytes: Number(row.bytes), rows: Number(row.rows) } : { bytes: 0, rows: 0 };
     };
+    /* THE SIZE BEFORE THE ANALYZE: `pg_total_relation_size` needs no statistics, and below the
+       floor nothing reads the row count the ANALYZE would refresh. A healthy launch is one catalog
+       read; the ANALYZE cost 1.6 to 22 s per launch on a 290 MB store and its answer was unused. */
+    const sized = await measure();
+    if (sized.bytes < minBytes) return { ...none, beforeBytes: sized.bytes, afterBytes: sized.bytes };
+    await client.exec(`ANALYZE message_bodies`);
     const before = await measure();
-    // The cheap short-circuit FIRST: below the floor no estimate is worth computing, and this is
-    // what keeps a healthy launch at one ANALYZE plus one catalog read.
     if (before.bytes < minBytes) return { ...none, beforeBytes: before.bytes, afterBytes: before.bytes };
     /* The live estimate is a sampled `octet_length`, not `pg_stats.avg_width`. `avg_width` was first
      * and RE-FIRED: on the measured store it answered 72.9 MB for 1.6 GB of TOASTed content (the
@@ -1824,14 +1828,13 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // AFTER the migrator (the table must exist on a first launch) and BEFORE serving: a rewrite
     // holds an exclusive lock, and the one place that lock collides with nothing is here, where
     // no reader has the handle yet. See {@link reclaimBodyBloat} for the measured pathology and
-    // the gate that keeps a healthy launch's cost at one ANALYZE.
+    // the gate that keeps a healthy launch's cost at one catalog read.
     const tCompact = Date.now();
     await reclaimBodyBloat(client, log, opts.onPhase);
     const compactMs = Date.now() - tCompact;
     // AFTER the migrator (the indexed tables must exist) and BEFORE serving, like the compaction.
     const tSearch = Date.now();
     if (!opts.withoutSearchExtensions) await setUpLocalSearch(db, log);
-    await analyzeSearchIfStale(client);
     const searchSetupMs = Date.now() - tSearch;
     await client.exec(`SET gin_pending_list_limit = ${GIN_PENDING_LIST_KB}`);
     /* The flush's one row, beside the journal rather than in it (see {@link LOG_FLUSH_TABLE}). */
@@ -1902,6 +1905,11 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       tick.unref?.();
     };
     schedule();
+    /* THE STATISTICS LOOK IS MAINTENANCE, so it waits for the reader's first page: it counts every
+       row of four tables (17.5 s on one measured launch) and nothing before that page needs it. */
+    const cancelStatistics = afterFirstPage(() => {
+      if (!closed) void analyzeSearchIfStale(client);
+    });
 
     const terminate = async (): Promise<void> => {
       try {
@@ -1938,6 +1946,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       close: () => {
         closing ??= (async () => {
           closed = true;
+          cancelStatistics();
           if (tick) clearTimeout(tick);
           tick = null;
           flush.stop();

@@ -26,6 +26,40 @@ let released = false;
 let waiters: Array<(outcome: FirstPageOutcome) => void> = [];
 /** When the grace started — see {@link armFirstPageGate}. `null` until the door is open. */
 let armedAtMs: number | null = null;
+let doorArmed = false;
+/** Work deferred past the first page — see {@link afterFirstPage}. */
+let deferred: Array<() => void> = [];
+let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function runDeferred(): void {
+  if (graceTimer !== null) clearTimeout(graceTimer);
+  graceTimer = null;
+  const due = deferred;
+  deferred = [];
+  for (const fn of due) fn();
+}
+
+/** The grace's end releases deferred work too, from wherever the gate was armed. */
+function armGraceTimer(graceMs: number): void {
+  if (graceTimer !== null || !doorArmed || armedAtMs === null) return;
+  graceTimer = setTimeout(runDeferred, Math.max(0, graceMs - (Date.now() - armedAtMs)));
+  graceTimer.unref?.();
+}
+
+/**
+ * STORE MAINTENANCE WAITS FOR THE READER'S FIRST PAGE: `fn` runs once that page is served, or once
+ * the grace runs out on an armed gate, whichever is first. An unarmed gate runs nothing — a store
+ * opened by a command that serves no window does no upkeep. Returns the cancel a close calls.
+ */
+export function afterFirstPage(fn: () => void, graceMs: number = FIRST_PAGE_GRACE_MS): () => void {
+  if (released) {
+    fn();
+    return () => {};
+  }
+  deferred.push(fn);
+  armGraceTimer(graceMs);
+  return () => { deferred = deferred.filter((d) => d !== fn); };
+}
 
 /**
  * Start the grace, at the moment a first page could first be ASKED for.
@@ -37,6 +71,13 @@ let armedAtMs: number | null = null;
  */
 export function armFirstPageGate(nowMs: number = Date.now()): void {
   armedAtMs = nowMs;
+  doorArmed = true;
+  if (deferred.length > 0) armGraceTimer(FIRST_PAGE_GRACE_MS);
+}
+
+/** Whether a DOOR armed the gate — a window can ask for a page. The phone's never does. */
+export function firstPageDoorArmed(): boolean {
+  return doorArmed;
 }
 
 /**
@@ -49,6 +90,7 @@ export function noteFirstPageServed(): void {
   const waiting = waiters;
   waiters = [];
   for (const resolve of waiting) resolve("served");
+  runDeferred();
 }
 
 /**
@@ -89,4 +131,8 @@ export function resetFirstPageGate(): void {
   released = false;
   waiters = [];
   armedAtMs = null;
+  doorArmed = false;
+  deferred = [];
+  if (graceTimer !== null) clearTimeout(graceTimer);
+  graceTimer = null;
 }
