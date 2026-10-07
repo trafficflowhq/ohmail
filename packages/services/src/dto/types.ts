@@ -565,6 +565,12 @@ export interface MailboxDTO {
    */
   organizedByThisInstall: boolean;
   /**
+   * How many of this mailbox's messages are SET ASIDE — unresolved `message_failures` rows, one
+   * per message coordinate. The same count the desktop and phone read off their own ledger, so
+   * every surface says the same sentence. Absent is a server that predates the field.
+   */
+  setAside?: number;
+  /**
    * When somebody agreed to let ohmail organize THIS mailbox, or `null`. A different question
    * from `organizerRole`, and the pair is not derivable from either half: the role says who
    * organizes it NOW; this says whether permission was ever given. Freshly connected is `reader`

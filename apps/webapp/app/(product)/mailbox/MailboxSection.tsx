@@ -2264,6 +2264,10 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                   </Button>
                 </>
               ) : null}
+              {/* THE MESSAGES THIS MAILBOX SET ASIDE, in the sentence the desktop and phone say. */}
+              {(m.setAside ?? 0) > 0 ? (
+                <span className="mbx-sub">{t("desktopSetAside", { n: m.setAside! })}</span>
+              ) : null}
             </div>
             <div className="mbx-state">
               {/* The row's states, and why "Waiting for first sync" is gone. This read

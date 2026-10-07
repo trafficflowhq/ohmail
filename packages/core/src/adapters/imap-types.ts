@@ -798,10 +798,18 @@ export interface FolderCursor extends PersistedFolderCursor { known: KnownEntry[
  * spelling and is read through `epochOf` before anything compares it, never as a number.
  */
 export interface BudgetStop { folder: string; uidValidity: string; uid: number; }
+/** One message coordinate: a UID is a fact only under the epoch that issued it. */
+export interface MessageSite { folder: string; uidValidity: string; uid: number; }
 export interface ImapCursor {
   folders: Record<string, FolderCursor>;
   /** Where the previous pass's budget ran out, if it did — see {@link BudgetStop}. */
   budgetStop?: BudgetStop;
+  /**
+   * Messages the caller has SET ASIDE. The pass never fetches one whose epoch equals the folder's
+   * live UIDVALIDITY, in any folder, with or without a cursor row; a row whose epoch the live one
+   * contradicts is reported back in {@link ChangeBatch.setAsideStale}. Absent ⇒ none.
+   */
+  setAside?: readonly MessageSite[];
 }
 
 export interface ChangeBatch {
@@ -852,6 +860,14 @@ export interface ChangeBatch {
    * The targeted retry probes these by size once per build. Optional; absent means none.
    */
   oversize?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number; size: number }>;
+  /**
+   * The pass STOPPED at a message whose own bytes crossed a read bound: the connection is retired,
+   * folders before it carry their work and cursors, that folder and every later one keep their
+   * stored cursor. The caller sets the message aside, commits the batch, and rethrows `breach`.
+   */
+  overrun?: MessageSite & { breach: Error };
+  /** {@link ImapCursor.setAside} rows whose epoch the folder's live UIDVALIDITY contradicts. */
+  setAsideStale?: readonly MessageSite[];
   /**
    * Remembered folders the server itself stated do not exist, asked by name after a LIST left
    * them out. Their instances are in {@link deletes} at the folder's remembered epoch, and the

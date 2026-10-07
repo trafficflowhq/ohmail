@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type SQL }
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
-  mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
+  mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings, messageFailures,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
   hasCapability, CAPABILITY_REQUESTS,
@@ -2744,6 +2744,10 @@ export class MailboxService {
     ctx: ServiceContext, m: MailboxRow, messageCount?: number,
   ): Promise<MailboxDTO> {
     const lastCycleAt = await this.lastCycleAtFor(ctx);
+    const [aside] = await ctx.db.select({
+      n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
+    }).from(messageFailures)
+      .where(and(eq(messageFailures.mailboxId, m.id), isNull(messageFailures.resolvedAt)));
     const fRows = await ctx.db.select().from(mailboxFolders)
       .where(eq(mailboxFolders.mailboxId, m.id)).orderBy(asc(mailboxFolders.folder));
     /**
@@ -2985,6 +2989,8 @@ export class MailboxService {
       organizedByThisInstall: this.deps.installId !== undefined
         && m.organizedByInstallId !== null
         && m.organizedByInstallId === this.deps.installId,
+      // UNCONDITIONAL, `pendingMoves`' rule: a set-aside message sits in a `connected` mailbox.
+      setAside: Number(aside?.n ?? 0),
       // THE CONSENT STAMP, beside the role rather than derived from it — the two are independent
       // and the DTO's own doc carries the argument. Projected UNCONDITIONALLY like its three
       // neighbours, and as a plain instant: no coercion is possible or needed, since the only

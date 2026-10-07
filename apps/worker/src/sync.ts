@@ -5,8 +5,8 @@ import {
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
-  epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, type Epoch,
-  type BudgetStop, type ChangeBatch, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
+  epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, makeRef, type Epoch,
+  type BudgetStop, type NativeLocator, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
@@ -22,6 +22,7 @@ import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, isStoreStatementFault, nextAttemptAfter,
   DETERMINISTIC_MESSAGE_FAILURE_CODES, MAX_DEAD_LETTERS_PER_CYCLE, MAX_MESSAGE_RETRIES_PER_CYCLE,
+  type MessageFailureCode,
 } from "./dead-letter.js";
 import { KnownSetCache, watchKnownSet } from "./known-set.js";
 // `./build-version.js` and NOT `./config.js`, which re-exports the same symbol: `config.ts` imports
@@ -439,12 +440,7 @@ export async function buildCursor(
   const folders: ImapCursor["folders"] = {};
   for (const f of names) {
     const row = folderRows.find((r) => r.folder === f);
-    /* A FOLDER WHOSE FIRST PASS NEVER FINISHED names no epoch, so the message that ended it would
-       not be presented as known and the next pass fetched it again. Its set-aside rows name one:
-       the adapter checks it against the server's, so a reset still re-enumerates. */
-    const named = epochs.get(f) ?? "0";
-    const epoch = epochOf(named).known ? named
-      : soleEpochOf(deadLetters?.entries().filter((e) => e.terminal && e.folder === f) ?? []);
+    const epoch = epochs.get(f) ?? "0";
     folders[f] = {
       uidValidity: epoch,
       uidNext: row?.uidNext ?? 0,
@@ -462,8 +458,13 @@ export async function buildCursor(
    * row carries the pair, which is a property of the writer rather than of this read.
    */
   const stopped = folderRows.find((r) => r.budgetStop !== undefined);
+  /* EVERY SET-ASIDE ROW, for every folder: the adapter decides each against the folder's live
+     epoch, so a folder with no cursor row, or one just reset, still never fetches it again. */
+  const setAside = (deadLetters?.entries() ?? []).filter((e) => e.terminal)
+    .map((e) => ({ folder: e.folder, uidValidity: e.uidValidity, uid: e.uid }));
   return {
     folders,
+    ...(setAside.length > 0 ? { setAside } : {}),
     ...(stopped?.budgetStop === undefined
       ? {}
       : { budgetStop: { folder: stopped.folder, ...stopped.budgetStop } }),
@@ -1158,13 +1159,7 @@ async function syncCycleWithin(
 
   const persistedFolders = new Map<string, PersistedFolderCursor>();
   const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet, persistedFolders);
-  let batch: ChangeBatch;
-  try {
-    batch = await adapter.changesSince(cursor);
-  } catch (err) {
-    await setAsideOverrun(deps, err, version);
-    throw err;
-  }
+  const batch = await adapter.changesSince(cursor);
   if (deps.census !== undefined) {
     deps.census.observed += batch.creates.length + batch.moves.length
       + batch.flagChanges.length + batch.deletes.length + (batch.resetGone?.length ?? 0);
@@ -1231,75 +1226,88 @@ async function syncCycleWithin(
         if (isStoreStatementFault(err)) deadLetters.noteStoreFault();
         throw err;
       }
-      const verdict = deadLetters.record(ch.locator, fault);
-      if (verdict === "retry") {
-        deferred.add(site.folder);
-        if (firstDeferredError === null) firstDeferredError = err;
-        log?.warn("sync_message_deferred", {
-          mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
-          code: fault.code, err,
-          reason: "this message failed but has not exhausted its attempts — the folder's cursor is " +
-            "held and the cycle fails, so nothing is acknowledged past it",
-        });
-        return;
-      }
-      // ── THE DURABLE RECORD, AND IT IS *NOT* BEST-EFFORT ──────────────────────────────────
-      //
-      // This write is the only reason the cursor is allowed to cross this UID. On the Sent folder
-      // the cursor IS a UID watermark, so a skip whose row is missing is a message nothing will ever
-      // enumerate again — the mail-loss defect, reachable through a database hiccup instead of
-      // through a restart. So a failure here REVOKES the terminal decision and takes the `retry`
-      // arm: the folder's cursor is held, the cycle fails, and the mailbox's ordinary quarantine
-      // cadence makes the problem loud. Content-free, exactly as the audit row below is: folder,
-      // epoch, UID, closed-set code, and nothing a sender chose.
-      let attempts: number;
-      try {
-        attempts = await fencedLiveGroup(deps, (r) => r.recordMessageFailure(mailboxId, {
-          accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
-          code: fault.code, version,
-          nextAttemptAt: nextAttemptAfter(fault.code, 1, new Date()),
-        }));
-      } catch (writeErr) {
-        deadLetters.revoke(ch.locator);
-        // Revoked FIRST, then the fence refusal propagates: the in-memory terminal decision must
-        // not outlive a durable record that was refused, whoever refused it.
-        rethrowRefusal(writeErr);
-        deferred.add(site.folder);
-        if (firstDeferredError === null) firstDeferredError = writeErr;
-        log?.error("sync_message_skip_unrecordable", {
-          mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
-          code: fault.code, err: writeErr,
-          reason: "this message could not be processed AND the durable record of that could not be " +
-            "written — the folder's cursor is held rather than advanced past mail nothing would " +
-            "ever enumerate again",
-        });
-        return;
-      }
-      log?.error("sync_message_skipped", {
+      await writeOff(ch.locator, fault, err);
+    }
+  }
+
+  /**
+   * THE ONE DOOR A MESSAGE IS WRITTEN OFF BY — the ledger's verdict (its per-cycle cap and the
+   * local backstop's hold), then the durable row. The per-change boundary above and a pass that
+   * stopped at one message's read-bound overrun both come through here.
+   */
+  async function writeOff(
+    locator: NativeLocator, fault: { code: MessageFailureCode; deterministic: boolean }, err: unknown,
+  ): Promise<void> {
+    const { uidValidity: siteEpoch, uid: siteUid } = parseRef(locator.ref);
+    const site = { folder: locator.folder, uidValidity: siteEpoch, uid: siteUid };
+    const verdict = deadLetters.record(locator, fault);
+    if (verdict === "retry") {
+      deferred.add(site.folder);
+      if (firstDeferredError === null) firstDeferredError = err;
+      log?.warn("sync_message_deferred", {
         mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
-        code: fault.code, skipped: deadLetters.skipped, attempts, err,
-        reason: "this message cannot be processed and has been declared consumed — the rest of the " +
-          "batch and all later mail continue, which is what one poison message used to prevent. It " +
-          "is recorded durably and re-read by UID on a schedule; the cursor may cross it",
+        code: fault.code, err,
+        reason: "this message failed but has not exhausted its attempts — the folder's cursor is " +
+          "held and the cycle fails, so nothing is acknowledged past it",
       });
-      // The USER-FACING evidence, best-effort and content-free: their own tooling reads `audit_log`,
-      // and unlike the row above this one carries no recovery, so a bookkeeping failure here must not
-      // resurrect the wedge the skip decision exists to end.
-      try {
-        await fencedLiveGroup(deps, (r) => r.recordAudit(
-          accountId, "sync.message_skipped",
-          {
-            mailboxId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
-            code: fault.code,
-          },
-          null,
-        ));
-      } catch (auditErr) {
-        rethrowRefusal(auditErr);
-        log?.warn("sync_message_skip_audit_failed", {
-          mailboxId, accountId, folder: site.folder, uid: site.uid, err: auditErr,
-        });
-      }
+      return;
+    }
+    // ── THE DURABLE RECORD, AND IT IS *NOT* BEST-EFFORT ──────────────────────────────────
+    //
+    // This write is the only reason the cursor is allowed to cross this UID. On the Sent folder
+    // the cursor IS a UID watermark, so a skip whose row is missing is a message nothing will ever
+    // enumerate again — the mail-loss defect, reachable through a database hiccup instead of
+    // through a restart. So a failure here REVOKES the terminal decision and takes the `retry`
+    // arm: the folder's cursor is held, the cycle fails, and the mailbox's ordinary quarantine
+    // cadence makes the problem loud. Content-free, exactly as the audit row below is: folder,
+    // epoch, UID, closed-set code, and nothing a sender chose.
+    let attempts: number;
+    try {
+      attempts = await fencedLiveGroup(deps, (r) => r.recordMessageFailure(mailboxId, {
+        accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+        code: fault.code, version,
+        nextAttemptAt: nextAttemptAfter(fault.code, 1, new Date()),
+      }));
+    } catch (writeErr) {
+      deadLetters.revoke(locator);
+      // Revoked FIRST, then the fence refusal propagates: the in-memory terminal decision must
+      // not outlive a durable record that was refused, whoever refused it.
+      rethrowRefusal(writeErr);
+      deferred.add(site.folder);
+      if (firstDeferredError === null) firstDeferredError = writeErr;
+      log?.error("sync_message_skip_unrecordable", {
+        mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+        code: fault.code, err: writeErr,
+        reason: "this message could not be processed AND the durable record of that could not be " +
+          "written — the folder's cursor is held rather than advanced past mail nothing would " +
+          "ever enumerate again",
+      });
+      return;
+    }
+    log?.error("sync_message_skipped", {
+      mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+      code: fault.code, skipped: deadLetters.skipped, attempts, err,
+      reason: "this message cannot be processed and has been declared consumed — the rest of the " +
+        "batch and all later mail continue, which is what one poison message used to prevent. It " +
+        "is recorded durably and re-read by UID on a schedule; the cursor may cross it",
+    });
+    // The USER-FACING evidence, best-effort and content-free: their own tooling reads `audit_log`,
+    // and unlike the row above this one carries no recovery, so a bookkeeping failure here must not
+    // resurrect the wedge the skip decision exists to end.
+    try {
+      await fencedLiveGroup(deps, (r) => r.recordAudit(
+        accountId, "sync.message_skipped",
+        {
+          mailboxId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+          code: fault.code,
+        },
+        null,
+      ));
+    } catch (auditErr) {
+      rethrowRefusal(auditErr);
+      log?.warn("sync_message_skip_audit_failed", {
+        mailboxId, accountId, folder: site.folder, uid: site.uid, err: auditErr,
+      });
     }
   }
 
@@ -1440,6 +1448,26 @@ async function syncCycleWithin(
     });
   }
 
+  // ── A RESET VOIDS A SET-ASIDE ROW; A PASS THAT STOPPED AT ONE MESSAGE SETS IT ASIDE ─────────
+  //
+  // Closed first, so a reset whose first page breaches again counts one message, not two.
+  for (const site of batch.setAsideStale ?? []) {
+    await fencedLiveGroup(deps, (r) => r.resolveMessageFailure(mailboxId, site));
+    deadLetters.forget(site.folder, site.uidValidity, site.uid);
+    log?.info("sync_set_aside_epoch_closed", {
+      mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
+      reason: "the folder's UIDVALIDITY changed, so this set-aside row names no message any more",
+    });
+  }
+  const overrun = batch.overrun;
+  if (overrun !== undefined) {
+    if (!isImapBoundExceeded(overrun.breach) || overrun.breach.bound !== "body_overrun") throw overrun.breach;
+    await writeOff(
+      { folder: overrun.folder, ref: makeRef(overrun.uidValidity, overrun.uid) },
+      { code: "mime_too_large", deterministic: true }, overrun.breach,
+    );
+  }
+
   // UIDs the server withheld — recorded here, before any cursor moves. `batch.unanswered` is the set
   // the adapter asked for and did not receive; no `Change` was ever produced for them, so the
   // `attempt` boundary never saw them and their dead-letter path was unreachable — they were crossed in
@@ -1539,6 +1567,10 @@ async function syncCycleWithin(
   if (!sameStop(cursor.budgetStop, batch.budgetStop)) {
     await fencedLiveGroup(deps, (r) => r.setMailboxBudgetStop(mailboxId, batch.budgetStop ?? null));
   }
+
+  // The pass stopped at an overrun: its work is committed and the connection is retired, so the
+  // cycle ends with the breach and the caller re-dials.
+  if (overrun !== undefined) throw overrun.breach;
 
   // AFTER the cursor writes, and skipped entirely when anything is deferred — see
   // `retryFailedMessages` for both reasons.
@@ -1664,39 +1696,6 @@ async function consentPointFor(
   if (readerMode || !creates.some((c) => c.ownAuthored === true)) return undefined;
   if (typeof deps.repo.correspondenceSince !== "function") return undefined;
   return (await deps.repo.correspondenceSince(deps.accountId, deps.mailboxId)) ?? undefined;
-}
-
-/**
- * A MESSAGE WHOSE OWN BYTES CROSSED A READ BOUND IS SET ASIDE ON THE FIRST BREACH. The breach is
- * thrown out of `changesSince` before any `Change` exists, so the `attempt` boundary never saw it
- * and the re-dial fetched the same UID and breached again, every cycle. Its row is the one the
- * RFC822.SIZE arm writes (`mime_too_large`, next look a new build), so the known-set excludes it
- * from the next fetch. The breach is rethrown by the caller: the connection is retired either way.
- */
-async function setAsideOverrun(deps: SyncDeps, err: unknown, version: string): Promise<void> {
-  if (!isImapBoundExceeded(err) || err.site === undefined || err.folder === undefined) return;
-  const { mailboxId, accountId, log } = deps;
-  const folder = err.folder;
-  const { uidValidity, uid } = err.site;
-  try {
-    const attempts = await fencedLiveGroup(deps, (r) => r.recordMessageFailure(mailboxId, {
-      accountId, folder, uidValidity, uid, code: "mime_too_large", version,
-      nextAttemptAt: nextAttemptAfter("mime_too_large", 1, new Date()),
-    }));
-    log?.warn("sync_uid_overrun_set_aside", {
-      mailboxId, accountId, folder, uidValidity, uid, attempts,
-      reason: "the server sent more bytes for this message than its declared size allows, so the " +
-        "connection was retired; the message is set aside so the next connection does not fetch " +
-        "it again, and a later build re-reads it by UID",
-    });
-  } catch (writeErr) {
-    rethrowRefusal(writeErr);
-    log?.error("sync_uid_overrun_unrecordable", {
-      mailboxId, accountId, folder, uidValidity, uid, err: writeErr,
-      reason: "the message that crossed a read bound could not be set aside, so the next " +
-        "connection will fetch it again",
-    });
-  }
 }
 
 async function retryFailedMessages(

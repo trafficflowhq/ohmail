@@ -1183,6 +1183,8 @@ export interface MailboxDTO {
    * absent reads as NOT ours.
    */
   organizedByThisInstall?: boolean;
+  /** Messages this mailbox set aside — the desktop's and phone's own sentence. Absent: an older server. */
+  setAside?: number;
   /**
    * WHEN somebody agreed to let ohmail organize this mailbox, or `null` for "nobody has". ABSENT AND `null` ARE
    * DIFFERENT HERE, AND THE DIFFERENCE IS A CONTROL: The claim offer's server-side rule is `status <> 'disabled' AND

@@ -73,7 +73,7 @@ import {
   imapTlsFloor, smtpTlsFloor,
   type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter,
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
-  type BudgetStop,
+  type BudgetStop, type MessageSite,
   type KnownEntry,
   type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
@@ -3161,6 +3161,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const scanOrder = leadWith(scanFolders, resumeAt?.folder);
     /** Set when a folder is refused for a spent budget — the cursor the NEXT pass leads with. */
     let stoppedAt: BudgetStop | undefined;
+    /* THE CALLER'S SET-ASIDE ROWS, by folder: decided against each folder's LIVE epoch below,
+       never against a cursor row, which a first pass or a reset does not have. */
+    const asideByFolder = new Map<string, MessageSite[]>();
+    for (const a of cursor.setAside ?? []) {
+      const arr = asideByFolder.get(a.folder) ?? [];
+      arr.push(a);
+      asideByFolder.set(a.folder, arr);
+    }
+    const setAsideStale: MessageSite[] = [];
+    let overrun: (MessageSite & { breach: Error }) | undefined;
     // ONE budget for the whole call, spent in WATCHED_FOLDERS order (INBOX first, Sent LAST),
     // so the bound is per-cycle rather than per-folder — six folders each fetching a full batch
     // would be six times the memory this is supposed to cap.
@@ -3330,10 +3340,33 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // bodies are then discarded. So "mark thousands of messages read" reproduced the same OOM
         // as a cold sync. The unknown-UID diff is a strict superset of the creates
         // `changedSince` could report, so nothing is lost by sourcing them here instead.
-        const unknownUids = currentUids.filter((u) => u >= createFloorUid && !effectiveKnown.has(u));
+        const liveEpoch = epochOf(curUidValidity);
+        const asideHere = new Set<number>();
+        for (const a of asideByFolder.get(folder) ?? []) {
+          const verdict = epochVerdict(epochOf(a.uidValidity), liveEpoch);
+          if (verdict === "usable") asideHere.add(a.uid);
+          else if (verdict === "stale") setAsideStale.push(a);
+        }
+        const unknownUids = currentUids.filter(
+          (u) => u >= createFloorUid && !effectiveKnown.has(u) && !asideHere.has(u),
+        );
+        let capped: Awaited<ReturnType<ImapAdapter["fetchCapped"]>>;
+        try {
+          capped = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
+        } catch (err) {
+          /* ONE MESSAGE'S OVERRUN ENDS THE PASS HERE AND DISCARDS NOTHING BEFORE IT: the
+             connection is retired, so the pass returns what the earlier folders produced, and
+             this folder and every later one keep their stored cursor. */
+          if (!(err instanceof ImapBoundExceeded) || err.bound !== "body_overrun"
+            || err.site === undefined || err.folder !== folder) throw err;
+          overrun = { folder, uidValidity: err.site.uidValidity, uid: err.site.uid, breach: err };
+          hasBacklog = true;
+          createsOwed = true;
+          break;
+        }
         const {
           fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize, budgetSpent,
-        } = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
+        } = capped;
         creates.push(...fetched);
         budget.messages -= fetched.length;
         for (const f of fetched) budget.bytes -= f.raw.length;
@@ -3652,6 +3685,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       ...(unreadableCursors.length > 0 ? { rebootstrapped: unreadableCursors } : {}),
       ...(foldersGone.length > 0 ? { foldersGone } : {}),
       ...(resetGone.length > 0 ? { resetGone: resetGone.map(asDelete) } : {}),
+      ...(overrun !== undefined ? { overrun } : {}),
+      ...(setAsideStale.length > 0 ? { setAsideStale } : {}),
     };
   }
 
@@ -3713,12 +3748,25 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       }
 
       const creates: Change[] = [];
+      /* THE RE-READ IS BYTE-ACCOUNTED AS THE PASS IS: a body past its own declared size's
+         ceiling retires the connection and names its message, in both body loops below. */
+      const overrunGuard = (m: FetchMessageObject): void => {
+        const arrived = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
+        const ceiling = bodyOverrunCeiling(sizes.get(m.uid));
+        if (arrived <= ceiling) return;
+        const because = new ImapBoundExceeded(
+          "body_overrun", ceiling, arrived, folder, { uidValidity: String(curUidValidity), uid: m.uid },
+        );
+        this.retireConnection(because);
+        throw because;
+      };
       if (take.length > 0) {
         for await (const m of this.client.fetch(
           take,
           { uid: true, flags: true, envelope: true, source: true, internalDate: true, bodyStructure: true },
           { uid: true },
         )) {
+          overrunGuard(m);
           creates.push({
             type: "create",
             locator: { folder, ref: makeRef(curUidValidity, m.uid) },
@@ -3749,6 +3797,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const withheld = take.filter((u) => !answered.has(u));
       if (withheld.length > 0) {
         const retried = (m: FetchMessageObject): void => {
+          overrunGuard(m);
           answered.add(m.uid);
           creates.push({
             type: "create",
