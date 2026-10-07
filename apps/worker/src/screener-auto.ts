@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import {
   accountSettings, accountSyncState, approvals, auditLog, changeLog, drafts, folderState, mailboxes,
   messageBodies, messageStates, messages, rules as rulesTbl, recordChange,
-  readOwnAddresses, ruleNamesSenderSql, weAnsweredThisSenderWhere, type Tx, auditAction,} from "@trafficflow/db";
+  ruleNamesSenderSql, weAnsweredThisSenderWhere, type Tx, auditAction,} from "@trafficflow/db";
 import {
   STRONG_BULK_FLOOR_VERSION, migrationBulkPlacement, silentLogger,
   type Destination, type Logger, type NormalizedMessage,
@@ -212,15 +212,14 @@ export async function screenerAutoApplyPass(
     .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
   if (!settings?.autoApplyAt) { deps.walk?.delete(accountId); deps.walk?.resumes?.delete(accountId); return EMPTY(); }
 
-  // The account's own addresses (the one set, `readOwnAddresses`) — for the "the user replied from
-  // their own client" exclusion. Read once here rather than in SQL so the candidate query stays one
-  // indexable statement. Every mailbox row is the roster the walk mark is keyed on (a promotion, a
-  // re-enable or a removal re-admits).
-  const ownAddresses = [...await readOwnAddresses(db as unknown as Tx, accountId)];
-  const rosterRows = await db.select({
+  // Every address this ACCOUNT sends from — for the "the user replied from their own client"
+  // exclusion. Read once here rather than in SQL so the candidate query stays one indexable statement.
+  // The same rows are the roster the walk mark is keyed on (a promotion or a re-enable re-admits).
+  const ownRows = await db.select({
     id: mailboxes.id, address: mailboxes.address, status: mailboxes.status, role: mailboxes.organizerRole,
   }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
-  const roster = rosterRows.map((r) => `${r.id}:${r.status}:${r.role}:${r.address.toLowerCase()}`).sort().join(",");
+  const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  const roster = ownRows.map((r) => `${r.id}:${r.status}:${r.role}:${r.address.toLowerCase()}`).sort().join(",");
 
   const result: ScreenerAutoResult = { ...EMPTY(), ran: true };
   const autoApplyAt = new Date(settings.autoApplyAt).toISOString();

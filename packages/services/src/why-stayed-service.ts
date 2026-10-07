@@ -1,4 +1,5 @@
-import { readOwnAddresses, whyTheyStayed, WHY_STAYED_IDS_MAX, type StayedWhy, type Tx } from "@trafficflow/db";
+import { eq } from "drizzle-orm";
+import { mailboxes, whyTheyStayed, WHY_STAYED_IDS_MAX, type StayedWhy, type Tx } from "@trafficflow/db";
 import { isUuid } from "./ids.js";
 import { ServiceError } from "./errors.js";
 
@@ -14,7 +15,10 @@ export async function whyStayed(db: Tx, accountId: string, ids: readonly string[
     throw new ServiceError("validation_failed", 400, `at most ${WHY_STAYED_IDS_MAX} ids`);
   }
   if (ids.some((id) => !isUuid(id))) throw new ServiceError("validation_failed", 400, "ids must be message ids");
-  const own = [...await readOwnAddresses(db, accountId)];
+  // The we-answered shield's own set, as the backlog pass reads it: every address the account has a
+  // mailbox for, a removed one's included, since a reply sent from it is still the person's.
+  const own = (await db.select({ address: mailboxes.address }).from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId))).map((r) => r.address.toLowerCase());
   const found = await whyTheyStayed(db, accountId, ids, own);
   return [...found].map(([id, why]) => ({ id, why }));
 }

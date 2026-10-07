@@ -148,10 +148,13 @@ async function unscreenedWalk(
      a press reads it inside its own transaction, so what it acts on is as fresh as its writes. */
   const rules: Rule[] = await repo.listRules(accountId);
   const known: ReadonlySet<string> = await repo.knownSenders(accountId);
-  // The account's own addresses, the one set (`readOwnAddresses`) — what "not from myself" excludes,
-  // and the reply predicate's list.
-  const ownAddresses = [...await readOwnAddresses(t, accountId)];
-  const ownSet: ReadonlySet<string> = new Set(ownAddresses);
+  // Every address the account has a mailbox for — what "not from myself" excludes, and the reply
+  // predicate's list (a reply sent from a removed mailbox is still the person's). The router reads
+  // the one set (`readOwnAddresses`), so what is offered stays a subset of what the gate screens.
+  const ownRows = await t.select({ address: mailboxes.address }).from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  const ownSet: ReadonlySet<string> = await readOwnAddresses(t, accountId);
   /* THE TWO WIDE COLUMNS ARE READ ONLY WHERE A RULE READS THEM, and which rule reads which is the
      whole of the condition. `headers` is read by ONE arm of the gate that can precede a `screener`
      answer — a `header` rule, which names a header and nobody's address; `message_bodies.text` by

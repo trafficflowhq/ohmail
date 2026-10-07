@@ -2,7 +2,7 @@ import { and, asc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   accountSettings, approvals, contactOnlyHeldWhere, drafts, folderState, mailboxes,
   messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl,
-  AccountErasedError, readAccountErasedAt, readOwnAddresses,
+  AccountErasedError, readAccountErasedAt,
   CUTLINE_ALLOW_DESTINATIONS, ruleNamesSenderSql, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { silentLogger, type Destination, type Logger } from "@trafficflow/core";
@@ -138,10 +138,12 @@ export async function gateReleasePass(
   }
   out.ran = true;
 
-  // THE ACCOUNT'S OWN ADDRESSES (the one set, `readOwnAddresses`), for the fifth user-intent
-  // exclusion below — "the user replied from their own mail client", which is the one thing that
-  // looks like their action and is not recorded as one.
-  const own = [...await readOwnAddresses(db as unknown as Tx, accountId)];
+  // THE ACCOUNT'S OWN ADDRESSES, for the fifth user-intent exclusion below — "the user replied
+  // from their own mail client", which is the one thing that looks like their action and is not
+  // recorded as one.
+  const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  const own = ownRows.map((r) => r.address.toLowerCase());
 
   const page = await db.transaction(async (tx) => {
     const d = dialect(tx as unknown as Tx);

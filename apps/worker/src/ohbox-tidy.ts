@@ -291,9 +291,12 @@ export async function ohboxTidyPass(
   // These shape the candidate QUERY (they are what "not from myself" excludes), and the set changes
   // only when a mailbox is connected or removed — an act that restarts this pass's world anyway. It
   // is read once and named as such, rather than swept along with the two reads below.
-  // The one own-address set (`readOwnAddresses`): a removed mailbox's address is a stranger's.
-  const ownAddresses = [...await readOwnAddresses(db, accountId)];
-  const ownSet: ReadonlySet<string> = new Set(ownAddresses);
+  // `ownAddresses` keeps every address the account has a mailbox for (a reply sent from a removed
+  // one is still the person's); the router reads the one set (`readOwnAddresses`).
+  const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  const ownSet: ReadonlySet<string> = await readOwnAddresses(db, accountId);
 
   const result: OhboxTidyResult = { ...EMPTY(), ran: true };
   let afterId: string | null = settings?.cursor ?? null;

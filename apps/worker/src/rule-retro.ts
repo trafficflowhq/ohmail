@@ -259,8 +259,9 @@ export async function ruleRetroPass(
     return async (accountId: string): Promise<string[]> => {
       const hit = cache.get(accountId);
       if (hit) return hit;
-      // The one own-address set (`readOwnAddresses`): a removed mailbox's address is a stranger's.
-      const fresh = [...await readOwnAddresses(db, accountId)];
+      const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
+        .where(eq(mailboxes.accountId, accountId));
+      const fresh = ownRows.map((r) => r.address.toLowerCase());
       cache.set(accountId, fresh);
       return fresh;
     };
@@ -269,8 +270,11 @@ export async function ruleRetroPass(
   for (const row of owed) {
     if (result.moved >= budget) { result.capped = true; break; }
     result.rules++;
+    // `own` is every address the account has a mailbox for, and it feeds the we-answered shield only:
+    // a reply sent from a mailbox the person later removed is still their reply. The router reads the
+    // one set (`readOwnAddresses`), where a removed mailbox's address is a stranger's.
     const own = await ownFor(row.accountId);
-    const ownSet: ReadonlySet<string> = new Set(own);
+    const ownSet: ReadonlySet<string> = await readOwnAddresses(db, row.accountId);
 
     let pages = 0;
     let exhausted = false;

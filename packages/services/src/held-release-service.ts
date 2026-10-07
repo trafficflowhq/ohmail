@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   AccountErasedError, accountSettings, applyScreenerDecision, auditAction, auditLog, changeLog,
-  contactOnlyHeldWhere, destinationIsDecisionSql, folderState, lockAccountRuleKeys, mailboxes, messages, readOwnAddresses, recordRuleDelta,
+  contactOnlyHeldWhere, destinationIsDecisionSql, folderState, lockAccountRuleKeys, mailboxes, messages, recordRuleDelta,
   ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -212,9 +212,9 @@ export async function heldReleaseGroups(
 }
 
 /** The account's own addresses, lower-cased — the contact arm's own-reply exclusion reads them. */
-/** The one own-address set (`readOwnAddresses`), as gate-release reads it for the same predicate. */
 async function ownAddressesOf(db: Tx, accountId: string): Promise<string[]> {
-  return [...await readOwnAddresses(db, accountId)];
+  const rows = await db.select({ address: mailboxes.address }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
+  return rows.map((r) => r.address.toLowerCase());
 }
 
 /** The contact-only senders with mail held at the gate, largest first — {@link HeldReleaseSenderGroup}. */

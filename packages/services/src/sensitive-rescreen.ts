@@ -242,10 +242,13 @@ export async function runSensitiveRescreen(
   const rules: Rule[] = await repo.listRules(accountId);
   const known: ReadonlySet<string> = await repo.knownSenders(accountId);
 
-  // The account's own addresses, the one set (`readOwnAddresses`). Used by the "the user replied"
-  // predicate below; read here rather than in SQL so the candidate query stays one indexable statement.
-  const ownAddresses = [...await readOwnAddresses(tx, accountId)];
-  const ownSet: ReadonlySet<string> = new Set(ownAddresses);
+  // Every address this ACCOUNT has sent from, a removed mailbox's included: a reply sent from one is
+  // still the person's. Used by the "the user replied" predicate below; read here rather than in SQL
+  // so the candidate query stays one indexable statement. The router reads the one set instead.
+  const ownRows = await tx.select({ address: mailboxes.address }).from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
+  const ownSet: ReadonlySet<string> = await readOwnAddresses(tx, accountId);
 
   let examined = 0;
   let rescreened = 0;
