@@ -620,6 +620,19 @@ export function profileFingerprintVersion(fingerprint: string): number {
 }
 
 /**
+ * DOES THE LOCAL STORE SAY WHAT A DOCUMENT WITH THIS FINGERPRINT SAYS — at the document's canonical
+ * version, and once more with the local screener's `source` left out (mail 0147): a document that
+ * states no source, which every older one is, names the same contacts, and an import changes the
+ * source of no contact this install holds, so the key's arrival is never a question by itself.
+ */
+export function localSaysWhatAFingerprintSays(local: OrganizerProfilePayload, fingerprint: string): boolean {
+  const v = profileFingerprintVersion(fingerprint);
+  if (profileFingerprint(local, v) === fingerprint) return true;
+  const unstated = { ...local, screener: local.screener.map(({ address, name }) => (name === undefined ? { address } : { address, name })) };
+  return profileFingerprint(unstated, v) === fingerprint;
+}
+
+/**
  * `different-version` IS NOT `different`, and the distinction is the whole point of versioning the
  * form: two fingerprints taken at different versions say NOTHING about whether the configurations
  * agree, so the answer is a re-canonicalise signal — write it out again at this build's version —

@@ -23,7 +23,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
-  profileFingerprint, profileFingerprintVersion, profileGateView, readOrganizerProfile, tidyOrganizerProfile,
+  localSaysWhatAFingerprintSays, profileFingerprint, profileGateView, readOrganizerProfile, tidyOrganizerProfile,
   writeOrganizerProfile,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf,
@@ -43,15 +43,7 @@ const REENCODED = new Set<string>();
  * re-canonicalise signal — the next write emits v2 — never a disagreement.
  */
 function localSaysWhatTheDocumentSays(local: OrganizerProfilePayload, doc: OrganizerProfileDoc): boolean {
-  return profileFingerprint(local, doc.v) === profileFingerprint(doc);
-}
-
-/**
- * The same question against a fingerprint we STORED rather than a document we hold: the version
- * travels in the fingerprint, so the local payload is hashed at the version the stored one names.
- */
-function localSaysWhatAFingerprintSays(local: OrganizerProfilePayload, fingerprint: string): boolean {
-  return profileFingerprint(local, profileFingerprintVersion(fingerprint)) === fingerprint;
+  return localSaysWhatAFingerprintSays(local, profileFingerprint(doc));
 }
 
 /**

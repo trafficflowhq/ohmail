@@ -9,7 +9,7 @@ import {
   type ImportAskRefusal, type Tx,
 } from "@trafficflow/db";
 import {
-  PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, profileFingerprint, profileFingerprintVersion,
+  PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, localSaysWhatAFingerprintSays,
   oversizedProfileList, type ProfileReadResult, type ProfileLocator,
 } from "@trafficflow/core/adapters/organizer-profile";
 import {
@@ -225,7 +225,7 @@ export class ProfileImportService {
     // Already what the local store says, at the DOCUMENT's canonical version (the fingerprint's
     // tag): an import would change nothing. The organizer releases its own hold the same way.
     const local = await serializeOrganizerProfile(db, ctx.accountId, mailboxId);
-    if (profileFingerprint(local, profileFingerprintVersion(fingerprint)) === fingerprint) return { state: "none" };
+    if (localSaysWhatAFingerprintSays(local, fingerprint)) return { state: "none" };
     return { ...offer, state: "found" };
   }
 
