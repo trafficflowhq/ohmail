@@ -1181,16 +1181,14 @@ function policyDemotion(
 }
 
 /**
- * The consent gate, in the only order that is correct: (1) the user's own rules, resolved by a
- * TOTAL order — a user decision outranks anything we infer, including the gate; (2) the account's
- * {@link standingRule} for this sender, whether or not a term claimed THIS message; (3) a POSITIVE
- * authenticated-known check; (4) fail closed to `ohmail/Screener` for an unknown, absent, unparseable
- * or ambiguous sender, never an own address; (5) THEN {@link headerHeuristic}, refinement only.
- * The identity fact ({@link EvaluateRulesInput.identity}) holds every admission in (1)-(3) that a
- * person did not give at the address level, below every denial and the `"fail"` screen.
- * `"fail"` — the only thing `input.auth` does — screens a message otherwise allowed: a DENY rule
- * is never weakened, nothing is ever REQUIRED. One refinement, {@link policyDemotion}, between
- * allow-side piles only; its `matchedRuleId` is `null` so the learning path is taught no consent.
+ * The consent gate, in the only correct order: (1) the user's own rules by a TOTAL order — a user
+ * decision outranks anything inferred, the gate included; (2) the account's {@link standingRule} for
+ * this sender, whether or not a term claimed THIS message; (3) a POSITIVE authenticated-known check;
+ * (4) fail closed to `ohmail/Screener` for an unknown, absent, unparseable or ambiguous sender, never
+ * an own address; (5) THEN {@link headerHeuristic}, refinement only. The identity fact holds every
+ * admission in (1)-(3) no person gave at the address level, below every denial and the `"fail"`
+ * screen; `"fail"` screens what is otherwise allowed and never weakens a DENY. One refinement,
+ * {@link policyDemotion}, between allow-side piles only, `matchedRuleId: null` (no consent taught).
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   const { msg, knownSenders, auth, ohboxPolicy, ownAddresses, identity } = input;

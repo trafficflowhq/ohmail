@@ -1,16 +1,13 @@
 "use client";
 
 /**
- * The sender's screening, as a popover reachable from any list or open message; anchored like the tag
- * picker, Escape and outside click dismiss. It states the consequence BEFORE the click, and the two
- * differ: from the Screener the change becomes a rule, from anywhere else it moves the mail only (see
- * `sender-screening.ts`). The additions sit around the existing sheet: a scope switch, offered only
- * when the address has a domain that is not a shared provider's, defaulting to the ADDRESS —
- * defaulting to the domain would silently widen every existing click. On a shared provider the
- * switch is replaced by the sentence that decisions there are per address: a rule for everyone at
- * gmail.com admits nobody (`rule-order.ts#sharedProviderAllowRefusal`). The counts are stated on
- * the switch, so the wide option is chosen with its size visible. And a way into the detail view —
- * every message from this address or domain and why it sits there (`sender-audit.ts`).
+ * The sender's screening, as a popover reachable from any list or open message; anchored like the
+ * tag picker, Escape and outside click dismiss. It states the consequence BEFORE the click: from the
+ * Screener the change becomes a rule, from anywhere else it moves the mail only (`sender-screening.ts`).
+ * A scope switch is offered only where the address has a domain that is not a shared provider's
+ * (there a sentence says decisions are per address: `rule-order.ts#sharedProviderAllowRefusal`),
+ * defaulting to the ADDRESS, the counts on the switch so the wide option shows its size. And a way
+ * into the detail view: every message from this address or domain and why it sits there.
  */
 
 /**
