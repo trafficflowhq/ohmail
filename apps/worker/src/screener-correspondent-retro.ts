@@ -11,6 +11,7 @@ import {
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { upsertDesired } from "./rule-pass.js";
+import { writeSenderChecks } from "./sender-check-backfill.js";
 
 /* THE SCREENER'S CORRESPONDENT RETRO — what the gate now knows at ingest, applied once to what it
  * decided before it knew. Three acts, all for somebody this account wrote to after its consent
@@ -18,7 +19,8 @@ import { upsertDesired } from "./rule-pass.js";
  * ingested before the ingest taught them; release their mail the gate still holds to the Ohbox
  * (desired state the reconciler converges, an audit row with its inverse per message); and switch
  * off a spam or screen-out rule the Screener's own auto-act promoted over them, never one the
- * person made. Nothing it moves is in Junk. Logs counts only. */
+ * person made. A held claim (mail 0147) moves only for somebody the person wrote to; a reply citing
+ * the account's mail releases no claim. Nothing it moves is in Junk. Logs counts only. */
 
 /** Senders one run may examine in each of its two walks. */
 const CORRESPONDENT_RETRO_SENDERS = 50;
@@ -141,16 +143,36 @@ async function release(
 ): Promise<number> {
   return fencedAccountWrite(db, { accountId }, async (tx) => {
     await lockAccountRuleKeys(tx, accountId);
-    // A Sent copy TO them is the person writing; a reply citing one is the reply arm's inference.
-    const source = evidence.via === "wrote" ? "person" : "inferred";
+    /* A Sent copy TO them is the person writing: consent, the fact riding. A reply citing one is
+       the reply arm's inference, which never admits a claim: the sender's unchecked rows are
+       checked first with the backfill's own write, a marked row stays at the gate, and a sender whose
+       every held row is a claim is taught nothing. */
+    const replied = evidence.via !== "wrote";
+    let cleared: ReadonlySet<string> | null = null;
+    if (replied) {
+      const held = await tx.select({
+        id: messages.id, fromName: messages.fromName, fromAddress: messages.fromAddress,
+        subject: messages.subject, senderCheck: messages.senderCheck,
+      }).from(folderState)
+        .innerJoin(messages, eq(messages.id, folderState.messageId))
+        .where(and(...heldWhere(accountId), eq(sql`lower(${messages.fromAddress})`, address)));
+      const marked = new Set((await writeSenderChecks(tx, accountId, held.filter((r) => r.senderCheck === null)
+        .map((r) => ({ id: r.id, fromName: r.fromName, fromAddress: r.fromAddress, subject: r.subject }))))
+        .map((r) => r.id));
+      cleared = new Set(held.filter((r) => r.senderCheck === "none" || (r.senderCheck === null && !marked.has(r.id)))
+        .map((r) => r.id));
+      if (cleared.size === 0) return 0;
+    }
+    const source = replied ? "inferred" : "person";
     await tx.insert(contacts).values({ accountId, address, source })
       .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
     if (source === "person") await upgradeContactsToPerson(tx, accountId, [address]);
-    const rows = await dialect(tx).forUpdate(tx.select({
+    const locked = await dialect(tx).forUpdate(tx.select({
       messageId: messages.id, mailboxId: messages.mailboxId, observedFolder: folderState.observedFolder,
     }).from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(...heldWhere(accountId), eq(sql`lower(${messages.fromAddress})`, address))));
+    const rows = cleared === null ? locked : locked.filter((r) => cleared.has(r.messageId));
     if (rows.length === 0) return 0;
     for (const r of rows) {
       await upsertDesired(tx, r, OHBOX, now);
