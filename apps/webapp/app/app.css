@@ -2690,13 +2690,16 @@ textarea.c-input:read-only {
   background: oklch(1 0 0 / 0.55);
 }
 /* THE PROVENANCE IS ONE SENTENCE: its children are inline, so it wraps at words. As a flex row its
-   three text runs each wrapped inside a column of their own at 700 and 390. A wrapped chip takes the
-   card radius — a pill radius on two lines is a blob. */
+   three text runs each wrapped inside a column of their own at 700 and 390. It stays a pill on its one
+   line; under 700px, where the compose card is narrower than the sentence, it wraps and takes the card
+   radius — a pill radius on two lines is a blob. */
 .grounding .chip {
   display: inline-block;
   max-width: 100%;
   box-sizing: border-box;
-  border-radius: calc(var(--r-card) * 10 / 14);
+}
+@media (max-width: 699.98px) {
+  .grounding .chip { border-radius: calc(var(--r-card) * 10 / 14); }
 }
 .grounding .chip > svg {
   vertical-align: -2px;
