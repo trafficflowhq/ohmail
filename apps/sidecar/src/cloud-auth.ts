@@ -151,9 +151,9 @@ export const ERASED_ANSWER_HEADER = "x-ohmail-accepts";
 export const ACCOUNT_ERASED = "account_erased";
 
 /**
- * THE ANSWERS THIS PROCESS BUILT ITSELF, never Cloud's. A reader asking "did Cloud answer?" (the
- * mirror's reachability) asks {@link answeredHere}, never the status: a built 503 or 410 carries the
- * same status a server sends. Kept by identity, so a copy or a re-wrap of one is not marked.
+ * THE ANSWERS THIS PROCESS BUILT ITSELF, never Cloud's. "Did Cloud answer?" ({@link answeredByCloud})
+ * asks this mark before any status: a built 503 or 410 carries the same status a server sends. Kept
+ * by identity, so a copy or a re-wrap of one is not marked.
  */
 const builtHere = new WeakSet<Response>();
 /** Mark an answer this process built. Every synthesis on a hosted request's path goes through it. */
@@ -163,6 +163,27 @@ export function builtAnswer(res: Response): Response {
 }
 export function answeredHere(res: Response): boolean {
   return builtHere.has(res);
+}
+
+/** The header the hosting platform sets on an error page it wrote itself, the API unreached. */
+const PLATFORM_ERROR_HEADER = "x-vercel-error";
+
+/**
+ * DID CLOUD ITSELF ANSWER, and not ask for a wait? The one question behind reachability, asked by the
+ * mirror's pull and the proxy's probe alike: below 500, not a 429, not built here, and a 4xx only with
+ * our API's error body and no platform error header. The host in front of the API writes its own
+ * plain-text 404, 402 or 403 when the API is not there, and that is an outage, not a refusal. Reads a
+ * CLONE, so the caller keeps its body.
+ */
+export async function answeredByCloud(res: Response): Promise<boolean> {
+  if (answeredHere(res) || res.status >= 500 || res.status === 429) return false;
+  if (res.status < 400) return true;
+  if (res.headers.has(PLATFORM_ERROR_HEADER)) return false;
+  try {
+    return (await envelopeCode(res.clone())) !== null;
+  } catch {
+    return false; // a body already being read cannot vouch for anything
+  }
 }
 
 function erasedResponse(): Response {

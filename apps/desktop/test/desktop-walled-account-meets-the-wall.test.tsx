@@ -32,9 +32,10 @@ if (typeof (Blob.prototype as { arrayBuffer?: unknown }).arrayBuffer !== "functi
  * DESKTOP-WALLED-ACCOUNT-READS-AS-OFFLINE, through the whole window over the REAL Cloud engine. The
  * account is suspended while the device still holds an open verdict, so the window paints the mail
  * and must learn of the wall from a request it relays. The engine's mirror has already pulled once
- * and met the 402. An answer of any status is Cloud reached, so the mirror stays reachable, the
- * window's reads are forwarded and meet the 402, and the lock rises; a pull that reaches nothing is
- * still offline (the control).
+ * and met the 402. Cloud's own refusal (a 4xx with the API's error body) is Cloud reached, so the
+ * mirror stays reachable, the window's reads are forwarded and meet the 402, and the lock rises. A
+ * pull that reaches nothing, Cloud's own 503 and the hosting platform's own 404 page are offline: the
+ * window's changes are held, uncounted, and land after.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -79,7 +80,7 @@ async function freshDataDir(tag: string): Promise<string> {
   return dir;
 }
 
-type Mode = "walled" | "unreachable" | "outage" | "up";
+type Mode = "walled" | "unreachable" | "outage" | "edge-404" | "up";
 
 /** ohmail Cloud for one account: suspended (every product door 402, the access read refused) or gone from the network. */
 function hostedCloud(mode: () => Mode) {
@@ -94,6 +95,12 @@ function hostedCloud(mode: () => Mode) {
     if (move && (init?.method ?? "GET").toUpperCase() === "POST") moves += 1;
     // Cloud down: its own 503 on every route, the answer a server error gives.
     if (mode() === "outage") return json({ error: { code: "service_unavailable", message: "down" } }, 503);
+    // The API gone from its host: the platform's own page on every route, plain text, no API body.
+    if (mode() === "edge-404") {
+      return new Response("The deployment could not be found.\n\nDEPLOYMENT_NOT_FOUND\n", {
+        status: 404, headers: { "content-type": "text/plain; charset=utf-8", "x-vercel-error": "DEPLOYMENT_NOT_FOUND" },
+      });
+    }
     if (mode() === "up") {
       if (move) return json({ id: move[1], folder: "ohmail/News", updatedAt: "2026-10-07T10:00:00.000Z" });
       if (url.pathname === "/mailboxes") return json({ items: [] });
@@ -210,6 +217,41 @@ async function walledEngine(mode: () => Mode, cloud = hostedCloud(mode)): Promis
   return engine;
 }
 
+/** A Cloud that is down as `failing` says, then up: the window's queued move waits at the door, then lands once. */
+async function heldThenLanded(failing: "outage" | "edge-404"): Promise<void> {
+  let mode: Mode = failing;
+  const cloud = hostedCloud(() => mode);
+  const engine = await walledEngine(() => mode, cloud);
+  const online = async (): Promise<boolean> => ((await (await engine.handle(new Request("http://sidecar/health", {
+    headers: { authorization: `Bearer ${engine.sessionToken}` },
+  }))).json()) as { online?: unknown }).online === true;
+  expect(await online(), `${failing} read as reachable`).toBe(false);
+  const shell = standInShell(engine);
+  const local = createLocalEngine(engine.world.mailboxId);
+  await local.hydrate();
+  const queued = await local.mutate({ kind: "move", messageId: "m-1", folder: "ohmail/News" });
+  expect(queued.status).toBe("queued");
+  for (let i = 0; i < 3; i++) await local.syncOnce().catch(() => undefined);
+  const attempts = shell.relayed.filter((r) => r.path === "/messages/m-1/move");
+  expect(attempts.length, "the queued move was never offered to the door").toBeGreaterThanOrEqual(1);
+  // `offline_read_only` is the one refusal the engine counts against nothing (engine.ts `unreachable`).
+  expect(attempts.every((r) => r.status === 503 && r.code === "offline_read_only"), JSON.stringify(attempts)).toBe(true);
+  expect(cloud.moves(), `the move went out during ${failing}: a counted failure, or a final refusal`).toBe(0);
+  expect(local.pendingMutations().map((p) => p.mutation.kind), "the move was not held").toEqual(["move"]);
+
+  mode = "up";
+  // The mirror's failure ladder asks again within seconds; its served pull makes Cloud reachable.
+  for (let waited = 0; waited < 20_000 && !(await online()); waited += 100) await new Promise((r) => setTimeout(r, 100));
+  expect(await online(), "Cloud came back and the mirror stayed offline").toBe(true);
+  for (let i = 0; i < 20 && cloud.moves() === 0; i++) {
+    await local.syncOnce().catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  expect(cloud.moves(), "the held move did not land once after Cloud returned").toBe(1);
+  for (let i = 0; i < 20 && local.pendingMutations().length > 0; i++) await new Promise((r) => setTimeout(r, 50));
+  expect(local.pendingMutations(), "the landed move stayed queued").toEqual([]);
+}
+
 describe("a suspended account's desktop window meets the wall, not an offline sentence", () => {
   it("the mirror met the 402 before the window opened: the window's reads are forwarded, meet the 402, and the lock rises", { timeout: 60_000 }, async () => {
     const engine = await walledEngine(() => "walled");
@@ -224,37 +266,11 @@ describe("a suspended account's desktop window meets the wall, not an offline se
   });
 
   it("a Cloud outage (its own 503) holds a queued move at the door, uncounted, and it lands once after Cloud returns", { timeout: 60_000 }, async () => {
-    let mode: Mode = "outage";
-    const cloud = hostedCloud(() => mode);
-    const engine = await walledEngine(() => mode, cloud);
-    const online = async (): Promise<boolean> => ((await (await engine.handle(new Request("http://sidecar/health", {
-      headers: { authorization: `Bearer ${engine.sessionToken}` },
-    }))).json()) as { online?: unknown }).online === true;
-    expect(await online(), "a Cloud outage read as reachable").toBe(false);
-    const shell = standInShell(engine);
-    const local = createLocalEngine(engine.world.mailboxId);
-    await local.hydrate();
-    const queued = await local.mutate({ kind: "move", messageId: "m-1", folder: "ohmail/News" });
-    expect(queued.status).toBe("queued");
-    for (let i = 0; i < 3; i++) await local.syncOnce().catch(() => undefined);
-    const attempts = shell.relayed.filter((r) => r.path === "/messages/m-1/move");
-    expect(attempts.length, "the queued move was never offered to the door").toBeGreaterThanOrEqual(1);
-    // `offline_read_only` is the one refusal the engine counts against nothing (engine.ts `unreachable`).
-    expect(attempts.every((r) => r.status === 503 && r.code === "offline_read_only"), JSON.stringify(attempts)).toBe(true);
-    expect(cloud.moves(), "the move reached Cloud during the outage, a counted failure").toBe(0);
-    expect(local.pendingMutations().map((p) => p.mutation.kind), "the move was not held").toEqual(["move"]);
+    await heldThenLanded("outage");
+  });
 
-    mode = "up";
-    // The mirror's failure ladder asks again within seconds; its served pull makes Cloud reachable.
-    for (let waited = 0; waited < 20_000 && !(await online()); waited += 100) await new Promise((r) => setTimeout(r, 100));
-    expect(await online(), "Cloud came back and the mirror stayed offline").toBe(true);
-    for (let i = 0; i < 20 && cloud.moves() === 0; i++) {
-      await local.syncOnce().catch(() => undefined);
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    expect(cloud.moves(), "the held move did not land once after Cloud returned").toBe(1);
-    for (let i = 0; i < 20 && local.pendingMutations().length > 0; i++) await new Promise((r) => setTimeout(r, 50));
-    expect(local.pendingMutations(), "the landed move stayed queued").toEqual([]);
+  it("the hosting platform's own 404 at every route is an outage too: the move is held, uncounted, and lands once after", { timeout: 60_000 }, async () => {
+    await heldThenLanded("edge-404");
   });
 
   it("CONTROL: a pull that reaches nothing still reads offline, and the window's relayed reads are answered offline", { timeout: 60_000 }, async () => {

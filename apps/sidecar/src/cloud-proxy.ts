@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
-import { mayRenewFor, offlineResponse, REQUEST_DEADLINE_MS, type CloudAuth } from "./cloud-auth.js";
+import { answeredByCloud, mayRenewFor, offlineResponse, REQUEST_DEADLINE_MS, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
 import { leftOf } from "./pair-undo.js";
@@ -119,8 +119,9 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
   /**
    * ONE READ MAY ASK AFTER THIS DOOR'S OWN FORWARD FAILED. That failure marks the mirror offline,
    * and every relayed read answered 503 unasked until a pull is served, or refused by Cloud itself
-   * (a 4xx). So the next read asks the account: an answer clears the flag, a failure leaves offline
-   * mode as the pull found it.
+   * (a 4xx with our API's error body). So the next read asks the account: an answer Cloud itself
+   * gave clears the flag; no answer, a 5xx, a 429, the platform's own error page or an answer built
+   * here leaves offline mode as the pull found it.
    */
   let probeOwed = false;
   /**
@@ -219,8 +220,10 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       answered();
     }
 
-    // The account answered, so it is reachable whatever it said.
-    if (!cfg.mirror.online()) cfg.mirror.markConnectivity(true);
+    // REACHABLE AGAIN ONLY IF CLOUD ITSELF ANSWERED, the mirror's own question (`answeredByCloud`): a
+    // 5xx, a 429, the hosting platform's own error page and an answer built here leave the door
+    // offline, so in a flapping outage the next write is still held, uncounted.
+    if (!cfg.mirror.online() && (await answeredByCloud(res))) cfg.mirror.markConnectivity(true);
     /* A send's draft create carries the send's own key (http-adapter.ts mailSend) and is not the
        send's verdict, so its 2xx records nothing; every other relayed write is one request. */
     const firstHalf = method === "POST" && url.pathname === "/drafts";
