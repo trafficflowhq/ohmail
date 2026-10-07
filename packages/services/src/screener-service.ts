@@ -42,7 +42,7 @@ import {
 /* The verdict derivation moved to its own leaf when `materializeScreenerSuggestion` became its
    third reader — one reading for the page, the purchase and the `/sync` entity. */
 import { reasonDetail, suggestionAdvice } from "./screener-advice.js";
-import { correspondentsAmong, makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { checkUncheckedById, correspondentsAmong, makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 /* `capabilityForKind` — the ONE map from a request kind to the capability its holder must
    advertise (mail 0094). Imported rather than spelled as a constant here so that this door and
    the record it writes cannot disagree about what `screener.decide` requires. */
@@ -1258,6 +1258,8 @@ export class ScreenerReadService {
           // A press: the decision is the person's, so a `no` licenses the unsubscribe pass, and it
           // converges the sender's existing rule rather than adding one beside it.
           decidedBy: "person", overExisting: "converge",
+          // An unchecked row it would move is checked first, so another address's claim stays.
+          checkUnchecked: checkUncheckedById,
         });
       } catch (err) {
         // `applyScreenerDecision` fences the account itself, first — see its own header. Its

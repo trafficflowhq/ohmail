@@ -19,6 +19,7 @@ import {
   type RequestRefusalReason, isRequestRefusalReason, LeaseUnavailableError,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { checkUncheckedById } from "@trafficflow/core/adapters/drizzle-repo";
 
 /**
  * The dispatch table — one entry per kind this build carries out: `screener.decide`, `message.move`,
@@ -137,6 +138,8 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
         // A READER's press, carried across the install boundary: still the person's decision,
         // and it converges the sender's existing rule as the press does on its own install.
         decidedBy: "person", overExisting: "converge",
+        // The rows it would move are checked first, as on the install the press was made on.
+        checkUnchecked: checkUncheckedById,
       });
       return { applied: true };
     };

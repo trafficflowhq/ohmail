@@ -391,6 +391,9 @@ function domainIs(tx: Tx, domain: string): SQL {
   `;
 }
 
+/** Ids per read-back of the rows a press checked first. */
+const HELD_CHECK_READ_BATCH = 500;
+
 export interface ApplyScreenerDecisionInput {
   accountId: string;
   scope: "sender" | "domain";
@@ -451,6 +454,12 @@ export interface ApplyScreenerDecisionInput {
    * counts a claim, moves none. A pass's yes moves only rows the check cleared.
    */
   marked?: "pressed" | "none";
+  /**
+   * THE CHECK A PRESS RUNS FIRST (mail 0147): writes the identity fact for held rows the check has
+   * not reached, by id, before anything moves (`@trafficflow/core#checkUncheckedById`; this package
+   * does not import core). Without it such a row moves only on a press made on its own address.
+   */
+  checkUnchecked?: (tx: Tx, accountId: string, messageIds: readonly string[]) => Promise<void>;
 }
 
 /**
@@ -623,11 +632,25 @@ export async function applyScreenerDecision(
     ? await heldRowsForDomain(tx, accountId, domain, undefined, held)
     : await heldRowsForSender(tx, accountId, address, undefined, held);
 
-  // …and a marked or unchecked row that arrived between the two reads stays at the gate too.
+  /* A PRESS CHECKS WHAT IT WOULD MOVE FIRST, as the gate release does: the rows the check never
+     reached get the fact through the caller's checker and are read back, so an unchecked claim at
+     another address is marked before anything moves. A pass's yes refused every unchecked row above. */
+  const unchecked = passAdmits ? [] : heldMail.filter((r) => r.senderCheck === null).map((r) => r.messageId);
+  if (unchecked.length > 0 && input.checkUnchecked) {
+    await input.checkUnchecked(tx, accountId, unchecked);
+    for (let i = 0; i < unchecked.length; i += HELD_CHECK_READ_BATCH) {
+      const read = await tx.select({ id: messages.id, senderCheck: messages.senderCheck }).from(messages)
+        .where(inArray(messages.id, unchecked.slice(i, i + HELD_CHECK_READ_BATCH)));
+      const checked = new Map(read.map((r) => [r.id, r.senderCheck ?? null]));
+      for (const r of heldMail) if (checked.has(r.messageId)) r.senderCheck = checked.get(r.messageId) ?? null;
+    }
+  }
+
+  // A claim, or a row nobody checked, moves only on a press made on its own address.
   const pressed = address.toLowerCase();
   const movable = (r: AppliedScreenerRow): boolean => {
     if (passAdmits) return r.senderCheck === "none";
-    if (r.senderCheck !== "impersonation") return true;
+    if (r.senderCheck === "none") return true;
     return marked === "pressed" && r.fromAddress.toLowerCase() === pressed;
   };
   const moved = await rerouteHeldBag(tx, accountId, heldMail.filter(movable), appliedFolder, now);

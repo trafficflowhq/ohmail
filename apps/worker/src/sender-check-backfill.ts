@@ -1,11 +1,13 @@
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
-  contacts, fencedAccountWrite, folderState, messages, recordChanges, SCREENER_ACT_TRIGGER_PREFIX,
-  type ChangeInput, type LedgerTx, type Tx,
+  contacts, fencedAccountWrite, folderState, messages, SCREENER_ACT_TRIGGER_PREFIX, type Tx,
 } from "@trafficflow/db";
 /* The mail leaf, never the barrel: the local engines bundle this pass, and a value import from the
    barrel carries the model half into them (the engine census refuses the build). */
-import { claimedIdentity, silentLogger, type Logger } from "@trafficflow/core/mail";
+import { silentLogger, type Logger } from "@trafficflow/core/mail";
+import { writeSenderChecks } from "@trafficflow/core/adapters/drizzle-repo";
+// The one write, re-exported for the passes that import it from here (the act, the gate release, the retro).
+export { writeSenderChecks, type UncheckedRow } from "@trafficflow/core/adapters/drizzle-repo";
 
 /**
  * THE IDENTITY BACKFILL (mail 0147) — the identity fact for the rows ingested before the column
@@ -38,38 +40,6 @@ export interface SenderCheckBackfillResult {
   marked: number;
   /** True ⇒ the NULL set in scope answered empty: nothing is left to check. */
   done: boolean;
-}
-
-/** A row the check has not reached: what the fact reads, and nothing else. */
-export interface UncheckedRow { id: string; fromName: string | null; fromAddress: string; subject: string }
-
-/**
- * THE ONE WRITE OF THE FACT FOR ROWS THE INGEST NEVER CHECKED — the backfill's page and the act's
- * own read of the senders it is about to decide (mail 0147). Per row the fact function; a marked
- * row gets its column and one `message` update delta, so every mirror repaints it with the
- * sentence; a clean row `'none'`, no delta (it changes no DTO). `is null` again on every write: a
- * row is written once, whoever reaches it first. Returns the rows it marked.
- */
-export async function writeSenderChecks(
-  tx: Tx, accountId: string, rows: readonly UncheckedRow[],
-): Promise<UncheckedRow[]> {
-  const clean: string[] = [];
-  const marked: UncheckedRow[] = [];
-  const changes: ChangeInput[] = [];
-  for (const r of rows) {
-    const fact = claimedIdentity({ fromName: r.fromName, fromAddress: r.fromAddress, subject: r.subject });
-    if (fact === undefined) { clean.push(r.id); continue; }
-    await tx.update(messages).set({ senderCheck: "impersonation", senderCheckBrand: fact.brand })
-      .where(and(eq(messages.id, r.id), isNull(messages.senderCheck)));
-    marked.push(r);
-    changes.push({ accountId, entityType: "message", entityId: r.id, op: "update", meta: null });
-  }
-  if (clean.length > 0) {
-    await tx.update(messages).set({ senderCheck: "none" })
-      .where(and(inArray(messages.id, clean), isNull(messages.senderCheck)));
-  }
-  await recordChanges(tx as unknown as LedgerTx, changes);
-  return marked;
 }
 
 /** The two places a banner is read when a person decides. Archive and Sent rows stay unchecked. */

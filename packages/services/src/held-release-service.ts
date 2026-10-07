@@ -5,6 +5,7 @@ import {
   ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
+import { checkUncheckedById } from "@trafficflow/core/adapters/drizzle-repo";
 import { SCREENER_FOLDER } from "./screener-service.js";
 import { recordSettingsChange } from "./consent-seed.js";
 import { ServiceError } from "./errors.js";
@@ -516,8 +517,9 @@ export async function releaseHeld(
         await applyScreenerDecision(bridgeTx(t), {
           accountId: ctx.accountId, scope: "sender", address: g.sender, appliedFolder: "INBOX", decision: "yes",
           triggeringActionId: `held-release:${g.sender}`, now, stampBaseline: false, applyRetro: true,
-          // The offer never counts a claim (`heldAtGate`): a claim beside the rows waits for its own press.
-          decidedBy: "person", overExisting: "converge", marked: "none",
+          // The offer never counts a claim (`heldAtGate`): a claim beside the rows waits for its own press,
+          // and an unchecked row is checked first, so a claim it carries is one of them.
+          decidedBy: "person", overExisting: "converge", marked: "none", checkUnchecked: checkUncheckedById,
         });
       } catch (err) {
         if (err instanceof AccountErasedError) {

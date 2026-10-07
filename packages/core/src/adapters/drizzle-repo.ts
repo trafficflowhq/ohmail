@@ -47,6 +47,8 @@ import { correspondentsAmong, type CorrespondentEvidence } from "../corresponden
 export {
   correspondentsAmong, recipientsOfOwnWriting, CORRESPONDENT_SCAN_ROWS, type CorrespondentEvidence,
 } from "../correspondent.js";
+// The identity fact's one write for unchecked rows, on the same leaf: the worker's passes and a press.
+export { checkUncheckedById, writeSenderChecks, type UncheckedRow } from "../sender-check-write.js";
 
 export interface PersistedFolderCursor {
   uidValidity: string; uidNext: number; highestModseq: string;
