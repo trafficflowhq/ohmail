@@ -36,7 +36,7 @@ import type {
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
-import { retryAfterMs, type CloudAuth } from "./cloud-auth.js";
+import { answeredHere, retryAfterMs, type CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
 import { announceExclusiveThreads, deleteMailboxRows, mirroredMessageCount } from "./local-mirror.js";
@@ -469,10 +469,11 @@ export interface CloudMirror {
    */
   draining(): boolean;
   /**
-   * Is the hosted account reachable right now? True optimistically at construction; a pull that
-   * fails (bad network, spent token) flips it false, a pull that succeeds flips it back. The
-   * write-through proxy reads this to answer `503 offline_read_only` rather than forward into a
-   * void, and `/health` surfaces it so the shell can render the mode.
+   * Is the hosted account reachable right now? True optimistically at construction. A pull that
+   * fails flips it false (no answer, a server error, a 429, an answer this process built), unless
+   * Cloud itself refused it (a 4xx, the account's 402 included: the window's requests then meet the
+   * refusal); a pull that succeeds flips it back. The write-through proxy reads this to answer `503
+   * offline_read_only` rather than forward into a void, and `/health` surfaces it.
    */
   online(): boolean;
   /** Report connectivity observed elsewhere — the proxy's own forward reaching Cloud, or not. */
@@ -2451,6 +2452,29 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     if (await answersAccountErased(res)) throw new CloudAccountErased();
     return res;
   };
+  /**
+   * DID CLOUD ITSELF REFUSE THIS? Only an answered refusal, a 4xx (the account's 402, a 403, a 404),
+   * is Cloud reached. A 5xx, an edge's 502 or 504, a 429 (later) and an answer this process built
+   * keep the offline path, so in an outage the window's changes are held uncounted and land after.
+   */
+  const refusedByCloud = (res: Response): boolean =>
+    res.status >= 400 && res.status < 500 && res.status !== 429 && !answeredHere(res);
+  /** The doors' refusals Cloud answered, kept by identity: `runPull`'s catch reads them, never a message. */
+  const cloudRefusals = new WeakSet<object>();
+  const refusal = (res: Response, message: string): Error => {
+    const e = new Error(message);
+    if (refusedByCloud(res)) cloudRefusals.add(e);
+    return e;
+  };
+  /** Was this failure Cloud's own refusal? Walked through `cause`, as {@link abortedByStop} is. */
+  const cloudRefused = (err: unknown): boolean => {
+    let cur: unknown = err;
+    for (let depth = 0; depth < 4 && cur !== null && typeof cur === "object"; depth++) {
+      if (cloudRefusals.has(cur)) return true;
+      cur = (cur as { cause?: unknown }).cause;
+    }
+    return false;
+  };
   /** The single-flight pull: the poll timer and an echo-await share ONE drain. */
   let inflight: Promise<number> | null = null;
   /* THE ECHO'S CLOCK, read inside a pull. `asked` numbers every hosted `/sync` page and mailbox
@@ -2581,8 +2605,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * skips every message it cannot attribute, and on a `since=0` bootstrap a skipped message is one
    * the generation never marked, so the trailing sweep would delete it: a transient 500 would empty
    * somebody's mirror. The cost of throwing is bounded and visible — `runPull` flips `reachable`
-   * false, the read surface keeps serving every held row, the write-through proxy answers
-   * `503 offline_read_only`, and the poll retries on the same backoff a failed `/sync` uses.
+   * false unless Cloud refused (a 4xx, whose forwards then meet the refusal), the read surface keeps
+   * serving every held row, the write-through proxy answers `503 offline_read_only`, and the poll
+   * retries on the backoff a failed `/sync` uses (a refused account's on the flat minute).
    */
   /**
    * May this refresh ask for the counts? Reasons named rather than folded into a shorter interval,
@@ -2630,7 +2655,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     const res = await fetchCloud(wantCounts ? "/mailboxes?counts=1" : "/mailboxes");
     if (!res.ok) {
       noteRetryAfter(res);
-      throw new Error(`the hosted /mailboxes answered HTTP ${res.status}`);
+      throw refusal(res, `the hosted /mailboxes answered HTTP ${res.status}`);
     }
     const body = (await res.json()) as { items?: unknown };
     // A wire boundary, so the shape is checked rather than assumed — an answer that is not a list
@@ -2725,7 +2750,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       const res = await fetchCloud(`/sync?${q.toString()}`);
       if (!res.ok) {
         noteWall(res);
-        throw new Error(`the hosted /sync answered HTTP ${res.status} to the rules-first pass`);
+        throw refusal(res, `the hosted /sync answered HTTP ${res.status} to the rules-first pass`);
       }
       const body = (await res.json()) as SyncResponse;
       applied += await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes);
@@ -2912,7 +2937,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         noteWall(res);
         windowRefusals = res.status === 404 || res.status === 410 ? WINDOW_REFUSALS_MAX : windowRefusals + 1;
         if (windowRefusals < WINDOW_REFUSALS_MAX) {
-          throw new Error(`the hosted /sync/snapshot answered HTTP ${res.status} to the opening window`);
+          throw refusal(res, `the hosted /sync/snapshot answered HTTP ${res.status} to the opening window`);
         }
         cursor.window = { phase: "complete" };
         cfg.log?.("cloud_window_skipped", {
@@ -3192,7 +3217,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       if (!res.ok) {
         noteRetryAfter(res);
-        throw new Error(`the hosted /sync answered HTTP ${res.status}`);
+        throw refusal(res, `the hosted /sync answered HTTP ${res.status}`);
       }
       let body = (await res.json()) as SyncResponse;
       // The freshen-supersession skip (stage 3). A change at `seq ≤ asOfSeq` for an identity the
@@ -3639,7 +3664,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       const q = new URLSearchParams({ limit: String(DEFAULT_BODIES_LIMIT) });
       if (walk.after !== null) q.set("after", walk.after);
       const res = await fetchCloud(`/messages/bodies?${q.toString()}`);
-      if (!res.ok) throw new Error(`the hosted /messages/bodies answered HTTP ${res.status}`);
+      if (!res.ok) throw refusal(res, `the hosted /messages/bodies answered HTTP ${res.status}`);
       const page = (await res.json()) as Page<MessageBodyBatchItem>;
       written += await storeBodies(page.items);
       cursor.bodies = page.nextCursor === null
@@ -3686,7 +3711,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       for (let round = 0; batch.length > 0 && round < BODIES_IDS_MAX; round++) {
         if (aborted) return written;
         const res = await fetchCloud(`/messages/bodies?ids=${batch.join(",")}`);
-        if (!res.ok) throw new Error(`the hosted /messages/bodies answered HTTP ${res.status}`);
+        if (!res.ok) throw refusal(res, `the hosted /messages/bodies answered HTTP ${res.status}`);
         const page = (await res.json()) as Page<MessageBodyBatchItem>;
         written += await storeBodies(page.items);
         const answered = new Set(page.items.map((item) => item.messageId));
@@ -4012,9 +4037,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         });
         return 0;
       }
-      // A failed pull is a bad network or a spent token — offline, not stopped. The proxy answers
-      // `503 offline_read_only` off this flag; the poll keeps retrying and flips it back on success.
-      reachable = false;
+      // OFFLINE UNLESS CLOUD REFUSED. A 4xx Cloud answered (the account's 402 included) leaves the
+      // mirror reachable, so the window's forwards meet it (the wall). No answer, a server error, a
+      // 429, an answer built here or a store failure is offline: the proxy answers `503
+      // offline_read_only` off this flag, and the poll keeps retrying and flips it back on success.
+      reachable = cloudRefused(err);
       throw err;
     }
   };

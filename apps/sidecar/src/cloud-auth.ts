@@ -150,11 +150,26 @@ export const OFFLINE_READ_ONLY = "offline_read_only";
 export const ERASED_ANSWER_HEADER = "x-ohmail-accepts";
 export const ACCOUNT_ERASED = "account_erased";
 
+/**
+ * THE ANSWERS THIS PROCESS BUILT ITSELF, never Cloud's. A reader asking "did Cloud answer?" (the
+ * mirror's reachability) asks {@link answeredHere}, never the status: a built 503 or 410 carries the
+ * same status a server sends. Kept by identity, so a copy or a re-wrap of one is not marked.
+ */
+const builtHere = new WeakSet<Response>();
+/** Mark an answer this process built. Every synthesis on a hosted request's path goes through it. */
+export function builtAnswer(res: Response): Response {
+  builtHere.add(res);
+  return res;
+}
+export function answeredHere(res: Response): boolean {
+  return builtHere.has(res);
+}
+
 function erasedResponse(): Response {
-  return new Response(
+  return builtAnswer(new Response(
     JSON.stringify({ error: { code: ACCOUNT_ERASED, message: "this account has been deleted" } }),
     { status: 410, headers: { "content-type": "application/json" } },
-  );
+  ));
 }
 
 /** Does this answer say the account was deleted? Reads a CLONE, so the caller keeps its body. */
@@ -168,7 +183,7 @@ async function saysAccountErased(res: Response): Promise<boolean> {
  * the window; this is the refusal the window's outbox already treats as a wait.
  */
 export function offlineResponse(): Response {
-  return new Response(
+  return builtAnswer(new Response(
     JSON.stringify({
       error: {
         code: OFFLINE_READ_ONLY,
@@ -179,7 +194,7 @@ export function offlineResponse(): Response {
       },
     }),
     { status: 503, headers: { "content-type": "application/json" } },
-  );
+  ));
 }
 
 export interface CloudAuthConfig {

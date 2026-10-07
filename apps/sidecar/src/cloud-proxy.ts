@@ -118,8 +118,9 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
 
   /**
    * ONE READ MAY ASK AFTER THIS DOOR'S OWN FORWARD FAILED. That failure marks the mirror offline,
-   * and every relayed read answered 503 unasked until the next good pull. So the next read asks the
-   * account: an answer clears the flag, a failure leaves offline mode as the pull found it.
+   * and every relayed read answered 503 unasked until a pull is served, or refused by Cloud itself
+   * (a 4xx). So the next read asks the account: an answer clears the flag, a failure leaves offline
+   * mode as the pull found it.
    */
   let probeOwed = false;
   /**
