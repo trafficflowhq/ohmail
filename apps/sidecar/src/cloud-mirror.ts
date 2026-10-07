@@ -1709,6 +1709,10 @@ async function applyUpsert(
            install was unstamped and "Earlier" there had no reading order at all. In the
            conflict set: a stamp Cloud cleared (mark-unread) clears here too. */
         lastReadAt: asDate(m.lastReadAt ?? null),
+        /* THE OPEN READ travels too, or a paired install keeps arrival for a row read at the top of
+           Earlier on the account's other devices. In the conflict set: a stamp Cloud cleared (an
+           unread) clears here. Absent on the wire (a server older than the field) is NULL: arrival. */
+        openReadAt: asDate(m.openReadAt ?? null),
         /* THE PROVIDER'S VERDICT ON THE CLAIMED AUTHOR travels too, so the local door re-emits the
            hosted answer and a forged `From` stays a claim here. Absent on the wire is NULL, "nobody
            asked" — the permissive reading an older server's rows always had. In the conflict set. */

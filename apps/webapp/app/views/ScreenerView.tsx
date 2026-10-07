@@ -1553,8 +1553,8 @@ export function ScreenerView({
                 A second row in this header, beside the release one and for its reasons: the mail
                 is not in this list, the whole of the decision is one press, and the row is absent
                 both when there is none and when the door cannot say — which render the same and
-                should. The Ohbox is arrival-ordered and a READ never moves a row; this is a
-                PRESS, which may. */}
+                should. The Ohbox is arrival-ordered and only a message read while open moves; this
+                is a PRESS, which may. */}
             {segment === "waiting" && state.unscreened ? (
               <div className="scn-held scn-unscreened" role="note">
                 <p className="scn-held-lead">

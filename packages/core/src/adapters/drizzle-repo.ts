@@ -3170,7 +3170,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
        * the two orderings agree.
        */
       await this.db.update(messages)
-        .set({ unread: !seen, lastReadAt: seen ? new Date() : null, updatedAt: new Date() })
+        // A `\Seen` set elsewhere never places a row; one taken away clears the open read.
+        .set({ unread: !seen, lastReadAt: seen ? new Date() : null, updatedAt: new Date(), ...(seen ? {} : { openReadAt: null }) })
         .where(eq(messages.id, row.id));
     }
     // The flag row is written either way: an unchanged value still RECORDS that the server has

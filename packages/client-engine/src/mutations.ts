@@ -377,6 +377,20 @@ function derivedScreenerEffects(
  * state. Unknown targets yield [] — the caller decides whether that is a no-op
  * or a rejection.
  */
+/**
+ * The instant an open read paints: `now`, or 1 ms above the newest open read the mirror holds, once per
+ * effect computation. A reader that cannot list refuses rather than painting `now` unchecked.
+ */
+function openReadFloor(reader: EntityReader, now: Date): string {
+  if (typeof reader.list !== "function") throw new Error("an open read needs a reader that can list messages");
+  let newest = Number.NEGATIVE_INFINITY;
+  for (const msg of reader.list<EngineMessage>("message")) {
+    const t = msg.openReadAt == null ? Number.NaN : Date.parse(msg.openReadAt);
+    if (Number.isFinite(t) && t > newest) newest = t;
+  }
+  return new Date(Math.max(now.getTime(), newest + 1)).toISOString();
+}
+
 export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: EffectContext): MutationEffect[] {
   const iso = ctx.now().toISOString();
 
@@ -695,11 +709,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       const targets = m.messageIds
         ? feed.filter((msg) => m.messageIds!.includes(msg.id))
         : feed.filter((msg) => msg.unread);
-      // `lastReadAt` beside `unread`, exactly as the server writes it. The overlay is not
-      // decoration here: the Ohbox sorts its read group by this field, so an optimistic flip that
-      // left it alone would move the row into "Earlier" at the BOTTOM of the list and then jump it
-      // to the top when the server's answer landed. One visible reorder per read, from the client
-      // and the server disagreeing about a field only one of them was writing.
+      // `lastReadAt` beside `unread`, exactly as the server writes it: the seen pill reads it, and
+      // an overlay that left it alone would disagree with the answer that replaces it.
       const effects: MutationEffect[] = targets.map((msg): MutationEffect => ({
         // NO `spentResurface`, and that is wire parity, not an omission: this verb is a GLANCE
         // by construction (the per-card dwell, the leave-commit — nobody pressed anything), and
@@ -733,12 +744,11 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // `feed_mark_seen` unusable outside Reads, and it is the reason this branch looks boringly literal. An id the
       // mirror does not know is dropped (there is no entity to produce), so a selection of entirely unknown ids
       // yields [] and the engine reports it as a rejection rather than pretending to have applied something.
-      // `lastReadAt` travels with the flag in BOTH directions, and the second one is the half worth stating: marking
-      // unread clears it, because a message the user deliberately put back has no reading to be ordered by.
-
-      // Keeping the old instant would leave it stamped as recently finished with, and it would file itself at the top
-      // of "Earlier" the moment anything marked it read again. The server's own writer does exactly this, so the
-      // overlay and the answer that replaces it agree.
+      // `lastReadAt` travels with the flag in BOTH directions, as the server writes it. `openReadAt` is painted on an
+      // OPEN READ (`m.openRead`, set by `Engine.enrich`) for the rows that were unread — the server's own scope — and
+      // cleared by every unread, so the overlay and the answer that replaces it agree. The instant is floored above the
+      // newest open read in the mirror: a device clock behind the API cannot drop the row under an earlier one for a drain.
+      const paintedAt = m.openRead && !m.unread ? openReadFloor(reader, ctx.now()) : null;
       const effects: MutationEffect[] = [];
       for (const id of m.messageIds) {
         const msg = reader.get<EngineMessage>("message", id);
@@ -754,6 +764,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           id,
           entity: {
             ...msg, unread: m.unread, lastReadAt: m.unread ? null : iso,
+            openReadAt: m.unread ? null : (paintedAt !== null && msg.unread ? paintedAt : (msg.openReadAt ?? null)),
             ...(spent ? { triage: spent } : {}), updatedAt: iso,
           },
         });

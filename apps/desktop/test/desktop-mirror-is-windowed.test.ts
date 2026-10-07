@@ -58,7 +58,7 @@ function msg(id: string, i: number, daysOld?: number): EngineMessage {
 async function mirrorAfterImport(
   n: number,
   policy: StorePolicy,
-  opts: { daysOld?: number } = {},
+  opts: { daysOld?: number; openRead?: { id: string; at: string }; inspect?: (engine: OhmailEngine) => void } = {},
 ) {
   let seq = 0;
   let served = 0;
@@ -68,7 +68,8 @@ async function mirrorAfterImport(
       const creates: SyncChange[] = [];
       const upto = Math.min(served + PAGE, n);
       for (let i = served; i < upto; i++) {
-        const m = msg(`m${i}`, i, opts.daysOld);
+        const base = msg(`m${i}`, i, opts.daysOld);
+        const m = opts.openRead?.id === base.id ? { ...base, openReadAt: opts.openRead.at } : base;
         creates.push({ type: "message", op: "create", id: `m${i}`, seq: ++seq, updatedAt: m.updatedAt, entity: m });
       }
       served = upto;
@@ -90,6 +91,7 @@ async function mirrorAfterImport(
   await engine.start();
   while (served < n) await engine.syncOnce();
   await engine.syncOnce();
+  opts.inspect?.(engine);
   return engine.read().list<EngineMessage>("message").length;
 }
 
@@ -171,6 +173,28 @@ describe("the desktop renderer's mirror is bounded by its window", () => {
    * WATCHED RED by `maxRows: 5000` (5 000 held where 10 000 is owed — the ceiling collapsing onto
    * the floor makes `days` unable to decide anything) and by removing `maxRows` (12 000 held).
    */
+  /**
+   * A ROW READ AT THE TOP OF EARLIER IS AS RECENT AS ITS OPEN READ. `m9000`
+   * arrived years ago, far past `days` and below the newest-`minRows` floor; read in ohmail an hour
+   * ago, it stands first in Earlier, so the window keeps it. MUTATION WATCHED: `messageTime` without
+   * the open-read term evicts it.
+   */
+  it("keeps a row lifted by an open read although it arrived past the window", async () => {
+    let kept: EngineMessage | undefined;
+    let control: EngineMessage | undefined;
+    const held = await mirrorAfterImport(10_000, DESKTOP_WINDOW, {
+      openRead: { id: "m9000", at: new Date(NOW.getTime() - 3_600_000).toISOString() },
+      inspect: (e) => {
+        kept = e.read().get<EngineMessage>("message", "m9000");
+        control = e.read().get<EngineMessage>("message", "m8999");
+      },
+    });
+    // Still the window's size: the lifted row counts among the newest and the oldest floor row yields.
+    expect(held).toBe(DESKTOP_WINDOW.minRows);
+    expect(kept?.id, "the lifted row was aged out of the window").toBe("m9000");
+    expect(control, "CONTROL: its unlifted neighbour is evicted").toBeUndefined();
+  });
+
   it("holds the ceiling, not the mailbox, when everything is inside the window", async () => {
     const held = await mirrorAfterImport(12_000, DESKTOP_WINDOW, { daysOld: 1 });
 

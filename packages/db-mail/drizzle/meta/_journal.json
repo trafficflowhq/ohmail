@@ -1030,6 +1030,13 @@
       "when": 1791602600050,
       "tag": "0146_rule_person_decided_followup",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1791602600051,
+      "tag": "0147_messages_open_read_at",
+      "breakpoints": true
     }
   ]
 }

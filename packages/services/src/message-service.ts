@@ -210,6 +210,13 @@ export interface MarkSeenBody {
   unread?: unknown;
   /** See {@link MessagePatchBody.via} — the batch form carries the same label. */
   via?: unknown;
+  /**
+   * AN OPEN READ — set by the engine alone (`Engine.enrich`), on a read whose every id is in the
+   * conversation the reader has open. Stamps `open_read_at` on the rows that were unread, when all
+   * ids are one conversation; over several it stamps nothing and the read still lands. Absent ⇒
+   * arrival. `true` beside `unread: true` is refused: nothing an unread does may place a row.
+   */
+  openRead?: unknown;
 }
 
 /**
@@ -1099,6 +1106,8 @@ export class MessageService {
           // into "Earlier" as recently finished with. See `messages.lastReadAt`.
           lastReadAt: body.unread ? null : at,
           updatedAt: at,
+          // An unread clears the open read; this route never stamps one (it has no hold fact).
+          ...(body.unread ? { openReadAt: null } : {}),
         }).where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
         // The read model AND the intent, in the same transaction. Writing only `messages.unread`
         // was the original bug: the flag never reached the mailbox, so it survived nothing.
@@ -1227,6 +1236,13 @@ export class MessageService {
     }
     const unread = body.unread;
     const glance = this.validVia(body.via);
+    if (body.openRead !== undefined && typeof body.openRead !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "openRead must be a boolean");
+    }
+    if (body.openRead === true && unread) {
+      throw new ServiceError("validation_failed", 400, "openRead is a read; it cannot mark unread");
+    }
+    const openRead = body.openRead === true;
     // De-duplicated but ORDER-PRESERVING: the same id twice is one update and one change, and
     // the caller's order is the order the deltas land in.
     const ids = [...new Set(body.ids as string[])];
@@ -1234,7 +1250,7 @@ export class MessageService {
     const floor = ctx.pressFloor ?? null;
     const aged = floor !== null && ctx.pressAged === true;
     const seq = await asTx(ctx).transaction(async (tx) => {
-      const owned = await tx.select({ id: messages.id, unread: messages.unread })
+      const owned = await tx.select({ id: messages.id, unread: messages.unread, threadId: messages.threadId })
         .from(messages)
         .where(and(inArray(messages.id, ids), eq(messages.accountId, ctx.accountId)));
       // The scoping predicate above is the whole of account scoping here. If the count does not match, at
@@ -1262,11 +1278,21 @@ export class MessageService {
       // they were minted per row, one gesture stamped its rows however far apart they landed.
       const at = ctx.now();
       const readAt = unread ? null : at;
-      // THREE STATEMENTS FOR THE WHOLE BATCH, whatever its size: the message rows, their `\Seen`
-      // intents, then the account's seq row, taken last and held to commit. One change per message
-      // still, allocated in one block in the caller's order.
-      await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: at })
+      // THREE STATEMENTS FOR THE WHOLE BATCH, whatever its size (one more for an open read): the
+      // message rows, their `\Seen` intents, then the account's seq row, taken last and held to
+      // commit. One change per message still, allocated in one block in the caller's order.
+      await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: at, ...(unread ? { openReadAt: null } : {}) })
         .where(and(inArray(messages.id, live), eq(messages.accountId, ctx.accountId)));
+      // THE OPEN READ: the rows that WERE unread, one conversation only, at this same instant. A
+      // row already read is never restamped, which is what makes a re-execution stamp nothing.
+      // Over several conversations the read above stands and nothing is placed.
+      // Only an id whose read landed here: one a newer read decision kept is neither read nor stamped.
+      const wasUnread = owned.filter((r) => r.unread && !stale.has(r.id)).map((r) => r.id);
+      const oneConversation = new Set(owned.map((r) => r.threadId ?? `msg:${r.id}`)).size === 1;
+      if (!unread && openRead && oneConversation && wasUnread.length > 0) {
+        await tx.update(messages).set({ openReadAt: at })
+          .where(and(inArray(messages.id, wasUnread), eq(messages.accountId, ctx.accountId)));
+      }
       await upsertDesiredSeenMany(
         tx, live.map((id) => ({ id, observedSeen: observedById.get(id) ?? false })), !unread, at,
         decisionInstant(floor, at),

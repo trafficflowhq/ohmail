@@ -27,7 +27,7 @@ import {
   type AddressResult,
   type LocalSearchResult,
 } from "./search.js";
-import { isOwnSent, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
+import { conversationKeyOf, isOwnSent, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
@@ -1259,7 +1259,7 @@ interface PendingApproval {
 
 /**
  * WHEN a message is, for windowing purposes — the mail's own date, falling back to the row's
- * `updatedAt`, and 0 for a row with neither.
+ * `updatedAt`, and 0 for a row with neither; an open read later than that wins.
  *
  * 0 sorts oldest, which is the conservative direction ONLY because the `minRows` floor and the
  * pin set are both checked independently of this number: an undated row can be evicted for being
@@ -1267,7 +1267,11 @@ interface PendingApproval {
  */
 function messageTime(m: EngineMessage): number {
   const t = Date.parse(m.date ?? m.updatedAt ?? "");
-  return Number.isFinite(t) ? t : 0;
+  // An open read is as recent as when it was read: the row sits at the top of "Earlier", so the
+  // window neither ages it out nor counts it old for the newest-N floor.
+  const read = m.openReadAt == null ? Number.NaN : Date.parse(m.openReadAt);
+  const at = Number.isFinite(t) ? t : 0;
+  return Number.isFinite(read) ? Math.max(at, read) : at;
 }
 
 /**
@@ -5176,10 +5180,11 @@ export class OhmailEngine {
   }
 
   /**
-   * THE ROW BEING READ KEEPS ITS PLACE (owner ruling 2026-09-18: a read never moves a row). A
-   * surface names the message it opens out of "New for you" here BEFORE it saves the read, and
-   * `ohboxView(read(), openRowHeld())` keeps it in New at its arrival slot until the reader moves
-   * on or answers it. Held only if it stands in New now: a read row, or a resurfaced one, holds
+   * THE ROW BEING READ KEEPS ITS PLACE until the reader moves on (owner 2026-09-18, narrowed
+   * 2026-10-07). A surface names the message it opens out of "New for you" here BEFORE it saves the
+   * read, and `ohboxView(read(), openRowHeld())` keeps it in New at its slot while held; a read of
+   * its conversation taken meanwhile is an OPEN READ ({@link enrich}), so leaving it files it at the
+   * top of "Earlier". Held only if it stands in New now: a read row, or a resurfaced one, holds
    * nothing and ends the previous hold. The hold is the engine's own state, so the read's paint and
    * the hold reach every subscriber in one snapshot — a React state beside the paint lost that race
    * to the notify.
@@ -5192,7 +5197,7 @@ export class OhmailEngine {
     return next !== null;
   }
 
-  /** The reader left `id` (any row when omitted): the row takes its arrival slot in Earlier. */
+  /** The reader left `id` (any row when omitted): the row takes the top of Earlier when it holds an open read, else its arrival slot. */
   releaseOpenRow(id?: string): void {
     this.actedAwayRow = null;
     if (this.openRow === null || (id !== undefined && id !== this.openRow)) return;
@@ -6523,6 +6528,25 @@ export class OhmailEngine {
        * all read afterwards — one list, no divergence.
        */
       return { ...m, messageIds: given };
+    }
+    if (m.kind === "mark_seen") {
+      /**
+       * AN OPEN READ IS DECIDED HERE, AND ONLY HERE: a read whose every id is in the conversation the
+       * reader holds open ({@link holdOpenRow}) carries `openRead`, and the server stamps the rows
+       * that were unread — the top of "Earlier" once the reader moves on. `via` does not matter: a
+       * glance counts. A flag a surface passed is dropped: no surface decides placement.
+       */
+      const { openRead: _surfaceFlag, ...given } = m;
+      if (given.unread || this.openRow === null) return given;
+      const reader = this.read();
+      const held = reader.get<EngineMessage>("message", this.openRow);
+      if (!held) return given;
+      const key = conversationKeyOf(held);
+      const all = given.messageIds.every((id) => {
+        const msg = reader.get<EngineMessage>("message", id);
+        return msg !== undefined && conversationKeyOf(msg) === key;
+      });
+      return all ? { ...given, openRead: true } : given;
     }
     if (m.kind === "mail_send") {
       // FREEZE THE ENVELOPE HERE, and nowhere else. The overlay effect and the wire body are

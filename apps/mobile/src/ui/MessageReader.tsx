@@ -81,7 +81,7 @@ export function MessageReader({
     };
   }, [id, openMessage, releaseAttachments, worldKey]);
   /* …AND ITS ROW'S PLACE: the open row stands in New while this reader shows it (`openMessage`
-     holds it), and leaving files it in Earlier at its arrival slot — a read never moves a row. */
+     holds it), and leaving files it at the top of Earlier — its read was an open read. */
   const leaveMessage = w.actions.leaveMessage;
   useEffect(() => () => {
     if (id) leaveMessage(id);

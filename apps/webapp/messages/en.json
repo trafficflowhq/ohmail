@@ -1797,7 +1797,7 @@
     "calloutUnreadTitle": "Unread is always on top",
     "calloutUnread": "New mail waits in one group at the top of the Ohbox until you read it — an empty New group means you're done.",
     "calloutEarlierTitle": "Read conversations land under Earlier",
-    "calloutEarlier": "A conversation with nothing new sits under Earlier, in the order it arrived; the one you have open stays where it is until you move on or answer it. Nothing to archive, nothing to tidy.",
+    "calloutEarlier": "A conversation with nothing new sits under Earlier in the order it arrived; one you just read in ohmail moves to the top when you move on. Nothing to archive, nothing to tidy.",
     "calloutsLabel": "Things to notice in the demo",
     "hintsLabel": "Inside the demo",
     "hintCmdk": "everything, by name",

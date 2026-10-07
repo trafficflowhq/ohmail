@@ -100,7 +100,7 @@ export type MessageAction =
   | "resurface_now"
   /**
    * DONE WITH A RESURFACE — the deliberate release, named. The release has existed as long as the pin has: a
-   * deliberate `mark_seen` (no `via`) spends it, stamps `lastReadAt`, and the row files at the top of "Earlier". What
+   * deliberate `mark_seen` (no `via`) spends it, and the row files back at its arrival slot in "Earlier". What
    * it never had was a face — the only doors were "Mark as read", `⇧I` and the bulk verbs, none of which says "this
    * resurface is finished". This action is that face, NOT a new mechanism: the shell answers it with the same
    * `mark_seen` every deliberate read dispatches, plus a `triage_set: none` first when the message is merely

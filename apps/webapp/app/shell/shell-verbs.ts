@@ -1196,7 +1196,7 @@ export function useShellVerbs({
            * THE DELIBERATE RELEASE, NAMED — "Done" on a resurfaced or scheduled message. FOR A PINNED MESSAGE IT IS
            * ONE MUTATION AND IT ALREADY EXISTED: a deliberate `mark_seen` (no `via`) spends the pin in the same act
            * on both sides of the wire (`spentResurface` in the overlay, `MessageService.spendResurface` in the
-           * route's transaction), stamps `lastReadAt`, and the row files at the top of "Earlier" — the choreography
+           * route's transaction), and the row files back at its arrival slot in "Earlier" — the choreography
            * `OhboxView.slideOut` already draws. Nothing new is dispatched for it, deliberately: a second wire verb
            * for the same release would be two writers of one fact. FOR A SCHEDULED MESSAGE (`bubbled_up`, sitting in
            * the Resurface pile) the release has an extra half: the booking is cleared FIRST (`triage_set: none` — the
@@ -1204,7 +1204,7 @@ export function useShellVerbs({
            */
 
           /**
-           * Same end state, never a new one: unscheduled, read, top of "Earlier". Skipping the clear would leave the
+           * Same end state, never a new one: unscheduled, read, at its arrival in "Earlier". Skipping the clear would leave the
            * pile listing a message the reader just said they were done with.
            */
           /* AND THE SENTENCE FOLLOWS THE ANSWER. A reader install cannot triage: the clear was

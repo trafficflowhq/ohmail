@@ -1411,8 +1411,8 @@ export function useMailSend(
            * A REPLY TO A PINNED ROW IS THE ANSWER THE PIN WAS WAITING FOR — so it clears the resurface,
            * automatically, through the ONE mechanism that already exists: a deliberate `mark_seen` (no `via`) spends
            * the pin in the same transaction on both sides of the wire (`spendResurface` server-side, `spentResurface`
-           * in the overlay) and stamps `lastReadAt`, filing the row at the top of "Earlier" — exactly what the
-           * explicit "Done" verb (`resurface_done`) performs.
+           * in the overlay) — the release the explicit "Done" verb (`resurface_done`) performs; the conversation
+           * then files under "Earlier" at the reply's instant.
            */
 
           /**

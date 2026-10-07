@@ -357,7 +357,7 @@ export function TriageView({
         /* "DONE" ON A SCHEDULED RESURFACE — the same release verb the pinned row and the action
            bar carry, read honestly for a row that is NOT pinned yet: the shell's `resurface_done`
            arm clears the booking (`triage_set: none`) and then files the message with the same
-           deliberate read every release takes — unscheduled, read, top of "Earlier". Never a new
+           deliberate read every release takes — unscheduled, read, at its arrival in "Earlier". Never a new
            state. Only this pile's rows carry it: Answer Later and Parked have their own toggles,
            and "done" is a claim about a RESURFACE. Same reveal grammar as the pinned row's
            control (`.rsf-done`, app.css). */

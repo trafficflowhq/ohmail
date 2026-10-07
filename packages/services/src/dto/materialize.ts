@@ -303,6 +303,7 @@ export function messageRowToDTO(
     // this function. A second projection for any one of them is how a mirror ends up sorting one
     // page differently from the next.
     lastReadAt: iso(m.lastReadAt),
+    openReadAt: iso(m.openReadAt),
     hasAttachments: m.hasAttachments,
     attachmentCount: m.attachmentCount,
     sensitivity,

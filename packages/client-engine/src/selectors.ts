@@ -100,6 +100,76 @@ function byDateDesc(a: EngineMessage, b: EngineMessage): number {
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
+/** A message's parsed {@link EngineMessage.openReadAt}, cached per entity like {@link tsOf}; -Infinity when none. */
+const parsedOpenRead = new WeakMap<EngineMessage, number>();
+function openReadMsOf(m: EngineMessage): number {
+  let t = parsedOpenRead.get(m);
+  if (t === undefined) {
+    const p = m.openReadAt == null ? Number.NaN : Date.parse(m.openReadAt);
+    t = Number.isFinite(p) ? p : Number.NEGATIVE_INFINITY;
+    parsedOpenRead.set(m, t);
+  }
+  return t;
+}
+
+/** WHERE A ROW STANDS IN "EARLIER": its arrival, or its open read when that is later. */
+function placeOf(m: EngineMessage): number {
+  return Math.max(tsOf(m), openReadMsOf(m));
+}
+
+/** {@link byDateDesc} over {@link placeOf}: place, then arrival, then id. Equal to it on an unlifted pair. */
+function byPlaceDesc(a: EngineMessage, b: EngineMessage): number {
+  const pa = placeOf(a);
+  const pb = placeOf(b);
+  if (pa !== pb) return pb - pa;
+  return byDateDesc(a, b);
+}
+
+let placeSortComparisons = 0;
+/** How many comparisons the lifted rows' SORT has made — the perf arm reads it; nothing else may. */
+export function earlierPlaceComparisons(): number {
+  return placeSortComparisons;
+}
+
+/**
+ * The mirror's LIFTED rows — an open read later than the arrival — sorted by place, cached on the
+ * message stamp like {@link messagesByDateDesc}: a body write or a hold change re-sorts nothing.
+ */
+const liftedCache = new WeakMap<EntityReader, { v: number; lifted: EngineMessage[]; ids: Set<string> }>();
+function liftedRows(reader: EntityReader): { lifted: readonly EngineMessage[]; ids: ReadonlySet<string> } {
+  const v = typeof reader.stampOf === "function" ? reader.stampOf("message")
+    : typeof reader.version === "function" ? reader.version() : null;
+  const hit = v === null ? undefined : liftedCache.get(reader);
+  if (hit && hit.v === v) return hit;
+  const lifted = messagesByDateDesc(reader).filter((m) => openReadMsOf(m) > tsOf(m))
+    .sort((a, b) => { placeSortComparisons++; return byPlaceDesc(a, b); });
+  const out = { v: v ?? 0, lifted, ids: new Set(lifted.map((m) => m.id)) };
+  if (v !== null) liftedCache.set(reader, out);
+  return out;
+}
+
+/**
+ * "EARLIER" IN PLACE ORDER (owner 2026-10-07): `list` is arrival-ordered; a row read in ohmail while
+ * open is lifted to its open read and merged in. With no lifted row in the mirror the SAME array
+ * comes back. Never keyed on the reading stamp: only the open read places a row. Exported for its
+ * own test only; not in the package index — every surface reads it through {@link ohboxView}.
+ */
+export function placeEarlier(list: EngineMessage[], reader: EntityReader): EngineMessage[] {
+  const { lifted, ids } = liftedRows(reader);
+  if (lifted.length === 0) return list;
+  const here = new Set(list.map((m) => m.id));
+  const up = lifted.filter((m) => here.has(m.id));
+  if (up.length === 0) return list;
+  const rest = list.filter((m) => !ids.has(m.id));
+  const out: EngineMessage[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < up.length && j < rest.length) out.push(byPlaceDesc(up[i]!, rest[j]!) <= 0 ? up[i++]! : rest[j++]!);
+  while (i < up.length) out.push(up[i++]!);
+  while (j < rest.length) out.push(rest[j++]!);
+  return out;
+}
+
 /** Reading order for a conversation — the exact reverse of `byDateDesc`, undated rows first. */
 function byDateAsc(a: EngineMessage, b: EngineMessage): number {
   return -byDateDesc(a, b);
@@ -623,12 +693,12 @@ const ohboxCache = new WeakMap<EntityReader, { v: number; openHeld: string | nul
 /**
  * A mail is in exactly one pile — these three groups plus the three bottom piles are the six.
  * Every group holds out {@link parkedMessageIds}, so filed mail is absent from all of them:
- * putting a message away takes it out of the Ohbox, "Earlier" included; the pile it went to is
- * the only place it is. Scope: this is the only surface that holds parked rows out — Reads and
- * Receipts are streams and still list a parked issue; `openTargetFor` depends on that asymmetry
- * and `search-locate.test.ts` pins it. `openHeld` is the row being read
- * ({@link OhmailEngine.holdOpenRow}): it keeps its conversation in "New for you" until the reader
- * moves on or answers it — a read never moves a row. A conversation stands in ONE group.
+ * putting a message away takes it out of the Ohbox, "Earlier" included. Scope: this is the only
+ * surface that holds parked rows out — Reads and Receipts are streams and still list a parked
+ * issue; `openTargetFor` depends on that asymmetry and `search-locate.test.ts` pins it. `openHeld`
+ * is the row being read ({@link OhmailEngine.holdOpenRow}): it keeps its conversation in "New for
+ * you" until the reader moves on or answers it, then takes the top of "Earlier" by its open read
+ * (every other read keeps arrival). A conversation stands in ONE group.
  */
 export function ohboxView(reader: EntityReader, openHeld: string | null = null): OhboxView {
   // Memoized on the reader's version like its siblings (`resurfacedThreads`, `screenerSegments`,
@@ -713,7 +783,7 @@ export function ohboxView(reader: EntityReader, openHeld: string | null = null):
   const view: OhboxView = {
     resurfaced: resurfaced.filter((m) => !parked.has(m.id)),
     newForYou: members.filter(inNew),
-    previouslySeen: members.filter((m) => !inNew(m)),
+    previouslySeen: placeEarlier(members.filter((m) => !inNew(m)), reader),
   };
   ohboxCache.set(reader, { v, openHeld, view });
   return view;

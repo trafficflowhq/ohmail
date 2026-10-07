@@ -1563,7 +1563,7 @@ export class HttpAdapter implements EngineAdapter {
         // marks read without spending a resurface pin (`MessageService.markSeen`). Deliberate reads (no `via`) keep
         // answering pins exactly as before.
         const res = await this.request("PATCH", "/messages", {
-          body: { ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}) },
+          body: { ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}), ...(m.openRead ? { openRead: true } : {}) },
           idempotencyKey: opts.idempotencyKey, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);

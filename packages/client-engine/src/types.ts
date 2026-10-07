@@ -355,15 +355,18 @@ export interface EngineMessage extends EngineMessageExtras {
   snippet: string;
   unread: boolean;
   /**
-   * When this message stopped being unread — the order "Earlier" sorts by.
-   * `null` where not known, and OPTIONAL because the mirror can be older
-   * than the field: a row written by an earlier build is `undefined`, and
-   * both mean "no reading time recorded". Requiring it would be a claim
-   * about stored data this type cannot make. `absent === null` is the rule,
-   * enforced in one place ({@link ohboxView}'s comparator). Fixture rows
-   * leave it absent: a demo mailbox has no reading history.
+   * When this message stopped being unread — STATE, the seen pill; it sorts nothing (owner ruling
+   * 2026-09-18). `null` where not known, and OPTIONAL because the mirror can be older than the
+   * field: `absent === null`. Fixture rows leave it absent: a demo mailbox has no reading history.
    */
   lastReadAt?: ISODateTime | null;
+  /**
+   * THE OPEN READ (mail 0145): when this message was read in ohmail while its conversation was the
+   * held row ({@link OhmailEngine.holdOpenRow}). "Earlier" places a row by max(arrival, this), so a
+   * message opened, read and left takes the top; no other read writes it, and every unread clears
+   * it. OPTIONAL for {@link lastReadAt}'s reason: `absent === null` = arrival.
+   */
+  openReadAt?: ISODateTime | null;
   hasAttachments: boolean;
   attachmentCount: number;
   sensitivity: SensitivityFlags;
@@ -1255,6 +1258,12 @@ export type EngineMutation =
        * a little too eagerly, never leaves one that can never be answered.
        */
       via?: "glance";
+      /**
+       * AN OPEN READ — set by `Engine.enrich` alone, never by a surface: every id is in the
+       * conversation the reader holds open. The server then stamps `openReadAt` on the rows that
+       * were unread, which places them at the top of "Earlier".
+       */
+      openRead?: true;
     }
   /**
    * Send mail — the one mutation whose effect leaves the building. One verb, two entry points
