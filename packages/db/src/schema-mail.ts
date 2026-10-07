@@ -716,7 +716,7 @@ export const messages = pgTable("messages", {
    */
   arrivedAt: timestamp("arrived_at", { withTimezone: true }),
   /**
-   * THE OPEN READ (mail 0145) — when this message was read in ohmail while its conversation was the
+   * THE OPEN READ — when this message was read in ohmail while its conversation was the
    * row open in the reader (`OhmailEngine.holdOpenRow`). Earlier places a row by max(arrival, this),
    * so a message opened, read and left takes the top. ONE non-null writer: `MessageService.markSeen`
    * with `openRead`, on rows that were unread, one conversation only. Every unread clears it (the

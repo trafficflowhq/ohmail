@@ -658,8 +658,8 @@ export const messages = sqliteTable("messages", {
   /** The honest arrival (IMAP INTERNALDATE), the pg column's twin — see `schema-mail.ts`.
    *  LAST, where mail 0119's ALTER appends it: the baseline test compares column ORDER. */
   arrivedAt: integer("arrived_at", { mode: "timestamp_ms" }),
-  /** The open read (mail 0145), the pg column's twin — see `schema-mail.ts` for the one writer and
-   *  the clears. LAST, where mail 0145's ALTER appends it: the baseline test compares column ORDER. */
+  /** The open read, the pg column's twin — see `schema-mail.ts` for the one writer and
+   *  the clears. LAST, where its migration's ALTER appends it: the baseline test compares column ORDER. */
   openReadAt: integer("open_read_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),

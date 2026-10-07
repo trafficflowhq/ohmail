@@ -149,7 +149,7 @@ export interface MessageDTO {
    */
   lastReadAt: ISODateTime | null;
   /**
-   * When this message was read in ohmail while it was the row open in the reader (mail 0145) —
+   * When this message was read in ohmail while it was the row open in the reader —
    * Earlier places a row by max(arrival, this). `null` for every other read and for an unread. This
    * server projects it on every message; OPTIONAL because an older server omits it and every reader
    * takes `undefined` as `null` — arrival, the order before the field.

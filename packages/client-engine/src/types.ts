@@ -361,7 +361,7 @@ export interface EngineMessage extends EngineMessageExtras {
    */
   lastReadAt?: ISODateTime | null;
   /**
-   * THE OPEN READ (mail 0145): when this message was read in ohmail while its conversation was the
+   * THE OPEN READ (`messages.open_read_at`): when this message was read in ohmail while its conversation was the
    * held row ({@link OhmailEngine.holdOpenRow}). "Earlier" places a row by max(arrival, this), so a
    * message opened, read and left takes the top; no other read writes it, and every unread clears
    * it. OPTIONAL for {@link lastReadAt}'s reason: `absent === null` = arrival.
