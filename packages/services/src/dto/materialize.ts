@@ -298,10 +298,10 @@ export function messageRowToDTO(
     folder,
     snippet: m.snippet,
     unread: m.unread,
-    // ONE projection, so read order reaches the client by every route it can arrive on: the list,
-    // the single read, the delta feed and the bootstrap snapshot all render a message row through
-    // this function. A second projection for any one of them is how a mirror ends up sorting one
-    // page differently from the next.
+    // ONE projection, so read state and the open read reach the client by every route it can
+    // arrive on: the list, the single read, the delta feed and the bootstrap snapshot all render a
+    // message row through this function. A second projection for any one of them is how a mirror
+    // ends up placing one page differently from the next.
     lastReadAt: iso(m.lastReadAt),
     openReadAt: iso(m.openReadAt),
     hasAttachments: m.hasAttachments,

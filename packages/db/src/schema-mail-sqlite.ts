@@ -620,12 +620,10 @@ export const messages = sqliteTable("messages", {
   threadId: text("thread_id").references(() => threads.id),
   unread: integer("unread", { mode: "boolean" }).notNull().default(true),
   /**
-   * When this message stopped being unread — the order "Earlier" is sorted by (mail 0047).
-   * Written by the same statement that flips {@link unread}: an instant when the flag goes false,
-   * NULL when it goes back to true. A record OF the flag, never its source. NULL means "not
-   * known"; the client files such a row at the message's own instant (mail 0119). No backfill: the
-   * column records only real readings — the own-instant fallback is the READER's rule, not a
-   * value on disk. No index; the sort happens on the client.
+   * When this message stopped being unread (mail 0047) — STATE, the seen pill; it sorts nothing,
+   * and the one read that places a row is `openReadAt`. Written by the same statement that flips
+   * {@link unread}: an instant when the flag goes false, NULL when it goes back to true. NULL means
+   * "not known". No backfill. No index.
    */
   lastReadAt: integer("last_read_at", { mode: "timestamp_ms" }),
   /**

@@ -141,12 +141,10 @@ export interface MessageDTO {
   snippet: string;
   unread: boolean;
   /**
-   * When this message stopped being unread, or `null` if that is not known. The order the
-   * client's "Earlier" group is sorted by — reading history, ordered by reading. `null` covers
-   * two rows that cannot be told apart and do not need to be: never read, and read before the
-   * field existed; both file at the message's own instant (the old below-every-stamped-row rule
-   * lost rows months down the list). Projected on EVERY message the API emits — one projection,
-   * so the sort works on a mirror built from any of them. A client newer than the server reads
+   * When this message stopped being unread, or `null` if that is not known — state, the seen
+   * pill; it orders nothing (the one read that places a row is {@link openReadAt}). `null` covers
+   * never read and read before the field existed. Projected on EVERY message the API emits — one
+   * projection, so every mirror reads the same state. A client newer than the server reads
    * `undefined` as `null`, so neither side has to deploy first.
    */
   lastReadAt: ISODateTime | null;

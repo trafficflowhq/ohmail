@@ -666,14 +666,11 @@ export const messages = pgTable("messages", {
   threadId: uuid("thread_id").references(() => threads.id),
   unread: boolean("unread").notNull().default(true),
   /**
-   * When this message stopped being unread — the order "Earlier" is sorted by (mail 0047).
-   * Written by the same statement that flips {@link unread}: an instant when the flag goes false,
-   * NULL when it goes back to true. A record OF the flag, never its source. NULL means "not
-   * known"; the client files such a row at the message's own instant (mail 0119 — the old
-   * below-every-stamped-row rule lost rows at a fixed boundary months down the list). No
-   * backfill: the column records only real readings — the own-instant fallback is the READER's
-   * rule, not a value on disk. No index; the sort happens on the client, and the server's keyset
-   * stays `(date, id)`.
+   * When this message stopped being unread (mail 0047) — STATE, the seen pill; since 2026-09-18 it
+   * sorts nothing, and the one read that places a row is {@link openReadAt}. Written by the same
+   * statement that flips {@link unread}: an instant when the flag goes false, NULL when it goes
+   * back to true. A record OF the flag, never its source. NULL means "not known". No backfill: the
+   * column records only real readings. No index; the server's keyset stays `(date, id)`.
    */
   lastReadAt: timestamp("last_read_at", { withTimezone: true }),
   /**
