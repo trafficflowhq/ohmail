@@ -537,14 +537,16 @@ export async function applyScreenerDecision(
 
   /* THE ACT NEVER ADMITS A MARKED SENDER (mail 0147), asked of the bag before the first rules,
      contacts or move statement: a pass's yes over held mail whose name claims a brand its address
-     does not own leaves the sender waiting and writes nothing of the decision. A person's press
-     stands; the row told them. The act stamps no baseline (`stampBaseline: false`). */
+     does not own leaves the sender waiting and writes nothing of the decision. A row the check
+     never reached (NULL) counts as marked here: this door cannot compute the fact, and the act
+     checks its senders' rows before it decides (fail closed). A person's press stands; the row
+     told them. The act stamps no baseline (`stampBaseline: false`). */
   const passAdmits = decidedBy === "pass" && decision === "yes";
   if (passAdmits) {
     const bag = scope === "domain"
       ? await heldRowsForDomain(tx, accountId, domain, undefined, { skipPutBack: true })
       : await heldRowsForSender(tx, accountId, address, undefined, { skipPutBack: true });
-    if (bag.some((r) => r.senderCheck === "impersonation")) {
+    if (bag.some((r) => r.senderCheck !== "none")) {
       return { createdRuleId: null, retargetedRuleIds: [], rerouted: [], lastSeq: null, heldElsewhere: [], skipped: "identity" };
     }
   }
@@ -614,9 +616,9 @@ export async function applyScreenerDecision(
     ? await heldRowsForDomain(tx, accountId, domain, undefined, held)
     : await heldRowsForSender(tx, accountId, address, undefined, held);
 
-  // …and a marked row that arrived between the two reads stays at the gate too.
+  // …and a marked or unchecked row that arrived between the two reads stays at the gate too.
   const moved = await rerouteHeldBag(tx, accountId,
-    passAdmits ? heldMail.filter((r) => r.senderCheck !== "impersonation") : heldMail, appliedFolder, now);
+    passAdmits ? heldMail.filter((r) => r.senderCheck === "none") : heldMail, appliedFolder, now);
   if (moved.lastSeq !== null) lastSeq = moved.lastSeq;
   const { rerouted, heldElsewhere } = moved;
 

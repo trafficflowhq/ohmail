@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, accounts, folderState, messages, routingDecisions,
@@ -12,8 +12,9 @@ import {
 } from "@trafficflow/db";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { correspondentsAmong } from "@trafficflow/core/adapters/drizzle-repo";
+import { SENDER_CHECK_BACKFILL_BATCH, writeSenderChecks } from "./sender-check-backfill.js";
 import {
-  canonicalDestination, effectForDestination, identityOfRow, silentLogger,
+  canonicalDestination, effectForDestination, silentLogger,
   type Destination, type Logger,
 } from "@trafficflow/core/mail";
 
@@ -243,7 +244,7 @@ export async function screenerAutoActPass(
   const correspondents = await correspondentsAmong(db, {
     accountId, senders: waiting.map((w) => w.address), references: "held",
   });
-  const unchecked = await uncheckedClaims(db, accountId, waiting.map((w) => w.address));
+  const unchecked = await checkUncheckedHeld(db, accountId, waiting.map((w) => w.address));
 
   let planned = 0;
   for (const sender of waiting) {
@@ -433,28 +434,33 @@ async function clearActRefusal(tx: Tx, accountId: string, suggestionId: string, 
 }
 
 /**
- * THE PAGE'S SENDERS WHOSE HELD MAIL THE CHECK NEVER REACHED (a NULL column, older than mail 0147)
- * and whose name or subject claims a brand: the fact function answers for the column there, as it
- * does for every other reader (`identityOfRow`), so the act does not read "unchecked" as "nothing
- * found" before the backfill reaches the row. One read per page, three short columns per row.
+ * THE PAGE'S HELD MAIL THE CHECK NEVER REACHED (a NULL column, older than mail 0147), checked HERE
+ * before the act decides — the backfill's own write (`writeSenderChecks`), so a claim is marked on
+ * its row and a `message` delta repaints every mirror: the Screener row then SAYS why the act left
+ * the sender waiting. Returns the senders a row was marked for. One read per page.
  */
-async function uncheckedClaims(db: Tx, accountId: string, senders: readonly string[]): Promise<Set<string>> {
+async function checkUncheckedHeld(db: Tx, accountId: string, senders: readonly string[]): Promise<Set<string>> {
   const out = new Set<string>();
   if (senders.length === 0) return out;
-  const rows = await db.select({
-    fromName: messages.fromName, fromAddress: messages.fromAddress, subject: messages.subject,
-  }).from(messages)
-    .innerJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(and(
-      eq(messages.accountId, accountId),
-      eq(folderState.desiredFolder, SCREENER_FOLDER),
-      isNull(messages.deletedAt),
-      isNull(messages.senderCheck),
-      inArray(sql`lower(${messages.fromAddress})`, [...senders]),
-    ));
-  for (const r of rows) {
-    if (identityOfRow({ ...r, senderCheck: null, senderCheckBrand: null }) !== null) out.add(r.fromAddress.toLowerCase());
-  }
+  // An erased account answers at the first sender's own write below, as one account-level line.
+  const marked = await fencedAccountWrite(db, { accountId }, async (tx) => {
+    const rows = await tx.select({
+      id: messages.id, fromName: messages.fromName, fromAddress: messages.fromAddress, subject: messages.subject,
+    }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(
+        eq(messages.accountId, accountId),
+        eq(folderState.desiredFolder, SCREENER_FOLDER),
+        isNull(messages.deletedAt),
+        isNull(messages.senderCheck),
+        inArray(sql`lower(${messages.fromAddress})`, [...senders]),
+      ))
+      // The backfill's page bound: a row past it stays NULL, and the door refuses over it.
+      .orderBy(desc(messages.createdAt), desc(messages.id))
+      .limit(SENDER_CHECK_BACKFILL_BATCH);
+    return rows.length === 0 ? [] : writeSenderChecks(tx, accountId, rows);
+  }).catch((err: unknown) => { if (err instanceof AccountErasedError) return []; throw err; });
+  for (const r of marked) out.add(r.fromAddress.toLowerCase());
   return out;
 }
 

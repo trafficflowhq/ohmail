@@ -39,6 +39,38 @@ export interface SenderCheckBackfillResult {
   done: boolean;
 }
 
+/** A row the check has not reached: what the fact reads, and nothing else. */
+export interface UncheckedRow { id: string; fromName: string | null; fromAddress: string; subject: string }
+
+/**
+ * THE ONE WRITE OF THE FACT FOR ROWS THE INGEST NEVER CHECKED — the backfill's page and the act's
+ * own read of the senders it is about to decide (mail 0147). Per row the fact function; a marked
+ * row gets its column and one `message` update delta, so every mirror repaints it with the
+ * sentence; a clean row `'none'`, no delta (it changes no DTO). `is null` again on every write: a
+ * row is written once, whoever reaches it first. Returns the rows it marked.
+ */
+export async function writeSenderChecks(
+  tx: Tx, accountId: string, rows: readonly UncheckedRow[],
+): Promise<UncheckedRow[]> {
+  const clean: string[] = [];
+  const marked: UncheckedRow[] = [];
+  const changes: ChangeInput[] = [];
+  for (const r of rows) {
+    const fact = claimedIdentity({ fromName: r.fromName, fromAddress: r.fromAddress, subject: r.subject });
+    if (fact === undefined) { clean.push(r.id); continue; }
+    await tx.update(messages).set({ senderCheck: "impersonation", senderCheckBrand: fact.brand })
+      .where(and(eq(messages.id, r.id), isNull(messages.senderCheck)));
+    marked.push(r);
+    changes.push({ accountId, entityType: "message", entityId: r.id, op: "update", meta: null });
+  }
+  if (clean.length > 0) {
+    await tx.update(messages).set({ senderCheck: "none" })
+      .where(and(inArray(messages.id, clean), isNull(messages.senderCheck)));
+  }
+  await recordChanges(tx as unknown as LedgerTx, changes);
+  return marked;
+}
+
 /** The two places a banner is read when a person decides. Archive and Sent rows stay unchecked. */
 const IN_SCOPE = ["INBOX", "ohmail/Screener"] as const;
 
@@ -68,24 +100,8 @@ export async function senderCheckBackfillPass(
         .orderBy(desc(messages.createdAt), desc(messages.id))
         .limit(batch);
       if (rows.length === 0) return { rows: 0, marked: 0 };
-
-      const clean: string[] = [];
-      const changes: ChangeInput[] = [];
-      for (const r of rows) {
-        const fact = claimedIdentity({ fromName: r.fromName, fromAddress: r.fromAddress, subject: r.subject });
-        if (fact === undefined) { clean.push(r.id); continue; }
-        // `is null` again: a row is written once, whoever reaches it first.
-        await tx.update(messages).set({ senderCheck: "impersonation", senderCheckBrand: fact.brand })
-          .where(and(eq(messages.id, r.id), isNull(messages.senderCheck)));
-        changes.push({ accountId: deps.accountId, entityType: "message", entityId: r.id, op: "update", meta: null });
-      }
-      if (clean.length > 0) {
-        // A clean row changes no DTO, so it costs no delta.
-        await tx.update(messages).set({ senderCheck: "none" })
-          .where(and(inArray(messages.id, clean), isNull(messages.senderCheck)));
-      }
-      await recordChanges(tx as unknown as LedgerTx, changes);
-      return { rows: rows.length, marked: changes.length };
+      const marked = await writeSenderChecks(tx, deps.accountId, rows);
+      return { rows: rows.length, marked: marked.length };
     });
     result.checked += n.rows;
     result.marked += n.marked;
