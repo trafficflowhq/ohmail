@@ -229,6 +229,24 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
 }
 
 /**
+ * HELD BY THE IDENTITY FACT (mail 0147): a message of this sender sits at the gate naming a company
+ * its address is not, held because no person consented to the address — whatever rule or contact
+ * decided the sender otherwise (the act's promotion, a domain rule, an inferred contact). Such a
+ * sender is waiting again: the queue lists them with the sentence, and no release takes the row.
+ */
+export function senderHasHeldClaimSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
+  return sql`exists (
+    select 1 from messages hm
+      join folder_state hf on hf.message_id = hm.id
+     where hm.account_id = ${d.castUuid(accountId)}
+       and lower(hm.from_address) = ${senderExpr}
+       and hf.desired_folder = ${CUTLINE_GATE_FOLDER}
+       and hm.deleted_at is null
+       and hm.sender_check = 'impersonation'
+  )`;
+}
+
+/**
  * DID A PERSON SCREEN THIS SENDER OUT HERE — the automatic unsubscribe pass's licence (UD-R4-03). An
  * enabled `sender`/`domain` rule naming the author, filing to one of `denyFolders`, whose decision a
  * person made (`person_decided_at`) ON THIS ACCOUNT: a person's (not the act's) Screener decision for

@@ -130,6 +130,8 @@ function heldAtGate(accountId: string) {
     sql`${folderState.lastSetBy} in ('external', 'peer', 'us')`,
     eq(folderState.desiredFolder, SCREENER_FOLDER),
     eq(folderState.observedFolder, SCREENER_FOLDER),
+    // A claim the identity fact holds is the Screener's question, with its sentence, never a release.
+    sql`(${messages.senderCheck} is null or ${messages.senderCheck} <> 'impersonation')`,
     sql`exists (
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId}

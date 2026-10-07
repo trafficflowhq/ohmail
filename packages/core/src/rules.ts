@@ -456,17 +456,19 @@ function isKnownAuthor(author: string | null, knownSenders: ReadonlySet<string>)
 
 /**
  * CONSENT GIVEN BY A PERSON ABOUT THIS ADDRESS — the only thing the identity fact yields to: an
- * enabled allow `sender` rule naming the author, or a contact a person's act wrote. A domain or
- * header rule, an inferred contact and the account's own address are inference. For an author
- * that is one of the account's own addresses only the rule half counts: a contacts row for your
- * own address is not consent to be impersonated.
+ * enabled allow `sender` rule a person wrote (`manual`, `migrated`, the Sent seed) naming the
+ * author, or a contact a person's act wrote. A `promoted` rule (the act on suggestions, learning),
+ * a domain or header rule, an inferred contact and the account's own address are inference; a
+ * person's Screener press consents through the person contact it writes. For an own address only
+ * the rule half counts: a contacts row for your own address is not consent to be impersonated.
  */
+const PERSON_WRITTEN: ReadonlySet<Rule["provenance"]> = new Set(["manual", "migrated", "seeded-from-sent"]);
 function addressLevelConsent(
   author: string | null, rules: readonly Rule[], known: KnownSenders, own: boolean,
 ): boolean {
   if (author === null) return false;
   const byRule = rules.some((r) => r.enabled && r.kind === "sender" && r.effect !== "deny"
-    && effectForDestination(r.destination) === "allow" && namesAuthor(r, author));
+    && effectForDestination(r.destination) === "allow" && PERSON_WRITTEN.has(r.provenance) && namesAuthor(r, author));
   if (byRule) return true;
   return !own && known.addresses.has(author) && !known.inferred.has(author);
 }

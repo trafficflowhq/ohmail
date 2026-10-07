@@ -413,6 +413,7 @@ export {
  */
 export {
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
+  senderHasHeldClaimSql,
   mailboxCountsAsOwn, mailboxCountsAsOwnSql,
   heldSortKey,
   cutlineInstant,

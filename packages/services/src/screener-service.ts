@@ -14,7 +14,7 @@ import {
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
-  heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
+  senderHasHeldClaimSql, heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
   readRequestEligibility, decisionCanBeApplied,
   listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -1676,7 +1676,8 @@ export class ScreenerReadService {
     return [
       eq(reps.rank, 1),
       cutline ? senderIsActiveSql(d, ctx.accountId, sender, cutline) : undefined,
-      sql`not ${senderIsDecidedSql(d, ctx.accountId, sender)}`,
+      // A decided sender is waiting again while the gate holds a claim of theirs (mail 0147).
+      sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${senderHasHeldClaimSql(d, ctx.accountId, sender)})`,
       // The account is not one of its own correspondents: its mail at the gate is no decision.
       sql`not ${senderIsOwnSql(d, ctx.accountId, sender)}`,
     ];

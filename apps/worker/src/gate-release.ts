@@ -7,6 +7,7 @@ import {
 } from "@trafficflow/db";
 import { silentLogger, type Destination, type Logger } from "@trafficflow/core";
 import { dialect } from "@trafficflow/db/dialect";
+import { writeSenderChecks } from "./sender-check-backfill.js";
 
 /* THE ONE-TIME REPAIR FOR MAIL STUCK AT THE SCREENING GATE BEHIND A DECISION ALREADY MADE.
    `confirmSeed` used to write its rules with `retro_requested_at` NULL — consent granted in bulk
@@ -81,6 +82,8 @@ function atTheGate(accountId: string) {
     sql`${folderState.lastSetBy} in ('us', 'peer', 'external')`,
     eq(folderState.desiredFolder, SCREENER_GATE),
     eq(folderState.observedFolder, SCREENER_GATE),
+    // A claim the identity fact holds is the Screener's question, never this repair's (mail 0147).
+    sql`(${messages.senderCheck} is null or ${messages.senderCheck} <> 'impersonation')`,
     sql`not exists (
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId}
@@ -198,14 +201,21 @@ export async function gateReleasePass(
        the held-release offer's sender lines count and press by after this sweep has run. */
     const filters = [atTheGate(accountId), ...contactOnlyHeldWhere(dialect(tx as unknown as Tx), { ownAddresses: own })];
 
-    const rows = await tx.select({
+    const selected = await tx.select({
       messageId: messages.id, observedFolder: folderState.observedFolder,
+      id: messages.id, fromName: messages.fromName, fromAddress: messages.fromAddress, subject: messages.subject,
+      senderCheck: messages.senderCheck,
     }).from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(...filters))
       .orderBy(asc(messages.id))
       .limit(batch)
       .for("update", { of: folderState });
+    /* A ROW THE CHECK NEVER REACHED IS CHECKED FIRST (fail closed, as the act does): a claim is marked
+       on its row, stays at the gate and leaves this selection; only a row checked clean is released. */
+    const marked = new Set((await writeSenderChecks(tx as unknown as Tx, accountId,
+      selected.filter((r) => r.senderCheck === null))).map((r) => r.id));
+    const rows = selected.filter((r) => !marked.has(r.messageId));
 
     for (const r of rows) {
       // Desired only — `reconcileFolders` is the one crash-safe mover, exactly as `rule-retro`
@@ -232,7 +242,7 @@ export async function gateReleasePass(
       });
     }
 
-    return { armed: armable.length, released: rows.length };
+    return { armed: armable.length, released: rows.length, selected: selected.length };
   });
 
   out.rulesArmed = page.armed;
@@ -242,7 +252,8 @@ export async function gateReleasePass(
      there is more, and claiming completion first would make a crash permanent. Written on its own
      rather than inside the page transaction for the same reason: the sweep is resumable, and a
      page that committed its work is work done whether or not the account is finished. */
-  if (page.armed < batch && page.released < batch) {
+  // Short by what was SELECTED: a page whose rows were partly claims held back is still a full page.
+  if (page.armed < batch && page.selected < batch) {
     /* ── THE ERASURE FENCE, AND THE REASON THIS UPSERT NEEDS ONE ─────────────────────────────
      * An UPSERT, so it CREATES: an account that never confirmed a seed has no settings row, and
      * `account_settings` is a table the Art. 17 sweep empties. This pass reads its subject pages
