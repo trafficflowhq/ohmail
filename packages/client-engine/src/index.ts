@@ -73,6 +73,7 @@ export {
  * rule a surface writes again — differently.
  */
 export { countWhen, listSurface, metaWhen, mirrorCountInput, saysEmpty, waitingSurfaceInput } from "./list-surface.js";
+export { notifiedSenderName } from "./notified-sender.js";
 export type { ListSurface, ListSurfaceInput, MirrorCountFacts, WaitingSurfaceFacts, WaitingWhy } from "./list-surface.js";
 
 /**
@@ -96,6 +97,9 @@ export { retroPassWouldMove, type RetroCandidateRow } from "@trafficflow/core/de
  * server's refusal and the web's panes ask; the phone reaches core only through this package.
  */
 export { holderIsLive } from "@trafficflow/core/reader-refusal";
+/* The shared-provider list and the one rule-door question, for the phone, which links no core:
+   a domain there is never offered as a scope, the server refusing it the same way. */
+export { isSharedProviderDomain, sharedProviderAllowRefusal } from "@trafficflow/core/rule-order";
 
 /**
  * THE PAIRING LINK'S SHAPE — composed by the desktop's Devices pane, parsed by the phone. Here

@@ -66,6 +66,11 @@ export interface DecisionBarProps {
   aiDest?: DecisionDestination;
   scope: DecisionScope;
   onScopeChange: (scope: DecisionScope) => void;
+  /**
+   * `false` ⇒ no domain option: the sender is at a shared provider, where a decision about everyone
+   * there admits nobody and the server refuses it. The host says why in its own words.
+   */
+  domainScopeOffered?: boolean;
   /** Every word on the bar. See {@link DecisionBarCopy}. */
   copy: DecisionBarCopy;
   /** One click files; `markRead` is true from the ✓ segment / shifted key. */
@@ -97,6 +102,7 @@ export function DecisionBar({
   aiDest,
   scope,
   onScopeChange,
+  domainScopeOffered = true,
   copy,
   onDecide,
   keyboard,
@@ -186,10 +192,9 @@ export function DecisionBar({
           ariaLabel={copy.scopeAria}
           value={scope}
           onChange={(s) => onScopeChange(s)}
-          options={[
-            { id: "sender", label: copy.scopeSender },
-            { id: "domain", label: copy.scopeDomain },
-          ]}
+          options={domainScopeOffered
+            ? [{ id: "sender", label: copy.scopeSender }, { id: "domain", label: copy.scopeDomain }]
+            : [{ id: "sender", label: copy.scopeSender }]}
         />
         {/*
             THE CONSEQUENCE LINE, WHICH IS THE CONSENT DISCLOSURE. "Becomes a rule — future mail from … files

@@ -176,6 +176,14 @@
   letter-spacing: 0.01em;
   color: var(--ink3);
 }
+/* ── a shared provider: no domain tile, the sentence in its place ── */
+.sm-shared {
+  margin: 0;
+  padding: 8px 12px 10px;
+  font-size: calc(12px + var(--type-up));
+  line-height: 1.45;
+  color: var(--ink2);
+}
 /* ── whose mail: two tiles, the count on the choice ── */
 .sm-scope {
   display: flex;
@@ -204,7 +212,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The COUNT WRAPS, never ellipsizes. It is the consent — "everyone at gmail.com" is chosen
+/* The COUNT WRAPS, never ellipsizes. It is the consent — "everyone at firma.ch" is chosen
    with its size visible — and half a tile's width used to print it as "1 s…", which is a
    count nobody can read. The label above it keeps its one line; the meta takes two. */
 .sm-scope button small {

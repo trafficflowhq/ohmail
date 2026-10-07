@@ -19,6 +19,7 @@ import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme } from "../theme";
 import { useBottomChromeSlot } from "./bottom-chrome";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
+import { isSharedProviderDomain } from "@ohmail/client-engine";
 import {
   calendarDayLabel,
   DAY_OFFSETS,
@@ -819,6 +820,8 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   const [step, setStep] = useState<PhoneStep | null>(null);
   const domain = domainOf(m.from.address);
   const hasDomain = m.from.address.includes("@") && domain !== "";
+  // A shared provider's domain is never a scope: a decision about everyone there admits nobody.
+  const sharedDomain = hasDomain && isSharedProviderDomain(domain);
   const target = scope === "domain" ? `@${domain}` : m.from.address;
   const inPlay = w.actions.screeningRules(m.id, scope);
   /* WHY SOME OF THEIR MAIL STAYED once the rule's past-mail pass finished — asked of the server
@@ -838,6 +841,14 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   const press = (dest: Destination) => {
     const f = w.actions.screeningForecast(m.id, dest, scope, applyRetro);
     const cls = f ? phoneStepClass(f, scope) : null;
+    // On a shared provider the domain above the address is answered by the address: no "everyone" tile.
+    if (f && cls === "domain" && sharedDomain) {
+      onClose();
+      w.actions.screenSender(m.id, dest, scope, applyRetro, {
+        resolution: "keep", shown: f.groups.map((g) => g.rule), forecast: f,
+      });
+      return;
+    }
     if (f && cls) { setStep({ dest, forecast: f, cls, choice: cls === "domain" && !f.exception ? 1 : 0 }); return; }
     onClose();
     w.actions.screenSender(m.id, dest, scope, applyRetro);
@@ -864,7 +875,11 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
       <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
         {Copy.screeningFor(m.from.name)}
       </Txt>
-      {hasDomain ? (
+      {sharedDomain ? (
+        <Txt variant="caption" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+          {Copy.screeningScopeShared(domain)}
+        </Txt>
+      ) : hasDomain ? (
         <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
           <Segmented
             fill={false}

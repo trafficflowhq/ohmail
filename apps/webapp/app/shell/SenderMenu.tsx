@@ -5,10 +5,12 @@
  * picker, Escape and outside click dismiss. It states the consequence BEFORE the click, and the two
  * differ: from the Screener the change becomes a rule, from anywhere else it moves the mail only (see
  * `sender-screening.ts`). The additions sit around the existing sheet: a scope switch, offered only
- * when the address has a domain, defaulting to the ADDRESS — defaulting to the domain would silently
- * widen every existing click, and on a shared provider that is a mailbox-destroying gesture; the
- * counts are stated on the switch, so the wide option is chosen with its size visible. And a way into
- * the detail view — every message from this address or domain and why it sits there (`sender-audit.ts`).
+ * when the address has a domain that is not a shared provider's, defaulting to the ADDRESS —
+ * defaulting to the domain would silently widen every existing click. On a shared provider the
+ * switch is replaced by the sentence that decisions there are per address: a rule for everyone at
+ * gmail.com admits nobody (`rule-order.ts#sharedProviderAllowRefusal`). The counts are stated on
+ * the switch, so the wide option is chosen with its size visible. And a way into the detail view —
+ * every message from this address or domain and why it sits there (`sender-audit.ts`).
  */
 
 /**
@@ -45,6 +47,7 @@ import {
   type StayedWhy, ruleMatchKey, ruleTwins, twinWinner,
 } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
+import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { Avatar, InfoNote, Kbd } from "@ohmail/ui";
 import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf, placeLabel } from "./format";
@@ -265,8 +268,10 @@ export function SenderMenu({
   const whichDomain = displayDomain(sender.domain);
   // Offered only when there IS a domain: `decide` answers 422 for an address with no `@`
   // (an empty `match` on a domain rule is compared against the empty domain of every other
-  // malformed address), so the switch must not present a choice the server refuses.
-  const canScope = sender.domain !== "";
+  // malformed address), so the switch must not present a choice the server refuses. Nor on a
+  // shared provider, where a domain decision admits nobody and the server refuses it too.
+  const sharedDomain = sender.domain !== "" && isSharedProviderDomain(sender.domain);
+  const canScope = sender.domain !== "" && !sharedDomain;
   const subject = sender.scopes[scope];
   const inPlay = rulesFor?.(scope) ?? null;
   /* THE ROWS A FINISHED PASS LEFT ELSEWHERE, AND WHY. Asked only when the rule deciding the subject
@@ -333,7 +338,11 @@ export function SenderMenu({
        the gate) and the forecast finds a rule keeping mail elsewhere, or an exception to write. */
     const asks = makeRule || subject.waiting;
     const forecast = asks ? forecastFor?.(dest, scope, makeRule, applyRetro) ?? null : null;
-    const cls = forecast ? stepClass(forecast, scope) : null;
+    const asked = forecast ? stepClass(forecast, scope) : null;
+    /* A SHARED PROVIDER'S DOMAIN IS NEVER A TILE: its domain rule above the address is answered by
+       the address, which is the "keep" tile, without asking to widen the press to everyone there. */
+    const addressOnly = asked === "domain" && sharedDomain;
+    const cls = addressOnly ? null : asked;
     if (forecast && cls) {
       openedFrom.current = dest;
       setStep({ kind: "resolve", dest, forecast, cls, choice: defaultChoice(cls, forecast), unsubscribes });
@@ -342,6 +351,12 @@ export function SenderMenu({
     if (unsubscribes) {
       openedFrom.current = dest;
       setStep({ kind: "unsubscribe", dest });
+      return;
+    }
+    if (addressOnly && forecast) {
+      onChoose(dest, scope, makeRule, applyRetro, {
+        resolution: "keep", shown: forecast.groups.map((g) => g.rule), forecast,
+      });
       return;
     }
     onChoose(dest, scope, makeRule, applyRetro);
@@ -415,9 +430,8 @@ export function SenderMenu({
               onClick={() => { setScope(s); setStep({ kind: "list" }); }}
             >
               {s === "sender" ? t("scopeAddress") : t("scopeDomain", { domain: whichDomain })}
-              {/* THE SIZE OF THE CHOICE, ON THE CHOICE. Domain scope on a shared provider is
-                  the foot-gun; "214 messages · 38 senders" is what makes that visible without
-                  a blocklist nobody can maintain. */}
+              {/* THE SIZE OF THE CHOICE, ON THE CHOICE: "214 messages · 38 senders" is the domain
+                  scope's size before it is chosen. A shared provider never reaches this switch. */}
               <small>
                 {s === "domain"
                   ? t("scopeCount", {
@@ -430,6 +444,8 @@ export function SenderMenu({
           ))}
         </div>
         </>
+      ) : sharedDomain ? (
+        <p className="sm-shared" data-reason="shared-provider">{t("scopeShared", { domain: whichDomain })}</p>
       ) : null}
 
       {/* The counts are the places' own: a row in no place (Trash, Junk, Sent) is in no number, and

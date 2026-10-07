@@ -93,6 +93,13 @@ export interface MessageRowProps {
    * nameless sender's `from` IS the address, and is drawn by the same rule.
    */
   addressFirst?: boolean;
+  /**
+   * THE IDENTITY CHIP — "Not PostFinance": the sender's name claims a company this address does not
+   * belong to (`MessageDTO.senderCheck`). The face and its hover sentence are the host's, already in
+   * the reader's language. Absent ⇒ no chip, which is every row whose sender says who they are.
+   */
+  senderCheckLabel?: string;
+  senderCheckTitle?: string;
   time?: string;
   /**
    * The stamp's hover title: the same instant in the other form. A row
@@ -286,6 +293,8 @@ export function MessageRow(props: MessageRowProps) {
     from,
     address,
     addressFirst,
+    senderCheckLabel,
+    senderCheckTitle,
     time,
     timeTitle,
     timeSpoken,
@@ -334,6 +343,13 @@ export function MessageRow(props: MessageRowProps) {
    */
   const keep: ReactNode[] = [];
   const tail: ReactNode[] = [];
+  // First and kept: a name claiming somebody else's company is the one fact a row may not lose.
+  if (senderCheckLabel)
+    keep.push(
+      <Badge key="check" variant="shield" icon="shield" className="bdg-check" title={senderCheckTitle}>
+        {senderCheckLabel}
+      </Badge>,
+    );
   if (threadCount) keep.push(<Badge key="thread" className="bdg-thread">⤷ {threadCount}</Badge>);
   /**
    * THE CONVERSATION'S FACES, DIRECTLY AFTER ITS COUNT — see
@@ -549,6 +565,7 @@ export function MessageRow(props: MessageRowProps) {
     heldLabel: typeof heldLabel === "string" ? heldLabel : undefined,
     newSinceLabel,
     newSinceTitle,
+    senderCheck: senderCheckTitle ?? senderCheckLabel,
     stateNote,
     // A note row's sentence rides the same spoken slot its visible chip uses — one fact, one line.
     aiReason: aiSuggestion && "note" in aiSuggestion ? aiSuggestion.note : aiSuggestion?.reason,

@@ -42,7 +42,7 @@ import { useListWindow } from "../shell/list-window";
 import { organizerRefusalOf, organizerRefusalSentence } from "../shell/organizer-refusal";
 import { postureRefusal, type RulesPosture } from "../shell/rules-posture";
 import { useFocusFollows } from "../shell/focus-follows";
-import { actingRules, outrankOf, twinsDiffer, waitingByRow } from "./rules-standing";
+import { actingRules, outrankOf, sharedProviderInert, twinsDiffer, waitingByRow } from "./rules-standing";
 import "./rules.css";
 
 /**
@@ -534,6 +534,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
     const rank = outrankOf(rule, allRules);
     const twins = copies.get(rule.id) ?? 0;
     const behind = others.get(rule.id) ?? [];
+    const inert = sharedProviderInert(rule);
     // Twins filing elsewhere, or paused where this row runs, are rules of their own: named, not counted.
     const twinNote = twins === 0 ? null : twinsDiffer(rule, behind)
       ? t("otherTwins", {
@@ -544,7 +545,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
     return (
       <Fragment key={rule.id}>
         <div
-          className={`rules-item${openHere ? " editing" : ""}${waits || rank || twins > 0 ? " noted" : ""}`}
+          className={`rules-item${openHere ? " editing" : ""}${waits || rank || twins > 0 || inert ? " noted" : ""}`}
           data-rule-id={rule.id}
           data-index={index}
           role="listitem"
@@ -566,6 +567,11 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
               <Button variant="ghost" className="rules-lift" disabled={lockedWhy !== null} onClick={() => lift(rule)}>
                 {t("liftAction")}
               </Button>
+            ) : null}
+            {inert ? (
+              <span className="meta rules-inert" data-reason="shared-provider">
+                {t("sharedProviderInert", { domain: displayRuleMatch(inert) })}
+              </span>
             ) : null}
             {twinNote ? <span className="meta rules-copies">{twinNote}</span> : null}
             {waits ? <span className="meta rules-waits" role="status">{waits}</span> : null}

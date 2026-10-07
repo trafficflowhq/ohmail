@@ -659,6 +659,11 @@
     "newSince": "{count, plural, =0 {Nichts Neues} one {# neue} other {# neue}} seit deinem letzten Besuch"
   },
   "screener": {
+    "senderCheck": {
+      "impersonation": "Der Name sagt {brand}, die Adresse gehört aber nicht zu {brand}.",
+      "impersonationShared": "Der Name sagt {brand}, aber eine {domain}-Adresse kann sich jeder anlegen.",
+      "chip": "Nicht {brand}"
+    },
     "title": "Screener",
     "metaWaiting": "{count, plural, =0 {alles klar} one {1 Erstabsender wartet} other {# Erstabsender warten}}",
     "metaWaitingOnDevice": "{count, plural, =0 {keiner auf diesem Gerät gezählt} one {1 Erstabsender wartet, auf diesem Gerät gezählt} other {# Erstabsender warten, auf diesem Gerät gezählt}}",
@@ -3187,6 +3192,7 @@
     "unsavedKindRule": "Eine Regel-\u00c4nderung"
   },
   "screening": {
+    "scopeShared": "{domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.",
     "action": "Einordnen",
     "openFor": "{sender} einordnen",
     "aria": "{sender} einordnen",
@@ -3416,6 +3422,7 @@
     "subjectAria": "Betreff dieser Antwort"
   },
   "rules": {
+    "sharedProviderInert": "Alle bei {domain}: ein geteilter Anbieter, diese Regel lässt niemanden durch. Entscheide pro Adresse.",
     "intro": "Jede Screener-Entscheidung schreibt eine Regel. Das sind deine.",
     "empty": "Noch keine Regeln. Sobald du über einen Absender entscheidest, entsteht eine, und sie steht hier.",
     "noCount": "Nichts hält fest, wie viele Nachrichten eine Regel einsortiert hat, also sagt diese Seite es auch nicht.",

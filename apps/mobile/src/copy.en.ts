@@ -2276,6 +2276,21 @@ const TABLE = {
   senderFirstContact:
     "First contact. Nothing from this sender has reached the Ohbox — it waited here.",
   /**
+   * THE IDENTITY FACT, the web's `screener.senderCheck` sentences as functions: the sender's name
+   * claims a company this address does not belong to. Rendered outside any AI advice.
+   */
+  senderCheckImpersonation: (brand: string): string =>
+    `Its name says ${brand}; the address isn't one ${brand} sends from.`,
+  senderCheckImpersonationShared: (brand: string, domain: string): string =>
+    `Its name says ${brand}, but anyone can register a ${domain} address.`,
+  senderCheckChip: (brand: string): string => `Not ${brand}`,
+  /** A shared provider's domain is never a scope: the sentence in the place of the choice. */
+  screeningScopeShared: (domain: string): string =>
+    `${domain} is a shared provider. Decisions here are per address.`,
+  /** An allow rule for everyone at a shared provider admits nobody — said on the row it covers. */
+  rulesSharedProviderInert: (domain: string): string =>
+    `Everyone at ${domain}: a shared provider, so this rule admits nobody. Decide per address.`,
+  /**
    * The whole suggestion sentence, in one key, because word order is not ours to assume. As a
    * fragment ("is the AI's suggestion at") with the destination rendered before it by the
    * screen, German broke — the verb moves, and the assembled result read "Ohbox schlägt die

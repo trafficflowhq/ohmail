@@ -8,6 +8,7 @@
  * doctrine); the release family rewrites the sender's own holding rule, or writes an address rule
  * beside a domain rule (`releaseRules`), beside physical `move`s. Mutations read the raw mirror ({@link presentedOf} is for renders); no React, no I/O, no network.
  */
+import { isSharedProviderDomain } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
@@ -634,6 +635,19 @@ function sentFaceOf(m: EngineMessage, own: readonly string[] | undefined): strin
   return to.length > 1 ? Copy.rowSentToMore(name, to.length - 1) : Copy.rowSentTo(name);
 }
 
+/** The identity fact off the wire; the phone holds no dictionary and decides nothing itself. */
+function senderCheckOf(m: EngineMessage): { senderCheck?: Mail["senderCheck"] } {
+  const c = m.senderCheck;
+  if (!c || c.reason !== "impersonation" || !c.brand) return {};
+  const at = m.from.address.lastIndexOf("@");
+  return {
+    senderCheck: {
+      brand: c.brand, domainShared: c.domainShared === true,
+      domain: at < 0 ? "" : m.from.address.slice(at + 1).toLowerCase(),
+    },
+  };
+}
+
 /** The account's own mail, as `isOwn` reads it: the Sent copy, or a sender among its addresses. */
 function ownMailOf(m: EngineMessage, physical: string, own: readonly string[] | undefined): boolean {
   if (isOwnSent({ folder: physical as Folder })) return true;
@@ -674,6 +688,7 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     from: { name: m.from.name || m.from.address, address: m.from.address },
     ...((): { sentTo?: string } => { const f = sentFaceOf(m, v.ownAddresses); return f === null ? {} : { sentTo: f }; })(),
     ...(ownMailOf(m, physical, v.ownAddresses) ? { ownMail: true as const } : {}),
+    ...senderCheckOf(m),
     subject: m.subject,
     time: messageDisplayTime(m, v.now, v.zone, v.locale ?? "en"),
     body: body.text,
@@ -1443,6 +1458,14 @@ export interface ScreenerRow {
   dull: boolean;
   scope: Scope;
   ai: { dest: Destination; confidence: number; rationale: string } | null;
+  /**
+   * THE IDENTITY FACT, the mirror selector's aggregate over the very bag this row lists
+   * (`ScreenerSenderDTO.checked`): a held message names `brand` from an address `brand` does not
+   * send from. Rendered as its own line, before and apart from the AI advice.
+   */
+  checked?: { brand: string; domainShared: boolean; domain: string };
+  /** An allow rule for everyone at this sender's shared provider names them and admits nobody. */
+  inertRule?: { domain: string };
   /** Every held message, oldest first — all of it, always, never a collapsed count. */
   held: ScreenerHeld[];
   /** screened rows only. */
@@ -1515,6 +1538,8 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
     dull: dto.dull === true,
     scope: scope ?? dto.scope,
     ai,
+    ...(dto.checked ? { checked: { brand: dto.checked.brand, domainShared: dto.checked.domainShared, domain: dto.checked.domain } } : {}),
+    ...(dto.inertRule ? { inertRule: { domain: dto.inertRule.domain } } : {}),
     held,
     screenedOn: dto.screenedOn ?? "",
     detection: "",
@@ -4911,7 +4936,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (!m) return null;
     const address = m.from.address.trim().toLowerCase();
     const domain = domainOf(address).toLowerCase();
-    if (scope === "domain" && (domain === "" || !address.includes("@"))) return null;
+    // A shared provider's domain is never a scope: a decision about everyone there admits nobody.
+    if (scope === "domain" && (domain === "" || !address.includes("@") || isSharedProviderDomain(domain))) return null;
     const match = scope === "domain" ? domain : address;
     const ofSubject = (x: EngineMessage): boolean =>
       scope === "domain"
@@ -5121,6 +5147,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const address = m.from.address.trim().toLowerCase();
     const domain = domainOf(address).toLowerCase();
     if (scope === "domain" && (domain === "" || !address.includes("@"))) return false;
+    // Everyone at a shared provider let through admits nobody, and the server refuses it: said, not sent.
+    if (scope === "domain" && isSharedProviderDomain(domain)) {
+      toast(refuse("screeningScopeShared", domain));
+      return false;
+    }
     const match = scope === "domain" ? domain : address;
     const wanted = FOLDER_OF_VIEW[dest as ScreenDest];
     const target = scope === "domain" ? `@${domain}` : m.from.address;

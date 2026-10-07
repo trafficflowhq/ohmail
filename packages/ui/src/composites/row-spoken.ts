@@ -11,6 +11,7 @@
 export type RowSpokenKind =
   | "arrived"
   | "readState"
+  | "senderCheck"
   | "thread"
   | "attachment"
   | "protected"
@@ -30,6 +31,7 @@ export type RowSpokenKind =
 export const ROW_SPOKEN_ORDER: readonly RowSpokenKind[] = [
   "arrived",
   "readState",
+  "senderCheck",
   "thread",
   "attachment",
   "protected",
@@ -89,6 +91,8 @@ export interface MessageRowFacts {
   heldLabel?: string;
   newSinceLabel?: string;
   newSinceTitle?: string;
+  /** The identity chip's sentence ("Its name says PostFinance; …"), or its face where no sentence was given. */
+  senderCheck?: string;
   stateNote?: string;
   aiReason?: string;
   place?: string;
@@ -106,6 +110,7 @@ export function messageRowFacts(p: MessageRowFacts): RowSpokenFact[] {
   const arrived = p.timeSpoken ?? p.time;
   if (arrived) said.push({ kind: "arrived", text: arrived });
   if (p.spoken) said.push({ kind: "readState", text: p.unread ? p.spoken.unread : p.spoken.read });
+  if (p.senderCheck) said.push({ kind: "senderCheck", text: p.senderCheck });
   /* A conversation of one is not a conversation — the row draws no badge for it either. */
   if (p.threadCount !== undefined && p.threadCount > 1 && p.threadLabel !== undefined) {
     said.push({ kind: "thread", text: p.threadLabel });

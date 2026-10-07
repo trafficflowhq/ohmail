@@ -21,6 +21,7 @@ import { useListWindow } from "../shell/list-window";
 import { useColumnPick } from "../shell/column-pick";
 import { useStoreTimeline } from "../shell/store-timeline";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
+import { useSenderCheckWords } from "../shell/sender-check";
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
@@ -94,6 +95,7 @@ export function HistoryView({
   held?: ReadonlySet<string>;
 }) {
   const t = useTranslations("history");
+  const { row: senderCheckRow } = useSenderCheckWords();
   const rowBadge = useRowBadgeCopy();
   const to = useTranslations("ohbox");
   const tReader = useTranslations("reader");
@@ -330,6 +332,7 @@ export function HistoryView({
           inSet={{ size: tl.length, position: i + 1 }}
           from={senderName(m)}
           address={rowAddress(m)}
+          {...senderCheckRow(m)}
           {...avatarOf(m)}
           participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
           {...rowStamp(m, now, absoluteTime, onToggleTime)}

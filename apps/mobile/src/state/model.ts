@@ -59,6 +59,12 @@ export interface Mail {
   sentTo?: string;
   /** The account's own mail (its Sent copy, or a sender among its addresses); absent on others'. */
   ownMail?: true;
+  /**
+   * THE IDENTITY FACT (`MessageDTO.senderCheck`): the sender's name claims `brand`, and this address
+   * is not one `brand` sends from. Absent on every other message. Drawn as the row's chip and the
+   * reader's line, and a marked message's pictures wait for a press.
+   */
+  senderCheck?: { brand: string; domainShared: boolean; domain: string };
   subject: string;
   time: string;
   body: string;

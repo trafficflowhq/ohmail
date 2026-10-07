@@ -20,7 +20,7 @@ import { displayAddress } from "./idn";
 import { MessageActionBar, type MessageAction } from "./MessagePane";
 import { MessageRecipients } from "./MessageRecipients";
 import { FoldTableArt, StreamCardToggled, StreamCardWidth } from "./StreamShell";
-import type { RemoteImagesChrome } from "./remote-images";
+import { autoLoadsImages, type RemoteImagesChrome } from "./remote-images";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
 import { useWithheldSentence } from "./message-chrome";
 import type { WithheldCopyKey } from "./format";
@@ -145,10 +145,10 @@ function StreamCardMemoInner({
         text={bodyText}
         html={bodyHtml}
         remoteLoaded={
-          bodyLoadedRemote || (remoteImages?.auto ?? false) || (remoteImages?.consented(m.id) ?? false)
+          bodyLoadedRemote || autoLoadsImages(remoteImages, m) || (remoteImages?.consented(m.id) ?? false)
         }
         imageProxy={remoteImages ? remoteImages.proxyFor(m.id) : null}
-        onLoadRemote={remoteImages && !remoteImages.auto ? () => remoteImages.consent(m.id) : undefined}
+        onLoadRemote={remoteImages && !autoLoadsImages(remoteImages, m) ? () => remoteImages.consent(m.id) : undefined}
         loadTrackingPixels={remoteImages?.loadPixels ?? false}
         resolvedRemoteImages={remoteImages?.resolvedFor(m.id)}
         onRemoteImages={remoteImages ? (urls) => remoteImages.needRemote(m.id, urls) : undefined}

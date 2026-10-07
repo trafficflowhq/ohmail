@@ -659,6 +659,11 @@
     "newSince": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here"
   },
   "screener": {
+    "senderCheck": {
+      "impersonation": "Its name says {brand}; the address isn't one {brand} sends from.",
+      "impersonationShared": "Its name says {brand}, but anyone can register a {domain} address.",
+      "chip": "Not {brand}"
+    },
     "title": "Screener",
     "metaWaiting": "{count, plural, =0 {all clear} one {1 first-time sender waiting} other {# first-time senders waiting}}",
     "metaWaitingOnDevice": "{count, plural, =0 {none counted on this device} one {1 first-time sender waiting, counted on this device} other {# first-time senders waiting, counted on this device}}",
@@ -3187,6 +3192,7 @@
     "unsavedKindRule": "A rule change"
   },
   "screening": {
+    "scopeShared": "{domain} is a shared provider. Decisions here are per address.",
     "action": "Screening",
     "openFor": "Screening for {sender}",
     "aria": "Screening for {sender}",
@@ -3416,6 +3422,7 @@
     "subjectAria": "Subject of this reply"
   },
   "rules": {
+    "sharedProviderInert": "Everyone at {domain}: a shared provider, so this rule admits nobody. Decide per address.",
     "intro": "Every Screener decision writes a rule. These are yours.",
     "empty": "No rules yet. Deciding about a sender writes one, and it shows up here.",
     "noCount": "Nothing records how many messages a rule has filed, so this page doesn't say.",

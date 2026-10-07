@@ -220,6 +220,14 @@ export function MessageReader({
               {m.from.address}
             </Txt>
           ) : null}
+          {/* THE IDENTITY FACT, under the address it is about — always drawn, never folded away. */}
+          {m.senderCheck ? (
+            <Txt variant="note" tone="ink" style={{ marginTop: 6 }} testID="reader-sender-check">
+              {m.senderCheck.domainShared
+                ? Copy.senderCheckImpersonationShared(m.senderCheck.brand, m.senderCheck.domain)
+                : Copy.senderCheckImpersonation(m.senderCheck.brand)}
+            </Txt>
+          ) : null}
 
           <Txt variant="h2" style={{ marginTop: 14, marginBottom: 14 }}>
             {m.subject}

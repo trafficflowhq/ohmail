@@ -417,6 +417,12 @@ export interface EngineMessage extends EngineMessageExtras {
    * a correspondent (`@trafficflow/core/sender-headers`). Absent reads as `null`, "nobody asked".
    */
   authVerdict?: "unauthenticated" | "unavailable" | "pass" | "fail" | null;
+  /**
+   * THE IDENTITY FACT (`MessageDTO.senderCheck`): the sender's name claims `brand` and this address
+   * is not one `brand` sends from. `null` — checked, nothing found; absent — never checked, which
+   * renders as nothing. The client reads it and decides nothing from a dictionary of its own.
+   */
+  senderCheck?: { reason: "impersonation"; brand: string; domainShared: boolean } | null;
 }
 
 /**
@@ -876,6 +882,18 @@ export interface ScreenerSenderDTO {
   id: string;
   segment: ScreenerSegment;
   from: EmailAddress;
+  /**
+   * THE IDENTITY FACT, FOR THE SENDER: a held message of theirs claims `brand` by name from an
+   * address `brand` does not send from (`MessageDTO.senderCheck`), aggregated over the very bag
+   * this row lists, the newest marked message naming the brand. `domain` is the address's own, for
+   * the shared-provider sentence. Rendered outside the AI advice, whether or not any was bought.
+   */
+  checked?: { reason: "impersonation"; brand: string; domainShared: boolean; domain: string };
+  /**
+   * An enabled allow rule names this sender's domain, and the domain is a shared provider's: the
+   * rule admits nobody, so the sender waits as a stranger the rule seemed to cover. Said on the row.
+   */
+  inertRule?: { domain: string };
   /**
    * WHICH OF THE ACCOUNT'S MAILBOXES THE STRANGER WROTE TO — the representative's own
    * `mailboxId`, the same fact `ScreenerItem.mailboxId` carries on the wire. The id and never the

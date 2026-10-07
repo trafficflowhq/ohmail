@@ -29,6 +29,17 @@ import {
 import { API_BASE, apiConfigured, messageOf, privacy } from "../api-client";
 
 /**
+ * DOES THIS MESSAGE LOAD ITS PICTURES ON OPEN — the account's `auto`, and never for a message whose
+ * sender's name claims a company the address does not belong to (`MessageDTO.senderCheck`): its
+ * pictures wait for a press, and the bar says they were held back. The one default-read term.
+ */
+export function autoLoadsImages(
+  chrome: Pick<RemoteImagesChrome, "auto"> | undefined, m: { senderCheck?: unknown },
+): boolean {
+  return (chrome?.auto ?? false) && !m.senderCheck;
+}
+
+/**
  * Everything a rendered message needs in order to offer "Show images" — or ABSENT, a real answer:
  * `undefined` means this client cannot proxy an image (`?demo=1`, the desktop shell, a test mounting
  * a view without an API), and `MessageBody` renders NO button for it rather than a dead one —

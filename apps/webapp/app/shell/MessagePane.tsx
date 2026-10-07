@@ -31,6 +31,7 @@ import { SENDER_SHEET_ID } from "./SenderMenu";
 import { useFocusFollows } from "./focus-follows";
 import { scrollProgrammatically } from "./programmatic-scroll";
 import { useReaderSeen } from "./reader-seen";
+import { autoLoadsImages } from "./remote-images";
 import "./action-bar.css";
 
 /**
@@ -1733,12 +1734,12 @@ export function MessagePane({
         html={body.html}
         remoteLoaded={
           body.loadedRemoteContent ||
-          (chrome.remoteImages?.auto ?? false) ||
+          autoLoadsImages(chrome.remoteImages, message) ||
           (chrome.remoteImages?.consented(message.id) ?? false)
         }
         imageProxy={chrome.remoteImages ? chrome.remoteImages.proxyFor(message.id) : null}
         onLoadRemote={
-          chrome.remoteImages && !chrome.remoteImages.auto
+          chrome.remoteImages && !autoLoadsImages(chrome.remoteImages, message)
             ? () => chrome.remoteImages!.consent(message.id)
             : undefined
         }

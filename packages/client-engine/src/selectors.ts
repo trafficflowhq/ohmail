@@ -2,7 +2,7 @@ import { canonicalDestination, isSentFolderPath } from "@trafficflow/core/folder
 import { opensWithForwardPrefix } from "@trafficflow/core/reply-subject";
 import { isAcknowledgementSubject } from "@trafficflow/core/ics";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
-import { ruleMatchKey } from "@trafficflow/core/rule-order";
+import { ruleMatchKey, sharedProviderAllowRefusal } from "@trafficflow/core/rule-order";
 import { resurfacedFolds } from "@trafficflow/core/conversation-fold";
 import { isHeldFolder } from "@trafficflow/core/destinations";
 import type { EntityReader } from "./store.js";
@@ -1487,6 +1487,45 @@ function suggestionAi(s: ScreenerSuggestionEntity | undefined): ScreenerSenderDT
 }
 
 /**
+ * THE SHARED-PROVIDER DOMAINS AN ENABLED ALLOW RULE NAMES — rules that admit nobody
+ * (`sharedProviderAllowRefusal`), so a sender at one waits as a stranger whom the rule seemed to
+ * cover. Their row says so; the row is otherwise the same object the derivation cached.
+ */
+function inertSharedDomains(reader: EntityReader): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const r of reader.list<RuleDTO>("rule")) {
+    if (r.enabled && sharedProviderAllowRefusal(r) !== null) out.add(ruleMatchKey(r.match));
+  }
+  return out;
+}
+
+function withInertRule(dto: ScreenerSenderDTO, inert: ReadonlySet<string>): ScreenerSenderDTO {
+  if (inert.size === 0) return dto;
+  const at = dto.from.address.lastIndexOf("@");
+  const domain = at < 0 ? "" : dto.from.address.slice(at + 1).toLowerCase();
+  return inert.has(domain) ? { ...dto, inertRule: { domain } } : dto;
+}
+
+/**
+ * THE IDENTITY FACT FOR A SENDER'S ROW, off the messages it lists (newest first): the newest held
+ * message the server marked names the brand. The client holds no dictionary; it reads the wire.
+ */
+function checkedOf(newestFirst: readonly EngineMessage[]): { checked?: ScreenerSenderDTO["checked"] } {
+  for (const m of newestFirst) {
+    const c = m.senderCheck;
+    if (!c || c.reason !== "impersonation" || !c.brand) continue;
+    const at = m.from.address.lastIndexOf("@");
+    return {
+      checked: {
+        reason: "impersonation", brand: c.brand, domainShared: c.domainShared === true,
+        domain: at < 0 ? "" : m.from.address.slice(at + 1).toLowerCase(),
+      },
+    };
+  }
+  return {};
+}
+
+/**
  * THE NEWEST BOUGHT ADVICE PER SENDER, off the mirror's `screener_suggestion` rows — the
  * narrow `/sync` entity (owner decision 2026-09-18). A re-buy arrives as a delete + create
  * pair, so ordinarily there is one row per sender; `boughtAt` breaks the tie inside the one
@@ -1753,6 +1792,7 @@ export function screenerSegments(
   // a WAITING row's `ai` on every surface that renders these rows — the phone's badge included —
   // the second the delta lands.
   const advice = newestAdviceBySender(reader);
+  const inertDomains = inertSharedDomains(reader);
 
   for (const m of reader.list<EngineMessage>("message")) {
     const view = VIEW_OF_FOLDER[m.folder] as OhmailView | undefined;
@@ -1827,6 +1867,8 @@ export function screenerSegments(
            every model, so this sender’s row is not waiting for a run to reach it. Read off the
            representative, which is the message a suggestion would have been about. */
         ...(rep.sensitivity?.no_ai ? { noAi: true as const } : {}),
+        // What the row lists is what it aggregates: any marked message marks the sender.
+        ...checkedOf(newestFirst),
         // Oldest first — the order every preview renders, and ALL of them.
         held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale, zone, day)),
         /* THROUGH {@link messageStamp}, like every row stamp on this screen. It used to mint
@@ -1856,7 +1898,7 @@ export function screenerSegments(
     }
     // Newest sender first — the same order `messagesIn` gives every other list.
     rows.sort((a, b) => byDateDesc(a.rep, b.rep));
-    for (const r of rows) out[segment].set(r.key, r.dto);
+    for (const r of rows) out[segment].set(r.key, withInertRule(r.dto, inertDomains));
   }
 
   // Fixtures win per sender key. `Map.set` on an existing key keeps its position, so a

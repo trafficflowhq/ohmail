@@ -153,6 +153,9 @@ export function MailRow({
         >
           {m.sentTo ?? m.from.name}
         </Txt>
+        {m.senderCheck && m.sentTo === undefined ? (
+          <Badge icon="shield" tone="accent">{Copy.senderCheckChip(m.senderCheck.brand)}</Badge>
+        ) : null}
         <View style={{ flex: 1 }} />
         <Txt variant="caption" tone="ink3" tabular>
           {m.time}

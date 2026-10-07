@@ -28,6 +28,7 @@ import {
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, withheldCopyKey } from "../shell/format";
+import { useSenderCheckWords } from "../shell/sender-check";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
@@ -175,6 +176,7 @@ export function ReadsView({
   onPick?: (id: string | null) => void;
 }) {
   const t = useTranslations("reads");
+  const { row: senderCheckRow } = useSenderCheckWords();
   const rowBadge = useRowBadgeCopy();
   /**
    * THE HEADER'S OWN SENTENCE — one key, `stream.newSince`, shared with Receipts and with the
@@ -593,6 +595,7 @@ export function ReadsView({
       inSet={inSet}
       from={senderName(m)}
       address={rowAddress(m)}
+      {...senderCheckRow(m)}
       {...avatarOf(m)}
       participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
       {...rowStamp(m, now, absoluteTime, onToggleTime)}

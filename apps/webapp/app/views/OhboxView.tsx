@@ -36,6 +36,7 @@ import { storageOwner } from "../shell/storage-owner";
 import type { UndoLink } from "../shell/shell-dispatch";
 import type { OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
+import { useSenderCheckWords } from "../shell/sender-check";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
@@ -390,6 +391,7 @@ export function OhboxView({
   onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("ohbox");
+  const { row: senderCheckRow } = useSenderCheckWords();
   const rowBadge = useRowBadgeCopy();
   /* The reading column's region name — shared vocabulary with every split view, so the
      screen-reader landing (`ReadColumn regionLabel`) says the same thing everywhere. */
@@ -2026,6 +2028,7 @@ export function OhboxView({
       inSet={inSet}
       from={sent ? sent.label : senderName(m)}
       address={sent ? undefined : rowAddress(m)}
+      {...(sent ? {} : senderCheckRow(m))}
       {...(sent ? sent.avatar : avatarOf(m))}
       {...rowStamp(m, now, absoluteTime, onToggleTime)}
       subject={m.subject}

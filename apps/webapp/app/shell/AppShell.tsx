@@ -28,6 +28,7 @@ import {
   forwardSubject,
   inverseMutations,
   mirrorSuggestionIdOf,
+  notifiedSenderName,
   sendAndDonePlanFor,
   type ComposeAttachment,
   draftBodyKnown,
@@ -1573,7 +1574,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     const row = firstRunQueue[0];
     if (!row || "pinned" in row) return null;
     return {
-      name: row.from.name ?? row.from.address,
+      // The identity fact rides the name, so the guided first decision cannot show the claim alone.
+      name: notifiedSenderName(row, (brand) => t("screener.senderCheck.chip", { brand })),
       address: row.from.address,
       held: row.held.length,
       /* THE SCREENER'S OWN CAPTION, not a second sentence written for this card. `heldCaption`

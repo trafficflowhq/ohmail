@@ -112,6 +112,24 @@ export function SenderDetail({
           <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
             {row.address}
           </Txt>
+          {/* THE IDENTITY FACT FIRST, its own line and outside the AI advice: ohmail measured it. */}
+          {row.checked ? (
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12, alignItems: "flex-start" }}>
+              <View style={{ marginTop: 2 }}>
+                <Icon name="shield" size={13} color={t.c.accentInk} />
+              </View>
+              <Txt variant="note" tone="ink" style={{ flex: 1 }} testID="sender-check">
+                {row.checked.domainShared
+                  ? Copy.senderCheckImpersonationShared(row.checked.brand, row.checked.domain)
+                  : Copy.senderCheckImpersonation(row.checked.brand)}
+              </Txt>
+            </View>
+          ) : null}
+          {row.inertRule ? (
+            <Txt variant="note" tone="ink2" style={{ marginTop: 10 }} testID="sender-inert-rule">
+              {Copy.rulesSharedProviderInert(row.inertRule.domain)}
+            </Txt>
+          ) : null}
           {seg === "waiting" ? (
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12, alignItems: "flex-start" }}>
               <View style={{ marginTop: 2 }}>

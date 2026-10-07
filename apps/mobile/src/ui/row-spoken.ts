@@ -12,10 +12,12 @@ import { Copy } from "../copy";
 import type { Mail } from "../state/model";
 
 /** The badge facts this surface has. The head — name, subject, stamp, read state — comes first. */
-export type PhoneRowBadgeKind = "thread" | "protected" | "newSince" | "tracker" | "place" | "amount" | "tag";
+export type PhoneRowBadgeKind =
+  | "senderCheck" | "thread" | "protected" | "newSince" | "tracker" | "place" | "amount" | "tag";
 
 /** The web's order, restricted to the badges this row wears. */
 export const PHONE_ROW_BADGE_ORDER: readonly PhoneRowBadgeKind[] = [
+  "senderCheck",
   "thread",
   "protected",
   "newSince",
@@ -52,6 +54,15 @@ export function threadOfRow(m: Mail): number {
 export function rowBadgeFacts(m: Mail): PhoneRowBadgeFact[] {
   const said: PhoneRowBadgeFact[] = [];
   const thread = threadOfRow(m);
+  // The sentence, for the chip's reason above: "Not PostFinance" alone says nothing about whom.
+  if (m.senderCheck && m.sentTo === undefined) {
+    said.push({
+      kind: "senderCheck",
+      text: m.senderCheck.domainShared
+        ? Copy.senderCheckImpersonationShared(m.senderCheck.brand, m.senderCheck.domain)
+        : Copy.senderCheckImpersonation(m.senderCheck.brand),
+    });
+  }
   if (thread > 1) said.push({ kind: "thread", text: Copy.mailRowThreadAria(thread) });
   if (m.protected) said.push({ kind: "protected", text: Copy.protectedLead });
   /* The SENTENCE, not the chip's face: "2 new" read aloud in a list is a number and a word with

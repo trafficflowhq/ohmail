@@ -20,6 +20,7 @@ import {
   TextField,
 } from "@ohmail/ui";
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
+import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { useDecisionBarCopy } from "./decision-copy";
 import { useKeyBindings } from "./keymap";
 import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset } from "./providers";
@@ -458,6 +459,8 @@ export function FirstRun({
      rendered here IS the Screener's bar, and a second set of five pile names would be a second
      vocabulary to keep in step. `decide.address` is the sender this step is asking about. */
   const decideBarCopy = useDecisionBarCopy(decide?.address ?? "");
+  // A shared provider's domain is never a scope here either: a decision about everyone there admits nobody.
+  const sharedDomain = isSharedProviderDomain((decide?.address ?? "").slice((decide?.address ?? "").lastIndexOf("@") + 1));
   const locale = useLocale();
   const ids = useId();
 
@@ -1711,7 +1714,8 @@ export function FirstRun({
                   `c` (Compose); inside this dialog there is no view under it to arbitrate with,
                   and the bar's own listener is the only thing bound. */}
               <DecisionBar
-                scope={scope} onScopeChange={setScope} copy={decideBarCopy} keyboard
+                scope={sharedDomain ? "sender" : scope} onScopeChange={setScope} copy={decideBarCopy} keyboard
+                domainScopeOffered={!sharedDomain}
                 onDecide={(dest, opts) => {
                   decide.onDecide(dest, { markRead: opts.markRead, scope });
                   setDecidedName(decide.name);

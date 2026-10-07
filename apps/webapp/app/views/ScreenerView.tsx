@@ -70,7 +70,8 @@ import type { SuggestBatchControl } from "../shell/screener-suggest";
 import {
   noSuggestionKey, noSuggestionReason, stripStandingKey, type SuggestStanding,
 } from "../shell/no-suggestion";
-import type { RemoteImagesChrome } from "../shell/remote-images";
+import { autoLoadsImages, type RemoteImagesChrome } from "../shell/remote-images";
+import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { MessageBody } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
 import { useManagedService } from "../shell/managed-service";
@@ -1840,6 +1841,8 @@ function drawnTarget(h: ScreenerHeldMail): BodyTarget | null {
 function heldRemoteProps(
   remoteImages: RemoteImagesChrome | undefined,
   h: { id: string; loadedRemoteContent?: boolean },
+  /** The sender's identity fact (`ScreenerSenderDTO.checked`): its pictures wait for a press. */
+  checked: unknown,
 ): {
   remoteLoaded: boolean;
   imageProxy: ((url: string) => string) | null;
@@ -1853,11 +1856,12 @@ function heldRemoteProps(
     // that sentence in Settings was false.
     remoteLoaded:
       (h.loadedRemoteContent ?? false) ||
-      (remoteImages?.auto ?? false) ||
+      autoLoadsImages(remoteImages, { senderCheck: checked }) ||
       (remoteImages?.consented(h.id) ?? false),
     imageProxy: remoteImages ? remoteImages.proxyFor(h.id) : null,
     // Withheld in auto mode for the pane's reason: a button over images already showing does nothing.
-    onLoadRemote: remoteImages && !remoteImages.auto ? () => remoteImages.consent(h.id) : undefined,
+    onLoadRemote: remoteImages && !autoLoadsImages(remoteImages, { senderCheck: checked })
+      ? () => remoteImages.consent(h.id) : undefined,
     loadTrackingPixels: remoteImages?.loadPixels ?? false,
   };
 }
@@ -2455,6 +2459,9 @@ function WaitingPreview({
   subscriptionPane: boolean;
 }) {
   const t = useTranslations("screener");
+  const tRules = useTranslations("rules");
+  // A shared provider's domain is never a scope: a decision about everyone there admits nobody.
+  const sharedDomain = isSharedProviderDomain(sender.from.address.slice(sender.from.address.lastIndexOf("@") + 1));
   const tm = useTranslations("message");
   const piles = usePileNames();
   // What the decision bar SAYS the rule will cover. Display only — the rule the decision writes
@@ -2495,8 +2502,9 @@ function WaitingPreview({
           {role.mode === "pending" ? <PendingNote name={role.name} /> : null}
           <DecisionBar
             aiDest={aiDest}
-            scope={scope}
+            scope={sharedDomain ? "sender" : scope}
             onScopeChange={onScopeChange}
+            domainScopeOffered={!sharedDomain}
             copy={barCopy}
             onDecide={onDecide}
             onBack={onBack}
@@ -2536,6 +2544,31 @@ function WaitingPreview({
             earlier — here nothing has ever been called a door (the capsules say Ohbox, Reads, Receipts, Screen out,
             Spam), and a word the surface never defines is a second vocabulary, not shorthand.
           */}
+        {/* THE IDENTITY FACT FIRST, and outside the AI block: ohmail MEASURED this, the model did
+            not advise it, and it says so whether or not a suggestion was ever bought. */}
+        {sender.checked ? (
+          <div className="scn-why scn-why-identity">
+            <Icon name="shield" />
+            <span className="scn-why-lines">
+              <span className="scn-why-checked" data-reason="identity">
+                {sender.checked.domainShared
+                  ? t("senderCheck.impersonationShared", { brand: sender.checked.brand, domain: sender.checked.domain })
+                  : t("senderCheck.impersonation", { brand: sender.checked.brand })}
+              </span>
+            </span>
+          </div>
+        ) : null}
+        {/* AN ALLOW RULE FOR EVERYONE AT A SHARED PROVIDER ADMITS NOBODY: the row says why the rule
+            did not let this sender through. */}
+        {sender.inertRule ? (
+          <div className="scn-why scn-why-inert">
+            <span className="scn-why-lines">
+              <span className="scn-why-checked" data-reason="shared-provider">
+                {tRules("sharedProviderInert", { domain: sender.inertRule.domain })}
+              </span>
+            </span>
+          </div>
+        ) : null}
         {sender.ai ? (
           <div className="scn-why">
             <Icon name="spark" />
@@ -2637,7 +2670,7 @@ function WaitingPreview({
             bodyStall={bodyStall(h.id)}
             trackerNote={h.trackerNote}
             dull={sender.dull}
-            {...heldRemoteProps(remoteImages, h)}
+            {...heldRemoteProps(remoteImages, h, sender.checked)}
           />
         ))}
       </div>
@@ -2744,7 +2777,7 @@ function ScreenedPreview({
             onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
             trackerNote={h.trackerNote}
             dull
-            {...heldRemoteProps(remoteImages, h)}
+            {...heldRemoteProps(remoteImages, h, sender.checked)}
           />
         ))}
       </div>
@@ -2857,7 +2890,7 @@ function SpamPreview({
             onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
             trackerNote={h.trackerNote}
             dull
-            {...heldRemoteProps(remoteImages, h)}
+            {...heldRemoteProps(remoteImages, h, row.sender.checked)}
           />
         ))}
       </div>

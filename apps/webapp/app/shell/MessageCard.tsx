@@ -34,6 +34,8 @@ import { useBodyStalled, useMessageChrome, useWithheldSentence } from "./message
 import { useDrawnBody } from "./body-slice";
 import { MessageRecipients } from "./MessageRecipients";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
+import { useSenderCheckWords } from "./sender-check";
+import { autoLoadsImages } from "./remote-images";
 
 /**
  * The header — who it is from, what it is called, when, and who else it went to. Reads `ownAddresses` and
@@ -71,6 +73,7 @@ export function MessageHeader({
   const tm = useTranslations("message");
   const tr = useTranslations("screening");
   const tfrom = useTranslations("ohbox");
+  const senderCheck = useSenderCheckWords();
   const chrome = useMessageChrome();
   /* Null on a one-mailbox account and wherever the shell has no mailbox facts — the gate is inside
      the resolver, so this header asks for a label and takes silence for an answer. */
@@ -100,6 +103,7 @@ export function MessageHeader({
    */
   const forwardedTo = isForwardedByUs(message) ? forwardedToNames(message) : null;
   const address = rowAddress(message);
+  const checkLine = senderCheck.line(message);
   const rel = displayTime(message, now);
   const abs = fullDateTime(message);
   /** Show the absolute form when the reader has asked for it AND there is one to show. */
@@ -246,6 +250,9 @@ export function MessageHeader({
             line (message.css); this line, drawn only then, carries it on its own — whatever the
             recipients block shows, because a display name alone is what a spoofed sender relies on. */}
         {address ? <p className="msg-from-line">{tfrom("fromAddress", { address })}</p> : null}
+        {/* THE IDENTITY FACT, under the address it is about: the name claims a company this address
+            does not belong to (`MessageDTO.senderCheck`). Not a block notice — nothing is withheld. */}
+        {checkLine ? <p className="msg-from-check" data-reason="identity">{checkLine}</p> : null}
       </div>
       {subjectLine}
       <MessageRecipients message={message} notice={notice} />
@@ -386,12 +393,12 @@ export function MessageCard({
             html={body.html}
             remoteLoaded={
               body.loadedRemoteContent ||
-              (chrome.remoteImages?.auto ?? false) ||
+              autoLoadsImages(chrome.remoteImages, message) ||
               (chrome.remoteImages?.consented(message.id) ?? false)
             }
             imageProxy={chrome.remoteImages ? chrome.remoteImages.proxyFor(message.id) : null}
             onLoadRemote={
-              chrome.remoteImages && !chrome.remoteImages.auto
+              chrome.remoteImages && !autoLoadsImages(chrome.remoteImages, message)
                 ? () => chrome.remoteImages!.consent(message.id)
                 : undefined
             }

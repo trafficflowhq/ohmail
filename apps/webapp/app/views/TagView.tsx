@@ -22,6 +22,7 @@ import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-
 import { Button, Kbd, ListPane, ListRows, MessageRow, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
+import { useSenderCheckWords } from "../shell/sender-check";
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
@@ -108,6 +109,7 @@ export function TagView({
   admin?: TagAdmin;
 }) {
   const t = useTranslations("tag");
+  const { row: senderCheckRow } = useSenderCheckWords();
   const rowBadge = useRowBadgeCopy();
   /* The list keys' shared vocabulary and the reading column's region name — the Ohbox's own
      labels and `reader.pane`, so four surfaces never phrase the same gesture apart. */
@@ -241,6 +243,7 @@ export function TagView({
                 inSet={{ size: messages.length, position: win.start + k + 1 }}
                 from={senderName(m)}
                 address={rowAddress(m)}
+                {...senderCheckRow(m)}
                 {...avatarOf(m)}
                 participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
                 {...rowStamp(m, now, absoluteTime, onToggleTime)}

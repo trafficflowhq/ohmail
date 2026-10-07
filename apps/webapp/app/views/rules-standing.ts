@@ -1,5 +1,7 @@
 import { domainOfAddress, ruleMatchKey, type RuleDTO, type WaitingOnOrganizerView } from "@ohmail/client-engine";
-import { addressPriorityOver, compareTwins, effectForDestination } from "@trafficflow/core/rule-order";
+import {
+  addressPriorityOver, compareTwins, effectForDestination, sharedProviderAllowRefusal,
+} from "@trafficflow/core/rule-order";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 
 /**
@@ -102,4 +104,15 @@ export function outrankOf(rule: RuleDTO, rules: readonly RuleDTO[]): Outrank | n
 export function twinsDiffer(rule: RuleDTO, others: readonly RuleDTO[]): boolean {
   const mine = canonicalDestination(rule.destination);
   return others.some((o) => canonicalDestination(o.destination) !== mine || o.enabled !== rule.enabled);
+}
+
+/**
+ * A RULE THAT ADMITS NOBODY, said on its row: an allow rule for everyone at a shared provider is
+ * declined at the router (`sharedProviderAllowRefusal`), so the page names it rather than letting
+ * it read as a decision. The domain it names, or `null`. Existing rows are never rewritten.
+ */
+export function sharedProviderInert(rule: RuleDTO): string | null {
+  if (!rule.enabled) return null;
+  return sharedProviderAllowRefusal({ kind: rule.kind, match: rule.match, destination: canonicalDestination(rule.destination) }) === null
+    ? null : ruleMatchKey(rule.match);
 }

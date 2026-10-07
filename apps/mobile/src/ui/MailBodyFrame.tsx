@@ -77,7 +77,8 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   const [refusedFor, setRefusedFor] = useState<string | null>(null);
 
   const html = m.html ?? "";
-  const imagesWanted = m.loadedRemoteContent === true || asked === m.id;
+  // A marked sender's pictures wait for the press whatever the stored flag says (`Mail.senderCheck`).
+  const imagesWanted = (m.loadedRemoteContent === true && m.senderCheck === undefined) || asked === m.id;
   const resolvedRemote = remote?.id === m.id ? remote.map : undefined;
   const theme = useMemo(
     () => ({ bg: t.c.canvas, ink: t.c.ink, ink2: t.c.ink3, accent: t.c.accent, fontScale: 1 }),

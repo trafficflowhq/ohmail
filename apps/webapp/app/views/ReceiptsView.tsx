@@ -21,6 +21,7 @@ import { ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp, withheldCopyKey } from "../shell/format";
+import { useSenderCheckWords } from "../shell/sender-check";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
@@ -142,6 +143,7 @@ export function ReceiptsView({
   onPick?: (id: string | null) => void;
 }) {
   const t = useTranslations("receipts");
+  const { row: senderCheckRow } = useSenderCheckWords();
   const tr = useTranslations("reads");
   const rowBadge = useRowBadgeCopy();
   /** One key for both streams, and the reasoning is in `ReadsView` beside its own read. */
@@ -473,6 +475,7 @@ export function ReceiptsView({
       inSet={inSet}
       from={senderName(m)}
       address={rowAddress(m)}
+      {...senderCheckRow(m)}
       {...avatarOf(m)}
       participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
       {...rowStamp(m, now, absoluteTime, onToggleTime)}

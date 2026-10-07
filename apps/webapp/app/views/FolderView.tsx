@@ -21,6 +21,7 @@ import { presentsUnread, type EngineMessage, type FolderEntity, type TagDTO } fr
 import { ListGroupLabel, ListPane, ListRows, MessageRow, Spinner } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
+import { useSenderCheckWords } from "../shell/sender-check";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
@@ -94,6 +95,7 @@ export function FolderView({
   canReplyAll: (message: EngineMessage) => boolean;
 }) {
   const t = useTranslations("folder");
+  const { row: senderCheckRow } = useSenderCheckWords();
   const rowBadge = useRowBadgeCopy();
   const to = useTranslations("ohbox");
   /* The reading column's region name — shared with every split view (`ReadColumn`). */
@@ -301,6 +303,7 @@ export function FolderView({
                       inSet={{ size: ordered.length, position: index + 1 }}
                       from={senderName(m)}
                       address={rowAddress(m)}
+                      {...senderCheckRow(m)}
                       {...avatarOf(m)}
                       participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
                       {...rowStamp(m, now, absoluteTime, onToggleTime)}
@@ -339,6 +342,7 @@ export function FolderView({
                   id={m.id}
                   from={senderName(m)}
                   address={rowAddress(m)}
+                  {...senderCheckRow(m)}
                   {...avatarOf(m)}
                   {...rowStamp(m, now, absoluteTime, onToggleTime)}
                   subject={m.subject}
