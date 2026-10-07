@@ -71,14 +71,12 @@ export function sseLiveCounts(): { total: number; byAccount: Record<string, numb
 }
 
 /**
- * Bounded SSE (raw): a `: ping` heartbeat and a content-free `event: sync` wake when the account's
- * max seq advances — the client pulls `GET /sync?since=cursor`; SSE is lossy by design. It ends at
- * a bounded lifetime, or at the first read that finds its session revoked or deleted, or its
- * account refused by the entitlements port. Push — `deps.changeWake`, one session-mode LISTEN per
- * instance (a transaction-mode pooler lands a LISTEN on a backend the next statement has left);
- * poll — always, the floor: a dead LISTEN degrades latency to `pollMs`, nothing else. `sse.enabled
- * === false` ⇒ 503 `sse_disabled` (a client-bundle flag is not a control). `maxPerAccount` 429,
- * `maxPerInstance` 503. One serialized, caught poll loop (`setInterval` overlaps under load).
+ * Bounded SSE (raw): `event: ready` once subscribed, an `event: ping` heartbeat and a content-free
+ * `event: sync` wake when the account's max seq advances; the client pulls `GET /sync?since=`.
+ * Lossy by design. Ends at a bounded lifetime, or at the first read that finds its session revoked
+ * or its account refused by the entitlements port. Push: `deps.changeWake`, one session-mode LISTEN
+ * per instance; poll: always, the floor (a dead LISTEN costs latency only). `sse.enabled === false`
+ * ⇒ 503 `sse_disabled`; `maxPerAccount` 429, `maxPerInstance` 503. One serialized, caught poll loop.
  */
 
 /**
@@ -221,7 +219,11 @@ export const eventsRoutes: Route[] = [
             unhook = null;                       // push is unavailable; the poll carries the stream
           }
 
-          heartbeat = setInterval(() => send(": ping\n\n"), cfg.heartbeatMs);
+          // NAMED frames, not comments: `EventSource` surfaces only events, and a client that has
+          // heard nothing since `open` cannot tell a live stream from one a proxy is holding. A
+          // client with no listener for a name ignores it.
+          send("event: ready\ndata: {}\n\n");
+          heartbeat = setInterval(() => send("event: ping\ndata: {}\n\n"), cfg.heartbeatMs);
           lifetime = setTimeout(finish, cfg.lifetimeMs);
 
           // The serialized poll loop. Deliberately not awaited by `start` (the Response has to
@@ -253,10 +255,13 @@ export const eventsRoutes: Route[] = [
         cancel() { closed = true; stop(); },
       });
 
+      // `no-transform` keeps a compressing hop (Next's own `compression()` honours it) from
+      // holding frames; `X-Accel-Buffering` asks the same of a buffering proxy.
       return new Response(stream, {
         headers: {
           "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
+          "Cache-Control": "no-cache, no-transform",
+          "X-Accel-Buffering": "no",
           "Connection": "keep-alive",
         },
       });
