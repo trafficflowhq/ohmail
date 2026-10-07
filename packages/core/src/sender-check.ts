@@ -197,13 +197,14 @@ function besideServiceWord(hay: string, i: number, needle: string): boolean {
 
 /**
  * Letters and digits only, each kept with the span of the hay it came from, and the swaps a
- * sender makes for a letter folded back: `0 3 5` for `o e s`, `1 l i` as one letter, `rn` as `m`.
- * `Post-Finance`, `P.o.s.t.F.i.n.a.n.c.e`, `P0stFinance`, `PostF1nance`, `PostFlnance`,
- * `MyPostFinance` and `Arnazon` share their skeleton with the needle they imitate.
+ * sender makes for a letter folded back: `0 3 5` for `o e s`, `1 l i` as one letter. `Post-Finance`,
+ * `P.o.s.t.F.i.n.a.n.c.e`, `P0stFinance`, `PostF1nance`, `PostFlnance` and `MyPostFinance` share
+ * their skeleton with the needle they imitate. `rn` as `m` is a READING of the hay, never of a
+ * brand: folded at a junction it swallows a brand's own letters (`YourNetflix`, `ElsterNachricht`).
  */
 const SKELETON_SWAPS: Readonly<Record<string, string>> = { "0": "o", "1": "i", "l": "i", "3": "e", "5": "s" };
 interface Skeleton { text: string; start: number[]; end: number[] }
-function skeletonOf(s: string): Skeleton {
+function skeletonOf(s: string, foldRn: boolean): Skeleton {
   const kept: Array<{ c: string; start: number; end: number }> = [];
   let at = 0;
   for (const cp of s) {
@@ -218,38 +219,105 @@ function skeletonOf(s: string): Skeleton {
   for (let k = 0; k < kept.length; k++) {
     const ch = kept[k]!;
     const next = kept[k + 1];
-    if (ch.c === "r" && next?.c === "n") { push("m", ch.start, next.end); k++; continue; }
+    if (foldRn && ch.c === "r" && next?.c === "n") { push("m", ch.start, next.end); k++; continue; }
     push(SKELETON_SWAPS[ch.c] ?? ch.c, ch.start, ch.end);
   }
   return out;
 }
 const letters = (s: string): number => (s.match(/\p{L}/gu) ?? []).length;
 
+/** The two readings a name, a local part or a lead-in is matched in: `rn` folded (`Arnazon`) and not. */
+const readingsOf = (s: string): Skeleton[] => [skeletonOf(s, true), skeletonOf(s, false)];
+
 /** A gate needle this long is also matched by skeleton, anywhere in the hay. */
 const SKELETON_MIN_LETTERS = 6;
 
-interface GatedBrand { brand: Brand; gate: string[]; skeletons: string[]; gateShort: string[] }
+interface GatedBrand { brand: Brand; gate: string[]; skeletons: string[]; gateShort: string[]; gateToken: string[] }
 
 /** The rows that count for the fact, their needles folded once. A row without needles is advice. */
 const GATED: readonly GatedBrand[] = BRANDS.flatMap((b) => {
   const gate = (b.gate ?? []).map(fold);
   const gateShort = (b.gateShort ?? []).map(fold);
-  if (gate.length === 0 && gateShort.length === 0) return [];
-  const skeletons = gate.filter((n) => letters(n) >= SKELETON_MIN_LETTERS).map((n) => skeletonOf(n).text);
-  return [{ brand: b, gate, skeletons, gateShort }];
+  const gateToken = (b.gateToken ?? []).map(fold);
+  if (gate.length === 0 && gateShort.length === 0 && gateToken.length === 0) return [];
+  // The brand's skeleton keeps its `rn`: folded, `klarna` would read `kiama` in "Stucki Amanda".
+  const skeletons = gate.filter((n) => letters(n) >= SKELETON_MIN_LETTERS).map((n) => skeletonOf(n, false).text);
+  return [{ brand: b, gate, skeletons, gateShort, gateToken }];
 });
 
+/** Letters and digits, every other run one space: the hay a token needle is read in. */
+function tokenView(s: string): Skeleton {
+  const out: Skeleton = { text: "", start: [], end: [] };
+  let at = 0;
+  let gap: [number, number] | null = null;
+  for (const cp of s) {
+    if (/[\p{L}\p{N}]/u.test(cp)) {
+      if (gap !== null && out.text !== "") { out.text += " "; out.start.push(gap[0]); out.end.push(gap[1]); }
+      gap = null;
+      for (let k = 0; k < cp.length; k++) { out.start.push(at); out.end.push(at + cp.length); }
+      out.text += cp;
+    } else {
+      gap = gap === null ? [at, at + cp.length] : [gap[0], at + cp.length];
+    }
+    at += cp.length;
+  }
+  return out;
+}
+
+/**
+ * A TOKEN NEEDLE ("post ch") claims as its exact tokens or fused ("postch"), never inside a word
+ * and never by skeleton: "Post Christian", "Post-Christmas" and "Postcheck" name nobody.
+ */
+function tokenNeedleSpans(view: Skeleton, needle: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const n of new Set([needle, needle.replace(/ /g, "")])) {
+    for (let i = view.text.indexOf(n); i >= 0; i = view.text.indexOf(n, i + 1)) {
+      const before = view.text[i - 1] ?? "";
+      const after = view.text[i + n.length] ?? "";
+      if ((before === "" || before === " ") && !/\p{L}/u.test(after)) spans.push([view.start[i]!, view.end[i + n.length - 1]!]);
+    }
+  }
+  return spans;
+}
+
 /** Every span of the hay at which it claims the brand: a needle, its skeleton, a short needle by a service word. */
-function claimSpans(hay: string, g: GatedBrand, bare: Skeleton): Array<[number, number]> {
+function claimSpans(hay: string, g: GatedBrand, readings: readonly Skeleton[], view: Skeleton): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   for (const n of g.gate) for (const i of namedAt(hay, n)) spans.push([i, i + n.length]);
-  for (const n of g.skeletons) {
-    for (let i = bare.text.indexOf(n); i >= 0; i = bare.text.indexOf(n, i + 1)) {
-      spans.push([bare.start[i]!, bare.end[i + n.length - 1]!]);
+  for (const bare of readings) {
+    for (const n of g.skeletons) {
+      for (let i = bare.text.indexOf(n); i >= 0; i = bare.text.indexOf(n, i + 1)) {
+        spans.push([bare.start[i]!, bare.end[i + n.length - 1]!]);
+      }
     }
   }
   for (const n of g.gateShort) {
     for (const i of namedAt(hay, n)) if (besideServiceWord(hay, i, n)) spans.push([i, i + n.length]);
+  }
+  for (const n of g.gateToken) spans.push(...tokenNeedleSpans(view, n));
+  return spans;
+}
+
+/**
+ * A LOCAL PART CLAIMS WHOLE TOKENS ONLY — split at `.` `_` `-` `+`, digits and every other
+ * non-letter: a run of its tokens must BE a needle, fused, or its skeleton in either reading, and
+ * never merely contain one ("administrator@" is not Strato, "revolution@" is not Revolut). A short
+ * needle claims as one token beside a service word.
+ */
+function localPartSpans(hay: string, g: GatedBrand): Array<[number, number]> {
+  const tokens = [...hay.matchAll(/\p{L}+/gu)].map((m) => ({ t: m[0], s: m.index ?? 0, e: (m.index ?? 0) + m[0].length }));
+  const fused = new Set([...g.gate, ...g.gateToken].map((n) => n.replace(/\P{L}/gu, "")).filter((n) => n !== ""));
+  const spans: Array<[number, number]> = [];
+  for (let i = 0; i < tokens.length; i++) {
+    let joined = "";
+    for (let j = i; j < tokens.length; j++) {
+      joined += tokens[j]!.t;
+      const read = readingsOf(joined).map((r) => r.text);
+      if (fused.has(joined) || g.skeletons.some((k) => read.includes(k))) spans.push([tokens[i]!.s, tokens[j]!.e]);
+    }
+    const t = tokens[i]!.t;
+    const beside = [tokens[i - 1]?.t, tokens[i + 1]?.t].some((w) => w !== undefined && SERVICE_WORDS.has(w));
+    if (g.gateShort.includes(t) && beside) spans.push([tokens[i]!.s, tokens[i]!.e]);
   }
   return spans;
 }
@@ -322,8 +390,9 @@ export function claimedIdentity(input: IdentityInput): IdentityFact | undefined 
 
   const domain = senderDomainOf(input.fromAddress);
   for (const { via, hay, tag } of sources) {
-    const bare = skeletonOf(hay);
-    const hits = GATED.flatMap((g) => claimSpans(hay, g, bare)
+    const readings = readingsOf(hay);
+    const view = tokenView(hay);
+    const hits = GATED.flatMap((g) => (via === "local_part" ? localPartSpans(hay, g) : claimSpans(hay, g, readings, view))
       .filter(([s, e]) => !tag || onlyServiceWordsOutside(hay, s, e))
       .map(([s, e]) => ({ brand: g.brand, s, e })));
     const owned = hits.filter((h) => owns(h.brand, domain));

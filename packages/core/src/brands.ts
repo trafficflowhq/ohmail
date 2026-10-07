@@ -23,6 +23,11 @@ export interface Brand {
   gate?: readonly string[];
   /** Needles under 5 letters: they claim the brand only beside a service word ("UBS Sicherheit"). */
   gateShort?: readonly string[];
+  /**
+   * Needles claimed only as their exact tokens or fused, followed by a non-letter, never by
+   * skeleton or inside a word: "Post CH" and "PostCH", never "Post Christian" or "Postcheck".
+   */
+  gateToken?: readonly string[];
 }
 
 /**
@@ -81,7 +86,7 @@ export const BRANDS: readonly Brand[] = [
   { name: "Viseca", aliases: ["viseca"], domains: ["viseca.ch"], gate: ["viseca"] },
 
   // ── Parcel and post ──
-  { name: "Die Post", aliases: ["schweizerische post", "die post", "swiss post", "post ch"], domains: ["post.ch"], gate: ["die post", "schweizerische post", "swiss post", "post ch"] },
+  { name: "Die Post", aliases: ["schweizerische post", "die post", "swiss post", "post ch"], domains: ["post.ch"], gate: ["die post", "schweizerische post", "swiss post"], gateToken: ["post ch"] },
   { name: "DHL", aliases: ["dhl"], domains: ["dhl.com", "dhl.de"], gateShort: ["dhl"] },
   { name: "Deutsche Post", aliases: ["deutsche post"], domains: ["deutschepost.de"], gate: ["deutsche post"] },
   { name: "DPD", aliases: ["dpd"], domains: ["dpd.com", "dpd.de", "dpd.ch"], gateShort: ["dpd"] },
