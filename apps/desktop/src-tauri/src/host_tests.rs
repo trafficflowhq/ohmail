@@ -483,9 +483,14 @@ fn stub_cli(name: &str, body: &str) -> PathBuf {
 #[test]
 fn a_tailscale_cli_that_never_answers_is_stopped_at_the_bound() {
     let cli = stub_cli("silent", "exec sleep 600");
-    let args = vec!["status".to_string(), "--json".to_string()];
+    // Run the stub THROUGH /bin/sh rather than exec'ing the freshly-written file: under a parallel
+    // `cargo test` a sibling that forked mid-write briefly holds our write fd, so a direct execve
+    // of the stub can fail ETXTBSY (os error 26), which the runner reports as Missing — a false
+    // red for this bound. /bin/sh only READS the script, so there is no exec race; what is under
+    // test — a process that never answers being stopped at the bound — is unchanged.
+    let args = vec![cli.to_string_lossy().into_owned(), "status".to_string(), "--json".to_string()];
     let started = std::time::Instant::now();
-    let got = run_cli_bounded(&cli, &args, std::time::Duration::from_millis(300));
+    let got = run_cli_bounded(std::path::Path::new("/bin/sh"), &args, std::time::Duration::from_millis(300));
     assert!(matches!(got, CliResult::TimedOut), "a CLI that never answered was not stopped");
     assert!(started.elapsed() < std::time::Duration::from_secs(5), "the bound did not hold");
     let _ = std::fs::remove_dir_all(cli.parent().expect("stub dir"));
@@ -494,9 +499,12 @@ fn a_tailscale_cli_that_never_answers_is_stopped_at_the_bound() {
 #[cfg(unix)]
 #[test]
 fn a_tailscale_cli_that_answers_is_read_whole() {
-    // The ordinary case: the bound must not cut an answer that arrives in time.
+    // The ordinary case: the bound must not cut an answer that arrives in time. The stub runs
+    // through /bin/sh (see the bound test above) so the freshly-written file is never exec'd and
+    // the ETXTBSY race cannot occur; the answer read back is unchanged.
     let cli = stub_cli("answers", &format!("printf '%s' '{STATUS_RUNNING}'"));
-    let got = run_cli_bounded(&cli, &["status".to_string()], std::time::Duration::from_secs(5));
+    let args = vec![cli.to_string_lossy().into_owned(), "status".to_string()];
+    let got = run_cli_bounded(std::path::Path::new("/bin/sh"), &args, std::time::Duration::from_secs(5));
     match got {
         CliResult::Ran { code: Some(0), stdout } => assert_eq!(stdout, STATUS_RUNNING),
         _ => panic!("an answering CLI was not read as its answer"),
@@ -510,6 +518,29 @@ fn the_launch_probe_returns_when_the_cli_never_answers() {
     // Through the SHIPPED runner, the one `HostBoot::detect` passes: the stub is found by the
     // same variable an operator would set, and the probe must come back as a guided state.
     let cli = stub_cli("launch", "exec sleep 600");
+    // The SHIPPED runner exec's this file directly, so it cannot go through /bin/sh like the two
+    // tests above. Clear the ETXTBSY window the stub's write opened (a sibling that forked mid-
+    // write holds our write fd until its own exec) by exec'ing the stub once here, retrying on
+    // ETXTBSY (os error 26) up to 5 x 50 ms, then killing the warmup child. Once it exec's clean
+    // no process holds the file open for writing, so the probe's own exec cannot see ETXTBSY.
+    for attempt in 0..5 {
+        match std::process::Command::new(&cli)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+            Err(e) if e.raw_os_error() == Some(26) && attempt < 4 => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => panic!("the stub could not be exec'd to clear the ETXTBSY window: {e}"),
+        }
+    }
     std::env::set_var(TAILSCALE_PATH_VAR, &cli);
     let (done, answered) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
