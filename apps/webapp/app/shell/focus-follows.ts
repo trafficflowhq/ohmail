@@ -57,9 +57,10 @@ function tabbables(root: HTMLElement): HTMLElement[] {
     .filter((el) => el.tabIndex >= 0 && showing(el));
 }
 
-function tryFocus(el: HTMLElement | null | undefined, preventScroll = false): boolean {
+/* An app focus move never scrolls: a scroll it caused would read as the person's in the reader. */
+function tryFocus(el: HTMLElement | null | undefined): boolean {
   if (!el || !el.isConnected) return false;
-  el.focus({ preventScroll });
+  el.focus({ preventScroll: true });
   return document.activeElement === el;
 }
 
@@ -133,7 +134,7 @@ function land(p: Place, returnTo: boolean): boolean {
   const modal = standingModal();
   const take = (el: HTMLElement | null | undefined): boolean =>
     el != null && el.isConnected && (modal === null || modal.contains(el))
-    && (tryFocus(el, !returnTo) || tryFocus(tabbables(el)[0], !returnTo));
+    && (tryFocus(el) || tryFocus(tabbables(el)[0]));
   const chain: Place[] = [];
   for (let q: Place | null = p; q && !chain.includes(q); q = q.parent) chain.push(q);
   if (returnTo) {

@@ -1118,6 +1118,7 @@ export const DE: Deck = {
   actionScreening: "Einordnen",
   actionMove: "Verschieben",
   actionMarkRead: "Als gelesen markieren",
+  actionMarkReadCount: (n: number) => (n === 1 ? "1 ungelesene Nachricht als gelesen markieren" : `${n} ungelesene Nachrichten als gelesen markieren`),
   actionMarkUnread: "Als ungelesen markieren",
   actionDone: "Erledigt",
   actionMore: "Mehr",
@@ -1223,6 +1224,7 @@ export const DE: Deck = {
   unscreenedMovedNone: "Nichts mehr zu screenen.",
   unscreenedFailed: "Screenen nicht möglich. Versuch es noch einmal.",
   toastRead: "Als gelesen markiert.",
+  toastReadPartial: (done: number, of: number) => `${done} von ${of} als gelesen markiert.`,
   toastUnread: "Als ungelesen markiert.",
   /* ALLES ALS GELESEN — der `markAll`-Namespace des Web-Katalogs. */
   markAll: "Alles als gelesen markieren",

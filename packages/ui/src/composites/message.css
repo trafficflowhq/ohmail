@@ -165,6 +165,11 @@
   transition:background .15s var(--swift)}
 .msg-sender:hover{background:var(--tint)}
 .msg-sender:hover small{color:var(--accent-ink)}
+/* A CONVERSATION PANEL'S UNREAD DOT — the row's own `.dot-unread`, in flow between the avatar and
+   the name, shown while the panel carries `data-unseen` (what scroll-to-read reads) and faded out
+   when it is read, the row's fade: nothing moves. */
+.pm .msg-sender .dot-unread{opacity:0}
+.pm[data-unseen] .msg-sender .dot-unread{opacity:1}
 /* The address sits inside the sender's button, which is as wide as its content: so it is not its
    own container here (that would count it as zero wide). The button WRAPS: the address shares the
    name's line where both fit and otherwise stands under the name, which the avatar, taken out of the

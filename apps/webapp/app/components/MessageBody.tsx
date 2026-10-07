@@ -34,6 +34,7 @@ import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
+import { scrollProgrammatically } from "../shell/programmatic-scroll";
 
 /**
  * The English sentences — the FALLBACK, not the source: every string comes
@@ -3763,7 +3764,7 @@ export function MessageBody({
     root.toggleAttribute("data-ohmail-fitclip", scale < 1 && !clampedByCeiling && h > 0);
 
     for (let i = 0; i < scrollers.length; i++) {
-      if (scrollers[i]!.scrollTop !== tops[i]) scrollers[i]!.scrollTop = tops[i]!;
+      if (scrollers[i]!.scrollTop !== tops[i]) scrollProgrammatically(scrollers[i]!, tops[i]!);
     }
     lastMeasure.current = measureInputs(frame, doc);
   }, []);

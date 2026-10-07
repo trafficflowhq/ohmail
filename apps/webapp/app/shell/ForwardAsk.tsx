@@ -19,7 +19,7 @@ export function ForwardAskStrip({ ask, onConfirm, onCancel }: {
   const t = useTranslations("reply.forwardAsk");
   const whyId = useId();
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => { box.current?.querySelector<HTMLButtonElement>("[data-ask-cancel]")?.focus(); }, []);
+  useEffect(() => { box.current?.querySelector<HTMLButtonElement>("[data-ask-cancel]")?.focus({ preventScroll: true }); }, []);
   return (
     <div ref={box} className="reply reply-ask" role="alertdialog" aria-label={t("question")} aria-describedby={whyId}>
       <p className="reply-forwarding" id={whyId}>{t(ask)}</p>

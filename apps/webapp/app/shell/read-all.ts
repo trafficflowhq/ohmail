@@ -1,11 +1,11 @@
-import type { EngineMutation } from "@ohmail/client-engine";
+import { MARK_SEEN_CHUNK, type EngineMutation } from "@ohmail/client-engine";
 
 /**
  * `PATCH /messages` accepts at most 200 ids and 413s above that (`packages/api/src/routes/
- * messages.ts` — `MARK_SEEN_MAX_IDS`). Exported so the guard reads the REAL number rather than a
- * hand-copied duplicate that could drift green.
+ * messages.ts` — `MARK_SEEN_MAX_IDS`). The engine's one number, re-exported so the guard reads the
+ * REAL value rather than a hand-copied duplicate that could drift green.
  */
-export const MARK_SEEN_CHUNK = 200;
+export { MARK_SEEN_CHUNK };
 
 /**
  * Dispatch "mark all read" as CHUNKED bulk `mark_seen` mutations — at most {@link MARK_SEEN_CHUNK} ids per mutation,

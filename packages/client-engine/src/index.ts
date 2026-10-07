@@ -478,6 +478,10 @@ export { forwardOffered, forwardPress, type ForwardAsk, type ForwardPress } from
 
 // Undo semantics — every verb's undo class, and the wire's own reversal for the "inverse" kinds.
 export { inverseMutations, UNDO_CLASS, type UndoClass, type UndoSubject } from "./undo.js";
+// One chunk size for a read pressed over a set and for its Undo (the route caps a PATCH at 200 ids).
+export { MARK_SEEN_CHUNK, chunkMarkSeen } from "./mark-seen-chunk.js";
+// Scroll-to-read: the numbers and the dwell decision both readers share.
+export { DWELL_MS, EVIDENCE_WINDOW_MS, READING_LINE, atScrollEnd, dwellCommits, type PanelBox } from "./reader-seen-rules.js";
 
 // The routing verbs' delayed commit — the half of a screening plan the wire cannot reverse.
 export {

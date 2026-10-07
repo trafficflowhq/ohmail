@@ -146,14 +146,17 @@ export function Panel({
   level = "l1",
   radius,
   style,
+  onLayout,
 }: {
   children: ReactNode;
   level?: PanelLevel;
   radius?: number;
   style?: StyleProp<ViewStyle>;
+  /** Where the panel landed — the reader's scroll-to-read reads each member panel's place. */
+  onLayout?: (e: LayoutChangeEvent) => void;
 }) {
   const t = useTheme();
-  return <View style={[panelSurface(t, level, radius), style]}>{children}</View>;
+  return <View style={[panelSurface(t, level, radius), style]} onLayout={onLayout}>{children}</View>;
 }
 
 export interface PullRefresh {

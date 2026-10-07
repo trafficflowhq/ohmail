@@ -145,7 +145,7 @@ export function MoreMenu({
   // Opening a menu puts the keyboard in it. Without this the reader would press More and then
   // have to Tab into what they just opened, which for a menu is not a disclosure at all.
   useEffect(() => {
-    live()[0]?.focus();
+    live()[0]?.focus({ preventScroll: true });
   }, [live]);
 
   /**
@@ -196,7 +196,7 @@ export function MoreMenu({
        fallback stood here for one revision and was removed: it declared a behaviour (jump to the
        top of the list) for a state that cannot arise, which the next reader would have taken for
        a guarantee this code keeps. */
-    next?.focus();
+    next?.focus({ preventScroll: true });
   });
 
   /**
@@ -239,7 +239,7 @@ export function MoreMenu({
     };
     const move = (next: number): void => {
       claim();
-      buttons[(next + buttons.length) % buttons.length]?.focus();
+      buttons[(next + buttons.length) % buttons.length]?.focus({ preventScroll: true });
     };
     if (e.key === "ArrowDown") return move(at + 1);
     if (e.key === "ArrowUp") return move(at - 1);

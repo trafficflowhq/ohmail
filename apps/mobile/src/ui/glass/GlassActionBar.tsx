@@ -26,6 +26,8 @@ export interface BarVerbSpec {
   seg?: "defer" | "file" | null;
   /** The icon a floor verb shows when the floor is tight — its narrow face. */
   iconFace?: IconName;
+  /** The accessible name where it says more than the label (the read slot's count). */
+  a11yLabel?: string;
   onPress: () => void;
 }
 
@@ -43,7 +45,7 @@ export function GlassActionBar({
   /** Row order = fold order — the webapp's BAR_VERB_ORDER, supplied by the surface. */
   verbs: readonly BarVerbSpec[];
   /** The read state, beside the verbs, never folded — Done / Mark unread; `icon` is its narrow face. */
-  readSwitch?: { label: string; icon?: IconName; onPress: () => void } | null;
+  readSwitch?: { label: string; icon?: IconName; a11yLabel?: string; onPress: () => void } | null;
   /** Verbs that always live behind ⋯, after whatever folded. */
   extraMore?: readonly BarVerbSpec[];
   /** Verbs of the floor (Forward): never folded; they stand in their row place, as an icon when the floor is tight. */
@@ -81,7 +83,7 @@ export function GlassActionBar({
     <Tap
       key={v.id}
       accessibilityRole="button"
-      accessibilityLabel={v.label}
+      accessibilityLabel={v.a11yLabel ?? v.label}
       onPress={opts?.measure ? undefined : v.onPress}
       onLayout={opts?.measure ? record(v.id) : undefined}
       style={({ pressed }) => ({
@@ -208,7 +210,7 @@ export function GlassActionBar({
         )}
         {readSwitch
           ? capsule(
-            { id: "__read", label: readSwitch.label, icon: faces.readIcon ? readSwitch.icon : undefined, onPress: readSwitch.onPress },
+            { id: "__read", label: readSwitch.label, icon: faces.readIcon ? readSwitch.icon : undefined, a11yLabel: readSwitch.a11yLabel, onPress: readSwitch.onPress },
             { iconOnly: faces.readIcon && readSwitch.icon !== undefined },
           )
           : null}

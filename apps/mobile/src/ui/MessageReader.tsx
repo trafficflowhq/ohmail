@@ -8,11 +8,11 @@
  * to `pane-memory` per message, so a fold that remounts this tree resumes where the reader
  * was — continuity as data, not as tree position.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { JUNK_REFILL_BOUND_MS, type WorldAttachment } from "../state/live";
 import { junkLeaving, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
-import { ActivityIndicator, Platform, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { ActivityIndicator, AppState, Platform, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useBodyStamp, useWorld } from "../state/world";
@@ -28,6 +28,7 @@ import { usePosture } from "./posture";
 import { readerVerbMode } from "./reader-verbs";
 import { scaffoldPlan } from "./scaffold/plan";
 import { paneScrollOf, recordPaneScroll } from "./pane-memory";
+import { createPhoneReaderSeen } from "./reader-seen";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -113,6 +114,24 @@ export function MessageReader({
     hydrateMessage(id);
   }, [id, shed, hydrateMessage]);
 
+  /* SCROLL-TO-READ over the members below the message — one core per open (`reader-seen.ts`), its
+     pending glance sent when the open ends. The mirror's own answer decides what is still unread. */
+  const markGlanced = w.actions.markGlanced;
+  const glance = useRef(markGlanced);
+  glance.current = markGlanced;
+  const earlierSeen = useRef<(mid: string) => boolean>(() => true);
+  earlierSeen.current = (mid) => m?.earlier.find((h) => h.id === mid)?.seen ?? true;
+  const seen = useMemo(
+    () => createPhoneReaderSeen({ isSeen: (mid) => earlierSeen.current(mid), onSeen: (ids) => glance.current(ids) }),
+    [id],
+  );
+  useEffect(() => () => seen.dispose(), [seen]);
+  /* The app leaving the foreground drops a running dwell: nobody is reading a backgrounded reader. */
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => { if (s !== "active") seen.hidden(); });
+    return () => sub.remove();
+  }, [seen]);
+
   if (!m) {
     return (
       <Screen fullWindow={!inPane}>
@@ -140,8 +159,10 @@ export function MessageReader({
 
   /** Continuity: the offset survives the remounts a posture change forces (`pane-memory`). */
   const scrollKey = `msg:${m.id}`;
-  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) =>
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     recordPaneScroll(scrollKey, e.nativeEvent.contentOffset.y);
+    seen.onScroll(e.nativeEvent.contentOffset.y);
+  };
 
   return (
     <Screen fullWindow={!inPane}>
@@ -167,8 +188,17 @@ export function MessageReader({
         contentOffset={{ x: 0, y: paneScrollOf(scrollKey) }}
         onScroll={onScroll}
         scrollEventThrottle={64}
+        onLayout={(e) => seen.viewport(e.nativeEvent.layout.height)}
+        onContentSizeChange={(_w, h) => seen.content(h)}
+        onScrollBeginDrag={seen.dragBegin}
+        onScrollEndDrag={seen.dragEnd}
+        onMomentumScrollBegin={seen.momentumBegin}
+        onMomentumScrollEnd={seen.momentumEnd}
       >
-        <View style={{ paddingHorizontal: 20, paddingTop: 18 }}>
+        <View
+          style={{ paddingHorizontal: 20, paddingTop: 18 }}
+          onLayout={(e) => seen.offset("padded", e.nativeEvent.layout.y)}
+        >
           {/* THE NAME IS THE FACT, THE ADDRESS THE DETAIL: the address yields first, and below 360 dp
               it takes its own line under the name, so a name is the last thing to truncate. */}
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 9 }}>
@@ -253,13 +283,21 @@ export function MessageReader({
           <AttachmentTiles m={m} />
 
           {m.earlier.length > 0 ? (
-            <View style={{ marginTop: 34, gap: 12 }}>
+            <View
+              style={{ marginTop: 34, gap: 12 }}
+              onLayout={(e) => seen.offset("container", e.nativeEvent.layout.y)}
+            >
               <Txt variant="caption" tone="ink3">
                 {Copy.earlierInThread(m.earlier.length + 1)}
               </Txt>
               {m.earlier.map((h) => (
-                <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}>
+                <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}
+                  onLayout={(e) => seen.panel(h.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}>
                   <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+                    {/* An unread member wears the list row's unread dot. */}
+                    {h.seen ? null : (
+                      <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: t.c.accent, alignSelf: "center" }} />
+                    )}
                     <Txt variant="rowSubject" style={{ flexShrink: 1 }}>
                       {h.face ?? h.subject}
                     </Txt>

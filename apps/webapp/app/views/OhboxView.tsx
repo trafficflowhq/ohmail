@@ -174,6 +174,9 @@ export function OhboxView({
   onMarkSeen,
   onReadArmed,
   readerId,
+  readSetFor,
+  onSiblingSeen,
+  flushSiblingSeen,
   undoLink,
   onRestoreHold,
   doorbellInitials,
@@ -307,6 +310,19 @@ export function OhboxView({
    * of read-state. Optional: a harness mounted without it has no sheet to inform.
    */
   onReadArmed?: (id: string | null) => void;
+  /**
+   * THE READER'S MARK AS READ SET — the shell's `conversationReadSet` over the presented mirror and
+   * the armed read: the unread members of the conversation on screen. Required, no default: the
+   * read slot's face and ⇧I's write are this one function, and a default would be an untested arm.
+   */
+  readSetFor: (messageId: string) => string[];
+  /**
+   * A sibling panel a person scrolled through (`reader-seen.ts`), into the shell's glance batch,
+   * and that batch drained — the first act of a press, so a glance never rides its Undo. Optional:
+   * a harness with no shell has no scroll-to-read.
+   */
+  onSiblingSeen?: (id: string) => void;
+  flushSiblingSeen?: () => void;
   /** Where this view answers an Undo (`UndoLink`): the row a verb took from under the cursor comes back as it stood. */
   undoLink?: MutableRefObject<UndoLink | null>;
   /** Re-take the hold an undone act ended (`engine.restoreOpenRow`); `true` when the row is held. */
@@ -864,6 +880,11 @@ export function OhboxView({
    */
   const markSeenRef = useRef(onMarkSeen);
   markSeenRef.current = onMarkSeen;
+  const readSetForRef = useRef(readSetFor);
+  readSetForRef.current = readSetFor;
+  const flushSiblingSeenRef = useRef(flushSiblingSeen);
+  flushSiblingSeenRef.current = flushSiblingSeen;
+
 
   /**
    * {@link earlierIds}, READABLE FROM INSIDE THE SLIDE TIMER, and held the same way and for the
@@ -1143,6 +1164,26 @@ export function OhboxView({
     pinnedUnread.current = null;
     onMarkSeen([m.id], false);
   }, [onMarkSeen]);
+
+  /**
+   * ⇧I AND THE READER'S MARK AS READ — the conversation on screen, read. The set is the one the
+   * slot's face was drawn from (`readSetRef`), floored by the mirror at the press after the glance
+   * batch drains, so a sibling that arrived after the face changed is never in it and a glance is
+   * never in its Undo. One member that is the open message is today's single read; more go out
+   * as ONE bulk read with its toast and Undo (`bulk.run`, never `runBulk`: no pick is involved).
+   */
+  const markConversationRead = useCallback((m: EngineMessage) => {
+    flushSiblingSeenRef.current?.();
+    const floor = readSetForRef.current(m.id);
+    const set = readSetRef.current.filter((id) => floor.includes(id));
+    // A resurfaced open message keeps its own key: ⇧I is its deliberate read, the pin's way out.
+    if (isResurfaced(m) || set.length === 0 || (set.length === 1 && set[0] === m.id)) {
+      markRead(m);
+      return;
+    }
+    if (set.includes(m.id)) pinnedUnread.current = null;
+    bulk.run("read", set);
+  }, [markRead, bulk]);
 
   /**
    * The 2 s dwell, and why j/k alone must commit nothing: the split pane's reading column shows
@@ -1643,7 +1684,7 @@ export function OhboxView({
       label: t("keyMarkRead"),
       disabled: selected == null,
       ...noCursor,
-      run: () => selected && markRead(selected),
+      run: () => selected && markConversationRead(selected),
     },
     {
       /**
@@ -1938,6 +1979,21 @@ export function OhboxView({
     isResurfaced(m) ? true : presentsUnread(m) && m.id !== armedRead;
 
   /**
+   * The read slot's set for the open message — only while a reader SHOWS it (the column, or the
+   * sheet over a hidden column): with nothing on screen ⇧I stays the one message's read. The open
+   * message itself counts only as this view presents it (armed = read; a pin answers by Done).
+   * Written to `readSetRef` at render, so the press reads what was drawn.
+   */
+  const readSet = selected && (!readColumnHidden() || readerId === selected.id)
+    ? readSetFor(selected.id).filter((id) => id !== selected.id || (effUnread(selected) && !isResurfaced(selected)))
+    : [];
+  /** The read set the reader last DREW — a press never writes a member drawn after its face changed. */
+  const readSetRef = useRef<string[]>([]);
+  readSetRef.current = readSet;
+  /** The reading column's scroller — scroll-to-read listens on it. */
+  const readColRef = useRef<HTMLDivElement>(null);
+
+  /**
    * WHAT THE ROW PUBLISHES AS ITS SELECTION, and it is not always the pick.
    *
    * The Ohbox is the one multi-selectable list, and a multi-selectable listbox's `aria-selected`
@@ -2061,9 +2117,9 @@ export function OhboxView({
    * `threadSubject`, falling back to the newest member's subject until the thread row syncs), the newest member's
    * snippet and time, the distinct unread senders on the sender line — the same people as the row's lead circles
    * (`participants` below) — and the member count as `⤷ N`. Click and ↵ act on the LATEST UNREAD member: the ordinary
-   * per-message open, so the thread view, dwell and held place behave exactly as for a plain row and nothing
-   * bulk-marks the folded members read. `selected` is row MEMBERSHIP, so the highlight survives the lead message
-   * changing.
+   * per-message open, so the thread view, dwell and held place behave exactly as for a plain row. The open marks
+   * that one member read; the reader's Mark as read and a person's scroll through the panels mark the rest.
+   * `selected` is row MEMBERSHIP, so the highlight survives the lead message changing.
    */
 
   /**
@@ -2488,6 +2544,7 @@ export function OhboxView({
           it clears the selection, which is what Esc does at 1024; the stylesheet shows it
           only there. Only while something is open — an empty column has nothing to close. */}
       <ReadColumn
+        scrollerRef={readColRef}
         regionLabel={tReader("pane")}
         onClose={selected || gone ? () => onSelect(null) : undefined}
         closeLabel={tReader("closeColumn")}
@@ -2513,13 +2570,16 @@ export function OhboxView({
                  would skip the pin/promote/armed machinery either way. So the fallback is routed
                  through the same two directions the keys take; everything else passes through. */
               if (a === "unread") {
-                if (effUnread(selected)) markRead(selected);
+                if (readSet.length > 0) markConversationRead(selected);
                 else markUnread(selected);
                 return;
               }
               onAction(a, selected);
             }}
             onAddTag={onAddTag}
+            readSet={readSet}
+            scroller={readColRef}
+            onSiblingSeen={onSiblingSeen}
           />
         ) : gone ? (
           /* BEFORE the resting panel, and that order is the whole arm: "nothing open" and "the

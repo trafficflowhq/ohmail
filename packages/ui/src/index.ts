@@ -184,7 +184,7 @@ export type {
 } from "./composites/FocusReplyOverlay.js";
 
 /* hooks */
-export { useSeenOnScroll } from "./hooks/useSeenOnScroll.js";
+export { SCROLL_KEYS, useSeenOnScroll } from "./hooks/useSeenOnScroll.js";
 export type { UseSeenOnScrollOptions, SeenObserver } from "./hooks/useSeenOnScroll.js";
 export { useCommandPalette } from "./hooks/useCommandPalette.js";
 export type { CommandPaletteState } from "./hooks/useCommandPalette.js";

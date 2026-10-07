@@ -24,6 +24,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { isTypingTarget, useOptionalKeyBindings, type KeyBinding } from "./keymap";
 import { railLayout } from "./narrow";
+import { scrollProgrammatically } from "./programmatic-scroll";
 
 /**
  * `"none"` is the fourth answer: a dialog is layered ABOVE the open reader (a screening
@@ -214,7 +215,7 @@ function railItems(): HTMLElement[] {
 
 function tryFocus(el: HTMLElement | null | undefined): boolean {
   if (!el) return false;
-  el.focus();
+  el.focus({ preventScroll: true });
   return document.activeElement === el;
 }
 
@@ -296,7 +297,7 @@ function useListFocusFollow(followId: string | null | undefined, selector: strin
     const cur = document.activeElement;
     if (!(cur instanceof HTMLElement) || !cur.matches(".row")) return;
     const sel = document.querySelector<HTMLElement>(selector);
-    if (sel && sel !== cur) sel.focus();
+    if (sel && sel !== cur) sel.focus({ preventScroll: true });
   }, [followId, selector]);
 }
 
@@ -411,7 +412,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
     const r = latest.current.reader;
     const el =
       sheet ?? (r ? document.querySelector<HTMLElement>(r.scrollSelector ?? r.selector) : null);
-    if (el) el.scrollTop = el.scrollTop + dir * READER_SCROLL_STEP;
+    if (el) scrollProgrammatically(el, el.scrollTop + dir * READER_SCROLL_STEP);
   };
 
   /**

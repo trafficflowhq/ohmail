@@ -14,7 +14,9 @@ import { useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import type { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
+  MARK_SEEN_CHUNK,
   UNDO_CLASS,
+  chunkMarkSeen,
   consentPartition,
   inverseMutations,
   landingOfMoves,
@@ -162,6 +164,13 @@ export interface ShellVerbsInput {
   deleting: ShellDispatch["deleting"];
   restoring: ShellDispatch["restoring"];
   markSeen: ShellOpenState["markSeen"];
+  /**
+   * The reader's Mark as read set ON THE OHBOX, else `undefined` — the read fallback below reads
+   * it so the sheet's slot writes what its face shows; every other view keeps the per-message flip.
+   */
+  readSetFor?: ShellOpenState["readSetFor"];
+  /** Drains the scroll-to-read glance batch before a read press (its Undo never carries a glance). */
+  flushSiblingSeen: ShellOpenState["flushSiblingSeen"];
   /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
   readerFor: ShellOpenState["readerFor"];
   setReaderFor: ShellOpenState["setReaderFor"];
@@ -191,7 +200,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, flushSiblingSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -1078,9 +1087,18 @@ export function useShellVerbs({
            * true; what it CANNOT do from here is set `OhboxView`'s `pinnedUnread`, which is
            * exactly why the button prefers the key. See `ActionBar` in `MessagePane.tsx`.
            */
-          // `!m.unread` is the DESIRED state, written the way `OhboxView.toggleUnread`
-          // writes it — one expression for "flip it", not two that could drift apart.
-          markSeen([m.id], !m.unread);
+          // On the Ohbox a slot whose face says Mark as read writes the conversation set it was
+          // drawn from (`readSetFor`); otherwise `!m.unread` is the DESIRED state — the flip, in the
+          // direction the per-message face shows.
+          {
+            const set = readSetFor?.(m.id);
+            if (set && set.length > 0) {
+              flushSiblingSeen();
+              onBulkAction("read", set);
+            } else {
+              markSeen([m.id], !m.unread);
+            }
+          }
           break;
         case "resurface": {
           // A message already scheduled: the horizon-less verb CLEARS the booking rather than
@@ -1323,22 +1341,27 @@ export function useShellVerbs({
         return deleting.remove(ids.map((id) => ({ id, mailboxId: rowOf(id)?.mailboxId })));
       }
       if (action === "read" || action === "unread") {
-        // The batch mutation, unchanged: one request, one transaction, one intent — and the
-        // sentence now waits for its verdict, like every other press in this file. The inverse
-        // is read before the dispatch, so Undo flips back exactly the ids this press flipped.
-        const inverses = inverseMutations(
-          setRead(),
-          { kind: "mark_seen", messageIds: ids, unread: action === "unread" },
-        );
-        void markSeen(ids, action === "unread").then((ok) => {
-          if (ok) {
-            toastWithUndo(
-              t(action === "unread" ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", {
-                count: ids.length,
-              }),
-              inverses,
-            );
-          }
+        // The batch mutation: one request per 200 ids (the route's cap), one intent — and the
+        // sentence waits for every chunk's verdict, like every other press in this file. The
+        // inverse is read ONCE before the first dispatch and chunked alike, so Undo flips back
+        // exactly the ids this press flipped and never sends a request the route refuses.
+        // A chunk's inverse is read with the rest, before the first dispatch, so a press over the cap
+        // that partly lands offers an Undo for exactly the chunks that landed and says how many.
+        const unread = action === "unread";
+        const pre = setRead();
+        const chunks: string[][] = [];
+        for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) chunks.push(ids.slice(i, i + MARK_SEEN_CHUNK));
+        const inverses = chunks.map((c) => chunkMarkSeen(inverseMutations(pre, { kind: "mark_seen", messageIds: c, unread })));
+        void Promise.all(chunks.map((c) => markSeen(c, unread))).then((oks) => {
+          const done = chunks.filter((_, i) => oks[i]).reduce((n, c) => n + c.length, 0);
+          if (done === 0) return;
+          const undo = inverses.filter((_, i) => oks[i]).flat();
+          toastWithUndo(
+            done === ids.length
+              ? t(unread ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", { count: ids.length })
+              : t(unread ? "ohbox.toastBulkUnreadPartial" : "ohbox.toastBulkReadPartial", { done, count: ids.length }),
+            undo,
+          );
         });
         return true;
       }

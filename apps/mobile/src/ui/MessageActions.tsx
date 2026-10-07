@@ -107,6 +107,7 @@ import { failedSendLine } from "./send-failed";
 import type { StayedWhy } from "../state/sender-stayed";
 import { stayedRows } from "./sender-stayed-lines";
 import { useKeyboardLift } from "./keyboard-lift";
+import { conversationUnreadIds } from "./read-slot";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -271,12 +272,17 @@ export function MessageActions({
   const moreHas = (id: ReaderVerbId) =>
     placement.behindMore.includes(id) || barFit.overflow.includes(id);
 
-  /** The one three-faced read slot — the webapp's read switch, never empty and never two. */
+  /**
+   * The one three-faced read slot — the webapp's read switch, never empty and never two. Mark as
+   * read takes the CONVERSATION on screen (`conversationUnreadIds`) in one deliberate write with
+   * one Undo; Mark unread stays this message alone.
+   */
+  const unreadIds = conversationUnreadIds(m);
   const readFace =
     m.pile === "resurfaced"
       ? { icon: "check" as IconName, label: Copy.actionDone, press: () => a.resurfaceDone(m.id) }
-      : m.unread
-        ? { icon: "check" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(m.id, false) }
+      : unreadIds.length > 0
+        ? { icon: "check" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(unreadIds[0]!, false, unreadIds), a11y: Copy.actionMarkReadCount(unreadIds.length) }
         : { icon: "x" as IconName, label: Copy.actionMarkUnread, press: () => a.markSeen(m.id, true) };
 
   /* THE RAIL CLAIM (unfolded-landscape Duo): the reader's verbs ride the ONE right-edge rail —
@@ -286,6 +292,8 @@ export function MessageActions({
      whenever a label, face or admission changes (the locale re-reads the deck's getters). */
   const pile = m.pile;
   const unread = m.unread;
+  /* The face key: the rail re-publishes when a sibling flips, never holding a stale press. */
+  const unreadKey = unreadIds.join(",");
   useEffect(() => {
     if (mode !== "rail") return;
     const core = (id: ReaderVerbId): RailAction => {
@@ -316,7 +324,7 @@ export function MessageActions({
     publishReaderRail(railReaderGroups(facts).map((g) => g.map(entry)));
     return () => publishReaderRail(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, m.id, pile, unread, facts.canReplyAll, facts.forwardOffered, m.forwardAsk, facts.foldersEnabled, facts.junkOffered, locale, onBack]);
+  }, [mode, m.id, pile, unread, unreadKey, facts.canReplyAll, facts.forwardOffered, m.forwardAsk, facts.foldersEnabled, facts.junkOffered, locale, onBack]);
 
   /**
    * THE HOUR THE CHOOSER IS ASKING ABOUT (mail 0110) — the account's stored time, or the
@@ -403,7 +411,7 @@ export function MessageActions({
           <GlassActionBar
             reply={{ label: Copy.actionReply, onPress: () => setOpen({ compose: "reply" }) }}
             verbs={barVerbs}
-            readSwitch={{ label: readFace.label, icon: readFace.icon, onPress: readFace.press }}
+            readSwitch={{ label: readFace.label, icon: readFace.icon, onPress: readFace.press, a11yLabel: "a11y" in readFace ? readFace.a11y : undefined }}
             floor={["forward"]}
             extraMore={barExtraMore}
           />
@@ -567,8 +575,8 @@ export function MessageActions({
         {/* One slot, three faces — the webapp's read switch, never empty and never two. */}
         {!moreHas("read") ? null : m.pile === "resurfaced" ? (
           <SheetRow icon="check" label={Copy.actionDone} onPress={() => { close(); a.resurfaceDone(m.id); }} />
-        ) : m.unread ? (
-          <SheetRow icon="check" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(m.id, false); }} />
+        ) : unreadIds.length > 0 ? (
+          <SheetRow icon="check" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(unreadIds[0]!, false, unreadIds); }} />
         ) : (
           <SheetRow icon="x" label={Copy.actionMarkUnread} onPress={() => { close(); a.markSeen(m.id, true); }} />
         )}

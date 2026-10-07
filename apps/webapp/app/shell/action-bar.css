@@ -426,7 +426,30 @@
    directions, one glyph that distinguishes them without a second word. */
 .abar-dot-off {
   background: transparent;
-  border-color: var(--hair);
+  border-color: var(--ink3);
+}
+/* The density measure's read switch (`ActionBar`'s measure row only): its three whole faces in
+   one grid cell, so the switch measures as its widest face; and the words alone, stacked out of
+   flow, as the width the compact floor saves. */
+.abar-read-faces {
+  display: inline-grid;
+  gap: inherit;
+}
+.abar-read-faces > * {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  gap: inherit;
+}
+.abar-measure .abar-read-lab.abar-read-words {
+  display: inline-grid !important;
+  position: absolute;
+  visibility: hidden;
+  left: 0;
+  top: 0;
+}
+.abar-read-words > * {
+  grid-area: 1 / 1;
 }
 /* The slot's THIRD face — "Done" on a resurfaced message (see `ActionBar`). The check wears the
    accent for the reason the dot does: it previews the outcome, and the outcome here is the one

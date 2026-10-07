@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { Icon } from "../icons.js";
 import { Avatar } from "../primitives/Avatar.js";
 import "./message.css";
@@ -188,15 +188,19 @@ export function ReadColumn({
   regionLabel,
   onClose,
   closeLabel,
+  scrollerRef,
 }: {
   children: ReactNode;
   className?: string;
   regionLabel?: string;
   onClose?: () => void;
   closeLabel?: string;
+  /** The column's own scroller (`.read-col` scrolls by stylesheet), for a reader that reads its scroll. */
+  scrollerRef?: Ref<HTMLDivElement>;
 }) {
   return (
     <div
+      ref={scrollerRef}
       className={className ? `read-col ${className}` : "read-col"}
       {...(regionLabel !== undefined
         ? ({ role: "region", "aria-label": regionLabel, tabIndex: -1 } as const)

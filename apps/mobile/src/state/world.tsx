@@ -582,6 +582,7 @@ const NO_ACTIONS: WorldActions = {
   resurfaceNow: () => undefined,
   resurfaceDone: () => undefined,
   markSeen: () => undefined,
+  markGlanced: () => undefined,
   markAllSeen: () => undefined,
   move: () => undefined,
   deleteMessage: () => undefined,
@@ -1499,6 +1500,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           resurfaceNow: (id) => void acts.resurfaceNow(id),
           resurfaceDone: (id, members) => void acts.resurfaceDone(id, members),
           markSeen: (id, unread, members) => void acts.markSeen(id, unread, members),
+          markGlanced: (ids) => void acts.markGlanced(ids),
           markAllSeen: (ids, feed) => void acts.markAllSeen(ids, feed),
           move: (row, dest, members) => void acts.move(row, dest, members),
           deleteMessage: (id, opts) => {

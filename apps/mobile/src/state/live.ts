@@ -11,6 +11,8 @@
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
+  MARK_SEEN_CHUNK,
+  chunkMarkSeen,
   VIEW_OF_FOLDER,
   bodyOf,
   canonicalDestination,
@@ -99,6 +101,7 @@ import {
   type WallClockVerdict,
   type WithdrawOutcome,
   type ZonedComposition,
+  isResurfaced,
   resurfacedThreads,
   ohboxRows,
   rowOpenTarget,
@@ -402,7 +405,11 @@ export type { WaitingOnOrganizerView } from "@ohmail/client-engine";
 export { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
 
 /** A conversation member under the opened message, with its own files beside its text. */
-export type WorldEarlier = Held & { attachments?: WorldAttachment[] };
+export type WorldEarlier = Held & {
+  attachments?: WorldAttachment[];
+  /** A pinned member: its pin is the row's to release, so the reader's Mark as read leaves it out. */
+  resurfaced?: true;
+};
 
 export type WorldMail = Omit<Mail, "earlier"> & {
   /** The rest of the conversation, oldest → newest, each member with its files. */
@@ -1812,6 +1819,7 @@ export function liveMessage(
         time: messageDisplayTime(member, v.now, v.zone, v.locale ?? "en"),
         body: bodyOf(pres, member).text,
         seen: !member.unread,
+        ...(isResurfaced(member) ? { resurfaced: true as const } : {}),
         ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),
         ...filesField(engine, member.id),
       };
@@ -2282,8 +2290,8 @@ export function planDecideCommit(reader: EntityReader, intent: DecideIntent): En
       FOLDER_OF_VIEW[intent.dest], true,
     ).writes;
   if (intent.read && decision === "yes") {
-    for (let i = 0; i < intent.messageIds.length; i += MARK_SEEN_MAX) {
-      out.push({ kind: "mark_seen", messageIds: intent.messageIds.slice(i, i + MARK_SEEN_MAX), unread: false });
+    for (let i = 0; i < intent.messageIds.length; i += MARK_SEEN_CHUNK) {
+      out.push({ kind: "mark_seen", messageIds: intent.messageIds.slice(i, i + MARK_SEEN_CHUNK), unread: false });
     }
   }
   return out;
@@ -2315,26 +2323,9 @@ export function routingReplaySay(r: RoutingReplay): Refusal[] {
 }
 
 
-/** `PATCH /messages` id cap per request — the webapp's own batch size. */
-const MARK_SEEN_MAX = 200;
-
 /** File lists a reader asks at once for a conversation — the web shell's own bound. */
 const THREAD_LIST_CONCURRENCY = 4;
 
-/**
- * A `mark_seen` wider than the PATCH cap, split — mark-all-read's inverse can carry more ids
- * than one request may, and an oversized inverse would be one refused request taking nothing back.
- */
-function chunkMarkSeen(list: EngineMutation[]): EngineMutation[] {
-  return list.flatMap((mu) => {
-    if (mu.kind !== "mark_seen" || mu.messageIds.length <= MARK_SEEN_MAX) return [mu];
-    const out: EngineMutation[] = [];
-    for (let i = 0; i < mu.messageIds.length; i += MARK_SEEN_MAX) {
-      out.push({ ...mu, messageIds: mu.messageIds.slice(i, i + MARK_SEEN_MAX) });
-    }
-    return out;
-  });
-}
 
 /**
  * How long the LEAVE COMMIT waits for in-flight sweeps before anchoring on the pool as it
@@ -2988,6 +2979,11 @@ export interface LiveWorldActions {
   /** Mark read / Mark unread — the DELIBERATE `mark_seen` (no `via`), so a read spends a pin. */
   markSeen(messageId: string, unread: boolean, members?: readonly string[]): Promise<boolean>;
   /**
+   * The reader's scroll-to-read over a conversation's members (`ui/reader-seen.ts`): a GLANCE
+   * (`via: "glance"`), so a pin survives it, with no sentence — the panel's own ink is the answer.
+   */
+  markGlanced(ids: readonly string[]): Promise<boolean>;
+  /**
    * MARK ALL READ — the webapp's `read-all.ts` on this surface: chunked deliberate
    * `mark_seen` at the `PATCH /messages` cap, one sentence naming the count, ONE undo for
    * exactly what the press flipped (pins a deliberate read spends are re-pinned). `feed` is
@@ -3318,7 +3314,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /** The same, over a SET: one sentence for the run, and a queued press is never counted landed. */
-  const saidAll = (vs: readonly PressVerdict[], done: RefusalArg | null, failed: RefusalArg): boolean => {
+  const saidAll = (vs: readonly PressVerdict[], done: RefusalArg | null, failed: RefusalArg, opts?: ToastOpts): boolean => {
     const t = tallyVerdicts(vs);
     if (t.refused > 0) { toast(failed); return false; }
     if (vs.length > 0 && t.silent === vs.length) return true;
@@ -3327,7 +3323,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(holder ? refuse("pressQueuedForOrganizer", holder) : refuse("pressQueuedForOrganizerUnknown"));
       return false;
     }
-    if (done !== null) toast(done);
+    if (done !== null) toast(done, opts);
     return true;
   };
 
@@ -3733,8 +3729,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // happened and undone by reading.
     if (decision === "yes" && readFlag && row.held.length > 0) {
       const ids = row.held.map((h) => h.id);
-      for (let i = 0; i < ids.length; i += MARK_SEEN_MAX) {
-        void engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_MAX), unread: false });
+      for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) {
+        void engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread: false });
       }
     }
     /* THE SENTENCE WAITS FOR THE ANSWER, and only this verb's does. Everywhere else the
@@ -3926,8 +3922,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * The messages a folded row's verb acts on: the open target first, then the rest, each once.
    * Junk, Later and Done never touch mail the person sent (a conversation answered from here
    * holds the reply), so `own: false` drops it; the read slot marks every member, as the web's
-   * pick of a row does (`apps/webapp/app/views/OhboxView.tsx:725`, read over the whole pick at
-   * `apps/webapp/app/shell/shell-verbs.ts:1291`). A row that is all own mail acts on its target.
+   * pick of a row does (OhboxView's `runBulk`, read over the whole pick by shell-verbs'
+   * `onBulkAction`). A row that is all own mail acts on its target.
    */
   const membersOf = (id: string, members?: readonly string[], opts: { own?: boolean } = {}): string[] => {
     const all = [...new Set([id, ...(members ?? [])])];
@@ -4000,13 +3996,40 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // of the wire — the opposite of the open's glance and the streams' sweep. The sentence is
     // new with the undo (the 0.20 review): the flip is visible, but the pill is where the way back
     // lives, and a verb whose undo has no surface is a verb with no undo.
-    const m: EngineMutation = { kind: "mark_seen", messageIds: membersOf(messageId, members, { own: true }), unread };
-    const inv = inverseMutations(engine.verbRead(), m);
-    return said(
-      await dispatch(m),
-      refuse(unread ? "toastUnread" : "toastRead"), refuse("liveSaveFailed"),
-      undoable(inv),
-    );
+    // Chunked at the route's cap both ways, the press and its Undo (a conversation's set can be wide).
+    const ids = membersOf(messageId, members, { own: true });
+    const m: EngineMutation = { kind: "mark_seen", messageIds: ids, unread };
+    const inv = chunkMarkSeen(inverseMutations(engine.verbRead(), m));
+    if (ids.length <= MARK_SEEN_CHUNK) {
+      return said(
+        await dispatch(m),
+        refuse(unread ? "toastUnread" : "toastRead"), refuse("liveSaveFailed"),
+        undoable(inv),
+      );
+    }
+    // Over the cap: each chunk's inverse read before the first dispatch, so a press that partly
+    // lands offers an Undo for exactly the chunks that landed and says how many.
+    const pre = engine.verbRead();
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) chunks.push(ids.slice(i, i + MARK_SEEN_CHUNK));
+    const invs = chunks.map((c) => chunkMarkSeen(inverseMutations(pre, { kind: "mark_seen", messageIds: c, unread })));
+    const vs = await Promise.all(chunks.map((c) => dispatch({ kind: "mark_seen", messageIds: c, unread })));
+    const landed = vs.map((v) => v.kind !== "refused");
+    const done = chunks.filter((_, i) => landed[i]).reduce((n, c) => n + c.length, 0);
+    if (done > 0 && done < ids.length && !unread) {
+      toast(refuse("toastReadPartial", done, ids.length), undoable(invs.filter((_, i) => landed[i]).flat()));
+      return false;
+    }
+    return saidAll(vs, refuse(unread ? "toastUnread" : "toastRead"), refuse("liveSaveFailed"), undoable(inv));
+  };
+
+  const markGlanced = async (ids: readonly string[]): Promise<boolean> => {
+    if (ids.length === 0) return true;
+    const parts: Promise<PressVerdict>[] = [];
+    for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) {
+      parts.push(dispatch({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread: false, via: "glance" }));
+    }
+    return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
   };
 
   /**
@@ -4020,8 +4043,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const markAllSeen = async (ids: string[], feed?: { place: FeedView; upToId: string }): Promise<boolean> => {
     const inv = chunkMarkSeen(inverseMutations(engine.verbRead(), { kind: "mark_seen", messageIds: ids, unread: false }));
     const parts: Promise<PressVerdict>[] = [];
-    for (let i = 0; i < ids.length; i += MARK_SEEN_MAX) {
-      parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_MAX), unread: false })));
+    for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) {
+      parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread: false })));
     }
     /* The waterline commit rides the SAME press (the webapp's ReadsView shape): an empty
        `messageIds` with the anchor alone, so a fresh-only stream ("2 new", nothing unread)
@@ -5213,7 +5236,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, release, setPile,
-    pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
+    pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markGlanced, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
@@ -5273,6 +5296,8 @@ export interface WorldActions {
   resurfaceNow(messageId: string): void;
   resurfaceDone(messageId: string, members?: readonly string[]): void;
   markSeen(messageId: string, unread: boolean, members?: readonly string[]): void;
+  /** Scroll-to-read's glance — see {@link LiveWorldActions.markGlanced}. */
+  markGlanced(ids: readonly string[]): void;
   /** Mark all read — see {@link LiveWorldActions.markAllSeen}. */
   markAllSeen(ids: string[], feed?: { place: "reads" | "receipts"; upToId: string }): void;
   /** The row, not an id — see {@link LiveWorldActions.move}. */
@@ -5388,6 +5413,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     resurfaceNow: (id) => void current().resurfaceNow(id),
     resurfaceDone: (id, members) => void current().resurfaceDone(id, members),
     markSeen: (id, unread, members) => void current().markSeen(id, unread, members),
+    markGlanced: (ids) => void current().markGlanced(ids),
     markAllSeen: (ids, feed) => void current().markAllSeen(ids, feed),
     move: (row, dest, members) => void current().move(row, dest, members),
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),

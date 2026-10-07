@@ -58,6 +58,7 @@ import {
 import { SignatureBlock } from "./SignatureBlock";
 import { SIG_FOLLOWING, type SignatureState } from "./signature";
 import { durableSessionSet } from "./durable";
+import { scrollIntoViewProgrammatically } from "./programmatic-scroll";
 
 /*
  * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
@@ -458,7 +459,7 @@ export function InlineReply({
    * `immediatelyRender: false` means there is no editor at all during the commit this effect runs in.
    */
   useEffect(() => {
-    box.current?.scrollIntoView?.({ block: "end" });
+    if (box.current) scrollIntoViewProgrammatically(box.current, { block: "end" });
   }, [message.id]);
 
 

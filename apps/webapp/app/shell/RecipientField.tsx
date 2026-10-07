@@ -225,7 +225,7 @@ export function focusMovedChip(inputId: string, entry: string): void {
     const chip = [...box.querySelectorAll<HTMLElement>(".rcp-chip")].find(
       (c) => c.dataset.entry === entry,
     );
-    chip?.focus();
+    chip?.focus({ preventScroll: true });
   });
 }
 
@@ -347,7 +347,7 @@ export function RecipientField({
       onChange(joinRecipients([...chips, formatRecipient(entry)], ""));
       setOpen(false);
       setCursor(0);
-      inputRef.current?.focus();
+      inputRef.current?.focus({ preventScroll: true });
     },
     [chips, onChange],
   );
@@ -368,8 +368,8 @@ export function RecipientField({
       // deleting the last chip must not drop focus on the body.
       requestAnimationFrame(() => {
         const target = chipRefs.current[Math.min(at, next.length - 1)];
-        if (next.length > 0 && target) target.focus();
-        else inputRef.current?.focus();
+        if (next.length > 0 && target) target.focus({ preventScroll: true });
+        else inputRef.current?.focus({ preventScroll: true });
       });
     },
     [chips, tail, onChange],
@@ -434,7 +434,7 @@ export function RecipientField({
       const el = e.currentTarget;
       if (el.selectionStart === 0 && el.selectionEnd === 0) {
         e.preventDefault();
-        chipRefs.current[chips.length - 1]?.focus();
+        chipRefs.current[chips.length - 1]?.focus({ preventScroll: true });
       }
     }
   };
@@ -480,13 +480,13 @@ export function RecipientField({
     }
     if (e.key === "ArrowLeft" && at > 0) {
       claim();
-      chipRefs.current[at - 1]?.focus();
+      chipRefs.current[at - 1]?.focus({ preventScroll: true });
       return;
     }
     if (e.key === "ArrowRight") {
       claim();
-      if (at < chips.length - 1) chipRefs.current[at + 1]?.focus();
-      else inputRef.current?.focus();
+      if (at < chips.length - 1) chipRefs.current[at + 1]?.focus({ preventScroll: true });
+      else inputRef.current?.focus({ preventScroll: true });
       return;
     }
     if (e.key === "Backspace" || e.key === "Delete") {
@@ -533,7 +533,7 @@ export function RecipientField({
         onDrop={(e) => dropAt(e, null)}
         // A click on the box's empty run of pixels belongs to the input, like any text field.
         onClick={(e) => {
-          if (e.target === e.currentTarget) inputRef.current?.focus();
+          if (e.target === e.currentTarget) inputRef.current?.focus({ preventScroll: true });
         }}
       >
         {chips.length > 0 ? (

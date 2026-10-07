@@ -50,10 +50,13 @@ export function MessageHeader({
   now,
   onEnterReader,
   notice = null,
+  unreadDot = false,
 }: {
   message: EngineMessage;
   now: Date;
   onEnterReader?: () => void;
+  /** A conversation panel's header carries the row's unread dot, shown while its panel is unseen. */
+  unreadDot?: boolean;
   /**
    * WHAT THIS MESSAGE'S BODY HAD REFUSED — the viewer's report (`MessageBody.onNotice`), handed up
    * by the panel that mounts the body (`MessageCard` below; `MessagePane` for the focused message)
@@ -82,7 +85,7 @@ export function MessageHeader({
   useEffect(() => { setMenuOpen(false); }, [message.id]);
   const closeMenu = (): void => {
     setMenuOpen(false);
-    moreRef.current?.focus();
+    moreRef.current?.focus({ preventScroll: true });
   };
 
   // `?? []` tolerates a bare test harness that predates the field; the real provider always
@@ -174,6 +177,7 @@ export function MessageHeader({
           onClick={(e) => chrome.openSenderMenu(message.id, e.currentTarget)}
         >
           <Avatar initials={initialsOf(name)} hue={avatarHue(message.from.address)} size="s" />
+          {unreadDot ? <span className="dot-unread" aria-hidden="true" /> : null}
           <b>{forwardedTo !== null ? tm("forwardedTo", { name: forwardedTo }) : name}</b>
           {address ? <small><AddressText address={address} /></small> : null}
         </button>
@@ -371,9 +375,10 @@ export function MessageCard({
     ) : null;
 
   return (
-    <article className="pm" data-conv-id={message.id}>
+    /* `data-unseen` while unread: the panel's dot and the reader's scroll-to-read read this one fact. */
+    <article className="pm" data-conv-id={message.id} data-unseen={message.unread ? "" : undefined}>
       <div className="pm-in">
-        <MessageHeader message={message} now={now} notice={notice} />
+        <MessageHeader message={message} now={now} notice={notice} unreadDot />
         <div className="pm-body">
           <MessageBody
             messageId={message.id}

@@ -1719,7 +1719,8 @@ const TABLE = {
   actionTag: "Tag",
   actionScreening: "Screening",
   actionMove: "Move",
-  actionMarkRead: "Mark as read",
+  actionMarkRead: "Mark read",
+  actionMarkReadCount: (n: number) => (n === 1 ? "Mark 1 unread message as read" : `Mark ${n} unread messages as read`),
   actionMarkUnread: "Mark unread",
   actionDone: "Done",
   actionMore: "More",
@@ -1791,6 +1792,7 @@ const TABLE = {
   unscreenedFailed: "Could not screen that mail. Try again.",
   /** The deliberate read/unread, spoken so the pill has a sentence to ride (silent before the undo work). */
   toastRead: "Marked as read.",
+  toastReadPartial: (done: number, of: number) => `Marked ${done} of ${of} as read.`,
   toastUnread: "Marked as unread.",
   /*
    * MARK ALL READ — the webapp's `markAll` namespace, sentence for sentence: the

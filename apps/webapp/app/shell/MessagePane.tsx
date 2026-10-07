@@ -5,7 +5,7 @@
  * from-line, subject, chips (routing rationale, tracker shield, tags,
  * add-affordance), body or the protected-OTP block, attachment, actions.
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, forwardOffered, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane } from "@ohmail/ui";
@@ -29,6 +29,8 @@ import { endOpen } from "./ui-vitals";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { SENDER_SHEET_ID } from "./SenderMenu";
 import { useFocusFollows } from "./focus-follows";
+import { scrollProgrammatically } from "./programmatic-scroll";
+import { useReaderSeen } from "./reader-seen";
 import "./action-bar.css";
 
 /**
@@ -268,8 +270,15 @@ function ActionBar({
   onTag,
   trash,
   forwardTarget,
+  readSet,
 }: {
   message: EngineMessage;
+  /**
+   * WHAT THE READ SLOT'S MARK AS READ TAKES on the Ohbox — the conversation's unread members on screen
+   * (`conversationReadSet`); empty means nothing left to read and the slot says Mark unread. ABSENT on
+   * every other surface: the face is then this message's own flag, the direction the fallback flips.
+   */
+  readSet?: readonly string[];
   /**
    * WHAT THIS BAR'S FORWARD TAKES when it is not `message` — a row-opened conversation's target as the
    * shell took it at the open (`chrome.forwardTargetOf`). It goes through the chrome's Forward, the
@@ -358,7 +367,7 @@ function ActionBar({
      both point the reader's click at whichever input the document holds first. */
   const panelId = useId();
   useEffect(() => {
-    if (panel === "delete") deleteCancelRef.current?.focus();
+    if (panel === "delete") deleteCancelRef.current?.focus({ preventScroll: true });
   }, [panel]);
 
   /**
@@ -386,7 +395,7 @@ function ActionBar({
      first destination (as the delete ask lands on Cancel), so `m` then ↵ files. */
   const moveFirstRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (panel === "move") moveFirstRef.current?.focus();
+    if (panel === "move") moveFirstRef.current?.focus({ preventScroll: true });
   }, [panel]);
   /**
    * AND RESURFACE LANDS THE SAME WAY — on "Now", its first control.
@@ -400,7 +409,7 @@ function ActionBar({
    */
   const resurfaceFirstRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (panel === "resurface") resurfaceFirstRef.current?.focus();
+    if (panel === "resurface") resurfaceFirstRef.current?.focus({ preventScroll: true });
   }, [panel]);
   /* Where focus goes when a strip closes is the shell's one rule (`focus-follows.ts`); the
      landings above stay the bar's, and so does the cancel's return to the trigger below. */
@@ -410,7 +419,9 @@ function ActionBar({
     enter: false,
   });
   /** Hoisted above `toggleRead`, which needs it to decide WHICH key it is standing in for. */
-  const read = !message.unread;
+  const read = readSet ? readSet.length === 0 : !message.unread;
+  /** The conversation face names what it takes ("Mark 3 unread messages as read"); its label stays. */
+  const readCount = readSet && readSet.length > 0 ? t("actionMarkReadCount", { count: readSet.length }) : t("actionMarkRead");
   /**
    * REPLY ALL RENDERS ONLY WHEN "ALL" IS MORE PEOPLE THAN "REPLY" — the predicate is
    * `replyAllRecipients`, the same call the shell resolves at send time, so the button and the
@@ -442,7 +453,7 @@ function ActionBar({
   const moreRef = useRef<HTMLButtonElement>(null);
   const closeMenu = (): void => {
     setMenuOpen(false);
-    moreRef.current?.focus();
+    moreRef.current?.focus({ preventScroll: true });
   };
 
   // A message swap must not leave a menu open over a different message's verbs.
@@ -493,7 +504,7 @@ function ActionBar({
       opener.from === "resurface" ? resurfaceRef.current
         : opener.from === "move" ? moveRef.current
           : moreRef.current;
-    back?.focus();
+    back?.focus({ preventScroll: true });
   }, [panel, message.id]);
 
   /**
@@ -507,7 +518,7 @@ function ActionBar({
   const dateRef = useRef<HTMLButtonElement>(null);
   const closeDate = (): void => {
     setDateOpen(false);
-    dateRef.current?.focus();
+    dateRef.current?.focus({ preventScroll: true });
   };
   useEffect(() => setDateOpen(false), [message.id, panel]);
   /**
@@ -1172,7 +1183,24 @@ function ActionBar({
               `resurface_done` rather than pressing `⇧I`, because the key acts on the SELECTED
               message and this bar can be mounted over an unselected one; a check instead of the
               dot — the previewed outcome is "finished". Part of the floor, folds nowhere. */}
-          {isResurfaced(message) ? (
+          {measure ? (
+            /* THE MEASURE STANDS AT THE WIDEST FACE: the three whole faces share one grid cell, so the
+               row admits the same verbs whichever face the switch shows and a read flip never
+               re-seats Tag (the frames at 1440). The words alone, stacked out of flow, are what the
+               compact floor saves by dropping them. */
+            <button type="button" className="abar-b abar-solo abar-read" tabIndex={-1}>
+              <span className="abar-read-faces">
+                <span><Icon name="check" size={13} className="abar-check" /><span>{t("actionDone")}</span><Key chord="shift+i" /></span>
+                <span><span className="abar-dot" /><span>{t("actionMarkUnread")}</span><Key chord="u" /></span>
+                <span><span className="abar-dot" /><span>{t("actionMarkRead")}</span><Key chord="shift+i" /></span>
+              </span>
+              <span className="abar-read-lab abar-read-words">
+                <span>{t("actionDone")}</span>
+                <span>{t("actionMarkUnread")}</span>
+                <span>{t("actionMarkRead")}</span>
+              </span>
+            </button>
+          ) : isResurfaced(message) ? (
             <button
               type="button"
               className="abar-b abar-solo abar-read abar-done"
@@ -1200,8 +1228,8 @@ function ActionBar({
             <button
               type="button"
               className="abar-b abar-solo abar-read"
-              aria-label={t("actionMarkRead")}
-              title={compact ? t("actionMarkRead") : undefined}
+              aria-label={readCount}
+              title={readSet || compact ? readCount : undefined}
               onClick={markRead}
             >
               <span className="abar-dot abar-dot-off" aria-hidden="true" />
@@ -1373,10 +1401,22 @@ export function MessagePane({
   onAction,
   onAddTag,
   trash,
+  readSet,
+  scroller,
+  onSiblingSeen,
 }: {
   message: EngineMessage;
   tags: TagDTO[];
   now: Date;
+  /** The read slot's set on the Ohbox — forwarded to {@link ActionBar}; absent elsewhere. */
+  readSet?: readonly string[];
+  /**
+   * The element that scrolls this pane's panels (the reading column's `.read-col`, the sheet's
+   * `.reader`), and where a sibling a person scrolled through is reported (`reader-seen.ts`). Both
+   * absent off the Ohbox: no scroll-to-read there.
+   */
+  scroller?: RefObject<HTMLElement | null>;
+  onSiblingSeen?: (id: string) => void;
   onEnterReader?: () => void;
   onAction: (action: MessageAction) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
@@ -1478,6 +1518,7 @@ export function MessagePane({
    * only, re-applied by a `ResizeObserver` while sibling bodies land and grow the stack above the panel, and released
    * for good at the reader's first gesture (`HANDOVER`) or after 6 s.
    */
+  const anchorRelease = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
     if (!showConversation) return;
     const conv = convRef.current;
@@ -1518,11 +1559,10 @@ export function MessagePane({
         if (pad < 0.02 || pad > 0.98) pad = 0;
         last.style.paddingBottom = `${pad.toFixed(3)}px`;
       }
-      scroller.scrollTop =
-        opened.getBoundingClientRect().top -
-        scroller.getBoundingClientRect().top +
-        scroller.scrollTop -
-        14;
+      scrollProgrammatically(
+        scroller,
+        opened.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 14,
+      );
     };
 
     anchor();
@@ -1542,10 +1582,14 @@ export function MessagePane({
     const release = (): void => {
       if (!live) return;
       live = false;
+      if (anchorRelease.current === release) anchorRelease.current = null;
       observer?.disconnect();
       window.clearTimeout(timer);
       for (const ev of HANDOVER) window.removeEventListener(ev, release, true);
     };
+    // A wheel over a framed body never reaches `window`: the reader-seen authority's human scroll
+    // releases the anchor too (`onHumanScroll` below), so one fact decides both.
+    anchorRelease.current = release;
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
@@ -1560,6 +1604,16 @@ export function MessagePane({
     for (const ev of HANDOVER) window.addEventListener(ev, release, true);
     return release;
   }, [message.id, showConversation]);
+
+  /* SCROLL-TO-READ over the sibling panels — a new core per open (`reader-seen.ts`). Mounted only
+     where the shell wires both halves (the Ohbox's column and its sheet). */
+  useReaderSeen({
+    scroller,
+    openedId: message.id,
+    active: showConversation,
+    onSeen: onSiblingSeen,
+    onHumanScroll: () => anchorRelease.current?.(),
+  });
 
   /**
    * THE BODY, HYDRATED.
@@ -1868,7 +1922,7 @@ export function MessagePane({
    * message exactly as on every thread panel. `test/conversation.test.ts` holds the absence.
    */
   const focusedHeader = (
-    <MessageHeader message={message} now={now} onEnterReader={onEnterReader} notice={notice} />
+    <MessageHeader message={message} now={now} onEnterReader={onEnterReader} notice={notice} unreadDot={showConversation} />
   );
 
   const bodyNoteFailed = body.state === "failed" || stalled;
@@ -1892,6 +1946,7 @@ export function MessagePane({
       onTag={(anchor) => onAddTag(message.id, anchor)}
       trash={trash}
       forwardTarget={forwardTarget}
+      readSet={readSet}
     />
   );
 

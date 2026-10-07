@@ -33,6 +33,7 @@ import type { UndoToastFn } from "./undo-door";
 import { placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } from "./cursor-placer";
 import { useCursorPlacer } from "./keymap";
 import type { MessageBarPanel } from "./message-chrome";
+import { createReadSetMemo } from "./conversation-on-screen";
 import { readColumnHidden, watchNarrow } from "./narrow";
 import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import type { RichValue } from "./rich-text";
@@ -592,6 +593,14 @@ export function useShellOpenState({
    * the pin; an ARMED read reads read, so the sheet offers "Mark unread"
    * over a read saved as a glance — and the arm does not spend a pin.
    */
+  /**
+   * THE READER'S MARK AS READ SET (`conversationReadSet`) — the unread members of the conversation
+   * the panels show, minus a resurfaced pin and the armed read. The Ohbox's column and the sheet
+   * over it draw their read slot from it and write it on the press; no other view is handed it.
+   */
+  const readSetMemo = useMemo(() => createReadSetMemo(), []);
+  const readSetFor = useStableCallback((messageId: string): string[] =>
+    readSetMemo(presented, engine.read(), messageId, ohboxArmedRead));
   const sheetPresentsUnread =
     readerMessage != null && (isResurfaced(readerMessage) || (readerMessage.unread && readerMessage.id !== ohboxArmedRead));
   const sheetMessage: EngineMessage | null =
@@ -754,6 +763,16 @@ export function useShellOpenState({
       }),
     [engine],
   );
+  /**
+   * The reader's scroll-to-read over a conversation's sibling panels (`reader-seen.ts`), batched
+   * the same way and labelled a glance: nobody pressed a read verb, so a pin survives it.
+   */
+  const conversationSeenBatch = useMemo(
+    () => createSeenBatcher((ids) => { void markSeen(ids, false, "glance"); }),
+    [markSeen],
+  );
+  const siblingSeen = useStableCallback((id: string) => conversationSeenBatch.add(id));
+  const flushSiblingSeen = useStableCallback(() => conversationSeenBatch.flushNow());
   const readsMarkSeen = useStableCallback((id: string) => readsSeenBatch.add(id));
   const receiptsMarkSeen = useStableCallback((id: string) => receiptsSeenBatch.add(id));
   /**
@@ -766,13 +785,14 @@ export function useShellOpenState({
     const drain = (): void => {
       readsSeenBatch.flushNow();
       receiptsSeenBatch.flushNow();
+      conversationSeenBatch.flushNow();
     };
     window.addEventListener("pagehide", drain);
     return () => {
       window.removeEventListener("pagehide", drain);
       drain();
     };
-  }, [readsSeenBatch, receiptsSeenBatch]);
+  }, [readsSeenBatch, receiptsSeenBatch, conversationSeenBatch]);
 
   /**
    * THE LEAVE-COMMIT, both streams — one anchored `feed_mark_seen` per departure, the
@@ -1295,6 +1315,9 @@ export function useShellOpenState({
     railOpen,
     readerFor,
     readerCrossed,
+    readSetFor,
+    siblingSeen,
+    flushSiblingSeen,
     readerGone,
     readerMessage,
     readsCur,

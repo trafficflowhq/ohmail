@@ -284,7 +284,7 @@ export function RichEditor({
   }, [editor, value.html, value.text]);
 
   useEffect(() => {
-    if (editor && autoFocus) editor.commands.focus("end");
+    if (editor && autoFocus) editor.commands.focus("end", { scrollIntoView: false });
   }, [editor, autoFocus]);
 
   /**
@@ -335,7 +335,7 @@ export function RichEditor({
   const closeLink = useCallback((focusEditor: boolean) => {
     setLinkOpen(false);
     // Escape hands focus back to the message; a click elsewhere took it somewhere on purpose.
-    if (focusEditor) editor?.commands.focus();
+    if (focusEditor) editor?.commands.focus(null, { scrollIntoView: false });
   }, [editor]);
 
   /**

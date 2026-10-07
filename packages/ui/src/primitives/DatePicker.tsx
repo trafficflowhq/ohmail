@@ -210,7 +210,7 @@ export function DatePicker({
     if (!root) return;
     const active = document.activeElement;
     if (active instanceof HTMLElement && root.contains(active) && !active.hasAttribute("data-day")) return;
-    root.querySelector<HTMLButtonElement>(`[data-day="${dayKey(cursor)}"]`)?.focus();
+    root.querySelector<HTMLButtonElement>(`[data-day="${dayKey(cursor)}"]`)?.focus({ preventScroll: true });
   }, [pos, cursor, view.y, view.m]);
 
   // An outside press dismisses — `mousedown`, so the press that opened this cannot close it.
