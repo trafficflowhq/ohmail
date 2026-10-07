@@ -234,8 +234,10 @@ const SKELETON_MIN_LETTERS = 6;
 
 interface GatedBrand {
   brand: Brand; gate: string[]; skeletons: string[]; gateShort: string[]; gateToken: string[];
-  /** Every gate and token needle with its separators removed, digits kept: what a local part's tokens must BE. */
+  /** Every gate and token needle with its separators removed, digits kept: what a run of whole tokens must BE. */
   fused: Set<string>;
+  /** The short needles the same way ("1&1" is "11"): a run that is one claims beside a service word. */
+  shortFused: Set<string>;
 }
 
 /** The rows that count for the fact, their needles folded once. A row without needles is advice. */
@@ -246,8 +248,9 @@ const GATED: readonly GatedBrand[] = BRANDS.flatMap((b) => {
   if (gate.length === 0 && gateShort.length === 0 && gateToken.length === 0) return [];
   // The brand's skeleton keeps its `rn`: folded, `klarna` would read `kiama` in "Stucki Amanda".
   const skeletons = gate.filter((n) => letters(n) >= SKELETON_MIN_LETTERS).map((n) => skeletonOf(n, false).text);
-  const fused = new Set([...gate, ...gateToken].map((n) => n.replace(/[^\p{L}\p{N}]/gu, "")));
-  return [{ brand: b, gate, skeletons, gateShort, gateToken, fused }];
+  const bare = (n: string) => n.replace(/[^\p{L}\p{N}]/gu, "");
+  const fused = new Set([...gate, ...gateToken].map(bare));
+  return [{ brand: b, gate, skeletons, gateShort, gateToken, fused, shortFused: new Set(gateShort.map(bare)) }];
 });
 
 /** Letters and digits, every other run one space: the hay a token needle is read in. */
@@ -315,36 +318,40 @@ function claimSpans(hay: string, g: GatedBrand, readings: readonly Skeleton[], v
 }
 
 /**
- * A LOCAL PART CLAIMS WHOLE TOKENS ONLY — split at `.` `_` `-` `+`, digits and every other
- * non-letter: a run of its tokens must BE a needle, fused, or its skeleton in either reading, and
- * never merely contain one ("administrator@" is not Strato, "revolution@" is not Revolut). A short
- * needle claims as one token beside a service word.
+ * A LOCAL PART AND A LEAD-IN CLAIM WHOLE TOKENS ONLY: a run of their tokens must BE a needle, fused,
+ * or its skeleton in either reading, and never merely contain one ("administrator" is not Strato,
+ * "revolution" is not Revolut). A local part splits at `.` `_` `-` `+`, digits and every other
+ * non-letter; a lead-in keeps a digit in its word (`P0stFinance`) and splits where its case does
+ * (`MyPostFinance`, `PostFinanceCH`). A short needle claims beside a service word.
  */
-interface LocalRun { s: number; e: number; joined: string; read: string[]; short?: string }
-function localRunsOf(hay: string): LocalRun[] {
-  const tokens = [...hay.matchAll(/\p{L}+/gu)].map((m) => ({ t: m[0], s: m.index ?? 0, e: (m.index ?? 0) + m[0].length }));
-  const runs: LocalRun[] = [];
+interface TokenRun { s: number; e: number; joined: string; read: string[]; beside: boolean }
+function tokenRunsOf(hay: string, withDigits: boolean): TokenRun[] {
+  const tokens = [...hay.matchAll(withDigits ? /[\p{L}\p{N}]+/gu : /\p{L}+/gu)]
+    .map((m) => ({ t: m[0], s: m.index ?? 0, e: (m.index ?? 0) + m[0].length }));
+  const runs: TokenRun[] = [];
   for (let i = 0; i < tokens.length; i++) {
     let joined = "";
     for (let j = i; j < tokens.length; j++) {
       joined += tokens[j]!.t;
-      runs.push({ s: tokens[i]!.s, e: tokens[j]!.e, joined, read: readingsOf(joined).map((r) => r.text) });
+      const beside = [tokens[i - 1]?.t, tokens[j + 1]?.t].some((w) => w !== undefined && SERVICE_WORDS.has(w));
+      runs.push({ s: tokens[i]!.s, e: tokens[j]!.e, joined, read: readingsOf(joined).map((r) => r.text), beside });
     }
-    const beside = [tokens[i - 1]?.t, tokens[i + 1]?.t].some((w) => w !== undefined && SERVICE_WORDS.has(w));
-    if (beside) runs.push({ s: tokens[i]!.s, e: tokens[i]!.e, joined: "", read: [], short: tokens[i]!.t });
   }
   return runs;
 }
-function localPartSpans(runs: readonly LocalRun[], g: GatedBrand): Array<[number, number]> {
+function tokenRunSpans(runs: readonly TokenRun[], g: GatedBrand): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   for (const r of runs) {
-    const hit = r.short !== undefined
-      ? g.gateShort.includes(r.short)
-      : g.fused.has(r.joined) || g.skeletons.some((k) => r.read.includes(k));
+    const hit = g.fused.has(r.joined) || g.skeletons.some((k) => r.read.includes(k))
+      || (r.beside && g.shortFused.has(r.joined));
     if (hit) spans.push([r.s, r.e]);
   }
   return spans;
 }
+
+/** A lead-in's words split where its case does, before the fold: `MyPostFinance` reads `My Post Finance`. */
+const splitCase = (s: string): string =>
+  s.replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2").replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, "$1 $2");
 
 /** A shared provider owns nothing: anyone can register an address there, whichever row lists it. */
 function owns(b: Brand, domain: string): boolean {
@@ -410,14 +417,14 @@ export function claimedIdentity(input: IdentityInput): IdentityFact | undefined 
   const local = fold(at < 0 ? input.fromAddress : input.fromAddress.slice(0, at));
   if (local !== "") sources.push({ via: "local_part", hay: local, tag: false });
   const lead = leadInOf(input.subject);
-  if (lead !== undefined) sources.push({ via: "subject_lead", hay: fold(lead.text), tag: lead.tag });
+  if (lead !== undefined) sources.push({ via: "subject_lead", hay: fold(splitCase(lead.text)), tag: lead.tag });
 
   const domain = senderDomainOf(input.fromAddress);
   for (const { via, hay, tag } of sources) {
-    const local = via === "local_part" ? localRunsOf(hay) : null;
-    const readings = local === null ? readingsOf(hay) : [];
+    const runs = via === "name" ? null : tokenRunsOf(hay, via === "subject_lead");
+    const readings = runs === null ? readingsOf(hay) : [];
     const view = tokenView(hay);
-    const hits = GATED.flatMap((g) => (local !== null ? localPartSpans(local, g) : claimSpans(hay, g, readings, view))
+    const hits = GATED.flatMap((g) => (runs !== null ? tokenRunSpans(runs, g) : claimSpans(hay, g, readings, view))
       .filter(([s, e]) => !tag || onlyServiceWordsOutside(hay, s, e))
       .map(([s, e]) => ({ brand: g.brand, s, e })));
     const owned = hits.filter((h) => owns(h.brand, domain));
