@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql } from "@trafficflow/db";
 import type {
@@ -587,7 +587,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * is `cap` — when the cap-th newest was written. Reads at most `cap` failure rows, and the
    * messages only once `cap` of them wait. OPTIONAL: a repo without it counts in memory.
    */
-  writeOffRun?(mailboxId: string, version: string, cap: number): Promise<{ count: number; heldSince: Date | null }>;
+  writeOffRun?(mailboxId: string, version: string, cap: number, exemptCodes: readonly string[]): Promise<{ count: number; heldSince: Date | null }>;
   /**
    * Record (or re-record) one failure, and return the row's attempt count after the write.
    *
@@ -1064,11 +1064,17 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /* THE INSERT IS THE WRITE-OFF: keyed on `first_failed_at`, which no re-failure and no retry claim
      moves (`last_failed_at` moved on both, so five old rows re-failing re-engaged a lifted hold).
-     Bounded at `cap` rows, newest first; the messages read runs only once a full cap waits. */
-  async writeOffRun(mailboxId: string, version: string, cap: number): Promise<{ count: number; heldSince: Date | null }> {
+     Bounded at `cap` rows, newest first; the messages read runs only once a full cap waits.
+     `exemptCodes` (the worker's HOLD_EXEMPT_CODES) never count, and the exclusion is in the WHERE so
+     the `cap` newest rows are all of the counted class. Required and never empty: an empty list is
+     today's defect restored in silence, so it throws. */
+  async writeOffRun(mailboxId: string, version: string, cap: number, exemptCodes: readonly string[]): Promise<{ count: number; heldSince: Date | null }> {
+    if (!Array.isArray(exemptCodes) || exemptCodes.length === 0) {
+      throw new Error("writeOffRun needs the codes the hold never counts (HOLD_EXEMPT_CODES); an empty list would count every set-aside message toward the hold");
+    }
     const failed = await this.db.select({ at: messageFailures.firstFailedAt }).from(messageFailures)
       .where(and(eq(messageFailures.mailboxId, mailboxId), isNull(messageFailures.resolvedAt),
-        eq(messageFailures.attemptedVersion, version)))
+        eq(messageFailures.attemptedVersion, version), notInArray(messageFailures.code, [...exemptCodes])))
       .orderBy(desc(messageFailures.firstFailedAt)).limit(Math.max(1, cap));
     if (failed.length < cap) return { count: failed.length, heldSince: null };
     const [stored] = await this.db.select({ at: messages.createdAt }).from(messages)

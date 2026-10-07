@@ -138,7 +138,7 @@ import { runSyncCycle, type CycleCensus, type SyncDeps } from "@trafficflow/work
    `runSyncCycle` alone, because a second value out of the loop's module would be a second piece of
    the pipeline running here. This is per-attachment state, not a piece of the pipeline. */
 import { KnownSetCache } from "@trafficflow/worker/known-set";
-import { DeadLetterLedger, isDeviceStoreFault } from "@trafficflow/worker/dead-letter";
+import { breachSetAside, DeadLetterLedger, isDeviceStoreFault } from "@trafficflow/worker/dead-letter";
 import { startTailProgress } from "./drain-tail-progress.js";
 
 // The ORGANIZER LEASE, from the same package and for the same reason: two readings of one decision
@@ -3456,10 +3456,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * nobody keeps in step with the first. Jittered so several mailboxes on one server do not
        * knock in unison after an outage.
        */
+      const jittered = (stepMs: number): number => Math.round(stepMs * (0.8 + Math.random() * 0.4));
       const climbTheLadder = (): void => {
         redialAttempts += 1;
-        const step = redialStepMs(reconnect, redialAttempts);
-        redialNotBefore = Date.now() + Math.round(step * (0.8 + Math.random() * 0.4));
+        redialNotBefore = Date.now() + jittered(redialStepMs(reconnect, redialAttempts));
       };
 
       /**
@@ -3887,8 +3887,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         /* OUTSIDE the guard, and it is not the same question. `connectionDeadSince` clears on a
            re-dial that reached a live server; `outageSince` clears only when a cycle is actually
            SERVED (`noteCycleServed`), so the two can be in states where a later death has to
-           re-arm the person's clock while the death itself is not news. */
-        outageSince ??= connectionDeadSince;
+           re-arm the person's clock while the death itself is not news. A read bound retiring the
+           connection arms nothing here: the server answered, and whether the breach set its message
+           aside (progress) is known only at the re-dial, whose failure arm arms the clock. */
+        if (!isImapBoundExceeded(err)) outageSince ??= connectionDeadSince;
         // CLOSED ON THE QUEUE, never inline: a cycle may be mid-batch over this very adapter, and
         // closing it under one is how a drain re-reads mail it already had. `detach()` and the
         // re-dial take the same queue, so whichever runs first, the other sees a settled state.
@@ -4234,6 +4236,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *  re-arming blind: re-arming a timer that has already waited 100 s of its 120 pushes the
        *  drain FURTHER away, which is the opposite of what every caller of it wants. */
       let timerDueAt = 0;
+      /** A re-dial after a set-aside is due at this instant; the next poll is armed no later. */
+      let floorPollAt = 0;
       /**
        * THE HEARTBEAT'S OWN TIMER, AND WHY IT IS NOT THE POLL'S.
        *
@@ -6668,6 +6672,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            drains"); the enforcement belongs here, where the timer is. `stopped` returns first. */
         if (timer) clearTimeout(timer);
         const kick = delayMs === 0;
+        /* A RE-DIAL AFTER A SET-ASIDE IS DUE AT THE LADDER'S FIRST STEP, so the next poll comes AT
+           it: earlier would be deferred and then wait a whole interval, later is the idle ladder
+           taxing progress. Nothing is drained meanwhile (the connection is retired). A floor in
+           the past is spent. */
+        if (floorPollAt <= Date.now()) floorPollAt = 0;
+        const due = delayMs ?? (floorPollAt > 0 ? floorPollAt - Date.now() : idlePollMs);
         timer = setTimeout(() => {
           /* SPENT THE MOMENT IT FIRES, before anything can await. Left standing, the guard above
              refuses every later re-arm and the mailbox stops polling altogether after its first
@@ -6698,8 +6708,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             /* A kick whose drain never reached `drainPass` (a skipped launch, a blocked
                credential) must not leave every later ring answering "already queued". */
             .finally(() => { if (kick) ringQueued = false; schedule(); });
-        }, delayMs ?? idlePollMs);
-        timerDueAt = Date.now() + (delayMs ?? idlePollMs);
+        }, due);
+        timerDueAt = Date.now() + due;
         timer.unref?.();
       };
 
@@ -7139,9 +7149,30 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             return;
           }
           /* THE CONNECTION THIS RE-DIAL OPENED DIED INSIDE ITS OWN GATE — a read bound retired
-             it. Not a reconnect: the catch below climbs the ladder and names the failure, and the
-             death stays on record so the next due poll dials again. */
-          if (deadGeneration === generation) throw outcome.drainError ?? new ImapConnectionClosedError();
+             it. If the breach set its message aside, that is progress: no ladder step, no outage,
+             and the next re-dial at the first step. Otherwise the catch below climbs the ladder;
+             either way the death stays on record so the next due poll dials again. */
+          if (deadGeneration === generation) {
+            if (breachSetAside(outcome.drainError, deadLetters)) {
+              redialAttempts = 0;
+              redialNotBefore = Date.now() + jittered(reconnect.ladderMs[0]!);
+              outageSince = null;
+              idlePollMs = pollIntervalMs;
+              floorPollAt = redialNotBefore;
+              schedule();
+              log("mailbox_redial_after_set_aside", {
+                mailboxId: mb.id,
+                attempt: redialAttempts,
+                retryInMs: Math.max(0, redialNotBefore - Date.now()),
+                skipped: deadLetters.skipped,
+                reason: "the connection was retired after a message the server sent more of than it " +
+                  "declared was set aside; that is progress, so the next re-dial waits the first " +
+                  "step and no outage is reported",
+              });
+              return;
+            }
+            throw outcome.drainError ?? new ImapConnectionClosedError();
+          }
           /* The socket is up. That is not the same as the mailbox being served.
            * `connectionDeadSince` clears either way — it is what makes the next poll re-dial, and
            * re-dialling over an answering server would churn logins a provider counts. `outageSince`
@@ -7198,6 +7229,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * A refused sign-in stops the automatic re-dial for good; anything else widens the
            * wait. Without this the log line below was literally true — "the next poll tries
            * again" — and that was the defect, not the remedy. */
+          /* A RE-DIAL THAT MADE NO PROGRESS IS THE OUTAGE, from the first death's instant. A read
+             bound's death armed nothing at the event (see `noteConnectionDead`), so this is where
+             its clock starts; any other death already armed it and keeps its first instant. */
+          outageSince ??= connectionDeadSince;
           if (err instanceof PlaintextDialRefused) plaintextRefusedNow = true;
           if (certificateRefused(err)) {
             /* No password was sent: the platform refused the handshake before LOGIN. Force or

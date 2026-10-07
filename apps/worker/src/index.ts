@@ -78,7 +78,7 @@ import {
  */
 const JUNK_SWEEP_PER_CYCLE = 200;
 import { makeStorageCapResolver } from "./storage-cap.js";
-import { DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
+import { breachSetAside, DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
 import { KnownSetCache } from "./known-set.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { markDatabaseFaults, asDatabaseFault } from "./db-fault.js";
@@ -2197,8 +2197,9 @@ export async function startWorkerWithLock(
           ? "the provider connection ENDED (imapflow emitted `close`, which nothing listened for " +
             "until the dead-connection fix); detaching THIS mailbox so the next roster pass re-dials it — NOT " +
             "quarantined, because a socket that closed is not a broken mailbox"
-          : "the provider connection emitted an error; detaching and quarantining THIS " +
-            "mailbox — before this listener existed the same event exited the process",
+          : "the provider connection emitted an error; detaching THIS mailbox and quarantining it " +
+            "unless a read bound retired it after setting a message aside — before this listener " +
+            "existed the same event exited the process",
       });
       void serialize(async () => {
         const rt = runtimes.get(mailboxId);
@@ -2207,6 +2208,12 @@ export async function startWorkerWithLock(
         if (!rt || stopped) return;
         if (ended) {
           await detach(rt, "the provider connection closed — the next roster pass re-attaches it on a fresh one");
+          return;
+        }
+        /* After the cycle on this queue: a breach whose message the cycle set aside is progress,
+           so the mailbox is re-attached by the next roster pass and not quarantined. */
+        if (breachSetAside(err, rt.deps.deadLetters)) {
+          await detach(rt, "retired after a message was set aside — the next roster pass re-attaches it");
           return;
         }
         await detach(rt, "the provider connection emitted an error");
@@ -4138,12 +4145,24 @@ export async function startWorkerWithLock(
             });
             return;
           }
-          rt.failures++;
-          log.error("sync_cycle_failed", {
-            mailboxId: rt.mailboxId, accountId: rt.accountId,
-            consecutiveFailures: rt.failures, maxSyncFailures, err,
-            ...(isImapBoundExceeded(err) ? { ceiling: err.bound, ceilingLimit: err.limit } : {}),
-          });
+          /* A BREACH WHOSE MESSAGE WAS SET ASIDE IS PROGRESS: the row committed, the connection is
+             retired and the next roster pass re-attaches. NOT counted toward maxSyncFailures. */
+          const setAside = breachSetAside(err, rt.deps.deadLetters);
+          if (setAside) {
+            log.info("sync_cycle_set_aside", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId,
+              reason: "the server sent more of one message than it declared; that message is set " +
+                "aside and the connection retired — NOT counted toward maxSyncFailures and NOT " +
+                "quarantined",
+            });
+          } else {
+            rt.failures++;
+            log.error("sync_cycle_failed", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId,
+              consecutiveFailures: rt.failures, maxSyncFailures, err,
+              ...(isImapBoundExceeded(err) ? { ceiling: err.bound, ceilingLimit: err.limit } : {}),
+            });
+          }
           /* A first import that ended on one of OUR ceilings still read the mailbox: stamp the
              progress the `sync_lag` rule reads while no cycle has completed. Measured on a 25k
              fixture: the first cycle ran six minutes and ended here, one failure the quarantine
@@ -4161,7 +4180,7 @@ export async function startWorkerWithLock(
               });
             }
           }
-          if (rt.failures >= maxSyncFailures) toQuarantine.push({ rt, err });
+          if (!setAside && rt.failures >= maxSyncFailures) toQuarantine.push({ rt, err });
         }
       }
 

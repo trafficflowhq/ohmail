@@ -1,7 +1,7 @@
 import {
   MimeParseError, MimeTooLargeError, StoreStatementFaultError, storeFaultOf, type NativeLocator, type StoreFaultName,
 } from "@trafficflow/core/mail";
-import { epochOf, parseRef, sameEpoch } from "@trafficflow/core/adapters/imap";
+import { epochOf, isImapBoundExceeded, parseRef, sameEpoch } from "@trafficflow/core/adapters/imap";
 
 /* The device store's mark lives beside `storeFaultOf` in core's log leaf, which imports nothing: the
    stores that throw it (apps/sidecar's db.ts and mobile.ts) must not reach this module's IMAP import. */
@@ -463,6 +463,20 @@ export const DETERMINISTIC_MESSAGE_FAILURE_CODES = [
 ] as const satisfies readonly MessageFailureCode[];
 
 /**
+ * The codes the LOCAL BACKSTOP'S RUN never counts, in memory or in the store (`writeOffRun`). The hold
+ * exists for a build of ours refusing readable mail; a `mime_too_large` row is a bound ohmail applied
+ * to the server's bytes (an overrun, a stated size past the MIME ceiling, or `normalizeMime`'s
+ * refusal), so a run of them is no evidence of that and holding ordinary write-offs over it strands
+ * mail for no reason. The per-cycle cap still applies to every code. The repo cannot import this
+ * app's types, so the caller passes this list; this is its one definition.
+ */
+export const HOLD_EXEMPT_CODES = ["mime_too_large"] as const satisfies readonly MessageFailureCode[];
+
+/** Does a write-off under this code stay out of the backstop's run? See {@link HOLD_EXEMPT_CODES}. */
+export const holdExemptCode = (code: string): boolean =>
+  (HOLD_EXEMPT_CODES as readonly string[]).includes(code);
+
+/**
  * The ledger's in-memory identity for one message coordinate — DELIMITED, because the three parts are
  * variable-length and a folder name is chosen by the mail server. The first version was
  * `${folder}${uidValidity}${uid}`, and concatenating variable-length parts with no separator is
@@ -478,6 +492,20 @@ const keyOf = (folder: string, uidValidity: string, uid: number): string =>
 /* THE EPOCH AS `recordMessageFailure` STORES IT: digits as a number, anything else `0`. A ref with no
    UIDVALIDITY parses as "undefined" while its row reads back "0"; keyed apart, one message counted twice. */
 const storedEpoch = (v: string): string => (/^[0-9]+$/.test(v) ? String(BigInt(v)) : "0");
+
+/**
+ * WAS THIS BREACH PROGRESS? A per-message `body_overrun` that names its message, and that message is
+ * written off in this ledger — `has()` is `terminal`, which `revoke` clears when the durable row could
+ * not be written, so it reads "the set-aside row committed". Asked at cycle end by both engines: such
+ * a breach does not climb the reconnect ladder, arm the outage clock or count toward quarantine. A
+ * breach naming no message (the batch total), a set-aside the cap or hold refused, or a revoked row
+ * answers false and stays a failure.
+ */
+export function breachSetAside(err: unknown, ledger: Pick<DeadLetterLedger, "has"> | undefined): boolean {
+  if (ledger === undefined || !isImapBoundExceeded(err) || err.bound !== "body_overrun") return false;
+  if (err.site === undefined || err.folder === undefined) return false;
+  return ledger.has(err.folder, err.site.uidValidity, err.site.uid);
+}
 
 /**
  * The ledger itself: per mailbox, held on the `MailboxRuntime`'s `SyncDeps` so it lives as long as
@@ -499,8 +527,6 @@ export class DeadLetterLedger {
   /** Write-offs since the last stored message: as the store said at cycle start, and this cycle's. */
   private runBefore = 0;
   private runThisCycle = 0;
-  /** Write-offs taken exempt from the hold ({@link record}'s `holdExempt`), for {@link revoke}. */
-  private readonly holdExemptKeys = new Set<string>();
   /**
    * THE LOCAL BACKSTOP. The per-cycle cap assumes a failing cycle quarantines the mailbox; a local
    * engine has none, so a defect refusing every message would write the mail off as it arrives, at
@@ -633,7 +659,7 @@ export class DeadLetterLedger {
     item.terminal = false;
     if (this.thisCycle > 0) this.thisCycle--;
     // An exempt write-off never joined the run, so its revoke leaves the run alone.
-    if (this.holdExemptKeys.delete(key)) return;
+    if (holdExemptCode(item.code)) return;
     if (this.runThisCycle > 0) this.runThisCycle--;
   }
 
@@ -649,7 +675,6 @@ export class DeadLetterLedger {
    */
   record(
     locator: NativeLocator, fault: { code: MessageFailureCode; deterministic: boolean },
-    opts: { holdExempt?: boolean } = {},
   ): "skip" | "retry" {
     const { uidValidity, uid } = parseRef(locator.ref);
     const key = keyOf(locator.folder, uidValidity, uid);
@@ -666,16 +691,15 @@ export class DeadLetterLedger {
     if (item.terminal) return "skip";                       // already written off; do not re-count
     const exhausted = fault.deterministic || item.attempts >= this.maxAttempts;
     if (!exhausted) return "retry";
-    /* A READ-BOUND OVERRUN names one known message the server will not send within its size, so
-       a standing hold does not refuse it (that would strand the folder it stopped) and this
-       cycle's run does not count it. The run reloaded from the store at the next cycle does
-       (`writeOffRun` counts every row), so the hold can still engage. The per-cycle cap applies. */
-    const exempt = opts.holdExempt === true;
+    /* A HOLD-EXEMPT CODE ({@link HOLD_EXEMPT_CODES}) is a bound we applied to the server's bytes:
+       a standing hold does not refuse it and the run does not count it, here or in the store's
+       `writeOffRun`, which takes the same list. The per-cycle cap applies to every code. */
+    const exempt = holdExemptCode(fault.code);
     if (!exempt && this.heldSince !== null) return "retry"; // the local backstop holds
     if (this.thisCycle >= this.perCycleCap) return "retry";  // the safety valve, above
     this.thisCycle++;
     item.terminal = true;
-    if (exempt) { this.holdExemptKeys.add(key); return "skip"; }
+    if (exempt) return "skip";
     if (this.holdsAtCap) {
       this.runThisCycle++;
       if (this.runBefore + this.runThisCycle >= this.perCycleCap) this.heldSince ??= now;

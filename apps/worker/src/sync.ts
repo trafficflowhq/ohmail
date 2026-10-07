@@ -21,7 +21,7 @@ import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } fr
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, isStoreStatementFault, nextAttemptAfter,
-  DETERMINISTIC_MESSAGE_FAILURE_CODES, MAX_DEAD_LETTERS_PER_CYCLE, MAX_MESSAGE_RETRIES_PER_CYCLE,
+  DETERMINISTIC_MESSAGE_FAILURE_CODES, HOLD_EXEMPT_CODES, MAX_DEAD_LETTERS_PER_CYCLE, MAX_MESSAGE_RETRIES_PER_CYCLE,
   type MessageFailureCode,
 } from "./dead-letter.js";
 import { KnownSetCache, watchKnownSet } from "./known-set.js";
@@ -981,7 +981,7 @@ async function syncCycleWithin(
   // outlives a relaunch under this build's label and a new label starts the count again.
   const heldBefore = deadLetters.writeOffsHeldSince !== null;
   if (deadLetters.holdsAtCap && typeof repo.writeOffRun === "function") {
-    deadLetters.hydrateRun(await repo.writeOffRun(mailboxId, version, MAX_DEAD_LETTERS_PER_CYCLE));
+    deadLetters.hydrateRun(await repo.writeOffRun(mailboxId, version, MAX_DEAD_LETTERS_PER_CYCLE, HOLD_EXEMPT_CODES));
   }
 
   // ── USER-COMMANDED FOLDER OPERATIONS, FIRST (FOLDERS-SPEC.md stage 2) ──────────────────────
@@ -1237,11 +1237,10 @@ async function syncCycleWithin(
    */
   async function writeOff(
     locator: NativeLocator, fault: { code: MessageFailureCode; deterministic: boolean }, err: unknown,
-    opts: { holdExempt?: boolean } = {},
   ): Promise<void> {
     const { uidValidity: siteEpoch, uid: siteUid } = parseRef(locator.ref);
     const site = { folder: locator.folder, uidValidity: siteEpoch, uid: siteUid };
-    const verdict = deadLetters.record(locator, fault, opts);
+    const verdict = deadLetters.record(locator, fault);
     if (verdict === "retry") {
       deferred.add(site.folder);
       if (firstDeferredError === null) firstDeferredError = err;
@@ -1465,7 +1464,7 @@ async function syncCycleWithin(
     if (!isImapBoundExceeded(overrun.breach) || overrun.breach.bound !== "body_overrun") throw overrun.breach;
     await writeOff(
       { folder: overrun.folder, ref: makeRef(overrun.uidValidity, overrun.uid) },
-      { code: "mime_too_large", deterministic: true }, overrun.breach, { holdExempt: true },
+      { code: "mime_too_large", deterministic: true }, overrun.breach,
     );
   }
 
@@ -1570,7 +1569,8 @@ async function syncCycleWithin(
   }
 
   // The pass stopped at an overrun: its work is committed and the connection is retired, so the
-  // cycle ends with the breach and the caller re-dials.
+  // cycle ends with the breach and the caller re-dials. The caller reads the ledger
+  // (`breachSetAside`) to tell a breach whose message was set aside, which is progress, from a failure.
   if (overrun !== undefined) throw overrun.breach;
 
   // AFTER the cursor writes, and skipped entirely when anything is deferred — see
