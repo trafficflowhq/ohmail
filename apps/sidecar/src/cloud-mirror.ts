@@ -1717,6 +1717,13 @@ async function applyUpsert(
            hosted answer and a forged `From` stays a claim here. Absent on the wire is NULL, "nobody
            asked" — the permissive reading an older server's rows always had. In the conflict set. */
         authVerdict: m.authVerdict ?? null,
+        /* THE IDENTITY FACT Cloud computed (mail 0147), so the local door re-emits the chip, the
+           reader line and the held pictures. Absent on the wire is NULL ("never checked"), `null`
+           is `'none'`, the claim is `'impersonation'` with its brand. In the conflict set: a
+           backfill that marks a row later repaints it here. */
+        senderCheck: m.senderCheck === undefined ? null
+          : m.senderCheck === null ? "none" : m.senderCheck.reason === "impersonation" ? "impersonation" : null,
+        senderCheckBrand: m.senderCheck?.reason === "impersonation" ? m.senderCheck.brand : null,
         snippet: m.snippet ?? "",
         toAddresses: m.to ?? [],
         ccAddresses: m.cc ?? [],
