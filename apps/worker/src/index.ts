@@ -4672,8 +4672,9 @@ export async function startWorkerWithLock(
       },
       sender_check_backfill: {
         // The identity fact for the Ohbox and Screener rows ingested before mail 0147, one page per
-        // account per tail. Once the set answers empty the call is one indexed read. Contained: a
-        // failure leaves the rows unchecked and the page sentence-less until the next tail.
+        // account per tail, then the act's contacts from before it, each contact written once. Once
+        // both sets answer empty the call is two reads: the unchecked rows and the source-less
+        // contacts. Contained: a failure leaves the rows unchecked until the next tail.
         run: async (accountId) => {
           try {
             await senderCheckBackfillPass(db as unknown as Tx, { accountId, log });

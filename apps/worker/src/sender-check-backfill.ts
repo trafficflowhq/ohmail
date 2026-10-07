@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   contacts, fencedAccountWrite, folderState, messages, SCREENER_ACT_TRIGGER_PREFIX, type Tx,
 } from "@trafficflow/db";
@@ -45,14 +45,15 @@ export interface SenderCheckBackfillResult {
 /** The two places a banner is read when a person decides. Archive and Sent rows stay unchecked. */
 const IN_SCOPE = ["INBOX", "ohmail/Screener"] as const;
 
-/** Contacts one call reads for {@link markLegacyActContacts}. */
-export const LEGACY_ACT_CONTACTS_BATCH = 500;
+/** Contacts one call examines for {@link markLegacyActContacts}. */
+export const LEGACY_ACT_CONTACTS_BATCH = 5000;
 
 /**
  * THE ACT'S CONTACTS FROM BEFORE THE COLUMN (mail 0147): a contact the act on suggestions wrote
- * before `contacts.source` existed is NULL, which reads as a person's. One whose every Screener
- * decision on record came from the act (`screener:auto:`) and none from anybody else is marked
- * inferred. Bounded per call, logged, and it moves no mail; the NULL set is the cursor.
+ * before `contacts.source` existed is NULL, which reads as a person's. Every NULL row the pass
+ * examines is written in one statement: inferred where each Screener decision on record came from
+ * the act (`screener:auto:`), person — the reading NULL already had — otherwise. No contact is
+ * read twice, so a call costs what is new. Bounded per call, logged; it moves no mail.
  */
 export async function markLegacyActContacts(
   db: Tx, deps: { accountId: string; batch?: number },
@@ -60,22 +61,22 @@ export async function markLegacyActContacts(
   // A literal, not a parameter: the sidecar names this statement, and a generic plan over a bound
   // pattern loses the (account, trigger) index its custom plan uses.
   const act = sql.raw(`'${SCREENER_ACT_TRIGGER_PREFIX.replace(/'/g, "''")}%'`);
-  const decided = (by: SQL) => sql`exists (
-    select 1 from learning_signals ls
-     where ls.account_id = ${contacts.accountId} and ls.kind = 'screener'
-       and lower(ls.sender_address) = lower(${contacts.address}) and ${by})`;
   return fencedAccountWrite(db, { accountId: deps.accountId }, async (tx) => {
-    const rows = await tx.select({ id: contacts.id }).from(contacts)
-      .where(and(
-        eq(contacts.accountId, deps.accountId), isNull(contacts.source),
-        decided(sql`ls.triggering_action_id like ${act}`),
-        sql`not ${decided(sql`ls.triggering_action_id not like ${act}`)}`,
-      ))
-      .limit(deps.batch ?? LEGACY_ACT_CONTACTS_BATCH);
-    if (rows.length === 0) return 0;
-    await tx.update(contacts).set({ source: "inferred" })
-      .where(and(eq(contacts.accountId, deps.accountId), inArray(contacts.id, rows.map((r) => r.id)), isNull(contacts.source)));
-    return rows.length;
+    const ids = (await tx.select({ id: contacts.id }).from(contacts)
+      .where(and(eq(contacts.accountId, deps.accountId), isNull(contacts.source)))
+      .limit(deps.batch ?? LEGACY_ACT_CONTACTS_BATCH)).map((r) => r.id);
+    if (ids.length === 0) return 0;
+    // The senders whose every Screener decision came from the act, read once for the statement.
+    const actOnly = sql`select lower(ls.sender_address) from learning_signals ls
+       where ls.account_id = ${deps.accountId} and ls.kind = 'screener' and ls.sender_address is not null
+       group by lower(ls.sender_address)
+      having min(case when ls.triggering_action_id like ${act} then 1 else 0 end) = 1`;
+    await tx.update(contacts)
+      .set({ source: sql`case when lower(${contacts.address}) in (${actOnly}) then 'inferred' else 'person' end` })
+      .where(and(eq(contacts.accountId, deps.accountId), inArray(contacts.id, ids), isNull(contacts.source)));
+    const [n] = await tx.select({ n: sql<number>`count(*)` }).from(contacts)
+      .where(and(eq(contacts.accountId, deps.accountId), inArray(contacts.id, ids), eq(contacts.source, "inferred")));
+    return Number(n?.n ?? 0);
   });
 }
 
