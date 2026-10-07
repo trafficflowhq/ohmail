@@ -5,8 +5,8 @@ import {
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
-  epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, type Epoch,
-  type BudgetStop, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
+  epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, type Epoch,
+  type BudgetStop, type ChangeBatch, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
@@ -439,7 +439,12 @@ export async function buildCursor(
   const folders: ImapCursor["folders"] = {};
   for (const f of names) {
     const row = folderRows.find((r) => r.folder === f);
-    const epoch = epochs.get(f) ?? "0";
+    /* A FOLDER WHOSE FIRST PASS NEVER FINISHED names no epoch, so the message that ended it would
+       not be presented as known and the next pass fetched it again. Its set-aside rows name one:
+       the adapter checks it against the server's, so a reset still re-enumerates. */
+    const named = epochs.get(f) ?? "0";
+    const epoch = epochOf(named).known ? named
+      : soleEpochOf(deadLetters?.entries().filter((e) => e.terminal && e.folder === f) ?? []);
     folders[f] = {
       uidValidity: epoch,
       uidNext: row?.uidNext ?? 0,
@@ -1153,7 +1158,13 @@ async function syncCycleWithin(
 
   const persistedFolders = new Map<string, PersistedFolderCursor>();
   const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet, persistedFolders);
-  const batch = await adapter.changesSince(cursor);
+  let batch: ChangeBatch;
+  try {
+    batch = await adapter.changesSince(cursor);
+  } catch (err) {
+    await setAsideOverrun(deps, err, version);
+    throw err;
+  }
   if (deps.census !== undefined) {
     deps.census.observed += batch.creates.length + batch.moves.length
       + batch.flagChanges.length + batch.deletes.length + (batch.resetGone?.length ?? 0);
@@ -1653,6 +1664,39 @@ async function consentPointFor(
   if (readerMode || !creates.some((c) => c.ownAuthored === true)) return undefined;
   if (typeof deps.repo.correspondenceSince !== "function") return undefined;
   return (await deps.repo.correspondenceSince(deps.accountId, deps.mailboxId)) ?? undefined;
+}
+
+/**
+ * A MESSAGE WHOSE OWN BYTES CROSSED A READ BOUND IS SET ASIDE ON THE FIRST BREACH. The breach is
+ * thrown out of `changesSince` before any `Change` exists, so the `attempt` boundary never saw it
+ * and the re-dial fetched the same UID and breached again, every cycle. Its row is the one the
+ * RFC822.SIZE arm writes (`mime_too_large`, next look a new build), so the known-set excludes it
+ * from the next fetch. The breach is rethrown by the caller: the connection is retired either way.
+ */
+async function setAsideOverrun(deps: SyncDeps, err: unknown, version: string): Promise<void> {
+  if (!isImapBoundExceeded(err) || err.site === undefined || err.folder === undefined) return;
+  const { mailboxId, accountId, log } = deps;
+  const folder = err.folder;
+  const { uidValidity, uid } = err.site;
+  try {
+    const attempts = await fencedLiveGroup(deps, (r) => r.recordMessageFailure(mailboxId, {
+      accountId, folder, uidValidity, uid, code: "mime_too_large", version,
+      nextAttemptAt: nextAttemptAfter("mime_too_large", 1, new Date()),
+    }));
+    log?.warn("sync_uid_overrun_set_aside", {
+      mailboxId, accountId, folder, uidValidity, uid, attempts,
+      reason: "the server sent more bytes for this message than its declared size allows, so the " +
+        "connection was retired; the message is set aside so the next connection does not fetch " +
+        "it again, and a later build re-reads it by UID",
+    });
+  } catch (writeErr) {
+    rethrowRefusal(writeErr);
+    log?.error("sync_uid_overrun_unrecordable", {
+      mailboxId, accountId, folder, uidValidity, uid, err: writeErr,
+      reason: "the message that crossed a read bound could not be set aside, so the next " +
+        "connection will fetch it again",
+    });
+  }
 }
 
 async function retryFailedMessages(

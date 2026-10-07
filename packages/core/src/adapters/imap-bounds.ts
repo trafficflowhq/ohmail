@@ -45,17 +45,25 @@ export type ImapBoundKind =
  */
 export class ImapBoundExceeded extends Error {
   readonly code = "EIMAPBOUND";
+  /**
+   * The ONE message whose own bytes crossed the bound, where one did: a per-message
+   * `body_overrun` names it, so the caller can set that message aside before the re-dial asks for
+   * it again. Absent for every bound no single message decides (a listing, a clock, a batch total).
+   */
+  readonly site?: { readonly uidValidity: string; readonly uid: number };
   constructor(
     readonly bound: ImapBoundKind,
     readonly limit: number,
     readonly observed: number,
     readonly folder?: string,
+    site?: { uidValidity: string; uid: number },
   ) {
     super(
       `imap server exceeded the ${bound} ceiling: ${observed} past a limit of ${limit}` +
       (folder !== undefined ? ` (folder ${folder})` : ""),
     );
     this.name = "ImapBoundExceeded";
+    if (site !== undefined) this.site = { uidValidity: site.uidValidity, uid: site.uid };
   }
 }
 

@@ -2794,6 +2794,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       if (arrived > bodyOverrunCeiling(declared)) {
         const because = new ImapBoundExceeded(
           "body_overrun", bodyOverrunCeiling(declared), arrived, folder,
+          { uidValidity: String(curUidValidity), uid: m.uid },
         );
         this.retireConnection(because);
         throw because;
@@ -2870,6 +2871,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         if (arrivedRetry > bodyOverrunCeiling(declaredRetry)) {
           const becauseRetry = new ImapBoundExceeded(
             "body_overrun", bodyOverrunCeiling(declaredRetry), arrivedRetry, folder,
+            { uidValidity: String(curUidValidity), uid: m.uid },
           );
           this.retireConnection(becauseRetry);
           throw becauseRetry;
@@ -2934,7 +2936,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       deadline.check(folder);
       const arrived = Buffer.isBuffer(m.headers) ? m.headers : Buffer.alloc(0);
       if (arrived.length > OVERSIZE_HEAD_MAX_BYTES) {
-        const because = new ImapBoundExceeded("body_overrun", OVERSIZE_HEAD_MAX_BYTES, arrived.length, folder);
+        const because = new ImapBoundExceeded(
+          "body_overrun", OVERSIZE_HEAD_MAX_BYTES, arrived.length, folder,
+          { uidValidity: String(curUidValidity), uid: m.uid },
+        );
         this.retireConnection(because);
         throw because;
       }

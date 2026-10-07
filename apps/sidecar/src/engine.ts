@@ -3423,6 +3423,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * — see {@link ConnectionReplacedError}.
        */
       let generation = 0;
+      /**
+       * WHICH DIAL THE RECORDED DEATH BELONGS TO, and whether it was a read bound retiring it. A
+       * re-dial's own connection can die inside its gate while the previous death is still on
+       * record; keyed on the generation, that is news, and the re-dial does not clear it. A
+       * breach-retired adapter refuses every call, so no cycle drains over it (`syncUntilQuiet`).
+       */
+      let deadGeneration = 0;
+      let deadByBreach = false;
 
       /**
        * REFUSE TO CONTINUE A PASS WHOSE CONNECTION HAS BEEN REPLACED.
@@ -3856,8 +3864,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * The second arrival is silent; the close below stays keyed to the reporting
          * connection, not the death.
          */
-        if (connectionDeadSince === null) {
-          connectionDeadSince = now();
+        /* THE DEATH OF A LATER DIAL IS NEWS even while an earlier one is on record: a re-dial's
+           own connection retired inside its gate was swallowed here, and the re-dial then
+           cleared the record over a dead socket. The outage clock keeps its first instant. */
+        const news = connectionDeadSince === null || deadGeneration !== gen;
+        deadGeneration = gen;
+        if (news) {
+          deadByBreach = isImapBoundExceeded(err);
+          connectionDeadSince ??= now();
           connectionDeadBy = "event";
           log("mailbox_connection_unavailable", {
             err, mailboxId: mb.id,
@@ -6571,6 +6585,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            half-open link reached the drain and hung inside it. Never throws. */
         await heartbeat();
         await redialIfDead({ force: opts.force === true });
+        /* A CONNECTION A READ BOUND RETIRED IS NEVER DRAINED: it refuses every call with the stale
+           breach in milliseconds. Until the ladder lets the re-dial through, the cycle says so. */
+        if (connectionDeadSince !== null && deadGeneration === generation && deadByBreach) {
+          log("mailbox_redial_deferred", {
+            mailboxId: mb.id,
+            attempt: redialAttempts,
+            retryInMs: Math.max(0, redialNotBefore - Date.now()),
+            reason: "the server sent more than this install accepts and the connection was " +
+              "retired; nothing is drained over it, and the next due poll dials a new one",
+          });
+          return 0;
+        }
         /* AND NOTHING IS DRAINED OVER A CONNECTION THAT WAS NEVER OPENED. The poll is armed for a
            mailbox whose stored password could not be used so the READ is retried on the ladder —
            see `redialIfDead` — and a drain here would fail on every tick against an adapter that
@@ -6979,7 +7005,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              in `start()` so a RE-DIAL re-arms on the new connection — the watch belongs to the
              socket, and a mailbox that came back from an outage must not rest behind a doorbell
              that died with the old one. */
-          await armWake(conn);
+          /* Not over a connection that died in this gate: the watch would be asked of a retired
+             connection; the re-dial arms it on the next one. */
+          if (deadGeneration !== gen) await armWake(conn);
           // (the poll timer is armed by the caller — see the header)
           return drainError === undefined ? { leaseRead: true } : { leaseRead: true, drainError };
         } catch (err) {
@@ -7110,6 +7138,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await adapter.close().catch(() => { /* already going away */ });
             return;
           }
+          /* THE CONNECTION THIS RE-DIAL OPENED DIED INSIDE ITS OWN GATE — a read bound retired
+             it. Not a reconnect: the catch below climbs the ladder and names the failure, and the
+             death stays on record so the next due poll dials again. */
+          if (deadGeneration === generation) throw outcome.drainError ?? new ImapConnectionClosedError();
           /* The socket is up. That is not the same as the mailbox being served.
            * `connectionDeadSince` clears either way — it is what makes the next poll re-dial, and
            * re-dialling over an answering server would churn logins a provider counts. `outageSince`
