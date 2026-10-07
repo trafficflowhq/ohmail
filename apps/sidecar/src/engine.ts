@@ -1933,13 +1933,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const statisticsUpkeep = createStatisticsUpkeep(() => opened.analyzeSearchIfStale());
     /* THE WAIT FOR THE WINDOW'S FIRST PAGE, one spelling for the poll's drain and the launch's
        (`first-page-gate.ts`). TWO LINES, NOT ONE WITH A FIELD: a rig greps for an event, and the
-       drain yielded and got its page, or the bound fired and it went anyway. `already` says nothing. */
+       drain yielded and got its page, or the bound fired and it went anyway. A wait of nothing
+       (`already`, or a grace spent before the drain asked) says nothing. */
     const yieldToFirstPage = async (): Promise<void> => {
       const yieldedAt = Date.now();
       const waited = await awaitFirstPage();
       const waitedMs = Date.now() - yieldedAt;
       if (waited === "served") log("first_page_before_drain", { waitedMs });
-      else if (waited === "timed-out") log("first_page_grace_expired", { waitedMs });
+      else if (waited === "timed-out" && waitedMs > 0) log("first_page_grace_expired", { waitedMs });
     };
     const tWorld = Date.now();
     const world = await ensureLocalWorld(db, { address, ...(config.displayName ? { displayName: config.displayName } : {}), now: now() });
@@ -6957,9 +6958,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* THE LAUNCH DRAIN WAITS FOR THE WINDOW'S FIRST PAGE TOO: its first cycle reads every
              locator of the mailbox in one statement whose result blocks the loop (74,003 rows, 4 to
              6 s on a measured install), and only the poll's drain asked the gate. Bounded by the
-             grace armed at serving; a re-dial after the first page reads `already`. Only where a
-             door armed it: the phone serves no such page, and its launch must not wait the grace. */
+             grace armed at serving; a re-dial after the page, or after the grace, waits nothing and
+             logs nothing. Only where a door armed it: the phone serves no such page. A stop during
+             the wait drains nothing; `detach()` gives the claim back. */
           if (firstPageDoorArmed()) await yieldToFirstPage();
+          if (stopped) return { leaseRead: true };
           try {
             // `permitted`, the answer THIS launch's gate gave — the launch is a pass like any
             // other and its drain runs under the role that pass read.

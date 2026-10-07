@@ -798,15 +798,26 @@ export const SEARCH_STATISTICS_TABLES = ["messages", "message_search", "message_
  */
 export async function analyzeSearchIfStale(client: PGlite): Promise<boolean> {
   try {
-    const r = await client.query<{ t: string; n: number; rt: number; read: boolean }>(
-      SEARCH_STATISTICS_TABLES.map((t) => `SELECT '${t}' AS t, (SELECT count(*) FROM public.${t})::int AS n,
+    /* ONE TABLE PER STATEMENT, with a turn of the loop between: PGlite answers in-process, so one
+       statement over four tables held the engine for its whole length (17.5 s on one launch). */
+    const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+    const rows: Array<{ t: string; n: number; rt: number; read: boolean }> = [];
+    for (const t of SEARCH_STATISTICS_TABLES) {
+      const r = await client.query<{ t: string; n: number; rt: number; read: boolean }>(
+        `SELECT '${t}' AS t, (SELECT count(*) FROM public.${t})::int AS n,
          COALESCE((SELECT c.reltuples FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
                     WHERE ns.nspname = 'public' AND c.relname = '${t}'), -1)::float8 AS rt,
-         EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = 'public' AND s.tablename = '${t}') AS read`).join(" UNION ALL "),
-    );
-    const stale = r.rows.filter(({ n, rt, read }) =>
+         EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = 'public' AND s.tablename = '${t}') AS read`,
+      );
+      rows.push(...r.rows);
+      await turn();
+    }
+    const stale = rows.filter(({ n, rt, read }) =>
       n > 0 && (!read || rt < 0 || Math.abs(n - rt) > 50 + 0.1 * Math.max(rt, 0)));
-    for (const { t } of stale) await client.exec(`ANALYZE public.${t}`);
+    for (const { t } of stale) {
+      await client.exec(`ANALYZE public.${t}`);
+      await turn();
+    }
     return stale.length > 0;
   } catch {
     return false;
