@@ -1403,8 +1403,8 @@ installs wrote there, a thousand at a time.
 <!-- changes: fix-026-one-row-per-conversation.md -->
 
 A conversation is one row in the Ohbox: in New while anything in it is unread or open, under Earlier
-once it is all read, at the time of its newest message — in the browser, in the desktop app and on
-the phone. Your replies ride the conversation's row, and reading one of several new replies no
+once it is all read, at the time of its newest message, or of the one you just read in ohmail — in
+the browser, in the desktop app and on the phone. Your replies ride the conversation's row, and reading one of several new replies no
 longer moves that message to a second row under Earlier.
 
 ### Links in designed mail open your browser on Linux
@@ -4594,8 +4594,8 @@ your computer, your folders and everything ohmail has organized stay where they 
 ### The Ohbox keeps arrival order on every device
 
 Every row in the Ohbox now sits by when its mail arrived, newest first — sent mail at the moment
-you sent it, in the same one timeline. Reading a message never moves it: the read state changes
-how a row looks, not where it sits. Previously the "Earlier" section ordered read mail by when
+you sent it, in the same one timeline. Mail read in bulk or in another app never moves: the read
+state changes how a row looks, not where it sits. Previously the "Earlier" section ordered read mail by when
 you read it, which could stack your sent history and your received history as two separate
 chronologies; on an existing mailbox, read rows return to chronological order and nothing else
 changes.
