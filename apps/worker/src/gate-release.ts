@@ -167,7 +167,7 @@ export async function gateReleasePass(
           select 1 from ${messages}
             join ${folderState} on ${folderState.messageId} = ${messages.id}
            where ${atTheGate(accountId)}
-             and ${ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match }, sql`lower(${messages.fromAddress})`)}
+             and ${ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination }, sql`lower(${messages.fromAddress})`)}
         )`,
       ))
       .orderBy(asc(rulesTbl.id))

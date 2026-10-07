@@ -391,7 +391,7 @@ export async function screenerAutoApplyPass(
     log.info("screener_auto_apply", {
       accountId, examined: result.examined, moved: result.moved, kept: result.kept,
       destinations: result.destinations, sensitivityExcluded: result.sensitivityExcluded,
-      identityExcluded: result.identityExcluded, capped: result.capped,
+      capped: result.capped,
     });
   }
   return result;
@@ -551,7 +551,7 @@ async function selectCandidates(
       select 1 from ${rulesTbl} r
        where r.account_id = ${messages.accountId}
          and r.enabled = true
-         and ${ruleNamesSenderSql(dialect(t), { kind: sql`r.kind`, match: sql`r.match` }, sql`lower(${messages.fromAddress})`)}
+         and ${ruleNamesSenderSql(dialect(t), { kind: sql`r.kind`, match: sql`r.match`, destination: sql`r.destination` }, sql`lower(${messages.fromAddress})`)}
     )`,
     // 2 — the user has triaged this message.
     sql`not exists (

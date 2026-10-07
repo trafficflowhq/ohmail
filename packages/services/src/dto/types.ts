@@ -48,6 +48,12 @@ export interface ScreenerItem {
   id: string;                     // the screener entry id (the representative message id when derived)
   messageId: string;
   /**
+   * THE SENDER'S IDENTITY FACT (mail 0147), aggregated over every held message of theirs: one
+   * names `brand` from an address `brand` does not send from. Absent when none does. Rendered
+   * apart from `aiSuggestion`, which it also caps whatever message the advice was bought on.
+   */
+  checked?: SenderCheckDTO;
+  /**
    * WHICH OF THE ACCOUNT'S MAILBOXES THE STRANGER WROTE TO. The id, never the address: a sheet
    * resolves it through the roster it already holds, and the "more than one mailbox" gate lives
    * in that resolver so no surface re-derives it. Absent from the wire until now, so a client
@@ -211,6 +217,20 @@ export interface MessageDTO {
    * every message; a client reads absent (an older server) as `null`.
    */
   authVerdict?: AuthVerdict | null;
+  /**
+   * THE IDENTITY FACT (`messages.sender_check`, mail 0147): the sender's name claims `brand`, and
+   * this address is not one `brand` sends from; `domainShared` — the address is at a provider where
+   * anyone can register one. `null` is "checked, nothing found"; ABSENT is "never checked" (a row
+   * older than the column, an older server), which a client renders as nothing.
+   */
+  senderCheck?: SenderCheckDTO | null;
+}
+
+/** The identity fact as every surface reads it — one sentence per field, outside any AI advice. */
+export interface SenderCheckDTO {
+  reason: "impersonation";
+  brand: string;
+  domainShared: boolean;
 }
 
 /**

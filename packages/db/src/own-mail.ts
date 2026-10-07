@@ -106,7 +106,7 @@ export async function releaseOwnMailAtGate(
         select 1 from rules rg
          where rg.account_id = ${messages.accountId}
            and rg.enabled
-           and ${ruleNamesSenderSql(d, { kind: sql`rg.kind`, match: sql`rg.match` }, from)}
+           and ${ruleNamesSenderSql(d, { kind: sql`rg.kind`, match: sql`rg.match`, destination: sql`rg.destination` }, from)}
       )`,
       sql`not exists (select 1 from message_states ms where ms.message_id = ${messages.id} and ms.state <> 'none')`,
       sql`not exists (select 1 from drafts dr where dr.in_reply_to_message_id = ${messages.id})`,

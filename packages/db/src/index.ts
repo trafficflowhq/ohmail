@@ -28,7 +28,9 @@ export { upgradeContactsToPerson } from "./contact-source.js";
 // screener-auto. See the module: three copies asked thread membership instead.
 export { weAnsweredThisSenderWhere } from "./we-answered.js";
 // A rule's `match` as SQL keys it, and whether it names a sender: ONE spelling for every reader.
-export { ruleMatchKeySql, ruleNamesSenderSql } from "./rule-match-sql.js";
+export {
+  ruleMatchKeySql, ruleNamesSenderSql, sharedProviderAllowRefusal, SHARED_PROVIDER_DOMAINS, SharedProviderDomainError,
+} from "./rule-match-sql.js";
 export {
   readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS, type DrainCursor,
 } from "./unsubscribe-drain-cursor.js";

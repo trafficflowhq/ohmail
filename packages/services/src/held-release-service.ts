@@ -184,7 +184,7 @@ function decidedRule(accountId: string) {
  * on both stores.
  */
 const ruleClaimsSender = (d: ReturnType<typeof dialect>) =>
-  ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match }, sql`lower(${messages.fromAddress})`);
+  ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination }, sql`lower(${messages.fromAddress})`);
 
 /** The screen's rows: every group with mail stuck behind it, largest first. */
 export async function heldReleaseGroups(

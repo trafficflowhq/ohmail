@@ -14,6 +14,7 @@ import {
 import { epochOf, uidRefsAtEpoch } from "../epoch.js";
 import {
   MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, effectForDestination, ruleMatchKey,
+  sharedProviderAllowRefusal,
 } from "../rule-order.js";
 import { DESTINATIONS, canonicalDestination, isConsentingDestination, type Destination } from "../types.js";
 import type { KnownSenders, Rule } from "../rules.js";
@@ -270,6 +271,8 @@ export function applicableProfileRule(r: ProfileRuleEntry): ApplicableProfileRul
   if (!PROFILE_RULE_KINDS.has(r.kind)) return null;
   if (typeof r.match !== "string" || r.match.length === 0 || hasNul(r.match)) return null;
   if (!PROFILE_RULE_FOLDERS.has(r.destination)) return null;
+  // Everyone at a shared provider let through is no rule here either: it would admit nobody.
+  if (sharedProviderAllowRefusal({ kind: r.kind, match: r.match, destination: r.destination }) !== null) return null;
   if (!Number.isInteger(r.priority) || r.priority < 0 || r.priority > RULE_PRIORITY_MAX) return null;
   const subjectContains = profileRuleTerm(r.subjectContains, MAX_SUBJECT_CONTAINS_CHARS);
   const bodyContains = profileRuleTerm(r.bodyContains, MAX_BODY_CONTAINS_CHARS);

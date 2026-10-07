@@ -130,6 +130,8 @@ export class HeyMigrationService {
             ? { destination: o.destination } : {}),
           insert: { destination: o.destination, provenance: "migrated", enabled: true, retroRequestedAt: null },
         });
+        // Everyone at a shared provider is no decision an import can make: counted, never written.
+        if (wrote.op === "refused") { unchanged++; continue; }
         ruleIds.push(wrote.ruleId!);
         if (wrote.op === "create" || (wrote.acting !== null && importOwns(wrote.acting))) owned.push(o);
         if (wrote.op === "create") {

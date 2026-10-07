@@ -7,7 +7,7 @@ import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeenMany } from "./flag-intent.js";
-import { ruleMatchKey, ruleMatchKeySql } from "./rule-match-sql.js";
+import { ruleMatchKey, ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
 
 /**
@@ -147,6 +147,10 @@ export function validateRequestPayload(payload: unknown): ValidatedRequestPayloa
   // A domain decision needs a domain — `decide`'s own 422, re-checked here because the payload
   // could claim `scope: "domain"` against an address with no `@` at all.
   if (scope === "domain" && domainOf(address) === "") return null;
+  // …and never lets everyone at a shared provider through — `decide`'s own 422, re-checked here.
+  if (scope === "domain" && sharedProviderAllowRefusal({
+    kind: "domain", match: domainOf(address), destination: appliedFolder,
+  }) !== null) return null;
 
   // Absent is the default, a non-boolean is a refusal — `"false"` is truthy, and reading a decline
   // as consent to re-file a backlog is the mistake this whole validator exists to make impossible.
@@ -589,6 +593,8 @@ export async function applyScreenerDecision(
   if (wrote.op === "skipped") {
     return { createdRuleId: null, retargetedRuleIds: [], rerouted: [], lastSeq: null, heldElsewhere: [], skipped: "ruled" };
   }
+  // Both validators refuse a domain yes on a shared provider before here; this is the door's belt.
+  if (wrote.op === "refused") throw new SharedProviderDomainError(domain);
   // Tracked and returned so an HTTP caller can re-emit it as `X-Sync-Seq` on an idempotent
   // replay — `claimIdempotencyKey`'s own `seq` field. The drain has no such replay contract and
   // simply discards it.

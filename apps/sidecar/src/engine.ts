@@ -2692,7 +2692,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       try {
         const r = await senderCheckBackfillPass(db as unknown as Tx, { accountId: world.accountId });
         if (r.done) senderCheckDone = true;
-        if (r.marked > 0) log("sender_check_backfill", { checked: r.checked, marked: r.marked });
+        if (r.marked > 0) log("sender_check_backfill", { scanned: r.checked, marked: r.marked });
       } catch (err) {
         log("sender_check_backfill_failed", {
           err,

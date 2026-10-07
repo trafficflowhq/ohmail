@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ACCOUNT_RULE_KEY_LOCK_CLASS, rules as rulesTbl } from "./schema-mail.js";
 import { recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
-import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { ruleMatchKeySql, sharedProviderAllowRefusal } from "./rule-match-sql.js";
 
 /**
  * ONE RULE PER FOUR-FIELD KEY — the key lookup and the converge every rules writer goes through.
@@ -139,7 +139,8 @@ export type RuleRowWrite = Omit<Partial<typeof rulesTbl.$inferInsert>, "id" | "a
 
 /** What {@link writeRuleUnderKey} did under the key. `lastSeq` is the last delta it recorded, if any. */
 export interface KeyWriteResult {
-  op: "create" | "update" | "unchanged" | "skipped";
+  /** `refused`: the write would let everyone at a shared provider through; nothing was written. */
+  op: "create" | "update" | "unchanged" | "skipped" | "refused";
   /** The one row under the key afterwards; `null` only when the write was skipped. */
   ruleId: string | null;
   lastSeq: bigint | null;
@@ -168,10 +169,28 @@ export async function writeRuleUnderKey(tx: Tx, input: {
   const { accountId, key, now } = input;
   await lockAccountRuleKeys(tx, accountId);
   const over = input.overExisting;
+  // Read up front only where something below asks: a skip decision, or the door on a domain key.
+  const rows = over !== "converge" || key.kind === "domain" ? await findRulesByKey(tx, accountId, key) : [];
   if (over !== "converge") {
-    const rows = await findRulesByKey(tx, accountId, key);
     const decided = over === "skip" ? rows.length > 0 : rows.some((r) => !over.onlyOver(r));
     if (decided) return { op: "skipped", ruleId: null, lastSeq: null, acting: rows[0] ?? null, collapsed: [] };
+  }
+  /* THE DOOR, asked of the row as it would stand and before anything is written: a rule ON and
+     letting everyone at a shared provider through admits nobody (`sharedProviderAllowRefusal`). The
+     acting row is the survivor the converge below keeps; a diff that moves neither the destination
+     nor the switch leaves an existing row as it is. Asked of domain keys only: a sender key is
+     never refused, and its door's `diff` is not asked twice. */
+  if (key.kind === "domain") {
+    const refused = (destination: string, enabled: boolean): boolean =>
+      enabled && sharedProviderAllowRefusal({ kind: key.kind, match: key.match, destination }) !== null;
+    const acting = rows[0];
+    const planned = acting ? input.diff(acting) : null;
+    if (acting && planned !== null
+      ? (planned.destination !== undefined || planned.enabled === true)
+        && refused(planned.destination ?? acting.destination, planned.enabled ?? acting.enabled)
+      : refused(input.insert.destination, input.insert.enabled ?? true)) {
+      return { op: "refused", ruleId: null, lastSeq: null, acting: acting ?? null, collapsed: [] };
+    }
   }
   const c = await convergeRuleKey(tx, { accountId, key });
   if (c.survivor) {

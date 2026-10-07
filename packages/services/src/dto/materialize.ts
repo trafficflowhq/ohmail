@@ -1,9 +1,10 @@
 import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type SQL, type Table } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import {
-  asAuthVerdict, capSuggestion, draftBodyOverCeiling, resolveOhboxPolicy, senderCheckAll,
+  asAuthVerdict, capSuggestion, draftBodyOverCeiling, resolveOhboxPolicy, senderCheckAll, senderDomainOf,
   type CheckedSuggestion, type EmailAddress,
 } from "@trafficflow/core/mail";
+import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
 import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes, mailboxProfileMirror, isOrganizerKind,
@@ -19,7 +20,7 @@ import { bridgeTx, type Db } from "../context.js";
 import type {
   FolderDTO, SettingsDTO, MailboxProfileDTO,
   Folder, MessageDTO, MessageStateDTO, ThreadDTO, RoutingDecisionDTO, ApprovalDTO, RuleDTO,
-  DraftDTO, DraftStatus, ScreenerSuggestionDTO, SensitivityFlags, TriageState, TagDTO,
+  DraftDTO, DraftStatus, ScreenerSuggestionDTO, SenderCheckDTO, SensitivityFlags, TriageState, TagDTO,
 } from "./types.js";
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
@@ -214,6 +215,23 @@ export function sortAtOf(date: Date | null | undefined, arrivedAt: Date | null |
     : arrivedAt.toISOString();
 }
 
+/**
+ * `messages.sender_check` on the wire: `'impersonation'` → the fact, `'none'` → `null`, NULL (never
+ * checked) → nothing. Whether the address is at a shared provider is read here, off the one list.
+ */
+function senderCheckOf(
+  value: string | null, brand: string | null, fromAddress: string,
+): { senderCheck?: SenderCheckDTO | null } {
+  if (value === "none") return { senderCheck: null };
+  if (value !== "impersonation") return {};
+  return {
+    senderCheck: {
+      reason: "impersonation", brand: brand ?? "",
+      domainShared: isSharedProviderDomain(senderDomainOf(fromAddress)),
+    },
+  };
+}
+
 export function messageRowToDTO(
   m: typeof messages.$inferSelect,
   fs: typeof folderState.$inferSelect | undefined,
@@ -319,6 +337,8 @@ export function messageRowToDTO(
     updatedAt: m.updatedAt.toISOString(),
     // On the row, so every projection carries it; a word from the other vocabulary reads `null`.
     authVerdict: asAuthVerdict(m.authVerdict),
+    // The identity fact, spread-in: a NULL column (never checked) leaves the key ABSENT.
+    ...senderCheckOf(m.senderCheck, m.senderCheckBrand, m.fromAddress),
     // Spread-in rather than a plain `autoReplyByUs:` so an un-asked caller yields a DTO with the
     // key ABSENT, not present-and-undefined. The two are the same in TypeScript and different
     // over JSON, and "this server does not know" must look exactly like "this server predates

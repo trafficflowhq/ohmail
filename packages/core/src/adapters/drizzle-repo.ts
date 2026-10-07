@@ -2462,7 +2462,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
            and r.enabled = true
            and r.subject_contains is null
            and r.body_contains is null
-           and ${ruleNamesSenderSql(this.d, { kind: sql`r.kind`, match: sql`r.match` }, sql`lower(${messages.fromAddress})`)}
+           and ${ruleNamesSenderSql(this.d, { kind: sql`r.kind`, match: sql`r.match`, destination: sql`r.destination` }, sql`lower(${messages.fromAddress})`)}
       )`,
     ];
     if (opts.afterId) filters.push(sql`${messages.id} > ${this.d.castUuid(opts.afterId)}`);

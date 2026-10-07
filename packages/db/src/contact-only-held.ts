@@ -18,7 +18,7 @@ export function contactOnlyHeldWhere(d: Dialect, o: { ownAddresses: readonly str
        where rg.account_id = ${messages.accountId}
          and rg.enabled
          and rg.kind in ('sender', 'domain')
-         and ${ruleNamesSenderSql(d, { kind: sql`rg.kind`, match: sql`rg.match` }, sql`lower(${messages.fromAddress})`)}
+         and ${ruleNamesSenderSql(d, { kind: sql`rg.kind`, match: sql`rg.match`, destination: sql`rg.destination` }, sql`lower(${messages.fromAddress})`)}
     )`,
     sql`exists (
       select 1 from ${contacts} cg

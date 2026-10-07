@@ -37,7 +37,7 @@ import type {
 import {
   applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
   DESTINATIONS, effectForDestination, isDecidedDestination,
-  resolveOhboxPolicy, senderCheckAll, senderFacts,
+  resolveOhboxPolicy, senderCheckAll, senderDomainOf, senderFacts, BRANDS,
 } from "@trafficflow/core/mail";
 /* The verdict derivation moved to its own leaf when `materializeScreenerSuggestion` became its
    third reader — one reading for the page, the purchase and the `/sync` entity. */
@@ -55,7 +55,8 @@ import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { refuseAiSpend, type AiRefusalClass } from "./ai-refusal.js";
 import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
-import { refuseOwnAddressRule } from "./rules-service.js";
+import { refuseOwnAddressRule, SHARED_PROVIDER_REFUSAL_SENTENCE } from "./rules-service.js";
+import { isSharedProviderDomain, sharedProviderAllowRefusal } from "@trafficflow/core/rule-order";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, Page, RuleDTO, ScreenerItem } from "./dto/types.js";
 
@@ -782,6 +783,12 @@ interface ScreenerRow {
   unread: boolean;
   /** The instant the queue sorted this row by (`heldSortKey`) — what the page's cursor carries. */
   sortAt: Date;
+  /**
+   * The sender's identity fact over every held message (mail 0147), the brand the newest marked
+   * one names; `null` when none is marked. A representative the ingest never checked is computed
+   * on the page instead (`claimedIdentity`, through the sender check).
+   */
+  markedBrand: string | null;
 }
 
 /**
@@ -812,9 +819,12 @@ function toScreenerRow(r: {
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
   updatedAt: Date; unread: boolean; mailboxId: string;
   fromName?: string | null; authVerdict?: string | null; sortKey: Date;
+  senderMarked?: number | boolean | null; senderMarkedBrand?: string | null;
 }): ScreenerRow {
+  const marked = r.senderMarked === true || Number(r.senderMarked ?? 0) === 1;
   return {
     sortAt: r.sortKey,
+    markedBrand: marked ? r.senderMarkedBrand ?? null : null,
     mailboxId: r.mailboxId,
     messageId: r.messageId,
     threadId: r.threadId ?? null,
@@ -985,9 +995,12 @@ export class ScreenerReadService {
     // on record, so a suggestion bought before this shipped says why it was wrong here too.
     const checked = senderSignalsByMessage(pageRows);
     await markCorrespondents(ctx, pageRows, checked);
-    const items = pageRows.map((r) => toItem(r, withSenderCheck(
-      stored.get(r.fromAddress.toLowerCase()) ?? null, checked.get(r.messageId), posture,
-    )));
+    const items = pageRows.map((r) => {
+      const signals = checked.get(r.messageId);
+      // The sender's fact FIRST: it marks the signals the displayed advice is capped by below.
+      const fact = checkedOfSender(r, signals);
+      return toItem(r, withSenderCheck(stored.get(r.fromAddress.toLowerCase()) ?? null, signals, posture), fact);
+    });
 
     // The quote. A sender is priced when not already paid for (`!stored`) — the WHOLE rule; the
     // fact is in hand, so this costs no query. It used to also require `r.aiEligible`, and the
@@ -1129,6 +1142,10 @@ export class ScreenerReadService {
 
     // Not a decision about the account itself: refused as `POST /rules` refuses it.
     if (scope === "sender") await refuseOwnAddressRule(asTx(ctx), ctx.accountId, { kind: "sender", match: address });
+    // Never everyone at a shared provider: a domain yes there would admit nobody, so it is refused.
+    if (scope === "domain" && sharedProviderAllowRefusal({ kind: "domain", match: domain, destination: appliedFolder }) !== null) {
+      throw new ServiceError("shared_provider_domain", 422, SHARED_PROVIDER_REFUSAL_SENTENCE);
+    }
 
     return { scope, decision, dest, target, address, domain, appliedFolder, applyRetro };
   }
@@ -1571,6 +1588,16 @@ export class ScreenerReadService {
       rank: sql<number>`row_number() over (
         partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
       )`.as("rank"),
+      /* THE IDENTITY FACT FOR THE SENDER, over the same partition (mail 0147): any held message
+         marked, and the brand of the newest marked one. A max of a case and a first_value, which
+         both stores spell alike — a pg-only `bool_or` would break the phone's queue. */
+      senderMarked: sql<number>`max(case when ${messages.senderCheck} = 'impersonation' then 1 else 0 end) over (
+        partition by ${sender}
+      )`.as("sender_marked"),
+      senderMarkedBrand: sql<string | null>`first_value(${messages.senderCheckBrand}) over (
+        partition by ${sender}
+        order by case when ${messages.senderCheck} = 'impersonation' then 1 else 0 end desc, ${sortKey} desc, ${messages.id} desc
+      )`.as("sender_marked_brand"),
     }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
@@ -1671,7 +1698,7 @@ export class ScreenerReadService {
       select 1 from organizer_requests o
        where o.account_id = ${d.castUuid(ctx.accountId)}
          and o.state in ('pending', 'sent')
-         and ${ruleNamesSenderSql(d, { kind: field("scope"), match: field("match") }, sender)}
+         and ${ruleNamesSenderSql(d, { kind: field("scope"), match: field("match"), destination: field("appliedFolder") }, sender)}
     )`;
     // scoped-by: `reps` is the account-scoped messages subquery (eq messages.accountId, ctx.accountId)
     const [row] = await ctx.db.select({ n: sql<number | string>`count(*)` }).from(reps)
@@ -2548,6 +2575,26 @@ function parseConfirmedCeiling(body: ScreenerSuggestBody): number | null {
 }
 
 /**
+ * THE SENDER'S IDENTITY FACT ON THE ROW (`ScreenerItem.checked`): the newest marked held message's
+ * brand, else the representative's own fact as the page computed it — so a NULL column never reads
+ * as "nothing found". When it marks the sender, the signals carry it too, so the displayed advice
+ * is capped whichever message it was bought on.
+ */
+function checkedOfSender(r: ScreenerRow, signals: SenderSignals | undefined): ScreenerItem["checked"] {
+  const brand = r.markedBrand ?? signals?.impersonation?.brand ?? null;
+  if (brand === null) return undefined;
+  if (signals && !signals.impersonation) {
+    const row = BRANDS.find((b) => b.name === brand);
+    signals.impersonation = { brand, brandDomains: row?.domains ?? [] };
+    if (!(signals.correspondent && signals.auth !== "fail")) signals.reasonCode = "impersonation";
+  }
+  return {
+    reason: "impersonation", brand,
+    domainShared: isSharedProviderDomain(senderDomainOf(r.fromAddress)),
+  };
+}
+
+/**
  * A row, plus whatever suggestion is on record for it. No I/O, and nothing to spend.
  *
  * It used to drop two facts the row already carried: `mailboxId`, so no client could say which of
@@ -2555,8 +2602,11 @@ function parseConfirmedCeiling(body: ScreenerSuggestBody): number | null {
  * asserted — screening signal the sheet renders where it has it. Both are selected by
  * `HELD_COLUMNS` and were thrown away here, which is why the gap was invisible from every surface.
  */
-function toItem(r: ScreenerRow, aiSuggestion: ScreenerItem["aiSuggestion"]): ScreenerItem {
+function toItem(
+  r: ScreenerRow, aiSuggestion: ScreenerItem["aiSuggestion"], checked?: ScreenerItem["checked"],
+): ScreenerItem {
   return {
+    ...(checked ? { checked } : {}),
     id: r.messageId,
     messageId: r.messageId,
     mailboxId: r.mailboxId,

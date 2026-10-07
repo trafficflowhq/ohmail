@@ -6,7 +6,9 @@ import {
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
-import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, ruleMatchKey } from "@trafficflow/core/rule-order";
+import {
+  MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, ruleMatchKey, sharedProviderAllowRefusal,
+} from "@trafficflow/core/rule-order";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
@@ -345,6 +347,19 @@ export async function refuseOwnAddressRule(db: Tx, accountId: string, key: { kin
   }
 }
 
+/**
+ * THE `shared_provider_domain` REFUSAL, the one predicate every rules door asks
+ * (`sharedProviderAllowRefusal`): a rule letting everyone at a shared provider through admits
+ * nobody at the router, so a press asking for one is told so instead of being given an inert rule.
+ */
+export const SHARED_PROVIDER_REFUSAL_SENTENCE =
+  "a domain decision on a shared provider is refused — decide on the address instead";
+export function refuseSharedProviderAllowRule(r: { kind: string; match: string; destination: string }): void {
+  if (sharedProviderAllowRefusal(r) !== null) {
+    throw new ServiceError("shared_provider_domain", 400, SHARED_PROVIDER_REFUSAL_SENTENCE);
+  }
+}
+
 export class RulesService {
   async list(ctx: ServiceContext): Promise<RuleDTO[]> {
     const rows = await ctx.db.select({ id: rules.id }).from(rules)
@@ -379,6 +394,8 @@ export class RulesService {
     return withAccountTx(ctx, async (tx) => {
       // Not a rule about the account itself, refused before anything is written or travels.
       await refuseOwnAddressRule(bridgeTx(tx), ctx.accountId, { kind, match });
+      // Not a rule letting everyone at a shared provider through: it would admit nobody.
+      refuseSharedProviderAllowRule({ kind, match, destination });
       // One instant for the press: the local row's stamp and every leg's `decidedAt`.
       const at = ctx.now();
       const travelling = (): Record<string, unknown> => ruleCreatePayload({
@@ -566,6 +583,7 @@ export class RulesService {
       // rule that does not exist there yet.
       const [before] = await tx.select({
         destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
+        enabled: rules.enabled,
         bodyContains: rules.bodyContains, match: rules.match, priority: rules.priority,
         provenance: rules.provenance, personDecidedAt: rules.personDecidedAt,
         // The key's match as the store itself folds it, so the lookup below compares one
@@ -599,6 +617,17 @@ export class RulesService {
           patch.bodyContains,
           (set.kind as string | undefined) ?? before?.kind ?? "sender",
         );
+      }
+      /* AN EDIT THAT WOULD LEAVE A RULE ON AND LETTING EVERYONE AT A SHARED PROVIDER THROUGH is
+         refused as the create is: switched on, re-pointed, or moved onto such a domain. A paused
+         row, or one holding mail back, stands; existing rows are never rewritten by this. */
+      if (before !== undefined && (set.enabled ?? before.enabled) === true
+        && (set.enabled === true || set.destination !== undefined || set.match !== undefined || set.kind !== undefined)) {
+        refuseSharedProviderAllowRule({
+          kind: (set.kind as string | undefined) ?? before.kind,
+          match: (set.match as string | undefined) ?? before.match,
+          destination: (set.destination as string | undefined) ?? before.destination,
+        });
       }
 
       // THE PLACE, NOT ITS SPELLING: a rule stored before the News rename says `ohmail/Reads`, and

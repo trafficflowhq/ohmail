@@ -3,8 +3,8 @@ import {
 } from "@trafficflow/core/sender-headers";
 import { ORGANIZED_FOLDERS, canonicalDestination, isConsentingDestination } from "@trafficflow/core/destinations";
 import {
-  bodyTermOf, compareRules, effectForDestination, placingRule, ruleMatchKey, subjectTermOf,
-  type OrderedRule,
+  bodyTermOf, compareRules, effectForDestination, placingRule, ruleMatchKey, sharedProviderAllowRefusal,
+  subjectTermOf, type OrderedRule,
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
@@ -191,6 +191,9 @@ export function consentIndex(
   for (const r of rules) {
     if (!r.enabled) continue;
     if (r.destination === "ohmail/Screener") continue;
+    // An allow rule for everyone at a shared provider decides about nobody: the router's
+    // `namesAuthor` declines it, and so does every client's index.
+    if (sharedProviderAllowRefusal(r) !== null) continue;
     const target = r.kind === "sender" ? bySender : r.kind === "domain" ? byDomain : null;
     if (!target) continue;
     // The router's and the queue SQL's key (`ruleMatchKey`), so all three name one principal.

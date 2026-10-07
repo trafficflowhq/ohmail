@@ -93,9 +93,8 @@ export async function senderCheckBackfillPass(
   }
 
   if (result.checked > 0) {
-    log.info("sender_check_backfill", {
-      accountId: deps.accountId, checked: result.checked, marked: result.marked, done: result.done,
-    });
+    // The logger's own field names: `scanned` is the rows given a fact this call.
+    log.info("sender_check_backfill", { accountId: deps.accountId, scanned: result.checked, marked: result.marked });
   }
   return result;
 }

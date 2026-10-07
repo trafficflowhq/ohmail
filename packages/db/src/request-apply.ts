@@ -10,7 +10,7 @@ import { accountWritesHere } from "./organizer-role.js";
 import { clampPressInstant, placementDecidedAfter, pressIsAged } from "./press-floor.js";
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { endGraduationOfRule } from "./learning-signal.js";
-import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { convergeRuleKey, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
 import { ruleKeyIsOwnAddress, type OwnAddressesPerPass } from "./own-mail.js";
 
@@ -881,8 +881,11 @@ export interface ApplyRuleRequestInput {
  * The applier's closed set. `no_such_rule`: an update or a delete legitimately found nothing.
  * `own_address`: a create keyed on one of the account's own addresses (`ruleKeyIsOwnAddress`),
  * refused as every press door refuses it, so an older reader's request writes no such rule here.
+ * `shared_provider_domain`: a rule that would let everyone at a shared provider through
+ * (`sharedProviderAllowRefusal`), which admits nobody and is refused at every door.
  */
-export type RuleRefusal = "no_such_rule" | "own_address";
+export type RuleRefusal = "no_such_rule" | "own_address" | "shared_provider_domain";
+
 
 export type ApplyRuleRequestResult =
   | { applied: true; op: "create" | "update" | "delete"; ruleId: string; lastSeq: bigint }
@@ -960,6 +963,10 @@ export async function reconcileRuleCreate(
 ): Promise<RuleCreateOutcome> {
   const { accountId, create, now } = input;
   const { key } = create;
+  // THE DOOR: a rule letting everyone at a shared provider through admits nobody, so none is written.
+  if (sharedProviderAllowRefusal({ kind: key.kind, match: key.match, destination: create.destination }) !== null) {
+    throw new SharedProviderDomainError(key.match);
+  }
   /* A ROW UNDER THIS KEY IS NOT THE ANSWER ON ITS OWN. The key names WHICH rule; it says nothing
      about where that rule files, how it ranks or whether it is on, and a reader working from a
      stale profile creates over the organizer's rule with a destination of their own. So the
@@ -1023,6 +1030,9 @@ export async function applyRuleRequest(
 
   if (payload.op === "create") {
     if (await ruleKeyIsOwnAddress(tx, accountId, key, input.ownAddresses)) return { applied: false, refusal: "own_address" };
+    if (sharedProviderAllowRefusal({ kind: key.kind, match: key.match, destination: payload.destination }) !== null) {
+      return { applied: false, refusal: "shared_provider_domain" };
+    }
     const out = await reconcileRuleCreate(tx, { accountId, create: payload, now });
     if (out.created) return { applied: true, op: "create", ruleId: out.ruleId, lastSeq: out.lastSeq };
     // The row was not written: `unchanged`, with the seq of the twins it collapsed if any went.
@@ -1067,6 +1077,12 @@ export async function applyRuleRequest(
   }
   if (payload.set.priority !== undefined) set.priority = payload.set.priority;
   if (payload.set.enabled !== undefined) set.enabled = payload.set.enabled;
+  // An edit that leaves a rule ON and letting everyone at a shared provider through is refused.
+  if ((set.enabled ?? found.enabled) && sharedProviderAllowRefusal({
+    kind: key.kind, match: key.match, destination: set.destination ?? found.destination,
+  }) !== null && (set.destination !== undefined || set.enabled === true)) {
+    return { applied: false, refusal: "shared_provider_domain" };
+  }
   // A person's pause makes the row theirs whatever wrote it (`RulesService.update`'s rule).
   const paused = payload.set.enabled === false;
   if (paused && found.personDecidedAt === null) set.personDecidedAt = now;

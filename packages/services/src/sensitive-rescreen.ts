@@ -679,7 +679,7 @@ async function selectCandidates(
          and r.enabled = true
          and r.subject_contains is null
          and r.body_contains is null
-         and ${ruleNamesSenderSql(dialect(t), { kind: sql`r.kind`, match: sql`r.match` }, sql`lower(${messages.fromAddress})`)}
+         and ${ruleNamesSenderSql(dialect(t), { kind: sql`r.kind`, match: sql`r.match`, destination: sql`r.destination` }, sql`lower(${messages.fromAddress})`)}
     )`,
     // 3 — the user has triaged this message.
     sql`not exists (

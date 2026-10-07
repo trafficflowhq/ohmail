@@ -83,6 +83,20 @@ export function isSharedProviderDomain(domain: string): boolean {
   return SHARED_PROVIDER_DOMAINS.has(domain.trim().toLowerCase());
 }
 
+/**
+ * THE ONE QUESTION EVERY RULE DOOR ASKS: would this rule let everyone at a shared provider through?
+ * Such a rule admits nobody — {@link namesAuthor} declines it at the gate — so every write door
+ * refuses it, by this predicate and no copy (`@trafficflow/db` holds the pinned twin). A rule that
+ * holds mail back (a deny) still names everyone at the domain. `null` admits the write.
+ */
+export function sharedProviderAllowRefusal(
+  r: { kind: string; match: string; destination: string; effect?: string },
+): "shared_provider_domain" | null {
+  if (r.kind !== "domain" || !isSharedProviderDomain(ruleMatchKey(r.match))) return null;
+  const denies = r.effect === "deny" || effectForDestination(r.destination) === "deny";
+  return denies ? null : "shared_provider_domain";
+}
+
 /** Among rules of one kind, deny outranks allow: the user's "no" never loses a tie. */
 const EFFECT_RANK: Readonly<Record<string, number>> = { deny: 0, allow: 1 };
 /** Specificity: one mailbox, then a set of them, then a statement about a message. */
@@ -182,6 +196,8 @@ function bodyTermSatisfied(r: Pick<OrderedRule, "bodyContains">, text: string): 
 export interface ClaimingRule extends OrderedRule {
   kind: string;
   match: string;
+  /** Where it files — read for one question: an allow rule on a shared provider names nobody. */
+  destination: string;
   enabled?: boolean;
 }
 
@@ -209,12 +225,15 @@ function domainOf(addr: string): string {
  * Does this rule name this PERSON? The ONE spelling of the sender/domain claim, for the router's
  * placement and its standing decision alike. `author === null` (absent, unparseable or ambiguous
  * `From`) names nobody: a guessed author never inherits a decision made about somebody else. A
- * `header` rule names a header, not a principal.
+ * `header` rule names a header, not a principal. An allow rule for everyone at a shared provider
+ * names nobody either ({@link sharedProviderAllowRefusal}); a deny one names everyone there.
  */
-export function namesAuthor(r: Pick<ClaimingRule, "kind" | "match">, author: string | null): boolean {
+export function namesAuthor(
+  r: Pick<ClaimingRule, "kind" | "match" | "destination"> & { effect?: string }, author: string | null,
+): boolean {
   if (author === null) return false;
   if (r.kind === "sender") return ruleMatchKey(r.match) === author;
-  if (r.kind === "domain") return ruleMatchKey(r.match) === domainOf(author);
+  if (r.kind === "domain") return ruleMatchKey(r.match) === domainOf(author) && sharedProviderAllowRefusal(r) === null;
   return false;
 }
 

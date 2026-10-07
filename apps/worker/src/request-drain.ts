@@ -86,6 +86,8 @@ const MOVE_REFUSAL_REASON: Readonly<Record<MoveRefusal, RequestRefusalReason>> =
 const RULE_REFUSAL_REASON: Readonly<Record<RuleRefusal, RequestRefusalReason>> = {
   no_such_rule: "no_such_rule",
   own_address: "invalid_payload",
+  // A request from an older app for everyone at a shared provider: refused like a malformed one.
+  shared_provider_domain: "invalid_payload",
 };
 
 /**

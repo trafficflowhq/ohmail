@@ -208,7 +208,7 @@ export function destinationIsDecisionSql(destination: SQL): SQL {
  * the set this excludes is the set a rule moves.
  */
 export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
-  const claims = ruleNamesSenderSql(d, { kind: sql`rd.kind`, match: sql`rd.match` }, senderExpr);
+  const claims = ruleNamesSenderSql(d, { kind: sql`rd.kind`, match: sql`rd.match`, destination: sql`rd.destination` }, senderExpr);
   const ruleFor = (side: SQL): SQL => sql`exists (
     select 1 from rules rd
      where rd.account_id = ${d.castUuid(accountId)}
@@ -247,7 +247,7 @@ export function senderScreenedOutByPersonSql(
        and rp.enabled
        and rp.person_decided_at is not null
        and rp.destination in ${deny}
-       and ${ruleNamesSenderSql(d, { kind: sql`rp.kind`, match: sql`rp.match` }, senderExpr)}
+       and ${ruleNamesSenderSql(d, { kind: sql`rp.kind`, match: sql`rp.match`, destination: sql`rp.destination` }, senderExpr)}
        and exists (
          select 1 from learning_signals ls
           where ls.account_id = rp.account_id
