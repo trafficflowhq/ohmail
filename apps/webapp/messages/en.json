@@ -660,8 +660,8 @@
   },
   "screener": {
     "senderCheck": {
-      "impersonation": "The name says {brand}; the address isn't one {brand} sends from.",
-      "impersonationShared": "The name says {brand}, but anyone can register a {domain} address.",
+      "impersonation": "This message claims to be from {brand}, but {domain} isn't one of {brand}'s addresses.",
+      "impersonationShared": "This message claims to be from {brand}, but anyone can register a {domain} address.",
       "chip": "Not {brand}"
     },
     "title": "Screener",

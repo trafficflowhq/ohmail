@@ -1494,10 +1494,10 @@ export const DE: Deck = {
   senderGone: "Dieser Absender steht nicht mehr im Screener.",
   senderFirstContact:
     "Erster Kontakt. Von diesem Absender hat es noch nichts in die Ohbox geschafft — es hat hier gewartet.",
-  senderCheckImpersonation: (brand: string): string =>
-    `Der Name sagt ${brand}, die Adresse gehört aber nicht zu ${brand}.`,
+  senderCheckImpersonation: (brand: string, domain: string): string =>
+    `Diese Nachricht gibt sich als ${brand} aus, aber ${domain} ist keine Adresse von ${brand}.`,
   senderCheckImpersonationShared: (brand: string, domain: string): string =>
-    `Der Name sagt ${brand}, aber eine ${domain}-Adresse kann sich jeder anlegen.`,
+    `Diese Nachricht gibt sich als ${brand} aus, aber eine ${domain}-Adresse kann sich jeder anlegen.`,
   senderCheckChip: (brand: string): string => `Nicht ${brand}`,
   screeningScopeShared: (domain: string): string =>
     `${domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.`,

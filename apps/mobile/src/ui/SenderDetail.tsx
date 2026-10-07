@@ -121,7 +121,7 @@ export function SenderDetail({
               <Txt variant="note" tone="ink" style={{ flex: 1 }} testID="sender-check">
                 {row.checked.domainShared
                   ? Copy.senderCheckImpersonationShared(row.checked.brand, row.checked.domain)
-                  : Copy.senderCheckImpersonation(row.checked.brand)}
+                  : Copy.senderCheckImpersonation(row.checked.brand, row.checked.domain)}
               </Txt>
             </View>
           ) : null}

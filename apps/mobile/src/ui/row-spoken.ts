@@ -60,7 +60,7 @@ export function rowBadgeFacts(m: Mail): PhoneRowBadgeFact[] {
       kind: "senderCheck",
       text: m.senderCheck.domainShared
         ? Copy.senderCheckImpersonationShared(m.senderCheck.brand, m.senderCheck.domain)
-        : Copy.senderCheckImpersonation(m.senderCheck.brand),
+        : Copy.senderCheckImpersonation(m.senderCheck.brand, m.senderCheck.domain),
     });
   }
   if (thread > 1) said.push({ kind: "thread", text: Copy.mailRowThreadAria(thread) });

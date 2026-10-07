@@ -2276,13 +2276,13 @@ const TABLE = {
   senderFirstContact:
     "First contact. Nothing from this sender has reached the Ohbox — it waited here.",
   /**
-   * THE IDENTITY FACT, the web's `screener.senderCheck` sentences as functions: the sender's name
-   * claims a company this address does not belong to. Rendered outside any AI advice.
+   * THE IDENTITY FACT, the web's `screener.senderCheck` sentences as functions: the message claims
+   * a company this address does not belong to. Rendered outside any AI advice.
    */
-  senderCheckImpersonation: (brand: string): string =>
-    `The name says ${brand}; the address isn't one ${brand} sends from.`,
+  senderCheckImpersonation: (brand: string, domain: string): string =>
+    `This message claims to be from ${brand}, but ${domain} isn't one of ${brand}'s addresses.`,
   senderCheckImpersonationShared: (brand: string, domain: string): string =>
-    `The name says ${brand}, but anyone can register a ${domain} address.`,
+    `This message claims to be from ${brand}, but anyone can register a ${domain} address.`,
   senderCheckChip: (brand: string): string => `Not ${brand}`,
   /** A shared provider's domain is never a scope: the sentence in the place of the choice. */
   screeningScopeShared: (domain: string): string =>

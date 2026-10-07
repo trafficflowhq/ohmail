@@ -124,8 +124,8 @@ async function served(): Promise<MessageDTO> {
 }
 
 const words = (key: string, v: Record<string, string> = {}): string => ({
-  "senderCheck.impersonation": `The name says ${v.brand}; the address isn't one ${v.brand} sends from.`,
-  "senderCheck.impersonationShared": `The name says ${v.brand}, but anyone can register a ${v.domain} address.`,
+  "senderCheck.impersonation": `This message claims to be from ${v.brand}, but ${v.domain} isn't one of ${v.brand}'s addresses.`,
+  "senderCheck.impersonationShared": `This message claims to be from ${v.brand}, but anyone can register a ${v.domain} address.`,
 } as Record<string, string>)[key] ?? key;
 
 describe("a marked message on the Cloud-mode desktop", () => {
@@ -134,7 +134,7 @@ describe("a marked message on the Cloud-mode desktop", () => {
     expect(autoLoadsImages({ auto: true }, m)).toBe(false);
     const fact = senderCheckFact(m as never);
     expect(fact).toEqual({ brand: "PostFinance", domainShared: true, domain: "gmail.com" });
-    expect(senderCheckSentence(words, fact!)).toBe("The name says PostFinance, but anyone can register a gmail.com address.");
+    expect(senderCheckSentence(words, fact!)).toBe("This message claims to be from PostFinance, but anyone can register a gmail.com address.");
 
     host = document.createElement("div");
     document.body.appendChild(host);

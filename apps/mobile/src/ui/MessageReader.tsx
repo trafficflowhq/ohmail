@@ -230,7 +230,7 @@ export function MessageReader({
               <Txt variant="note" tone="ink" style={{ flex: 1 }} testID="reader-sender-check">
                 {m.senderCheck.domainShared
                   ? Copy.senderCheckImpersonationShared(m.senderCheck.brand, m.senderCheck.domain)
-                  : Copy.senderCheckImpersonation(m.senderCheck.brand)}
+                  : Copy.senderCheckImpersonation(m.senderCheck.brand, m.senderCheck.domain)}
               </Txt>
             </View>
           ) : null}

@@ -660,8 +660,8 @@
   },
   "screener": {
     "senderCheck": {
-      "impersonation": "Der Name sagt {brand}, die Adresse gehört aber nicht zu {brand}.",
-      "impersonationShared": "Der Name sagt {brand}, aber eine {domain}-Adresse kann sich jeder anlegen.",
+      "impersonation": "Diese Nachricht gibt sich als {brand} aus, aber {domain} ist keine Adresse von {brand}.",
+      "impersonationShared": "Diese Nachricht gibt sich als {brand} aus, aber eine {domain}-Adresse kann sich jeder anlegen.",
       "chip": "Nicht {brand}"
     },
     "title": "Screener",

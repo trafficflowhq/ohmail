@@ -12,7 +12,7 @@ import type { EngineMessage } from "@ohmail/client-engine";
 export interface SenderCheckFact {
   brand: string;
   domainShared: boolean;
-  /** The address's own domain, for the shared-provider sentence. */
+  /** The address's own domain, which the sentence names. */
   domain: string;
 }
 
@@ -29,7 +29,7 @@ type Words = (key: string, values?: Record<string, string>) => string;
 export function senderCheckSentence(t: Words, f: SenderCheckFact): string {
   return f.domainShared
     ? t("senderCheck.impersonationShared", { brand: f.brand, domain: f.domain })
-    : t("senderCheck.impersonation", { brand: f.brand });
+    : t("senderCheck.impersonation", { brand: f.brand, domain: f.domain });
 }
 
 /** The words, bound once per surface: the chip props a list row spreads, and the open message's line. */

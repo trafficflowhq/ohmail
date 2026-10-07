@@ -1269,7 +1269,7 @@ export function ScreenerView({
     senderCheckLabel: t("senderCheck.chip", { brand: s.checked.brand }),
     senderCheckTitle: s.checked.domainShared
       ? t("senderCheck.impersonationShared", { brand: s.checked.brand, domain: s.checked.domain })
-      : t("senderCheck.impersonation", { brand: s.checked.brand }),
+      : t("senderCheck.impersonation", { brand: s.checked.brand, domain: s.checked.domain }),
   } : {});
 
   const row = (x: ScreenerSenderDTO | SpamRow, windowIndex: number, inSet: { size: number; position: number }) => {
@@ -2565,7 +2565,7 @@ function WaitingPreview({
               <span className="scn-why-checked" data-reason="identity">
                 {sender.checked.domainShared
                   ? t("senderCheck.impersonationShared", { brand: sender.checked.brand, domain: sender.checked.domain })
-                  : t("senderCheck.impersonation", { brand: sender.checked.brand })}
+                  : t("senderCheck.impersonation", { brand: sender.checked.brand, domain: sender.checked.domain })}
               </span>
             </span>
           </div>
