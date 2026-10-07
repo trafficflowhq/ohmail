@@ -444,6 +444,13 @@ export interface ApplyScreenerDecisionInput {
    * rule, which is the automatic unsubscribe pass's whole licence to act.
    */
   decidedBy: "person" | "pass";
+  /**
+   * WHICH MARKED ROWS THE DECISION MOVES (mail 0147). `pressed`, the default: a person's press moves
+   * a claim only from the address they pressed on, the row that told them; a domain press leaves
+   * another address's claim to its own press. `none`: the held-release press, whose offer never
+   * counts a claim, moves none. A pass's yes moves only rows the check cleared.
+   */
+  marked?: "pressed" | "none";
 }
 
 /**
@@ -508,7 +515,7 @@ export async function applyScreenerDecision(
 ): Promise<ApplyScreenerDecisionResult> {
   const {
     accountId, scope, address, appliedFolder, decision, triggeringActionId, now,
-    stampBaseline = true, applyRetro = true, overExisting, liftOverDomain = true, decidedBy,
+    stampBaseline = true, applyRetro = true, overExisting, liftOverDomain = true, decidedBy, marked = "pressed",
   } = input;
   const domain = domainOf(address);
 
@@ -617,8 +624,13 @@ export async function applyScreenerDecision(
     : await heldRowsForSender(tx, accountId, address, undefined, held);
 
   // …and a marked or unchecked row that arrived between the two reads stays at the gate too.
-  const moved = await rerouteHeldBag(tx, accountId,
-    passAdmits ? heldMail.filter((r) => r.senderCheck === "none") : heldMail, appliedFolder, now);
+  const pressed = address.toLowerCase();
+  const movable = (r: AppliedScreenerRow): boolean => {
+    if (passAdmits) return r.senderCheck === "none";
+    if (r.senderCheck !== "impersonation") return true;
+    return marked === "pressed" && r.fromAddress.toLowerCase() === pressed;
+  };
+  const moved = await rerouteHeldBag(tx, accountId, heldMail.filter(movable), appliedFolder, now);
   if (moved.lastSeq !== null) lastSeq = moved.lastSeq;
   const { rerouted, heldElsewhere } = moved;
 

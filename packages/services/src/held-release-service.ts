@@ -516,7 +516,8 @@ export async function releaseHeld(
         await applyScreenerDecision(bridgeTx(t), {
           accountId: ctx.accountId, scope: "sender", address: g.sender, appliedFolder: "INBOX", decision: "yes",
           triggeringActionId: `held-release:${g.sender}`, now, stampBaseline: false, applyRetro: true,
-          decidedBy: "person", overExisting: "converge",
+          // The offer never counts a claim (`heldAtGate`): a claim beside the rows waits for its own press.
+          decidedBy: "person", overExisting: "converge", marked: "none",
         });
       } catch (err) {
         if (err instanceof AccountErasedError) {
