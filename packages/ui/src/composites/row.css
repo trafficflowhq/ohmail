@@ -202,3 +202,16 @@
 @container list-col (max-width:379.98px){
   .row .badges > .bdg-tail > .badge.place{display:none}
 }
+/* A LIST COLUMN UNDER 340px (the two-pane band's 300px list beside the reader, as `app.css` keys it)
+   keeps the subject at 16ch: the whole tail goes — tag chips and state notes as well — and the bounded
+   members give way after it. At 6ch a split list read "Re: Gla…" beside a full-width tag chip. */
+@container list-col (max-width:339.98px){
+  .row .subj{min-width:16ch}
+  .row .badges > .bdg-tail{display:none}
+  .row .badges:not(:has(> :not(.bdg-tail))){display:none}
+  /* An amount is whole or absent (`flex:none`), and 16ch beside "CHF 240.00" overran the 214px line. */
+  .row .row-mid:has(> .amt) > .subj{min-width:12ch}
+  /* …and the protected mark is its shield alone, as the clip is: its word was cut mid-letter beside a
+     16ch subject. The row's spoken text still carries the word (`row-spoken.ts`). */
+  .row .badges > .badge.shield{font-size:0;gap:0}
+}

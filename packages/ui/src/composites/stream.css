@@ -33,8 +33,9 @@
 .sc-line .addr{flex:1 1 0;min-width:0;container:who-addr / inline-size;pointer-events:none;font-size:calc(11.5px + var(--type-up));color:var(--ink3);white-space:nowrap}
 .sc-line .addr > span{pointer-events:auto;cursor:pointer;display:block;overflow:hidden;text-overflow:ellipsis;transition:color .15s}
 /* A hidden address is CLIPPED, not removed: the card has no label of its own, so its head's text is
-   what a screen reader hears, and the address stays in it. */
-@container who-addr (max-width:13.98ch){.sc-line .addr > span{clip-path:inset(50%)}}
+   what a screen reader hears, and the address stays in it. The 1px box is the sr-only form: a
+   clipped box at full width still claimed 26px of the line. */
+@container who-addr (max-width:13.98ch){.sc-line .addr > span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
 @container who-line (max-width:279.98px){.sc-line .addr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
 /* THE DELIVERED-TO CHIP STANDS ON THE LINE ONLY ON A CARD 600px WIDE (a 548px line): below that it
    took the name's room on every card. It is then said once, on the open card, under the subject. */

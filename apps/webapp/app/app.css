@@ -1475,6 +1475,17 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   gap: 9px;
   flex: none;
 }
+/* A list column under 340px (the two-pane band's 300px list) gives the tab strip the phone's gutter. */
+@container list-col (max-width: 339.98px) {
+  .list-col .scn-head {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .list-col .triage-seg {
+    margin-left: 18px;
+    margin-right: 18px;
+  }
+}
 .scn-seg button {
   padding: 5.5px 13px;
   font-size:calc(12px + var(--type-up));
@@ -2678,6 +2689,19 @@ textarea.c-input:read-only {
 .grounding .chip {
   background: oklch(1 0 0 / 0.55);
 }
+/* THE PROVENANCE IS ONE SENTENCE: its children are inline, so it wraps at words. As a flex row its
+   three text runs each wrapped inside a column of their own at 700 and 390. A wrapped chip takes the
+   card radius — a pill radius on two lines is a blob. */
+.grounding .chip {
+  display: inline-block;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: calc(var(--r-card) * 10 / 14);
+}
+.grounding .chip > svg {
+  vertical-align: -2px;
+  margin-right: 6px;
+}
 [data-theme="dark"] .grounding .chip {
   background: oklch(1 0 0 / 0.08);
 }
@@ -3243,6 +3267,16 @@ input.set-tag-input {
    ladder stacks a row with a text input and stretches every child, which drew the dot as a
    full-width green bar over the field. The dot and its field stay on one line; the verbs go under. */
 .set-tag-edit > .tdot { flex: none; width: 12px; height: 12px; }
+/* THE CREATE ROW CARRIES ITS OWN FOOT, and the sentence under it stands off the row's rule: the note's
+   pull-up (`.set-row + .set-note-inline`) put its first line on the rule at every width. */
+.set-row.set-tag-new { padding-bottom: 12px; }
+.set-row.set-tag-new + .set-note-inline { margin-top: 0; padding-top: 10px; }
+/* In a narrow pane (1024 and under) the input gives way to Add rather than pushing it under the
+   field: one verb fits beside it, where a rename's two go under (the block below). */
+@container set-pane (max-width: 480px) {
+  .set-row.set-tag-edit.set-tag-new:has(> .set-tag-input) > .set-tag-input { flex: 1 1 0; min-width: 0; }
+  .set-row.set-tag-edit.set-tag-new:has(> .set-tag-input) > .set-tag-acts { flex-basis: auto; }
+}
 @container set-pane (max-width: 480px) {
   .set-row.set-tag-edit:has(> .set-tag-input) { flex-direction: row; flex-wrap: wrap; align-items: center; }
   .set-row.set-tag-edit:has(> .set-tag-input) > .tdot { width: 12px; }
