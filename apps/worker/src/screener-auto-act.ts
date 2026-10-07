@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, accounts, folderState, messages, routingDecisions,
@@ -13,7 +13,7 @@ import {
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { correspondentsAmong } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  canonicalDestination, effectForDestination, silentLogger,
+  canonicalDestination, effectForDestination, identityOfRow, silentLogger,
   type Destination, type Logger,
 } from "@trafficflow/core/mail";
 
@@ -243,6 +243,7 @@ export async function screenerAutoActPass(
   const correspondents = await correspondentsAmong(db, {
     accountId, senders: waiting.map((w) => w.address), references: "held",
   });
+  const unchecked = await uncheckedClaims(db, accountId, waiting.map((w) => w.address));
 
   let planned = 0;
   for (const sender of waiting) {
@@ -256,7 +257,7 @@ export async function screenerAutoActPass(
     /* THE IDENTITY FACT, ABOVE THE BARS: advice bought on a benign message never lets through a
        sender whose other held mail claims a brand from an address the brand does not own. The
        act gains a refusal here and never a filing; the person's own press still decides. */
-    if (sender.identityHeld && plan.decision === "yes") {
+    if ((sender.identityHeld || unchecked.has(sender.address)) && plan.decision === "yes") {
       result.kept++;
       result.identity++;
       continue;
@@ -429,6 +430,32 @@ async function clearActRefusal(tx: Tx, accountId: string, suggestionId: string, 
   await recordChanges(tx as unknown as LedgerTx, [{
     accountId, entityType: "screener_suggestion" as const, entityId: suggestionId, op: "update" as const,
   }]);
+}
+
+/**
+ * THE PAGE'S SENDERS WHOSE HELD MAIL THE CHECK NEVER REACHED (a NULL column, older than mail 0147)
+ * and whose name or subject claims a brand: the fact function answers for the column there, as it
+ * does for every other reader (`identityOfRow`), so the act does not read "unchecked" as "nothing
+ * found" before the backfill reaches the row. One read per page, three short columns per row.
+ */
+async function uncheckedClaims(db: Tx, accountId: string, senders: readonly string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (senders.length === 0) return out;
+  const rows = await db.select({
+    fromName: messages.fromName, fromAddress: messages.fromAddress, subject: messages.subject,
+  }).from(messages)
+    .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    .where(and(
+      eq(messages.accountId, accountId),
+      eq(folderState.desiredFolder, SCREENER_FOLDER),
+      isNull(messages.deletedAt),
+      isNull(messages.senderCheck),
+      inArray(sql`lower(${messages.fromAddress})`, [...senders]),
+    ));
+  for (const r of rows) {
+    if (identityOfRow({ ...r, senderCheck: null, senderCheckBrand: null }) !== null) out.add(r.fromAddress.toLowerCase());
+  }
+  return out;
 }
 
 interface WaitingSender {
