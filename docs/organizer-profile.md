@@ -99,7 +99,7 @@ The envelope:
 | --- | --- | --- |
 | `v` | integer ≥ 1 | Format version. Required. This page documents version 2; ohmail reads version 1 as well, and always will. The number names the field set **and** the canonical ordering the document is written in — see versioning. |
 | `updatedAt` | ISO 8601 string | When this copy was written, by the writer's clock. Readers coalesce duplicate messages by it — newest wins. |
-| `producer` | object | Provenance, never identity: `kind` is an open set (`"local"`, `"cloud"`, a future value — readers must tolerate unknown kinds), `version` is the writer's build label. `stamped`, optional, is `true` when the copy's rules carry the date you decided them (`personDecidedAt`) wherever ohmail knows it. A copy written by an older ohmail has no `stamped`, so an import treats a promoted rule there that files a sender listed in that copy's `screener` into `INBOX`, `ohmail/News` or `ohmail/Receipts` as decided by you. Only the value `true` counts. |
+| `producer` | object | Provenance, never identity: `kind` is an open set (`"local"`, `"cloud"`, a future value — readers must tolerate unknown kinds), `version` is the writer's build label. `stamped`, optional, is `true` when the copy's rules carry the date you decided them (`personDecidedAt`) wherever ohmail knows it. A copy written by an older ohmail has no `stamped`, so an import treats a promoted rule there that files a sender listed in that copy's `screener` into `INBOX`, `ohmail/News` or `ohmail/Receipts` as decided by you, unless this install already holds a rule for that sender or the rule is narrowed by a subject or body term. Only the value `true` counts. |
 
 **`screener`** — an array of senders this mailbox has screened **in**:
 
