@@ -494,17 +494,17 @@ const keyOf = (folder: string, uidValidity: string, uid: number): string =>
 const storedEpoch = (v: string): string => (/^[0-9]+$/.test(v) ? String(BigInt(v)) : "0");
 
 /**
- * WAS THIS BREACH PROGRESS? A per-message `body_overrun` that names its message, and that message is
- * written off in this ledger — `has()` is `terminal`, which `revoke` clears when the durable row could
- * not be written, so it reads "the set-aside row committed". Asked at cycle end by both engines: such
- * a breach does not climb the reconnect ladder, arm the outage clock or count toward quarantine. A
- * breach naming no message (the batch total), a set-aside the cap or hold refused, or a revoked row
- * answers false and stays a failure.
+ * WAS THIS BREACH PROGRESS? A per-message `body_overrun` that names its message, and THIS CYCLE wrote
+ * that message off ({@link DeadLetterLedger.wroteOffThisCycle}; `revoke` takes it back when the durable
+ * row could not be written). A row from an earlier cycle is not progress: a server naming no
+ * UIDVALIDITY hands the same liar back every pass. Asked at cycle end by both engines: progress does
+ * not climb the reconnect ladder, arm the outage clock or count toward quarantine. Anything else — the
+ * batch total, a set-aside the cap refused, a revoked or an older row — stays a failure.
  */
-export function breachSetAside(err: unknown, ledger: Pick<DeadLetterLedger, "has"> | undefined): boolean {
+export function breachSetAside(err: unknown, ledger: Pick<DeadLetterLedger, "wroteOffThisCycle"> | undefined): boolean {
   if (ledger === undefined || !isImapBoundExceeded(err) || err.bound !== "body_overrun") return false;
   if (err.site === undefined || err.folder === undefined) return false;
-  return ledger.has(err.folder, err.site.uidValidity, err.site.uid);
+  return ledger.wroteOffThisCycle(err.folder, err.site.uidValidity, err.site.uid);
 }
 
 /**
@@ -517,6 +517,8 @@ export class DeadLetterLedger {
   private readonly perCycleCap: number;
   /** Terminal decisions taken in the CURRENT cycle; reset by {@link beginCycle}. */
   private thisCycle = 0;
+  /** The keys {@link record} wrote off in the CURRENT cycle (and {@link revoke} did not take back). */
+  private readonly writtenThisCycle = new Set<string>();
   /** See {@link holdsAtCap}; the instant the hold engaged, or null. */
   private heldSince: Date | null = null;
   /** See {@link storeFaultSince}. */
@@ -596,7 +598,12 @@ export class DeadLetterLedger {
   }
 
   /** Called once at the top of every sync cycle, so the per-cycle cap is per cycle. */
-  beginCycle(): void { this.thisCycle = 0; }
+  beginCycle(): void { this.thisCycle = 0; this.writtenThisCycle.clear(); }
+
+  /** Did THIS cycle write this message off? See {@link breachSetAside}. */
+  wroteOffThisCycle(folder: string, uidValidity: string, uid: number): boolean {
+    return this.writtenThisCycle.has(keyOf(folder, uidValidity, uid));
+  }
 
   /**
    * Load the DURABLE rows for this mailbox into the ledger — the join between the two halves, called
@@ -657,6 +664,7 @@ export class DeadLetterLedger {
     const item = this.items.get(key);
     if (!item?.terminal) return;
     item.terminal = false;
+    this.writtenThisCycle.delete(key);
     if (this.thisCycle > 0) this.thisCycle--;
     // An exempt write-off never joined the run, so its revoke leaves the run alone.
     if (holdExemptCode(item.code)) return;
@@ -699,6 +707,7 @@ export class DeadLetterLedger {
     if (this.thisCycle >= this.perCycleCap) return "retry";  // the safety valve, above
     this.thisCycle++;
     item.terminal = true;
+    this.writtenThisCycle.add(key);
     if (exempt) return "skip";
     if (this.holdsAtCap) {
       this.runThisCycle++;

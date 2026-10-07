@@ -2188,6 +2188,11 @@ export async function startWorkerWithLock(
      * The two shapes are separated BY CLASS (never a driver string): ERRORED → detach AND quarantine;
      * merely ENDED → DETACH ONLY (no `error`, no backoff), so the next roster pass re-dials in 30 s rather than waiting out `retryBaseMs`. ON THE QUEUE, so a detach never closes an adapter a cycle is using and an error during `attach()` lands after that attach's own catch.
      */
+    /* THE CYCLE'S OWN VERDICT on a breach it ended on, keyed on the error object: the connection
+       handler runs later on the queue, and by then another cycle's `beginCycle` may have cleared
+       the ledger's record of what the breaching cycle wrote. */
+    const setAsideBreaches = new WeakSet<object>();
+
     function handleConnectionError(mailboxId: string, accountId: string, err: unknown): void {
       if (stopped) return;
       const ended = err instanceof ImapConnectionClosedError;
@@ -2212,7 +2217,9 @@ export async function startWorkerWithLock(
         }
         /* After the cycle on this queue: a breach whose message the cycle set aside is progress,
            so the mailbox is re-attached by the next roster pass and not quarantined. */
-        if (breachSetAside(err, rt.deps.deadLetters)) {
+        const progress = (typeof err === "object" && err !== null && setAsideBreaches.has(err))
+          || breachSetAside(err, rt.deps.deadLetters);
+        if (progress) {
           await detach(rt, "retired after a message was set aside — the next roster pass re-attaches it");
           return;
         }
@@ -4147,7 +4154,11 @@ export async function startWorkerWithLock(
           }
           /* A BREACH WHOSE MESSAGE WAS SET ASIDE IS PROGRESS: the row committed, the connection is
              retired and the next roster pass re-attaches. NOT counted toward maxSyncFailures. */
-          const setAside = breachSetAside(err, rt.deps.deadLetters);
+          /* A retired adapter rethrows the breach that retired it, so a later cycle over it meets the
+             SAME object: already judged, and not a second failure. */
+          const judged = typeof err === "object" && err !== null && setAsideBreaches.has(err);
+          const setAside = judged || breachSetAside(err, rt.deps.deadLetters);
+          if (setAside && typeof err === "object" && err !== null) setAsideBreaches.add(err);
           if (setAside) {
             log.info("sync_cycle_set_aside", {
               mailboxId: rt.mailboxId, accountId: rt.accountId,

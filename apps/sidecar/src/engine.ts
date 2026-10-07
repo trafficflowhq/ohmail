@@ -7154,6 +7154,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              either way the death stays on record so the next due poll dials again. */
           if (deadGeneration === generation) {
             if (breachSetAside(outcome.drainError, deadLetters)) {
+              /* The handshake went through, so the success branch's resets below hold here too: a
+                 refused certificate or plaintext server is no longer the answer, and the press's
+                 floor goes with the ladder. */
+              certificateRefusedNow = false;
+              plaintextRefusedNow = false;
+              forcedNotBefore = 0;
               redialAttempts = 0;
               redialNotBefore = Date.now() + jittered(reconnect.ladderMs[0]!);
               outageSince = null;
