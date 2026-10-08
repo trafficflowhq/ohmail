@@ -22,6 +22,12 @@ export const FIRST_PAGE_GRACE_MS = 1_500;
 /** Why the wait ended — a reading, so a test and a log line can tell the three apart. */
 export type FirstPageOutcome = "served" | "timed-out" | "already";
 
+/* A MONOTONIC CLOCK, so a wall clock stepped back after the arm cannot lengthen the grace: on the
+   phone nothing ever releases this gate (its window asks the engine in-process, never through the
+   desktop's `host.ts`), so every drain for the life of the process asked it, and on the wall clock
+   each one waited the grace plus the step. Every wait is also clamped to the grace it was given. */
+const monotonicNow = (): number => performance.now();
+
 let released = false;
 let waiters: Array<(outcome: FirstPageOutcome) => void> = [];
 /** When the grace started — see {@link armFirstPageGate}. `null` until the door is open. */
@@ -39,10 +45,15 @@ function runDeferred(): void {
   for (const fn of due) fn();
 }
 
+/** What is left of the grace: never below nothing, never above the grace itself. */
+function graceLeft(graceMs: number, nowMs: number, armedAt: number): number {
+  return Math.min(graceMs, Math.max(0, graceMs - (nowMs - armedAt)));
+}
+
 /** The grace's end releases deferred work too, from wherever the gate was armed. */
 function armGraceTimer(graceMs: number): void {
   if (graceTimer !== null || !doorArmed || armedAtMs === null) return;
-  graceTimer = setTimeout(runDeferred, Math.max(0, graceMs - (Date.now() - armedAtMs)));
+  graceTimer = setTimeout(runDeferred, graceLeft(graceMs, monotonicNow(), armedAtMs));
   graceTimer.unref?.();
 }
 
@@ -69,7 +80,7 @@ export function afterFirstPage(fn: () => void, graceMs: number = FIRST_PAGE_GRAC
  * 2 ms after the store open and which is the honest anchor — before the door serves, no window can
  * ask, so a grace running then would be counting a window nobody could use.
  */
-export function armFirstPageGate(nowMs: number = Date.now()): void {
+export function armFirstPageGate(nowMs: number = monotonicNow()): void {
   armedAtMs = nowMs;
   doorArmed = true;
   if (deferred.length > 0) armGraceTimer(FIRST_PAGE_GRACE_MS);
@@ -102,14 +113,14 @@ export function noteFirstPageServed(): void {
  */
 export function awaitFirstPage(
   graceMs: number = FIRST_PAGE_GRACE_MS,
-  nowMs: number = Date.now(),
+  nowMs: number = monotonicNow(),
 ): Promise<FirstPageOutcome> {
   if (released) return Promise.resolve<FirstPageOutcome>("already");
   // WHAT IS LEFT OF THE GRACE, not the whole of it. An unarmed gate (no door, so no `serving`
   // line) ARMS ITSELF at its first wait: the full bound once per process, as an armed gate pays
   // it, and never again — the phone's door never arms it, and every one of its drains paid 1.5 s.
   if (armedAtMs === null) armedAtMs = nowMs;
-  const left = Math.max(0, graceMs - (nowMs - armedAtMs));
+  const left = graceLeft(graceMs, nowMs, armedAtMs);
   if (left === 0) return Promise.resolve<FirstPageOutcome>("timed-out");
   return new Promise<FirstPageOutcome>((resolve) => {
     const timer = setTimeout(() => {

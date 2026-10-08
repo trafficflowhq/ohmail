@@ -1319,6 +1319,30 @@ export const RECONNECT_PROFILES: Readonly<Record<OrganizerKind, ReconnectProfile
 export const reconnectProfile = (kind: OrganizerKind): ReconnectProfile =>
   RECONNECT_PROFILES[kind];
 
+/**
+ * A WAIT ON THE WALL CLOCK THAT A BACKWARD STEP CANNOT LENGTHEN. Armed with its length; a reading
+ * that finds more than that length left (the clock went back after the arm) re-arms it at
+ * `now + ms`, so a step costs at most one wait, never the step. A forward step ends it early, as
+ * every wall-clock wait here always did. FIRST-PAGE-GATE-WAITS-OUT-A-CLOCK-STEP.
+ */
+export class WallWait {
+  private due = 0;
+  private ms = 0;
+  private armed = false;
+  arm(ms: number, now: number = Date.now()): void {
+    this.ms = Math.max(0, ms);
+    this.due = now + this.ms;
+    this.armed = true;
+  }
+  clear(): void { this.armed = false; }
+  /** What is left, never more than the length it was armed with; 0 when spent or never armed. */
+  left(now: number = Date.now()): number {
+    if (!this.armed) return 0;
+    if (this.due - now > this.ms) this.due = now + this.ms;
+    return Math.max(0, this.due - now);
+  }
+}
+
 /** The wait before attempt `n` (1-based). Past the ladder's end the last step repeats. */
 export const redialStepMs = (profile: ReconnectProfile, attempt: number): number =>
   profile.ladderMs[Math.min(Math.max(attempt, 1), profile.ladderMs.length) - 1]!;
@@ -1966,9 +1990,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        drain yielded and got its page, or the bound fired and it went anyway. A wait of nothing
        (`already`, or a grace spent before the drain asked) says nothing. */
     const yieldToFirstPage = async (): Promise<void> => {
-      const yieldedAt = Date.now();
+      const yieldedAt = performance.now();
       const waited = await awaitFirstPage();
-      const waitedMs = Date.now() - yieldedAt;
+      const waitedMs = Math.floor(performance.now() - yieldedAt);
       if (waited === "served") log("first_page_before_drain", { waitedMs });
       else if (waited === "timed-out" && waitedMs > 0) log("first_page_grace_expired", { waitedMs });
     };
@@ -3444,11 +3468,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (!signInRefused && redialAttempts === 0) return;
         signInRefused = false;
         redialAttempts = 0;
-        redialNotBefore = 0;
+        redialWait.clear();
         /* …and the manual floor with them, for this method's own stated reason: a new password
            is a new question, and it should be asked promptly rather than at the end of a wait
            the old one earned. */
-        forcedNotBefore = 0;
+        forcedWait.clear();
         log("mailbox_sign_in_retry_armed", {
           mailboxId: mb.id,
           reason: `${why}; the stored refusal is discarded and ${next}`,
@@ -3456,21 +3480,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
       /** Backoff for the failures that MAY pass. Attempts since the last successful dial. */
       let redialAttempts = 0;
-      /** Wall-clock instant before which no re-dial is attempted. */
-      let redialNotBefore = 0;
+      /** No re-dial is attempted while this has time left. */
+      const redialWait = new WallWait();
       /**
-       * Wall-clock instant before which a press is not honoured — a floor under the one path
-       * allowed to skip the ladder. A forced dial skips {@link redialNotBefore} and a fast failure
+       * While this has time left a press is not honoured — a floor under the one path
+       * allowed to skip the ladder. A forced dial skips {@link redialWait} and a fast failure
        * settles in under a second, so without this a second press dials again and repeated presses
        * defeat the 15 s–5 min ladder against a server already refusing. A press is worth ONE
-       * attempt per base step: after a forced dial fails this is set to `now + reconnect.ladderMs[0]`
+       * attempt per base step: after a forced dial fails this is armed with `reconnect.ladderMs[0]`
        * and `force` is refused until it passes (the press still answers 202); a successful dial
-       * clears it. Kept separate from `redialNotBefore` — that widens to five minutes; folding them
+       * clears it. Kept separate from `redialWait` — that widens to five minutes; folding them
        * would give a press the long wait back or let it reset the ladder.
        */
-      let forcedNotBefore = 0;
+      const forcedWait = new WallWait();
       /** The floor under {@link LocalMailboxRuntime.networkReturned}, its own for the press's reason. */
-      let networkNotBefore = 0;
+      const networkWait = new WallWait();
 
       /**
        * Which connection this mailbox is on — a counter, bumped by every dial. The identity a
@@ -3518,7 +3542,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const jittered = (stepMs: number): number => Math.round(stepMs * (0.8 + Math.random() * 0.4));
       const climbTheLadder = (): void => {
         redialAttempts += 1;
-        redialNotBefore = Date.now() + jittered(redialStepMs(reconnect, redialAttempts));
+        redialWait.arm(jittered(redialStepMs(reconnect, redialAttempts)));
       };
 
       /**
@@ -4297,7 +4321,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *  drain FURTHER away, which is the opposite of what every caller of it wants. */
       let timerDueAt = 0;
       /** A re-dial after a set-aside is due at this instant; the next poll is armed no later. */
-      let floorPollAt = 0;
+      const floorPoll = new WallWait();
       /**
        * THE HEARTBEAT'S OWN TIMER, AND WHY IT IS NOT THE POLL'S.
        *
@@ -6657,7 +6681,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           log("mailbox_redial_deferred", {
             mailboxId: mb.id,
             attempt: redialAttempts,
-            retryInMs: Math.max(0, redialNotBefore - Date.now()),
+            retryInMs: redialWait.left(),
             reason: "the server sent more than this install accepts and the connection was " +
               "retired; nothing is drained over it, and the next due poll dials a new one",
           });
@@ -6738,8 +6762,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            it: earlier would be deferred and then wait a whole interval, later is the idle ladder
            taxing progress. Nothing is drained meanwhile (the connection is retired). A floor in
            the past is spent. */
-        if (floorPollAt <= Date.now()) floorPollAt = 0;
-        const due = delayMs ?? (floorPollAt > 0 ? floorPollAt - Date.now() : idlePollMs);
+        const floorLeft = floorPoll.left();
+        if (floorLeft === 0) floorPoll.clear();
+        const due = delayMs ?? (floorLeft > 0 ? floorLeft : idlePollMs);
         timer = setTimeout(() => {
           /* SPENT THE MOMENT IT FIRES, before anything can await. Left standing, the guard above
              refuses every later re-arm and the mailbox stops polling altogether after its first
@@ -7119,7 +7144,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * retries the stored READ rather than dialling), and `signInRefused` (the SERVER said no; a press
        * must not become repeated LOGIN attempts providers throttle or lock). It does NOT reset the
        * ladder (`redialAttempts` untouched) and is NOT unlimited — at most once per this profile's first
-       * ladder step ({@link forcedNotBefore}, {@link ReconnectProfile}).
+       * ladder step ({@link forcedWait}, {@link ReconnectProfile}).
        */
       const redialIfDead = async ({ force = false }: { force?: boolean } = {}): Promise<void> => {
         if (stopped || connectionDeadSince === null || redialling || moving) return;
@@ -7133,11 +7158,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         /* A REFUSED CERTIFICATE WAITS FOR A PERSON, not for the ladder — see the field. */
         if (certificateRefusedNow && !force) return;
         /* THE PRESS SKIPS THE LADDER, AND THE FLOOR UNDER THE PRESS IS ITS OWN. See
-           {@link forcedNotBefore}: a forced dial that failed a moment ago has not become worth
+           {@link forcedWait}: a forced dial that failed a moment ago has not become worth
            repeating because somebody pressed again. ABOVE the credential arm below, because the
            READ is rationed by this same ladder: a store that answered a moment ago has not become
            worth asking again either, and a read every poll would climb no ladder at all. */
-        if (force ? Date.now() < forcedNotBefore : Date.now() < redialNotBefore) return;
+        if ((force ? forcedWait : redialWait).left() > 0) return;
         /* THE SAME PRECONDITION `start()` KEEPS, and for the same reason: an empty password is a
            login attempt the server will refuse, and a refused login counts toward a lockout on
            some providers. A mailbox with no usable credential is not unreachable, it is waiting
@@ -7151,7 +7176,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             /* AND ONLY THE POLL CLIMBS, exactly as the failed dial below decides it: a press is
                one reading, not evidence about when a store might open, so it arms its own floor
                and leaves the automatic wait where it was. */
-            if (force) forcedNotBefore = Date.now() + reconnect.ladderMs[0]!;
+            if (force) forcedWait.arm(reconnect.ladderMs[0]!);
             else climbTheLadder();
             return;
           }
@@ -7221,17 +7246,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  floor goes with the ladder. */
               certificateRefusedNow = false;
               plaintextRefusedNow = false;
-              forcedNotBefore = 0;
+              forcedWait.clear();
               redialAttempts = 0;
-              redialNotBefore = Date.now() + jittered(reconnect.ladderMs[0]!);
+              redialWait.arm(jittered(reconnect.ladderMs[0]!));
               outageSince = null;
               idlePollMs = pollIntervalMs;
-              floorPollAt = redialNotBefore;
+              floorPoll.arm(redialWait.left());
               schedule();
               log("mailbox_redial_after_set_aside", {
                 mailboxId: mb.id,
                 attempt: redialAttempts,
-                retryInMs: Math.max(0, redialNotBefore - Date.now()),
+                retryInMs: redialWait.left(),
                 skipped: deadLetters.skipped,
                 reason: "the connection was retired after a message the server sent more of than it " +
                   "declared was set aside; that is progress, so the next re-dial waits the first " +
@@ -7251,7 +7276,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           connectionDeadBy = null;
           wentQuiet = false;
           redialAttempts = 0;
-          redialNotBefore = 0;
+          redialWait.clear();
           /* The handshake went through, so the certificate is no longer the answer. */
           certificateRefusedNow = false;
           plaintextRefusedNow = false;
@@ -7263,7 +7288,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * (`lease_lost_race`), so a case on it was a race, not evidence, and was removed. Kept as
            * hygiene — a floor outliving the condition it rations is a bug for the next caller — and
            * the mutation table leaves it out. */
-          forcedNotBefore = 0;
+          forcedWait.clear();
           if (outcome.leaseRead) {
             leaseUnavailableSince = null;
             leaseUnavailableCycles = 0;
@@ -7308,7 +7333,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             /* No password was sent: the platform refused the handshake before LOGIN. Force or
                not, the press floor rations the next ask; the automatic ladder stops here. */
             certificateRefusedNow = true;
-            forcedNotBefore = Date.now() + reconnect.ladderMs[0]!;
+            forcedWait.arm(reconnect.ladderMs[0]!);
             log("mailbox_certificate_check_failed", {
               err, mailboxId: mb.id,
               reason: "this device would not accept the mail server's certificate, so nothing " +
@@ -7333,7 +7358,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                5 s does not make the heal slower. Jitter stops mailboxes knocking in unison after
                an outage, a property of the automatic cadence; a person pressing is not a herd,
                and a floor that moved would make "press again in fifteen seconds" unstatable. */
-            forcedNotBefore = Date.now() + reconnect.ladderMs[0]!;
+            forcedWait.arm(reconnect.ladderMs[0]!);
           } else {
             /* AND ONLY THE POLL CLIMBS THE LADDER — a press is one dial, not evidence about the
                server's schedule; see the contract above. A failed forced attempt used to run
@@ -7350,9 +7375,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                climbing from one that has stopped. `null` on a refused sign-in — nothing is
                waiting, because nothing will dial until a person acts — and `0` where the next
                poll may dial at once, which is what a failed PRESS leaves (the press does not
-               climb the automatic ladder). Read off `redialNotBefore` AFTER the arms above, never
+               climb the automatic ladder). Read off `redialWait` AFTER the arms above, never
                from the step this call site could compute: the one that ran is the fact. */
-            retryInMs: signInRefused ? null : Math.max(0, redialNotBefore - Date.now()),
+            retryInMs: signInRefused ? null : redialWait.left(),
             totalMs: deadSince ? Date.now() - deadSince.getTime() : 0,
             reason: "the connection could not be re-opened; this install organizes nothing and " +
               "serves the mirror it already has, and the next poll tries again. The clock the " +
@@ -7506,9 +7531,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (stopped || connectionDeadSince === null || signInRefused || certificateRefusedNow) {
             return false;
           }
-          if (Date.now() < networkNotBefore) return false;
-          networkNotBefore = Date.now() + reconnect.ladderMs[0]!;
-          redialNotBefore = 0;
+          if (networkWait.left() > 0) return false;
+          networkWait.arm(reconnect.ladderMs[0]!);
+          redialWait.clear();
           void redialIfDead().catch(() => { /* the dial logs its own failure */ });
           return true;
         },
