@@ -25,8 +25,9 @@ the string literals each patch adds, and `apply-patches.mjs assert --in <file or
 without every one of them. The three engine bundlers run it over the bundle they write, the
 Android workflow over the APK's dex, the desktop workflow over the packaged engine, and the image
 workflow over the bundle inside each image. The markers are read out of the patch, so a changed
-patch moves them with it. The three patches that touch only Apple sources add no literal, and no
-workflow here builds for iOS.
+patch moves them with it. Literals in Apple sources are listed apart (`apple` in `markers`,
+`appleMarkers` in `--json`) and never asked of a dex or a bundle: no workflow here builds for iOS.
+The three patches that touch only Apple sources add no literal.
 
 ## `react-native-tcp-socket@6.4.2`
 
@@ -212,3 +213,26 @@ is reported as already carrying this patch rather than refused.
 **What would let us drop this:** a release past 57.0.4 that also builds under the current Swift.
 57.0.8 and later change `RuntimeScheduler.h` in a way that fails worse here, so the version is not
 the fix yet.
+
+## `react-native-webview@13.16.1`
+
+MIT. Upstream: <https://github.com/react-native-webview/react-native-webview>.
+
+The phone draws an html message in a WebView with JavaScript off, so the document cannot measure
+itself. Without its height the view gets a guessed one and scrolls inside it, and a drag that
+starts on the message moves that box instead of the reader around it. The patch reports the
+document's own height to JavaScript through the `onScroll` event the library already has:
+`contentSize.height` is the document height whenever it changes. Android sends it on the draw that
+changes `getContentHeight()`, which is the document in CSS pixels; `computeVerticalScrollRange()`
+is not used, because during a resize it reads about twice the document. iOS observes the web
+view's `scrollView.contentSize` and sends the same event whether its scrolling is enabled or not.
+Both send it again after the view is resized, so a resize is always answered with a reading. No
+event or property is added, so the generated component spec is unchanged.
+
+The Android literal `ohmail-webview-document-height` is what the Android workflow reads in the
+dex. The iOS half's literal, `ohmail-webview-document-height-ios`, is the observer's KVO context, for
+a Pods build guard to read once there is an iOS build here; that half has not been measured on a
+device yet.
+
+**What would let us drop this:** upstream reporting the document height natively, or the reader
+drawing html mail without a WebView.

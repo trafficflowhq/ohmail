@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 const CONTROLS = {
   nodemailer: "Connection closed unexpectedly",
   "react-native-tcp-socket": "Attempted to write to closed socket",
+  "react-native-webview": "RNCWebViewBridge",
 };
 const MIN_MARKER = 20;
 
@@ -104,13 +105,22 @@ function literalsIn(code, state) {
 }
 
 /* What the patch ADDS that the build must carry: literals on `+` lines, long enough to be unique, plain
- * ASCII with no escape (so source and compiled bytes agree), and on no context or removed line. */
-function markersOf(patch) {
+ * ASCII with no escape (so source and compiled bytes agree), and on no context or removed line.
+ * Apple sources are read apart (`apple: true`): no build here compiles them, so a dex or a bundle
+ * is asked only for the others, and a Pods build guard for the Apple ones. */
+const APPLE_PATH = /^(ios|apple|macos)\//;
+function markersOf(patch, { apple = false } = {}) {
   const added = [];
   const kept = new Set();
   let state = { block: false };
+  let skip = false;
   for (const line of patch.text.split("\n")) {
-    if (line.startsWith("diff --git ")) { state = { block: false }; continue; }
+    if (line.startsWith("diff --git ")) {
+      state = { block: false };
+      skip = APPLE_PATH.test(/^diff --git a\/(\S+)/.exec(line)?.[1] ?? "") !== apple;
+      continue;
+    }
+    if (skip) continue;
     if (/^(index |--- |\+\+\+ |@@ |new file|deleted file|similarity|rename |old mode|new mode)/.test(line)) continue;
     const kind = line[0];
     if (kind !== "+" && kind !== "-" && kind !== " ") continue;
@@ -328,7 +338,7 @@ function apply(root) {
 function markers(root, json) {
   const patches = patchList(root);
   if (json) {
-    const table = Object.fromEntries(patches.map((p) => [p.file, { name: p.name, version: p.version, paths: p.paths, control: CONTROLS[p.name] ?? null, markers: markersOf(p) }]));
+    const table = Object.fromEntries(patches.map((p) => [p.file, { name: p.name, version: p.version, paths: p.paths, control: CONTROLS[p.name] ?? null, markers: markersOf(p), appleMarkers: markersOf(p, { apple: true }) }]));
     process.stdout.write(`${JSON.stringify(table, null, 2)}\n`);
     return;
   }
@@ -336,6 +346,7 @@ function markers(root, json) {
     const ms = markersOf(p);
     console.log(`MARKERS ${p.file} n=${ms.length}${ms.length ? "" : ` (adds no literal; changes ${p.paths.join(", ")})`}`);
     for (const m of ms) console.log(`  ${JSON.stringify(m)}`);
+    for (const m of markersOf(p, { apple: true })) console.log(`  apple ${JSON.stringify(m)}`);
   }
 }
 

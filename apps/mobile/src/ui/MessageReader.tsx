@@ -23,6 +23,7 @@ import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { BodyPages } from "./BodyPages";
 import { MailBodyFrame } from "./MailBodyFrame";
+import { FadeOut } from "./FadeOut";
 import { MessageActions } from "./MessageActions";
 import { usePosture } from "./posture";
 import { readerVerbMode } from "./reader-verbs";
@@ -180,6 +181,11 @@ export function MessageReader({
           title={m.historyPlace ? Copy.history : m.gateHeld ? Copy.screener : m.folderLeaf ?? placeName(m.place)}
         />
       )}
+      {/* The reader's top edge: text scrolled under the bar ends in canvas, not in sliced glyphs.
+          A zero-height row drawn above the scroller, so it takes no room and no touch. */}
+      <View pointerEvents="none" style={{ height: 0, zIndex: 1 }}>
+        <FadeOut color={t.c.canvas} height={10} edge="top" />
+      </View>
       {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
           air above the from-line, or the back bar reads as part of the mail. */}
       <Scroller

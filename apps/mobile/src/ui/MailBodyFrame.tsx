@@ -16,7 +16,20 @@ import { WebView } from "react-native-webview";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld, useWorldToast, type WorldMail } from "../state/world";
-import { buildPhoneMailDocument, frameHeightEstimate } from "../mail/mail-document";
+import { buildPhoneMailDocument } from "../mail/mail-document";
+import {
+  armFrameTimer,
+  FRAME_UNANSWERED_MS,
+  frameHeightFor,
+  frameLayout,
+  nextFrameHeight,
+  rememberedFrameHeight,
+  rememberFrameHeight,
+  settleDelayMs,
+  settleFrameHeight,
+  unansweredFrameHeight,
+  type FrameHeight,
+} from "../mail/frame-height";
 import { fetchRemoteImages, imagesSeenBy } from "../mail/remote-images";
 import { frameNavDecision, openConfirmedLink } from "../mail/frame-nav";
 import { sanitizeMailHtmlPhone } from "../mail/sanitize";
@@ -70,11 +83,28 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   const t = useTheme();
   const w = useWorld();
   const toast = useWorldToast();
-  const { height: windowHeight } = useWindowDimensions();
   const [asked, setAsked] = useState<string | null>(null);
   const [remote, setRemote] = useState<{ id: string; map: ReadonlyMap<string, string> } | null>(null);
   const [linkAsk, setLinkAsk] = useState<string | null>(null);
   const [refusedFor, setRefusedFor] = useState<string | null>(null);
+  const [frameHeight, setFrameHeight] = useState<FrameHeight | null>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // THE FRAME IS AS TALL AS ITS DOCUMENT and never scrolls itself (`src/mail/frame-height.ts`). A new
+  // width re-measures at the seed's size above a spacer holding the old height; the settle is armed
+  // only by a seed-size reading at that width, and a frame no reading answers reads as text.
+  const { width: windowWidth } = useWindowDimensions();
+  const sized = frameHeightFor(frameHeight, m.id, windowWidth, rememberedFrameHeight(m.id));
+  const update = (f: (s: FrameHeight) => FrameHeight) =>
+    setFrameHeight((prev) => f(frameHeightFor(prev, m.id, windowWidth, rememberedFrameHeight(m.id))));
+  useEffect(() => {
+    if (frameHeight !== null) rememberFrameHeight(frameHeight);
+  }, [frameHeight]);
+  const settleKey = sized.measured === null ? null : `${sized.key}@${sized.width}:${sized.measured}`;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => armFrameTimer(settleDelayMs(sized, Date.now()), () => update(settleFrameHeight)), [settleKey]);
+  const awaiting = loadedFor === m.id && !sized.answered && sized.text === null ? `${sized.key}@${sized.width}` : null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => armFrameTimer(awaiting === null ? null : FRAME_UNANSWERED_MS, () => update(unansweredFrameHeight)), [awaiting]);
 
   const html = m.html ?? "";
   // A marked sender's pictures wait for the press whatever the stored flag says (`Mail.senderCheck`).
@@ -161,7 +191,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   }, [imagesWanted, resolvedRemote === undefined, pictureUrls.length === 0, m.id]);
 
   const shows = frameShows(reading, current, kept, sanitized.oversize === true, barePlan === null ? "none" : bareReading);
-  if (shows.show === "text") {
+  if (shows.show === "text" || sized.text !== null) {
     // The size fallback states its reason — a bare plain-text render reads as a bug.
     return (
       <View>
@@ -182,7 +212,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   const canLoad = !imagesWanted && pictureUrls.length > 0;
   // The document drawn: this state's once its own count fits; otherwise the last that fitted for this html.
   const doc = shows.show === "frame" ? shows.doc : null;
-  const height = frameHeightEstimate(sanitized.html, windowHeight);
+  const { frame: height, spacer } = frameLayout(sized);
 
   return (
     <View>
@@ -236,7 +266,14 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
             if (d.kind === "compose") router.push({ pathname: "/compose", params: { mailto: d.url } });
             return d.kind === "load";
           }}
-          nestedScrollEnabled
+          scrollEnabled={false}
+          onScroll={(e) => {
+            const reported = e.nativeEvent.contentSize.height;
+            const view = e.nativeEvent.layoutMeasurement.height;
+            const at = Date.now();
+            update((s) => nextFrameHeight(s, reported, view, at));
+          }}
+          onLoadEnd={() => setLoadedFor(m.id)}
           style={{ height, backgroundColor: t.c.canvas }}
           accessibilityLabel={Copy.mailFrameLabel}
         />
@@ -244,6 +281,7 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
         // Where the frame will stand, as the WebView looks before its own first paint.
         <View style={{ height, backgroundColor: t.c.canvas }} />
       )}
+      {spacer > 0 ? <View style={{ height: spacer }} /> : null}
       <Sheet open={linkAsk !== null} onClose={() => setLinkAsk(null)} label={Copy.mailOpenLinkTitle}>
         <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
           {Copy.mailOpenLinkTitle}

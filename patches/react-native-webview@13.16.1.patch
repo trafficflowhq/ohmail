@@ -1,0 +1,138 @@
+diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+index 80c68034b193a47bedb56ca527352de9548e8ac6..67b0f09f82b04e535f39fdec0251908850c0ef6b 100644
+--- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
++++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+@@ -133,6 +133,8 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+     @Override
+     protected void onSizeChanged(int w, int h, int ow, int oh) {
+         super.onSizeChanged(w, h, ow, oh);
++        // ohmail: a resized view reports its document again on the next draw, changed or not.
++        reportedDocumentHeight = -1;
+ 
+         if (sendContentSizeChangeEvents) {
+             dispatchEvent(
+@@ -395,7 +397,7 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+                     mOnScrollDispatchHelper.getXFlingVelocity(),
+                     mOnScrollDispatchHelper.getYFlingVelocity(),
+                     this.computeHorizontalScrollRange(),
+-                    this.computeVerticalScrollRange(),
++                    documentHeightPx(),
+                     this.getWidth(),
+                     this.getHeight());
+ 
+@@ -403,6 +405,42 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+         }
+     }
+ 
++    // ohmail: the DOCUMENT's height reaches JS as onScroll's contentSize.height, on every draw that
++    // changes it, so a host can size the view to its document with JavaScript off. getContentHeight is
++    // the document in CSS px; computeVerticalScrollRange is not (mid-resize it reads about twice the
++    // document). The tag is the literal a device guard reads in the dex (a release build strips
++    // Log.v and Log.d, so it rides the warning).
++    private static final String DOCUMENT_HEIGHT_TAG = "ohmail-webview-document-height";
++    private int reportedDocumentHeight = -1;
++
++    private int documentHeightPx() {
++        return Math.round(getContentHeight() * getResources().getDisplayMetrics().density);
++    }
++
++    @Override
++    protected void onDraw(android.graphics.Canvas canvas) {
++        super.onDraw(canvas);
++        if (!hasScrollEvent) return;
++        int css = getContentHeight();
++        if (css <= 0 || css == reportedDocumentHeight) return;
++        if (!(getResources().getDisplayMetrics().density > 0f)) {
++            android.util.Log.w(DOCUMENT_HEIGHT_TAG, "no display density: the document height is not reported");
++            return;
++        }
++        reportedDocumentHeight = css;
++        dispatchEvent(this, ScrollEvent.obtain(
++                RNCWebViewWrapper.getReactTagFromWebView(this),
++                ScrollEventType.SCROLL,
++                getScrollX(),
++                getScrollY(),
++                0f,
++                0f,
++                this.computeHorizontalScrollRange(),
++                documentHeightPx(),
++                this.getWidth(),
++                this.getHeight()));
++    }
++
+     protected void dispatchEvent(WebView webView, Event event) {
+         ThemedReactContext reactContext = getThemedReactContext();
+         int reactTag = RNCWebViewWrapper.getReactTagFromWebView(webView);
+diff --git a/apple/RNCWebViewImpl.m b/apple/RNCWebViewImpl.m
+index 7f5c24d6e2cfb26eddbc513bf17a81c24a7273e2..212a552e41a0b0ff53e014a6aac7f484a31d0c63 100644
+--- a/apple/RNCWebViewImpl.m
++++ b/apple/RNCWebViewImpl.m
+@@ -20,6 +20,10 @@
+ static NSTimer *keyboardTimer;
+ static NSString *const HistoryShimName = @"ReactNativeHistoryShim";
+ static NSString *const MessageHandlerName = @"ReactNativeWebView";
++#if !TARGET_OS_OSX
++// ohmail: the document-size observer's KVO context, and the literal a build guard reads in the binary.
++static NSString *const RNCWebViewDocumentHeightContext = @"ohmail-webview-document-height-ios";
++#endif // !TARGET_OS_OSX
+ static NSURLCredential* clientAuthenticationCredential;
+ static NSDictionary* customCertificatesForHost;
+ 
+@@ -548,6 +552,10 @@ RCTAutoInsetsProtocol>
+ #endif // !TARGET_OS_OSX
+     _webView.allowsLinkPreview = _allowsLinkPreview;
+     [_webView addObserver:self forKeyPath:@"estimatedProgress" options:NSKeyValueObservingOptionOld | NSKeyValueObservingOptionNew context:nil];
++#if !TARGET_OS_OSX
++    // ohmail: the document's size reaches onScroll whenever it changes, scrolling enabled or not.
++    [_webView.scrollView addObserver:self forKeyPath:@"contentSize" options:NSKeyValueObservingOptionNew context:(__bridge void *)RNCWebViewDocumentHeightContext];
++#endif // !TARGET_OS_OSX
+     _webView.allowsBackForwardNavigationGestures = _allowsBackForwardNavigationGestures;
+ 
+     _webView.customUserAgent = _userAgent;
+@@ -617,6 +625,9 @@ RCTAutoInsetsProtocol>
+     [_webView.configuration.userContentController removeScriptMessageHandlerForName:HistoryShimName];
+     [_webView.configuration.userContentController removeScriptMessageHandlerForName:MessageHandlerName];
+     [_webView removeObserver:self forKeyPath:@"estimatedProgress"];
++#if !TARGET_OS_OSX
++    [_webView.scrollView removeObserver:self forKeyPath:@"contentSize" context:(__bridge void *)RNCWebViewDocumentHeightContext];
++#endif // !TARGET_OS_OSX
+     [_webView removeFromSuperview];
+     if (@available(iOS 15.0, macOS 12.0, *)) {
+         [_webView pauseAllMediaPlaybackWithCompletionHandler:nil];
+@@ -707,6 +718,10 @@ RCTAutoInsetsProtocol>
+       [event addEntriesFromDictionary:@{@"progress":[NSNumber numberWithDouble:self.webView.estimatedProgress]}];
+       _onLoadingProgress(event);
+     }
++#if !TARGET_OS_OSX
++  } else if (context == (__bridge void *)RNCWebViewDocumentHeightContext && object == self.webView.scrollView) {
++    [self reportScroll:self.webView.scrollView];
++#endif // !TARGET_OS_OSX
+   }else{
+     [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+   }
+@@ -1050,7 +1065,15 @@ RCTAutoInsetsProtocol>
+   if (!_scrollEnabled) {
+     scrollView.bounds = _webView.bounds;
+   }
+-  else if (_onScroll != nil) {
++  else {
++    [self reportScroll:scrollView];
++  }
++}
++
++// ohmail: one shape for a scroll and for a document-size change (the contentSize observer).
++- (void)reportScroll:(UIScrollView *)scrollView
++{
++  if (_onScroll != nil) {
+     NSDictionary *event = @{
+       @"contentOffset": @{
+         @"x": @(scrollView.contentOffset.x),
+@@ -1126,6 +1149,8 @@ RCTAutoInsetsProtocol>
+   _webView.frame = self.bounds;
+ #if !TARGET_OS_OSX
+   _webView.scrollView.contentInset = _contentInset;
++  // ohmail: a resized view reports its document again, changed or not.
++  [self reportScroll:_webView.scrollView];
+ #endif // !TARGET_OS_OSX
+ }
+ 

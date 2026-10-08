@@ -311,9 +311,10 @@ jobs:
           AAB_N=$(ls /tmp/dexcmp/aab | wc -l | tr -d ' ')
           test "${APK_N:-0}" -ge 1 || { echo "no dex came out of the APK — nothing was compared" >&2; exit 1; }
           test "${AAB_N:-0}" -ge 1 || { echo "no dex came out of the bundle — nothing was compared" >&2; exit 1; }
-          # The TLS transport's patch reached the compiled code: the literals it adds, read in the
-          # APK's dex (the bundle's dex is this dex, asserted below). Unpatched, this refuses.
-          node scripts/apply-patches.mjs assert --in /tmp/dexcmp/apk --require react-native-tcp-socket
+          # The TLS transport's and the mail frame's patches reached the compiled code: the literals
+          # they add, read in the APK's dex (the bundle's dex is this dex, asserted below).
+          # Unpatched, this refuses.
+          node scripts/apply-patches.mjs assert --in /tmp/dexcmp/apk --require react-native-tcp-socket --require react-native-webview
           ( cd /tmp/dexcmp/apk && sha256sum classes*.dex > /tmp/dexcmp/apk.raw )
           ( cd /tmp/dexcmp/aab && sha256sum classes*.dex > /tmp/dexcmp/aab.raw )
           sort /tmp/dexcmp/apk.raw > /tmp/dexcmp/apk.sha
@@ -555,9 +556,10 @@ jobs:
           AAB_N=$(ls /tmp/dexcmp/aab | wc -l | tr -d ' ')
           test "${APK_N:-0}" -ge 1 || { echo "no dex came out of the APK — nothing was compared" >&2; exit 1; }
           test "${AAB_N:-0}" -ge 1 || { echo "no dex came out of the bundle — nothing was compared" >&2; exit 1; }
-          # The TLS transport's patch reached the compiled code: the literals it adds, read in the
-          # APK's dex (the bundle's dex is this dex, asserted below). Unpatched, this refuses.
-          node scripts/apply-patches.mjs assert --in /tmp/dexcmp/apk --require react-native-tcp-socket
+          # The TLS transport's and the mail frame's patches reached the compiled code: the literals
+          # they add, read in the APK's dex (the bundle's dex is this dex, asserted below).
+          # Unpatched, this refuses.
+          node scripts/apply-patches.mjs assert --in /tmp/dexcmp/apk --require react-native-tcp-socket --require react-native-webview
           ( cd /tmp/dexcmp/apk && sha256sum classes*.dex > /tmp/dexcmp/apk.raw )
           ( cd /tmp/dexcmp/aab && sha256sum classes*.dex > /tmp/dexcmp/aab.raw )
           sort /tmp/dexcmp/apk.raw > /tmp/dexcmp/apk.sha
