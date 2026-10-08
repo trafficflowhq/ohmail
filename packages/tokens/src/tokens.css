@@ -33,6 +33,10 @@
   --accent-soft: oklch(0.60 0.13 45 / .09);
   --accent-hair: oklch(0.55 0.13 45 / .38);
   --on-accent:   oklch(0.995 0.004 85);
+  /* the warning ink ("stop and read"): the face's --danger where it has one (ohmarchy), else
+     paper's red, taken 15% toward body ink so it reads at least 4.5:1 on canvas, panel and float
+     in every theme (ohmarchy light's --danger alone reads 4.07 on its canvas). */
+  --danger-ink:  color-mix(in oklab, var(--danger, oklch(0.50 0.15 28)) 85%, var(--ink));
   /* tag hues — muted, warm-adjacent, never candy.
      The first three are the prototype's, named after the tags it demonstrated
      (pottery / Buchhaltung / privat) and pinned byte-for-byte by the fidelity
@@ -107,6 +111,7 @@
   --accent-soft: oklch(0.75 0.115 55 / .12);
   --accent-hair: oklch(0.75 0.115 55 / .42);
   --on-accent:   oklch(0.19 0.035 50);
+  --danger-ink:  color-mix(in oklab, var(--danger, oklch(0.75 0.12 25)) 85%, var(--ink));
   --tg-pottery-ink: oklch(0.80 0.07 150);
   --tg-pottery-bg:  oklch(0.75 0.08 150 / .14);
   --tg-buch-ink:    oklch(0.82 0.09 80);
@@ -167,6 +172,7 @@
     --accent-soft: oklch(0.75 0.115 55 / .12);
     --accent-hair: oklch(0.75 0.115 55 / .42);
     --on-accent:   oklch(0.19 0.035 50);
+    --danger-ink:  color-mix(in oklab, var(--danger, oklch(0.75 0.12 25)) 85%, var(--ink));
     --tg-pottery-ink: oklch(0.80 0.07 150);
     --tg-pottery-bg:  oklch(0.75 0.08 150 / .14);
     --tg-buch-ink:    oklch(0.82 0.09 80);
