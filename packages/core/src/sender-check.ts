@@ -241,6 +241,8 @@ const SKELETON_MIN_LETTERS = 6;
 
 interface GatedBrand {
   brand: Brand; gate: string[]; skeletons: string[]; gateShort: string[]; gateToken: string[];
+  /** Per skeleton, the skeleton of the brand's own first word where its name joins two (PostFinance's "post"). */
+  heads: Array<string | null>;
   /** Every gate and token needle with its separators removed, digits kept: what a run of whole tokens must BE. */
   fused: Set<string>;
   /** The short needles the same way ("1&1" is "11"): a run that is one claims beside a service word. */
@@ -254,10 +256,15 @@ const GATED: readonly GatedBrand[] = BRANDS.flatMap((b) => {
   const gateToken = (b.gateToken ?? []).map(fold);
   if (gate.length === 0 && gateShort.length === 0 && gateToken.length === 0) return [];
   // The brand's skeleton keeps its `rn`: folded, `klarna` would read `kiama` in "Stucki Amanda".
-  const skeletons = gate.filter((n) => letters(n) >= SKELETON_MIN_LETTERS).map((n) => skeletonOf(n, false).text);
+  const long = gate.filter((n) => letters(n) >= SKELETON_MIN_LETTERS);
+  const skeletons = long.map((n) => skeletonOf(n, false).text);
+  // A one-word needle the brand's own name spells as two words ("PostFinance") keeps its first word;
+  // a needle written with its space ("die post") never equals the joined words.
+  const words = fold(splitCase(b.name)).split(" ").filter((w) => w !== "");
+  const heads = long.map((n) => (words.length > 1 && words.join("") === n ? skeletonOf(words[0]!, false).text : null));
   const bare = (n: string) => n.replace(/[^\p{L}\p{N}]/gu, "");
   const fused = new Set([...gate, ...gateToken].map(bare));
-  return [{ brand: b, gate, skeletons, gateShort, gateToken, fused, shortFused: new Set(gateShort.map(bare)) }];
+  return [{ brand: b, gate, skeletons, heads, gateShort, gateToken, fused, shortFused: new Set(gateShort.map(bare)) }];
 });
 
 /**
@@ -312,15 +319,29 @@ function wholeWordsAcross(hay: string, at: number, end: number): boolean {
   return !isWordChar(hay[at - 1] ?? "") && !isWordChar(hay[end] ?? "");
 }
 
+/**
+ * "MyPost Finance", "IhrPost-Finance": a split match also stands where its first word ENDS with the
+ * brand's own first word (`head`, either reading) and the match ends on a whole word — a word chosen
+ * to lead into the brand. Read within {@link MAX_RUN}; a needle of two words ("die post") never takes it.
+ */
+function gluedHeadAcross(hay: string, at: number, end: number, head: string): boolean {
+  if (isWordChar(hay[end] ?? "")) return false;
+  let k = at;
+  while (k < end && k - at <= MAX_RUN && isWordChar(hay[k] ?? "")) k++;
+  if (k === at || k >= end || k - at > MAX_RUN) return false;
+  return readingsOf(hay.slice(at, k)).some((r) => r.text === head);
+}
+
 /** Every span of the hay at which it claims the brand: a needle, its skeleton, a short needle by a service word. */
 function claimSpans(hay: string, g: GatedBrand, readings: readonly Skeleton[], view: Skeleton): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   for (const n of g.gate) for (const i of namedAt(hay, n)) spans.push([i, i + n.length]);
   for (const bare of readings) {
-    for (const n of g.skeletons) {
+    for (const [k, n] of g.skeletons.entries()) {
+      const head = g.heads[k] ?? null;
       for (let i = bare.text.indexOf(n); i >= 0; i = bare.text.indexOf(n, i + 1)) {
         const [at, end] = [bare.start[i]!, bare.end[i + n.length - 1]!];
-        if (!wholeWordsAcross(hay, at, end)) continue;
+        if (!wholeWordsAcross(hay, at, end) && !(head !== null && gluedHeadAcross(hay, at, end, head))) continue;
         spans.push([at, end]);
       }
     }
@@ -382,8 +403,9 @@ function tokenRunSpans(runs: TokenRuns, g: GatedBrand): Array<[number, number]> 
 }
 
 /** A lead-in's words split where its case does, before the fold: `MyPostFinance` reads `My Post Finance`. */
-const splitCase = (s: string): string =>
-  s.replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2").replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, "$1 $2");
+function splitCase(s: string): string {
+  return s.replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2").replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, "$1 $2");
+}
 
 /** A shared provider owns nothing: anyone can register an address there, whichever row lists it. */
 function owns(b: Brand, domain: string): boolean {
