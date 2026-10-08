@@ -28,6 +28,7 @@ import "../../webapp/app/zero-layout.css";
 import { bridgeAvailable, bridgeFetch, connectLocalEngine, engineStatus } from "./bridge-fetch.js";
 import { startNetworkReturnRelay } from "./network-return.js";
 import { omarchySchemeSource, startOmarchyFeed } from "./omarchy.js";
+import { configureSchemeTransitions } from "./scheme-platform.js";
 import { startUpdateCadence } from "./update-cadence.js";
 import { DesktopGate } from "./DesktopGate.js";
 import { DOOR_COPY } from "./door-copy.js";
@@ -155,6 +156,8 @@ startNetworkReturnRelay({
    relaunch — so a rail somebody widened is the width the next launch opens at, without a round
    trip to the sidecar (window chrome is not a mailbox fact). Before `createRoot`. */
 stampColumns();
+/* Before the provider mounts and arms the crossfade: Linux fades by class (issue #9). */
+configureSchemeTransitions();
 
 /**
  * THE THEME'S WRITE DOOR — one per window, at module scope so it is not rebuilt per frame.

@@ -8,7 +8,6 @@ import {
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
-import { storeInstantOf } from "./store-pages.js";
 import {
   isOwnSent, isResurfaced, messagesByDateDesc, newestHeldBySender, queueCoverage, rulesList, screenerWaitingOf, senderKey,
 } from "./selectors.js";
@@ -482,12 +481,9 @@ export function senderActivity(
     // row with no instant read "not recent" and its sender retired under the one setting that
     // means "retire nobody". Every dated row reaches the same answer either way.
     if (allTime) { out.set(key, "active"); continue; }
-    // A claim the gate holds inside the cutline keeps its sender active, dated by its arrival key and
-    // never by its Date (mail 0148): the server's `heldClaimInsideSql`, so queue, counts and partition agree.
-    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && storeInstantOf(m) >= cutoff) {
-      out.set(key, "active");
-      continue;
-    }
+    // A claim the gate holds keeps its sender active however old its Date (mail 0148): the server's
+    // `senderHasHeldClaimSql` term, so the queue, the counts and this partition agree.
+    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation") { out.set(key, "active"); continue; }
     const ms = messageMs(m);
     const recent = ms !== null && ms >= cutoff;
     // Baselined ⇒ unread only counts inside the window. Absent ⇒ unread outranks age, exactly as

@@ -74,13 +74,6 @@
   </screenshots>
 
   <releases>
-    <release version="0.25.19" date="2026-10-09">
-      <description>
-        <ul>
-          <li>Older mail no longer appears in the Screener</li>
-        </ul>
-      </description>
-    </release>
     <release version="0.25.18" date="2026-10-08">
       <description>
         <ul>
@@ -151,6 +144,26 @@
           <li>A wrong code is never retried as a session renewal</li>
           <li>Held messages stay out of Ohbox conversations</li>
           <li>The ⋯ button in a message's header is a plain icon again</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.25.14" date="2026-10-05">
+      <description>
+        <ul>
+          <li>Deleting your account no longer fails when a device renews its sign-in or signs out at the same time</li>
+          <li>A changed rule takes effect where an older copy of it existed</li>
+          <li>A message this device could not save is no longer given up on</li>
+          <li>The subprocessors page names the database that holds your mail</li>
+          <li>A message with a long run of text inside a table no longer stalls the phone's reader</li>
+          <li>A mailbox whose ohmail/_meta folder is full says so</li>
+          <li>ohmail stops filling an ohmail/_meta it cannot clean, and shrinks a full one</li>
+          <li>Forwarding a message that just moved goes out on the first press</li>
+          <li>A server port saved as digits works</li>
+          <li>A conversation opens at the message its buttons act on</li>
+          <li>Requests no longer race the web app's session renewal</li>
+          <li>Pressing Send again while ohmail reconnects no longer sends the message twice</li>
+          <li>A message that waited without a connection goes out once when ohmail reconnects</li>
+          <li>The privacy pages say what is kept and what reaches the AI model</li>
         </ul>
       </description>
     </release>

@@ -1675,16 +1675,14 @@ export class ScreenerReadService {
   ): Array<SQL | undefined> {
     const { reps, d } = held;
     const sender = sql`lower(${reps.fromAddress})`;
-    // A claim the gate holds INSIDE the cutline, dated by its arrival (mail 0148): never by its
-    // Date, which the sender writes; never one the backfill stamped on mail from before the cutline.
-    const claim = cutline ? senderHasHeldClaimSql(d, ctx.accountId, sender, cutline.cutoff) : undefined;
     return [
       eq(reps.rank, 1),
-      cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline)} or ${claim})` : undefined,
-      // A decided sender is waiting again while the gate holds such a claim of theirs.
-      claim
-        ? sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${claim})`
-        : sql`not ${senderIsDecidedSql(d, ctx.accountId, sender)}`,
+      // A claim the gate holds is never hidden as dormant (mail 0148): its Date is the sender's to write.
+      cutline
+        ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline)} or ${senderHasHeldClaimSql(d, ctx.accountId, sender)})`
+        : undefined,
+      // A decided sender is waiting again while the gate holds a claim of theirs (mail 0148).
+      sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${senderHasHeldClaimSql(d, ctx.accountId, sender)})`,
       // The account is not one of its own correspondents: its mail at the gate is no decision.
       sql`not ${senderIsOwnSql(d, ctx.accountId, sender)}`,
     ];

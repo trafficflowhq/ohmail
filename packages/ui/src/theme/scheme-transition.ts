@@ -14,6 +14,11 @@ const FALLBACK_MS = 320;
 const SHIFT_CLASS = "scheme-shift";
 
 let armed = false;
+/* THE HOST'S VETO. WebKitGTK running without a GPU backing store (no GL context, DMA-BUF or
+   compositing disabled) dereferences null when a view transition enters accelerated
+   compositing and the whole app dies (issue #9, measured on 2.52.6). The page cannot see that
+   state, so the Linux desktop turns the API off and the class fallback fades instead. */
+let viewTransitionsAllowed = true;
 let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** The API as this file uses it. Read off the document through `unknown` rather than by
@@ -35,9 +40,15 @@ export function armSchemeTransitions(): void {
   armed = true;
 }
 
+/** The host's switch: `false` and no change ever reaches `startViewTransition`. */
+export function setViewTransitions(allowed: boolean): void {
+  viewTransitionsAllowed = allowed;
+}
+
 /** Tests only: back to the state a fresh document starts in. */
 export function resetSchemeTransitionsForTests(): void {
   armed = false;
+  viewTransitionsAllowed = true;
   if (fallbackTimer !== null) clearTimeout(fallbackTimer);
   fallbackTimer = null;
   if (typeof document !== "undefined") document.documentElement.classList.remove(SHIFT_CLASS);
@@ -56,7 +67,7 @@ export function withSchemeTransition(apply: () => void): void {
   }
   const start = (doc as unknown as { startViewTransition?: StartViewTransition })
     .startViewTransition;
-  if (typeof start === "function") {
+  if (viewTransitionsAllowed && typeof start === "function") {
     start.call(doc, apply);
     return;
   }

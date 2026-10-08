@@ -8,6 +8,7 @@ import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, evaluateRules,
   silentLogger, type Destination, type KnownSenders, type Logger, type NormalizedMessage, type Rule,
 } from "@trafficflow/core";
+import { identityOfRow } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { bridgeTx, type Db } from "./context.js";
 
@@ -189,6 +190,10 @@ interface RescreenRow {
   bodyText: string;
   headers: Record<string, string[]>;
   observedFolder: string;
+  /** The identity fact's inputs and its column (mail 0148) — `identityOfRow` reads them. */
+  fromName: string | null;
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
 }
 
 /**
@@ -324,9 +329,8 @@ export async function runSensitiveRescreen(
         const decision = evaluateRules({
           msg: asRuleInput(row), rules, knownSenders: known, ownAddresses: ownSet,
           auth: authVerdictFromHeaders(row.headers, row.fromAddress, trustedAuthservIds),
-          // No identity fact: it holds mail at ARRIVAL only, and this pass re-routes mail already in
-          // the Ohbox. A claim never moves a message the bypass filed (0.25.18 handed it the fact).
-          identity: null,
+          // The gate's own fact for the row — the column, or computed for a row that predates it.
+          identity: identityOfRow(row),
           // LENIENT, and it must stay so: this pass acts ONLY on `source === "screener"` (the
           // known-sender-with-a-fail demotion it exists for). A `people_only` demotion answers
           // `source: "policy"` → Reads/Receipts, which this pass would ignore anyway — but passing
@@ -713,6 +717,9 @@ async function selectCandidates(
     messageId: messages.id,
     fromAddress: messages.fromAddress,
     subject: messages.subject,
+    fromName: messages.fromName,
+    senderCheck: messages.senderCheck,
+    senderCheckBrand: messages.senderCheckBrand,
     observedFolder: folderState.observedFolder,
     headers: messageBodies.headers,
     // Rides the join `headers` already pays for — see `RescreenRow.bodyText` (mail 0052).
@@ -733,6 +740,9 @@ async function selectCandidates(
     bodyText: r.bodyText ?? "",
     headers: (r.headers as Record<string, string[]> | null) ?? {},
     observedFolder: r.observedFolder,
+    fromName: r.fromName,
+    senderCheck: r.senderCheck,
+    senderCheckBrand: r.senderCheckBrand,
   }));
 }
 

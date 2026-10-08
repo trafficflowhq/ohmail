@@ -33,6 +33,7 @@ import {
   armSchemeTransitions,
   resetSchemeTransitionsForTests,
 } from "../../../packages/ui/src/theme/scheme-transition.js";
+import { configureSchemeTransitions } from "../src/scheme-platform.js";
 
 /* The active theme the shell would read on a stock install — tokyo-night's real palette,
    inline so this suite (which the public mirror runs) carries its own ground truth. */
@@ -338,6 +339,29 @@ describe("the live theme restages through the one crossfade", () => {
     held!();
     expect(styleText()).toContain("#2e3440");
   });
+});
+
+/* Issue #9: the Linux build's first theme pull crossfaded by `startViewTransition`, which kills
+   a WebKitGTK that runs without a GPU backing store. Linux restages by class; the others keep
+   the transition. */
+describe("which builds restage through startViewTransition", () => {
+  for (const [platform, expected] of [["linux", 0], ["darwin", 1], ["win32", 1]] as const) {
+    it(`${platform}: ${expected} call(s), and the new theme lands either way`, async () => {
+      const { pushes } = installShell({ colorsToml: TOKYO_NIGHT });
+      await startOmarchyFeed();
+      let calls = 0;
+      (document as unknown as Record<string, unknown>).startViewTransition = (cb: () => void) => {
+        calls += 1;
+        cb();
+        return { finished: Promise.resolve(), ready: Promise.resolve() };
+      };
+      configureSchemeTransitions(platform);
+      armSchemeTransitions();
+      pushes.get(OMARCHY_THEME_EVENT)!({ payload: { colorsToml: NORD_MINIMAL } });
+      expect(calls).toBe(expected);
+      expect(styleText()).toContain("#2e3440");
+    });
+  }
 });
 
 /**

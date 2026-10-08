@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  DEFAULT_OHBOX_POLICY, evaluateRules,
+  DEFAULT_OHBOX_POLICY, evaluateRules, identityOfRow,
   type Destination, type NormalizedMessage, type Rule, type KnownSenders,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -84,6 +84,10 @@ interface UnscreenedRow {
   observedFolder: string;
   /** The arrival instant, `date` where the header carried one and the ingest stamp otherwise. */
   at: Date;
+  /** The identity fact's inputs and its column (mail 0148) — `identityOfRow` reads them. */
+  fromName: string | null;
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
 }
 
 /**
@@ -129,9 +133,8 @@ function gateWouldScreen(
     ownAddresses: own,
     auth: "unavailable",
     ohboxPolicy: DEFAULT_OHBOX_POLICY,
-    // No identity fact: it holds mail at ARRIVAL only, and this offer moves mail already placed. With
-    // it, a domain-admitted sender's old Ohbox mail naming a company was offered and moved (0.25.18).
-    identity: null,
+    // The gate's own fact for the row, so a claim it holds at arrival is offered here too.
+    identity: identityOfRow(row),
   }).source === "screener";
 }
 
@@ -252,6 +255,9 @@ async function selectCandidates(
     messageId: messages.id,
     fromAddress: messages.fromAddress,
     subject: messages.subject,
+    fromName: messages.fromName,
+    senderCheck: messages.senderCheck,
+    senderCheckBrand: messages.senderCheckBrand,
     observedFolder: folderState.observedFolder,
     /* THE TWO WIDE COLUMNS, OR WHAT THE GATE WOULD HAVE SEEN WITHOUT THEM — and each placeholder
        is its own EXPRESSION, never the same cast twice. This module is loaded by the PHONE
@@ -283,6 +289,9 @@ async function selectCandidates(
     headers: (r.headers as Record<string, string[]> | null) ?? {},
     observedFolder: r.observedFolder,
     at: new Date(r.at),
+    fromName: r.fromName,
+    senderCheck: r.senderCheck,
+    senderCheckBrand: r.senderCheckBrand,
   }));
 }
 

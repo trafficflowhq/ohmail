@@ -44,6 +44,7 @@ export type {
 export {
   armSchemeTransitions,
   resetSchemeTransitionsForTests,
+  setViewTransitions,
   withSchemeTransition,
 } from "./theme/scheme-transition.js";
 
