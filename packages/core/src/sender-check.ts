@@ -371,6 +371,8 @@ function runSkeleton(s: string, foldRn: boolean): string {
   }
   return out;
 }
+/** The most runs one input stores. A belt: a hostile input past it loses its claim reading, never mail. */
+const MAX_RUNS = 4096;
 function tokenRunsOf(hay: string, withDigits: boolean): TokenRuns {
   const tokens = [...hay.matchAll(withDigits ? /[\p{L}\p{N}]+/gu : /\p{L}+/gu)]
     .map((m) => ({ t: m[0], s: m.index ?? 0, e: (m.index ?? 0) + m[0].length }));
@@ -379,17 +381,26 @@ function tokenRunsOf(hay: string, withDigits: boolean): TokenRuns {
     const list = m.get(key);
     if (list === undefined) m.set(key, [span]); else list.push(span);
   };
-  for (let i = 0; i < tokens.length; i++) {
-    let joined = "";
-    for (let j = i; j < tokens.length; j++) {
-      joined += tokens[j]!.t;
-      if (joined.length > MAX_RUN) break;
-      const span: [number, number] = [tokens[i]!.s, tokens[j]!.e];
-      add(runs.exact, joined, span);
-      add(runs.read, runSkeleton(joined, true), span);
-      add(runs.read, runSkeleton(joined, false), span);
-      if ([tokens[i - 1]?.t, tokens[j + 1]?.t].some((w) => w !== undefined && SERVICE_WORDS.has(w))) add(runs.short, joined, span);
+  // Shortest runs first, so a belt that stops has read every single word and every short run.
+  const joined: Array<string | null> = tokens.map(() => "");
+  let stored = 0;
+  for (let k = 0; k < tokens.length && stored < MAX_RUNS; k++) {
+    let grew = false;
+    for (let i = 0; i + k < tokens.length && stored < MAX_RUNS; i++) {
+      const prev = joined[i];
+      if (prev === null || prev === undefined) continue;
+      const run = prev + tokens[i + k]!.t;
+      if (run.length > MAX_RUN) { joined[i] = null; continue; }
+      joined[i] = run;
+      grew = true;
+      stored++;
+      const span: [number, number] = [tokens[i]!.s, tokens[i + k]!.e];
+      add(runs.exact, run, span);
+      add(runs.read, runSkeleton(run, true), span);
+      add(runs.read, runSkeleton(run, false), span);
+      if ([tokens[i - 1]?.t, tokens[i + k + 1]?.t].some((w) => w !== undefined && SERVICE_WORDS.has(w))) add(runs.short, run, span);
     }
+    if (!grew) break;
   }
   return runs;
 }
@@ -414,6 +425,12 @@ function owns(b: Brand, domain: string): boolean {
 
 /** The most of a name, a local part or a subject the fact reads: each is cut here before any reading. */
 const MAX_IDENTITY_INPUT = 4096;
+/**
+ * And AFTER the fold, which can multiply an input's length (NFKC writes `⒜` as `(a)`): a name is read
+ * to 4,096 units, a local part to 256 — RFC 5321 allows 64 octets, so a valid one's expansion fits.
+ */
+const MAX_FOLDED_NAME = 4096;
+const MAX_FOLDED_LOCAL_PART = 256;
 
 /** A claimed identity the sender's address does not back. `via` is where the claim was read. */
 export interface IdentityFact {
@@ -472,10 +489,10 @@ function onlyServiceWordsOutside(hay: string, start: number, end: number): boole
 export function claimedIdentity(input: IdentityInput): IdentityFact | undefined {
   const sources: Array<{ via: IdentityFact["via"]; hay: string; tag: boolean }> = [];
   const capped = (s: string): string => (s.length > MAX_IDENTITY_INPUT ? s.slice(0, MAX_IDENTITY_INPUT) : s);
-  const name = input.fromName === null ? "" : fold(capped(input.fromName));
+  const name = input.fromName === null ? "" : fold(capped(input.fromName)).slice(0, MAX_FOLDED_NAME);
   if (/[\p{L}\p{N}]/u.test(name)) sources.push({ via: "name", hay: name, tag: false });
   const at = input.fromAddress.lastIndexOf("@");
-  const local = fold(capped(at < 0 ? input.fromAddress : input.fromAddress.slice(0, at)));
+  const local = fold(capped(at < 0 ? input.fromAddress : input.fromAddress.slice(0, at))).slice(0, MAX_FOLDED_LOCAL_PART);
   if (local !== "") sources.push({ via: "local_part", hay: local, tag: false });
   const lead = leadInOf(capped(input.subject));
   if (lead !== undefined) sources.push({ via: "subject_lead", hay: fold(splitCase(lead.text)), tag: lead.tag });
