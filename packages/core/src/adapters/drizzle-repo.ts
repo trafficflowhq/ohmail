@@ -1070,10 +1070,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /* THE INSERT IS THE WRITE-OFF: keyed on `first_failed_at`, which no re-failure and no retry claim
      moves (`last_failed_at` moved on both, so five old rows re-failing re-engaged a lifted hold).
-     Bounded at `cap` rows, newest first; the messages read runs only once a full cap waits.
-     `exemptCodes` (the worker's HOLD_EXEMPT_CODES) never count, and the exclusion is in the WHERE so
-     the `cap` newest rows are all of the counted class. Required and never empty: an empty list is
-     today's defect restored in silence, so it throws. */
+     Bounded at `cap` rows, newest first. Only rows AFTER the newest stored message count, below
+     the cap too: a raw count of older rows let one new write-off engage the hold. `exemptCodes`
+     (the worker's HOLD_EXEMPT_CODES) never count, and the exclusion is in the WHERE so the `cap`
+     newest rows are all of the counted class. Required and never empty: an empty list is today's
+     defect restored in silence, so it throws. */
   async writeOffRun(mailboxId: string, version: string, cap: number, exemptCodes: readonly string[]): Promise<{ count: number; heldSince: Date | null }> {
     if (!Array.isArray(exemptCodes) || exemptCodes.length === 0) {
       throw new Error("writeOffRun needs the codes the hold never counts (HOLD_EXEMPT_CODES); an empty list would count every set-aside message toward the hold");
@@ -1082,7 +1083,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(and(eq(messageFailures.mailboxId, mailboxId), isNull(messageFailures.resolvedAt),
         eq(messageFailures.attemptedVersion, version), notInArray(messageFailures.code, [...exemptCodes])))
       .orderBy(desc(messageFailures.firstFailedAt)).limit(Math.max(1, cap));
-    if (failed.length < cap) return { count: failed.length, heldSince: null };
+    if (failed.length === 0) return { count: 0, heldSince: null };
     const [stored] = await this.db.select({ at: messages.createdAt }).from(messages)
       .where(eq(messages.mailboxId, mailboxId)).orderBy(desc(messages.createdAt)).limit(1);
     const after = stored ? failed.filter((f) => f.at.getTime() > stored.at.getTime()) : failed;
