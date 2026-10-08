@@ -1046,13 +1046,13 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
        the author known, so rules and the header heuristic still place it. */
     const correspondent = await correspondentAtGate(repo, accountId, normalized, decision, authVerdict, known);
     if (correspondent !== null) {
-      // A named author is taught as a PERSON's contact (`commitChange`), the fact a Sent copy's own
-      // ingest teaches; an unnamed one is known for this message only, as inference.
+      // Known for this message. `inferred` cannot change this re-run: a claim never reaches it (refused
+      // above), and only `addressLevelConsent` reads it. What is taught is `commitChange`'s, by `named`.
       decision = evaluateRules({
         msg: normalized, rules,
         knownSenders: {
           addresses: new Set([...known.addresses, correspondent.author]),
-          inferred: correspondent.evidence.named ? known.inferred : new Set([...known.inferred, correspondent.author]),
+          inferred: known.inferred,
         },
         auth: authVerdict, ohboxPolicy, ownAddresses, identity: senderCheck,
       });
