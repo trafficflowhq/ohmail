@@ -155,6 +155,22 @@ another app and anything you mark Done after resurfacing keep their place. Marki
 puts it back in New. A desktop or phone that runs on its own, without an ohmail account, remembers
 only what you read on that device.
 
+### A mail server running on this computer gets time to finish its own sign-in
+<!-- changes: fix-026-local-imap-gateway.md -->
+
+In the desktop app, when the IMAP host is this computer (localhost, 127.0.0.1 or ::1), Test
+connection, Connect and Sign in again now wait up to two minutes for the server to answer the
+sign-in, and a refusal from it is reported as that server's, with the gateway named as the place to
+look, instead of as a wrong password. Remote servers keep the 20-second check. On DavMail, the
+`ohmail` folder is created before the folders under it.
+
+### A name claiming a company from another address waits at the Screener
+<!-- changes: fix-026-impersonation.md -->
+
+A first-time mail whose sender name claims a company on ohmail's list, from an address that is not
+that company's, now waits at the Screener and says so. Decisions about everyone at a shared mail
+provider are made per address.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
