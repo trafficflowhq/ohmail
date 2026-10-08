@@ -3,6 +3,7 @@ import {
 } from "@trafficflow/db";
 import { ingestIsRunning } from "./store-lanes.js";
 import type { Diagnostic } from "./log.js";
+import { cadenceDue, stampNow, SYSTEM_CLOCKS, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
 
 /**
  * THE LOCAL STORE'S RETENTION — the hosted horizon, on this door. The local door stamps
@@ -13,15 +14,13 @@ import type { Diagnostic } from "./log.js";
  */
 export const LOCAL_RETENTION_EVERY_MS = 60 * 60 * 1000;
 
-const monotonicNow = (): number => performance.now();
-
-/** When each store last ran it, keyed by the store's handle — per store, not per mailbox. A
- *  monotonic reading: a wall clock stepped back would skip the pass for the length of the step. */
-const lastRunAt = new WeakMap<object, number>();
+/** When each store last ran it, keyed by the store's handle — per store, not per mailbox. Both
+ *  clocks (`pass-cadence.ts`): neither a clock stepped back nor a suspend skips the hour. */
+const lastRunAt = new WeakMap<object, CadenceStamp>();
 
 /** Is a pass owed on this store now? Asked before the upkeep enters the ingest's lane. */
-export function localRetentionDue(db: object, clock: () => number = monotonicNow): boolean {
-  return !ingestIsRunning() && clock() - (lastRunAt.get(db) ?? -Infinity) >= LOCAL_RETENTION_EVERY_MS;
+export function localRetentionDue(db: object, clocks: CadenceClocks = SYSTEM_CLOCKS): boolean {
+  return !ingestIsRunning() && cadenceDue(lastRunAt.get(db) ?? null, LOCAL_RETENTION_EVERY_MS, clocks);
 }
 
 /**
@@ -29,9 +28,9 @@ export function localRetentionDue(db: object, clock: () => number = monotonicNow
  * Contained — a failure is logged and the next due drain asks again; the floor only rises.
  */
 export async function runLocalRetention(
-  db: Tx, accountId: string, now: Date, log: Diagnostic, clock: () => number = monotonicNow,
+  db: Tx, accountId: string, now: Date, log: Diagnostic, clocks: CadenceClocks = SYSTEM_CLOCKS,
 ): Promise<void> {
-  lastRunAt.set(db, clock());
+  lastRunAt.set(db, stampNow(clocks));
   try {
     const cl = await pruneChangeLogForAccount(db, accountId, now, { batch: RETENTION_DELETE_BATCH, maxBatches: 1 });
     const audit = await pruneAuditLog(db, now, AUDIT_LOG_RETENTION_MS, RETENTION_DELETE_BATCH);

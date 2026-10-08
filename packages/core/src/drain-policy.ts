@@ -93,7 +93,8 @@ export function mirrorFreshness(
   // with no time in it. The next completed drain re-stamps it, and {@link mirrorStale} has
   // already made sure that drain freshens first.
   if (Number.isNaN(t)) return { state: "unknown", asOf: null };
-  return { state: now.getTime() - t > staleMs ? "stale" : "current", asOf: lastDrainAt };
+  // A future stamp is stale here as in `mirrorStale`: one verdict, read the same way twice.
+  return { state: t > now.getTime() || now.getTime() - t > staleMs ? "stale" : "current", asOf: lastDrainAt };
 }
 
 /**

@@ -258,6 +258,7 @@ import type { PowerVerdict } from "./host-power.js";
 import { startSearchIndexBackfill } from "./search-backfill.js";
 import { createStatisticsUpkeep } from "./store-statistics.js";
 import { localRetentionDue, runLocalRetention } from "./local-retention.js";
+import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
 import { loopTurn } from "./loop-hold.js";
 import { SEARCH_INDEX_ROUTE, createSearchIndexDoor } from "./search-index-door.js";
 import { createFirstSyncReporter, createFirstSyncTracker } from "./first-sync.js";
@@ -1916,6 +1917,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      cadence, a stop's budget, the lease bound's duration) reads this, so a wall clock stepped back
      neither skips a pass nor stretches a wait. A time that is stored or shown stays on `now`. */
   const monotonic = config.monotonic ?? ((): number => performance.now());
+  /* A RECURRING PASS reads both clocks (`pass-cadence.ts`): the monotonic one alone stops in a
+     suspend, so the hourly retro would run an awake hour after every sleep. */
+  const wallNow = config.now ? (): number => now().getTime() : (): number => Date.now();
+  const cadenceClocks: CadenceClocks = { wall: wallNow, mono: monotonic };
   const address = config.address ?? config.imap.auth.user;
   /* WHAT THIS COMPOSITION CLAIMS AS, resolved ONCE. Hoisted to this scope because two readers now
      need it and `?? "local"` written twice is the "absent config selects the dangerous branch"
@@ -2680,21 +2685,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     let namesCursor: string | undefined;
     let namesDone = false;
-    /** A pass last run at `at` on the monotonic clock is due once `everyMs` has passed; `null`
-     * (not yet in THIS launch) is due, so a launch's first drain takes one look. */
-    const passDue = (at: number | null, everyMs: number): boolean => at === null || monotonic() - at >= everyMs;
+    /** A pass last run at `at` is due by `cadenceDue`; `null` (not yet in THIS launch) is due, so a
+     * launch's first drain takes one look. */
+    const passDue = (at: CadenceStamp | null, everyMs: number): boolean => cadenceDue(at, everyMs, cadenceClocks);
     /** When the thread-join heal last ran in THIS launch — it repairs presentation, not a
      * promise, so once per {@link LOCAL_JOIN_HEAL_EVERY_MS} is plenty and a busy drain never
      * pays its GROUP BY. Unset so a launch's first drain takes one look (splits accumulated
      * while the app was closed), exactly the worker's gate seeding. */
-    let lastJoinHealAt: number | null = null;
+    let lastJoinHealAt: CadenceStamp | null = null;
     /** When the correspondent retro last ran in THIS launch — unset, so a launch's first drain
      * releases whoever it wrote to while the app was closed; then once per
      * `CORRESPONDENT_RETRO_EVERY_MS`, the hosted cadence. */
-    let lastCorrespondentRetroAt: number | null = null;
+    let lastCorrespondentRetroAt: CadenceStamp | null = null;
     /** When the inbound-quiet pass last ran in THIS launch — same seeding and cadence
      * (`LOCAL_INBOUND_QUIET_EVERY_MS`) as the heal above. */
-    let lastInboundQuietAt: number | null = null;
+    let lastInboundQuietAt: CadenceStamp | null = null;
     /** Where the last gated heal walk stopped, kept only while it stopped on its BUDGET — a
      * refused group never leaves the candidate predicate, so restarting from the top every six
      * hours would rescan the same refusals for ever and never reach the groups past the cap.
@@ -4016,7 +4021,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * serves clears both, so the state describes what this connection has been doing rather
        * than what somebody set.
        */
-      let leaseUnavailableSince: number | null = null;
+      let leaseUnavailableSince: CadenceStamp | null = null;
       let leaseUnavailableCycles = 0;
 
       /**
@@ -4069,10 +4074,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const noteCycleFailed = (err: unknown): void => {
         if (stopped) return;                       // see `noteCycleServed`
         if (!isConnectionFailure(err)) return;
-        leaseUnavailableSince ??= monotonic();
+        leaseUnavailableSince ??= stampNow(cadenceClocks);
         leaseUnavailableCycles += 1;
-        const unavailableMs = monotonic() - leaseUnavailableSince;
-        const due = unavailableMs >= reconnect.deadAfterMs
+        const due = cadenceDue(leaseUnavailableSince, reconnect.deadAfterMs, cadenceClocks)
           || leaseUnavailableCycles >= reconnect.deadAfterCycles;
         if (!due || connectionDeadSince !== null) return;
         connectionDeadSince = now();
@@ -6204,7 +6208,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           tail.phase("correspondent-retro");
           const correspondentRetroDue = async (): Promise<void> => {
             if (!passDue(lastCorrespondentRetroAt, CORRESPONDENT_RETRO_EVERY_MS)) return;
-            lastCorrespondentRetroAt = monotonic();
+            lastCorrespondentRetroAt = stampNow(cadenceClocks);
             try {
               const r = await screenerCorrespondentRetroPass(db as unknown as Tx, { accountId: world.accountId, now });
               if (r.released > 0 || r.retired > 0 || r.learned > 0) {
@@ -6245,7 +6249,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              split, mail keeps arriving, the next gated drain asks again. */
           tail.phase("thread-join-heal");
           if (passDue(lastJoinHealAt, LOCAL_JOIN_HEAL_EVERY_MS)) {
-            lastJoinHealAt = monotonic();
+            lastJoinHealAt = stampNow(cadenceClocks);
             try {
               const r = await threadJoinHealPass({
                 db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
@@ -6281,7 +6285,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              mail keeps arriving, the next gated drain asks again. */
           tail.phase("inbound-quiet");
           if (passDue(lastInboundQuietAt, LOCAL_INBOUND_QUIET_EVERY_MS)) {
-            lastInboundQuietAt = monotonic();
+            lastInboundQuietAt = stampNow(cadenceClocks);
             try {
               const r = await inboundQuietPass(db as unknown as Tx, now(), { accountId: world.accountId });
               if (r.tripped > 0 || r.cleared > 0) {

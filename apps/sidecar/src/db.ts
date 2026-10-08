@@ -1574,8 +1574,8 @@ interface HeldLock {
   ino: bigint;
   /**
    * When these bytes were last written, read through the SAME descriptor they came from — so the
-   * age and the content describe one file. Only {@link EMPTY_LOCK_STALE_AFTER_MS} reads it, and a
-   * clock that has moved backwards makes the age negative, which refuses: the safe direction.
+   * age and the content describe one file. Only {@link EMPTY_LOCK_STALE_AFTER_MS} reads it, by the
+   * age's SIZE: a file dated a window or more ahead predates a clock stepped back, and is residue.
    */
   mtimeMs: number;
 }

@@ -13,6 +13,7 @@ import { openaiTransport, DEFAULT_OPENAI_MODELS } from "./ai-openai.js";
 import { writeAtomicFile } from "./fs-atomic.js";
 import type { AiTransport, ProbeFailure, ProbeOutcome } from "./ai-transport.js";
 import type { Diagnostic } from "./log.js";
+import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
 
 /**
  * Where this install's AI comes from, and what happens when it comes from nowhere. A standalone
@@ -358,6 +359,7 @@ function unavailable(reason: AiUnavailableReason, which?: KeyedProviderKind): Se
 export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   const now = opts.now ?? ((): Date => new Date());
   const monotonic = opts.monotonic ?? ((): number => performance.now());
+  const clocks: CadenceClocks = { wall: opts.now ? () => now().getTime() : () => Date.now(), mono: monotonic };
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const doFetch = opts.fetchImpl ?? fetch;
   const path = join(opts.dataDir, AI_STORE_FILE);
@@ -550,7 +552,8 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
    * worked, so it is neutral. This is NOT the hosted worker's breaker (that refunds a credit ledger
    * this install lacks); what is shared is the SHAPE — withhold the port, never wrap it in a throw. */
   let consecutiveFaults = 0;
-  let withheldUntilMs = 0;
+  /** When the withhold began and for how long; over by `cadenceDue`, so a suspend ends it too. */
+  let withheld: { at: CadenceStamp; forMs: number } | null = null;
   let cooldownMs = baseCooldownMs;
 
   const noteFault = (err: unknown): void => {
@@ -563,9 +566,8 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
       reason: "a model call failed during a background sync cycle",
     });
     if (consecutiveFaults < faultThreshold) return;
-    // The withhold is measured MONOTONIC (a clock stepped back would extend it by the step); the
-    // line states the instant on the wall clock, where a person reads it.
-    withheldUntilMs = monotonic() + cooldownMs;
+    // The withhold reads both clocks (`pass-cadence.ts`); the line states the wall-clock instant.
+    withheld = { at: stampNow(clocks), forMs: cooldownMs };
     opts.log("ai_routing_unavailable", {
       kind: store.provider ?? "none",
       consecutiveFaults,
@@ -579,7 +581,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
 
   const noteSuccess = (): void => {
     consecutiveFaults = 0;
-    withheldUntilMs = 0;
+    withheld = null;
     cooldownMs = baseCooldownMs;
   };
 
@@ -788,7 +790,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
 
     classifierForCycle() {
       if (blockedBy(store) !== null) return undefined;
-      if (withheldUntilMs > monotonic()) return undefined;
+      if (withheld !== null && !cadenceDue(withheld.at, withheld.forMs, clocks)) return undefined;
       return cycleClassifier;
     },
   };

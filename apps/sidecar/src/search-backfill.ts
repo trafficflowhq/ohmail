@@ -7,6 +7,7 @@
  * idle tick. A failed round is logged and tried again; rows without a document are read the older way.
  */
 import { PERSON_QUIET_MS } from "./attention.js";
+import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
 import type { PowerVerdict } from "./host-power.js";
 
 /** Between rounds while idle: a breather for the other lane, not a pacing of the work. */
@@ -38,7 +39,9 @@ interface SearchBackfillDeps {
   /** The store's upkeep after the table grew — `OpenLocalDb.analyzeSearchIfStale`. Never throws. */
   maintain?: () => Promise<unknown>;
   maintainEveryMs?: number;
+  /** The monotonic clock; `wall` beside it, so the upkeep cadence survives a suspend (`pass-cadence.ts`). */
   now?: () => number;
+  wall?: () => number;
   quietMs?: number;
   tickMs?: number;
   waitMs?: number;
@@ -62,6 +65,7 @@ export interface SearchBackfill {
 export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfill {
   // Monotonic: every reading below is a "how long since", which a wall clock stepped back stretches.
   const now = deps.now ?? ((): number => performance.now());
+  const clocks: CadenceClocks = { wall: deps.wall ?? ((): number => Date.now()), mono: now };
   const quietMs = deps.quietMs ?? PERSON_QUIET_MS;
   const power = deps.power ?? (() => NO_POWER_READING);
   let finished = false;
@@ -71,10 +75,10 @@ export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfi
   let written = 0;
   let rounds = 0;
   let startedAt: number | null = null;
-  let maintainedAt: number | null = null;
+  let maintainedAt: CadenceStamp | null = null;
   const maintain = async (): Promise<void> => {
     if (!deps.maintain) return;
-    maintainedAt = now();
+    maintainedAt = stampNow(clocks);
     await deps.maintain().catch(() => undefined);
   };
 
@@ -85,7 +89,7 @@ export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfi
     if (deps.ingesting()) return "draining";
     if (!power().onPower) return "battery";
     if (finished) {
-      if (maintainedAt === null || now() - maintainedAt >= (deps.maintainEveryMs ?? SEARCH_MAINTAIN_EVERY_MS)) {
+      if (cadenceDue(maintainedAt, deps.maintainEveryMs ?? SEARCH_MAINTAIN_EVERY_MS, clocks)) {
         const upkeep = maintain();
         inFlight = upkeep;
         try { await upkeep; } finally { inFlight = null; }
