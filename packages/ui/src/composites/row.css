@@ -34,6 +34,8 @@
 .row-top{display:flex;align-items:baseline;gap:8px;container:who-line / inline-size}
 .row-top .who{font-weight:600;font-size:calc(13px + var(--type-up));letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
 .row.seen .who{font-weight:500;color:var(--ink2)}
+/* The identity chip ("Not {brand}") rides after the name and never gives; the address gives first. */
+.row-top .bdg-check{flex:none}
 .row-top .addr{flex:1 1 0;min-width:0;container:who-addr / inline-size;pointer-events:none;font-size:calc(11px + var(--type-up));color:var(--ink3);white-space:nowrap}
 /* The address TEXT is the handle on the sender; the grown box around it passes presses to the row. */
 .row-top .addr > span{pointer-events:auto;display:block;overflow:hidden;text-overflow:ellipsis}

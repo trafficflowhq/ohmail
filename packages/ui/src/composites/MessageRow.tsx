@@ -343,13 +343,13 @@ export function MessageRow(props: MessageRowProps) {
    */
   const keep: ReactNode[] = [];
   const tail: ReactNode[] = [];
-  // First and kept: a name claiming somebody else's company is the one fact a row may not lose.
-  if (senderCheckLabel)
-    keep.push(
-      <Badge key="check" variant="shield" icon="shield" className="bdg-check" title={senderCheckTitle}>
-        {senderCheckLabel}
-      </Badge>,
-    );
+  // On the sender line after the name, never on the subject's: a name claiming somebody else's
+  // company is the one fact a row may not lose, and on a phone-width row the subject keeps its room.
+  const check = senderCheckLabel ? (
+    <Badge variant="shield" icon="shield" className="bdg-check" title={senderCheckTitle}>
+      {senderCheckLabel}
+    </Badge>
+  ) : null;
   if (threadCount) keep.push(<Badge key="thread" className="bdg-thread">⤷ {threadCount}</Badge>);
   /**
    * THE CONVERSATION'S FACES, DIRECTLY AFTER ITS COUNT — see
@@ -487,6 +487,7 @@ export function MessageRow(props: MessageRowProps) {
       <span className="row-top">
         {unread && !dotless ? <span className="dot-unread" /> : null}
         <span className="who">{addressFirst && !address ? <AddressText address={from} /> : from}</span>
+        {check}
         {address ? <span className="addr">{addressFirst ? <AddressText address={address} /> : <span>{address}</span>}</span> : null}
         {/* See `onToggleTime`: `data-stamp` is the hit target the row's own press looks for, and
             it exists ONLY where a flip is wired — so an unwired stamp can never be routed to a
