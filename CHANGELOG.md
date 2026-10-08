@@ -42,6 +42,12 @@ batch instead of one message per folder.
 The warnings in the subject rule sheet, under a tag name that is already taken and on a folder whose
 change did not go through are drawn in the warning colour again instead of grey.
 
+### Mail from people you wrote to is released on time after the clock is set back
+<!-- changes: fix-026-engine-wall-clock-timers.md -->
+
+When the computer's or phone's clock is set back, ohmail now releases mail held from people you have
+written to at its usual hourly cadence, instead of holding it for as long as the clock moved.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
