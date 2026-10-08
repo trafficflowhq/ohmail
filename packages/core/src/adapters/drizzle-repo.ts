@@ -45,7 +45,8 @@ import { providerAuthservIds } from "../authserv-ids.js";
 import { correspondentsAmong, inSentFolderSql, ownSentCopies, type CorrespondentEvidence } from "../correspondent.js";
 // The one correspondent predicate, on the leaf the worker passes and the services already import.
 export {
-  correspondentsAmong, recipientsOfOwnWriting, CORRESPONDENT_SCAN_ROWS, type CorrespondentEvidence,
+  correspondentsAmong, messagesCitingOwnWriting, recipientsOfOwnWriting, CORRESPONDENT_SCAN_ROWS,
+  type CorrespondentEvidence,
 } from "../correspondent.js";
 // The identity fact's one write for unchecked rows, on the same leaf: the worker's passes and a press.
 export { checkUncheckedById, writeSenderChecks, type UncheckedRow } from "../sender-check-write.js";

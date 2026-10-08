@@ -1,6 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
 import { autoReplyByUsWhere } from "./auto-reply-by-us.js";
+import { notFailedAuthSql } from "./own-mail.js";
 import { ruleNamesSenderSql } from "./rule-match-sql.js";
 import { contacts, messages } from "./schema-mail.js";
 
@@ -8,11 +9,13 @@ import { contacts, messages } from "./schema-mail.js";
  * HELD MAIL FROM A SENDER WHO IS ONLY A CONTACT — the one spelling, for the one-time repair
  * (`apps/worker/src/gate-release.ts`) and the held-release offer (`held-release-service.ts`). No
  * enabled sender/domain rule names the author (a DENY one excludes too: that mail is the
- * Screened-out tab's), a `contacts` row does, and the account did not reply in the thread from its
- * own addresses. The caller brings the gate predicate over `messages` and `folder_state`.
+ * Screened-out tab's), a `contacts` row does, the account did not reply in the thread from its own
+ * addresses, and the row did not FAIL authentication: its provider says it is not the contact's.
+ * The caller brings the gate predicate over `messages` and `folder_state`.
  */
 export function contactOnlyHeldWhere(d: Dialect, o: { ownAddresses: readonly string[] }): SQL[] {
   const filters: SQL[] = [
+    notFailedAuthSql(messages),
     sql`not exists (
       select 1 from rules rg
        where rg.account_id = ${messages.accountId}

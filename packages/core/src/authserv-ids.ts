@@ -50,3 +50,26 @@ export function providerAuthservIds(imapHost: string | null | undefined): Readon
   if (host === "") return NO_TRUSTED_AUTHSERV_IDS;
   return PROVIDER_AUTHSERV_IDS.get(host) ?? NO_TRUSTED_AUTHSERV_IDS;
 }
+
+/**
+ * The brand each provider's own mail system writes under — its name in `brands.ts`. A delivery
+ * report from the mailbox's own provider carries it: Microsoft writes "Microsoft Outlook" at
+ * postmaster@outlook.com, at Hotmail and at a Microsoft 365 tenant's MicrosoftExchange… address.
+ * Keyed by the authserv-id sets above, so one host answers both questions.
+ */
+const PROVIDER_BRANDS: ReadonlyArray<readonly [ReadonlySet<string>, string]> = [
+  [GMAIL_AUTHSERV_IDS, "Google"],
+  [MICROSOFT_AUTHSERV_IDS, "Microsoft"],
+];
+
+/**
+ * The brand of the provider that holds the mailbox, read off the authserv-ids
+ * {@link providerAuthservIds} resolved for it: `null` for every other host. By membership, so a
+ * set built elsewhere naming the same id answers the same.
+ */
+export function providerBrand(trustedAuthservIds: ReadonlySet<string>): string | null {
+  for (const [ids, brand] of PROVIDER_BRANDS) {
+    for (const id of ids) if (trustedAuthservIds.has(id)) return brand;
+  }
+  return null;
+}

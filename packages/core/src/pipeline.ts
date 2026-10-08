@@ -12,6 +12,7 @@ import {
   type KnownSenders, type OhboxPolicy, type Rule,
 } from "./rules.js";
 import { claimedIdentity, type IdentityFact } from "./sender-check.js";
+import { providerBrand } from "./authserv-ids.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // The leaf predicate, not `adapters/imap.js`: this module is the model layer and naming the
 // adapter here would pull `imapflow` into the desktop engine. `gone.ts` carries the rule this
@@ -786,8 +787,9 @@ function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
  * The gate's correspondent question — the reply arm, the one this path can afford per message:
  * the `wrote` arm is `known` already, taught when the Sent copy was ingested. Asked only for a
  * gate fall-through ({@link evaluateRules}' `screened` with no rule) about a single usable author
- * who did not fail authentication and whose mail names at least one message id, and answered yes
- * only when a cited copy was written TO that author.
+ * who did not fail authentication and carries no company claim, and whose mail names at least one
+ * message id. `named` says whether a cited copy was written TO that author; either way this message
+ * is admitted, and only a named author is taught.
  */
 async function correspondentAtGate(
   repo: RepoPort, accountId: string, msg: NormalizedMessage,
@@ -1044,13 +1046,13 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
        the author known, so rules and the header heuristic still place it. */
     const correspondent = await correspondentAtGate(repo, accountId, normalized, decision, authVerdict, known);
     if (correspondent !== null) {
-      // Taught as a PERSON's contact (`commitChange`): the cited copy was written to them, the same
-      // fact a Sent copy's own ingest teaches. So the gate re-runs on that one shape.
+      // A named author is taught as a PERSON's contact (`commitChange`), the fact a Sent copy's own
+      // ingest teaches; an unnamed one is known for this message only, as inference.
       decision = evaluateRules({
         msg: normalized, rules,
         knownSenders: {
           addresses: new Set([...known.addresses, correspondent.author]),
-          inferred: known.inferred,
+          inferred: correspondent.evidence.named ? known.inferred : new Set([...known.inferred, correspondent.author]),
         },
         auth: authVerdict, ohboxPolicy, ownAddresses, identity: senderCheck,
       });
@@ -1063,9 +1065,9 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     // `effectForDestination`: a `deny` verdict also covers an explicit user rule, so a
     // QUARANTINED sender cannot free themselves with an OTP-shaped body. `allow` and `unclear`
     // still yield INBOX for sensitive mail. The bounce arm: a quoted Message-ID that is one of the
-    // account's own post-consent Sent copies — any other row's id was chosen by its author, a
-    // stranger's held message among them. It may pass the GATE, never overrule the USER (a rule id
-    // stands), and never carries a failed authentication or a brand's claim past it.
+    // account's own post-consent Sent copies (any other row's id was chosen by its author). It may
+    // pass the GATE, never overrule the USER (a rule id stands), and never carries a failed
+    // authentication, nor a claim to a brand other than the mailbox's own provider, past it.
     const dsn = dsnVerdict(normalized, change.raw);
     let ownBounce = false;
     let citedOwnCopy: string | null = null;
@@ -1091,8 +1093,12 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
 
     const deniedByConsent =
       decision.destination !== null && effectForDestination(decision.destination) === "deny";
-    /** Lifts nothing the provider's report failed and nothing that carries a brand's claim. */
-    const liftable = authVerdict !== "fail" && decision.identity === undefined;
+    /* Lifts nothing the provider's report failed and no claim to somebody else's brand. The mailbox's
+       own provider writes its reports under its own name ("Microsoft Outlook" at outlook.com or at a
+       tenant's MicrosoftExchange… address): that is its report, not a claim. */
+    const ownProvidersReport = decision.identity !== undefined
+      && decision.identity.brand === providerBrand(trustedAuthservIds);
+    const liftable = authVerdict !== "fail" && (decision.identity === undefined || ownProvidersReport);
     /** A corroborated bounce the account has expressed no opinion about. */
     const admitBounce = ownBounce && decision.matchedRuleId === null
       && (!deniedByConsent || decision.source === "screener") && liftable;
@@ -1640,16 +1646,16 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
        the recipients of a Sent copy past the consent point, or the correspondent the gate just
        admitted. `contacts` is what every re-screening pass reads, so they all agree with this
        routing. The admission's audit row is what the Screener shows the reason from. */
-    // Both are the person writing (`person`): the reply arm admits only an address the cited copy
-    // was written to, which is the Sent copy's own fact found by index rather than by scan.
+    // Both are the person writing (`person`): a reply-arm author the cited copy names is the Sent
+    // copy's own fact, found by index rather than by scan. An unnamed author is taught nothing.
     const learned = p.learnCorrespondents ?? [];
     if (learned.length > 0) await repo.upsertContacts(accountId, learned, "person");
-    const author = p.correspondentAdmission ? gateAuthor(p.normalized) : null;
+    const author = p.correspondentAdmission?.named ? gateAuthor(p.normalized) : null;
     if (author) await repo.upsertContacts(accountId, [author], "person");
     if (p.correspondentAdmission) {
       await repo.recordAudit(accountId, "screener.correspondent_admitted", {
         messageId: stored.id, via: p.correspondentAdmission.via,
-        sentAt: p.correspondentAdmission.sentAt.toISOString(),
+        sentAt: p.correspondentAdmission.sentAt.toISOString(), named: p.correspondentAdmission.named,
       }, null);
     }
     if (p.bounceAdmission) {

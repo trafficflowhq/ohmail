@@ -492,10 +492,10 @@ export interface RepoPort {
   /** The account's own mailbox addresses, lower-cased — `@trafficflow/db#readOwnAddresses`. */
   ownAddresses(accountId: string): Promise<Set<string>>;
   /**
-   * Has this account written to `sender` — `correspondent.ts#correspondentsAmong`, its REPLY arm:
-   * `references` (bracket-free, as `threadKeyOf` parses them) name a Sent copy this account wrote
-   * TO `sender` (its To or Cc) after its consent point. The `wrote` arm reaches ingest as {@link
-   * knownSenders}, taught when the Sent copy was ingested; the passes that can afford it ask both.
+   * Does `sender` answer this account's writing — `correspondent.ts#correspondentsAmong`, its REPLY
+   * arm: `references` (bracket-free, as `threadKeyOf` parses them) name a Sent copy this account
+   * wrote after its consent point; `named` when that copy's To or Cc names `sender`. The `wrote` arm
+   * reaches ingest as {@link knownSenders}, taught when the Sent copy was ingested.
    */
   isCorrespondent(
     accountId: string, sender: string, references: readonly string[],

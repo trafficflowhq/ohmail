@@ -6,11 +6,12 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  correspondentsAmong, recipientsOfOwnWriting, type CorrespondentEvidence,
+  correspondentsAmong, messagesCitingOwnWriting, recipientsOfOwnWriting, type CorrespondentEvidence,
 } from "@trafficflow/core/adapters/drizzle-repo";
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { upsertDesired } from "./rule-pass.js";
+import { writeSenderChecks } from "./sender-check-backfill.js";
 
 /* THE SCREENER'S CORRESPONDENT RETRO — what the gate now knows at ingest, applied once to what it
  * decided before it knew. Three acts, all for somebody this account wrote to after its consent
@@ -19,8 +20,9 @@ import { upsertDesired } from "./rule-pass.js";
  * (desired state the reconciler converges, an audit row with its inverse per message); and switch
  * off a spam or screen-out rule the Screener's own auto-act promoted over them, never one the
  * person made. Somebody the account wrote to, found by their citation of that mail, is admitted as
- * any recipient is, a held claim (mail 0148) with the fact riding; a citer the copy does not name is
- * a stranger. A row that FAILED authentication is never moved, nor anything in Junk. Counts only. */
+ * any recipient is, a held claim (mail 0148) with the fact riding. A citer the copy does not name is
+ * a correspondent for the messages that cite it only: those go, never a claim, and nothing is
+ * taught. A row that FAILED authentication is never moved, nor anything in Junk. Counts only. */
 
 /** Senders one run may examine in each of its two walks. */
 const CORRESPONDENT_RETRO_SENDERS = 50;
@@ -141,7 +143,7 @@ function heldWhere(accountId: string): SQL[] {
  * rule-key lock first, then the contact, then the rows: a Screener decision about the same sender
  * takes that lock, records its rule, and only then reaches `contacts` and the held bag, so a release
  * holding the rows while it waits on the contact (or the change-log sequence) deadlocked with it.
- * A correspondent is taught as a contact even when the gate no longer holds their mail.
+ * A named correspondent is taught as a contact even when the gate no longer holds their mail.
  */
 async function release(
   db: Tx, accountId: string, address: string, evidence: CorrespondentEvidence, now: Date,
@@ -150,15 +152,36 @@ async function release(
     await lockAccountRuleKeys(tx, accountId);
     /* A copy written TO them is the person writing, whichever arm found it (`via` says how): a
        person's contact, and their held mail released, a claim included with the fact riding — the
-       gate holds a claim at ingest, and this releases it within the hour. */
-    await tx.insert(contacts).values({ accountId, address, source: "person" })
-      .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
-    await upgradeContactsToPerson(tx, accountId, [address]);
-    const rows = await dialect(tx).forUpdate(tx.select({
+       gate holds a claim at ingest, and this releases it within the hour. An answer from an address
+       the copy does not name is released message by message: only what itself cites an own copy,
+       never a claim (unchecked rows are checked first), and nothing is taught. */
+    let cleared: ReadonlySet<string> | null = null;
+    if (evidence.named) {
+      await tx.insert(contacts).values({ accountId, address, source: "person" })
+        .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
+      await upgradeContactsToPerson(tx, accountId, [address]);
+    } else {
+      const held = await tx.select({
+        id: messages.id, fromName: messages.fromName, fromAddress: messages.fromAddress,
+        subject: messages.subject, senderCheck: messages.senderCheck,
+      }).from(folderState)
+        .innerJoin(messages, eq(messages.id, folderState.messageId))
+        .where(and(...heldWhere(accountId), eq(sql`lower(${messages.fromAddress})`, address)));
+      const citing = await messagesCitingOwnWriting(tx, accountId, held.map((r) => r.id));
+      const candidates = held.filter((r) => citing.has(r.id));
+      const marked = new Set((await writeSenderChecks(tx, accountId, candidates.filter((r) => r.senderCheck === null)
+        .map((r) => ({ id: r.id, fromName: r.fromName, fromAddress: r.fromAddress, subject: r.subject }))))
+        .map((r) => r.id));
+      cleared = new Set(candidates.filter((r) => r.senderCheck === "none" || (r.senderCheck === null && !marked.has(r.id)))
+        .map((r) => r.id));
+      if (cleared.size === 0) return 0;
+    }
+    const locked = await dialect(tx).forUpdate(tx.select({
       messageId: messages.id, mailboxId: messages.mailboxId, observedFolder: folderState.observedFolder,
     }).from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(...heldWhere(accountId), eq(sql`lower(${messages.fromAddress})`, address))));
+    const rows = cleared === null ? locked : locked.filter((r) => cleared.has(r.messageId));
     if (rows.length === 0) return 0;
     for (const r of rows) {
       await upsertDesired(tx, r, OHBOX, now);
@@ -169,7 +192,7 @@ async function release(
       await tx.insert(auditLog).values({
         accountId, action: auditAction("screener.correspondent_admitted"),
         payload: {
-          mailboxId: r.mailboxId, messageId: r.messageId, via: evidence.via,
+          mailboxId: r.mailboxId, messageId: r.messageId, via: evidence.via, named: evidence.named,
           sentAt: evidence.sentAt.toISOString(), from: SCREENER_FOLDER, to: OHBOX,
         },
         inverse: { messageId: r.messageId, from: OHBOX, to: SCREENER_FOLDER },

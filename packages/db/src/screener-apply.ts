@@ -190,6 +190,8 @@ export interface AppliedScreenerRow {
   unread: boolean;
   /** `messages.sender_check` (mail 0148): `'impersonation'` holds the row from a pass's admission. */
   senderCheck: string | null;
+  /** `messages.auth_verdict`: a row its provider failed is never moved by the held-release press. */
+  authVerdict: string | null;
 }
 
 const HELD_COLUMNS = {
@@ -197,12 +199,13 @@ const HELD_COLUMNS = {
   fromAddress: messages.fromAddress, subject: messages.subject, snippet: messages.snippet,
   date: messages.date, nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
   updatedAt: messages.updatedAt, unread: messages.unread, senderCheck: messages.senderCheck,
+  authVerdict: messages.authVerdict,
 } as const;
 
 function toAppliedScreenerRow(r: {
   messageId: string; mailboxId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
-  updatedAt: Date; unread: boolean; senderCheck: string | null;
+  updatedAt: Date; unread: boolean; senderCheck: string | null; authVerdict: string | null;
 }): AppliedScreenerRow {
   return {
     messageId: r.messageId, mailboxId: r.mailboxId, threadId: r.threadId ?? null, fromAddress: r.fromAddress,
@@ -214,7 +217,7 @@ function toAppliedScreenerRow(r: {
     // site can at least fail predictably on; `undefined` is not a value that column ever holds and
     // has no business surviving this row's own construction. Same defensive shape as `threadId`.
     nativeLocator: r.nativeLocator ?? null, updatedAt: r.updatedAt, unread: r.unread,
-    senderCheck: r.senderCheck ?? null,
+    senderCheck: r.senderCheck ?? null, authVerdict: r.authVerdict ?? null,
   };
 }
 
@@ -450,8 +453,9 @@ export interface ApplyScreenerDecisionInput {
   /**
    * WHICH MARKED ROWS THE DECISION MOVES (mail 0148). `pressed`, the default: a person's press moves
    * a claim only from the address they pressed on, the row that told them; a domain press leaves
-   * another address's claim to its own press. `none`: the held-release press, whose offer never
-   * counts a claim, moves none. A pass's yes moves only rows the check cleared.
+   * another address's claim to its own press. `none`: the held-release press, whose offer counts
+   * neither a claim nor a row that FAILED authentication, moves neither — exactly what it counted.
+   * A pass's yes moves only rows the check cleared.
    */
   marked?: "pressed" | "none";
   /**
@@ -649,6 +653,7 @@ export async function applyScreenerDecision(
   // A claim, or a row nobody checked, moves only on a press made on its own address.
   const pressed = address.toLowerCase();
   const movable = (r: AppliedScreenerRow): boolean => {
+    if (marked === "none" && r.authVerdict === "fail") return false;
     if (passAdmits) return r.senderCheck === "none";
     if (r.senderCheck === "none") return true;
     return marked === "pressed" && r.fromAddress.toLowerCase() === pressed;

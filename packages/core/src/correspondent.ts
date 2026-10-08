@@ -11,16 +11,22 @@ import { SENT_SHAPED_PATHS } from "./types.js";
  * HAS THIS ACCOUNT WRITTEN TO THEM — the one predicate. A correspondent is never first contact:
  * the Screener holds nobody this account wrote to, and nothing files them as spam on the model's
  * word. Evidence is a copy in the mailbox's own Sent folder — the server's answer, never the
- * `From` header a stranger writes — addressed to them (`wrote`), or addressed to them and named
- * by their mail's In-Reply-To/References (`replied`): a copy's id travels with every reply,
- * forward and list archive, so citing it proves nothing about who was written to. An automatic
- * reply is not writing. Only writing AFTER the consent point counts — the later of the mailbox's
- * connect and the sent-mail seed's answer: history before it is the seed's question.
+ * `From` header a stranger writes — addressed to them (`wrote`), or named by their mail's
+ * In-Reply-To/References (`replied`). A copy's id travels with every reply, forward and list
+ * archive, so only a copy whose To or Cc names them makes them somebody this account wrote to
+ * (`named`); an answer from another address is a correspondent for that message alone. An
+ * automatic reply is not writing. Only writing AFTER the consent point counts.
  */
 export interface CorrespondentEvidence {
   /** When this account wrote — the Sent copy's own arrival, else its date. */
   sentAt: Date;
   via: "wrote" | "replied";
+  /**
+   * The copy names them in To or Cc: the person wrote TO them, which teaches a contact. Always
+   * true for `wrote`; false for an answer from an address the cited copy does not name, which is
+   * admitted for the message that cites and never taught.
+   */
+  named: boolean;
 }
 
 /** Sent copies one `wrote` read may examine. The newest win, and they are what the answer needs. */
@@ -65,18 +71,21 @@ export async function correspondentsAmong(db: Tx, args: {
   const scope = await ownWritingScope(db, args.accountId);
   if (scope === null) return out;
   const { ownWriting, arrival } = scope;
+  // A named reading outranks an unnamed one (only it teaches), then the newer writing wins.
   const keep = (sender: string, ev: CorrespondentEvidence): void => {
     const held = out.get(sender);
-    if (!held || ev.sentAt > held.sentAt) out.set(sender, ev);
+    if (!held || (ev.named && !held.named) || (ev.named === held.named && ev.sentAt > held.sentAt)) {
+      out.set(sender, ev);
+    }
   };
 
   if (allRefs.length > 0) {
     const copies = await sentCopiesIn(db, scope, allRefs);
     for (const [s, refs] of refsBySender) {
       for (const ref of refs) {
-        // Answering mail written TO them: the cited copy's To or Cc names this sender, exactly.
+        // Named when the cited copy's To or Cc names this sender, exactly.
         const copy = copies.get(ref);
-        if (copy && copy.recipients.has(s)) keep(s, { sentAt: copy.sentAt, via: "replied" });
+        if (copy) keep(s, { sentAt: copy.sentAt, via: "replied", named: copy.recipients.has(s) });
       }
     }
   }
@@ -102,9 +111,41 @@ export async function correspondentsAmong(db: Tx, args: {
   for (const r of wrote) {
     const at = sentAtOf(r);
     for (const a of [...addressesOf(r.to), ...addressesOf(r.cc)]) {
-      if (asked.has(a)) keep(a, { sentAt: at, via: "wrote" });
+      if (asked.has(a)) keep(a, { sentAt: at, via: "wrote", named: true });
     }
   }
+  return out;
+}
+
+/**
+ * WHICH OF THESE MESSAGES ANSWER THE ACCOUNT'S OWN WRITING — each one's own In-Reply-To/References,
+ * bounded as the reply arm reads them, naming one of its post-consent Sent copies. An answer from
+ * an address the cited copy does not name is a correspondent for the message that cites and for no
+ * other, so the retro releases exactly these. Account-scoped; the ids are rows the caller read.
+ */
+export async function messagesCitingOwnWriting(
+  db: Tx, accountId: string, messageIds: readonly string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (messageIds.length === 0) return out;
+  const d = dialect(db);
+  const refsById = new Map<string, string[]>();
+  for (let at = 0; at < messageIds.length; at += REPLY_ARM_IDS_PER_STATEMENT) {
+    const rows = await db.select({
+      id: messages.id,
+      // Aliased: the device store returns rows positionally and refuses two same-named columns.
+      inReplyTo: sql<unknown>`${d.jsonGet(messageBodies.headers, "in-reply-to")}`.as("mc_in_reply_to"),
+      references: sql<unknown>`${d.jsonGet(messageBodies.headers, "references")}`.as("mc_references"),
+    }).from(messages)
+      .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .where(and(eq(messages.accountId, accountId), inArray(messages.id, messageIds.slice(at, at + REPLY_ARM_IDS_PER_STATEMENT))));
+    for (const r of rows) {
+      const ids = boundedReferenceIds(null, parseMessageIds(headerLines(r.inReplyTo)), parseMessageIds(headerLines(r.references)));
+      if (ids.length > 0) refsById.set(r.id, ids);
+    }
+  }
+  const copies = await ownSentCopies(db, accountId, [...new Set([...refsById.values()].flat())]);
+  for (const [id, ids] of refsById) if (ids.some((ref) => copies.has(ref))) out.add(id);
   return out;
 }
 
