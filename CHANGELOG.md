@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.18] — 2026-10-08
+
 ### The phone app's download is smaller
 <!-- changes: perf-026-phone-engine-trim.md -->
 
@@ -109,19 +116,18 @@ at the next sync.
 
 When the mail server sends more for one message than ohmail accepts, that message is set aside and
 the rest of the mailbox syncs over a new connection, in every folder, on the desktop, the phone and
-a self-hosted server. Many such messages are set aside one at a time, so newer mail in that folder
-can wait behind them. The mailbox's settings row says how many messages were set aside. Before, a
+a self-hosted server. The mailbox's settings row says how many messages were set aside. Before, a
 desktop or phone mailbox stopped syncing until the app was restarted, and ohmail asked for the same
 message again on every attempt.
 
 ### Messages set aside no longer slow a mailbox or show a storage error
 <!-- changes: fix-026-overrun-hold-and-ladder.md -->
 
-When the mail server sends more of a message than it declared, ohmail sets that message aside and
-reconnects after a short wait, without reporting the server as unreachable, so newer mail behind it
-arrives within seconds per message rather than hours. Such messages no longer make the desktop or
-phone say that ohmail could not store mail, and no longer hold other messages back. A self-hosted
-server no longer pauses the mailbox for each one.
+After a message the mail server sent more of than it declared is set aside, ohmail reconnects after
+a short wait, without reporting the server as unreachable, so newer mail behind it arrives within
+seconds per message. Such messages no longer make the desktop or phone say that ohmail could not
+store mail, and no longer hold other messages back. A self-hosted server no longer pauses the
+mailbox for each one.
 
 ### Mark read in the Ohbox marks the whole conversation read, and messages you scroll through are marked read
 <!-- changes: fix-026-thread-read.md -->
@@ -173,11 +179,6 @@ rule for the whole domain, a rule ohmail learned or a contact it added would hav
 or contact you made for that exact address still lets it through. Mail from your own addresses keeps
 its place and still shows the warning. Decisions about everyone at a shared mail provider are made
 per address.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.17] — 2026-10-07
 
@@ -11722,7 +11723,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.17...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.18...HEAD
+[0.25.18]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.18
 [0.25.17]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.17
 [0.25.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.16
 [0.25.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.15

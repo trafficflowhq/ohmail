@@ -74,6 +74,33 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.18" date="2026-10-08">
+      <description>
+        <ul>
+          <li>The phone app's download is smaller</li>
+          <li>Signing out ends that session's live updates within seconds</li>
+          <li>Live updates on the web</li>
+          <li>The buttons in an open message are easier to tap on a tablet</li>
+          <li>The sender's address stays on screen in the Screener and the open message</li>
+          <li>A draft kept by folding the phone keeps its Cc and Bcc</li>
+          <li>Lists keep their subjects readable on fold-width screens, and tabs stay in one row</li>
+          <li>Enter after narrowing the window keeps the message open</li>
+          <li>The desktop app opens its mailbox faster</li>
+          <li>A move or delete pressed offline no longer lands over a newer one a day later</li>
+          <li>Senders you allowed stay yours in settings an older ohmail saved</li>
+          <li>Your own mail is never filed by a rule about your own address</li>
+          <li>A removed rule leaves at once</li>
+          <li>A mailbox keeps syncing after the server sends a message ohmail cannot read</li>
+          <li>Messages set aside no longer slow a mailbox or show a storage error</li>
+          <li>Mark read in the Ohbox marks the whole conversation read, and messages you scroll through are marked read</li>
+          <li>Paused accounts</li>
+          <li>A change made during an ohmail Cloud outage waits for the service</li>
+          <li>A message you open and read moves to the top of Earlier</li>
+          <li>A mail server running on this computer gets time to finish its own sign-in</li>
+          <li>A name claiming a company from another address waits at the Screener</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.17" date="2026-10-07">
       <description>
         <ul>
@@ -137,20 +164,6 @@
           <li>Pressing Send again while ohmail reconnects no longer sends the message twice</li>
           <li>A message that waited without a connection goes out once when ohmail reconnects</li>
           <li>The privacy pages say what is kept and what reaches the AI model</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.13" date="2026-10-04">
-      <description>
-        <ul>
-          <li>The approval page says when a computer asked from another network</li>
-          <li>A reply that has gone keeps the words that went</li>
-          <li>A self-hosted server tells its visitors apart</li>
-          <li>Restarting the desktop app waits for its mail engine</li>
-          <li>A Move is sent before the folder check</li>
-          <li>Undo puts a message back where it was in the Ohbox</li>
-          <li>One rule per sender, and a rule change waits for every organizer</li>
-          <li>A phone with less memory keeps a margin when it shows a long message's images</li>
         </ul>
       </description>
     </release>
