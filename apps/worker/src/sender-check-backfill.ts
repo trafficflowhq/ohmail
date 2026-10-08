@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import {
   contacts, fencedAccountWrite, folderState, messages, SCREENER_ACT_TRIGGER_PREFIX, type Tx,
 } from "@trafficflow/db";
@@ -40,6 +40,8 @@ export interface SenderCheckBackfillResult {
   marked: number;
   /** True ⇒ the NULL set in scope answered empty: nothing is left to check. */
   done: boolean;
+  /** True ⇒ the source-less contacts answered short of a batch: none is left to mark. */
+  contactsDone: boolean;
 }
 
 /** The two places a banner is read when a person decides. Archive and Sent rows stay unchecked. */
@@ -58,6 +60,13 @@ export const LEGACY_ACT_CONTACTS_BATCH = 5000;
 export async function markLegacyActContacts(
   db: Tx, deps: { accountId: string; batch?: number },
 ): Promise<number> {
+  return (await legacyActContactsPage(db, deps)).inferred;
+}
+
+/** {@link markLegacyActContacts}, and how many contacts the call examined. */
+async function legacyActContactsPage(
+  db: Tx, deps: { accountId: string; batch?: number },
+): Promise<{ examined: number; inferred: number }> {
   // A literal, not a parameter: the sidecar names this statement, and a generic plan over a bound
   // pattern loses the (account, trigger) index its custom plan uses.
   const act = sql.raw(`'${SCREENER_ACT_TRIGGER_PREFIX.replace(/'/g, "''")}%'`);
@@ -65,7 +74,7 @@ export async function markLegacyActContacts(
     const ids = (await tx.select({ id: contacts.id }).from(contacts)
       .where(and(eq(contacts.accountId, deps.accountId), isNull(contacts.source)))
       .limit(deps.batch ?? LEGACY_ACT_CONTACTS_BATCH)).map((r) => r.id);
-    if (ids.length === 0) return 0;
+    if (ids.length === 0) return { examined: 0, inferred: 0 };
     // The senders whose every Screener decision came from the act, read once for the statement.
     const actOnly = sql`select lower(ls.sender_address) from learning_signals ls
        where ls.account_id = ${deps.accountId} and ls.kind = 'screener' and ls.sender_address is not null
@@ -76,7 +85,7 @@ export async function markLegacyActContacts(
       .where(and(eq(contacts.accountId, deps.accountId), inArray(contacts.id, ids), isNull(contacts.source)));
     const [n] = await tx.select({ n: sql<number>`count(*)` }).from(contacts)
       .where(and(eq(contacts.accountId, deps.accountId), inArray(contacts.id, ids), eq(contacts.source, "inferred")));
-    return Number(n?.n ?? 0);
+    return { examined: ids.length, inferred: Number(n?.n ?? 0) };
   });
 }
 
@@ -86,7 +95,7 @@ export async function senderCheckBackfillPass(
   const log = deps.log ?? silentLogger;
   const batch = deps.batch ?? SENDER_CHECK_BACKFILL_BATCH;
   const maxPages = deps.maxPages ?? SENDER_CHECK_BACKFILL_PAGES;
-  const result: SenderCheckBackfillResult = { checked: 0, marked: 0, done: false };
+  const result: SenderCheckBackfillResult = { checked: 0, marked: 0, done: false, contactsDone: false };
 
   for (let page = 0; page < maxPages; page++) {
     if (page > 0 && deps.until?.()) break;
@@ -118,7 +127,92 @@ export async function senderCheckBackfillPass(
     // The logger's own field names: `scanned` is the rows given a fact this call.
     log.info("sender_check_backfill", { accountId: deps.accountId, scanned: result.checked, marked: result.marked });
   }
-  const inferred = await markLegacyActContacts(db, { accountId: deps.accountId });
-  if (inferred > 0) log.info("act_contacts_inferred", { accountId: deps.accountId, count: inferred });
+  const contacts = await legacyActContactsPage(db, { accountId: deps.accountId });
+  result.contactsDone = contacts.examined < LEGACY_ACT_CONTACTS_BATCH;
+  if (contacts.inferred > 0) log.info("act_contacts_inferred", { accountId: deps.accountId, count: contacts.inferred });
   return result;
+}
+
+/** How far behind its previous reading the re-arm read starts: writer clocks and commit latency. */
+export const SENDER_CHECK_REARM_OVERLAP_MS = 10 * 60_000;
+
+/**
+ * The accounts among `accountIds` holding an unchecked row in scope whose `folder_state` was
+ * written at or after `since`. A row enters the scope only by such a write (ingest's insert, a
+ * move), and every one stamps `updated_at`, the stamp the mirror drain's window rests on: the read
+ * is that index's recent range, never an account's history. Both sets the pass works are otherwise
+ * closed: ingest writes every new row's fact and every contact writer names its source.
+ */
+export async function senderCheckReentered(
+  db: Tx, accountIds: readonly string[], since: Date,
+): Promise<Set<string>> {
+  if (accountIds.length === 0) return new Set();
+  const rows = await db.selectDistinct({ accountId: messages.accountId }).from(folderState)
+    .innerJoin(messages, eq(messages.id, folderState.messageId))
+    .where(and(
+      inArray(folderState.desiredFolder, [...IN_SCOPE]),
+      gte(folderState.updatedAt, since),
+      inArray(messages.accountId, [...accountIds]),
+      isNull(messages.senderCheck),
+      isNull(messages.deletedAt),
+    ));
+  return new Set(rows.map((r) => r.accountId));
+}
+
+/** The cycle tail's door to the pass: which accounts it walks, and one account's call. */
+export interface SenderCheckRetirement {
+  enter(db: Tx, accounts: readonly string[], log?: Logger): Promise<readonly string[]>;
+  run(db: Tx, accountId: string, log?: Logger): Promise<SenderCheckBackfillResult>;
+}
+
+/**
+ * THE PASS RETIRES PER ACCOUNT, IN THIS PROCESS. An account whose call answered both sets empty
+ * is skipped from then on, so a finished account costs no statement; once per walk ONE read
+ * ({@link senderCheckReentered}) re-arms the retired accounts a row has re-entered since their
+ * last reading. A failed read re-arms nobody and keeps their readings, so the next walk covers
+ * the gap. A restart, or an account leaving the walk, forgets the retirement: the next call pays
+ * one full page.
+ */
+export function senderCheckRetirement(opts: {
+  now?: () => number;
+  overlapMs?: number;
+  pass?: typeof senderCheckBackfillPass;
+} = {}): SenderCheckRetirement {
+  const now = opts.now ?? Date.now;
+  const overlap = opts.overlapMs ?? SENDER_CHECK_REARM_OVERLAP_MS;
+  const pass = opts.pass ?? senderCheckBackfillPass;
+  /** Account → the instant from which its scope is known empty. */
+  const retired = new Map<string, number>();
+  return {
+    async enter(db, accounts, log = silentLogger) {
+      const here = new Set(accounts);
+      for (const a of [...retired.keys()]) if (!here.has(a)) retired.delete(a);
+      const asleep = accounts.filter((a) => retired.has(a));
+      if (asleep.length > 0) {
+        const readAt = now();
+        let since = readAt;
+        for (const a of asleep) since = Math.min(since, retired.get(a)!);
+        try {
+          const back = await senderCheckReentered(db, asleep, new Date(since - overlap));
+          for (const a of asleep) {
+            if (back.has(a)) retired.delete(a);
+            else retired.set(a, readAt);
+          }
+        } catch (err) {
+          log.warn("sender_check_rearm_read_failed", {
+            err,
+            reason: "no retired account is re-armed this walk and each keeps its last reading, so " +
+              "the next walk's read covers this one's window",
+          });
+        }
+      }
+      return accounts.filter((a) => !retired.has(a));
+    },
+    async run(db, accountId, log = silentLogger) {
+      const startedAt = now();
+      const r = await pass(db, { accountId, log });
+      if (r.done && r.contactsDone) retired.set(accountId, startedAt);
+      return r;
+    },
+  };
 }

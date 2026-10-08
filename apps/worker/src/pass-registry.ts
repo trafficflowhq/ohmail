@@ -189,7 +189,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "sender_check_backfill",
     module: `${W}/sender-check-backfill.ts`, entry: "senderCheckBackfillPass",
     triggers: ["cycle-tail", "sidecar-drain"],
-    cadence: "every cycle tail, per account, while Ohbox or Screener rows have no identity fact (mail 0148); on a standalone install once per drain",
+    cadence: "every cycle tail, per account, until both its sets answer empty; then one read per tail re-arms an account a row re-entered (mail 0148); on a standalone install once per drain until empty",
     budget: "SENDER_CHECK_BACKFILL_BATCH rows x SENDER_CHECK_BACKFILL_PAGES pages per account per call",
     owns: "a message ingested before mail 0148 that sits in the Ohbox or the Screener gets its identity fact, once, and a marked one a message delta",
     fence: "leader lock; the account erasure fence per page; writes the fact and a delta, never a move",

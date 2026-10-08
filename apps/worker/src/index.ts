@@ -95,7 +95,7 @@ import { inboundQuietPass } from "./inbound-quiet.js";
 import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { gateReleasePass } from "./gate-release.js";
-import { senderCheckBackfillPass } from "./sender-check-backfill.js";
+import { senderCheckRetirement } from "./sender-check-backfill.js";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { retentionPrunePass, signInRetentionPass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
@@ -4493,6 +4493,8 @@ export async function startWorkerWithLock(
       return passMailboxes;
     }
 
+    /** The identity backfill's per-account retirement, for this process's life. */
+    const senderCheckTail = senderCheckRetirement();
     // BEGIN TAIL_IMPL — the no-IMAP census reads this block: no adapter, runtime or lease here.
     const TAIL_IMPL: { readonly [K in TailSectionName]: Omit<TailSection, "name"> } = {
       screener_suggest_owed: {
@@ -4673,11 +4675,13 @@ export async function startWorkerWithLock(
       sender_check_backfill: {
         // The identity fact for the Ohbox and Screener rows ingested before mail 0148, one page per
         // account per tail, then the act's contacts from before it, each contact written once. Once
-        // both sets answer empty the call is two reads: the unchecked rows and the source-less
-        // contacts. Contained: a failure leaves the rows unchecked until the next tail.
+        // both sets answer empty the account RETIRES in this process and costs nothing; one read on
+        // entry re-arms an account a row re-entered (`senderCheckRetirement`). Contained: a failure
+        // leaves the rows unchecked until the next tail.
+        enter: (accounts) => senderCheckTail.enter(db as unknown as Tx, accounts, log),
         run: async (accountId) => {
           try {
-            await senderCheckBackfillPass(db as unknown as Tx, { accountId, log });
+            await senderCheckTail.run(db as unknown as Tx, accountId, log);
           } catch (err) {
             log.error("sender_check_backfill_failed", {
               accountId, err,
