@@ -432,8 +432,8 @@ async function materializeRows(
       fromAddress: sql`${messages.fromAddress}`,
       messageIdHeader: sql`${messages.messageIdHeader}`,
     })} then 1 else 0 end`.as("m_auto_reply"),
-    invitation: sql`${invitationWithoutEventWhere(d, { id: sql`${messages.id}` })}`.as("m_invitation"),
-    itipReply: sql`${itipReplyHeaderWhere(d, { id: sql`${messages.id}` })}`.as("m_itip_reply"),
+    invitation: sql`${invitationWithoutEventWhere(d, { id: sql`${messages.id}`, accountId: sql`${messages.accountId}` })}`.as("m_invitation"),
+    itipReply: sql`${itipReplyHeaderWhere(d, { id: sql`${messages.id}`, accountId: sql`${messages.accountId}` })}`.as("m_itip_reply"),
     ...keyFields,
   };
   type Row = {

@@ -45,6 +45,18 @@ function hasMethodParam(d: Dialect, value: SQL, needle: string): SQL {
   return sql`${d.strpos(squeezed, sql`${needle}`)} > 0`;
 }
 
+/** A message row as the predicates read it: its id and its account, the attachments index's lead. */
+export interface CalendarRow { readonly id: SQL; readonly accountId: SQL }
+
+/**
+ * The message's attachments, asked by ACCOUNT and message: `attachments_account_message_idx` leads
+ * with the account, so the message alone was a scan of the whole index for every materialized row.
+ * The composite foreign key (message_id, account_id) makes the two forms the same rows.
+ */
+function attachmentsOf(row: CalendarRow): SQL {
+  return sql`a.account_id = ${row.accountId} and a.message_id = ${row.id}`;
+}
+
 /** The base media type of a stored `content_type`, folded — everything before the first `;`. */
 function baseType(d: Dialect, value: SQL): SQL {
   const cut = sql`case when ${d.strpos(value, sql`';'`)} > 0
@@ -58,12 +70,12 @@ function baseType(d: Dialect, value: SQL): SQL {
  * `invitationWithoutEvent`. The message SAYS it is a calendar message (Microsoft's
  * `Content-Class`, or a top-level `Content-Type` carrying `method=`) and carries NO calendar part.
  */
-export function invitationWithoutEventWhere(d: Dialect, row: { id: SQL }): SQL {
+export function invitationWithoutEventWhere(d: Dialect, row: CalendarRow): SQL {
   const cls = headerElements(d, row.id, "content-class", "cc");
   const ct = headerElements(d, row.id, "content-type", "ct");
   const calendarPart = sql`
     exists (select 1 from ${attachments} a
-             where a.message_id = ${row.id}
+             where ${attachmentsOf(row)}
                and ${baseType(d, sql`a.content_type`)} in ('text/calendar', 'application/ics'))`;
   return sql`(
     (
@@ -83,13 +95,13 @@ export function invitationWithoutEventWhere(d: Dialect, row: { id: SQL }): SQL {
  * and one of the two arms of the list's acknowledgement test; the other is the subject, which the
  * client already holds and composes itself.
  */
-export function itipReplyHeaderWhere(d: Dialect, row: { id: SQL }): SQL {
+export function itipReplyHeaderWhere(d: Dialect, row: CalendarRow): SQL {
   const ct = headerElements(d, row.id, "content-type", "ct");
   return sql`(
     exists (select 1 from ${ct.from}
              where ${ct.isString} and (${hasMethodParam(d, ct.text, ";method=reply")}))
     or exists (select 1 from ${attachments} a
-                where a.message_id = ${row.id}
+                where ${attachmentsOf(row)}
                   and ${baseType(d, sql`a.content_type`)} in ('text/calendar', 'application/ics')
                   and ${hasMethodParam(d, sql`a.content_type`, ";method=reply")})
   )`;
