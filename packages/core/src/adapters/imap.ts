@@ -2755,6 +2755,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   private static readonly DATE_READ_PASS_MS = 20_000;
 
+  /** Ten times the slowest single unsized fetch measured (1.0 s, on an injected slow-link clock). */
+  private static readonly UNSIZED_FETCH_MARGIN_MS = 10_000;
+
+  /** One unsized command's bytes, every row counted: the batch ceiling of a lone undeclared message. */
+  private static readonly UNSIZED_COMMAND_CEILING = bodyOverrunCeiling(undefined) + MAX_RAW_MESSAGE_BYTES;
+
   /**
    * Fetch bodies for at most `budget` worth of UIDs, NEWEST MAIL FIRST, and say what was left.
    * The memory bound of the whole worker: every path that pulls `source: true` goes through here
@@ -2883,7 +2889,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * under its own cap ({@link messageOverrunCeiling}), the bytes that ARRIVED are charged against
    * what the pass has left, and the next is asked only while some is left: the pass overshoots
    * by at most one message's cap, the bound the first admission already had. A row the server
-   * withholds is re-asked as {@link fetchSized} does; still absent, it is `unanswered`.
+   * withholds is re-asked as {@link fetchSized} does; still absent, it is `unanswered`. Every row
+   * of a command counts against {@link UNSIZED_COMMAND_CEILING}, rows for another UID included, and
+   * the loop stops softly while {@link UNSIZED_FETCH_MARGIN_MS} of the read deadline is left.
    */
   private async fetchUnsized(
     fetched: InternalCreate[], unsized: readonly number[], folder: string, curUidValidity: bigint,
@@ -2893,8 +2901,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const unanswered: number[] = [];
     for (let i = 0; i < unsized.length; i++) {
       if (spent >= passBytes) return { truncated: true, unanswered };
+      /* A SOFT STOP, as date reads stop at DATE_READ_PASS_MS: a read_deadline thrown mid-loop kept
+         nothing, so a slow server imported nothing at all. Only this pre-fetch check is soft. */
+      if (deadline.remainingMs() < ImapAdapter.UNSIZED_FETCH_MARGIN_MS) return { truncated: true, unanswered };
       const uid = unsized[i]!;
       let got = undefined as InternalCreate | undefined;
+      let streamed = 0;
       const row = (m: FetchMessageObject, envelope: boolean): void => {
         deadline.check(folder);
         const raw = (m.source ?? Buffer.alloc(0)) as Buffer;
@@ -2903,6 +2915,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             "body_overrun", messageOverrunCeiling(undefined), raw.length, folder,
             { uidValidity: String(curUidValidity), uid: m.uid },
           );
+          this.retireConnection(because);
+          throw because;
+        }
+        streamed += raw.length;
+        if (streamed > ImapAdapter.UNSIZED_COMMAND_CEILING) {
+          const because = new ImapBoundExceeded("body_overrun", ImapAdapter.UNSIZED_COMMAND_CEILING, streamed, folder);
           this.retireConnection(because);
           throw because;
         }
@@ -2920,11 +2938,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       for await (const m of this.client.fetch(
         [uid], { uid: true, flags: true, envelope: true, source: true, internalDate: true, bodyStructure: true }, { uid: true },
       )) row(m, true);
+      streamed = 0;
       if (got === undefined) {
         for await (const m of this.client.fetch(
           [uid], { uid: true, flags: true, source: true, internalDate: true, bodyStructure: true }, { uid: true },
         )) row(m, false);
       }
+      streamed = 0;
       if (got === undefined) {
         for await (const m of this.client.fetch([uid], STRUCTURE_FREE_LAST_RESORT, { uid: true })) row(m, false);
       }
