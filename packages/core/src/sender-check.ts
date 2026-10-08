@@ -190,8 +190,15 @@ function names(hay: string, needle: string): boolean {
 
 /** A short needle claims only with a service word as the word before or after it. */
 function besideServiceWord(hay: string, i: number, needle: string): boolean {
-  const before = /([\p{L}\p{N}]+)[^\p{L}\p{N}]*$/u.exec(hay.slice(0, i))?.[1];
-  const after = /^[^\p{L}\p{N}]*([\p{L}\p{N}]+)/u.exec(hay.slice(i + needle.length))?.[1];
+  // Read within MAX_RUN on either side: the whole prefix made a crafted name of short needles quadratic.
+  const from = Math.max(0, i - MAX_RUN);
+  const pre = /([\p{L}\p{N}]+)[^\p{L}\p{N}]*$/u.exec(hay.slice(from, i));
+  const cutBefore = pre !== null && pre.index === 0 && isWordChar(hay[from - 1] ?? "");
+  const at = i + needle.length;
+  const post = /^[^\p{L}\p{N}]*([\p{L}\p{N}]+)/u.exec(hay.slice(at, at + MAX_RUN));
+  const cutAfter = post !== null && post[0].length === Math.min(MAX_RUN, hay.length - at) && isWordChar(hay[at + MAX_RUN] ?? "");
+  const before = pre !== null && !cutBefore ? pre[1] : undefined;
+  const after = post !== null && !cutAfter ? post[1] : undefined;
   return (before !== undefined && SERVICE_WORDS.has(before)) || (after !== undefined && SERVICE_WORDS.has(after));
 }
 
@@ -252,6 +259,14 @@ const GATED: readonly GatedBrand[] = BRANDS.flatMap((b) => {
   const fused = new Set([...gate, ...gateToken].map(bare));
   return [{ brand: b, gate, skeletons, gateShort, gateToken, fused, shortFused: new Set(gateShort.map(bare)) }];
 });
+
+/**
+ * THE LONGEST RUN WORTH READING: twice the longest needle a run can equal, so both `rn` readings fit.
+ * Every reading is bounded by it: a token run stops growing past it, a short needle looks for its
+ * service word within it, a lead-in is looked for within twice it. So a crafted name, local part or
+ * subject costs time linear in its length, which {@link MAX_IDENTITY_INPUT} caps before any reading.
+ */
+const MAX_RUN = 2 * Math.max(...GATED.flatMap((g) => [...g.fused, ...g.shortFused, ...g.skeletons].map((n) => n.length)));
 
 /** Letters and digits, every other run one space: the hay a token needle is read in. */
 function tokenView(s: string): Skeleton {
@@ -324,28 +339,45 @@ function claimSpans(hay: string, g: GatedBrand, readings: readonly Skeleton[], v
  * non-letter; a lead-in keeps a digit in its word (`P0stFinance`) and splits where its case does
  * (`MyPostFinance`, `PostFinanceCH`). A short needle claims beside a service word.
  */
-interface TokenRun { s: number; e: number; joined: string; read: string[]; beside: boolean }
-function tokenRunsOf(hay: string, withDigits: boolean): TokenRun[] {
+type Spans = Map<string, Array<[number, number]>>;
+interface TokenRuns { exact: Spans; read: Spans; short: Spans }
+/** A run's skeleton text, for letters and digits only: the swaps, and `rn` as `m` when asked. */
+function runSkeleton(s: string, foldRn: boolean): string {
+  let out = "";
+  for (let k = 0; k < s.length; k++) {
+    if (foldRn && s[k] === "r" && s[k + 1] === "n") { out += "m"; k++; continue; }
+    out += SKELETON_SWAPS[s[k]!] ?? s[k]!;
+  }
+  return out;
+}
+function tokenRunsOf(hay: string, withDigits: boolean): TokenRuns {
   const tokens = [...hay.matchAll(withDigits ? /[\p{L}\p{N}]+/gu : /\p{L}+/gu)]
     .map((m) => ({ t: m[0], s: m.index ?? 0, e: (m.index ?? 0) + m[0].length }));
-  const runs: TokenRun[] = [];
+  const runs: TokenRuns = { exact: new Map(), read: new Map(), short: new Map() };
+  const add = (m: Spans, key: string, span: [number, number]): void => {
+    const list = m.get(key);
+    if (list === undefined) m.set(key, [span]); else list.push(span);
+  };
   for (let i = 0; i < tokens.length; i++) {
     let joined = "";
     for (let j = i; j < tokens.length; j++) {
       joined += tokens[j]!.t;
-      const beside = [tokens[i - 1]?.t, tokens[j + 1]?.t].some((w) => w !== undefined && SERVICE_WORDS.has(w));
-      runs.push({ s: tokens[i]!.s, e: tokens[j]!.e, joined, read: readingsOf(joined).map((r) => r.text), beside });
+      if (joined.length > MAX_RUN) break;
+      const span: [number, number] = [tokens[i]!.s, tokens[j]!.e];
+      add(runs.exact, joined, span);
+      add(runs.read, runSkeleton(joined, true), span);
+      add(runs.read, runSkeleton(joined, false), span);
+      if ([tokens[i - 1]?.t, tokens[j + 1]?.t].some((w) => w !== undefined && SERVICE_WORDS.has(w))) add(runs.short, joined, span);
     }
   }
   return runs;
 }
-function tokenRunSpans(runs: readonly TokenRun[], g: GatedBrand): Array<[number, number]> {
+function tokenRunSpans(runs: TokenRuns, g: GatedBrand): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
-  for (const r of runs) {
-    const hit = g.fused.has(r.joined) || g.skeletons.some((k) => r.read.includes(k))
-      || (r.beside && g.shortFused.has(r.joined));
-    if (hit) spans.push([r.s, r.e]);
-  }
+  const take = (list: Array<[number, number]> | undefined): void => { for (const x of list ?? []) spans.push(x); };
+  for (const n of g.fused) take(runs.exact.get(n));
+  for (const k of g.skeletons) take(runs.read.get(k));
+  for (const n of g.shortFused) take(runs.short.get(n));
   return spans;
 }
 
@@ -357,6 +389,9 @@ const splitCase = (s: string): string =>
 function owns(b: Brand, domain: string): boolean {
   return domain !== "" && b.domains.includes(domain) && !isSharedProviderDomain(domain);
 }
+
+/** The most of a name, a local part or a subject the fact reads: each is cut here before any reading. */
+const MAX_IDENTITY_INPUT = 4096;
 
 /** A claimed identity the sender's address does not back. `via` is where the claim was read. */
 export interface IdentityFact {
@@ -389,9 +424,12 @@ function leadInOf(subject: string): { text: string; tag: boolean } | undefined {
     if (next === s) break;
     s = next;
   }
-  const tag = BRACKET_TAG.exec(s)?.[1]?.trim();
+  // A lead-in is at most 30 characters before its separator: look within twice MAX_RUN, never the
+  // whole subject, whose runs of spaces made the lead-in's own pattern quadratic.
+  const head = s.slice(0, 2 * MAX_RUN);
+  const tag = BRACKET_TAG.exec(head)?.[1]?.trim();
   if (tag) return { text: tag, tag: true };
-  const lead = LEAD_IN_FACT.exec(s)?.[1]?.trim();
+  const lead = LEAD_IN_FACT.exec(head)?.[1]?.trim();
   return lead ? { text: lead, tag: false } : undefined;
 }
 
@@ -411,12 +449,13 @@ function onlyServiceWordsOutside(hay: string, start: number, end: number): boole
  */
 export function claimedIdentity(input: IdentityInput): IdentityFact | undefined {
   const sources: Array<{ via: IdentityFact["via"]; hay: string; tag: boolean }> = [];
-  const name = input.fromName === null ? "" : fold(input.fromName);
+  const capped = (s: string): string => (s.length > MAX_IDENTITY_INPUT ? s.slice(0, MAX_IDENTITY_INPUT) : s);
+  const name = input.fromName === null ? "" : fold(capped(input.fromName));
   if (/[\p{L}\p{N}]/u.test(name)) sources.push({ via: "name", hay: name, tag: false });
   const at = input.fromAddress.lastIndexOf("@");
-  const local = fold(at < 0 ? input.fromAddress : input.fromAddress.slice(0, at));
+  const local = fold(capped(at < 0 ? input.fromAddress : input.fromAddress.slice(0, at)));
   if (local !== "") sources.push({ via: "local_part", hay: local, tag: false });
-  const lead = leadInOf(input.subject);
+  const lead = leadInOf(capped(input.subject));
   if (lead !== undefined) sources.push({ via: "subject_lead", hay: fold(splitCase(lead.text)), tag: lead.tag });
 
   const domain = senderDomainOf(input.fromAddress);
