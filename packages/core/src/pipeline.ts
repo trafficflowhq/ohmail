@@ -11,8 +11,9 @@ import {
   dsnVerdict, effectForDestination, evaluateRules, gateAuthor, screenerAdmits, type AuthVerdict,
   type KnownSenders, type OhboxPolicy, type Rule,
 } from "./rules.js";
-import { claimedIdentity, type IdentityFact } from "./sender-check.js";
-import { providerBrand } from "./authserv-ids.js";
+import { claimedIdentity, registrableDomain, type IdentityFact } from "./sender-check.js";
+import { isProviderBrand, providerBrand } from "./authserv-ids.js";
+import { isSharedProviderDomain } from "./rule-order.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // The leaf predicate, not `adapters/imap.js`: this module is the model layer and naming the
 // adapter here would pull `imapflow` into the desktop engine. `gone.ts` carries the rule this
@@ -809,6 +810,31 @@ async function correspondentAtGate(
 }
 
 /**
+ * Is a delivery report's `from` at the account's OWN domain: one of its mailbox addresses', or, for an
+ * away reply's report, the domain that reply was minted under (`mintMessageId` takes the mailbox
+ * address's) and only for an id the ledger holds? Exchange's MicrosoftExchange… sender at a tenant's
+ * domain, an on-premises postmaster, a mailbox behind a gateway the provider map cannot name. Never a
+ * shared provider's domain: everybody there shares it.
+ */
+async function fromOwnDomain(
+  repo: RepoPort, accountId: string, from: string, ownAddresses: ReadonlySet<string>, minted: readonly string[],
+): Promise<boolean> {
+  const domain = domainOf(from);
+  if (domain === "" || isSharedProviderDomain(registrableDomain(domain))) return false;
+  for (const address of ownAddresses) if (domainOf(address) === domain) return true;
+  for (const id of minted) {
+    if (domainOf(id) === domain && await repo.isOwnAwayReply(accountId, [id])) return true;
+  }
+  return false;
+}
+
+/** The domain of an address or a bracket-free Message-ID, lower-cased, no trailing dot; "" without one. */
+function domainOf(value: string): string {
+  const at = value.lastIndexOf("@");
+  return at < 0 ? "" : value.slice(at + 1).trim().toLowerCase().replace(/\.$/, "");
+}
+
+/**
  * Who one of the account's own Sent copies was written to, when it teaches — To, Cc and a Bcc
  * the copy kept, lower-cased. Nothing before the consent point ({@link
  * PlanDeps.correspondenceSince}) and nothing a machine wrote: an out-of-office copy addressed to
@@ -969,7 +995,8 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
 
     // THE IDENTITY FACT, read once, HERE: below the Sent return and above the reader and passive
     // returns, so every plan that stores an inbound message stores the fact, and the gate below is
-    // handed the same value the row records. Pure: name, local part and the subject's lead-in.
+    // handed the same value the row records (but for the organisation's own report, which is no
+    // claim: the bounce arm's). Pure: name, local part and the subject's lead-in.
     const senderCheck = claimedIdentity({
       fromName: normalized.from.name, fromAddress: normalized.from.address, subject: normalized.subject,
     }) ?? null;
@@ -1067,7 +1094,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     // still yield INBOX for sensitive mail. The bounce arm: a quoted Message-ID that is one of the
     // account's own post-consent Sent copies (any other row's id was chosen by its author). It may
     // pass the GATE, never overrule the USER (a rule id stands), and never carries a failed
-    // authentication, nor a claim to a brand other than the mailbox's own provider, past it.
+    // authentication, nor a brand claim other than its own provider's or organisation's, past it.
     const dsn = dsnVerdict(normalized, change.raw);
     let ownBounce = false;
     let citedOwnCopy: string | null = null;
@@ -1095,10 +1122,18 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
       decision.destination !== null && effectForDestination(decision.destination) === "deny";
     /* Lifts nothing the provider's report failed and no claim to somebody else's brand. The mailbox's
        own provider writes its reports under its own name ("Microsoft Outlook" at outlook.com or at a
-       tenant's MicrosoftExchange… address): that is its report, not a claim. */
+       tenant's MicrosoftExchange… address): that is its report, not a claim. So does the account's own
+       organisation's mail system, under such a name at its own domain, however the mailbox is reached;
+       any other company's name there stays a claim, which anybody holding one of the ids can forge. */
     const ownProvidersReport = decision.identity !== undefined
       && decision.identity.brand === providerBrand(trustedAuthservIds);
-    const liftable = authVerdict !== "fail" && (decision.identity === undefined || ownProvidersReport);
+    const ownOrganisationReport = ownBounce && authVerdict !== "fail"
+      && decision.identity !== undefined && isProviderBrand(decision.identity.brand)
+      && await fromOwnDomain(
+        repo, accountId, normalized.from.address, ownAddresses, awayReplyBounce ? dsn!.originalMessageIds : [],
+      );
+    const liftable = authVerdict !== "fail"
+      && (decision.identity === undefined || ownProvidersReport || ownOrganisationReport);
     /** A corroborated bounce the account has expressed no opinion about. */
     const admitBounce = ownBounce && decision.matchedRuleId === null
       && (!deniedByConsent || decision.source === "screener") && liftable;
@@ -1241,7 +1276,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
         // at commit is what makes "the verdict on the row is the verdict that routed" a
         // property of the code and not of two call sites staying in step.
         authVerdict,
-        senderCheck,
+        senderCheck: ownOrganisationReport ? null : senderCheck,
         // A placement adopted under the import hold — mail the travelling document admits — is the
         // standing state of the user's mailbox, not this organizer's decision: `passive` commits
         // `'external'`, out of every retro pass's reach once the import lands. Only where the hold

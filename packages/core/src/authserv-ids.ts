@@ -73,3 +73,8 @@ export function providerBrand(trustedAuthservIds: ReadonlySet<string>): string |
   }
   return null;
 }
+
+/** Is `brand` one the provider map names (Google, Microsoft): the name a mail system writes its reports under. */
+export function isProviderBrand(brand: string): boolean {
+  return PROVIDER_BRANDS.some(([, name]) => name === brand);
+}
