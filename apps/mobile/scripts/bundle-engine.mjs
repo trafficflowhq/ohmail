@@ -35,7 +35,7 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import aliases from "../../sidecar/src/phone/aliases.js";
@@ -222,9 +222,12 @@ export function workspaceSourceAliases(repo = REPO) {
  *     workspace file (its `src/` or `dist/` copy alike) and the specifier matches whole;
  *  6. a package in `aliases.ONE_COPY` is resolved from its anchor's directory, whoever imports it;
  *  7. a row of `aliases.PACKAGE_MODULE_SUBSTITUTES` applies only when the importer IS the named file
- *     inside that package (the path after its last `node_modules/`) and the specifier matches whole.
+ *     inside that package (the path after its last `node_modules/`) and the specifier matches whole;
+ *  8. a module RESOLVING to a source file in `aliases.ONE_BUILD` takes its built copy instead, when
+ *     that copy exists — decided by the resolved path, never the specifier. Off for the published
+ *     resolution (`workspaceSources`), which reaches no built copy at all.
  */
-function substitutions(extraBare = {}) {
+function substitutions(extraBare = {}, { oneBuild = true } = {}) {
   const bare = aliases.bareSpecifiers();
   /* The table wins every collision: `@trafficflow/api/desktop-host` is a SUBSTITUTE, and a
      workspace-source entry for the same name would put the desktop's door back in the bundle. */
@@ -234,6 +237,7 @@ function substitutions(extraBare = {}) {
   const external = new Set(aliases.EXTERNAL);
   const sidecarSrc = join(REPO, "apps", "sidecar", "src");
   const oneCopy = new Set(aliases.ONE_COPY.packages);
+  const oneBuildNames = new Set(Object.keys(aliases.ONE_BUILD).map((p) => basename(p).replace(/\.ts$/, "")));
   /** Every substitution the build actually performed, for the report and for the census. */
   const applied = [];
 
@@ -373,6 +377,17 @@ function substitutions(extraBare = {}) {
           applied.push([args.path, within[args.path]]);
           return { path: within[args.path] };
         }
+        // 8 — one build of a workspace module: the resolved source file, when its built copy exists.
+        if (oneBuild && oneBuildNames.has(basename(args.path).replace(/\.(js|ts)$/, ""))) {
+          const r = await build.resolve(args.path, {
+            resolveDir: args.resolveDir, importer: args.importer, kind: args.kind, pluginData: { viaTable: true },
+          });
+          const built = r.errors.length === 0 && Object.hasOwn(aliases.ONE_BUILD, r.path) ? aliases.ONE_BUILD[r.path] : null;
+          if (built && existsSync(built)) {
+            applied.push([args.path, built]);
+            return { path: built };
+          }
+        }
         return null;   // everything else resolves normally
       });
     },
@@ -431,7 +446,8 @@ function appVersion() {
 
 export async function buildPhoneEngine({ write = true, workspaceSources = false } = {}) {
   const esbuild = await loadEsbuild();
-  const { plugin, applied } = substitutions(workspaceSources ? workspaceSourceAliases(REPO) : {});
+  const { plugin, applied } = substitutions(workspaceSources ? workspaceSourceAliases(REPO) : {},
+    { oneBuild: !workspaceSources });
   mkdirSync(OUT_DIR, { recursive: true });
   mkdirSync(PACKAGED_DIR, { recursive: true });
 
@@ -573,6 +589,22 @@ export function externalsIn(metafile) {
     }
   }
   return [...found].sort();
+}
+
+/**
+ * Every workspace module the graph carries TWICE — as its source (`src/x.ts`) and as its built
+ * copy (`dist/x.js`) of the same package — as `[source, built]` pairs. Each pair is one module's
+ * code and tables shipped twice, and two instances of one module's state. Expected: none; a new
+ * pair is a row in `aliases.ONE_BUILD`.
+ */
+export function twinsIn(metafile) {
+  const inputs = new Set(Object.keys(metafile.inputs));
+  const pairs = [];
+  for (const p of inputs) {
+    const m = p.match(/^((?:packages|apps)\/[^/]+)\/src\/(.+)\.tsx?$/);
+    if (m && inputs.has(`${m[1]}/dist/${m[2]}.js`)) pairs.push([p, `${m[1]}/dist/${m[2]}.js`]);
+  }
+  return pairs.sort((a, b) => a[0].localeCompare(b[0]));
 }
 
 /* `pathToFileURL`, never `file://${argv[1]}`: the raw splice is false for any path needing

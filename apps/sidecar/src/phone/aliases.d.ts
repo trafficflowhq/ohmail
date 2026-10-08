@@ -45,6 +45,8 @@ export function workspaceModuleKey(relativePath: string): string | null;
 export const SIDECAR_SUBSTITUTES: SubstitutionTable;
 /** `@trafficflow/api` entry points substituted for a phone-shaped twin. */
 export const API_SUBSTITUTES: SubstitutionTable;
+/** Absolute source file → its built copy, taken when the copy exists (one build per module). */
+export const ONE_BUILD: SubstitutionTable;
 
 /**
  * THE SCHEMA TWIN — one specifier, matched exactly, and that is why this is not a record.
@@ -74,6 +76,7 @@ declare const aliases: {
   workspaceModuleKey: (relativePath: string) => string | null;
   SIDECAR_SUBSTITUTES: SubstitutionTable;
   API_SUBSTITUTES: SubstitutionTable;
+  ONE_BUILD: SubstitutionTable;
   SCHEMA_TWIN: { from: string; to: string };
   EXTERNAL: string[];
   INJECT: string[];

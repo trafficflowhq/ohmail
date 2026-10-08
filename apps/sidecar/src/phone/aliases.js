@@ -247,6 +247,20 @@ const SCHEMA_TWIN = {
   to: path.join(REPO, "packages", "db", "src", "schema-mail-sqlite.ts"),
 };
 
+/**
+ * ONE BUILD OF EACH WORKSPACE MODULE. Where this tree resolves packages through `dist/`, these
+ * source files are also reached directly (a source-only subpath, or a relative import from a
+ * source file), so the module shipped twice. Each resolves to its built copy, the one the
+ * worker's Node graph runs, when that copy exists; a tree with no build output keeps the source.
+ * The phone app's `no-node-builtins.test.ts` refuses a new pair.
+ */
+const ONE_BUILD = Object.fromEntries([
+  ["core", "rule-order"], ["core", "outbound-text"], ["core", "types"], ["db", "rule-match-sql"],
+].map(([pkg, mod]) => [
+  path.join(REPO, "packages", pkg, "src", `${mod}.ts`),
+  path.join(REPO, "packages", pkg, "dist", `${mod}.js`),
+]));
+
 /** The route table a paired phone reaches on a HOSTING desktop. Empty here. */
 const API_SUBSTITUTES = {
   "@trafficflow/api/desktop-host": path.join(PHONE, "desktop-host.ts"),
@@ -287,12 +301,12 @@ function bareSpecifiers() {
 export {
   MOBILE, REPO, SHIMS, PHONE,
   NODE_MODULES, PACKAGE_ALIASES, PACKAGE_MODULE_SUBSTITUTES, WORKSPACE_MODULE_SUBSTITUTES,
-  ONE_COPY, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
+  ONE_COPY, ONE_BUILD, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
   workspaceModuleKey,
 };
 export default {
   MOBILE, REPO, SHIMS, PHONE,
   NODE_MODULES, PACKAGE_ALIASES, PACKAGE_MODULE_SUBSTITUTES, WORKSPACE_MODULE_SUBSTITUTES,
-  ONE_COPY, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
+  ONE_COPY, ONE_BUILD, SIDECAR_SUBSTITUTES, API_SUBSTITUTES, SCHEMA_TWIN, EXTERNAL, INJECT, bareSpecifiers,
   workspaceModuleKey,
 };
