@@ -48,6 +48,18 @@ change did not go through are drawn in the warning colour again instead of grey.
 When the computer's or phone's clock is set back, ohmail now releases mail held from people you have
 written to at its usual hourly cadence, instead of holding it for as long as the clock moved.
 
+### Answers to your mail arrive; only the people you wrote to are remembered
+<!-- changes: fix-026-reply-arm-names-the-author.md -->
+
+An answer to a message you sent still reaches your Ohbox, but only an address the message was sent
+to is remembered as somebody you know; an answer from another address waits at the Screener when it
+fails its sender check or carries a company's name. A delivery report that quotes your own sent
+message reaches the Ohbox. One sent under a company's name does so only when the name is your own
+mail provider's (Gmail or Microsoft, connected directly), or Microsoft's or Google's from your own
+domain; under any other company's name it keeps its warning and waits at the Screener, as does a
+report that names only the failed recipient. A copy of your own sent mail no longer merges with a
+received message that carries the same Message-ID.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
