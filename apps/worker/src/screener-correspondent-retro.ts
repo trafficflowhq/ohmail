@@ -6,7 +6,8 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  correspondentsAmong, messagesCitingOwnWriting, recipientsOfOwnWriting, type CorrespondentEvidence,
+  correspondentsAmong, messagesCitingOwnWriting, recipientsOfOwnWriting, sendersAnsweringOwnWriting,
+  type CorrespondentEvidence,
 } from "@trafficflow/core/adapters/drizzle-repo";
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
@@ -89,7 +90,9 @@ export async function screenerCorrespondentRetroPass(
   result.examined = held.length;
   if (held.length > 0) {
     const found = await correspondentsAmong(db, { accountId, senders: held, references: "held" });
-    for (const [address, evidence] of found) {
+    // An answer held under a newer mail of theirs citing nothing: every held message is asked.
+    const answering = await sendersAnsweringOwnWriting(db, accountId, held.filter((a) => !found.has(a)));
+    for (const [address, evidence] of [...found, ...answering]) {
       result.released += await release(db, accountId, address, evidence, now);
     }
   }

@@ -11,7 +11,7 @@ import {
   type ResolvedCutline, type Tx,
 } from "@trafficflow/db";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
-import { correspondentsAmong } from "@trafficflow/core/adapters/drizzle-repo";
+import { correspondentsAmong, sendersAnsweringOwnWriting } from "@trafficflow/core/adapters/drizzle-repo";
 import { SENDER_CHECK_BACKFILL_BATCH, writeSenderChecks } from "./sender-check-backfill.js";
 import {
   canonicalDestination, effectForDestination, silentLogger,
@@ -244,11 +244,15 @@ export async function screenerAutoActPass(
   const correspondents = await correspondentsAmong(db, {
     accountId, senders: waiting.map((w) => w.address), references: "held",
   });
+  // An answer to this account's mail held under a newer message: any held one keeps the act off.
+  const answering = await sendersAnsweringOwnWriting(
+    db, accountId, waiting.map((w) => w.address).filter((a) => !correspondents.has(a)),
+  );
   const unchecked = await checkUncheckedHeld(db, accountId, waiting.map((w) => w.address));
 
   let planned = 0;
   for (const sender of waiting) {
-    if (correspondents.has(sender.address)) {
+    if (correspondents.has(sender.address) || answering.has(sender.address)) {
       result.kept++;
       result.correspondents++;
       continue;

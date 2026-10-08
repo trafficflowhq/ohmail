@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import {
   accountSettings, autoReplyByUsWhere, folderState, heldSortKey, mailboxFolders, mailboxes, messageBodies,
   messageInstances, messages, notFailedAuthSql, type Tx,
@@ -27,6 +27,11 @@ export interface CorrespondentEvidence {
    * admitted for the message that cites and never taught.
    */
   named: boolean;
+}
+
+/** A named reading outranks an unnamed one (only it teaches), then the newer writing wins. */
+function outranks(ev: CorrespondentEvidence, held: CorrespondentEvidence | undefined): boolean {
+  return !held || (ev.named && !held.named) || (ev.named === held.named && ev.sentAt > held.sentAt);
 }
 
 /** Sent copies one `wrote` read may examine. The newest win, and they are what the answer needs. */
@@ -71,12 +76,8 @@ export async function correspondentsAmong(db: Tx, args: {
   const scope = await ownWritingScope(db, args.accountId);
   if (scope === null) return out;
   const { ownWriting, arrival } = scope;
-  // A named reading outranks an unnamed one (only it teaches), then the newer writing wins.
   const keep = (sender: string, ev: CorrespondentEvidence): void => {
-    const held = out.get(sender);
-    if (!held || (ev.named && !held.named) || (ev.named === held.named && ev.sentAt > held.sentAt)) {
-      out.set(sender, ev);
-    }
+    if (outranks(ev, out.get(sender))) out.set(sender, ev);
   };
 
   if (allRefs.length > 0) {
@@ -118,15 +119,16 @@ export async function correspondentsAmong(db: Tx, args: {
 }
 
 /**
- * WHICH OF THESE MESSAGES ANSWER THE ACCOUNT'S OWN WRITING — each one's own In-Reply-To/References,
- * bounded as the reply arm reads them, naming one of its post-consent Sent copies. An answer from
- * an address the cited copy does not name is a correspondent for the message that cites and for no
- * other, so the retro releases exactly these. Account-scoped; the ids are rows the caller read.
+ * WHICH OF THESE MESSAGES ANSWER THE ACCOUNT'S OWN WRITING, and the copies each cites — its own
+ * In-Reply-To/References, bounded as the reply arm reads them, naming its post-consent Sent copies.
+ * An answer from an address the cited copy does not name is a correspondent for the message that
+ * cites and for no other, so the retro releases exactly these. Account-scoped; the ids are rows the
+ * caller read.
  */
 export async function messagesCitingOwnWriting(
   db: Tx, accountId: string, messageIds: readonly string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
+): Promise<Map<string, OwnSentCopy[]>> {
+  const out = new Map<string, OwnSentCopy[]>();
   if (messageIds.length === 0) return out;
   const d = dialect(db);
   const refsById = new Map<string, string[]>();
@@ -145,7 +147,56 @@ export async function messagesCitingOwnWriting(
     }
   }
   const copies = await ownSentCopies(db, accountId, [...new Set([...refsById.values()].flat())]);
-  for (const [id, ids] of refsById) if (ids.some((ref) => copies.has(ref))) out.add(id);
+  for (const [id, ids] of refsById) {
+    const cited = ids.flatMap((ref) => copies.get(ref) ?? []);
+    if (cited.length > 0) out.set(id, cited);
+  }
+  return out;
+}
+
+/** Held messages per sender one {@link sendersAnsweringOwnWriting} read examines, the newest first. */
+export const ANSWERING_HELD_PER_SENDER = 20;
+
+/**
+ * THE EVIDENCE FOR EACH OF THESE SENDERS WITH ANY HELD MESSAGE ANSWERING THE ACCOUNT'S OWN WRITING,
+ * not only the newest one the Screener shows: an answer held before its copy synced, then buried
+ * under a newer mail citing nothing, keeps the act off the sender and is the retro's to release. A
+ * row that FAILED authentication is not the sender's. One read per page, each sender's newest held
+ * messages to a bound of their own, so a flood from one address buries nobody else's answer.
+ */
+export async function sendersAnsweringOwnWriting(
+  db: Tx, accountId: string, senders: readonly string[],
+): Promise<Map<string, CorrespondentEvidence>> {
+  const out = new Map<string, CorrespondentEvidence>();
+  const wanted = [...new Set(senders.map((s) => s.trim().toLowerCase()).filter(Boolean))];
+  if (wanted.length === 0) return out;
+  const d = dialect(db);
+  const sender = sql`lower(${messages.fromAddress})`;
+  const ranked = db.select({
+    id: messages.id, from: messages.fromAddress,
+    rank: sql<number>`row_number() over (
+      partition by ${sender} order by ${heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` })} desc, ${messages.id} desc
+    )`.as("an_rank"),
+  }).from(messages)
+    .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    .where(and(
+      eq(messages.accountId, accountId),
+      eq(folderState.desiredFolder, "ohmail/Screener"),
+      isNull(messages.deletedAt),
+      notFailedAuthSql(messages),
+      inArray(sender, wanted),
+    ))
+    .as("an_held");
+  const rows = await db.select({ id: ranked.id, from: ranked.from }).from(ranked)
+    .where(lte(ranked.rank, ANSWERING_HELD_PER_SENDER));
+  const citing = await messagesCitingOwnWriting(db, accountId, rows.map((r) => r.id));
+  for (const r of rows) {
+    const address = r.from.trim().toLowerCase();
+    for (const copy of citing.get(r.id) ?? []) {
+      const ev: CorrespondentEvidence = { sentAt: copy.sentAt, via: "replied", named: copy.recipients.has(address) };
+      if (outranks(ev, out.get(address))) out.set(address, ev);
+    }
+  }
   return out;
 }
 
