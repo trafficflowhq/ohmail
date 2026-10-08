@@ -256,6 +256,7 @@ import { WINDOW_OUTBOX_ROUTE, adoptLegacyWindowOutbox, createWindowOutbox, windo
 import { createAttentionClock } from "./attention.js";
 import type { PowerVerdict } from "./host-power.js";
 import { startSearchIndexBackfill } from "./search-backfill.js";
+import { SEARCH_WARMUP_WORD, createSearchWarmup, type SearchWarmup } from "./search-warmup.js";
 import { createStatisticsUpkeep } from "./store-statistics.js";
 import { localRetentionDue, runLocalRetention } from "./local-retention.js";
 import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
@@ -2942,6 +2943,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const isSeedRow = (address: string): boolean =>
       seedAddress !== "" && address.trim().toLowerCase() === seedAddress;
 
+    /** The launch's one warm-up search (`search-warmup.ts`), armed by the first settled drain. */
+    let searchWarmup: SearchWarmup | null = null;
     const attachLocal = async (mb: LocalRosterRow, isSeed: boolean): Promise<LocalMailboxRuntime> => {
       /**
        * What this mailbox dials. `config.imap` — the `OHMAIL_IMAP_*` the shell set — is now the SEED's only,
@@ -6357,6 +6360,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           tail.end();
           writeDrainLine();
         }
+        if (drained) searchWarmup?.settled();
         return cycles;
       };
       /* THE STORE'S SENTENCE, SETTLED AT EVERY DRAIN'S END (both doors drain through here): a store
@@ -8385,6 +8389,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           ...(config.searchBackfillTiming ?? {}),
         })
       : null;
+    /* THE FIRST SEARCH'S COLD START, PAID AT LAUNCH IDLE — the same composition as the backfill
+       (the desktop's own store); see `search-warmup.ts`. The answer is dropped. */
+    searchWarmup = runsStorePass(organizerKind, "search-index-backfill")
+      ? createSearchWarmup({
+          search: () => searchFor(organizerKind).search({
+            db: db as never, accountId: world.accountId, userId: null, now, requestId: "search-warmup",
+          }, { q: SEARCH_WARMUP_WORD, parts: "page", limit: 50 }),
+          ingesting: ingestIsRunning,
+          quietForMs: () => attention.quietForMs(),
+          log,
+        })
+      : null;
     const searchIndexDoor = createSearchIndexDoor({
       authorized: launchBearerAuthorized, db: db as unknown as Tx, accountId: world.accountId,
     });
@@ -9901,6 +9917,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         stopVitals();
         // A round in flight finishes before the store closes under it.
         await searchBackfill?.stop();
+        searchWarmup?.stop();
         /* AND THE CLAIM GOES BACK WITH EACH MAILBOX, inside `detach()` — see the block there.
            NOT a `handBack()` pass in front of this one: that queues BEHIND an in-flight cycle, so
            a gate parked in the lease read would run its whole drain before anything told it to
