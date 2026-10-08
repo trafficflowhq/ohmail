@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { useWorld, type WorldMail } from "./world";
 import { createSessionReask, type SessionRenewalDoor, type StoreMessage, type StoreReadSource } from "./live";
 
-/** Search's debounce — the webapp's `ARCHIVE_DEBOUNCE_MS`; the ceiling is the walker's own. */
+/** The phone's Search debounce: 250 ms (the webapp types at 100); the ceiling is the walker's own. */
 export const STORE_SEARCH_DEBOUNCE_MS = 250;
 
 const NONE: readonly StoreMessage[] = [];

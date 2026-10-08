@@ -14,6 +14,7 @@ import {
   folderLeaf,
   SERVER_SEARCH_SORTS,
   STORE_ANSWER_TIMEOUT_MS,
+  STORE_SEARCH_FOLLOWUP_HOLD_MS,
   StoreSearchWalker,
   VIEW_OF_FOLDER,
   type EngineMessage,
@@ -64,15 +65,14 @@ interface MergedHit {
 }
 
 /**
- * One archive request per SETTLED query, never per keystroke.
+ * One archive request per SETTLED query: a key inside the wait restarts it. 100 ms, so the page
+ * fits the 250 ms budget to the rendered list; a pause longer than that between keys costs the
+ * store one page, its count and facets held (`STORE_SEARCH_FOLLOWUP_HOLD_MS`).
  *
- * `GET /search` is `cost: "read"` and so is not gated for an unverified account, but the rule
- * against API cost with no revenue behind it is about volume, not class: a request per keystroke
- * would be ~7 RRF queries for the word
- * "invoice" against a table that joins `message_bodies`. The local pass is what covers the
- * typing; this covers the question.
+ * `GET /search` is `cost: "read"`, but cost is about volume: a request per keystroke would be ~7
+ * RRF queries for "invoice". The local pass covers the typing; this covers the question.
  */
-const ARCHIVE_DEBOUNCE_MS = 250;
+const ARCHIVE_DEBOUNCE_MS = 100;
 
 /**
  * How long "Searching your whole mailbox…" may stand — the ceiling on the `searching` state.
@@ -295,22 +295,32 @@ export function SearchView({
     exact: (result?.items ?? []).map((h) => h.message.id),
     similar: (result?.similar ?? []).map((h) => h.message.id),
   };
-  /* Enter and the two "search again" controls settle the question themselves: they ask at once.
-     Only typing waits the debounce (Enter restarted it, 251 ms before any request). */
+  /* Only TYPED text waits: the debounce, then its count and facets until the question has stood
+     STORE_SEARCH_FOLLOWUP_HOLD_MS, so a prefix costs the store one page. Enter, the two "search
+     again" controls, a pressed facet and a sort change settle the question: they ask at once. */
   const askedTick = useRef(retryTick);
+  const lastText = useRef<string | null>(null);
+  /** The text of the question the walker is answering, by its `question()` — what its facets are of. */
+  const askedText = useRef<{ question: number; text: string } | null>(null);
   useEffect(() => {
     const asked = askedTick.current !== retryTick;
     askedTick.current = retryTick;
+    const typed = lastText.current !== trimmed;
+    lastText.current = trimmed;
     // A single character is not a question: the local arm ignores it, and so does the store.
     if (trimmed.length < 2) {
       walker.clear();
+      askedText.current = null;
       return undefined;
     }
+    const settled = asked || !typed;
     walker.start(
       { query: trimmed, sort, ...(storeFilters ? { filters: storeFilters } : {}) },
       (tier) => (tier === "similar" ? deviceOrder.current.similar : deviceOrder.current.exact),
-      asked ? 0 : ARCHIVE_DEBOUNCE_MS,
+      settled ? 0 : ARCHIVE_DEBOUNCE_MS,
+      settled ? 0 : STORE_SEARCH_FOLLOWUP_HOLD_MS,
     );
+    askedText.current = { question: walker.question(), text: trimmed };
     return () => walker.stop();
     // `sort` and the pressed facet are NEW QUESTIONS for the store, not re-presentations.
   }, [walker, trimmed, available, retryTick, sort, storeFilters]);
@@ -400,12 +410,16 @@ export function SearchView({
   /**
    * THE FACETS ARE THE STORE'S once its summary lands — counts over the WHOLE match set, kept from
    * the unnarrowed question so pressing one does not zero the others. Before that, the device's
-   * own, counted over what is on screen.
+   * own, counted over what is on screen. Kept under the text of the question that PRODUCED them
+   * (`question` is this render's): the render after a new text still holds the old answer.
    */
   const [storeFacets, setStoreFacets] = useState<{ q: string; facets: ServerSearchFacets } | null>(null);
   useEffect(() => {
-    if (ready?.facets && filter === null) setStoreFacets({ q: trimmed, facets: ready.facets });
-  }, [ready?.facets, filter, trimmed]);
+    const own = askedText.current;
+    if (ready?.facets && filter === null && own !== null && own.question === question) {
+      setStoreFacets({ q: own.text, facets: ready.facets });
+    }
+  }, [ready?.facets, filter, question]);
   const facets = storeFacets && storeFacets.q === trimmed ? storeFacets.facets : null;
 
   /** The rows a facet fallback may count: the device's paint, or the store's held pages. */

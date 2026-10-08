@@ -604,6 +604,13 @@ export function facetsInPlace(prev: ServerSearchFacets | null, next: ServerSearc
 export const STORE_SEARCH_DEBOUNCE_MS = 250;
 
 /**
+ * How long a TYPED question must stand before its count and facets are asked. The desktop's store
+ * has one connection and cannot cancel: a typed prefix's summary, the slowest of the three asks,
+ * would hold the next question's page behind it. A settled question (Enter) passes 0.
+ */
+export const STORE_SEARCH_FOLLOWUP_HOLD_MS = 600;
+
+/**
  * SEARCH: one question's matches, a page at a time by the store's own cursor, on the same walk as
  * History. Under relevance the rows the device painted first keep their places in page one.
  */
@@ -615,6 +622,10 @@ export class StoreSearchWalker {
   private deviceIds: (tier: "exact" | "similar") => readonly string[] = () => [];
   private cause: string | null = null;
   private epoch = 0;
+  /** This question's count and facets, waiting for its hold to end; `null` once asked or free. */
+  private heldFollowUp: (() => void) | null = null;
+  /** Has this question stood its hold (always true for a settled one)? */
+  private followUpFree = true;
   private timers: ReturnType<typeof setTimeout>[] = [];
   private readonly signal = new Signal();
   private readonly walk: PagedWalk<string>;
@@ -677,7 +688,7 @@ export class StoreSearchWalker {
    */
   start(
     key: StoreSearchKey, deviceIds: (tier: "exact" | "similar") => readonly string[],
-    debounceMs = STORE_SEARCH_DEBOUNCE_MS,
+    debounceMs = STORE_SEARCH_DEBOUNCE_MS, followupHoldMs = 0,
   ): void {
     this.stop();
     if (this.key !== null) this.engine.resetStorePages(storeSearchList(this.key));
@@ -694,6 +705,17 @@ export class StoreSearchWalker {
       epoch, start: performance.now(), fired: null, sent: null, sentAt: null, answered: null, answeredAt: null,
       verdict: null, serverMs: null, told: false,
     };
+    this.heldFollowUp = null;
+    this.followUpFree = followupHoldMs <= 0;
+    if (!this.followUpFree) {
+      this.timers.push(setTimeout(() => {
+        if (epoch !== this.epoch) return;
+        this.followUpFree = true;
+        const go = this.heldFollowUp;
+        this.heldFollowUp = null;
+        go?.();
+      }, followupHoldMs));
+    }
     this.signal.bump();
     if (this.status === "unavailable") return;
     this.timers.push(setTimeout(() => {
@@ -748,6 +770,17 @@ export class StoreSearchWalker {
     // An estimate that failed (an older store refuses the part) is not exact: the summary follows.
     // A count from the other store (the account's under a mirror page, or the reverse) is not read.
     const sameStore = (o: { fromMirror?: true }): boolean => (o.fromMirror === true) === this.meta?.fromMirror;
+    // HELD while a typed question may still change; a new question clears the hold's timer.
+    const go = (): void => { if (epoch === this.epoch) this.followUp(key, filters, sameStore); };
+    if (this.followUpFree) go();
+    else this.heldFollowUp = go;
+  }
+
+  /** The count and facets after the page: the estimate, then the summary only when it was cut. */
+  private followUp(
+    key: StoreSearchKey, filters: { filters?: StoreSearchKey["filters"] }, sameStore: (o: { fromMirror?: true }) => boolean,
+  ): void {
+    const epoch = this.epoch;
     void this.engine.searchServer(key.query, { parts: "estimate", limit: HISTORY_PAGE_ROWS, ...filters }).then((est) => {
       if (epoch !== this.epoch || this.meta === null) return;
       if (est.state === "ready" && sameStore(est)) {

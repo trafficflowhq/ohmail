@@ -761,6 +761,7 @@ export {
   STORE_ANSWER_TIMEOUT_MS,
   STORE_PAGE_RETRY_MS,
   STORE_SEARCH_DEBOUNCE_MS,
+  STORE_SEARCH_FOLLOWUP_HOLD_MS,
   type PageAnswer,
   type PageSource,
   type StoreSearchMeta,
