@@ -418,6 +418,15 @@ function heldAheadOfTheCopy(reader: EntityReader, messages: readonly EngineMessa
 }
 const NO_SENDERS: ReadonlySet<string> = new Set();
 
+/** The senders a claim at the gate is held for (mail 0147) — the server's `senderHasHeldClaimSql`. */
+function sendersWithAHeldClaim(messages: readonly EngineMessage[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const m of messages) {
+    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation") out.add(senderKey(m.from.address));
+  }
+  return out;
+}
+
 function messageMs(m: EngineMessage): number | null {
   const header = m.date === null ? Number.NaN : new Date(m.date).getTime();
   if (Number.isFinite(header)) return header;
@@ -503,6 +512,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const own = ownAddressKeys(reader, opts);
   const notWaiting = storeSaysNotWaiting(reader, messages);
   const heldAhead = heldAheadOfTheCopy(reader, messages);
+  const heldClaim = sendersWithAHeldClaim(messages);
   /* The user's own folders, when "Use folders" is on (FOLDERS-SPEC.md
    * §16.5). Two gates, both must say yes: the caller's
    * {@link ConsentOptions.foldersEnabled} (the account's consent answer —
@@ -660,6 +670,9 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     if (placed !== null || decided !== null) {
       placeOf.set(m.id, placed !== null && effectForDestination(placed) === "deny" ? placed : m.folder);
       if (m.folder === "ohmail/Screener" && !active) retiredDecided.add(key);
+      // A claim the gate holds makes a decided sender waiting again (mail 0147): the queue lists
+      // them, so the count does, as `cutlineCounts` does on the server's `senderHasHeldClaimSql`.
+      if (!rulesOnly && heldClaim.has(key)) activeUndecided.add(key);
     } else if (decided === null && (rulesOnly || active) && notWaiting(m, key)) {
       // THE STORE HAS ANSWERED FOR THIS SENDER: not waiting (a correspondent, a contact, decided
       // elsewhere), so their mail presents in the Ohbox, never at the gate. The count keeps asking

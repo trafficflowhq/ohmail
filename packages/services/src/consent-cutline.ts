@@ -4,7 +4,7 @@ import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
   activeSenderExpr, anyOf, CUTLINE_GATE_FOLDER, cutlineInstant, destinationIsDecisionSql, resolveCutline,
-  ruleMatchKeySql, senderIsDecidedSql, senderIsOwnSql,
+  ruleMatchKeySql, senderHasHeldClaimSql, senderIsDecidedSql, senderIsOwnSql,
 } from "@trafficflow/db";
 
 /**
@@ -198,11 +198,14 @@ export async function cutlineCounts(
              -- expression's own contribution is the CONTACT arm and the gate's defeat of it, which
              -- these CTEs do not have. A sender the queue refuses to list can never be one this
              -- count still calls first-time. (NO BACKTICKS in this template literal -- see above.)
-             (exists (select 1 from decided_sender r where r.m = i.addr)
+             -- A claim the gate holds makes a decided sender waiting again (mail 0147): the queue's
+             -- own term, so the count beside the Screener counts the sender its list shows.
+             ((exists (select 1 from decided_sender r where r.m = i.addr)
               or (${d.strpos(sql`i.addr`, sql`'@'`)} > 0
                   and exists (select 1 from decided_domain dd
                                where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))
-              or ${senderIsDecidedSql(d, ctx.accountId, sql`i.addr`)}) as decided,
+              or ${senderIsDecidedSql(d, ctx.accountId, sql`i.addr`)})
+              and not ${senderHasHeldClaimSql(d, ctx.accountId, sql`i.addr`)}) as decided,
              (${activeSenderExpr(d, resolved, {
                anyUnread: sql`i.any_unread`,
                anyUnreadInWindow: sql`i.any_unread_in_window`,
