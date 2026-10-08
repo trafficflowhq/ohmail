@@ -229,20 +229,37 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
 }
 
 /**
+ * A HELD CLAIM INSIDE THE CUTLINE: a live row at the gate marked `'impersonation'` whose ARRIVAL KEY
+ * ({@link Dialect.arrivalKey}, the client's `storeInstantOf`) is at or after the cutoff. The arrival
+ * and not the `Date:` header, which the sender writes: new mail held at ingest is inside however it
+ * is dated, and a row the identity backfill stamped years after it arrived stays outside, so the fact
+ * never puts mail from before the cutline back in the queue (0.25.18 did). One spelling, two readers.
+ */
+export function heldClaimInsideSql(
+  d: Dialect, r: { folder: SQL; deletedAt: SQL; senderCheck: SQL; date: SQL; arrivedAt: SQL }, cutoff: Date,
+): SQL {
+  return sql`(${r.folder} = ${CUTLINE_GATE_FOLDER} and ${r.deletedAt} is null and ${r.senderCheck} = 'impersonation'
+    and ${d.arrivalKey(r.date, r.arrivedAt)} >= ${d.ts(cutoff)})`;
+}
+
+/**
  * HELD BY THE IDENTITY FACT (mail 0148): a message of this sender sits at the gate naming a company
  * its address is not, held because no person consented to the address — whatever rule or contact
  * decided the sender otherwise (the act's promotion, a domain rule, an inferred contact). Such a
- * sender is waiting again: the queue lists them with the sentence, and no release takes the row.
+ * sender is waiting again while the claim is inside the cutline ({@link heldClaimInsideSql}); no
+ * release takes the row whatever its age.
  */
-export function senderHasHeldClaimSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
+export function senderHasHeldClaimSql(d: Dialect, accountId: string, senderExpr: SQL, cutoff: Date): SQL {
+  const inside = heldClaimInsideSql(d, {
+    folder: sql`hf.desired_folder`, deletedAt: sql`hm.deleted_at`, senderCheck: sql`hm.sender_check`,
+    date: sql`hm.date`, arrivedAt: sql`hm.arrived_at`,
+  }, cutoff);
   return sql`exists (
     select 1 from messages hm
       join folder_state hf on hf.message_id = hm.id
      where hm.account_id = ${d.castUuid(accountId)}
        and lower(hm.from_address) = ${senderExpr}
-       and hf.desired_folder = ${CUTLINE_GATE_FOLDER}
-       and hm.deleted_at is null
-       and hm.sender_check = 'impersonation'
+       and ${inside}
   )`;
 }
 

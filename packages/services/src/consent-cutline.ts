@@ -3,7 +3,7 @@ import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, type ScreeningScope } from "
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
-  activeSenderExpr, anyOf, CUTLINE_GATE_FOLDER, cutlineInstant, destinationIsDecisionSql, resolveCutline,
+  activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, heldClaimInsideSql, resolveCutline,
   ruleMatchKeySql, senderIsDecidedSql, senderIsOwnSql,
 } from "@trafficflow/db";
 
@@ -178,9 +178,12 @@ export async function cutlineCounts(
              -- Activity is measured over all six presented folders (above); membership in the
              -- undecided counts is not. See UNDECIDED_RESIDENCES.
              ${anyOf(sql`fs.desired_folder in ${undecidedResidences}`)} as undecided_residence,
-             -- A claim the gate holds keeps its sender active however old its Date (mail 0148),
-             -- the queue's own term (senderHasHeldClaimSql), so the count and the list agree.
-             ${anyOf(sql`fs.desired_folder = ${CUTLINE_GATE_FOLDER} and m.deleted_at is null and m.sender_check = 'impersonation'`)}
+             -- A claim the gate holds inside the cutline, dated by its arrival (mail 0148): the
+             -- queue's own term (senderHasHeldClaimSql), so the count and the list agree.
+             ${anyOf(heldClaimInsideSql(d, {
+               folder: sql`fs.desired_folder`, deletedAt: sql`m.deleted_at`, senderCheck: sql`m.sender_check`,
+               date: sql`m.date`, arrivedAt: sql`m.arrived_at`,
+             }, cutoff))}
                as held_claim
         from messages m
         join folder_state fs on fs.message_id = m.id
