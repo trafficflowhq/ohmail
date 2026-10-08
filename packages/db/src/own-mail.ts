@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { folderState, mailboxes, messages } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
 import type { Dialect } from "./dialect/index.js";
@@ -65,6 +65,16 @@ export async function ruleKeyIsOwnAddress(
   return false;
 }
 
+/**
+ * NOT A FAILED AUTHENTICATION: the provider's own report did not say this mail is not its author's
+ * (NULL is a row older than the column). Asked by every door that lets held mail through on evidence
+ * about its AUTHOR, as the gate asks it (`core/rules.ts`): the own-mail release below, the
+ * correspondent retro's held set, and the held mail whose references the reply arm reads.
+ */
+export function notFailedAuthSql(m: typeof messages): SQL {
+  return sql`(${m.authVerdict} is null or ${m.authVerdict} <> 'fail')`;
+}
+
 /** Own-address rows released per call — one page, bounded like `GATE_RELEASE_BATCH`. */
 export const OWN_MAIL_RELEASE_BATCH = 100;
 
@@ -96,7 +106,7 @@ export async function releaseOwnMailAtGate(
       inArray(folderState.lastSetBy, ["us", "peer"]),
       eq(folderState.desiredFolder, CUTLINE_GATE_FOLDER),
       eq(folderState.observedFolder, CUTLINE_GATE_FOLDER),
-      sql`(${messages.authVerdict} is null or ${messages.authVerdict} <> 'fail')`,
+      notFailedAuthSql(messages),
       sql`not exists (
         select 1 from mailboxes mb
          where mb.id = ${messages.mailboxId}

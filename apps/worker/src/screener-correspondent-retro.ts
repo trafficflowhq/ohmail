@@ -1,8 +1,8 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
   auditAction, auditLog, contacts, fencedAccountWrite, folderState, learningSignals, lockAccountRuleKeys, messages,
-  recordChange, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, SCREENER_FOLDER, admitsDestination,
-  SCREENER_ACT_TRIGGER_PREFIX, type LedgerTx, type Tx, upgradeContactsToPerson,
+  notFailedAuthSql, recordChange, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, SCREENER_FOLDER,
+  admitsDestination, SCREENER_ACT_TRIGGER_PREFIX, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -11,7 +11,6 @@ import {
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { upsertDesired } from "./rule-pass.js";
-import { writeSenderChecks } from "./sender-check-backfill.js";
 
 /* THE SCREENER'S CORRESPONDENT RETRO — what the gate now knows at ingest, applied once to what it
  * decided before it knew. Three acts, all for somebody this account wrote to after its consent
@@ -19,8 +18,9 @@ import { writeSenderChecks } from "./sender-check-backfill.js";
  * ingested before the ingest taught them; release their mail the gate still holds to the Ohbox
  * (desired state the reconciler converges, an audit row with its inverse per message); and switch
  * off a spam or screen-out rule the Screener's own auto-act promoted over them, never one the
- * person made. A held claim (mail 0148) moves only for somebody the person wrote to; a reply citing
- * the account's mail releases no claim. Nothing it moves is in Junk. Logs counts only. */
+ * person made. Somebody the account wrote to, found by their citation of that mail, is admitted as
+ * any recipient is, a held claim (mail 0148) with the fact riding; a citer the copy does not name is
+ * a stranger. A row that FAILED authentication is never moved, nor anything in Junk. Counts only. */
 
 /** Senders one run may examine in each of its two walks. */
 const CORRESPONDENT_RETRO_SENDERS = 50;
@@ -116,13 +116,18 @@ async function heldSenders(db: Tx, accountId: string, limit: number): Promise<st
   return rows.map((r) => r.address).filter((a) => a.includes("@"));
 }
 
-/** Held by the gate here, not moved on, not a tombstone, on a mailbox this install organizes. */
+/**
+ * Held by the gate here, not moved on, not a tombstone, on a mailbox this install organizes — and
+ * not a FAILED authentication: the provider's own report says that mail is not its author's, so
+ * having written to the address it names proves nothing about it (the gate's own term).
+ */
 function heldWhere(accountId: string): SQL[] {
   return [
     eq(messages.accountId, accountId),
     eq(folderState.desiredFolder, SCREENER_FOLDER),
     eq(folderState.lastSetBy, "us"),
     isNull(messages.deletedAt),
+    notFailedAuthSql(messages),
     sql`not exists (
       select 1 from mailboxes mb
        where mb.id = ${messages.mailboxId}
@@ -143,36 +148,17 @@ async function release(
 ): Promise<number> {
   return fencedAccountWrite(db, { accountId }, async (tx) => {
     await lockAccountRuleKeys(tx, accountId);
-    /* A Sent copy TO them is the person writing: consent, the fact riding. A reply citing one is
-       the reply arm's inference, which never admits a claim: the sender's unchecked rows are
-       checked first with the backfill's own write, a marked row stays at the gate, and a sender whose
-       every held row is a claim is taught nothing. */
-    const replied = evidence.via !== "wrote";
-    let cleared: ReadonlySet<string> | null = null;
-    if (replied) {
-      const held = await tx.select({
-        id: messages.id, fromName: messages.fromName, fromAddress: messages.fromAddress,
-        subject: messages.subject, senderCheck: messages.senderCheck,
-      }).from(folderState)
-        .innerJoin(messages, eq(messages.id, folderState.messageId))
-        .where(and(...heldWhere(accountId), eq(sql`lower(${messages.fromAddress})`, address)));
-      const marked = new Set((await writeSenderChecks(tx, accountId, held.filter((r) => r.senderCheck === null)
-        .map((r) => ({ id: r.id, fromName: r.fromName, fromAddress: r.fromAddress, subject: r.subject }))))
-        .map((r) => r.id));
-      cleared = new Set(held.filter((r) => r.senderCheck === "none" || (r.senderCheck === null && !marked.has(r.id)))
-        .map((r) => r.id));
-      if (cleared.size === 0) return 0;
-    }
-    const source = replied ? "inferred" : "person";
-    await tx.insert(contacts).values({ accountId, address, source })
+    /* A copy written TO them is the person writing, whichever arm found it (`via` says how): a
+       person's contact, and their held mail released, a claim included with the fact riding — the
+       gate holds a claim at ingest, and this releases it within the hour. */
+    await tx.insert(contacts).values({ accountId, address, source: "person" })
       .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
-    if (source === "person") await upgradeContactsToPerson(tx, accountId, [address]);
-    const locked = await dialect(tx).forUpdate(tx.select({
+    await upgradeContactsToPerson(tx, accountId, [address]);
+    const rows = await dialect(tx).forUpdate(tx.select({
       messageId: messages.id, mailboxId: messages.mailboxId, observedFolder: folderState.observedFolder,
     }).from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(...heldWhere(accountId), eq(sql`lower(${messages.fromAddress})`, address))));
-    const rows = cleared === null ? locked : locked.filter((r) => cleared.has(r.messageId));
     if (rows.length === 0) return 0;
     for (const r of rows) {
       await upsertDesired(tx, r, OHBOX, now);

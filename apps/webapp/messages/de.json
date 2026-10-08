@@ -845,7 +845,7 @@
       "campaign": "Dieselbe Mail kam von {count} fremden Absendern",
       "auth_fail": "Diese Mail hat die Absender-Authentifizierung nicht bestanden",
       "brand_mismatch": "Die Absenderadresse passt nicht zum Namen in dieser Mail",
-      "correspondent": "Du hast diesem Absender zuerst geschrieben, oder er antwortet auf deine Mail"
+      "correspondent": "Du hast an diese Adresse geschrieben, oder sie antwortet auf eine Mail, die du ihr geschickt hast"
     },
     "aiReasonChip": {
       "impersonation": "Nicht {brand}",

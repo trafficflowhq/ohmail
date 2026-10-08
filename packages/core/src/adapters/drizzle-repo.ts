@@ -42,7 +42,7 @@ import { SENT_SHAPED_CANONICAL } from "./imap-types.js";
    names the folder), `FolderBudgetStop` what one folder's row HOLDS (the row names it). */
 import type { BudgetStop, FolderBudgetStop, ImapConfig, MailboxAdapter } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
-import { correspondentsAmong, type CorrespondentEvidence } from "../correspondent.js";
+import { correspondentsAmong, inSentFolderSql, ownSentCopies, type CorrespondentEvidence } from "../correspondent.js";
 // The one correspondent predicate, on the leaf the worker passes and the services already import.
 export {
   correspondentsAmong, recipientsOfOwnWriting, CORRESPONDENT_SCAN_ROWS, type CorrespondentEvidence,
@@ -883,9 +883,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   /**
    * The own-sent twin lookup — see `RepoPort.findByMessageIdHeader` for the contract, including
    * why only the `ownAuthored` gate in `resolveExisting` may call it. `accountId` is in the
-   * predicate so the `(account_id, message_id_header)` index serves the read; `created_at, id`
-   * makes "oldest row wins" deterministic when a mailbox already holds several rows under one id
-   * (the pre-fix doubles this lookup exists to stop collapsing onto a stable one of them).
+   * predicate so the `(account_id, message_id_header)` index serves the read; the row must already
+   * have an instance in this mailbox's Sent set (`inSentFolderSql`, the own-writing scope's own
+   * spelling), so an inbound row under the same id is never the twin. `created_at, id` makes
+   * "oldest row wins" deterministic when a mailbox already holds several rows under one id.
    */
   async findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<StoredMessage | null> {
     const rows = await this.db.select().from(messages)
@@ -893,6 +894,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         eq(messages.accountId, accountId),
         eq(messages.mailboxId, mailboxId),
         eq(messages.messageIdHeader, messageIdHeader),
+        sql`exists (
+          select 1 from message_instances mi
+            join mailboxes mb on mb.id = mi.mailbox_id
+           where mi.message_id = ${messages.id}
+             and mi.mailbox_id = ${mailboxId}
+             and ${inSentFolderSql(sql`mi.folder`, sql`mb.sent_folder`)}
+        )`,
       ))
       .orderBy(asc(messages.createdAt), asc(messages.id))
       .limit(1);
@@ -1988,6 +1996,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       accountId, senders: [key], references: new Map([[key, references]]), arms: "reply",
     });
     return found.get(key) ?? null;
+  }
+
+  /** {@link RepoPort.citesOwnWriting} — the bounce arm's evidence, over the reply arm's own read. */
+  async citesOwnWriting(accountId: string, ids: readonly string[]): Promise<string | null> {
+    const copies = await ownSentCopies(this.db as unknown as Tx, accountId, ids);
+    return ids.find((id) => copies.has(id)) ?? null;
   }
 
   /**

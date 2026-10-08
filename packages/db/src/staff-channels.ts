@@ -119,6 +119,8 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   // ── a correspondent let through: at ingest (`pipeline.ts`) and by the retro
   //    (`apps/worker/src/screener-correspondent-retro.ts`), which also retires the auto-act's rule ─
   "screener.correspondent_admitted", "screener.correspondent_rule_retired",
+  // ── a delivery report let through at ingest (`pipeline.ts`): it cited the account's own Sent copy ─
+  "screener.bounce_admitted",
 ];
 
 const AUDIT_LOG_ACTION_SET: ReadonlySet<string> = new Set(AUDIT_LOG_ACTIONS);

@@ -358,14 +358,13 @@ export type InsertedMessage = StoredMessage & { created: boolean };
 export interface RepoPort {
   findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null>;
   /**
-   * A stored message of THIS mailbox carrying this Message-ID, spelled as ingest stores it —
-   * bracket-stripped, case preserved. Oldest row wins, so observations converge. One caller, and
-   * the gate is the contract: the own-sent twin lookup, reached only for a `Change.ownAuthored`
-   * create — there, and only there, the Message-ID alone may name a row: everything in that
-   * folder was written by the user's own clients. It exists because Exchange Online re-renders
-   * the copy it files beside the byte-exact one the send path APPENDs, defeating both fingerprint
-   * lookups — a Microsoft-hosted message ingested twice. For INBOUND mail the Message-ID is a string
-   * a stranger types; never call this outside the gate — the forgery pin goes red when it widens.
+   * A row of THIS mailbox carrying this Message-ID (bracket-stripped, case preserved) that already
+   * has an instance in the mailbox's Sent set — the user's own copy; an inbound row carrying the
+   * same id is a stranger's and is never adopted. Oldest row wins, so observations converge. One
+   * caller: the own-sent twin lookup for a `Change.ownAuthored` create. It exists because Exchange
+   * Online re-renders the copy it files beside the byte-exact one the send path APPENDs, defeating
+   * both fingerprint lookups. For INBOUND mail the Message-ID is a string a stranger types; never
+   * call this outside that gate — the forgery pin goes red when it widens.
    */
   findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<StoredMessage | null>;
   /**
@@ -495,12 +494,19 @@ export interface RepoPort {
   /**
    * Has this account written to `sender` — `correspondent.ts#correspondentsAmong`, its REPLY arm:
    * `references` (bracket-free, as `threadKeyOf` parses them) name a Sent copy this account wrote
-   * after its consent point. The `wrote` arm reaches ingest as {@link knownSenders}, taught when
-   * the Sent copy was ingested; the passes that can afford it ask both arms.
+   * TO `sender` (its To or Cc) after its consent point. The `wrote` arm reaches ingest as {@link
+   * knownSenders}, taught when the Sent copy was ingested; the passes that can afford it ask both.
    */
   isCorrespondent(
     accountId: string, sender: string, references: readonly string[],
   ): Promise<CorrespondentEvidence | null>;
+  /**
+   * The first of `ids`, in their order, that is one of the account's own Sent copies written after
+   * its consent point (`correspondent.ts#ownSentCopies`), or null. The bounce arm's evidence: a
+   * delivery report quoting it is a report about the account's own writing. Any other row of the
+   * account carries an id its author chose — a stranger's held message among them.
+   */
+  citesOwnWriting(accountId: string, ids: readonly string[]): Promise<string | null>;
   /**
    * Upsert known correspondents. Returns how many rows were genuinely NEW, which is what makes
    * "a second connect does not re-import" observable rather than merely asserted. `source` is

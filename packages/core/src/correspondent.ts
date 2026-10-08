@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import {
   accountSettings, autoReplyByUsWhere, folderState, heldSortKey, mailboxFolders, mailboxes, messageBodies,
-  messageInstances, messages, type Tx,
+  messageInstances, messages, notFailedAuthSql, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { boundedReferenceIds, MAX_THREAD_CANDIDATES, parseMessageIds } from "./threading.js";
@@ -11,10 +11,11 @@ import { SENT_SHAPED_PATHS } from "./types.js";
  * HAS THIS ACCOUNT WRITTEN TO THEM — the one predicate. A correspondent is never first contact:
  * the Screener holds nobody this account wrote to, and nothing files them as spam on the model's
  * word. Evidence is a copy in the mailbox's own Sent folder — the server's answer, never the
- * `From` header a stranger writes — addressed to them (`wrote`), or named by their mail's
- * In-Reply-To/References (`replied`). An automatic reply is not writing. Only writing AFTER the
- * consent point counts — the later of the mailbox's connect and the sent-mail seed's answer:
- * history before it is the seed's question, answered by the person, and stays theirs.
+ * `From` header a stranger writes — addressed to them (`wrote`), or addressed to them and named
+ * by their mail's In-Reply-To/References (`replied`): a copy's id travels with every reply,
+ * forward and list archive, so citing it proves nothing about who was written to. An automatic
+ * reply is not writing. Only writing AFTER the consent point counts — the later of the mailbox's
+ * connect and the sent-mail seed's answer: history before it is the seed's question.
  */
 export interface CorrespondentEvidence {
   /** When this account wrote — the Sent copy's own arrival, else its date. */
@@ -32,9 +33,10 @@ const REPLY_ARM_IDS_PER_STATEMENT = 1_000;
 
 /**
  * The evidence for each of `senders` (lower-cased keys), absent for a stranger. `references` are
- * the message ids each sender's own mail names, as `threadKeyOf` parses them. `arms: "reply"`
- * asks only the indexed reply arm — the ingest's form, where the `wrote` arm is already carried
- * by `contacts`, taught when the Sent copy is ingested.
+ * the message ids each sender's own mail names, as `threadKeyOf` parses them; a cited copy answers
+ * only for a sender its To or Cc names. `arms: "reply"` asks only the indexed reply arm — the
+ * ingest's form, where the `wrote` arm is already carried by `contacts`, taught when the Sent copy
+ * is ingested.
  */
 export async function correspondentsAmong(db: Tx, args: {
   accountId: string;
@@ -69,27 +71,12 @@ export async function correspondentsAmong(db: Tx, args: {
   };
 
   if (allRefs.length > 0) {
-    const byHeader = new Map<string, Date>();
-    for (let at = 0; at < allRefs.length; at += REPLY_ARM_IDS_PER_STATEMENT) {
-      const replied = await db.select({
-        header: messages.messageIdHeader, arrivedAt: messages.arrivedAt, date: messages.date,
-        createdAt: messages.createdAt,
-      }).from(messages)
-        .innerJoin(messageInstances, eq(messageInstances.messageId, messages.id))
-        .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
-        .leftJoin(accountSettings, eq(accountSettings.accountId, messages.accountId))
-        .where(and(inArray(messages.messageIdHeader, allRefs.slice(at, at + REPLY_ARM_IDS_PER_STATEMENT)), ...ownWriting));
-      for (const r of replied) {
-        if (!r.header) continue;
-        const sent = sentAtOf(r);
-        const prev = byHeader.get(r.header);
-        if (!prev || sent > prev) byHeader.set(r.header, sent);
-      }
-    }
+    const copies = await sentCopiesIn(db, scope, allRefs);
     for (const [s, refs] of refsBySender) {
       for (const ref of refs) {
-        const at = byHeader.get(ref);
-        if (at) keep(s, { sentAt: at, via: "replied" });
+        // Answering mail written TO them: the cited copy's To or Cc names this sender, exactly.
+        const copy = copies.get(ref);
+        if (copy && copy.recipients.has(s)) keep(s, { sentAt: copy.sentAt, via: "replied" });
       }
     }
   }
@@ -116,6 +103,54 @@ export async function correspondentsAmong(db: Tx, args: {
     const at = sentAtOf(r);
     for (const a of [...addressesOf(r.to), ...addressesOf(r.cc)]) {
       if (asked.has(a)) keep(a, { sentAt: at, via: "wrote" });
+    }
+  }
+  return out;
+}
+
+/** One of the account's own Sent copies, by its Message-ID — see {@link ownSentCopies}. */
+export interface OwnSentCopy {
+  /** The newest copy's arrival, else its date. */
+  sentAt: Date;
+  /** Everybody a copy under this id was written to — To and Cc, lower-cased, never empty strings. */
+  recipients: ReadonlySet<string>;
+}
+
+/**
+ * THE ACCOUNT'S OWN SENT COPIES AMONG `ids` (bracket-free, as `threadKeyOf` parses them), keyed by
+ * Message-ID: the reply arm's question and the bounce arm's (`RepoPort.citesOwnWriting`), over the
+ * one own-writing scope. Copies sharing an id answer once, their recipients unioned, the newest
+ * arrival kept. A recipient list stored empty names nobody: what a copy's headers say is not read.
+ */
+export async function ownSentCopies(
+  db: Tx, accountId: string, ids: readonly string[],
+): Promise<Map<string, OwnSentCopy>> {
+  if (ids.length === 0) return new Map();
+  const scope = await ownWritingScope(db, accountId);
+  return scope === null ? new Map() : sentCopiesIn(db, scope, ids);
+}
+
+async function sentCopiesIn(
+  db: Tx, scope: OwnWritingScope, ids: readonly string[],
+): Promise<Map<string, OwnSentCopy>> {
+  const out = new Map<string, { sentAt: Date; recipients: Set<string> }>();
+  const unique = [...new Set(ids)];
+  for (let at = 0; at < unique.length; at += REPLY_ARM_IDS_PER_STATEMENT) {
+    const rows = await db.select({
+      header: messages.messageIdHeader, to: messages.toAddresses, cc: messages.ccAddresses,
+      arrivedAt: messages.arrivedAt, date: messages.date, createdAt: messages.createdAt,
+    }).from(messages)
+      .innerJoin(messageInstances, eq(messageInstances.messageId, messages.id))
+      .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
+      .leftJoin(accountSettings, eq(accountSettings.accountId, messages.accountId))
+      .where(and(inArray(messages.messageIdHeader, unique.slice(at, at + REPLY_ARM_IDS_PER_STATEMENT)), ...scope.ownWriting));
+    for (const r of rows) {
+      if (!r.header) continue;
+      const sent = sentAtOf(r);
+      const copy = out.get(r.header) ?? { sentAt: sent, recipients: new Set<string>() };
+      if (sent > copy.sentAt) copy.sentAt = sent;
+      for (const a of [...addressesOf(r.to), ...addressesOf(r.cc)]) copy.recipients.add(a);
+      out.set(r.header, copy);
     }
   }
   return out;
@@ -151,25 +186,28 @@ export async function recipientsOfOwnWriting(db: Tx, accountId: string): Promise
 }
 
 /**
- * THE ACCOUNT'S OWN WRITING, as predicates over `messages ⋈ message_instances ⋈ mailboxes ⟕
- * account_settings`: an instance in a Sent folder, arrived after the consent point, not an
- * automatic reply. A Sent folder is a Sent-shaped path or the one the attach wrote down
- * (`mailboxes.sent_folder`, mail 0132) — a server's own name for Sent. `null` when no mailbox
- * holds either. The folders are read first and spelled exactly, so the instance read is the
- * unique index.
+ * IS `folder` THE MAILBOX'S SENT FOLDER — a Sent-shaped path, or the one the attach wrote down
+ * (`mailboxes.sent_folder`, mail 0132): a server's own name for Sent. One spelling for the
+ * own-writing scope below and the own-sent twin's lookup (`DrizzleRepo.findByMessageIdHeader`).
  */
-async function ownWritingScope(db: Tx, accountId: string): Promise<{ ownWriting: SQL[]; arrival: SQL } | null> {
+export function inSentFolderSql(folder: SQLWrapper, sentFolder: SQLWrapper): SQL {
+  return or(inArray(sql`lower(${folder})`, [...SENT_SHAPED_PATHS]), eq(folder, sentFolder))!;
+}
+
+interface OwnWritingScope { ownWriting: SQL[]; arrival: SQL }
+
+/**
+ * THE ACCOUNT'S OWN WRITING, as predicates over `messages ⋈ message_instances ⋈ mailboxes ⟕
+ * account_settings`: an instance in a Sent folder ({@link inSentFolderSql}), arrived after the
+ * consent point, not an automatic reply. `null` when no mailbox holds a Sent folder. The folders
+ * are read first and spelled exactly, so the instance read is the unique index.
+ */
+async function ownWritingScope(db: Tx, accountId: string): Promise<OwnWritingScope | null> {
   const d = dialect(db);
   const sentFolders = await db.select({ mailboxId: mailboxFolders.mailboxId, folder: mailboxFolders.folder })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
-    .where(and(
-      eq(mailboxes.accountId, accountId),
-      or(
-        inArray(sql`lower(${mailboxFolders.folder})`, [...SENT_SHAPED_PATHS]),
-        eq(mailboxFolders.folder, mailboxes.sentFolder),
-      ),
-    ));
+    .where(and(eq(mailboxes.accountId, accountId), inSentFolderSql(mailboxFolders.folder, mailboxes.sentFolder)));
   if (sentFolders.length === 0) return null;
   const inSent = or(...sentFolders.map((f) => and(
     eq(messageInstances.mailboxId, f.mailboxId), eq(messageInstances.folder, f.folder),
@@ -196,9 +234,9 @@ const sentAtOf = (r: { arrivedAt: Date | null; date: Date | null; createdAt: Dat
   r.arrivedAt ?? r.date ?? r.createdAt;
 
 /**
- * The message ids each sender's representative held message — the newest, the one the Screener
- * shows and prices — names in In-Reply-To/References: the reply arm's question for a pass with no
- * arriving message in hand. One row per sender by the Screener's own window, never a whole bag.
+ * The message ids each sender's representative held message — the newest the Screener shows and
+ * prices, never one that FAILED authentication — names in In-Reply-To/References: the reply arm's
+ * question for a pass with no arriving message in hand. One row per sender, never a whole bag.
  */
 async function heldReferences(
   db: Tx, accountId: string, senders: readonly string[],
@@ -220,6 +258,7 @@ async function heldReferences(
       eq(messages.accountId, accountId),
       eq(folderState.desiredFolder, "ohmail/Screener"),
       inArray(sender, [...senders]),
+      notFailedAuthSql(messages),
     ))
     .as("co_reps");
   const rows = await db.select({ from: reps.from, inReplyTo: reps.inReplyTo, references: reps.references })
@@ -239,14 +278,18 @@ function headerLines(value: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
-/** The lower-cased addresses of one stored `EmailAddress[]` column, whatever store decoded it. */
+/**
+ * The lower-cased addresses of one stored `EmailAddress[]` column, whatever store decoded it. A
+ * group's empty address (`undisclosed-recipients:;`) names nobody, so it is dropped.
+ */
 function addressesOf(value: unknown): string[] {
   const list = typeof value === "string" ? safeJson(value) : value;
   if (!Array.isArray(list)) return [];
   return list
     .map((e) => (e && typeof e === "object" ? (e as { address?: unknown }).address : undefined))
     .filter((a): a is string => typeof a === "string")
-    .map((a) => a.trim().toLowerCase());
+    .map((a) => a.trim().toLowerCase())
+    .filter((a) => a !== "");
 }
 
 function safeJson(s: string): unknown {

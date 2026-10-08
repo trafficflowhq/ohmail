@@ -390,6 +390,12 @@ export interface NewPlan {
    */
   correspondentAdmission?: CorrespondentEvidence;
   /**
+   * A delivery report the gate would hold, lifted to the Ohbox because it cites `header`, one of
+   * the account's own Sent copies. The commit writes the admission's audit row: an admission
+   * nobody records cannot be counted afterwards.
+   */
+  bounceAdmission?: { header: string };
+  /**
    * The recipients of a Sent copy written after the consent point — {@link
    * PlanDeps.correspondenceSince} — which the commit teaches `contacts`. Absent for anything else.
    */
@@ -723,16 +729,14 @@ async function resolveExisting(
     };
   }
 
-  // Step 3: the own-sent twin — by Message-ID alone, and ONLY for an `ownAuthored` create.
-  // Exchange Online files its own re-rendered copy of every SMTP submission into Sent beside the
-  // byte-exact copy the send path APPENDs: different bytes, different fingerprint, both lookups
-  // miss, and the twin used to ingest as a SECOND row — the user's just-sent message, twice in
-  // its own conversation. Message-ID alone is exactly the forgeable key the fingerprint replaced,
-  // and it stays banned for inbound mail: this arm is gated on `Change.ownAuthored`, which the
-  // ADAPTER stamps only on pure creates read out of the mailbox's own Sent folder — a folder
-  // strangers cannot write into. The key returned is still `fpKey`, and NO `upgrade` rides along:
-  // rewriting the stored key to this observation's fingerprint would repoint the row's identity
-  // at whichever copy was seen last.
+  // Step 3: the own-sent twin — by Message-ID, ONLY for an `ownAuthored` create, and only onto a
+  // row that already has a Sent instance. Exchange Online files its own re-rendered copy of every
+  // SMTP submission into Sent beside the byte-exact copy the send path APPENDs: both fingerprint
+  // lookups miss, and the twin used to ingest as a SECOND row. A Message-ID is the forgeable key
+  // the fingerprint replaced: `ownAuthored` (stamped only on creates read out of the mailbox's own
+  // Sent folder) vouches for THIS copy, and the Sent instance for the row it joins — an inbound row
+  // under the same id is a stranger's. The key returned is still `fpKey`, and NO `upgrade` rides
+  // along: rewriting the stored key would repoint the row's identity at whichever copy came last.
   if (ownAuthored && normalized.canonical.messageIdHeader !== null) {
     const twin = await repo.findByMessageIdHeader(accountId, mailboxId, normalized.canonical.messageIdHeader);
     if (twin) return { key: fpKey, existing: twin };
@@ -782,7 +786,8 @@ function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
  * The gate's correspondent question — the reply arm, the one this path can afford per message:
  * the `wrote` arm is `known` already, taught when the Sent copy was ingested. Asked only for a
  * gate fall-through ({@link evaluateRules}' `screened` with no rule) about a single usable author
- * who did not fail authentication and whose mail names at least one message id.
+ * who did not fail authentication and whose mail names at least one message id, and answered yes
+ * only when a cited copy was written TO that author.
  */
 async function correspondentAtGate(
   repo: RepoPort, accountId: string, msg: NormalizedMessage,
@@ -1039,12 +1044,13 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
        the author known, so rules and the header heuristic still place it. */
     const correspondent = await correspondentAtGate(repo, accountId, normalized, decision, authVerdict, known);
     if (correspondent !== null) {
-      // Taught as INFERRED (`commitChange`), so it is inferred here too: the gate reads one shape.
+      // Taught as a PERSON's contact (`commitChange`): the cited copy was written to them, the same
+      // fact a Sent copy's own ingest teaches. So the gate re-runs on that one shape.
       decision = evaluateRules({
         msg: normalized, rules,
         knownSenders: {
           addresses: new Set([...known.addresses, correspondent.author]),
-          inferred: new Set([...known.inferred, correspondent.author]),
+          inferred: known.inferred,
         },
         auth: authVerdict, ohboxPolicy, ownAddresses, identity: senderCheck,
       });
@@ -1056,12 +1062,13 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     // your verification code` was a remote defeat of the consent boundary. The subordination is
     // `effectForDestination`: a `deny` verdict also covers an explicit user rule, so a
     // QUARANTINED sender cannot free themselves with an OTP-shaped body. `allow` and `unclear`
-    // still yield INBOX for sensitive mail. The bounce arm: two corroborations, either sufficient
-    // — a quoted Message-ID this account HOLDS, or `X-Failed-Recipients` naming an existing
-    // correspondent. It may pass the GATE, never overrule the USER: a gate fall-through carries
-    // `matchedRuleId === null`; a rule id stands.
+    // still yield INBOX for sensitive mail. The bounce arm: a quoted Message-ID that is one of the
+    // account's own post-consent Sent copies — any other row's id was chosen by its author, a
+    // stranger's held message among them. It may pass the GATE, never overrule the USER (a rule id
+    // stands), and never carries a failed authentication or a brand's claim past it.
     const dsn = dsnVerdict(normalized, change.raw);
     let ownBounce = false;
+    let citedOwnCopy: string | null = null;
     /**
      * A bounce for an away reply is not the reader's mail at all. This is our own bounce, and
      * nobody composed the failed message — the responder did, and it already records the dead
@@ -1076,17 +1083,19 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     if (dsn) {
       awayReplyBounce = dsn.originalMessageIds.length > 0
         && await repo.isOwnAwayReply(accountId, dsn.originalMessageIds);
-      ownBounce = awayReplyBounce ||
-        dsn.failedRecipients.some((a) => known.addresses.has(a)) ||
-        (dsn.originalMessageIds.length > 0 &&
-          (await repo.findThreadParent(accountId, dsn.originalMessageIds)) !== null);
+      if (!awayReplyBounce && dsn.originalMessageIds.length > 0) {
+        citedOwnCopy = await repo.citesOwnWriting(accountId, dsn.originalMessageIds);
+      }
+      ownBounce = awayReplyBounce || citedOwnCopy !== null;
     }
 
     const deniedByConsent =
       decision.destination !== null && effectForDestination(decision.destination) === "deny";
+    /** Lifts nothing the provider's report failed and nothing that carries a brand's claim. */
+    const liftable = authVerdict !== "fail" && decision.identity === undefined;
     /** A corroborated bounce the account has expressed no opinion about. */
     const admitBounce = ownBounce && decision.matchedRuleId === null
-      && (!deniedByConsent || decision.source === "screener");
+      && (!deniedByConsent || decision.source === "screener") && liftable;
     /**
      * The responder's own bounce, filed to `ohmail/Receipts` — kept, findable, out of the way.
      *
@@ -1094,7 +1103,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
      * reason: a daemon somebody quarantined must not be re-filed by us, in either direction.
      */
     const fileBounceAsReceipt = awayReplyBounce && decision.matchedRuleId === null
-      && (!deniedByConsent || decision.source === "screener");
+      && (!deniedByConsent || decision.source === "screener") && liftable;
 
     /**
      * The gate does not reach back past the screening baseline. Three refusals to over-reach: a
@@ -1239,6 +1248,9 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
            ours — an empty array would be a third state meaning the same as absent, and it cannot
            arise: the predicate requires `isOwnAwayReply`, which requires at least one id. */
         ...(fileBounceAsReceipt ? { awayBounceOf: dsn!.originalMessageIds } : {}),
+        // A gate hold the bounce arm lifted, and only that: recorded by the commit.
+        ...(admitBounce && citedOwnCopy !== null && decision.source === "screener" && desired === "INBOX"
+          ? { bounceAdmission: { header: citedOwnCopy } } : {}),
         ...(correspondent !== null ? { correspondentAdmission: correspondent.evidence } : {}),
         ai,
       },
@@ -1628,15 +1640,21 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
        the recipients of a Sent copy past the consent point, or the correspondent the gate just
        admitted. `contacts` is what every re-screening pass reads, so they all agree with this
        routing. The admission's audit row is what the Screener shows the reason from. */
-    // A Sent copy is the person writing (`person`); the reply arm's admission is ours (`inferred`).
+    // Both are the person writing (`person`): the reply arm admits only an address the cited copy
+    // was written to, which is the Sent copy's own fact found by index rather than by scan.
     const learned = p.learnCorrespondents ?? [];
     if (learned.length > 0) await repo.upsertContacts(accountId, learned, "person");
     const author = p.correspondentAdmission ? gateAuthor(p.normalized) : null;
-    if (author) await repo.upsertContacts(accountId, [author], "inferred");
+    if (author) await repo.upsertContacts(accountId, [author], "person");
     if (p.correspondentAdmission) {
       await repo.recordAudit(accountId, "screener.correspondent_admitted", {
         messageId: stored.id, via: p.correspondentAdmission.via,
         sentAt: p.correspondentAdmission.sentAt.toISOString(),
+      }, null);
+    }
+    if (p.bounceAdmission) {
+      await repo.recordAudit(accountId, "screener.bounce_admitted", {
+        messageId: stored.id, header: p.bounceAdmission.header,
       }, null);
     }
 

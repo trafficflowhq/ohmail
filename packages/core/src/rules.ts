@@ -1029,9 +1029,9 @@ function isMoneySubject(subject: string): boolean {
  * says "your mail did not arrive". The obvious fix is a bypass: `report-type=delivery-status` is
  * a string anybody can type, and backscatter is real — a spammer forges YOUR address, a real MTA
  * rejects, and its genuine report satisfies every property of "shape". So the verdict is shape
- * AND own-send evidence, and this answers only the pure half: the caller matches the quoted
- * Message-IDs against its own rows (backscatter's misses) and `X-Failed-Recipients` against known
- * correspondents. Neither means the Screener, one press away.
+ * AND a quoted Message-ID that is one of the account's own post-consent Sent copies; this answers
+ * only the pure half, and the caller asks its own Sent copies (backscatter's misses). No match
+ * means the Screener, one press away. `X-Failed-Recipients` is not read: its sender writes it.
  */
 export interface DsnEvidence {
   /**
@@ -1044,16 +1044,6 @@ export interface DsnEvidence {
    * large, on the ingest hot path, for free.
    */
   originalMessageIds: string[];
-  /**
-   * The addresses `X-Failed-Recipients` names, lower-cased. EMPTY when the header is absent or
-   * carries nothing address-shaped.
-   *
-   * Deliberately the ADDRESSES and not a boolean. A boolean would be the presence of a header
-   * a stranger writes, which is worth nothing; these are values the caller can check against
-   * the account's own correspondents, which is worth everything. Returning the wrong shape here
-   * is how the bypass gets reintroduced by somebody being helpful.
-   */
-  failedRecipients: string[];
 }
 
 /** How many quoted Message-IDs one report may contribute to the lookup. */
@@ -1116,14 +1106,7 @@ export function dsnVerdict(msg: NormalizedMessage, raw?: Uint8Array): DsnEvidenc
   // worse, would make a self-referential report look like corroboration the moment the report
   // itself had been ingested.
   const self = msg.canonical.messageIdHeader;
-  const originalMessageIds = self ? ids.filter((id) => id !== self) : ids;
-
-  const failedRecipients = (msg.headers["x-failed-recipients"] ?? [])
-    .flatMap((v) => v.split(","))
-    .map((v) => v.trim().replace(/^<|>$/g, "").toLowerCase())
-    .filter((v) => v.includes("@") && !v.includes(" "));
-
-  return { originalMessageIds, failedRecipients };
+  return { originalMessageIds: self ? ids.filter((id) => id !== self) : ids };
 }
 
 /** Latin-1 is enough: a Message-ID is ASCII by RFC, and this only ever feeds a `<...@...>` match. */

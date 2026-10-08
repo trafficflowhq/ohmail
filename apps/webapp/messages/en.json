@@ -845,7 +845,7 @@
       "campaign": "The same mail came from {count} unrelated senders",
       "auth_fail": "This mail failed the sender's own authentication",
       "brand_mismatch": "The sender's address does not match the name this mail gives",
-      "correspondent": "You wrote to this sender first, or they are answering mail you sent"
+      "correspondent": "You wrote to this address, or they are answering mail you sent to them"
     },
     "aiReasonChip": {
       "impersonation": "Not {brand}",
