@@ -1,5 +1,5 @@
 /**
- * `messages.sender_check` (mail 0147): `none` = checked and nothing found, `impersonation` = the
+ * `messages.sender_check` (mail 0148): `none` = checked and nothing found, `impersonation` = the
  * sender's name claims a brand the address does not own; NULL is "never checked". The ONE
  * definition — the CHECK on both stores, the writers and the closed-set census read it.
  */

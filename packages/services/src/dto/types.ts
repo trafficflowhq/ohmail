@@ -48,7 +48,7 @@ export interface ScreenerItem {
   id: string;                     // the screener entry id (the representative message id when derived)
   messageId: string;
   /**
-   * THE SENDER'S IDENTITY FACT (mail 0147), aggregated over every held message of theirs: one
+   * THE SENDER'S IDENTITY FACT (mail 0148), aggregated over every held message of theirs: one
    * names `brand` from an address `brand` does not send from. Absent when none does. Rendered
    * apart from `aiSuggestion`, which it also caps whatever message the advice was bought on.
    */
@@ -218,7 +218,7 @@ export interface MessageDTO {
    */
   authVerdict?: AuthVerdict | null;
   /**
-   * THE IDENTITY FACT (`messages.sender_check`, mail 0147): the sender's name claims `brand`, and
+   * THE IDENTITY FACT (`messages.sender_check`, mail 0148): the sender's name claims `brand`, and
    * this address is not one `brand` sends from; `domainShared` — the address is at a provider where
    * anyone can register one. `null` is "checked, nothing found"; ABSENT is "never checked" (a row
    * older than the column, an older server), which a client renders as nothing.

@@ -209,7 +209,7 @@ export function SenderMenu({
   /* The five pile names, from the Screener's namespace — the same words the rail and the
      decision bar use. See `decision-copy.ts`. */
   const piles = usePileNames();
-  // The identity fact off the newest marked message the sheet's subject sent (mail 0147).
+  // The identity fact off the newest marked message the sheet's subject sent (mail 0148).
   const checkWords = useSenderCheckWords();
   const checkLine = sender.messages.map(checkWords.line).find((l) => l !== null) ?? null;
   const rootRef = useRef<HTMLDivElement>(null);

@@ -199,7 +199,7 @@ import {
   CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
 } from "@trafficflow/worker/screener-correspondent-retro";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
-/* THE IDENTITY BACKFILL (mail 0147), the worker's pass for the name repair's reason: this store is
+/* THE IDENTITY BACKFILL (mail 0148), the worker's pass for the name repair's reason: this store is
    the authority nothing else will ever check, and one fact function decides every row. */
 import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfill";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
@@ -2683,7 +2683,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     /** The identity backfill answered empty in THIS launch: later drains skip it at no cost. */
     let senderCheckDone = false;
     /**
-     * THE IDENTITY FACT FOR ROWS OLDER THAN mail 0147, one page per drain, the worker's own pass:
+     * THE IDENTITY FACT FOR ROWS OLDER THAN mail 0148, one page per drain, the worker's own pass:
      * the Ohbox's and the Screener's rows get the sentence a fresh arrival carries. It writes the
      * fact and a `message` update for a marked row, never a move. Contained like the name repair.
      */

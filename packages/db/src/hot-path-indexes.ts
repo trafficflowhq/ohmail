@@ -98,9 +98,9 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
     ddl: ARRIVAL_ORDER_INDEX_DDL,
   },
   {
-    // THE IDENTITY BACKFILL'S NEVER-CHECKED ROWS (mail 0147), by account then id. Every row is NULL
+    // THE IDENTITY BACKFILL'S NEVER-CHECKED ROWS (mail 0148), by account then id. Every row is NULL
     // when the column lands, so the build is a pass over all of `messages`: here, CONCURRENTLY,
-    // never inside the journal's transaction. The device store builds its twin in its own 0147.
+    // never inside the journal's transaction. The device store builds its twin in its own 0148.
     name: "messages_sender_check_owed_idx",
     table: "messages",
     requiresColumn: "sender_check",

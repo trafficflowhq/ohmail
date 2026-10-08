@@ -84,7 +84,7 @@ interface UnscreenedRow {
   observedFolder: string;
   /** The arrival instant, `date` where the header carried one and the ingest stamp otherwise. */
   at: Date;
-  /** The identity fact's inputs and its column (mail 0147) — `identityOfRow` reads them. */
+  /** The identity fact's inputs and its column (mail 0148) — `identityOfRow` reads them. */
   fromName: string | null;
   senderCheck: string | null;
   senderCheckBrand: string | null;

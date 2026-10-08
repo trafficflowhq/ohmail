@@ -6,7 +6,7 @@ import { claimedIdentity } from "./sender-check.js";
 export interface UncheckedRow { id: string; fromName: string | null; fromAddress: string; subject: string }
 
 /**
- * THE ONE WRITE OF THE FACT FOR ROWS THE INGEST NEVER CHECKED (mail 0147) — the backfill's page,
+ * THE ONE WRITE OF THE FACT FOR ROWS THE INGEST NEVER CHECKED (mail 0148) — the backfill's page,
  * and the act's, the passes' and a press's own read of the rows they are about to decide. Per row
  * the fact function; a marked row gets its column and one `message` update delta, so every mirror
  * repaints it with the sentence; a clean row `'none'`, no delta. `is null` again on every write: a

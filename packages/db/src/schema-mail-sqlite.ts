@@ -926,7 +926,7 @@ export const contacts = sqliteTable("contacts", {
   // address the pipeline recorded; the user may later name it. ──
   name: text("name"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
-  /** Who made the row (mail 0147) — see `schema-mail.ts`. NULL reads as `'person'`. */
+  /** Who made the row (mail 0148) — see `schema-mail.ts`. NULL reads as `'person'`. */
   source: text("source"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("contacts_id_account_uq").on(t.id, t.accountId),

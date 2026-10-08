@@ -123,7 +123,7 @@ export interface ScreenerAutoResult {
    * how much was deliberately left at the gate for a human rather than filed to Reads/Receipts.
    */
   sensitivityExcluded: number;
-  /** Movers held back BECAUSE the identity fact marks them (mail 0147): never filed by a pass. */
+  /** Movers held back BECAUSE the identity fact marks them (mail 0148): never filed by a pass. */
   identityExcluded: number;
   /** True ⇒ the per-cycle write budget ran out; the rest is swept next cycle. */
   capped: boolean;

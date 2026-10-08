@@ -1050,7 +1050,7 @@ export const contacts = pgTable("contacts", {
   name: text("name"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   /**
-   * Who made the row (mail 0147): `'person'` for a person's act (a send, a press, Not junk, a
+   * Who made the row (mail 0148): `'person'` for a person's act (a send, a press, Not junk, a
    * Sent copy), `'inferred'` for an automatic admission (a pass, a reply-arm correspondent).
    * NULL is every row older than the column and reads as `'person'`, the permissive default.
    */

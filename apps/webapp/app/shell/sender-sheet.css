@@ -745,6 +745,6 @@ input.sm-edit-input {
   }
 }
 
-/* The identity fact (mail 0147): body ink behind the shield, the reader line's and the Screener row's mark. */
+/* The identity fact (mail 0148): body ink behind the shield, the reader line's and the Screener row's mark. */
 .sm-check{display:flex;gap:8px;margin:0;padding:8px 12px 0;font-size:calc(12px + var(--type-up));font-weight:600;line-height:1.45;color:var(--ink)}
 .sm-check svg{color:var(--accent-ink);flex:none;margin-top:2px}

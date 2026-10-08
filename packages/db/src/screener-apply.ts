@@ -188,7 +188,7 @@ export interface AppliedScreenerRow {
   updatedAt: Date;
   /** The server's current `\Seen`, `!unread`, as the mirror last recorded it. */
   unread: boolean;
-  /** `messages.sender_check` (mail 0147): `'impersonation'` holds the row from a pass's admission. */
+  /** `messages.sender_check` (mail 0148): `'impersonation'` holds the row from a pass's admission. */
   senderCheck: string | null;
 }
 
@@ -448,14 +448,14 @@ export interface ApplyScreenerDecisionInput {
    */
   decidedBy: "person" | "pass";
   /**
-   * WHICH MARKED ROWS THE DECISION MOVES (mail 0147). `pressed`, the default: a person's press moves
+   * WHICH MARKED ROWS THE DECISION MOVES (mail 0148). `pressed`, the default: a person's press moves
    * a claim only from the address they pressed on, the row that told them; a domain press leaves
    * another address's claim to its own press. `none`: the held-release press, whose offer never
    * counts a claim, moves none. A pass's yes moves only rows the check cleared.
    */
   marked?: "pressed" | "none";
   /**
-   * THE CHECK A PRESS RUNS FIRST (mail 0147): writes the identity fact for held rows the check has
+   * THE CHECK A PRESS RUNS FIRST (mail 0148): writes the identity fact for held rows the check has
    * not reached, by id, before anything moves (`@trafficflow/core#checkUncheckedById`; this package
    * does not import core). Without it such a row moves only on a press made on its own address.
    */
@@ -492,7 +492,7 @@ export interface ApplyScreenerDecisionResult {
   retargetedRuleIds: string[];
   /**
    * `ruled`: `overExisting: "skip"` met a key with a rule, and nothing was written or filed.
-   * `identity`: a pass's yes met held mail carrying the identity fact (mail 0147), and nothing was
+   * `identity`: a pass's yes met held mail carrying the identity fact (mail 0148), and nothing was
    * written or filed — only a person's press admits that sender.
    */
   skipped?: "ruled" | "identity";
@@ -551,7 +551,7 @@ export async function applyScreenerDecision(
      follows it, as on "Not junk, always allow", so the two never wait on each other crosswise. */
   await lockAccountRuleKeys(tx, accountId);
 
-  /* THE ACT NEVER ADMITS A MARKED SENDER (mail 0147), asked of the bag before the first rules,
+  /* THE ACT NEVER ADMITS A MARKED SENDER (mail 0148), asked of the bag before the first rules,
      contacts or move statement: a pass's yes over held mail whose name claims a brand its address
      does not own leaves the sender waiting and writes nothing of the decision. A row the check
      never reached (NULL) counts as marked here: this door cannot compute the fact, and the act
@@ -619,7 +619,7 @@ export async function applyScreenerDecision(
   let lastSeq = wrote.lastSeq;
 
   if (decision === "yes") {
-    // A person's press is a person's contact; the act's is inferred (mail 0147), and the identity
+    // A person's press is a person's contact; the act's is inferred (mail 0148), and the identity
     // fact still holds what only inference admitted.
     const source = decidedBy === "person" ? "person" : "inferred";
     await tx.insert(contacts).values({ accountId, address, source })

@@ -10,7 +10,7 @@ import { writeSenderChecks } from "@trafficflow/core/adapters/drizzle-repo";
 export { writeSenderChecks, type UncheckedRow } from "@trafficflow/core/adapters/drizzle-repo";
 
 /**
- * THE IDENTITY BACKFILL (mail 0147) — the identity fact for the rows ingested before the column
+ * THE IDENTITY BACKFILL (mail 0148) — the identity fact for the rows ingested before the column
  * existed, written once. Only the two places a sentence is read at the moment of a decision: the
  * Ohbox and the Screener — inbound mail by construction, so Sent copies (which ingest checks
  * without computing) are out of scope. Per row the fact function, exactly what ingest writes. It
@@ -49,7 +49,7 @@ const IN_SCOPE = ["INBOX", "ohmail/Screener"] as const;
 export const LEGACY_ACT_CONTACTS_BATCH = 5000;
 
 /**
- * THE ACT'S CONTACTS FROM BEFORE THE COLUMN (mail 0147): a contact the act on suggestions wrote
+ * THE ACT'S CONTACTS FROM BEFORE THE COLUMN (mail 0148): a contact the act on suggestions wrote
  * before `contacts.source` existed is NULL, which reads as a person's. Every NULL row the pass
  * examines is written in one statement: inferred where each Screener decision on record came from
  * the act (`screener:auto:`), person — the reading NULL already had — otherwise. No contact is

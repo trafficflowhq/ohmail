@@ -82,7 +82,7 @@ function atTheGate(accountId: string) {
     sql`${folderState.lastSetBy} in ('us', 'peer', 'external')`,
     eq(folderState.desiredFolder, SCREENER_GATE),
     eq(folderState.observedFolder, SCREENER_GATE),
-    // A claim the identity fact holds is the Screener's question, never this repair's (mail 0147).
+    // A claim the identity fact holds is the Screener's question, never this repair's (mail 0148).
     sql`(${messages.senderCheck} is null or ${messages.senderCheck} <> 'impersonation')`,
     sql`not exists (
       select 1 from ${mailboxes} mb

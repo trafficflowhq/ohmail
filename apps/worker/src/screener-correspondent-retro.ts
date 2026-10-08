@@ -19,7 +19,7 @@ import { writeSenderChecks } from "./sender-check-backfill.js";
  * ingested before the ingest taught them; release their mail the gate still holds to the Ohbox
  * (desired state the reconciler converges, an audit row with its inverse per message); and switch
  * off a spam or screen-out rule the Screener's own auto-act promoted over them, never one the
- * person made. A held claim (mail 0147) moves only for somebody the person wrote to; a reply citing
+ * person made. A held claim (mail 0148) moves only for somebody the person wrote to; a reply citing
  * the account's mail releases no claim. Nothing it moves is in Junk. Logs counts only. */
 
 /** Senders one run may examine in each of its two walks. */
@@ -71,7 +71,7 @@ export async function screenerCorrespondentRetroPass(
       let learned = 0;
       for (let i = 0; i < fresh.length; i += 500) {
         const part = fresh.slice(i, i + 500);
-        // The account WROTE to them: a person's act (mail 0147).
+        // The account WROTE to them: a person's act (mail 0148).
         const inserted = await tx.insert(contacts)
           .values(part.map((address) => ({ accountId, address, source: "person" })))
           .onConflictDoNothing({ target: [contacts.accountId, contacts.address] })

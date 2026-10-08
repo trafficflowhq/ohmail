@@ -134,7 +134,7 @@ export interface ScreenerAutoActResult {
   correspondents: number;
   /**
    * Senders left waiting because a held message of theirs claims a brand its address does not own
-   * (`messages.sender_check`, mail 0147) while the advice would let them through — counted inside
+   * (`messages.sender_check`, mail 0148) while the advice would let them through — counted inside
    * {@link kept}. A denying plan still files.
    */
   identity: number;
@@ -434,7 +434,7 @@ async function clearActRefusal(tx: Tx, accountId: string, suggestionId: string, 
 }
 
 /**
- * THE PAGE'S HELD MAIL THE CHECK NEVER REACHED (a NULL column, older than mail 0147), checked HERE
+ * THE PAGE'S HELD MAIL THE CHECK NEVER REACHED (a NULL column, older than mail 0148), checked HERE
  * before the act decides — the backfill's own write (`writeSenderChecks`), so a claim is marked on
  * its row and a `message` delta repaints every mirror: the Screener row then SAYS why the act left
  * the sender waiting. Returns the senders a row was marked for. One read per page.
@@ -513,7 +513,7 @@ async function selectWaitingSenders(
     mailboxId: reps.mailboxId,
     fromAddress: reps.fromAddress,
     // ANY held message of the sender, not the representative: advice is bought on one message, and
-    // the newest may be the benign one (mail 0147).
+    // the newest may be the benign one (mail 0148).
     identityHeld: sql<boolean | number>`exists (
       select 1 from ${messages} im
         join ${folderState} ifs on ifs.message_id = im.id

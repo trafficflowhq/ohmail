@@ -229,7 +229,7 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
 }
 
 /**
- * HELD BY THE IDENTITY FACT (mail 0147): a message of this sender sits at the gate naming a company
+ * HELD BY THE IDENTITY FACT (mail 0148): a message of this sender sits at the gate naming a company
  * its address is not, held because no person consented to the address — whatever rule or contact
  * decided the sender otherwise (the act's promotion, a domain rule, an inferred contact). Such a
  * sender is waiting again: the queue lists them with the sentence, and no release takes the row.

@@ -4671,7 +4671,7 @@ export async function startWorkerWithLock(
         },
       },
       sender_check_backfill: {
-        // The identity fact for the Ohbox and Screener rows ingested before mail 0147, one page per
+        // The identity fact for the Ohbox and Screener rows ingested before mail 0148, one page per
         // account per tail, then the act's contacts from before it, each contact written once. Once
         // both sets answer empty the call is two reads: the unchecked rows and the source-less
         // contacts. Contained: a failure leaves the rows unchecked until the next tail.

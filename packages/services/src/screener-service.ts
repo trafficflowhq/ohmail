@@ -784,7 +784,7 @@ interface ScreenerRow {
   /** The instant the queue sorted this row by (`heldSortKey`) — what the page's cursor carries. */
   sortAt: Date;
   /**
-   * The sender's identity fact over every held message (mail 0147), the brand the newest marked
+   * The sender's identity fact over every held message (mail 0148), the brand the newest marked
    * one names; `null` when none is marked. A representative the ingest never checked is computed
    * on the page instead (`claimedIdentity`, through the sender check).
    */
@@ -1590,7 +1590,7 @@ export class ScreenerReadService {
       rank: sql<number>`row_number() over (
         partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
       )`.as("rank"),
-      /* THE IDENTITY FACT FOR THE SENDER, over the same partition (mail 0147): any held message
+      /* THE IDENTITY FACT FOR THE SENDER, over the same partition (mail 0148): any held message
          marked, and the brand of the newest marked one. A max of a case and a first_value, which
          both stores spell alike — a pg-only `bool_or` would break the phone's queue. */
       senderMarked: sql<number>`max(case when ${messages.senderCheck} = 'impersonation' then 1 else 0 end) over (
@@ -1677,11 +1677,11 @@ export class ScreenerReadService {
     const sender = sql`lower(${reps.fromAddress})`;
     return [
       eq(reps.rank, 1),
-      // A claim the gate holds is never hidden as dormant (mail 0147): its Date is the sender's to write.
+      // A claim the gate holds is never hidden as dormant (mail 0148): its Date is the sender's to write.
       cutline
         ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline)} or ${senderHasHeldClaimSql(d, ctx.accountId, sender)})`
         : undefined,
-      // A decided sender is waiting again while the gate holds a claim of theirs (mail 0147).
+      // A decided sender is waiting again while the gate holds a claim of theirs (mail 0148).
       sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${senderHasHeldClaimSql(d, ctx.accountId, sender)})`,
       // The account is not one of its own correspondents: its mail at the gate is no decision.
       sql`not ${senderIsOwnSql(d, ctx.accountId, sender)}`,

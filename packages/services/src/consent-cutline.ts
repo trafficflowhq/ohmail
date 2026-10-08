@@ -178,7 +178,7 @@ export async function cutlineCounts(
              -- Activity is measured over all six presented folders (above); membership in the
              -- undecided counts is not. See UNDECIDED_RESIDENCES.
              ${anyOf(sql`fs.desired_folder in ${undecidedResidences}`)} as undecided_residence,
-             -- A claim the gate holds keeps its sender active however old its Date (mail 0147),
+             -- A claim the gate holds keeps its sender active however old its Date (mail 0148),
              -- the queue's own term (senderHasHeldClaimSql), so the count and the list agree.
              ${anyOf(sql`fs.desired_folder = ${CUTLINE_GATE_FOLDER} and m.deleted_at is null and m.sender_check = 'impersonation'`)}
                as held_claim

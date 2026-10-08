@@ -110,7 +110,7 @@ export interface ProfileScreenerEntry {
   /** The display name the user gave the contact, if any. */
   name?: string;
   /**
-   * WHO MADE THE CONTACT (mail 0147): `person` for a person's own decision. ABSENT is inferred — a
+   * WHO MADE THE CONTACT (mail 0148): `person` for a person's own decision. ABSENT is inferred — a
    * reply or the act's admission, or a document written before the key — so an older document
    * fails closed for the identity fact while its senders still pass the gate. The canonical form
    * keeps `person` and drops `inferred`, so a document without the key keeps its fingerprint.
@@ -621,7 +621,7 @@ export function profileFingerprintVersion(fingerprint: string): number {
 
 /**
  * DOES THE LOCAL STORE SAY WHAT A DOCUMENT WITH THIS FINGERPRINT SAYS — at the document's canonical
- * version, and once more with the local screener's `source` left out (mail 0147): a document that
+ * version, and once more with the local screener's `source` left out (mail 0148): a document that
  * states no source, which every older one is, names the same contacts, and an import changes the
  * source of no contact this install holds, so the key's arrival is never a question by itself.
  */

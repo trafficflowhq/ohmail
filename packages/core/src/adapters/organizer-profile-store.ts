@@ -116,7 +116,7 @@ export async function serializeOrganizerProfileCounted(
   notifyRows.splice(PROFILE_LIST_MAX.notifyRules);
   tagRows.splice(PROFILE_LIST_MAX.tagNames);
   const payload: OrganizerProfilePayload = {
-    // A person's contact says so (NULL is a person's, mail 0147); an inferred one travels unstated.
+    // A person's contact says so (NULL is a person's, mail 0148); an inferred one travels unstated.
     screener: contactRows.map((c) => ({
       address: c.address, ...(c.name === null ? {} : { name: c.name }),
       ...(c.source === "inferred" ? {} : { source: "person" as const }),
@@ -264,7 +264,7 @@ export async function applyOrganizerProfile(
     byAddress.set(address, { name, source: s.source === "person" ? "person" : "inferred" });
   }
   for (const [address, { name, source }] of byAddress) {
-    /* The entry's source as the document states it, absent read as inferred (mail 0147): an
+    /* The entry's source as the document states it, absent read as inferred (mail 0148): an
        older document fails closed for the identity fact. A document never upgrades a row this
        install holds, so an inferred contact stays inferred whatever a document says. */
     await tx.insert(contacts)
