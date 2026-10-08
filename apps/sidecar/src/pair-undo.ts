@@ -8,6 +8,10 @@
 
 /** The ONE deadline a sign-out spends at the server, entered once and threaded through. */
 export const SIGN_OUT_AT_HOST_MS = 5_000;
+
+/** Every deadline here is a MONOTONIC instant (`deadlineIn`), so a wall clock stepped back inside
+ *  a sign-out cannot stretch it. */
+export const deadlineIn = (ms: number): number => performance.now() + ms;
 /**
  * What the deadline keeps for the revoke itself: the bearer door is one round trip, the refresh
  * door a second. Before it, the press waits for the window's accepted writes to land under the
@@ -50,7 +54,7 @@ export function pairFlights(): PairFlights {
       if (open.length === 0) return null;
       for (const entry of open) entry.undoneBy = deadline;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const outOfTime = new Promise<"late">((r) => { timer = setTimeout(() => r("late"), Math.max(deadline - Date.now(), 0)); });
+      const outOfTime = new Promise<"late">((r) => { timer = setTimeout(() => r("late"), leftOf(deadline)); });
       const outcomes = await Promise.race([Promise.all(open.map((e) => e.settled)), outOfTime]);
       clearTimeout(timer);
       /* Still in flight at the deadline: a session may yet arrive, and it is signed out when it
@@ -62,9 +66,10 @@ export function pairFlights(): PairFlights {
   };
 }
 
-/** What is left of a deadline, never negative. */
+/** What is left of a deadline, never negative, in WHOLE milliseconds (`AbortSignal.timeout` refuses
+ *  a fraction, and a monotonic reading carries one). */
 export function leftOf(deadline: number): number {
-  return Math.max(deadline - Date.now(), 0);
+  return Math.max(Math.ceil(deadline - performance.now()), 0);
 }
 
 /** A held session's pair, as the engine holds it in memory. Nothing here reads or writes disk. */
@@ -110,7 +115,7 @@ export async function revokeHeldSession(
 
 /** A deadline an undo already spent gets a bound of its own: nobody waits on that sign-out. */
 export function boundForUnwaited(deadline: number): number {
-  return leftOf(deadline) > 0 ? deadline : Date.now() + SIGN_OUT_AT_HOST_MS;
+  return leftOf(deadline) > 0 ? deadline : deadlineIn(SIGN_OUT_AT_HOST_MS);
 }
 
 /** Settle when `work` settles or at `deadline`, whichever is first; `work` goes on regardless. */

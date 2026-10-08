@@ -60,7 +60,8 @@ export interface SearchBackfill {
 }
 
 export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfill {
-  const now = deps.now ?? Date.now;
+  // Monotonic: every reading below is a "how long since", which a wall clock stepped back stretches.
+  const now = deps.now ?? ((): number => performance.now());
   const quietMs = deps.quietMs ?? PERSON_QUIET_MS;
   const power = deps.power ?? (() => NO_POWER_READING);
   let finished = false;
@@ -102,7 +103,7 @@ export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfi
       if (r.marked) {
         finished = true;
         deps.log("search_index_backfill_finished", {
-          written, rounds, totalMs: now() - startedAt,
+          written, rounds, totalMs: Math.round(now() - startedAt),
           reason: "every message on this install now has its search document; search reads the index alone",
         });
       }

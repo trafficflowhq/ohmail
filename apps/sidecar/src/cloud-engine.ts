@@ -62,7 +62,7 @@ import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 import { createSessionWatch, heldReadingOf, sameReading } from "./session-watch.js";
 import {
-  boundForUnwaited, pairFlights, REVOKE_RESERVE_MS, revokeHeldSession, settledBy, SIGN_OUT_AT_HOST_MS,
+  boundForUnwaited, deadlineIn, pairFlights, REVOKE_RESERVE_MS, revokeHeldSession, settledBy, SIGN_OUT_AT_HOST_MS,
 } from "./pair-undo.js";
 import { approvalAt, approvalPending, type ApprovalVerdict } from "./approval-verdict.js";
 
@@ -208,10 +208,10 @@ export function drainOnFollowUp(
   const live = held.get(key);
   if (live) return live;
   const wait = (async (): Promise<SyncResponse> => {
-    const end = Date.now() + capMs;
+    const end = performance.now() + capMs;               // monotonic: a step back cannot stretch the hold
     let result = first;
-    while (quiet(result) && mirror.followUps() > 0 && Date.now() < end) {
-      if (!(await mirror.awaitFollowUp(end - Date.now()))) break;
+    while (quiet(result) && mirror.followUps() > 0 && performance.now() < end) {
+      if (!(await mirror.awaitFollowUp(end - performance.now()))) break;
       result = await ask();
     }
     return result;
@@ -1721,7 +1721,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           /* The host minted a session this install does not keep: it is signed out there too, so a
              refused pairing leaves no row on that computer's Devices list. */
           flight.settle(await revokeHeldSession(
-            config.fetchImpl ?? fetch, cloudBase, redeemed.tokens, Date.now() + SIGN_OUT_AT_HOST_MS,
+            config.fetchImpl ?? fetch, cloudBase, redeemed.tokens, deadlineIn(SIGN_OUT_AT_HOST_MS),
           ));
           // REFUSED, AND NOTHING KEPT. The pair is not sealed and `activate` is not called, so
           // every read below stays `409 not_signed_in` — there is no window in which this session
@@ -1821,7 +1821,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            in flight is marked undone; `signOut`'s synchronous prefix forgets the session; the pair it
            held, in memory only, then asks the server to end its family. Nothing the server answers
            can keep this install signed in. `?revoke=host`, the undo's older spelling, is the same. */
-        const deadline = Date.now() + SIGN_OUT_AT_HOST_MS;
+        const deadline = deadlineIn(SIGN_OUT_AT_HOST_MS);
         const inFlight = await flights.undo(deadline);
         const live = authed;
         setHostedSession(null);

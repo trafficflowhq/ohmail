@@ -1686,7 +1686,10 @@ export function lockDataDir(dataDir: string, log?: Diagnostic): () => void {
        * launch in progress — replaced once, then raced for. Unreadable BYTES are not this shape.
        */
       if (rec === null) {
-        if (held.raw === "" && Date.now() - held.mtimeMs >= EMPTY_LOCK_STALE_AFTER_MS) {
+        /* A residue dated a window or more AHEAD was written before the clock stepped back; a
+           launch mid-creation is dated now. Read as old, or the refusal lasts as long as the step. */
+        const emptyAgeMs = Date.now() - held.mtimeMs;
+        if (held.raw === "" && Math.abs(emptyAgeMs) >= EMPTY_LOCK_STALE_AFTER_MS) {
           // Removed only while the path still names THE FILE THAT WAS JUDGED, on the stale
           // record's rule below; either way the next pass judges whatever it then finds.
           removeIfUnchanged(path, held);

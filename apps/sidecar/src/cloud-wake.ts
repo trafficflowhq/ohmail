@@ -150,7 +150,7 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
    * or a failed read's `retry: 30000`, is never redialled every second. A bare 200 resets nothing.
    */
   const afterStream = (openedAt: number, frames: number): void => {
-    if (frames > 0 || Date.now() - openedAt >= WAKE_HEALTHY_STREAM_MS) {
+    if (frames > 0 || performance.now() - openedAt >= WAKE_HEALTHY_STREAM_MS) {
       backoffMs = backoffBaseMs;
       scheduleReconnect(retryMs ?? recycleDelayMs);
       return;
@@ -258,7 +258,7 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
           "within about a second instead of on the poll cadence",
       });
     }
-    const openedAt = Date.now();
+    const openedAt = performance.now();             // monotonic, as the walled redial floor below
     let frames = 0;
     try {
       await readEvents(res.body, () => { frames += 1; wake(); }, honourRetry, () => stopped);
@@ -277,7 +277,7 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
   return {
     rearm() {
       if (stopped || !walled) return;
-      const now = Date.now();
+      const now = performance.now();
       if (now - lastWalledDial < WAKE_WALLED_REDIAL_MIN_MS) return;
       walled = false;
       lastWalledDial = now;

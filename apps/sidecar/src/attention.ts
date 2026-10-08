@@ -43,7 +43,8 @@ interface AttentionClock {
   quietForMs(): number;
 }
 
-export function createAttentionClock(now: () => number = Date.now): AttentionClock {
+/** Monotonic by default: a wall clock stepped back read as a person active for the whole step. */
+export function createAttentionClock(now: () => number = () => performance.now()): AttentionClock {
   let lastPersonAt: number | null = null;
   return {
     note(method, pathname) {

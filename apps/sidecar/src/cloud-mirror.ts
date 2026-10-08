@@ -1016,6 +1016,9 @@ interface QuarantineSink { take(ch: SyncChange, facts: IntegrityFacts): void }
  */
 const QUARANTINE_MAX = 500;
 
+/** How long since, never when: the mirror's waits and deadlines read this, not the wall clock. */
+const monotonicNow = (): number => performance.now();
+
 /**
  * How many refusals past {@link QUARANTINE_MAX} are counted by key. Measured at the cap: +560 KB
  * of cursor JSON and +0.6 ms median per (synchronous) cursor write, only while it lasts. Beyond it
@@ -2503,10 +2506,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let walled = false;
   const waiters = new Set<() => void>();
   const progressed = (): void => { for (const w of [...waiters]) w(); };
+  /* `quietUntil` and every echo or chain deadline below are MONOTONIC instants: a wall clock stepped
+     back would hold the pulls for the length of the step. The header is read against the wall clock,
+     where an HTTP-date lives. */
   const noteRetryAfter = (res: Response): void => {
     if (res.status !== 429 && res.status !== 503) return;
     const ms = retryAfterMs(res, Date.now());
-    if (ms !== null) quietUntil = Math.max(quietUntil, Date.now() + ms);
+    if (ms !== null) quietUntil = Math.max(quietUntil, monotonicNow() + ms);
   };
   /** Current reconnect delay; grows on failure, resets on success. See {@link scheduleAfter}. */
   let backoffMs = RECONNECT_BASE_MS;
@@ -4108,7 +4114,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       };
       const check = (): void => { if (covered()) finish("yes"); };
       waiters.add(check);
-      const timer = setTimeout(() => finish("late"), Math.max(0, end - Date.now()));
+      const timer = setTimeout(() => finish("late"), Math.max(0, end - monotonicNow()));
       void work.then(() => finish(covered() ? "yes" : "settled"), () => finish(covered() ? "yes" : "settled"));
       check();
     });
@@ -4118,21 +4124,21 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * the deadline or a hosted `Retry-After` that falls beyond it. A stopped mirror covers nothing.
    */
   const echo = async (covered: () => boolean, ask: () => Promise<unknown>, deadlineMs: number): Promise<boolean> => {
-    const end = Date.now() + Math.max(0, deadlineMs);
+    const end = monotonicNow() + Math.max(0, deadlineMs);
     for (;;) {
       if (covered()) return true;
       if (aborted || accountErased) return false;
-      if (quietUntil > Date.now()) {
+      if (quietUntil > monotonicNow()) {
         if (quietUntil >= end) return false;
-        await until(() => false, new Promise((r) => setTimeout(r, quietUntil - Date.now())), end);
+        await until(() => false, new Promise((r) => setTimeout(r, quietUntil - monotonicNow())), end);
         continue;
       }
       const r = await until(covered, ask(), end);
       if (r === "yes") return true;
-      if (r === "late" || Date.now() >= end) return false;
+      if (r === "late" || monotonicNow() >= end) return false;
       // A pull that settled short of the target (offline, or it began before the write): once
       // more, after a breath, so a dead network is not asked in a hot loop.
-      await until(covered, new Promise((w) => setTimeout(w, Math.min(50, end - Date.now()))), end);
+      await until(covered, new Promise((w) => setTimeout(w, Math.min(50, end - monotonicNow()))), end);
     }
   };
 
@@ -4146,12 +4152,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const nap = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, Math.max(0, ms)));
   const runChain = async (needs: Need[], end: number): Promise<void> => {
     const done = (): boolean => needs.every((n) => n.covered());
-    const over = (): boolean => aborted || accountErased || Date.now() >= end;
+    const over = (): boolean => aborted || accountErased || monotonicNow() >= end;
     for (const step of stepsMs) {
       if ((await until(done, nap(step), end)) === "yes" || over()) return;
-      if (quietUntil > Date.now()) {
+      if (quietUntil > monotonicNow()) {
         if (quietUntil >= end) return;
-        if ((await until(done, nap(quietUntil - Date.now()), end)) === "yes" || over()) return;
+        if ((await until(done, nap(quietUntil - monotonicNow()), end)) === "yes" || over()) return;
       }
       if ((await until(done, Promise.all(needs.filter((n) => !n.covered()).map((n) => n.ask())), end)) === "yes") return;
     }
@@ -4162,7 +4168,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     if (live) { live.push(need); return; }
     const needs = [need];
     chains.set(key, needs);
-    void runChain(needs, Date.now() + capMs).finally(() => {
+    void runChain(needs, monotonicNow() + capMs).finally(() => {
       if (chains.get(key) === needs) chains.delete(key);
       progressed();
     });
@@ -4214,10 +4220,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     if (stopped || accountErased) return;
     let delay: number;
     if (failed && walled) {
-      delay = Math.max(cfg.walledPollMs ?? WALLED_POLL_MS, quietUntil - Date.now());
+      delay = Math.max(cfg.walledPollMs ?? WALLED_POLL_MS, quietUntil - monotonicNow());
       backoffMs = RECONNECT_BASE_MS;
     } else if (failed) {
-      delay = Math.max(backoffMs, quietUntil - Date.now());
+      delay = Math.max(backoffMs, quietUntil - monotonicNow());
       backoffMs = Math.min(backoffMs * 2, RECONNECT_MAX_MS);
     } else {
       backoffMs = RECONNECT_BASE_MS;

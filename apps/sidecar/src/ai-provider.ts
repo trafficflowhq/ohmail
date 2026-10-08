@@ -277,6 +277,8 @@ export interface LocalAiOptions {
   canStoreKey: boolean;
   log: Diagnostic;
   now?: () => Date;
+  /** What the fault cooldown is measured on; `performance.now()` when absent. */
+  monotonic?: () => number;
   /** Injected for tests; production uses the platform's `fetch`. */
   fetchImpl?: typeof fetch;
   /** How long a model call or a verification may take. */
@@ -355,6 +357,7 @@ function unavailable(reason: AiUnavailableReason, which?: KeyedProviderKind): Se
 
 export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   const now = opts.now ?? ((): Date => new Date());
+  const monotonic = opts.monotonic ?? ((): number => performance.now());
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const doFetch = opts.fetchImpl ?? fetch;
   const path = join(opts.dataDir, AI_STORE_FILE);
@@ -560,12 +563,14 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
       reason: "a model call failed during a background sync cycle",
     });
     if (consecutiveFaults < faultThreshold) return;
-    withheldUntilMs = now().getTime() + cooldownMs;
+    // The withhold is measured MONOTONIC (a clock stepped back would extend it by the step); the
+    // line states the instant on the wall clock, where a person reads it.
+    withheldUntilMs = monotonic() + cooldownMs;
     opts.log("ai_routing_unavailable", {
       kind: store.provider ?? "none",
       consecutiveFaults,
       cooldownMs,
-      retryAt: withheldUntilMs,
+      retryAt: now().getTime() + cooldownMs,
       reason: "consecutive model faults — routing continues on rules alone and mail keeps "
         + "arriving; the model is asked again after the cooldown",
     });
@@ -783,7 +788,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
 
     classifierForCycle() {
       if (blockedBy(store) !== null) return undefined;
-      if (withheldUntilMs > now().getTime()) return undefined;
+      if (withheldUntilMs > monotonic()) return undefined;
       return cycleClassifier;
     },
   };

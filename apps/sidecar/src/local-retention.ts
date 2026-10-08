@@ -13,11 +13,14 @@ import type { Diagnostic } from "./log.js";
  */
 export const LOCAL_RETENTION_EVERY_MS = 60 * 60 * 1000;
 
-/** When each store last ran it, keyed by the store's handle — per store, not per mailbox. */
+const monotonicNow = (): number => performance.now();
+
+/** When each store last ran it, keyed by the store's handle — per store, not per mailbox. A
+ *  monotonic reading: a wall clock stepped back would skip the pass for the length of the step. */
 const lastRunAt = new WeakMap<object, number>();
 
 /** Is a pass owed on this store now? Asked before the upkeep enters the ingest's lane. */
-export function localRetentionDue(db: object, clock: () => number = Date.now): boolean {
+export function localRetentionDue(db: object, clock: () => number = monotonicNow): boolean {
   return !ingestIsRunning() && clock() - (lastRunAt.get(db) ?? -Infinity) >= LOCAL_RETENTION_EVERY_MS;
 }
 
@@ -26,7 +29,7 @@ export function localRetentionDue(db: object, clock: () => number = Date.now): b
  * Contained — a failure is logged and the next due drain asks again; the floor only rises.
  */
 export async function runLocalRetention(
-  db: Tx, accountId: string, now: Date, log: Diagnostic, clock: () => number = Date.now,
+  db: Tx, accountId: string, now: Date, log: Diagnostic, clock: () => number = monotonicNow,
 ): Promise<void> {
   lastRunAt.set(db, clock());
   try {

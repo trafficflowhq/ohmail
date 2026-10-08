@@ -1355,16 +1355,16 @@ export const redialStepMs = (profile: ReconnectProfile, attempt: number): number
  * wait can never be the thing that holds a process open.
  */
 export async function settledWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
-  /* THE DEADLINE IS A WALL-CLOCK INSTANT, AND THE TIMER IS RE-ARMED AGAINST IT.
+  /* THE DEADLINE IS A MONOTONIC INSTANT, AND THE TIMER IS RE-ARMED AGAINST IT.
    * `setTimeout` schedules against the event loop's cached clock, which is not refreshed while
-   * synchronous work runs, so a single-shot timer can fire up to a millisecond before `Date.now()`
-   * reaches the deadline — a bounded wait that returns early is a bound that does not hold, and
-   * `detach()` measured it as a 299 against the 300 ms interval it promises. */
-  const deadline = Date.now() + Math.max(0, ms);
+   * synchronous work runs, so a single-shot timer can fire up to a millisecond before the clock
+   * reaches the deadline — `detach()` measured a 299 against the 300 ms it promises. Monotonic,
+   * because a wall clock stepped back inside the wait re-armed it for the length of the step. */
+  const deadline = performance.now() + Math.max(0, ms);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const elapsed = new Promise<false>((resolve) => {
     const arm = (): void => {
-      const left = deadline - Date.now();
+      const left = deadline - performance.now();
       if (left <= 0) { resolve(false); return; }
       timer = setTimeout(arm, left);
       timer.unref?.();
@@ -1912,6 +1912,10 @@ async function pullMailboxIds(req: Request): Promise<string[] | null> {
 export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const log = config.log ?? ((): void => undefined);
   const now = config.now ?? ((): Date => new Date());
+  /* HOW LONG SINCE, as opposed to WHEN: every interval this engine measures in memory (a pass's
+     cadence, a stop's budget, the lease bound's duration) reads this, so a wall clock stepped back
+     neither skips a pass nor stretches a wait. A time that is stored or shown stays on `now`. */
+  const monotonic = config.monotonic ?? ((): number => performance.now());
   const address = config.address ?? config.imap.auth.user;
   /* WHAT THIS COMPOSITION CLAIMS AS, resolved ONCE. Hoisted to this scope because two readers now
      need it and `?? "local"` written twice is the "absent config selects the dangerous branch"
@@ -2069,6 +2073,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       canStoreKey: durableKey,
       log,
       now,
+      monotonic,
       ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
     });
     /* `localAutoSuggestRoutes` is mounted HERE and nowhere else, which is what makes "this door
@@ -2675,19 +2680,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     let namesCursor: string | undefined;
     let namesDone = false;
+    /** A pass last run at `at` on the monotonic clock is due once `everyMs` has passed; `null`
+     * (not yet in THIS launch) is due, so a launch's first drain takes one look. */
+    const passDue = (at: number | null, everyMs: number): boolean => at === null || monotonic() - at >= everyMs;
     /** When the thread-join heal last ran in THIS launch — it repairs presentation, not a
      * promise, so once per {@link LOCAL_JOIN_HEAL_EVERY_MS} is plenty and a busy drain never
-     * pays its GROUP BY. Zero so a launch's first drain takes one look (splits accumulated
+     * pays its GROUP BY. Unset so a launch's first drain takes one look (splits accumulated
      * while the app was closed), exactly the worker's gate seeding. */
-    let lastJoinHealAt = 0;
-    /** When the correspondent retro last ran in THIS launch — zero, so a launch's first drain
+    let lastJoinHealAt: number | null = null;
+    /** When the correspondent retro last ran in THIS launch — unset, so a launch's first drain
      * releases whoever it wrote to while the app was closed; then once per
      * `CORRESPONDENT_RETRO_EVERY_MS`, the hosted cadence. */
-    let lastCorrespondentRetroAt = 0;
+    let lastCorrespondentRetroAt: number | null = null;
     /** When the inbound-quiet pass last ran in THIS launch — same seeding and cadence
-     * (`LOCAL_INBOUND_QUIET_EVERY_MS`) as the heal above: zero so a launch's first drain takes
-     * one look at what went quiet while the app was closed. */
-    let lastInboundQuietAt = 0;
+     * (`LOCAL_INBOUND_QUIET_EVERY_MS`) as the heal above. */
+    let lastInboundQuietAt: number | null = null;
     /** Where the last gated heal walk stopped, kept only while it stopped on its BUDGET — a
      * refused group never leaves the candidate predicate, so restarting from the top every six
      * hours would rescan the same refusals for ever and never reach the groups past the cap.
@@ -4062,9 +4069,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const noteCycleFailed = (err: unknown): void => {
         if (stopped) return;                       // see `noteCycleServed`
         if (!isConnectionFailure(err)) return;
-        leaseUnavailableSince ??= Date.now();
+        leaseUnavailableSince ??= monotonic();
         leaseUnavailableCycles += 1;
-        const unavailableMs = Date.now() - leaseUnavailableSince;
+        const unavailableMs = monotonic() - leaseUnavailableSince;
         const due = unavailableMs >= reconnect.deadAfterMs
           || leaseUnavailableCycles >= reconnect.deadAfterCycles;
         if (!due || connectionDeadSince !== null) return;
@@ -4167,7 +4174,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * the window as the only evidence, and reading it the other way would disarm the detector.
          */
         const heardMs = who.lastServerActivityAt?.()?.getTime() ?? null;
-        if (heardMs !== null && now().getTime() - heardMs < heartbeatTimeoutMs) {
+        // A wall-clock stamp a window or more AHEAD predates a clock stepped back: silence too.
+        if (heardMs !== null && Math.abs(now().getTime() - heardMs) < heartbeatTimeoutMs) {
           log("mailbox_heartbeat_deferred", {
             mailboxId: mb.id,
             totalMs: heartbeatTimeoutMs,
@@ -4207,9 +4215,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const running = heartbeatInFlight;
         if (running !== null) { await running; return; }
         const last = heartbeatSettledAtMs;
-        if (last !== null && now().getTime() - last < heartbeatTimeoutMs) return;
+        if (last !== null && monotonic() - last < heartbeatTimeoutMs) return;
         const run = probeConnection().finally(() => {
-          heartbeatSettledAtMs = now().getTime();
+          heartbeatSettledAtMs = monotonic();
           heartbeatInFlight = null;
         });
         heartbeatInFlight = run;
@@ -4360,8 +4368,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /** Set only where {@link LocalMailboxRuntime.quiesce} is what stopped this runtime. */
       let heldForRemoval = false;
       const stopLeft = (): number => {
-        stopStartedAt ??= Date.now();
-        return stopStartedAt + detachWaitMs - Date.now();
+        stopStartedAt ??= monotonic();
+        return stopStartedAt + detachWaitMs - monotonic();
       };
 
       // The organizer lease — the LOCAL half. A local install cannot query the hosted database
@@ -5480,7 +5488,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // beside a fixed believability cutoff is silently the smaller of the two.
           leasePermit = await acquireLeasePermit({
             ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now,
-            monotonic: config.monotonic ?? ((): number => performance.now()),
+            monotonic,
             /* ── A RENEWAL THIS INSTALL PERFORMED IS THIS INSTALL'S CLAIM ─────────────────
              *
              * The permit re-reads past its deadline or its write count, and a re-read RENEWS:
@@ -6195,8 +6203,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              like the join heal, and CONTAINED: held mail stays held and the next gated drain asks. */
           tail.phase("correspondent-retro");
           const correspondentRetroDue = async (): Promise<void> => {
-            if (Date.now() - lastCorrespondentRetroAt < CORRESPONDENT_RETRO_EVERY_MS) return;
-            lastCorrespondentRetroAt = Date.now();
+            if (!passDue(lastCorrespondentRetroAt, CORRESPONDENT_RETRO_EVERY_MS)) return;
+            lastCorrespondentRetroAt = monotonic();
             try {
               const r = await screenerCorrespondentRetroPass(db as unknown as Tx, { accountId: world.accountId, now });
               if (r.released > 0 || r.retired > 0 || r.learned > 0) {
@@ -6236,8 +6244,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              the same checkpoint. A failure is CONTAINED like every pass above: threads stay
              split, mail keeps arriving, the next gated drain asks again. */
           tail.phase("thread-join-heal");
-          if (Date.now() - lastJoinHealAt >= LOCAL_JOIN_HEAL_EVERY_MS) {
-            lastJoinHealAt = Date.now();
+          if (passDue(lastJoinHealAt, LOCAL_JOIN_HEAL_EVERY_MS)) {
+            lastJoinHealAt = monotonic();
             try {
               const r = await threadJoinHealPass({
                 db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
@@ -6272,8 +6280,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              place. A failure is CONTAINED like every pass above: episodes already stamped stand,
              mail keeps arriving, the next gated drain asks again. */
           tail.phase("inbound-quiet");
-          if (Date.now() - lastInboundQuietAt >= LOCAL_INBOUND_QUIET_EVERY_MS) {
-            lastInboundQuietAt = Date.now();
+          if (passDue(lastInboundQuietAt, LOCAL_INBOUND_QUIET_EVERY_MS)) {
+            lastInboundQuietAt = monotonic();
             try {
               const r = await inboundQuietPass(db as unknown as Tx, now(), { accountId: world.accountId });
               if (r.tripped > 0 || r.cleared > 0) {
@@ -6796,7 +6804,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                credential) must not leave every later ring answering "already queued". */
             .finally(() => { if (kick) ringQueued = false; schedule(); });
         }, due);
-        timerDueAt = Date.now() + due;
+        timerDueAt = monotonic() + due;
         timer.unref?.();
       };
 
@@ -6824,7 +6832,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (stopped || handedBack) return;
         idlePollMs = pollIntervalMs;
         if (wakePending) return;
-        if (timerDueAt - Date.now() > pollIntervalMs) schedule(pollIntervalMs);
+        if (timerDueAt - monotonic() > pollIntervalMs) schedule(pollIntervalMs);
       };
 
       /**
@@ -7859,7 +7867,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           log("mailbox_detach_forced", {
             mailboxId: mb.id,
             pollIntervalMs: detachWaitMs,
-            totalMs: Date.now() - startedAt,
+            totalMs: Math.round(monotonic() - startedAt),
             reason: "this mailbox did not let go within one drain interval — the cycle, the " +
               "re-dial or the logout was waiting on a link that answers nothing, which is what " +
               "a half-open link produces — so the connection was destroyed and the stop " +

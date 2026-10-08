@@ -59,8 +59,8 @@ export const BACKLOG_PAGE_LIMIT = 2000;
  * accepted. Absent is STALE here and `unknown` in {@link mirrorFreshness}, and that is why both
  * functions exist: for the RESUME a stampless mirror must read stale — the cost of wrong is one
  * snapshot page versus a whole oldest-first replay; for the LABEL it must read unknown — there is
- * no time to put in "as of …". An unparseable stamp reads stale: it is the driver's own write,
- * answered by freshening and re-stamping. The caller supplies the cold/bootstrap gate.
+ * no time to put in "as of …". An unparseable stamp, or one in the FUTURE (the clock stepped back
+ * since), reads stale: one freshen, then the drain re-stamps it. The caller supplies the cold gate.
  */
 export function mirrorStale(
   lastDrainAt: string | null | undefined,
@@ -69,7 +69,7 @@ export function mirrorStale(
 ): boolean {
   if (lastDrainAt === undefined || lastDrainAt === null) return true;
   const t = Date.parse(lastDrainAt);
-  return Number.isNaN(t) || now.getTime() - t > staleMs;
+  return Number.isNaN(t) || t > now.getTime() || now.getTime() - t > staleMs;
 }
 
 /**

@@ -52,7 +52,7 @@ export function createHostPower(opts: {
   now?: () => number;
   readState?: () => HostPowerState;
 } = {}): () => PowerVerdict {
-  const now = opts.now ?? Date.now;
+  const now = opts.now ?? ((): number => performance.now());   // a cache age; monotonic
   const readState = opts.readState
     ?? (() => (process.platform === "linux" ? readPowerSupplies() : "unknown"));
   let last: { state: HostPowerState; at: number } | null = null;
