@@ -2824,6 +2824,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
 
     const take: number[] = [];
+    /** No RFC822.SIZE stated: fetched one at a time after `take` ({@link fetchUnsized}). */
+    const unsized: number[] = [];
     /** Refused from RFC822.SIZE alone — see {@link ChangeBatch.oversize}. Never fetched. */
     const oversize: Array<{ uid: number; size: number }> = [];
     let bytes = 0;
@@ -2850,12 +2852,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // behind — a first scan that could not finish). Skipping keeps filling the batch with what
       // fits: the pass stays truncated, the unknown set strictly shrinks, and the skipped message
       // is admitted the moment it reaches the front.
-      /* A SIZE THE SERVER DID NOT STATE is charged at the most it may be, so such a message is
-         fetched alone and its own cap ({@link messageOverrunCeiling}) bounds what it costs. */
-      const charged = size > 0 ? size : MAX_RAW_MESSAGE_BYTES;
-      if (take.length > 0 && bytes + charged > budget.bytes) { truncated = true; continue; }
+      if (size <= 0) { unsized.push(uid); continue; }
+      if (take.length > 0 && bytes + size > budget.bytes) { truncated = true; continue; }
       take.push(uid);
-      bytes += charged;
+      bytes += size;
     }
     // A message refused on size still arrives as its header block, so it is listed and routed;
     // only a UID whose block did not come back whole stays the caller's `oversize` obligation.
@@ -2863,10 +2863,83 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     fetched.push(...heads);
     const headed = new Set(heads.map((h) => h.uid));
     const unheaded = oversize.filter((o) => !headed.has(o.uid));
-    if (take.length === 0) {
+    if (take.length === 0 && unsized.length === 0) {
       fetched.sort((a, b) => (dates.get(b.uid) ?? 0) - (dates.get(a.uid) ?? 0) || b.uid - a.uid);
       return { fetched, truncated, unanswered: [], oversize: unheaded, budgetSpent: false };
     }
+    const bodyDeadline = this.readDeadline();
+    const unanswered = take.length === 0
+      ? [] : await this.fetchSized(fetched, take, sizes, folder, curUidValidity, bodyDeadline);
+    const rest = await this.fetchUnsized(fetched, unsized, folder, curUidValidity, budget.bytes, bodyDeadline);
+    if (rest.truncated) truncated = true;
+    unanswered.push(...rest.unanswered);
+    fetched.sort((a, b) => (dates.get(b.uid) ?? 0) - (dates.get(a.uid) ?? 0) || b.uid - a.uid);
+    return { fetched, truncated, unanswered, oversize: unheaded, budgetSpent: false };
+  }
+
+  /**
+   * UNSIZED MESSAGES, ONE `UID FETCH` EACH. Charged at the MIME ceiling inside the sized take, a
+   * server stating no RFC822.SIZE gave one message per folder per pass. Each is fetched alone
+   * under its own cap ({@link messageOverrunCeiling}), the bytes that ARRIVED are charged against
+   * what the pass has left, and the next is asked only while some is left: the pass overshoots
+   * by at most one message's cap, the bound the first admission already had. A row the server
+   * withholds is re-asked as {@link fetchSized} does; still absent, it is `unanswered`.
+   */
+  private async fetchUnsized(
+    fetched: InternalCreate[], unsized: readonly number[], folder: string, curUidValidity: bigint,
+    passBytes: number, deadline: ImapDeadline,
+  ): Promise<{ truncated: boolean; unanswered: number[] }> {
+    let spent = fetched.reduce((n, f) => n + f.raw.length, 0);
+    const unanswered: number[] = [];
+    for (let i = 0; i < unsized.length; i++) {
+      if (spent >= passBytes) return { truncated: true, unanswered };
+      const uid = unsized[i]!;
+      let got = undefined as InternalCreate | undefined;
+      const row = (m: FetchMessageObject, envelope: boolean): void => {
+        deadline.check(folder);
+        const raw = (m.source ?? Buffer.alloc(0)) as Buffer;
+        if (raw.length > messageOverrunCeiling(undefined)) {
+          const because = new ImapBoundExceeded(
+            "body_overrun", messageOverrunCeiling(undefined), raw.length, folder,
+            { uidValidity: String(curUidValidity), uid: m.uid },
+          );
+          this.retireConnection(because);
+          throw because;
+        }
+        if (m.uid !== uid || got !== undefined) return;
+        got = {
+          folder, uidValidity: curUidValidity, uid, raw,
+          seen: m.flags?.has("\\Seen") ?? false,
+          messageId: envelope ? normalizeMessageId(m.envelope?.messageId ?? null) : messageIdFromRaw(raw),
+          ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
+            ? { internalDate: m.internalDate }
+            : {}),
+          ...structureField(m.bodyStructure),
+        };
+      };
+      for await (const m of this.client.fetch(
+        [uid], { uid: true, flags: true, envelope: true, source: true, internalDate: true, bodyStructure: true }, { uid: true },
+      )) row(m, true);
+      if (got === undefined) {
+        for await (const m of this.client.fetch(
+          [uid], { uid: true, flags: true, source: true, internalDate: true, bodyStructure: true }, { uid: true },
+        )) row(m, false);
+      }
+      if (got === undefined) {
+        for await (const m of this.client.fetch([uid], STRUCTURE_FREE_LAST_RESORT, { uid: true })) row(m, false);
+      }
+      if (got === undefined) { unanswered.push(uid); continue; }
+      fetched.push(got);
+      spent += got.raw.length;
+    }
+    return { truncated: false, unanswered };
+  }
+
+  /** The sized take's body fetch, byte-accounted against what each message declared. */
+  private async fetchSized(
+    fetched: InternalCreate[], take: number[], sizes: ReadonlyMap<number, number>, folder: string,
+    curUidValidity: bigint, bodyDeadline: ImapDeadline,
+  ): Promise<number[]> {
 
     /**
      * The byte budget above trusts a number the server chose — the literal-length arm. Everything
@@ -2879,10 +2952,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      * un-buffer the liar itself. {@link IMAP_BODY_OVERRUN_FACTOR} carries the numbers.
      */
     const declaredTotal = take.reduce((sum, uid) => sum + (sizes.get(uid) ?? 0), 0);
-    const undeclared = take.filter((uid) => (sizes.get(uid) ?? 0) <= 0).length;
-    const batchCeiling = bodyOverrunCeiling(declaredTotal) + undeclared * MAX_RAW_MESSAGE_BYTES;
+    const batchCeiling = bodyOverrunCeiling(declaredTotal);
     let streamedBytes = 0;
-    const bodyDeadline = this.readDeadline();
 
     for await (const m of this.client.fetch(
       take,
@@ -3009,9 +3080,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       }
       unanswered = withheld.filter((u) => !answered.has(u));
     }
-
-    fetched.sort((a, b) => (dates.get(b.uid) ?? 0) - (dates.get(a.uid) ?? 0) || b.uid - a.uid);
-    return { fetched, truncated, unanswered, oversize: unheaded, budgetSpent: false };
+    return unanswered;
   }
 
   /**
