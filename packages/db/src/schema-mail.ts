@@ -903,7 +903,8 @@ export const folderState = pgTable("folder_state", {
    * When a DECISION about this message's placement was placed (mail 0145): the press's floor (the
    * server clock minus the press age) when the request carried one, else the server's now. A press
    * replayed past its idempotency record is refused when this is later than its floor. NULL admits
-   * (rows decided before the column). The worker's observations never write it.
+   * (rows decided before the column). Of the worker's observations only the adoption of a move made
+   * in another mail client writes it: a lower bound of when the person moved it, or NULL.
    */
   decidedAt: timestamp("decided_at", { withTimezone: true }),
 }, (t) => ({
