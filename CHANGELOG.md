@@ -167,9 +167,12 @@ look, instead of as a wrong password. Remote servers keep the 20-second check. O
 ### A name claiming a company from another address waits at the Screener
 <!-- changes: fix-026-impersonation.md -->
 
-A first-time mail whose sender name claims a company on ohmail's list, from an address that is not
-that company's, now waits at the Screener and says so. Decisions about everyone at a shared mail
-provider are made per address.
+Mail whose sender name, address before the @ or subject opening claims a company on ohmail's list,
+from an address that is not that company's, now waits at the Screener and says so, also when only a
+rule for the whole domain, a rule ohmail learned or a contact it added would have let it in. A rule
+or contact you made for that exact address still lets it through. Mail from your own addresses keeps
+its place and still shows the warning. Decisions about everyone at a shared mail provider are made
+per address.
 
 ### Still to come
 

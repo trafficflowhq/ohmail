@@ -458,19 +458,19 @@ function isKnownAuthor(author: string | null, knownSenders: ReadonlySet<string>)
  * CONSENT GIVEN BY A PERSON ABOUT THIS ADDRESS — the only thing the identity fact yields to: an
  * enabled allow `sender` rule a person wrote (`manual`, `migrated`, the Sent seed) naming the
  * author, or a contact a person's act wrote. A `promoted` rule (the act on suggestions, learning),
- * a domain or header rule, an inferred contact and the account's own address are inference; a
- * person's Screener press consents through the person contact it writes. For an own address only
- * the rule half counts: a contacts row for your own address is not consent to be impersonated.
+ * a domain or header rule and an inferred contact are inference; a person's Screener press consents
+ * through the person contact it writes. The account's own mail never asks: {@link evaluateRules}
+ * keeps it out of the hold, and an own `From` that fails authentication is screened by `auth`.
  */
 const PERSON_WRITTEN: ReadonlySet<Rule["provenance"]> = new Set(["manual", "migrated", "seeded-from-sent"]);
 function addressLevelConsent(
-  author: string | null, rules: readonly Rule[], known: KnownSenders, own: boolean,
+  author: string | null, rules: readonly Rule[], known: KnownSenders,
 ): boolean {
   if (author === null) return false;
   const byRule = rules.some((r) => r.enabled && r.kind === "sender" && r.effect !== "deny"
     && effectForDestination(r.destination) === "allow" && PERSON_WRITTEN.has(r.provenance) && namesAuthor(r, author));
   if (byRule) return true;
-  return !own && known.addresses.has(author) && !known.inferred.has(author);
+  return known.addresses.has(author) && !known.inferred.has(author);
 }
 
 /**
@@ -1188,9 +1188,9 @@ function policyDemotion(
  * this sender, whether or not a term claimed THIS message; (3) a POSITIVE authenticated-known check;
  * (4) fail closed to `ohmail/Screener` for an unknown, absent, unparseable or ambiguous sender, never
  * an own address; (5) THEN {@link headerHeuristic}, refinement only. The identity fact holds every
- * admission in (1)-(3) no person gave at the address level, below every denial and the `"fail"`
- * screen; `"fail"` screens what is otherwise allowed and never weakens a DENY. One refinement,
- * {@link policyDemotion}, between allow-side piles only, `matchedRuleId: null` (no consent taught).
+ * admission in (1)-(3) no person gave at the address level, own mail apart, below every denial and
+ * the `"fail"` screen; `"fail"` screens what is otherwise allowed and never weakens a DENY. One
+ * refinement, {@link policyDemotion}, between allow-side piles, `matchedRuleId: null` (no consent taught).
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   const { msg, knownSenders, auth, ohboxPolicy, ownAddresses, identity } = input;
@@ -1208,9 +1208,10 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   /* THE IDENTITY FACT HOLDS WHAT ONLY INFERENCE ADMITTED. A name claiming a brand from an address
      the brand does not own waits at the Screener unless a PERSON consented to this address; the
      hold is the gate's own verdict (`source: "screener"`, no rule), so the backlog cutoff and the
-     import hold read it as they read any hold. Denials stand above it. */
-  const own = author !== null && ownAddresses.has(author.toLowerCase());
-  const hold = identity !== null && !addressLevelConsent(author, rules, knownSenders, own);
+     import hold read it as they read any hold. Denials stand above it. It never holds the account's
+     own mail, which keeps its place with the fact riding; an own `From` failing authentication is
+     screened by `auth` as before. */
+  const hold = identity !== null && !ownMail && !addressLevelConsent(author, rules, knownSenders);
   const rides = identity !== null ? { identity } : {};
 
   const winner = winningRule(rules, msg, author);
@@ -1235,14 +1236,14 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   if (standing && effectForDestination(standing.destination) === "deny") {
     return { destination: standing.destination, matchedRuleId: standing.id, source: "rule" };
   }
-  // One line for a standing allow, an inferred contact, the account's own address and a stranger.
+  // One line for a standing allow, an inferred contact and a stranger.
   if (hold) return { ...screened, ...rides };
   if (standing === null && !isKnownAuthor(author, knownSenders.addresses)) {
     /* THE ACCOUNT ITSELF IS NOT FIRST CONTACT: its own mail keeps the place the mailbox gave it
        (`destination: null`, `source: "own"` — no pile, no AI question), where every other mail
        program and a person who has left ohmail expect it. `fail` still screens: a forged own
        `From` is not the account's mail. */
-    if (ownMail) return { destination: null, matchedRuleId: null, source: "own" };
+    if (ownMail) return { destination: null, matchedRuleId: null, source: "own", ...rides };
     return screened;
   }
   if (auth === "fail") return { ...screened, ...rides };
