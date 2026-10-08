@@ -13,6 +13,35 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The Linux app no longer crashes at launch without GPU rendering
+<!-- changes: fix-026-issue-9-webkit-crash.md -->
+
+On systems where WebKitGTK runs without GPU rendering, such as some NVIDIA setups, the Linux app
+crashed about a second after its window appeared. The theme change now fades without the API that
+triggered the crash.
+
+### On Android, a long html message scrolls with the reader
+<!-- changes: fix-026-phone-reader-frame-drag.md -->
+
+An html message used to sit in a box of its own inside the reader: a swipe that started on the
+message scrolled the box, and the rest of the conversation below it was reached only by swiping
+beside it. The message now takes its full height and the reader scrolls as one page, so swiping
+through a message reaches the end of the conversation, and the messages read on the way are marked
+read. A message too tall to draw that way is shown as text, with the sentence an oversized message
+already shows.
+
+### Mail servers that do not state message sizes import faster
+<!-- changes: fix-026-sync-lows-1008.md -->
+
+On a mail server that does not report how large each message is, a sync pass now takes up to a full
+batch instead of one message per folder.
+
+### Warnings show in the warning colour again
+<!-- changes: fix-026-identity-lows.md -->
+
+The warnings in the subject rule sheet, under a tag name that is already taken and on a folder whose
+change did not go through are drawn in the warning colour again instead of grey.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
