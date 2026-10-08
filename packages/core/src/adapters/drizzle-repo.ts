@@ -586,10 +586,14 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   /**
    * THE LOCAL BACKSTOP'S RUN, from the store: how many unresolved write-offs under `version` were
    * first written after the newest message this mailbox stored (at most `cap`), and — where that
-   * is `cap` — when the cap-th newest was written. Reads at most `cap` failure rows, and the
-   * messages only once `cap` of them wait. OPTIONAL: a repo without it counts in memory.
+   * is `cap` — when the cap-th newest was written. Reads at most `cap` failure rows; the newest
+   * stored message is read only when a counted row exists and the caller passed no `newestStored`,
+   * and then returned so the caller can keep it. OPTIONAL: a repo without it counts in memory.
    */
-  writeOffRun?(mailboxId: string, version: string, cap: number, exemptCodes: readonly string[]): Promise<{ count: number; heldSince: Date | null }>;
+  writeOffRun?(
+    mailboxId: string, version: string, cap: number, exemptCodes: readonly string[],
+    newestStored?: { at: Date | null },
+  ): Promise<{ count: number; heldSince: Date | null; newestStored?: { at: Date | null } }>;
   /**
    * Record (or re-record) one failure, and return the row's attempt count after the write.
    *
@@ -1075,7 +1079,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
      (the worker's HOLD_EXEMPT_CODES) never count, and the exclusion is in the WHERE so the `cap`
      newest rows are all of the counted class. Required and never empty: an empty list is today's
      defect restored in silence, so it throws. */
-  async writeOffRun(mailboxId: string, version: string, cap: number, exemptCodes: readonly string[]): Promise<{ count: number; heldSince: Date | null }> {
+  async writeOffRun(
+    mailboxId: string, version: string, cap: number, exemptCodes: readonly string[],
+    newestStored?: { at: Date | null },
+  ): Promise<{ count: number; heldSince: Date | null; newestStored?: { at: Date | null } }> {
     if (!Array.isArray(exemptCodes) || exemptCodes.length === 0) {
       throw new Error("writeOffRun needs the codes the hold never counts (HOLD_EXEMPT_CODES); an empty list would count every set-aside message toward the hold");
     }
@@ -1084,10 +1091,18 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         eq(messageFailures.attemptedVersion, version), notInArray(messageFailures.code, [...exemptCodes])))
       .orderBy(desc(messageFailures.firstFailedAt)).limit(Math.max(1, cap));
     if (failed.length === 0) return { count: 0, heldSince: null };
-    const [stored] = await this.db.select({ at: messages.createdAt }).from(messages)
-      .where(eq(messages.mailboxId, mailboxId)).orderBy(desc(messages.createdAt)).limit(1);
-    const after = stored ? failed.filter((f) => f.at.getTime() > stored.at.getTime()) : failed;
-    return { count: after.length, heldSince: after.length >= cap ? after[cap - 1]!.at : null };
+    let read: { at: Date | null } | undefined;
+    if (newestStored === undefined) {
+      const [stored] = await this.db.select({ at: messages.createdAt }).from(messages)
+        .where(eq(messages.mailboxId, mailboxId)).orderBy(desc(messages.createdAt)).limit(1);
+      read = { at: stored?.at ?? null };
+    }
+    const at = (read ?? newestStored)!.at;
+    const after = at ? failed.filter((f) => f.at.getTime() > at.getTime()) : failed;
+    return {
+      count: after.length, heldSince: after.length >= cap ? after[cap - 1]!.at : null,
+      ...(read !== undefined ? { newestStored: read } : {}),
+    };
   }
 
   async listMessageFailures(mailboxId: string): Promise<MessageFailureRow[]> {

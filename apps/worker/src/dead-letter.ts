@@ -511,6 +511,14 @@ export function breachSetAside(err: unknown, ledger: Pick<DeadLetterLedger, "wro
  * The ledger itself: per mailbox, held on the `MailboxRuntime`'s `SyncDeps` so it lives as long as
  * the attachment does.
  */
+/** The store's run of write-offs ({@link DeadLetterLedger.hydrateRunFrom}): the repo's `writeOffRun`. */
+export interface WriteOffRunSource {
+  writeOffRun?(
+    mailboxId: string, version: string, cap: number, exemptCodes: readonly string[],
+    newestStored?: { at: Date | null },
+  ): Promise<{ count: number; heldSince: Date | null; newestStored?: { at: Date | null } }>;
+}
+
 export class DeadLetterLedger {
   private readonly items = new Map<string, MessageFailure>();
   private readonly maxAttempts: number;
@@ -529,6 +537,8 @@ export class DeadLetterLedger {
   /** Write-offs since the last stored message: as the store said at cycle start, and this cycle's. */
   private runBefore = 0;
   private runThisCycle = 0;
+  /** The store's newest stored message as last read; undefined until read or after one is stored. */
+  private newestStored: { at: Date | null } | undefined;
   /**
    * THE LOCAL BACKSTOP. The per-cycle cap assumes a failing cycle quarantines the mailbox; a local
    * engine has none, so a defect refusing every message would write the mail off as it arrives, at
@@ -589,8 +599,21 @@ export class DeadLetterLedger {
     this.heldSince = run.count >= this.perCycleCap ? (this.heldSince ?? run.heldSince ?? new Date()) : null;
   }
 
-  /** A message was stored: the run starts again and a hold is lifted. */
+  /**
+   * The run from the store, at the top of a cycle; nothing when the repo keeps no run. The newest
+   * stored message is read once and kept until {@link noteStored}: only a stored message moves it,
+   * so every idle cycle reused one reading instead of sorting the mailbox again.
+   */
+  async hydrateRunFrom(repo: WriteOffRunSource, mailboxId: string, version: string): Promise<void> {
+    if (typeof repo.writeOffRun !== "function") return;
+    const run = await repo.writeOffRun(mailboxId, version, this.perCycleCap, HOLD_EXEMPT_CODES, this.newestStored);
+    if (run.newestStored !== undefined) this.newestStored = run.newestStored;
+    this.hydrateRun(run);
+  }
+
+  /** A message was stored: the run starts again, a hold is lifted, the newest stored is read again. */
   noteStored(): void {
+    this.newestStored = undefined;
     this.runBefore = 0;
     this.runThisCycle = 0;
     this.heldSince = null;

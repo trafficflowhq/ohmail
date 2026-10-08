@@ -21,7 +21,7 @@ import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } fr
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, isStoreStatementFault, nextAttemptAfter,
-  DETERMINISTIC_MESSAGE_FAILURE_CODES, HOLD_EXEMPT_CODES, MAX_DEAD_LETTERS_PER_CYCLE, MAX_MESSAGE_RETRIES_PER_CYCLE,
+  DETERMINISTIC_MESSAGE_FAILURE_CODES, MAX_MESSAGE_RETRIES_PER_CYCLE,
   type MessageFailureCode,
 } from "./dead-letter.js";
 import { KnownSetCache, watchKnownSet } from "./known-set.js";
@@ -980,9 +980,7 @@ async function syncCycleWithin(
   // THE LOCAL BACKSTOP'S RUN, as the store has it (see `DeadLetterLedger.holdsAtCap`), so a hold
   // outlives a relaunch under this build's label and a new label starts the count again.
   const heldBefore = deadLetters.writeOffsHeldSince !== null;
-  if (deadLetters.holdsAtCap && typeof repo.writeOffRun === "function") {
-    deadLetters.hydrateRun(await repo.writeOffRun(mailboxId, version, MAX_DEAD_LETTERS_PER_CYCLE, HOLD_EXEMPT_CODES));
-  }
+  if (deadLetters.holdsAtCap) await deadLetters.hydrateRunFrom(repo, mailboxId, version);
 
   // ── USER-COMMANDED FOLDER OPERATIONS, FIRST (FOLDERS-SPEC.md stage 2) ──────────────────────
   //
