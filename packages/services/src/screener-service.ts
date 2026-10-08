@@ -2506,6 +2506,9 @@ async function markCorrespondents(
     const evidence = found.get(r.fromAddress.trim().toLowerCase());
     const signals = checked.get(r.messageId);
     if (!evidence || !signals) continue;
+    // An answer from an address the copy does not name, under a company's name, is no correspondent:
+    // the gate's term, read off this row's own name too, which the backfill may not have stored yet.
+    if (!evidence.named && signals.impersonation) continue;
     signals.correspondent = { sentAt: evidence.sentAt.toISOString() };
     if (signals.auth !== "fail") signals.reasonCode = "correspondent";
   }

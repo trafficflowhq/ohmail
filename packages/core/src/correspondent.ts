@@ -34,6 +34,14 @@ function outranks(ev: CorrespondentEvidence, held: CorrespondentEvidence | undef
   return !held || (ev.named && !held.named) || (ev.named === held.named && ev.sentAt > held.sentAt);
 }
 
+/**
+ * A held row whose identity fact is no company claim: the gate's term, and the retro's. Unchecked
+ * (NULL, older than the column) passes: the act checks its page first, the Screener reads the name.
+ */
+function notAClaimSql(m: typeof messages): SQL {
+  return sql`(${m.senderCheck} is null or ${m.senderCheck} <> 'impersonation')`;
+}
+
 /** Sent copies one `wrote` read may examine. The newest win, and they are what the answer needs. */
 export const CORRESPONDENT_SCAN_ROWS = 1000;
 
@@ -161,8 +169,8 @@ export const ANSWERING_HELD_PER_SENDER = 20;
  * THE EVIDENCE FOR EACH OF THESE SENDERS WITH ANY HELD MESSAGE ANSWERING THE ACCOUNT'S OWN WRITING,
  * not only the newest one the Screener shows: an answer held before its copy synced, then buried
  * under a newer mail citing nothing, keeps the act off the sender and is the retro's to release. A
- * row that FAILED authentication is not the sender's. One read per page, each sender's newest held
- * messages to a bound of their own, so a flood from one address buries nobody else's answer.
+ * row that FAILED authentication or carries a company claim is no answer. One read per page, each
+ * sender's newest held messages to a bound of their own, so one address's flood buries no other.
  */
 export async function sendersAnsweringOwnWriting(
   db: Tx, accountId: string, senders: readonly string[],
@@ -184,6 +192,7 @@ export async function sendersAnsweringOwnWriting(
       eq(folderState.desiredFolder, "ohmail/Screener"),
       isNull(messages.deletedAt),
       notFailedAuthSql(messages),
+      notAClaimSql(messages),
       inArray(sender, wanted),
     ))
     .as("an_held");
@@ -327,8 +336,9 @@ const sentAtOf = (r: { arrivedAt: Date | null; date: Date | null; createdAt: Dat
 
 /**
  * The message ids each sender's representative held message — the newest the Screener shows and
- * prices, never one that FAILED authentication — names in In-Reply-To/References: the reply arm's
- * question for a pass with no arriving message in hand. One row per sender, never a whole bag.
+ * prices, never one that FAILED authentication or carries a company claim — names in
+ * In-Reply-To/References: the reply arm's question for a pass with no arriving message in hand. One
+ * row per sender, never a whole bag.
  */
 async function heldReferences(
   db: Tx, accountId: string, senders: readonly string[],
@@ -351,6 +361,7 @@ async function heldReferences(
       eq(folderState.desiredFolder, "ohmail/Screener"),
       inArray(sender, [...senders]),
       notFailedAuthSql(messages),
+      notAClaimSql(messages),
     ))
     .as("co_reps");
   const rows = await db.select({ from: reps.from, inReplyTo: reps.inReplyTo, references: reps.references })
