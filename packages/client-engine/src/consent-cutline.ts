@@ -8,6 +8,7 @@ import {
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
+import { storeInstantOf } from "./store-pages.js";
 import {
   isOwnSent, isResurfaced, messagesByDateDesc, newestHeldBySender, queueCoverage, rulesList, screenerWaitingOf, senderKey,
 } from "./selectors.js";
@@ -418,11 +419,14 @@ function heldAheadOfTheCopy(reader: EntityReader, messages: readonly EngineMessa
 }
 const NO_SENDERS: ReadonlySet<string> = new Set();
 
-/** The senders a claim at the gate is held for (mail 0147) — the server's `senderHasHeldClaimSql`. */
-function sendersWithAHeldClaim(messages: readonly EngineMessage[]): ReadonlySet<string> {
+/** The senders a claim at the gate is held for inside the cutline, dated by the arrival key (mail 0147, 0148) — the
+ *  server's `senderHasHeldClaimSql` with its cutoff. */
+function sendersWithAHeldClaim(messages: readonly EngineMessage[], cutoff: number): ReadonlySet<string> {
   const out = new Set<string>();
   for (const m of messages) {
-    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation") out.add(senderKey(m.from.address));
+    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && storeInstantOf(m) >= cutoff) {
+      out.add(senderKey(m.from.address));
+    }
   }
   return out;
 }
@@ -490,9 +494,12 @@ export function senderActivity(
     // row with no instant read "not recent" and its sender retired under the one setting that
     // means "retire nobody". Every dated row reaches the same answer either way.
     if (allTime) { out.set(key, "active"); continue; }
-    // A claim the gate holds keeps its sender active however old its Date (mail 0148): the server's
-    // `senderHasHeldClaimSql` term, so the queue, the counts and this partition agree.
-    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation") { out.set(key, "active"); continue; }
+    // A claim the gate holds inside the cutline keeps its sender active, dated by its arrival key and
+    // never by its Date (mail 0148): the server's `heldClaimInsideSql`, so queue, counts and partition agree.
+    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && storeInstantOf(m) >= cutoff) {
+      out.set(key, "active");
+      continue;
+    }
     const ms = messageMs(m);
     const recent = ms !== null && ms >= cutoff;
     // Baselined ⇒ unread only counts inside the window. Absent ⇒ unread outranks age, exactly as
@@ -512,7 +519,6 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const own = ownAddressKeys(reader, opts);
   const notWaiting = storeSaysNotWaiting(reader, messages);
   const heldAhead = heldAheadOfTheCopy(reader, messages);
-  const heldClaim = sendersWithAHeldClaim(messages);
   /* The user's own folders, when "Use folders" is on (FOLDERS-SPEC.md
    * §16.5). Two gates, both must say yes: the caller's
    * {@link ConsentOptions.foldersEnabled} (the account's consent answer —
@@ -543,6 +549,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   // own-sent branch below. One call, so the two halves of the partition cannot disagree about
   // where the cutline is.
   const { cutoff } = cutlineFor(opts);
+  const heldClaim = sendersWithAHeldClaim(messages, cutoff);
 
   const placeOf = new Map<string, Folder | null>();
   /** Messages whose sender is consented, by thread — the anchor the thread rule uses. */

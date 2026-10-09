@@ -104,7 +104,7 @@ services:
       - caddy_config:/config
 
   web:
-    image: ghcr.io/trafficflowhq/ohmail-web:${OHMAIL_IMAGE_TAG:-0.25.18}
+    image: ghcr.io/trafficflowhq/ohmail-web:${OHMAIL_IMAGE_TAG:-0.25.19}
     restart: unless-stopped
     environment:
       # Where the web container's OWN session gate asks "is this cookie a live session?" —
@@ -121,7 +121,7 @@ services:
       start_period: 30s
 
   api:
-    image: ghcr.io/trafficflowhq/ohmail-server:${OHMAIL_IMAGE_TAG:-0.25.18}
+    image: ghcr.io/trafficflowhq/ohmail-server:${OHMAIL_IMAGE_TAG:-0.25.19}
     restart: unless-stopped
     depends_on:
       db:
@@ -227,7 +227,7 @@ services:
       start_period: 30s
 
   organizer:
-    image: ghcr.io/trafficflowhq/ohmail-worker:${OHMAIL_IMAGE_TAG:-0.25.18}
+    image: ghcr.io/trafficflowhq/ohmail-worker:${OHMAIL_IMAGE_TAG:-0.25.19}
     restart: unless-stopped
     depends_on:
       api:

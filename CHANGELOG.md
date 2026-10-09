@@ -53,6 +53,17 @@ written to at its usual hourly cadence, instead of holding it for as long as the
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.25.19] — 2026-10-09
+
+### Older mail no longer appears in the Screener
+<!-- changes: hotfix-026-screener-old-mail.md -->
+
+After the update to 0.25.18, the Screener listed older held mail again when the sender's name claims
+a company, some of it years old. That mail had been in the Screener folder all along; nothing was
+moved. Held mail from before your screening start no longer appears in the Screener; new mail is
+still held and listed when it arrives, and Screen no longer offers Inbox mail from senders you have
+already admitted.
+
 ## [0.25.18] — 2026-10-08
 
 ### The phone app's download is smaller
@@ -11758,7 +11769,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.18...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.19...HEAD
+[0.25.19]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.19
 [0.25.18]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.18
 [0.25.17]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.17
 [0.25.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.16

@@ -3,7 +3,7 @@ import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, type ScreeningScope } from "
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
-  activeSenderExpr, anyOf, CUTLINE_GATE_FOLDER, cutlineInstant, destinationIsDecisionSql, resolveCutline,
+  activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, heldClaimInsideSql, resolveCutline,
   ruleMatchKeySql, senderHasHeldClaimSql, senderIsDecidedSql, senderIsOwnSql,
 } from "@trafficflow/db";
 
@@ -178,9 +178,12 @@ export async function cutlineCounts(
              -- Activity is measured over all six presented folders (above); membership in the
              -- undecided counts is not. See UNDECIDED_RESIDENCES.
              ${anyOf(sql`fs.desired_folder in ${undecidedResidences}`)} as undecided_residence,
-             -- A claim the gate holds keeps its sender active however old its Date (mail 0148),
-             -- the queue's own term (senderHasHeldClaimSql), so the count and the list agree.
-             ${anyOf(sql`fs.desired_folder = ${CUTLINE_GATE_FOLDER} and m.deleted_at is null and m.sender_check = 'impersonation'`)}
+             -- A claim the gate holds inside the cutline, dated by its arrival (mail 0148): the
+             -- queue's own term (senderHasHeldClaimSql), so the count and the list agree.
+             ${anyOf(heldClaimInsideSql(d, {
+               folder: sql`fs.desired_folder`, deletedAt: sql`m.deleted_at`, senderCheck: sql`m.sender_check`,
+               date: sql`m.date`, arrivedAt: sql`m.arrived_at`,
+             }, cutoff))}
                as held_claim
         from messages m
         join folder_state fs on fs.message_id = m.id
@@ -198,14 +201,14 @@ export async function cutlineCounts(
              -- expression's own contribution is the CONTACT arm and the gate's defeat of it, which
              -- these CTEs do not have. A sender the queue refuses to list can never be one this
              -- count still calls first-time. (NO BACKTICKS in this template literal -- see above.)
-             -- A claim the gate holds makes a decided sender waiting again (mail 0147): the queue's
-             -- own term, so the count beside the Screener counts the sender its list shows.
+             -- A claim the gate holds inside the cutline makes a decided sender waiting again (mail
+             -- 0147, 0148): the queue's own term, so the count beside the Screener counts the sender its list shows.
              ((exists (select 1 from decided_sender r where r.m = i.addr)
               or (${d.strpos(sql`i.addr`, sql`'@'`)} > 0
                   and exists (select 1 from decided_domain dd
                                where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))
               or ${senderIsDecidedSql(d, ctx.accountId, sql`i.addr`)})
-              and not ${senderHasHeldClaimSql(d, ctx.accountId, sql`i.addr`)}) as decided,
+              and not ${senderHasHeldClaimSql(d, ctx.accountId, sql`i.addr`, cutoff)}) as decided,
              (${activeSenderExpr(d, resolved, {
                anyUnread: sql`i.any_unread`,
                anyUnreadInWindow: sql`i.any_unread_in_window`,
