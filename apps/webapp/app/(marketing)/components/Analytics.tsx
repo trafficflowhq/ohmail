@@ -9,12 +9,13 @@ import {
   CONSENT_DENIED, CONSENT_GRANTED, CONSENT_KEY, CONSENT_REOPEN_EVENT, gtagUrl,
 } from "../../../analytics.mjs";
 import { localStorageDoor } from "../../shell/durable";
+import { beginPageView, observeSections, reportPress, reportToggle } from "../site-events";
 
 /**
  * The website's visit statistics: a one-line notice, and Google's tag only after Accept. Mounted by
  * the marketing root only when the build carries an id, and rendered only on `MARKETING_PATHS` (the
  * same list the CSP widens for). Before a choice nothing is loaded and no press is reported; ads
- * signals are denied in every state. Events carry a placement or a platform, never a person.
+ * signals are denied in every state. What is reported, and with which labels, is `../site-events.ts`.
  */
 
 const DOOR = localStorageDoor("analytics");
@@ -75,18 +76,6 @@ function stopGtag(id: string): void {
   }
 }
 
-/** One delegated listener: `data-ga-lead` and `data-ga-download` mark the presses worth counting. */
-function reportPress(target: EventTarget | null): void {
-  if (!(target instanceof Element) || !window.gtag) return;
-  const lead = target.closest("[data-ga-lead]")?.getAttribute("data-ga-lead");
-  if (lead) {
-    window.gtag("event", "generate_lead", { method: "signup_cta", placement: lead });
-    return;
-  }
-  const platform = target.closest("[data-ga-download]")?.getAttribute("data-ga-download");
-  if (platform) window.gtag("event", "file_download", { platform, transport_type: "beacon" });
-}
-
 export function Analytics({ id }: { id: string }) {
   const pathname = usePathname();
   const t = useTranslations("analytics");
@@ -110,10 +99,18 @@ export function Analytics({ id }: { id: string }) {
   useEffect(() => {
     if (!granted) return;
     startGtag(id);
+    beginPageView();
     const onClick = (e: MouseEvent) => reportPress(e.target);
+    const onToggle = (e: Event) => reportToggle(e.target);
     document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
-  }, [granted, id]);
+    document.addEventListener("toggle", onToggle, true);
+    const stopSections = observeSections(document);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("toggle", onToggle, true);
+      stopSections();
+    };
+  }, [granted, id, pathname]);
 
   const decide = useCallback(
     (next: Choice) => {

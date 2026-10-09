@@ -19,7 +19,7 @@ const EXITS = ["fromCloud", "toDesktop", "out"] as const;
 export function LeaveAnytime() {
   const t = useTranslations("leave");
   return (
-    <section className="l-leave" id="leave" aria-labelledby="leave-title">
+    <section className="l-leave" id="leave" aria-labelledby="leave-title" data-ga-section="leave-anytime">
       <Reveal className="l-sec-head">
         <h2 id="leave-title" className="l-h2">
           {t("title")}

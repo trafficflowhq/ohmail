@@ -2259,7 +2259,7 @@
   },
   "analytics": {
     "label": "Visit statistics",
-    "notice": "May we count visits to this website with Google Analytics? Pages and clicks only — never your mail, never in the app.",
+    "notice": "May we count visits to this website with Google Analytics? Pages, sections seen and clicks only — never your mail, never in the app.",
     "more": "Details",
     "accept": "Accept",
     "decline": "Decline"

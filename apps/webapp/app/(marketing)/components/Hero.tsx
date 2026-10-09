@@ -38,7 +38,7 @@ export function Hero() {
   const door = t.rich("door", markTags());
 
   return (
-    <section className="l-hero" aria-labelledby="hero-title">
+    <section className="l-hero" aria-labelledby="hero-title" data-ga-section="hero">
       <h1 id="hero-title" className="l-hero-title l-rise" style={{ "--rise": "1" } as CSSProperties}>
         {lines.map((line, i) => (
           <Fragment key={line}>

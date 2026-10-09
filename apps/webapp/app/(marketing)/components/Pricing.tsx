@@ -42,7 +42,7 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
   const [interval, setInterval] = useState<"month" | "year">("month");
 
   return (
-    <section className="l-pricing" id="pricing" aria-labelledby="pricing-title">
+    <section className="l-pricing" id="pricing" aria-labelledby="pricing-title" data-ga-section="pricing">
       <Reveal className="l-sec-head">
         <h2 id="pricing-title" className="l-h2">
           {t("title")}

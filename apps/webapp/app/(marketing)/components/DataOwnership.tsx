@@ -21,7 +21,7 @@ const ROWS = ["Runs", "Copy", "Ai", "Cost"] as const;
 export function DataOwnership() {
   const t = useTranslations("data");
   return (
-    <section className="l-data" aria-labelledby="data-title">
+    <section className="l-data" aria-labelledby="data-title" data-ga-section="data-ownership">
       <Reveal className="l-sec-head">
         <h2 id="data-title" className="l-h2">
           {t("title")}

@@ -36,7 +36,7 @@ const ROWS: ReadonlyArray<{ id: string; link?: { href: string; key: string } }> 
 export function Compare() {
   const t = useTranslations("compare");
   return (
-    <section className="l-compare" aria-labelledby="compare-title">
+    <section className="l-compare" aria-labelledby="compare-title" data-ga-section="compare">
       <Reveal className="l-sec-head">
         <h2 id="compare-title" className="l-h2">
           {t("title")}

@@ -56,7 +56,7 @@ export function Landing({ publicSignup }: { publicSignup: boolean }) {
         <Hero />
         {SHOW_HERO_SPLIT ? <HeroSplit /> : null}
         <DemoSection />
-        <div className="l-features" id="product">
+        <div className="l-features" id="product" data-ga-section="features">
           <Views />
           <Screener />
           <AiSection />

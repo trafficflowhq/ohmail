@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
+import { reportSignupStep } from "../site-events";
 
 /**
  * The waitlist flow: email → tier preselect → success. It used to write `localStorage` and nothing
@@ -87,6 +88,7 @@ export function SignupProvider({ children }: { children: ReactNode }) {
     setInvalid(false);
     if (preselect) setTier(preselect);
     dialogRef.current?.showModal();
+    reportSignupStep("email");
   }, []);
 
   const close = useCallback(() => dialogRef.current?.close(), []);
@@ -99,6 +101,7 @@ export function SignupProvider({ children }: { children: ReactNode }) {
     }
     setInvalid(false);
     setStep("tier");
+    reportSignupStep("tier");
   };
 
   const join = async (e: FormEvent) => {
@@ -113,6 +116,7 @@ export function SignupProvider({ children }: { children: ReactNode }) {
     // than one that reports nothing.
     if (generation !== submission.current) return;
     setStep(ok ? "done" : "error");
+    if (ok) reportSignupStep("done");
   };
 
   return (

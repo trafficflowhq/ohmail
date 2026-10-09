@@ -10,7 +10,7 @@ import { FAQ_ANSWERS, FAQ_QUESTIONS, faqAnswerAnchor } from "../faq-anchors";
 export function Faq() {
   const t = useTranslations("faq");
   return (
-    <section className="l-faq" id="faq" aria-labelledby="faq-title">
+    <section className="l-faq" id="faq" aria-labelledby="faq-title" data-ga-section="faq">
       <Reveal>
         <h2 id="faq-title" className="l-h2">
           {t("title")}

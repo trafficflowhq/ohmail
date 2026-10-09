@@ -53,7 +53,10 @@ export default function PrivacyPage() {
             </p>
             <p>
               If you accept, Google receives the pages you open on this website,
-              the buttons you press to sign up or download, where you came from,
+              which of its sections you see, the buttons and links you press on it
+              (to choose a plan, sign up, download, open a question, switch language
+              or try the demo), the steps of its sign-up form you reach, how far
+              you scroll, where you came from,
               and your browser, device type and approximate location, along with
               two Google Analytics cookies that recognise a returning browser. No
               mail content, no address, no name and nothing you type is sent.

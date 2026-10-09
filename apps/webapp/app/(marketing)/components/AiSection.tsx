@@ -20,7 +20,7 @@ export function AiSection() {
   const [on, setOn] = useState(true);
 
   return (
-    <section className="l-ai" aria-labelledby="feat-ai">
+    <section className="l-ai" aria-labelledby="feat-ai" data-ga-section="ai">
       <div className="l-ai-top">
         <Reveal className="l-ai-copy">
           <h2 id="feat-ai" className="l-h2">

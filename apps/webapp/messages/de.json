@@ -2259,7 +2259,7 @@
   },
   "analytics": {
     "label": "Besuchsstatistik",
-    "notice": "Dürfen wir Besuche dieser Website mit Google Analytics zählen? Nur Seiten und Klicks — nie deine Mail, nie in der App.",
+    "notice": "Dürfen wir Besuche dieser Website mit Google Analytics zählen? Nur Seiten, gesehene Abschnitte und Klicks — nie deine Mail, nie in der App.",
     "more": "Details",
     "accept": "Akzeptieren",
     "decline": "Ablehnen"

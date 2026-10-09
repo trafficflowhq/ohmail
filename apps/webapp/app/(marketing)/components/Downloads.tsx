@@ -49,7 +49,7 @@ export function Downloads() {
   }, []);
 
   return (
-    <section className="l-dl" id="download" aria-labelledby="dl-title">
+    <section className="l-dl" id="download" aria-labelledby="dl-title" data-ga-section="downloads">
       <Reveal className="l-sec-head">
         <h2 id="dl-title" className="l-h2">
           {t("title")}

@@ -15,6 +15,7 @@ import { useModGlyph } from "../../shell/mod-glyph";
 import { Reveal } from "./Reveal";
 import { omarchyRuleText } from "@ohmail/tokens/omarchy-rule";
 import { OMARCHY_DEMO_THEMES, type OmarchyDemoTheme } from "./omarchy-demo-themes";
+import { isDemoSearchField, isDemoSearchKey, reportDemo } from "../site-events";
 
 const DEMO_SRC = "/demo";
 
@@ -326,6 +327,7 @@ export function DemoSection() {
     const wrap = wrapRef.current;
     if (wrap) wrap.parentElement?.style.setProperty("--wrap-h", `${wrap.offsetHeight}px`);
     setFull(true);
+    reportDemo("expand");
   }, []);
 
   const closeFull = useCallback(() => {
@@ -588,7 +590,10 @@ export function DemoSection() {
     requestAnimationFrame(measure);
     const doc = docOf(frameRef.current);
     if (!doc) return;
-    const go = () => setTouched(true);
+    const go = () => {
+      setTouched(true);
+      reportDemo("start");
+    };
     const opts = { capture: true, once: true, passive: true } as const;
     doc.addEventListener("pointerdown", go, opts);
     doc.addEventListener("keydown", go, { capture: true, once: true });
@@ -604,6 +609,9 @@ export function DemoSection() {
       if (!fullRef.current) openFull(frameRef.current);
     };
     doc.addEventListener("pointerup", enter, { capture: true, passive: true });
+    /* A search in the demo: the palette's shortcut, or typing into its field or a search box. */
+    doc.addEventListener("keydown", (e) => { if (isDemoSearchKey(e)) reportDemo("search"); }, { capture: true });
+    doc.addEventListener("input", (e) => { if (isDemoSearchField(e.target)) reportDemo("search"); }, { capture: true });
     /**
      * Escape pressed INSIDE the app returns to the page ONLY when the app has nothing of its own for Escape to mean.
      * The app's own consumers handle Escape without stopping propagation or preventing default, so "was it handled"
@@ -676,7 +684,7 @@ export function DemoSection() {
   }, [measure, openFull, closeFull]);
 
   return (
-    <section className="l-demo" id="demo" aria-labelledby="demo-title" ref={sectionRef}>
+    <section className="l-demo" id="demo" aria-labelledby="demo-title" ref={sectionRef} data-ga-section="demo">
       <Reveal className="l-demo-head">
         <h2 id="demo-title" className="l-h2">
           {t("heading")}

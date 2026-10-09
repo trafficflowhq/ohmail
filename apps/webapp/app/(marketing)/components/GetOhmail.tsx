@@ -111,7 +111,7 @@ const SELF_HOST = [
 export function GetOhmail() {
   const t = useTranslations("get");
   return (
-    <section className="l-get" id="get" aria-labelledby="get-title">
+    <section className="l-get" id="get" aria-labelledby="get-title" data-ga-section="get">
       <Reveal className="l-sec-head">
         <h2 id="get-title" className="l-h2">
           {t("title")}
