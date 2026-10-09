@@ -269,7 +269,10 @@ export function MailList<T>({
           minIndexForVisible: surfaceNode !== null ? 1 : 0,
           autoscrollToTopThreshold: TOP_HOLD,
         }}
-        removeClippedSubviews={Platform.OS === "android"}
+        /* Android detaches clipped rows; a list placed by its caller's ledger and jumped by offset
+           (History) does not: after a rail press a small swipe left its viewport blank on Android
+           only. The window still bounds what is mounted. */
+        removeClippedSubviews={Platform.OS === "android" && rowLayout === undefined}
         {...LIST_WINDOW}
         style={{ flex: 1 }}
         contentContainerStyle={insets}

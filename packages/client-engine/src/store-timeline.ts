@@ -52,6 +52,10 @@ export class PagedWalk<A> {
   private anchors = new Map<number, A | null>([[0, null]]);
   private skips = new Map<number, number>();
   private inFlight = { down: false, up: false };
+  /** The newest slot wanted in each lane — asked when the lane frees, so a walk outlives the move that began it. */
+  private owed: { down: number | null; up: number | null } = { down: null, up: null };
+  /** The last page answered was a failure — the rows it would have filled say so. */
+  failing = false;
   private failedAt = new Map<string, number>();
   private epoch = 0;
   private heldKey = "";
@@ -88,6 +92,8 @@ export class PagedWalk<A> {
     this.anchors = new Map([[0, null]]);
     this.skips.clear();
     this.inFlight = { down: false, up: false };
+    this.owed = { down: null, up: null };
+    this.failing = false;
     this.failedAt.clear();
     this.end = null;
     this.reached = 0;
@@ -170,6 +176,10 @@ export class PagedWalk<A> {
       // Rows arrived above while this was in the air: it lands lower by as many. (Page one's own
       // null anchor is asked by `start` alone, before a visit can move.)
       this.land(start + this.moved - moved, anchor, transient, out);
+      // The lane is free: the newest slot wanted in it is asked now (a walk's next step, or a
+      // move made while this was in the air), unless a page holds it or this answer taught nothing.
+      const owed = this.owed[dir];
+      if (owed !== null && out.state === "ready" && out.items.length > 0 && this.freshAt(owed) === null) this.ask(owed, dir);
     });
   }
 
@@ -177,12 +187,14 @@ export class PagedWalk<A> {
   private land(start: number, anchor: A | null, transient: boolean, out: PageAnswer<A>): void {
     const key = JSON.stringify([start, anchor]);
     if (out.state !== "ready") {
+      this.failing = out.state === "failed";
       this.failedAt.set(key, this.hooks.clock());
       this.hooks.failed?.(start, out.state === "failed" ? out.errorClass ?? null : null);
       this.hooks.changed();
       return;
     }
     this.failedAt.delete(key);
+    this.failing = false;
     const skip = !transient && this.source.dedupe ? this.skipFor(start, out.items) : this.skips.get(start) ?? 0;
     const len = Math.max(0, out.items.length - skip);
     const next = out.next ?? (this.source.anchorOf && out.items.length > 0
@@ -218,6 +230,7 @@ export class PagedWalk<A> {
     this.runs = this.runs.filter((r) => r.start > 0).map((r) => ({ start: r.start + k, anchor: r.anchor }));
     this.anchors = new Map<number, A | null>([[0, null], ...down(this.anchors)]);
     this.skips = new Map(down(this.skips));
+    this.owed = { down: this.owed.down === null ? null : this.owed.down + k, up: this.owed.up === null ? null : this.owed.up + k };
     this.failedAt.clear();
     if (this.end !== null) this.end += k;
     this.reached += k;
@@ -255,14 +268,19 @@ export class PagedWalk<A> {
     return best;
   }
 
-  private ask(p: number, dir: "down" | "up"): void {
-    if (p < 0 || this.inFlight[dir]) return;
+  /** Ask the page holding slot `p` in lane `dir`; a busy lane keeps it as the one it asks next. */
+  ask(p: number, dir: "down" | "up"): void {
+    if (p < 0) return;
+    this.owed[dir] = p;
+    if (this.inFlight[dir]) return;
     const a = this.anchorFor(p);
     if (a === null) return;
     const at = this.failedAt.get(JSON.stringify([a.start, a.anchor]));
     if (at !== undefined && this.hooks.clock() - at < STORE_PAGE_RETRY_MS) return;
     // Farther than a page from the anchor: an uncached step that only learns the next anchor.
-    this.fetch(a.start, a.anchor, dir, p - a.start >= HISTORY_PAGE_ROWS);
+    const transient = p - a.start >= HISTORY_PAGE_ROWS;
+    if (!transient) this.owed[dir] = null;
+    this.fetch(a.start, a.anchor, dir, transient);
   }
 
   /** Ask for the pages covering `[start, hi)` — at most one request per direction in flight. */
@@ -555,10 +573,20 @@ export class StoreTimelineWalker {
     this.walk.want(start, Math.min(end, this.length(0)));
   }
 
-  /** A rail press: the page at that month's own anchor, asked at once. */
+  /**
+   * A RAIL PRESS: the page at that month's own anchor, asked at once, and the walk toward the rows
+   * just above it begun in the other lane — so the press fills both sides with no scroll.
+   */
   jump(start: number): void {
     const seg = this.segs.find((s) => s.start === start);
-    if (seg && this.state() === "ready" && this.walk.rowAt(start) === null) this.walk.fetch(seg.start, seg.before, "down");
+    if (!seg || this.state() !== "ready") return;
+    if (this.walk.rowAt(start) === null) this.walk.fetch(seg.start, seg.before, "down");
+    if (start > 0 && this.walk.rowAt(start - 1) === null) this.walk.ask(start - 1, "up");
+  }
+
+  /** A page this visit asked did not answer, and none has since — the rows it held say so. */
+  pagesFailing(): boolean {
+    return this.state() === "ready" && this.walk.failing;
   }
 }
 

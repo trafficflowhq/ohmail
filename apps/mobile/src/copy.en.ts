@@ -1088,6 +1088,8 @@ const TABLE = {
   historyLoading: "Loading your mail.",
   historyStoreUnavailable: "Your server did not answer — showing the recent mail this device holds.",
   historyStoreRetry: "Try again",
+  /* A placeholder row whose page did not load: said in the row, where the reader is. */
+  historyRowsNotLoaded: "These messages did not load. Scroll to try again.",
   historyRailLabel: "Jump to a year",
   historyUndated: "No date",
 

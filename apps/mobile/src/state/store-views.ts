@@ -42,6 +42,8 @@ export interface PhoneHistory {
   retry(): void;
   /** Rows the store placed above the first one, counted up — what the screen holds its reader by. */
   shifted: number;
+  /** A page this visit asked did not load: its placeholder rows say so. */
+  pagesFailing: boolean;
 }
 
 export function useStoreHistory(): PhoneHistory {
@@ -91,6 +93,7 @@ export function useStoreHistory(): PhoneHistory {
       jump: (start) => walker?.jump(start),
       retry: () => walker?.start(),
       shifted: walker ? walker.shifted() : 0,
+      pagesFailing: walker ? walker.pagesFailing() : false,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walker, rev, mirror, w, state]);

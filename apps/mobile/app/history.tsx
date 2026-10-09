@@ -6,7 +6,7 @@
  * mirror's rows painting first until page one replaces them in place. Nothing has moved: every row
  * states its server folder.
  */
-import { useCallback, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 
 import { Copy } from "../src/copy";
@@ -23,6 +23,8 @@ import { MessageReader } from "../src/ui/MessageReader";
 import { Gated } from "../src/ui/Gated";
 import { MailRow } from "../src/ui/MailRow";
 import { SlotHeights } from "../src/ui/history-slot";
+import { HistoryAsks } from "../src/ui/history-asks";
+import { HISTORY_HEAD_PAD, HISTORY_RAIL_RIGHT, historyHeadPadRight } from "../src/ui/history-rail";
 import { SkeletonList } from "../src/ui/Skeleton";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
@@ -48,6 +50,8 @@ function HistoryBody() {
   const h = useStoreHistory();
   const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
   const [more, setMore] = useState(false);
+  /* The year rail floats over the head's right edge: the head keeps its measured width clear. */
+  const [railWidth, setRailWidth] = useState<number | null>(null);
   const scrollTo = useRef<((y: number) => void) | null>(null);
   /** Where slot 0 sits in the scroll content, learnt from its own frame. */
   const top = useRef(0);
@@ -58,8 +62,15 @@ function HistoryBody() {
   const onRowHeight = useCallback((i: number, height: number) => {
     if (heights.record(i, height)) redraw();
   }, [heights]);
-  /** The scroll offset last read, in scroll-content coordinates. */
+  /** The scroll offset last read, in scroll-content coordinates, and the viewport's height. */
   const scrollY = useRef(0);
+  const viewport = useRef(0);
+  const [asks] = useState(() => new HistoryAsks(heights));
+  /* Every render asks the last range again: a landed page renders, so the walk's next step and the
+     rows around a press fill without the finger moving. */
+  useEffect(() => {
+    asks.again(h);
+  }, [asks, h]);
   /* MAIL ARRIVED ABOVE (the walker's `shifted`): the ledger moves with its rows in the render that
      first shows them, and while the reader is inside the rows the offset moves by the new rows'
      height, so the row being read stays where it stands; at the top the new rows show above it. */
@@ -90,15 +101,14 @@ function HistoryBody() {
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, layoutMeasurement } = e.nativeEvent;
     scrollY.current = contentOffset.y;
-    const y = Math.max(0, contentOffset.y - top.current);
-    const first = heights.indexAt(y, h.length);
-    h.want(Math.max(0, first - 8), heights.indexAt(y + layoutMeasurement.height, h.length) + 10);
+    viewport.current = layoutMeasurement.height;
+    asks.scrolled(h, contentOffset.y - top.current, viewport.current, h.length);
   };
   const jump = (start: number) => {
-    h.jump(start);
-    scrollTo.current?.(top.current + heights.offsetOf(start));
+    scrollTo.current?.(top.current + asks.jumped(h, start, viewport.current, h.length));
   };
 
+  const rail = h.state === "ready" && h.years.length > 1;
   const meta = h.state === "ready" && h.total !== null
     ? Copy.historyMeta(h.total)
     : h.state === "unavailable" && w.boot.settled ? Copy.historyMeta(h.length) : " ";
@@ -115,7 +125,11 @@ function HistoryBody() {
             const m = h.rowAt(i);
             return (
               <View style={{ height: m === "gone" ? 0 : heights.heightOf(i), overflow: "hidden" }}>
-                {m === "gone" ? <View onLayout={() => onRowHeight(i, 0)} /> : m === null ? (
+                {m === "gone" ? <View onLayout={() => onRowHeight(i, 0)} /> : m === null && h.pagesFailing ? (
+                  <View style={{ flex: 1, justifyContent: "center", paddingHorizontal: 12 }}>
+                    <Txt variant="note" tone="ink3" numberOfLines={2}>{Copy.historyRowsNotLoaded}</Txt>
+                  </View>
+                ) : m === null ? (
                   <View style={{ flex: 1, justifyContent: "center", gap: 8, paddingHorizontal: 12 }}>
                     <View style={{ height: 10, width: "46%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
                     <View style={{ height: 10, width: "72%", borderRadius: 5, backgroundColor: t.c.tint2 }} />
@@ -141,7 +155,7 @@ function HistoryBody() {
           gapAbove={h.length > 0 ? 8 : 0}
           refresh={pull}
           head={
-            <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
+            <View style={{ paddingLeft: HISTORY_HEAD_PAD, paddingRight: historyHeadPadRight(rail ? railWidth : null), paddingTop: 8, paddingBottom: 4 }}>
               <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
                 <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>{Copy.history}</Txt>
                 <Txt variant="meta" tone="ink3" tabular>{meta}</Txt>
@@ -177,11 +191,12 @@ function HistoryBody() {
           }
           tail={h.state === "ready" && h.total !== null && h.length > 0 ? <Tail>{Copy.historyTail(h.total)}</Tail> : null}
         />
-        {h.state === "ready" && h.years.length > 1 ? (
+        {rail ? (
           <View
             accessibilityRole="menu"
             accessibilityLabel={Copy.historyRailLabel}
-            style={{ position: "absolute", right: 2, top: 8, gap: 2, paddingVertical: 4, paddingHorizontal: 2,
+            onLayout={(e) => setRailWidth(e.nativeEvent.layout.width)}
+            style={{ position: "absolute", right: HISTORY_RAIL_RIGHT, top: 8, gap: 2, paddingVertical: 4, paddingHorizontal: 2,
               borderRadius: 10, backgroundColor: t.c.panel }}
           >
             {h.years.map((y) => (

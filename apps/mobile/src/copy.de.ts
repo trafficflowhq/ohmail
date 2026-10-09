@@ -696,6 +696,7 @@ export const DE: Deck = {
   historyLoading: "Deine Post wird geladen.",
   historyStoreUnavailable: "Dein Server hat nicht geantwortet — angezeigt wird die neuere Post, die dieses Gerät hat.",
   historyStoreRetry: "Erneut versuchen",
+  historyRowsNotLoaded: "Diese Nachrichten wurden nicht geladen. Scrolle, um es erneut zu versuchen.",
   historyRailLabel: "Zu einem Jahr springen",
   historyUndated: "Ohne Datum",
 
