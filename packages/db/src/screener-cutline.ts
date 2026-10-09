@@ -229,17 +229,23 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
 }
 
 /**
- * A HELD CLAIM INSIDE THE CUTLINE: a live row at the gate marked `'impersonation'` whose ARRIVAL KEY
- * ({@link Dialect.arrivalKey}, the client's `storeInstantOf`) is at or after the cutoff. The arrival
- * and not the `Date:` header, which the sender writes: new mail held at ingest is inside however it
- * is dated, and a row the identity backfill stamped years after it arrived stays outside, so the fact
- * never puts mail from before the cutline back in the queue (0.25.18 did). One spelling, two readers.
+ * A HELD CLAIM INSIDE THE CUTLINE: a live row at the gate marked `'impersonation'`, dated by WHO wrote
+ * the fact (mail 0149). The store's own write at ingest dates it by the row's record time, once the
+ * mailbox's first import had finished: a first import is old mail, however recently recorded. A fact
+ * given later to a row stored before it existed (`'backfill'`) never counts, so the update puts no old
+ * mail back in the queue. A fact from a build older than the column (NULL) is dated by its arrival key
+ * ({@link Dialect.arrivalKey}). One spelling, two readers; the client's twin is `claimInside`.
  */
 export function heldClaimInsideSql(
-  d: Dialect, r: { folder: SQL; deletedAt: SQL; senderCheck: SQL; date: SQL; arrivedAt: SQL }, cutoff: Date,
+  d: Dialect,
+  r: { folder: SQL; deletedAt: SQL; senderCheck: SQL; by: SQL; date: SQL; arrivedAt: SQL; recordedAt: SQL; mailboxId: SQL },
+  cutoff: Date,
 ): SQL {
+  const cut = d.ts(cutoff);
+  const importDone = sql`(select mbi.initial_import_completed_at from mailboxes mbi where mbi.id = ${r.mailboxId})`;
   return sql`(${r.folder} = ${CUTLINE_GATE_FOLDER} and ${r.deletedAt} is null and ${r.senderCheck} = 'impersonation'
-    and ${d.arrivalKey(r.date, r.arrivedAt)} >= ${d.ts(cutoff)})`;
+    and ((${r.by} = 'ingest' and ${r.recordedAt} >= ${cut} and ${r.recordedAt} > ${importDone})
+      or (${r.by} is null and ${d.arrivalKey(r.date, r.arrivedAt)} >= ${cut})))`;
 }
 
 /**
@@ -253,7 +259,8 @@ export function heldClaimInsideSql(
 export function senderHasHeldClaimSql(d: Dialect, accountId: string, senderExpr: SQL, cutoff: Date): SQL {
   const inside = heldClaimInsideSql(d, {
     folder: sql`hf.desired_folder`, deletedAt: sql`hm.deleted_at`, senderCheck: sql`hm.sender_check`,
-    date: sql`hm.date`, arrivedAt: sql`hm.arrived_at`,
+    by: sql`hm.sender_check_by`, date: sql`hm.date`, arrivedAt: sql`hm.arrived_at`,
+    recordedAt: sql`hm.created_at`, mailboxId: sql`hm.mailbox_id`,
   }, cutoff);
   return sql`(exists (
     select 1 from messages hm

@@ -99,6 +99,12 @@ export interface PhoneMailbox {
    */
   junkFolder: string | null;
   /**
+   * WHEN THIS MAILBOX'S FIRST IMPORT FINISHED — `MailboxDTO.initialImportCompletedAt`, `null` while
+   * it runs. The held-claim term reads it (`ConsentOptions.firstImportDoneAt`). ABSENT where a server
+   * older than the field answered, which the partition reads as an import finished.
+   */
+  initialImportCompletedAt?: string | null;
+  /**
    * The submission server's RFC 1870 `SIZE` announcement — `MailboxDTO.smtpMaxSizeBytes`, what
    * the composer's attach cap is derived from (`composeAttachCap`, the one shared bound). `null`
    * is "never probed, or this server predates the field": the cap falls to the strict constant,
@@ -207,6 +213,11 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         /* An empty string is not a folder name. A server that predates the field sends nothing
            here, which lands as `null` — the same instruction as "no Junk folder": say nothing. */
         junkFolder: typeof r.junkFolder === "string" && r.junkFolder !== "" ? r.junkFolder : null,
+        ...(r.initialImportCompletedAt === null
+          ? { initialImportCompletedAt: null }
+          : typeof r.initialImportCompletedAt === "string" && r.initialImportCompletedAt !== ""
+            ? { initialImportCompletedAt: r.initialImportCompletedAt }
+            : {}),
         /* A positive finite number or `null` — the cap rule's own admissibility test, applied at
            the wire so no consumer re-derives it. */
         smtpMaxSizeBytes:

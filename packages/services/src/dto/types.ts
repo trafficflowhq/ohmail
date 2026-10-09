@@ -231,6 +231,12 @@ export interface SenderCheckDTO {
   reason: "impersonation";
   brand: string;
   domainShared: boolean;
+  /**
+   * Which writer gave the fact (`messages.sender_check_by`, mail 0149): `"ingest"` as the message was
+   * stored, `"backfill"` later, for a row stored before the fact existed. ABSENT is a build older than
+   * the column. The client's held-claim term reads it as the server's does.
+   */
+  by?: "ingest" | "backfill";
 }
 
 /**

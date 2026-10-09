@@ -664,6 +664,8 @@ export const messages = sqliteTable("messages", {
   /** The identity fact (mail 0148), the pg columns' twins — see `schema-mail.ts`. */
   senderCheck: text("sender_check"),
   senderCheckBrand: text("sender_check_brand"),
+  /** Which writer gave the fact (mail 0149), the pg column's twin — see `schema-mail.ts`. */
+  senderCheckBy: text("sender_check_by"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),
@@ -701,6 +703,7 @@ export const messages = sqliteTable("messages", {
     t.id,
   ),
   ckSenderCheck: check("messages_sender_check_closed", sql`${t.senderCheck} in ('none', 'impersonation')`),
+  ckSenderCheckBy: check("messages_sender_check_by_closed", sql`${t.senderCheckBy} in ('ingest', 'backfill')`),
 }));
 
 /**

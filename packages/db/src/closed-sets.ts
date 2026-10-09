@@ -10,7 +10,7 @@ import {
 import { JUNK_RESCUE_STATUSES, isJunkRescueStatus } from "./junk-rescue-status.js";
 import { SEARCH_SOURCES, isSearchSource } from "./search-sources.js";
 import { SCREENER_ACT_REFUSALS, isScreenerActRefusal } from "./screener-act-refusal.js";
-import { SENDER_CHECKS, isSenderCheck } from "./sender-check-values.js";
+import { SENDER_CHECKS, SENDER_CHECK_BY, isSenderCheck, isSenderCheckBy } from "./sender-check-values.js";
 
 /**
  * THE CLOSED SETS THE TWO STORES CARRY, AND WHICH OF THEM MAY BE A CHECK ON A DEVICE.
@@ -140,6 +140,15 @@ export const CLOSED_SETS: readonly ClosedSet[] = [
     why: "the identity fact about one message: its name claims a brand its address does not own, "
       + "or it does not. A second kind of finding would be a second column with its own reader, not "
       + "a wider set. NULL is a row the ingest never checked, which is the backfill's question.",
+  },
+  {
+    constraint: "messages_sender_check_by_closed",
+    table: "messages", column: "sender_check_by", nullable: true,
+    members: SENDER_CHECK_BY, isMember: isSenderCheckBy,
+    kind: "immutable",
+    why: "which writer gave a message its identity fact: the store when it took the message in, or "
+      + "a later read of a row stored before the fact existed. There is no third writer of one fact. "
+      + "NULL is a build older than the column, which cannot say.",
   },
 ];
 

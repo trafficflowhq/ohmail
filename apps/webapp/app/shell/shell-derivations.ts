@@ -41,7 +41,7 @@ import {
 } from "@ohmail/client-engine";
 import { readBootCache, writeBootCache } from "./boot-cache";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
-import { shellConsentOptions } from "./consent-options";
+import { firstImportsKey, firstImportsOf, shellConsentOptions } from "./consent-options";
 import { hideMessages } from "./delete-undo";
 import { folderTailVerdict, folderUnreadCounts } from "./folders";
 import { avatarHue, initialsOf } from "./format";
@@ -196,6 +196,15 @@ export function useShellDerivations({
     [ownAddressKey(facts, rememberedOwn)],
   );
   /**
+   * EACH MAILBOX'S FIRST-IMPORT STAMP, for the held-claim term (`firstImportsOf`). Keyed on the
+   * stamps for `ownAddresses`' reason: the partition reads nothing else of a mailbox row here.
+   */
+  const firstImportDoneAt = useMemo(
+    () => firstImportsOf(facts),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [firstImportsKey(facts)],
+  );
+  /**
    * THE ACCOUNT'S OWN NAME FOR ONE OF ITS ADDRESSES — what the "me" recipient chip wears
    * (viewer redesign). `GET /mailboxes` carries `displayName` per mailbox (nullable; OAuth connects
    * fill it from the provider's id_token, IMAP connects only when the user typed a label), and
@@ -254,10 +263,10 @@ export function useShellDerivations({
       demo
         ? null
         // One builder for the lists and a screening press's read-back (`consent-options.ts`).
-        : consentPartition(reader, shellConsentOptions(consent, now, ownAddresses)),
+        : consentPartition(reader, shellConsentOptions(consent, now, ownAddresses, firstImportDoneAt)),
     [
       demo, consent.known, consent.standalone, reader, derived, now, consent.dormancyDays,
-      consent.screeningBaselineAt, consent.screeningScope, ownAddresses, consent.foldersEnabled,
+      consent.screeningBaselineAt, consent.screeningScope, ownAddresses, firstImportDoneAt, consent.foldersEnabled,
     ],
   );
   /**
@@ -405,7 +414,7 @@ export function useShellDerivations({
     if (demo) return new Set(fetched.map((m) => m.id));
     const withFetched = readerWithEffects(reader, fetched.map((m) => ({ type: "message", id: m.id, entity: m })));
     const view = ohboxView(presentationReader(
-      withFetched, consentPartition(withFetched, shellConsentOptions(consent, now, ownAddresses)),
+      withFetched, consentPartition(withFetched, shellConsentOptions(consent, now, ownAddresses, firstImportDoneAt)),
     ));
     const asked = new Set(fetched.map((m) => m.id));
     const out = new Set<string>();
@@ -631,6 +640,7 @@ export function useShellDerivations({
 
   return {
     ownAddresses,
+    firstImportDoneAt,
     ownNameOf,
     mailboxLabelOf,
     consentView,

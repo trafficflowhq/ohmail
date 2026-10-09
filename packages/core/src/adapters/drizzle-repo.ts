@@ -965,6 +965,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // could not reach (untyped JS) leaves NULL — "never checked", the backfill's question.
       senderCheck: input.senderCheck === undefined ? null : input.senderCheck === null ? "none" : "impersonation",
       senderCheckBrand: input.senderCheck ? input.senderCheck.brand : null,
+      // …and that the store wrote it as it took the message in (mail 0149): the Screener dates such a
+      // claim by this row's own record time, which a backfilled row's fact never earns.
+      senderCheckBy: input.senderCheck === undefined ? null : "ingest",
     }).onConflictDoNothing({ target: [messages.mailboxId, messages.dedupKey] }).returning();
     if (inserted[0]) {
       // Every message row gets its primary instance here, and only here:

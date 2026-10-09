@@ -421,8 +421,9 @@ export interface EngineMessage extends EngineMessageExtras {
    * THE IDENTITY FACT (`MessageDTO.senderCheck`): the sender's name claims `brand` and this address
    * is not one `brand` sends from. `null` — checked, nothing found; absent — never checked, which
    * renders as nothing. The client reads it and decides nothing from a dictionary of its own.
+   * `by` is which writer gave it (mail 0149), read by the held-claim term; absent from an older server.
    */
-  senderCheck?: { reason: "impersonation"; brand: string; domainShared: boolean } | null;
+  senderCheck?: { reason: "impersonation"; brand: string; domainShared: boolean; by?: "ingest" | "backfill" } | null;
 }
 
 /**

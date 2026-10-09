@@ -10,7 +10,9 @@ export interface UncheckedRow { id: string; fromName: string | null; fromAddress
  * and the act's, the passes' and a press's own read of the rows they are about to decide. Per row
  * the fact function; a marked row gets its column and one `message` update delta, so every mirror
  * repaints it with the sentence; a clean row `'none'`, no delta. `is null` again on every write: a
- * row is written once, whoever reaches it first. Returns the rows it marked.
+ * row is written once, whoever reaches it first. Every write here is stamped `'backfill'` (mail 0149):
+ * the row was stored before the fact existed, so the Screener never lists it for its claim. Returns
+ * the rows it marked.
  */
 export async function writeSenderChecks(
   tx: Tx, accountId: string, rows: readonly UncheckedRow[],
@@ -21,13 +23,13 @@ export async function writeSenderChecks(
   for (const r of rows) {
     const fact = claimedIdentity({ fromName: r.fromName, fromAddress: r.fromAddress, subject: r.subject });
     if (fact === undefined) { clean.push(r.id); continue; }
-    await tx.update(messages).set({ senderCheck: "impersonation", senderCheckBrand: fact.brand })
+    await tx.update(messages).set({ senderCheck: "impersonation", senderCheckBrand: fact.brand, senderCheckBy: "backfill" })
       .where(and(eq(messages.id, r.id), isNull(messages.senderCheck)));
     marked.push(r);
     changes.push({ accountId, entityType: "message", entityId: r.id, op: "update", meta: null });
   }
   if (clean.length > 0) {
-    await tx.update(messages).set({ senderCheck: "none" })
+    await tx.update(messages).set({ senderCheck: "none", senderCheckBy: "backfill" })
       .where(and(inArray(messages.id, clean), isNull(messages.senderCheck)));
   }
   await recordChanges(tx as unknown as LedgerTx, changes);

@@ -1727,6 +1727,9 @@ async function applyUpsert(
         senderCheck: m.senderCheck === undefined ? null
           : m.senderCheck === null ? "none" : m.senderCheck.reason === "impersonation" ? "impersonation" : null,
         senderCheckBrand: m.senderCheck?.reason === "impersonation" ? m.senderCheck.brand : null,
+        // …and which writer gave it (mail 0149), so the local queue never lists what Cloud's never
+        // does. Absent on the wire (an older server) is NULL, dated by the arrival as there.
+        senderCheckBy: m.senderCheck?.reason === "impersonation" ? (m.senderCheck.by ?? null) : null,
         snippet: m.snippet ?? "",
         toAddresses: m.to ?? [],
         ccAddresses: m.cc ?? [],

@@ -16,7 +16,7 @@ import {
   type StayVerdict,
   ruleMatchKey,
 } from "@ohmail/client-engine";
-import { shellConsentOptions, type ShellConsentFacts } from "./consent-options";
+import { shellConsentOptions, type FirstImports, type ShellConsentFacts } from "./consent-options";
 import {
   RETRO_VISIBLE_MOVES, senderScreening, type ScreeningDest, type ScreeningScope,
 } from "./sender-screening";
@@ -33,7 +33,7 @@ export function screeningVerdict(
   address: string | undefined,
   dest: ScreeningDest,
   scope: ScreeningScope,
-  o: { consent: ShellConsentFacts; now: Date; ownAddresses: readonly string[]; retro: boolean },
+  o: { consent: ShellConsentFacts; now: Date; ownAddresses: readonly string[]; firstImportDoneAt?: FirstImports; retro: boolean },
 ): StayVerdict {
   return screeningReadBack(reader, messageId, address, dest, scope, o)?.verdict ?? { key: "none" };
 }
@@ -45,11 +45,13 @@ export function screeningReadBack(
   address: string | undefined,
   dest: ScreeningDest,
   scope: ScreeningScope,
-  o: { consent: ShellConsentFacts; now: Date; ownAddresses: readonly string[]; retro: boolean },
+  o: { consent: ShellConsentFacts; now: Date; ownAddresses: readonly string[]; firstImportDoneAt?: FirstImports; retro: boolean },
 ): { verdict: StayVerdict; at: number; shown: string[] } | null {
   const s = senderScreening(reader, messageId, address);
   if (!s) return null;
-  const presented = presentationReader(reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses)));
+  const presented = presentationReader(
+    reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses, o.firstImportDoneAt)),
+  );
   const out = pressOutcome({
     presented, subject: s.scopes[scope].messages, rules: rulesList(reader), profiles: mailboxProfiles(reader),
     wanted: FOLDER_OF_VIEW[dest], retro: o.retro,
@@ -67,11 +69,13 @@ export function screeningShown(
   reader: EntityReader,
   subject: readonly EngineMessage[],
   dest: ScreeningDest,
-  o: { consent: ShellConsentFacts | null; now: Date; ownAddresses: readonly string[] },
+  o: { consent: ShellConsentFacts | null; now: Date; ownAddresses: readonly string[]; firstImportDoneAt?: FirstImports },
 ): string[] {
   const presented = o.consent === null
     ? reader
-    : presentationReader(reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses)));
+    : presentationReader(
+      reader, consentPartition(reader, shellConsentOptions(o.consent, o.now, o.ownAddresses, o.firstImportDoneAt)),
+    );
   return pressOutcome({
     presented, subject, rules: rulesList(reader), profiles: mailboxProfiles(reader), wanted: FOLDER_OF_VIEW[dest], retro: false,
   }).shown;

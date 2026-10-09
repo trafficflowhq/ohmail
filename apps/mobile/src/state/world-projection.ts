@@ -17,6 +17,7 @@ import { junkFolderSaid } from "./folders";
 import {
   NOT_DERIVED_FROM,
   beginDerive,
+  firstImportsOfMailboxes,
   hiddenMessagesReader,
   historyRow,
   liveDrafts,
@@ -145,13 +146,16 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       now, zone, locale, foldersEnabled: foldersOn, ownAddresses: inp.ownAddresses, mailboxes, screening: posture, tags,
     }));
     /* THE PRESENTED READER, kept across runs: a fresh one per run missed every engine memo keyed on reader identity. */
-    const presented = kept("presented", [engine, stamp, day, foldersOn, posture, inp.ownAddresses, inp.heldDeletes, inp.heldPlaces], () => {
+    /* Each mailbox's first-import stamp, kept while the stamps read the same (the held-claim term). */
+    const importsNow = firstImportsOfMailboxes(inp.mailboxes);
+    const imports = kept("imports", [JSON.stringify(importsNow === undefined ? null : Object.entries(importsNow).sort())], () => importsNow);
+    const presented = kept("presented", [engine, stamp, day, foldersOn, posture, inp.ownAddresses, inp.heldDeletes, inp.heldPlaces, imports], () => {
       const base = hiddenMessagesReader(raw, inp.heldDeletes);
-      const world = presentedWorld(base, v.now, foldersOn, posture, inp.ownAddresses);
+      const world = presentedWorld(base, v.now, foldersOn, posture, inp.ownAddresses, imports);
       return {
         base, history: world.history, world,
         pres: routingReader(world.reader, inp.heldPlaces),
-        options: presentedOptions(v.now, foldersOn, posture, inp.ownAddresses),
+        options: presentedOptions(v.now, foldersOn, posture, inp.ownAddresses, imports),
       };
     });
     const { base, pres } = presented;

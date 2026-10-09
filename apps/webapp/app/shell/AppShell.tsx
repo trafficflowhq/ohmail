@@ -1368,7 +1368,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * order the regions they replace had.
    */
   const {
-    ownAddresses, ownNameOf, mailboxLabelOf, consentView, presented, trashPage, trashWindow,
+    ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, consentView, presented, trashPage, trashWindow,
     older, folderOlder, ohbox, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rules, rulesWaiting, mailboxes, draft, aiChip, account,
@@ -1474,7 +1474,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   // Withheld where no door can write the stamp (the demo; no transport): it would stand for ever.
   const noticeOn = !demo && organizerNoticeTransport !== undefined && organizerChanges.length > 0;
   const screenerShownAt = useStableCallback((subject: readonly EngineMessage[], dest: ScreeningDest) =>
-    screeningShown(engine.read(), subject, dest, { consent: demo ? null : consent, now: nowAt(), ownAddresses }));
+    screeningShown(engine.read(), subject, dest, { consent: demo ? null : consent, now: nowAt(), ownAddresses, firstImportDoneAt }));
   const screener = useScreenerState(
     engine, derived, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
     // The SAME addresses `consentView` was built from — the queue's rows and the partition's
@@ -1897,7 +1897,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
     revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
-    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
+    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, flushSiblingSeen,

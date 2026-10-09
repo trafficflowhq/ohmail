@@ -153,6 +153,13 @@ export interface ConsentOptions {
    * History. An unruled row stays where its folder is, so nothing is hidden.
    */
   rulesOnly?: boolean;
+  /**
+   * WHEN EACH MAILBOX'S FIRST IMPORT FINISHED (`MailboxDTO.initialImportCompletedAt`, by mailbox id;
+   * `null` while it runs). A claim the store wrote at ingest counts only once recorded after that, as
+   * the server's `heldClaimInsideSql` reads it. Absent, or a mailbox it does not name, is an import
+   * taken as finished: such a claim is listed rather than lost.
+   */
+  firstImportDoneAt?: Readonly<Record<string, string | null | undefined>>;
 }
 
 /** The domain half of an address, lower-cased, or `null` when there is not one. */
@@ -444,6 +451,25 @@ function personConsented(index: ConsentIndex, m: EngineMessage, key: string): bo
   return named.some((r) => personConsentRule({ ...r, effect: effectForDestination(r.destination) }, key));
 }
 
+/**
+ * IS THIS HELD CLAIM INSIDE THE CUTLINE — the server's `heldClaimInsideSql` over the wire: a fact the
+ * store wrote at ingest by its record time (`arrivedAt`, `messages.created_at`) once the mailbox's first
+ * import had finished, a backfilled fact never, a fact from an older build by its arrival key.
+ */
+function claimInside(m: EngineMessage, cutoff: number, imports: ConsentOptions["firstImportDoneAt"]): boolean {
+  const by = m.senderCheck?.by;
+  if (by === "backfill") return false;
+  if (by !== "ingest") return storeInstantOf(m) >= cutoff;
+  const recorded = m.arrivedAt == null ? Number.NaN : Date.parse(m.arrivedAt);
+  if (!Number.isFinite(recorded) || recorded < cutoff) return false;
+  // An own key only: the record is the shell's, and an inherited name is no mailbox.
+  const done = imports !== undefined && Object.prototype.hasOwnProperty.call(imports, m.mailboxId)
+    ? imports[m.mailboxId] : undefined;
+  if (done === undefined) return true;
+  const doneMs = done === null ? Number.NaN : Date.parse(done);
+  return Number.isFinite(doneMs) && recorded > doneMs;
+}
+
 function messageMs(m: EngineMessage): number | null {
   const header = m.date === null ? Number.NaN : new Date(m.date).getTime();
   if (Number.isFinite(header)) return header;
@@ -509,11 +535,11 @@ export function senderActivity(
     // row with no instant read "not recent" and its sender retired under the one setting that
     // means "retire nobody". Every dated row reaches the same answer either way.
     if (allTime) { out.set(key, "active"); continue; }
-    // A claim the gate holds inside the cutline keeps its sender active, dated by its arrival key and
-    // never by its Date (mail 0148): the server's `senderHasHeldClaimSql`, so queue, counts and partition
-    // agree — and, like it, not for a sender a person consented to at the address (the gate holds none).
-    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && storeInstantOf(m) >= cutoff
-        && !(index !== null && personConsented(index, m, key))) {
+    // A claim the gate holds inside the cutline keeps its sender active ({@link claimInside}, never by its
+    // Date): the server's `senderHasHeldClaimSql`, so queue, counts and partition agree — and, like it,
+    // not for a sender a person consented to at the address (the gate holds none of theirs).
+    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation"
+        && claimInside(m, cutoff, opts.firstImportDoneAt) && !(index !== null && personConsented(index, m, key))) {
       out.set(key, "active");
       continue;
     }

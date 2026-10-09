@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
 import {
   AccountErasedError, accountSettings, applyScreenerDecision, auditAction, auditLog, changeLog,
   contactOnlyHeldWhere, destinationIsDecisionSql, folderState, lockAccountRuleKeys, mailboxes, messages, recordRuleDelta,
-  ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
+  ruleNamesSenderSql, rules as rulesTbl, senderHasPersonConsentSql, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { checkUncheckedById } from "@trafficflow/core/adapters/drizzle-repo";
@@ -124,15 +124,17 @@ export function heldReleaseFingerprint(
  * The user-intent exclusions here are the SAME three a RELEASE run applies — the own-reply arm
  * once kept ALL 57 offered rows, so it no longer binds one — one set, counted and moved.
  */
-function heldAtGate(accountId: string) {
+function heldAtGate(d: ReturnType<typeof dialect>, accountId: string) {
   return and(
     eq(messages.accountId, accountId),
     isNull(messages.deletedAt),
     sql`${folderState.lastSetBy} in ('external', 'peer', 'us')`,
     eq(folderState.desiredFolder, SCREENER_FOLDER),
     eq(folderState.observedFolder, SCREENER_FOLDER),
-    // A claim the identity fact holds is the Screener's question, with its sentence, never a release.
-    sql`(${messages.senderCheck} is null or ${messages.senderCheck} <> 'impersonation')`,
+    // A claim the identity fact holds is the Screener's question, with its sentence, never a release —
+    // unless a person consented to the address, whose mail the gate never holds for its name.
+    sql`(${messages.senderCheck} is null or ${messages.senderCheck} <> 'impersonation'
+      or ${senderHasPersonConsentSql(d, accountId, sql`lower(${messages.fromAddress})`)})`,
     sql`exists (
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId}
@@ -149,6 +151,17 @@ function heldAtGate(accountId: string) {
       select 1 from approvals a where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   );
+}
+
+/** Of `senders` (lower-cased, the offer's own, bounded), those a person consented to at the address. */
+async function personConsentedAmong(db: Tx, accountId: string, senders: readonly string[]): Promise<Set<string>> {
+  const d = dialect(db);
+  const out = new Set<string>();
+  for (const s of senders) {
+    const rows = await d.exec(db, sql`select case when ${senderHasPersonConsentSql(d, accountId, sql`${s}`)} then 1 else 0 end`);
+    if (Number(rows[0]?.[0] ?? 0) === 1) out.add(s);
+  }
+  return out;
 }
 
 /**
@@ -203,7 +216,7 @@ export async function heldReleaseGroups(
     .from(rulesTbl)
     .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender(d)))
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(and(decidedRule(accountId), heldAtGate(accountId)))
+    .where(and(decidedRule(accountId), heldAtGate(d, accountId)))
     .groupBy(rulesTbl.id, rulesTbl.kind, rulesTbl.match, rulesTbl.destination)
     .orderBy(sql`count(${messages.id}) desc`, rulesTbl.id)
     .limit(HELD_RELEASE_GROUPS_MAX);
@@ -229,7 +242,7 @@ export async function heldReleaseSenders(db: Tx, accountId: string): Promise<Hel
     .select({ sender, count: sql<number>`${d.castInt(sql`count(${messages.id})`)}` })
     .from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
-    .where(and(heldAtGate(accountId), ...contactOnlyHeldWhere(d, { ownAddresses: own })))
+    .where(and(heldAtGate(d, accountId), ...contactOnlyHeldWhere(d, { ownAddresses: own })))
     .groupBy(sender)
     .orderBy(sql`count(${messages.id}) desc`, sender)
     .limit(HELD_RELEASE_GROUPS_MAX);
@@ -254,7 +267,7 @@ export async function heldReleaseTotal(
     .from(rulesTbl)
     .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender(d)))
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(and(decidedRule(accountId), heldAtGate(accountId), inArray(rulesTbl.id, ids)));
+    .where(and(decidedRule(accountId), heldAtGate(d, accountId), inArray(rulesTbl.id, ids)));
   return Number(row?.n ?? 0);
 }
 
@@ -278,7 +291,7 @@ async function heldReleaseJoinedSince(
     const [joined] = await db.select({ one: sql`1` }).from(changeLog)
       .innerJoin(messages, and(eq(messages.id, changeLog.entityId), eq(messages.accountId, changeLog.accountId)))
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .where(and(placedAtGate, heldAtGate(accountId), inArray(sql`lower(${messages.fromAddress})`, addresses)))
+      .where(and(placedAtGate, heldAtGate(d, accountId), inArray(sql`lower(${messages.fromAddress})`, addresses)))
       .limit(1);
     if (joined !== undefined) return true;
   }
@@ -289,7 +302,7 @@ async function heldReleaseJoinedSince(
     .innerJoin(messages, and(eq(messages.id, changeLog.entityId), eq(messages.accountId, changeLog.accountId)))
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
     .innerJoin(rulesTbl, and(eq(rulesTbl.accountId, messages.accountId), ruleClaimsSender(d)))
-    .where(and(placedAtGate, decidedRule(accountId), heldAtGate(accountId), inArray(rulesTbl.id, ids)))
+    .where(and(placedAtGate, decidedRule(accountId), heldAtGate(d, accountId), inArray(rulesTbl.id, ids)))
     .limit(1);
   if (placed !== undefined) return true;
   // scoped-by: `since` pins eq(changeLog.accountId, accountId)
@@ -317,7 +330,7 @@ async function heldReleaseNewest(
     .from(rulesTbl)
     .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender(d)))
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
-    .where(and(decidedRule(accountId), heldAtGate(accountId), inArray(rulesTbl.id, ids)))
+    .where(and(decidedRule(accountId), heldAtGate(d, accountId), inArray(rulesTbl.id, ids)))
     .orderBy(desc(folderState.updatedAt))
     .limit(1);
   const decided = await db
@@ -470,6 +483,8 @@ export async function releaseHeld(
     const asked = new Set((wantedSenders ?? []).map((a) => a.trim().toLowerCase()));
     const namedSenders = asked.size === 0 ? []
       : (await heldReleaseSenders(bridgeTx(t), ctx.accountId)).filter((g) => asked.has(g.sender));
+    // The senders whose claims the offer counted (`heldAtGate`'s person skip): their press moves them.
+    const consented = await personConsentedAmong(bridgeTx(t), ctx.accountId, namedSenders.map((g) => g.sender));
     if (named.length === 0 && namedSenders.length === 0) return { released: [], releasedSenders: [], total: 0 };
     /* READ BEFORE THE WRITE, and that order is load-bearing: the re-arm below puts each rule in
        flight, which is exactly what {@link decidedRule} excludes, so the same count asked
@@ -517,9 +532,11 @@ export async function releaseHeld(
         await applyScreenerDecision(bridgeTx(t), {
           accountId: ctx.accountId, scope: "sender", address: g.sender, appliedFolder: "INBOX", decision: "yes",
           triggeringActionId: `held-release:${g.sender}`, now, stampBaseline: false, applyRetro: true,
-          // The offer never counts a claim (`heldAtGate`): a claim beside the rows waits for its own press,
-          // and an unchecked row is checked first, so a claim it carries is one of them.
-          decidedBy: "person", overExisting: "converge", marked: "none", checkUnchecked: checkUncheckedById,
+          // The offer counts a claim only from an address a person consented to (`heldAtGate`), whose
+          // claims move with the rest; any other claim waits for its own press, and an unchecked row is
+          // checked first, so a claim it carries is one of them.
+          decidedBy: "person", overExisting: "converge", marked: consented.has(g.sender) ? "pressed" : "none",
+          checkUnchecked: checkUncheckedById,
         });
       } catch (err) {
         if (err instanceof AccountErasedError) {

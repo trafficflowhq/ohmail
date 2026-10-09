@@ -309,9 +309,10 @@ export function presentedWorld(
   reader: EntityReader, now: Date, foldersEnabled = false,
   screening: ScreeningPosture = SCREENING_UNSUPPLIED,
   ownAddresses?: readonly string[],
+  firstImportDoneAt?: ConsentOptions["firstImportDoneAt"],
 ): PresentedWorld {
   partitions += 1;
-  const partition = consentPartition(reader, presentedOptions(now, foldersEnabled, screening, ownAddresses));
+  const partition = consentPartition(reader, presentedOptions(now, foldersEnabled, screening, ownAddresses, firstImportDoneAt));
   return {
     reader: presentationReader(reader, partition),
     history: partition.history,
@@ -333,10 +334,13 @@ export function presentedOptions(
   now: Date, foldersEnabled = false,
   screening: ScreeningPosture = SCREENING_UNSUPPLIED,
   ownAddresses?: readonly string[],
+  /** Each mailbox's first import ({@link firstImportsOfMailboxes}), for the held-claim term. */
+  firstImportDoneAt?: ConsentOptions["firstImportDoneAt"],
 ): ConsentOptions {
   return {
     now,
     foldersEnabled,
+    ...(firstImportDoneAt === undefined ? {} : { firstImportDoneAt }),
     ...(screening.state === "answered"
       ? {
           ...(screening.answer.dormancyDays === null
@@ -351,6 +355,19 @@ export function presentedOptions(
        appear in their own queue. Passed whenever the mailbox read has landed. */
     ...(ownAddresses === undefined ? {} : { ownAddresses }),
   };
+}
+
+/**
+ * THE MAILBOX READ'S FIRST-IMPORT STAMPS, by id (`ConsentOptions.firstImportDoneAt`): `null` while an
+ * import runs, a mailbox whose server sent none left out, and no read at all `undefined`.
+ */
+export function firstImportsOfMailboxes(
+  mailboxes: ReadonlyArray<{ id: string; initialImportCompletedAt?: string | null }> | null,
+): Readonly<Record<string, string | null>> | undefined {
+  if (mailboxes === null) return undefined;
+  const out: Record<string, string | null> = {};
+  for (const m of mailboxes) if (m.initialImportCompletedAt !== undefined) out[m.id] = m.initialImportCompletedAt;
+  return out;
 }
 
 /** The projection alone — {@link presentedWorld}'s first arm, for a caller with no History list. */

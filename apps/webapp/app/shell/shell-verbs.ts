@@ -45,7 +45,7 @@ import { dayStamp, PLACE_LABEL, placeLabel, resurfaceLabel, tomorrowAt } from ".
 import { displayAddress, displayDomain } from "./idn";
 import { readerMoveRefusal } from "./mail-state";
 import type { BulkAction, MessageAction } from "./MessagePane";
-import { shellConsentOptions, type ShellConsentFacts } from "./consent-options";
+import { shellConsentOptions, type FirstImports, type ShellConsentFacts } from "./consent-options";
 import {
   moveInBatches, retroOf, screeningReadBack, screeningShown, verdictAction, verdictArgs, verdictKeyOf, writtenRuleIds,
 } from "./press-verdict";
@@ -149,6 +149,8 @@ export interface ShellVerbsInput {
   tags: TagDTO[];
   /** The account's own addresses — the reply-all gate asks them. */
   ownAddresses: string[];
+  /** Each mailbox's first import, for the held-claim term of every read-back (`firstImportsOf`). */
+  firstImportDoneAt?: FirstImports;
   fileAndRefresh: ShellDispatch["fileAndRefresh"];
   toastWithUndo: ShellDispatch["toastWithUndo"];
   mutateAndReport: ShellDispatch["mutateAndReport"];
@@ -197,7 +199,7 @@ export interface ShellVerbsInput {
 export type ShellVerbs = ReturnType<typeof useShellVerbs>;
 
 export function useShellVerbs({
-  engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses,
+  engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
   markSeen, readSetFor, flushSiblingSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
@@ -288,7 +290,7 @@ export function useShellVerbs({
        never moves. Read here, before anything is dispatched, and again at the answer. */
     const subject = sender.scopes[scope].messages;
     const shownNow = () => screeningShown(engine.verbRead(), subject, dest, {
-      consent: demo ? null : consent, now: nowAt(), ownAddresses,
+      consent: demo ? null : consent, now: nowAt(), ownAddresses, firstImportDoneAt,
     });
     const before = shownNow();
     /* SUCCESS IS SAID ONLY OVER THE LIST READ AGAIN: a pressed row the list shows elsewhere is
@@ -297,7 +299,7 @@ export function useShellVerbs({
     const say = (key: ScreeningToastKey | "toastAlready") => {
       const back = READS_BACK.has(key) && !demo
         ? screeningReadBack(engine.verbRead(), messageId, address, dest, scope, {
-            consent, now: nowAt(), ownAddresses, retro: plan.retro,
+            consent, now: nowAt(), ownAddresses, firstImportDoneAt, retro: plan.retro,
           })
         : null;
       const v: StayVerdict = back?.verdict ?? { key: "none" };
@@ -388,7 +390,7 @@ export function useShellVerbs({
     const plan = planScreeningChange(sender, dest, scope, makeRule, applyRetro);
     const decide = plan.mutations.find((m) => m.kind === "screener_decide");
     return pressForecast({
-      reader: read, options: shellConsentOptions(consent, nowAt(), ownAddresses),
+      reader: read, options: shellConsentOptions(consent, nowAt(), ownAddresses, firstImportDoneAt),
       subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
       wanted: FOLDER_OF_VIEW[dest], makeRule, applyRetro, now: nowAt(),
       ...(decide?.kind === "screener_decide" ? { decide } : {}),
@@ -404,7 +406,7 @@ export function useShellVerbs({
     const sender = senderScreening(read, messageId, address);
     if (!sender) return null;
     return rulesInPlay({
-      reader: read, placeOf: consentPartition(read, shellConsentOptions(consent, nowAt(), ownAddresses)).placeOf,
+      reader: read, placeOf: consentPartition(read, shellConsentOptions(consent, nowAt(), ownAddresses, firstImportDoneAt)).placeOf,
       subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
     });
   });
@@ -523,7 +525,7 @@ export function useShellVerbs({
   ): void => {
     const read = engine.verbRead();
     const back = screeningReadBack(read, p.messageId, p.address, p.dest, p.scope, {
-      consent, now: nowAt(), ownAddresses, retro: p.applyRetro,
+      consent, now: nowAt(), ownAddresses, firstImportDoneAt, retro: p.applyRetro,
     });
     // The seed message left the mirror: there is no subject left to read, and nothing is claimed.
     if (back === null) return;
@@ -540,7 +542,7 @@ export function useShellVerbs({
       done: (state) => {
         if (state !== "done") return;
         const after = screeningReadBack(engine.verbRead(), p.messageId, p.address, p.dest, p.scope, {
-          consent, now: nowAt(), ownAddresses, retro: false,
+          consent, now: nowAt(), ownAddresses, firstImportDoneAt, retro: false,
         });
         if (after === null) return;
         if (after.verdict.key === "none") toast(t("screening.verdictAll", { count: after.at, sender: p.who, place: p.place }));
@@ -1551,7 +1553,7 @@ export function useShellVerbs({
        whole selection; the demo's lists are not partitioned, so every candidate lands there. */
     const wanted = FOLDER_OF_VIEW[dest];
     const landing = demo || !wanted ? null : landingOfMoves(
-      read, shellConsentOptions(consent, nowAt(), ownAddresses), planned.flatMap((p) => p.outOfPlace), wanted,
+      read, shellConsentOptions(consent, nowAt(), ownAddresses, firstImportDoneAt), planned.flatMap((p) => p.outOfPlace), wanted,
     );
     const forecast = landing === null ? null : { keep: { landing }, remove: { landing } };
     for (const plan of planned) {
@@ -1584,7 +1586,7 @@ export function useShellVerbs({
         return true;
       }
       // The count said after is what the lists gained there, read before and at the answer.
-      const facts = { consent: demo ? null : consent, now: nowAt(), ownAddresses };
+      const facts = { consent: demo ? null : consent, now: nowAt(), ownAddresses, firstImportDoneAt };
       const before = screeningShown(engine.verbRead(), plan.subject, dest, facts);
       const gained = () => pressGained(before, screeningShown(engine.verbRead(), plan.subject, dest, facts));
       // Two sentences because there are two outcomes, and the second one is permanent. The

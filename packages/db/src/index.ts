@@ -20,7 +20,9 @@ export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js
 // Where a search document's body words came from (mail 0125) — the CHECK's one definition.
 export { SEARCH_SOURCES, isSearchSource, type SearchSource } from "./search-sources.js";
 export { SCREENER_ACT_REFUSALS, isScreenerActRefusal, type ScreenerActRefusal } from "./screener-act-refusal.js";
-export { SENDER_CHECKS, isSenderCheck, type SenderCheckValue } from "./sender-check-values.js";
+export {
+  SENDER_CHECKS, SENDER_CHECK_BY, isSenderCheck, isSenderCheckBy, type SenderCheckBy, type SenderCheckValue,
+} from "./sender-check-values.js";
 export { autoReplyByUsWhere } from "./auto-reply-by-us.js";
 export { contactOnlyHeldWhere } from "./contact-only-held.js";
 export { upgradeContactsToPerson } from "./contact-source.js";

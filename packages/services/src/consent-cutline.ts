@@ -178,12 +178,13 @@ export async function cutlineCounts(
              -- Activity is measured over all six presented folders (above); membership in the
              -- undecided counts is not. See UNDECIDED_RESIDENCES.
              ${anyOf(sql`fs.desired_folder in ${undecidedResidences}`)} as undecided_residence,
-             -- A claim the gate holds inside the cutline, dated by its arrival (mail 0148): the
-             -- queue's own term (senderHasHeldClaimSql), so the count and the list agree. Its
+             -- A claim the gate holds inside the cutline, dated by who wrote the fact (mail 0149):
+             -- the queue's own term (senderHasHeldClaimSql), so the count and the list agree. Its
              -- person-consent half is asked per sender below, beside the active test.
              ${anyOf(heldClaimInsideSql(d, {
                folder: sql`fs.desired_folder`, deletedAt: sql`m.deleted_at`, senderCheck: sql`m.sender_check`,
-               date: sql`m.date`, arrivedAt: sql`m.arrived_at`,
+               by: sql`m.sender_check_by`, date: sql`m.date`, arrivedAt: sql`m.arrived_at`,
+               recordedAt: sql`m.created_at`, mailboxId: sql`m.mailbox_id`,
              }, cutoff))}
                as held_claim
         from messages m

@@ -732,9 +732,17 @@ export const messages = pgTable("messages", {
    */
   senderCheck: text("sender_check"),
   senderCheckBrand: text("sender_check_brand"),
+  /**
+   * WHICH WRITER GAVE THE FACT (mail 0149): `'ingest'` when the message was stored, `'backfill'` for
+   * a row stored before the fact existed (`writeSenderChecks`). NULL is a build older than the
+   * column. The Screener's held-claim term never counts a backfilled row. Closed by
+   * `messages_sender_check_by_closed`.
+   */
+  senderCheckBy: text("sender_check_by"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   ckSenderCheck: check("messages_sender_check_closed", sql`${t.senderCheck} in ('none', 'impersonation')`),
+  ckSenderCheckBy: check("messages_sender_check_by_closed", sql`${t.senderCheckBy} in ('ingest', 'backfill')`),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),
   ixThread: index("messages_account_thread_idx").on(t.accountId, t.threadId),
   // ── Mail 0026 — the THREADING key ──

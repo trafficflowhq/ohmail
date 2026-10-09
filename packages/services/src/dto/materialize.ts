@@ -220,7 +220,7 @@ export function sortAtOf(date: Date | null | undefined, arrivedAt: Date | null |
  * checked) → nothing. Whether the address is at a shared provider is read here, off the one list.
  */
 function senderCheckOf(
-  value: string | null, brand: string | null, fromAddress: string,
+  value: string | null, brand: string | null, fromAddress: string, by: string | null | undefined,
 ): { senderCheck?: SenderCheckDTO | null } {
   if (value === "none") return { senderCheck: null };
   if (value !== "impersonation") return {};
@@ -228,6 +228,8 @@ function senderCheckOf(
     senderCheck: {
       reason: "impersonation", brand: brand ?? "",
       domainShared: isSharedProviderDomain(senderDomainOf(fromAddress)),
+      // Who wrote it (mail 0149); a NULL column is absent, the reading an older server gives.
+      ...(by === "ingest" || by === "backfill" ? { by } : {}),
     },
   };
 }
@@ -338,7 +340,7 @@ export function messageRowToDTO(
     // On the row, so every projection carries it; a word from the other vocabulary reads `null`.
     authVerdict: asAuthVerdict(m.authVerdict),
     // The identity fact, spread-in: a NULL column (never checked) leaves the key ABSENT.
-    ...senderCheckOf(m.senderCheck, m.senderCheckBrand, m.fromAddress),
+    ...senderCheckOf(m.senderCheck, m.senderCheckBrand, m.fromAddress, m.senderCheckBy),
     // Spread-in rather than a plain `autoReplyByUs:` so an un-asked caller yields a DTO with the
     // key ABSENT, not present-and-undefined. The two are the same in TypeScript and different
     // over JSON, and "this server does not know" must look exactly like "this server predates
