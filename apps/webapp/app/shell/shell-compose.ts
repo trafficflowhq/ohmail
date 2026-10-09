@@ -2166,6 +2166,7 @@ export function useShellCompose({
     replySubjectEdit,
     resolveHeldSend,
     sendCompose,
+    composeElsewhere: autosave.elsewhere,
     sendReply,
     setReplyAttachments,
     setReplyEnvelope,

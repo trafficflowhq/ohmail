@@ -1878,7 +1878,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply,
-    setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
+    composeElsewhere, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
   } = useShellCompose({
     engine, reader, t, toast, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
@@ -3030,6 +3030,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onCancel={cancelCompose}
                 /* Discard keeps a held row, and the question says so before the press. */
                 discardKeeps={discardKeepsCompose() !== null}
+                /* The letter went from another device — said, and Send answers in words. */
+                elsewhere={composeElsewhere}
+                /* As a new letter: the plan names the row a pause made since, or none — never the
+                   sent one, which `elsewhere` let go of. */
+                onSendAsNew={sendCompose}
                 resumed={composeResumed}
                 /* LEAVING SAVES FIRST — see `closeCompose`. Escape and the close control take
                    this; every other exit takes the autosave hook's own belt. */

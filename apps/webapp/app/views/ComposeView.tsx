@@ -81,6 +81,8 @@ export function ComposeView({
   onSendLater,
   onCancel,
   discardKeeps = false,
+  elsewhere = null,
+  onSendAsNew,
   resumed = false,
   onClose,
   closeNote = null,
@@ -163,6 +165,14 @@ export function ComposeView({
    * a delete.
    */
   discardKeeps?: boolean;
+  /**
+   * THE LETTER ON SCREEN WAS SENT FROM ANOTHER DEVICE — `useComposeAutosave`'s `elsewhere`. Said at
+   * once; Send then refuses in words, and once something was typed since it offers that text as a
+   * new letter ({@link onSendAsNew}) rather than sending anything by itself.
+   */
+  elsewhere?: { why: "sent"; typedSince: boolean } | null;
+  /** Go on with what is on screen as a NEW letter, and send it. */
+  onSendAsNew?: () => void;
   /** `true` when the plain compose door opened on a message left unfinished — see `composeResumed`. */
   resumed?: boolean;
   /**
@@ -322,6 +332,14 @@ export function ComposeView({
     setConfirmCancel(false);
     rootRef.current?.querySelector<HTMLButtonElement>(".compose-cancel")?.focus();
   }, []);
+  /* A PRESS OVER A LETTER SENT ELSEWHERE IS ANSWERED IN WORDS, never by a send and never by
+     silence — see `elsewhere`. Every road to `onSend` from this view passes here. */
+  const [elsewhereNote, setElsewhereNote] = useState(false);
+  useEffect(() => { if (elsewhere === null) setElsewhereNote(false); }, [elsewhere]);
+  const pressSend = (): void => {
+    if (elsewhere !== null) { setElsewhereNote(true); return; }
+    onSend();
+  };
   /* Leaving — sent, discarded or closed — hands focus back to what opened Compose, and the
      question keeps Tab on its two answers while it asks (`focus-follows.ts`). */
   useFocusFollows(rootRef, { enter: false });
@@ -492,7 +510,7 @@ export function ComposeView({
       // ONE rule, the button's. A typo'd recipient is already expressed as `to: []` inside the
       // mutation (`composePlan`), so there is deliberately no second term about it here.
       disabled: sendLaterOpen || !canSend(send, plan.mutation),
-      run: () => onSend(),
+      run: () => pressSend(),
     },
     /* ── THE PICKER'S PRESETS, ON THE DIGITS (the prototype's "Send later open: 1 2 3 4") ──
        View-scope digits OUTRANK the global pile numbers exactly while the picker is open —
@@ -955,6 +973,11 @@ export function ComposeView({
                 {t("stillAttaching", { name: attaching[0]!, count: attaching.length })}
               </p>
             ) : null}
+            {/* THE LETTER WENT FROM ANOTHER DEVICE, said the moment the mirror says so. An alert
+                because it arrives while somebody may be typing into a letter that no longer exists. */}
+            {elsewhere !== null ? (
+              <p className="compose-note" role="alert">{t("sentElsewhere")}</p>
+            ) : null}
             {/* THE QUESTION SITS ABOVE THE ROW IT WAS ASKED FROM, at full panel width — the
                 Drafts list's panel, and deliberately not an overlay: Compose was moved OUT of a
                 dialog the keyboard could not leave, and putting one back to ask about
@@ -978,9 +1001,11 @@ export function ComposeView({
                     message exists in this browser alone, and claiming more teaches people the
                     warning exaggerates. */}
                 <p className="set-note-inline" id="compose-cancel-what">
-                  {discardKeeps
-                    ? t("cancelWhatHeld")
-                    : plan.mutation.draftId ? t("cancelWhat") : t("cancelWhatLocal")}
+                  {elsewhere !== null
+                    ? t(elsewhere.typedSince ? "cancelWhatSentElsewhereTyped" : "cancelWhatSentElsewhere")
+                    : discardKeeps
+                      ? t("cancelWhatHeld")
+                      : plan.mutation.draftId ? t("cancelWhat") : t("cancelWhatLocal")}
                 </p>
                 <div className="gate-actions">
                   <Button
@@ -1071,7 +1096,7 @@ export function ComposeView({
                 aria-busy={send.phase === "sending" || undefined}
                 // See `sendVerb` — the same attribute and the same word as the inline dock.
                 data-send={verb.attr}
-                onClick={() => { if (needsContent) { setNeedNote(true); return; } onSend(); }}
+                onClick={() => { if (needsContent) { setNeedNote(true); return; } pressSend(); }}
               >
                 {t(verb.key)}
                 {/* The verb's chord, from the live registry — the action-bar law (§12): an
@@ -1090,7 +1115,7 @@ export function ComposeView({
               <Button
                 variant="ghost"
                 className="send-later-toggle"
-                disabled={sendBlocked || sendLaterBlocked !== null}
+                disabled={sendBlocked || sendLaterBlocked !== null || elsewhere !== null}
                 aria-expanded={sendLaterOpen}
                 title={sendLaterBlocked ?? undefined}
                 onClick={toggleSendLater}
@@ -1117,6 +1142,18 @@ export function ComposeView({
               {needNote && needsContent ? (
                 <span className="send-note" role="status">{t("needContent")}</span>
               ) : null}
+              {/* WHY SEND DID NOT SEND, and the one way on: the text typed since, as a new letter.
+                  Nothing is offered for an unchanged letter — it already went. */}
+              {elsewhereNote && elsewhere !== null ? (
+                <span className="send-note" role="status">
+                  {t("sentElsewhereSend")}
+                  {elsewhere.typedSince && onSendAsNew ? (
+                    <Button variant="ghost" onClick={() => { setElsewhereNote(false); onSendAsNew(); }}>
+                      {t("sendAsNew")}
+                    </Button>
+                  ) : null}
+                </span>
+              ) : null}
               {/* AN EMPTY SUBJECT SENDS — see `composePlan`. Said here, before the press, rather
                   than as a modal after it. */}
               {plan.noSubject && !inFlight ? (
@@ -1130,7 +1167,7 @@ export function ComposeView({
               ) : null}
               {/* A RESUMED MESSAGE IS SAID AS ONE, so a person who meant a new message knows this is
                   the old one. A held message's own sentence says more, and this gives way to it. */}
-              {resumed && !held && shown.phase !== "unverified" ? (
+              {resumed && !held && elsewhere === null && shown.phase !== "unverified" ? (
                 <span className="send-note" role="status">{t("resumedNote")}</span>
               ) : null}
               {/* THE CLOSE THAT DID NOT HAPPEN, and why — a composer that stayed open after
@@ -1154,7 +1191,7 @@ export function ComposeView({
                     size: formatFileSize(DRAFT_BODY_MAX_BYTES, activeFormatLocale()),
                   })}
                 </span>
-              ) : (
+              ) : elsewhere !== null && !elsewhere.typedSince ? null : (
                 <span className="send-note">{t("draftNote")}</span>
               )}
             </div>

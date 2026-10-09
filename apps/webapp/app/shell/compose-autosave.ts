@@ -239,6 +239,13 @@ export interface ComposeAutosave {
    * case; this handles the one that confirmed BEFORE.
    */
   settled: (sentDraftId: string | null) => void;
+  /**
+   * THE ROW THIS COMPOSER HELD WAS SENT FROM ANOTHER DEVICE — the mirror's `sent` arrived for it
+   * with no send of this browser's on record. The row is let go of on that word, so nothing is
+   * written to a sent letter again, and `typedSince` says whether the form has moved off what was
+   * on screen then: anything typed after it is saved as a NEW draft by the ordinary pause.
+   */
+  elsewhere: { why: "sent"; typedSince: boolean } | null;
 }
 
 /**
@@ -314,6 +321,8 @@ export function useComposeAutosave(opts: {
    * into since is a different message, and that one is still worth saving.
    */
   const abandonedAt = useRef<string | null>(null);
+  /** See {@link ComposeAutosave.elsewhere}; `at` is the form's signature when the word arrived. */
+  const [elsewhereAt, setElsewhereAt] = useState<{ why: "sent"; rowId: string; at: string } | null>(null);
   /** A restored form the account may not hold yet — see {@link ComposeAutosave.restored}. */
   const openWrite = useRef(false);
   const restored = useCallback(() => { openWrite.current = true; }, []);
@@ -329,6 +338,7 @@ export function useComposeAutosave(opts: {
     savedMailbox.current = f.fromMailboxId;
     // A row taken over is a message this surface holds again — see `abandonedAt`.
     abandonedAt.current = null;
+    setElsewhereAt(null);
   }, []);
 
   /**
@@ -359,6 +369,7 @@ export function useComposeAutosave(opts: {
     writeComposeRow(null);
     saved.current = null;
     savedMailbox.current = null;
+    setElsewhereAt(null);
   }, []);
 
   /**
@@ -767,6 +778,40 @@ export function useComposeAutosave(opts: {
     return () => { void writeNow(); };
   }, [active, writeNow]);
 
+  /**
+   * A SEND FROM ANOTHER DEVICE ENDS THIS EDITOR'S HOLD ON ITS ROW. The server marks a sent draft
+   * `sent` and `/sync` brings the row back; the editor used to stay bound to it, and every save and
+   * press was refused in silence. A `sent` read by status (no unconfirmed record of this browser's)
+   * while no send of this surface is in flight is another device's send: the row is let go of
+   * without a delete, the form stays, the text the row held is not written again, and anything
+   * typed after is the next pause's new row.
+   */
+  useEffect(() => {
+    if (draftId === null) return;
+    const check = (): void => {
+      if (draftIdRef.current !== draftId || sendInFlightRef.current) return;
+      const hold = holdOf(engine, {
+        lane: COMPOSE_SEND_KEY, draftId, session: composeSessionId(),
+      });
+      if (hold.kind !== "parked" || hold.by !== "status" || hold.status !== "sent") return;
+      /* WHAT THE ROW HELD AS FAR AS THIS TAB KNOWS, never the form: words typed here that never
+         reached the row (a pause not yet run, a save refused offline) are text after the send, and
+         they are kept as the new draft by the next pause rather than counted as the sent letter. */
+      const at = saved.current ?? signatureOf(fieldsRef.current);
+      release();
+      abandonedAt.current = at;
+      // Nothing new on screen: the buffer is the sent letter, and a reload must not make it a draft.
+      if (signatureOf(fieldsRef.current) === at) clearComposeDraft();
+      setElsewhereAt({ why: "sent", rowId: draftId, at });
+    };
+    check();
+    return engine.subscribe(check);
+  }, [engine, draftId, release]);
+
+  const elsewhere = elsewhereAt === null ? null : {
+    why: elsewhereAt.why, typedSince: signatureOf(fields) !== elsewhereAt.at,
+  };
+
   const flush = useCallback(async (): Promise<ComposeFlush> => {
     /* A save already on the wire carries OLDER text: waited out rather than deduped against, or
        the keystrokes typed during its round trip would be the ones that never landed. */
@@ -780,5 +825,7 @@ export function useComposeAutosave(opts: {
   settledRef.current = settled;
   settleComposeRef.current = settleCompose;
 
-  return { draftId, adopt, release, discard, flush, restored, settled, settleCompose };
+  return {
+    draftId, adopt, release, discard, flush, restored, settled, settleCompose, elsewhere,
+  };
 }

@@ -2484,7 +2484,7 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  * because asking again cannot help; every other failure keeps the plain one.
  */
 export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyNotSignedIn"
-  | "replyForwardOriginalUnavailable" | "replyFailed";
+  | "replyForwardOriginalUnavailable" | "replyFailed" | "replySentElsewhere";
 
 export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   const code = r?.error?.code;
@@ -2790,6 +2790,8 @@ export interface DraftKeep {
   draftId?: string | null;
   /** A composer's own save as it goes: the row is written and nothing is said. */
   quiet?: boolean;
+  /** The bound row was sent from another device, so the keep wrote a NEW row: bind to it. */
+  rebind?: (draftId: string) => void;
 }
 
 /** `kept` — the account holds it or the outbox does; `refused` — nothing was kept, and said. */
@@ -3176,6 +3178,8 @@ export interface LiveWorldActions {
    * discards it; `refused` names nothing and the sheet stays open to say so.
    */
   draftKeep(keep: DraftKeep): Promise<DraftKeepOutcome>;
+  /** The mirror says this row was SENT — by another device while a composer here holds it. */
+  draftSent(draftId: string): boolean;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -4607,6 +4611,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     andDone = false,
     draftId: string | null = null,
   ): Promise<SendResult> => {
+    const elsewhere = sentElsewhere(draftId);
+    if (elsewhere) return elsewhere;
     const m = messageOf(messageId);
     const text = body.trim();
     // The empty refusal is judged BEFORE the signature joins: a signature must never light
@@ -4796,6 +4802,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * forward keeps its typed recipients under `Fwd:` and names its original, and a new
    * mail is what was typed. The Undo is the Drafts card's own discard.
    */
+  const draftSent = (draftId: string): boolean =>
+    engine.read().get<{ status?: unknown }>("draft", draftId)?.status === "sent";
+
+  /** A bound send of a row another device sent: refused before the wire, and said. */
+  const sentElsewhere = (draftId: string | null): SendResult | null =>
+    draftId !== null && draftSent(draftId) ? { outcome: "failed", failure: "replySentElsewhere" } : null;
+
   const draftKeep = async (k: DraftKeep): Promise<DraftKeepOutcome> => {
     const parent = k.messageId === null ? undefined : messageOf(k.messageId);
     const mailboxId = k.mailboxId ?? parent?.mailboxId ?? null;
@@ -4813,15 +4826,25 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        update names a target the engine must already hold. */
     const bound = k.draftId ?? null;
     if (bound !== null && !engine.read().get("draft", bound)) await engine.syncOnce().catch(() => undefined);
-    const r = await engine
+    const save = (target: string | null) => engine
       .mutate({
-        kind: "draft_save", draftId: bound, mailboxId,
+        kind: "draft_save", draftId: target, mailboxId,
         ...(reply && parent ? { inReplyToMessageId: parent.id, threadId: parent.threadId ?? null } : {}),
         ...(k.mode === "forward" && parent ? { forwardOfMessageId: parent.id } : {}),
         subject, body: k.body, to, cc: env ? env.cc : (k.cc ?? []), bcc: env ? [] : (k.bcc ?? []),
       })
       .then((res) => res, () => null);
+    /* A ROW ANOTHER DEVICE SENT TAKES NO NEW WORDS — the server answers `draft_sent`. What is on
+       screen is then a new letter's, so it is kept as a NEW row and the composer is bound to it;
+       the mirror's `sent`, or the server's refusal when the mirror has not heard yet, decides. */
+    let target = bound !== null && draftSent(bound) ? null : bound;
+    let r = await save(target);
+    if (target !== null && r?.status === "rolled_back" && r.error?.code === "draft_sent") {
+      target = null;
+      r = await save(null);
+    }
     if (r === null || r.status === "rolled_back") return "refused";
+    if (target !== bound && r.entityId) k.rebind?.(r.entityId);
     // A newer save of this row replaced this one: it owns the sentence.
     if (k.quiet === true || r.status === "superseded") return "kept";
     const without = k.files > 0;
@@ -4838,6 +4861,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false, confirmed = false, draftId: string | null = null): Promise<SendResult> => {
+    const elsewhere = sentElsewhere(draftId);
+    if (elsewhere) return elsewhere;
     const m = messageOf(messageId);
     // A `no_forward` original leaves only after the sheet's ask was answered (`forwardPress`);
     // the server refuses it without `forwardConfirmed` too. Told, for the reply belt's reason: a
@@ -4882,6 +4907,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     draftId: string | null = null,
     copies: { cc: EmailAddress[]; bcc: EmailAddress[] } = { cc: [], bcc: [] },
   ): Promise<SendResult> => {
+    const elsewhere = sentElsewhere(draftId);
+    if (elsewhere) return elsewhere;
     const text = body.trim();
     // TOLD, all three arms — a return before `sent()` renders nothing, and a fresh mail has
     // one more way to be unsendable than a reply: nothing to send it FROM. The empty-content
@@ -5303,7 +5330,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
-    draftDiscard, draftResolve, draftSendAgain, draftKeep,
+    draftDiscard, draftResolve, draftSendAgain, draftKeep, draftSent,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -5419,6 +5446,8 @@ export interface WorldActions {
   draftSendAgain(draftId: string): Promise<DraftSendAgainOutcome>;
   /** Keep what a closing composer holds — see {@link LiveWorldActions.draftKeep}. */
   draftKeep(keep: DraftKeep): Promise<DraftKeepOutcome>;
+  /** See {@link LiveWorldActions.draftSent}. */
+  draftSent(draftId: string): boolean;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
@@ -5495,6 +5524,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     draftResolve: (draftId, outcome) => current().draftResolve(draftId, outcome),
     draftSendAgain: (draftId) => current().draftSendAgain(draftId),
     draftKeep: (keep) => current().draftKeep(keep),
+    draftSent: (draftId) => current().draftSent(draftId),
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),

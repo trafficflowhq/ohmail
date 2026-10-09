@@ -1304,12 +1304,23 @@ export function ComposeSheet({
       void w.actions.draftKeep({
         mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
         mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,
+        rebind: setDraftId,
       });
     }, DRAFT_AUTOSAVE_MS);
     return () => clearTimeout(timer);
     // `w`, `mailboxId` and the three fields are read at the timer; `onScreen` is their change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bound, draftId, phase, onScreen]);
+  /* THE ROW WAS SENT FROM ANOTHER DEVICE — the mirror's word, read while this sheet is idle on it
+     (its own send leaves the sheet). Held from that moment, because the keep that follows binds a
+     NEW row; `goneAt` is what the row held, so text typed after it is told apart from the letter. */
+  const sentElsewhere = draftId !== null && phase === "idle" && w.actions.draftSent(draftId);
+  const [goneAt, setGoneAt] = useState<string | null>(null);
+  useEffect(() => {
+    if (sentElsewhere && goneAt === null) setGoneAt(saved.current ?? onScreen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sentElsewhere]);
+  const typedSinceGone = goneAt !== null && onScreen !== goneAt;
 
   /**
    * THE LOCKED COMPOSER SETTLES ITSELF. A queued send is retried by the world layer's
@@ -1456,6 +1467,7 @@ export function ComposeSheet({
         const kept = await w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
           ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: attachments.length, draftId, ...(draft !== undefined ? { quiet: true } : {}),
+          rebind: setDraftId,
         });
         keeping.current = false;
         if (kept === "kept") leave();
@@ -1480,21 +1492,30 @@ export function ComposeSheet({
     void w.actions.draftKeep({
       mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
       ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: attachments.length, draftId, quiet: true,
+      rebind: setDraftId,
     });
   };
 
+  /* OVER A LETTER SENT ELSEWHERE A PRESS IS ANSWERED IN WORDS; only the offer sends, and it sends
+     the text as a new letter — the row a keep bound since, or none, never the sent one. */
+  const sendAsNew = useRef(false);
+
   const send = async (sendAt: string | null = null, andDone = false) => {
+    if (goneAt !== null && !sendAsNew.current) { setFailNote("replySentElsewhere"); return; }
     // The picker closes the moment ANY send is dispatched — a panel left standing over a
     // message that is already on its way offers rows for an act that may no longer happen.
     setLater(null);
     setPhase("sending");
     setFailNote(null);
     const files = toComposeAttachments(attachments);
-    const result = fresh
+    const asNew = sendAsNew.current;
+    sendAsNew.current = false;
+    const toRow = async (draftId: string | null) => fresh
       ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)
       : forward
         ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId)
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
+    const result = await toRow(asNew && draftId !== null && w.actions.draftSent(draftId) ? null : draftId);
     // `superseded`: a newer press of this reply carries it and says its sentence.
     if (result.outcome === "sent" || result.outcome === "superseded") {
       leave();
@@ -1519,6 +1540,14 @@ export function ComposeSheet({
      toast and the top bar render under this Modal, so a sentence said only there was a press with no
      answer. Pinned up to `pinnedNotesMax`; past it they scroll at the letter's end, scrolled to. */
   const noteItems = [
+    goneAt !== null ? (
+      <Txt key="sentElsewhere" variant="caption" tone="ink2" accessibilityRole="alert">
+        {Copy.composeSentElsewhere}
+      </Txt>
+    ) : null,
+    goneAt !== null && typedSinceGone && failNote === "replySentElsewhere" ? (
+      <Button key="sendAsNew" label={Copy.composeSendAsNew} variant="quiet" onPress={() => { sendAsNew.current = true; void send(); }} />
+    ) : null,
     phase === "queued" || phase === "unverified" ? (
       <Txt key="queued" variant="caption" tone="ink3">
         {phase === "queued" ? Copy[queuedCaptionKey(network, accepted)] : Copy.replyUnverified}
