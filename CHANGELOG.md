@@ -103,6 +103,45 @@ the saved responder; an unsaved change is named under the switch with its own Sa
 asks whether to discard it. The same holds on the phone, where the end-date line and a failed save's
 sentence now also state the saved responder.
 
+### The Screener says when nothing is screened yet
+<!-- changes: fix-026-selfhost-first-run-asks-to-organize.md -->
+
+Until you agree to let ohmail organize a mailbox, nothing screens it, and first-time senders go
+straight to your inbox. The Screener and the Ohbox now say so, with a button that opens the
+agreement, instead of saying first-time senders wait in the Screener. The last setup screen names
+that agreement as the step left rather than reading "You're set up".
+
+### Moving your own letter writes no rule about your own address
+<!-- changes: fix-026-move-never-writes-an-own-address-rule.md -->
+
+Moving a letter you sent moves that letter and changes no rule, on the web, the desktop and the phone.
+Moving a conversation whose newest letter is yours moves the replies in it and leaves your sent
+letters in Sent. A rule about your own address can be paused or removed, and is not changed otherwise.
+
+### A draft sent from another device no longer leaves a dead editor
+<!-- changes: fix-026-sent-elsewhere-draft-says-so.md -->
+
+When a draft open in ohmail was sent from another device or another tab, the editor stayed on it, said it
+was saving while it saved nothing, and Send did nothing. The editor now says the draft was sent, anything you
+type after that is saved as a new draft, and Send offers to send it as a new letter. The same on the phone.
+
+### A year press in History fills the rows around it
+<!-- changes: fix-026-phone-history-jump-fills.md -->
+
+Pressing a year on History's rail left the messages just above that year grey until the list was
+scrolled, and on Android a small swipe back from there could blank the list. The press now loads
+the rows above and below its landing, loading continues after scrolling stops, and a row that could
+not be fetched says so. History's heading sentence and link wrap beside the year list instead of
+running under it, at any screen width and text size.
+
+### Visit statistics on ohmail.app, only if you agree
+<!-- changes: web-026-landing-analytics.md -->
+
+The ohmail.app website can now count visits with Google Analytics. Nothing loads until you accept the
+one-line notice, and you can change your choice from the footer or the privacy page. Only pages and
+sign-up or download presses are counted, never your mail and never in the apps. Self-hosted installs
+carry no analytics.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
