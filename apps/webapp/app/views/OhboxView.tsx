@@ -33,6 +33,8 @@ import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden } from "../shell/narrow";
 import { ACTED_FRESH_MS, nextSurvivor, readAfterVerb, type ActedMarker } from "../shell/after-verb";
 import { storageOwner } from "../shell/storage-owner";
+import { goFirstRun } from "../shell/routing";
+import type { NotOrganizingYet } from "../shell/mail-state";
 import type { UndoLink } from "../shell/shell-dispatch";
 import type { OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
@@ -183,6 +185,7 @@ export function OhboxView({
   doorbellInitials,
   doorbellHues,
   doorbellCount,
+  notOrganizingYet = null,
   settled,
   owed,
   onDoorbell,
@@ -343,6 +346,8 @@ export function OhboxView({
   /** Per-sender tint hues for the doorbell stack, index-aligned with `doorbellInitials`. */
   doorbellHues?: number[];
   doorbellCount: number;
+  /** Mailboxes nobody agreed to organize (`notOrganizingYetOf`): where it is every one, "All clear" is not said. */
+  notOrganizingYet?: NotOrganizingYet | null;
   /**
    * May this view state its emptiness as a fact? Derived once in
    * `shell/mail-state.ts` ({@link MailState.settled}). Three sentences here
@@ -2352,7 +2357,19 @@ export function OhboxView({
                 KNOWN to be waiting, which is a different sentence. The doorbell is withheld
                 entirely rather than reworded — it is an affordance for senders who are
                 waiting, and there is nothing yet to open it for. It returns with the count. */}
-            {!mayState && doorbellCount === 0 ? null : (
+            {/* NOTHING ORGANIZES ANY OF THESE MAILBOXES YET: "All clear" would claim the gate is kept. The same
+                slot stands DRAWN, says what is true, and its press opens the organize decision — read off the mailbox
+                facts, so it does not wait for the mirror. */}
+            {notOrganizingYet?.every && doorbellCount === 0 && notOrganizingYet.mailboxes[0] ? (
+            <Doorbell
+              initials={[]}
+              hues={[]}
+              message={t.rich("doorbellNotYet", { b: (chunks) => <b>{chunks}</b> })}
+              actionLabel={t("doorbellNotYetAction")}
+              ariaLabel={t("doorbellNotYetAria")}
+              onPress={() => goFirstRun({ rerun: true, mailboxId: notOrganizingYet.mailboxes[0]!.id })}
+            />
+            ) : !mayState && doorbellCount === 0 ? null : (
             <Doorbell
               initials={doorbellInitials}
               hues={doorbellHues}

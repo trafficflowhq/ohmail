@@ -191,7 +191,7 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
 import {
-  organizerNotices, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
+  notOrganizingYetOf, organizerNotices, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
 } from "./mail-state";
 /* Every press that changes mail leaves through here. See the module. */
 import { useShellDispatch } from "./shell-dispatch";
@@ -2567,6 +2567,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 doorbellInitials={waitingLive.map((w) => w.initial)}
                 doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}
                 doorbellCount={screener.waitingCount}
+                notOrganizingYet={demo ? null : notOrganizingYetOf(facts)}
                 /* May this view state its emptiness as a fact yet? Derived once in
                    `mail-state.ts`; see `MailState.settled` and `MailState.owed` — the pair the
                    shared `listSurface` reading asks, never one of them alone. */
@@ -2671,6 +2672,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "screener" ? (
               <ScreenerView
                 state={screener}
+                notOrganizingYet={demo ? null : notOrganizingYetOf(facts)}
                 /* Which address of yours a stranger wrote to, above one mailbox — the resolver
                    Reads is handed; the view draws the badge and the sheet's sentence from it. */
                 mailboxLabelOf={mailboxLabelOf}

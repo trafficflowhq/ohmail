@@ -19,6 +19,7 @@ export const FIRST_SCREEN: Readonly<Record<string, true | readonly string[]>> = 
   triage: true, message: true, tag: true, trash: true,
   ohbox: [
     "title", "meta", "tail", "emptyPlain", "doorbell", "doorbellAction", "doorbellAria",
+    "doorbellNotYet", "doorbellNotYetAction", "doorbellNotYetAria",
     "toastDeleted", "deleteUndone", "deleteFailed",
     "keyNext", "keyPrev", "keyOpen", "keyPick", "keyClear", "keyCancelBulk", "keyExtendDown",
     "keyExtendUp", "keyMarkPicked", "keyMarkRead", "keyMarkUnread", "keyTag",

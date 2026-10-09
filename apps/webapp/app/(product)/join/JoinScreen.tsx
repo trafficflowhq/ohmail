@@ -673,8 +673,12 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     );
   }
 
+  /* "You're set up" only once somebody agreed: before that the organize decision is still ahead (`#/first-run` opens
+     on it), and a person who leaves here believing setup is over has a mailbox nothing screens. */
+  const decisionAhead = step === "done" && connected !== null && !connected.organizeConsentedAt;
+
   return (
-    <Shell title={t(`step_${step}_title`)} step={step} rail={needsInvite ? RAIL_BASE : RAIL_OPEN}>
+    <Shell title={t(decisionAhead ? "step_connected_title" : `step_${step}_title`)} step={step} rail={needsInvite ? RAIL_BASE : RAIL_OPEN}>
       {error && step !== "mailbox" && <p className="join-error" role="alert">{error}</p>}
 
       {step === "invite" && (
@@ -989,7 +993,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
       {step === "done" && (
         <>
-          <p className="sub">{t("step_done_lead")}</p>
+          <p className="sub">{t(decisionAhead ? "step_connected_lead" : "step_done_lead")}</p>
           {/* Readably: the address the person just typed, said back to them. `connected.address`
               itself is the stored A-label form the connect wrote — see `shell/idn.ts`. */}
           {connected && (
@@ -1006,7 +1010,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
              * every button answers 403; reaching `done` means verification is behind us. The
              * FRAGMENT survives the rewrite of `/` to the mail client — it never leaves the
              * browser, the mechanism `/login#/settings` already relies on. */}
-            <Link className="btn primary" href="/#/first-run">{t("openOhmail")}</Link>
+            <Link className="btn primary" href="/#/first-run">{t(decisionAhead ? "continue" : "openOhmail")}</Link>
           </div>
         </>
       )}

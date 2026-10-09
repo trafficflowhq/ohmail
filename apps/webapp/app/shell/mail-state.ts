@@ -29,7 +29,7 @@
 import { addressKey } from "./address-key";
 import { liftedAt, refusalIsStale } from "./access-window";
 import {
-  holderIsLive, holderStopped, rosterRefusalReason, type RequestRefusalReason,
+  holderIsLive, holderStopped, notOrganizingYet, rosterRefusalReason, type RequestRefusalReason,
 } from "@trafficflow/core/reader-refusal";
 
 export const SYNC_BLOCK_REASONS = [
@@ -219,6 +219,32 @@ export function claimLeftBehind(m: {
   if (m.organizerRole !== "reader") return false;
   if (m.organizeConsentedAt === null || m.organizeConsentedAt === undefined) return false;
   return m.organizedByThisInstall === true;
+}
+
+/**
+ * The mailboxes `notOrganizingYet` (core's `reader-refusal`) names, and whether they are every live one — `null` when
+ * none. The Screener and the Ohbox read it so neither claims screening over a mailbox nothing organizes.
+ */
+export interface NotOrganizingYet {
+  mailboxes: { id: string; address: string }[];
+  every: boolean;
+}
+
+type NotOrganizingRow = Parameters<typeof notOrganizingYet>[0] & { id: string; address: string };
+/* One answer per polled roster, so the shell can ask in its render and the views see a stable object. */
+const notOrganizingSeen = new WeakMap<readonly NotOrganizingRow[], NotOrganizingYet | null>();
+
+export function notOrganizingYetOf(facts: readonly NotOrganizingRow[] | null): NotOrganizingYet | null {
+  if (facts === null) return null;
+  const seen = notOrganizingSeen.get(facts);
+  if (seen !== undefined) return seen;
+  const live = facts.filter((m) => m.status !== "disabled");
+  const not = live.filter(notOrganizingYet);
+  const out = not.length === 0
+    ? null
+    : { mailboxes: not.map((m) => ({ id: m.id, address: m.address })), every: not.length === live.length };
+  notOrganizingSeen.set(facts, out);
+  return out;
 }
 
 /* ── WHO FILES A MAILBOX THIS INSTALL ORGANIZES ─────────────────────────────────────────────

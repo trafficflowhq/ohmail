@@ -61,10 +61,10 @@ import { useListWindow } from "../shell/list-window";
 import { useBodyStalled, type BodyTarget } from "../shell/message-chrome";
 import { MessageFiles } from "../shell/MessageFiles";
 import { useDrawnBody, useDrawnStates } from "../shell/body-slice";
-import { goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
+import { goFirstRun, goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
-import { readerHolder, type ReaderHolding, type ScreenerRole } from "../shell/mail-state";
+import { readerHolder, type NotOrganizingYet, type ReaderHolding, type ScreenerRole } from "../shell/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import {
@@ -511,7 +511,11 @@ function RowActions({
  * the app's copy. `test/demo-zero-network.test.ts` now forbids the import class outright.
  */
 function Empty(
-  { segment, surface, why = "importing" }: { segment: ScreenerSegmentId; surface: ListSurface; why?: WaitingWhy },
+  { segment, surface, why = "importing", notYet = null }: {
+    segment: ScreenerSegmentId; surface: ListSurface; why?: WaitingWhy;
+    /** Mailboxes nobody agreed to organize — {@link NotOrganizingYetNote} stands in for the screening claim. */
+    notYet?: NotOrganizingYet | null;
+  },
 ) {
   const t = useTranslations("screener");
   const speak = useLoadingGrace(!saysEmpty(surface));
@@ -546,12 +550,42 @@ function Empty(
     );
   }
   const key = segment === "screened" ? "screened" : segment;
+  /* "First-time senders appear here" is false for a mailbox nothing organizes, so where EVERY mailbox is one the
+     hint gives way to the sentence that is true; on a mixed account it stands, and the others are named beside it. */
+  if (segment === "waiting" && notYet !== null && notYet.every) {
+    return <div className="empty"><NotOrganizingYetNote notYet={notYet} /></div>;
+  }
   return (
     <div className="empty">
       <span className="glyph">{t(`empty.${key}.glyph`)}</span>
       <b>{t(`empty.${key}.title`)}</b>
       {t(`empty.${key}.hint`)}
+      {segment === "waiting" && notYet !== null ? <NotOrganizingYetNote notYet={notYet} /> : null}
     </div>
+  );
+}
+
+/**
+ * NOTHING SCREENS THIS MAILBOX YET, AND THE PRESS THAT CHANGES THAT — the first run's own organize decision, opened as a
+ * re-run on the first such mailbox, so the person reads what ohmail will do and nothing moves before Agree.
+ */
+function NotOrganizingYetNote({ notYet }: { notYet: NotOrganizingYet }) {
+  const t = useTranslations("screener");
+  const first = notYet.mailboxes[0];
+  return (
+    <span className="scn-not-yet" role="note">
+      {notYet.every ? (
+        <>
+          <b>{t("notYetTitle", { count: notYet.mailboxes.length })}</b>
+          <span>{t("notYetWhy")}</span>
+        </>
+      ) : notYet.mailboxes.map((m) => (
+        <span key={m.id}>{t("notYetOne", { address: displayAddress(m.address) })}</span>
+      ))}
+      {first ? (
+        <button type="button" onClick={() => goFirstRun({ rerun: true, mailboxId: first.id })}>{t("notYetPress")}</button>
+      ) : null}
+    </span>
   );
 }
 
@@ -576,6 +610,7 @@ export function ScreenerView({
   mailboxLabelOf,
   full,
   onFull,
+  notOrganizingYet = null,
 }: {
   state: ScreenerState;
   /**
@@ -690,6 +725,8 @@ export function ScreenerView({
   mailboxLabelOf?: (mailboxId: string, form?: "short") => string | null;
   full: boolean;
   onFull: (full: boolean) => void;
+  /** Mailboxes nobody agreed to organize (`notOrganizingYetOf`); absent or null claims nothing new. */
+  notOrganizingYet?: NotOrganizingYet | null;
 }) {
   const t = useTranslations("screener");
   /* The delivery badge's own words, from the namespace that already owns them — "Delivered to
@@ -1459,9 +1496,12 @@ export function ScreenerView({
         meta={countWhen(
           waitingInput(state.waiting.length),
           // A count this device derived is never shown as the mailbox's own.
-          state.waitingSource === "device"
-            ? t("metaWaitingOnDevice", { count: state.waitingCount })
-            : t("metaWaiting", { count: state.waitingCount }),
+          /* "all clear" is a screening claim; a zero over mailboxes nothing organizes says that instead. */
+          notOrganizingYet?.every && state.waitingCount === 0
+            ? t("metaNotYet")
+            : state.waitingSource === "device"
+              ? t("metaWaitingOnDevice", { count: state.waitingCount })
+              : t("metaWaiting", { count: state.waitingCount }),
         )}
         header={
           <div className="scn-head">
@@ -1682,7 +1722,7 @@ export function ScreenerView({
               row(x, itemsFrom + k, { size: items.length + decidedRows.length, position: itemsFrom + k + 1 }))
           ) : state.decided.length === 0 ? (
             <Empty segment={segment} surface={emptySurface(items.length)}
-              why={segment === "waiting" ? waitingInput(items.length).why : "importing"} />
+              why={segment === "waiting" ? waitingInput(items.length).why : "importing"} notYet={notOrganizingYet} />
           ) : null}
           {/*
               DECIDED, NOT DONE: A sender whose decision is waiting on another install is out of the queue and not

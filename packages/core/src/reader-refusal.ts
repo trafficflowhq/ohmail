@@ -53,3 +53,23 @@ export function requestRefusalReason(f: HolderLeaseFacts | null | undefined): Re
 export function rosterRefusalReason(rows: readonly (HolderLeaseFacts | null | undefined)[]): RequestRefusalReason {
   return rows.some(holderIsLive) ? "organizer_outdated" : "no_organizer";
 }
+
+/**
+ * NOBODY HAS AGREED, AND NOTHING ELSE ORGANIZES IT — a mailbox whose first run was left before "Agree and start
+ * organizing", so nothing screens it and first-time senders go straight to the inbox. Every surface that would claim
+ * screening asks this instead. Consent `=== null` only (absent is a build that cannot tell), and only once the lease
+ * has been READ with no live holder: a mailbox another install organizes is screened, by that install.
+ */
+export function notOrganizingYet(m: {
+  status?: string | null;
+  organizerRole?: "organizer" | "reader" | null;
+  organizeConsentedAt?: string | null;
+  organizedBy?: { kind?: string | null; name?: string | null } | null;
+  organizerState?: string | null;
+  organizerChecked?: boolean;
+}): boolean {
+  if (m.status === "disabled" || m.organizerRole !== "reader") return false;
+  if (m.organizeConsentedAt !== null) return false;
+  if (!holderAnswered(m)) return false;
+  return !holderIsLive({ by: m.organizedBy, state: m.organizerState });
+}

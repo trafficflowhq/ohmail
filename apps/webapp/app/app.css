@@ -1802,6 +1802,25 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .scn-reader button:hover {
   background: var(--accent-soft);
 }
+/* NOTHING ORGANIZES THIS MAILBOX YET — in the Screener's empty state, where the screening hint would stand. The
+   reader note's voice and its quiet press, stacked and centred like the empty state around it. */
+.scn-not-yet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.scn-not-yet button {
+  margin-top: 4px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  border-radius: var(--r-pill);
+  padding: 2px 9px;
+}
+.scn-not-yet button:hover {
+  background: var(--accent-soft);
+}
 /* ── DECIDING ON A MAILBOX ANOTHER INSTALL ORGANIZES, WHEN THAT INSTALL TAKES THE DECISION ──
    The opposite of `.scn-reader`, and it must never be mistaken for it. There the verbs are GONE
    and a two-line note stands in their place; here the verbs are present and work — a press is

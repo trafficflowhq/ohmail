@@ -10,7 +10,7 @@
  */
 import { useState } from "react";
 import { View } from "react-native";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
 import { destDone, type ScreenerSeg } from "../../src/state/model";
@@ -27,6 +27,7 @@ import { Segmented } from "../../src/ui/Segmented";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
+import { noneOrganized } from "../../src/ui/not-organizing";
 
 /**
  * The three empty states, READ WHEN THE SCREEN RENDERS rather than when this module is imported.
@@ -72,7 +73,16 @@ function ScreenerBody() {
   const { open, openRow, close } = useListDetail(
     (key) => `/sender/${seg}/${encodeURIComponent(key)}`,
   );
-  const empty = emptyFor(seg);
+  /* "First-time senders knock here" is false where nothing organizes any mailbox: the waiting shelf says that
+     instead, once the mailbox read has answered (`known`), never on a guess. */
+  const notYet = seg === "waiting" && w.mailboxes.known && noneOrganized(w.mailboxes.rows);
+  const empty = notYet
+    ? {
+        title: Copy.waitingNotYetTitle,
+        hint: Copy.waitingNotYetHint,
+        action: { label: Copy.waitingNotYetPress, onPress: () => router.push("/settings") },
+      }
+    : emptyFor(seg);
   const { waiting, screened, spam, meta, waitingPending } = w.screener;
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
   const shelves: Record<ScreenerSeg, ScreenerRow[]> = { waiting, screened, spam };

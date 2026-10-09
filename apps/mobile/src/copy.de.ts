@@ -599,6 +599,9 @@ export const DE: Deck = {
     "Die Erkennung liest die Struktur — Absender, Header, Linkziele. Inhalte werden nirgendwohin gesendet.",
   waitingEmptyTitle: "Es wartet niemand.",
   waitingEmptyHint: "Erstabsender klopfen hier an, bevor irgendetwas in deine Ohbox kommt.",
+  waitingNotYetTitle: "ohmail organisiert dieses Postfach noch nicht.",
+  waitingNotYetHint: "Niemand prüft Erstabsender, deshalb landen sie direkt in deiner Ohbox. In den Einstellungen steht, was jedes Postfach organisiert.",
+  waitingNotYetPress: "Einstellungen öffnen",
   cutlinePending:
     "Deine Screening-Einstellungen werden gelesen — bis sie da sind, steht diese Liste nicht fest.",
   screenedEmptyTitle: "Niemand aussortiert.",

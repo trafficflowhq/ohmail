@@ -576,7 +576,12 @@ export function Rule({ inset = 0 }: { inset?: number }) {
  * (the prototype's `.empty`). No glyph: the emoji vocabulary this once carried mixed pictures
  * with type, and an iOS runtime without the emoji font drew a boxed "?" in its place.
  */
-export function Empty({ title, hint }: { title: string; hint: string }) {
+export function Empty({ title, hint, action }: {
+  title: string;
+  hint: string;
+  /** The one press an empty state may carry — the way out of the condition its sentence names. */
+  action?: { label: string; onPress: () => void };
+}) {
   return (
     <View style={{ alignItems: "center", paddingHorizontal: 32, paddingVertical: 56, gap: 8 }}>
       <Txt variant="cardTitle" style={{ textAlign: "center" }}>
@@ -585,6 +590,7 @@ export function Empty({ title, hint }: { title: string; hint: string }) {
       <Txt variant="note" tone="ink3" style={{ textAlign: "center", maxWidth: 300 }}>
         {hint}
       </Txt>
+      {action ? <Button label={action.label} variant="quiet" onPress={action.onPress} /> : null}
     </View>
   );
 }
