@@ -3,7 +3,8 @@ import type { AuthVerdict } from "./sender-headers.js";
 import type { IdentityFact } from "./sender-check.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 import {
-  compareRules, effectForDestination as effectOfDestination, namesAuthor, placingRule, ruleMatchKey, type RuleEffect,
+  compareRules, effectForDestination as effectOfDestination, namesAuthor, personConsentRule, placingRule, ruleMatchKey,
+  type RuleEffect,
 } from "./rule-order.js";
 
 export type RuleKind = "sender" | "domain" | "header";
@@ -460,16 +461,14 @@ function isKnownAuthor(author: string | null, knownSenders: ReadonlySet<string>)
  * author, or a contact a person's act wrote. A `promoted` rule (the act on suggestions, learning),
  * a domain or header rule and an inferred contact are inference; a person's Screener press consents
  * through the person contact it writes. The account's own mail never asks: {@link evaluateRules}
- * keeps it out of the hold, and an own `From` that fails authentication is screened by `auth`.
+ * keeps it out of the hold, and an own `From` that fails authentication is screened by `auth`. The
+ * rule half is `personConsentRule` (`rule-order.ts`), which the client's held-claim term asks too.
  */
-const PERSON_WRITTEN: ReadonlySet<Rule["provenance"]> = new Set(["manual", "migrated", "seeded-from-sent"]);
 function addressLevelConsent(
   author: string | null, rules: readonly Rule[], known: KnownSenders,
 ): boolean {
   if (author === null) return false;
-  const byRule = rules.some((r) => r.enabled && r.kind === "sender" && r.effect !== "deny"
-    && effectForDestination(r.destination) === "allow" && PERSON_WRITTEN.has(r.provenance) && namesAuthor(r, author));
-  if (byRule) return true;
+  if (rules.some((r) => personConsentRule(r, author))) return true;
   return known.addresses.has(author) && !known.inferred.has(author);
 }
 

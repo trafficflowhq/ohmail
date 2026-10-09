@@ -244,23 +244,55 @@ export function heldClaimInsideSql(
 
 /**
  * HELD BY THE IDENTITY FACT (mail 0148): a message of this sender sits at the gate naming a company
- * its address is not, held because no person consented to the address — whatever rule or contact
- * decided the sender otherwise (the act's promotion, a domain rule, an inferred contact). Such a
- * sender is waiting again while the claim is inside the cutline ({@link heldClaimInsideSql}); no
- * release takes the row whatever its age.
+ * its address is not — whatever rule or contact decided the sender otherwise (the act's promotion, a
+ * domain rule, an inferred contact). Such a sender is waiting again while the claim is inside the
+ * cutline ({@link heldClaimInsideSql}); no release takes the row whatever its age. Not a sender a
+ * PERSON consented to at the address ({@link senderHasPersonConsentSql}): the gate holds nothing of
+ * theirs, so the list and the count do not ask about them either.
  */
 export function senderHasHeldClaimSql(d: Dialect, accountId: string, senderExpr: SQL, cutoff: Date): SQL {
   const inside = heldClaimInsideSql(d, {
     folder: sql`hf.desired_folder`, deletedAt: sql`hm.deleted_at`, senderCheck: sql`hm.sender_check`,
     date: sql`hm.date`, arrivedAt: sql`hm.arrived_at`,
   }, cutoff);
-  return sql`exists (
+  return sql`(exists (
     select 1 from messages hm
       join folder_state hf on hf.message_id = hm.id
      where hm.account_id = ${d.castUuid(accountId)}
        and lower(hm.from_address) = ${senderExpr}
        and ${inside}
-  )`;
+  ) and not ${senderHasPersonConsentSql(d, accountId, senderExpr)})`;
+}
+
+/**
+ * `@trafficflow/core/rule-order#PERSON_WRITTEN_PROVENANCE`, RE-DECLARED for
+ * {@link CUTLINE_DEFAULT_DORMANCY_DAYS}' reason and pinned equal by `screener-cutline-one-owner.test.ts`.
+ */
+export const CUTLINE_PERSON_WRITTEN_PROVENANCE: readonly string[] = ["manual", "migrated", "seeded-from-sent"];
+
+/**
+ * A PERSON CONSENTED TO THIS ADDRESS — the gate's `addressLevelConsent` (`rules.ts`) in SQL: an
+ * enabled allow `sender` rule a person wrote naming it, or a contact whose source is not `'inferred'`
+ * (NULL predates the column and is a person's; a person's row outvotes an inferred twin). A domain
+ * rule, a promoted rule and an inferred contact are inference. `senderExpr` is lower-cased.
+ */
+export function senderHasPersonConsentSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
+  const allow = sql`(${sql.join(CUTLINE_ALLOW_DESTINATIONS.map((f) => sql`${f}`), sql`, `)})`;
+  const person = sql`(${sql.join(CUTLINE_PERSON_WRITTEN_PROVENANCE.map((p) => sql`${p}`), sql`, `)})`;
+  return sql`(exists (
+      select 1 from rules rpc
+       where rpc.account_id = ${d.castUuid(accountId)}
+         and rpc.enabled
+         and rpc.kind = 'sender'
+         and rpc.destination in ${allow}
+         and rpc.provenance in ${person}
+         and ${ruleMatchKeySql(sql`rpc.match`)} = ${senderExpr}
+    ) or exists (
+      select 1 from contacts cpc
+       where cpc.account_id = ${d.castUuid(accountId)}
+         and lower(cpc.address) = ${senderExpr}
+         and (cpc.source is null or cpc.source <> 'inferred')
+    ))`;
 }
 
 /**

@@ -3,8 +3,8 @@ import {
 } from "@trafficflow/core/sender-headers";
 import { ORGANIZED_FOLDERS, canonicalDestination, isConsentingDestination } from "@trafficflow/core/destinations";
 import {
-  bodyTermOf, compareRules, effectForDestination, placingRule, ruleMatchKey, sharedProviderAllowRefusal,
-  subjectTermOf, type OrderedRule,
+  bodyTermOf, compareRules, effectForDestination, personConsentRule, placingRule, ruleMatchKey,
+  sharedProviderAllowRefusal, subjectTermOf, type OrderedRule,
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
@@ -420,15 +420,28 @@ function heldAheadOfTheCopy(reader: EntityReader, messages: readonly EngineMessa
 const NO_SENDERS: ReadonlySet<string> = new Set();
 
 /** The senders a claim at the gate is held for inside the cutline, dated by the arrival key (mail 0147, 0148) — the
- *  server's `senderHasHeldClaimSql` with its cutoff. */
-function sendersWithAHeldClaim(messages: readonly EngineMessage[], cutoff: number): ReadonlySet<string> {
+ *  server's `senderHasHeldClaimSql` with its cutoff, and like it not a sender a person consented to at the address. */
+function sendersWithAHeldClaim(
+  messages: readonly EngineMessage[], cutoff: number, index: ConsentIndex,
+): ReadonlySet<string> {
   const out = new Set<string>();
   for (const m of messages) {
     if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && storeInstantOf(m) >= cutoff) {
-      out.add(senderKey(m.from.address));
+      const key = senderKey(m.from.address);
+      if (!personConsented(index, m, key)) out.add(key);
     }
   }
   return out;
+}
+
+/**
+ * A PERSON CONSENTED TO THIS ADDRESS, as far as the mirror can say: core's `personConsentRule` over
+ * the sender's rules in the message's own index. The gate's other half, a person's contact, is not on
+ * the mirror; the store's queue page answers for it, since `senderHasHeldClaimSql` skips it there.
+ */
+function personConsented(index: ConsentIndex, m: EngineMessage, key: string): boolean {
+  const named = scoped(index, m.mailboxId).allBySender.get(key) ?? [];
+  return named.some((r) => personConsentRule({ ...r, effect: effectForDestination(r.destination) }, key));
 }
 
 function messageMs(m: EngineMessage): number | null {
@@ -480,6 +493,8 @@ export function senderActivity(
   messages: readonly EngineMessage[],
   opts: ConsentOptions = {},
   own: ReadonlySet<string> = new Set(),
+  /** The rules in force ({@link consentIndex}), for the held claim's person-consent half; absent = none. */
+  index: ConsentIndex | null = null,
 ): Map<string, SenderActivity> {
   const { cutoff, baselined, allTime } = cutlineFor(opts);
 
@@ -495,8 +510,10 @@ export function senderActivity(
     // means "retire nobody". Every dated row reaches the same answer either way.
     if (allTime) { out.set(key, "active"); continue; }
     // A claim the gate holds inside the cutline keeps its sender active, dated by its arrival key and
-    // never by its Date (mail 0148): the server's `heldClaimInsideSql`, so queue, counts and partition agree.
-    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && storeInstantOf(m) >= cutoff) {
+    // never by its Date (mail 0148): the server's `senderHasHeldClaimSql`, so queue, counts and partition
+    // agree — and, like it, not for a sender a person consented to at the address (the gate holds none).
+    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && storeInstantOf(m) >= cutoff
+        && !(index !== null && personConsented(index, m, key))) {
       out.set(key, "active");
       continue;
     }
@@ -544,12 +561,12 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const inUserFolder = (m: EngineMessage): boolean =>
     userFolders.has(`${m.mailboxId}|${m.folder}`) || userFolders.has(m.folder);
   const rulesOnly = opts.rulesOnly === true;
-  const activity = rulesOnly ? new Map<string, SenderActivity>() : senderActivity(messages, opts, own);
+  const activity = rulesOnly ? new Map<string, SenderActivity>() : senderActivity(messages, opts, own, index);
   // The same line {@link senderActivity} measures from, read here for outbound mail — see the
   // own-sent branch below. One call, so the two halves of the partition cannot disagree about
   // where the cutline is.
   const { cutoff } = cutlineFor(opts);
-  const heldClaim = sendersWithAHeldClaim(messages, cutoff);
+  const heldClaim = sendersWithAHeldClaim(messages, cutoff, index);
 
   const placeOf = new Map<string, Folder | null>();
   /** Messages whose sender is consented, by thread — the anchor the thread rule uses. */

@@ -240,6 +240,26 @@ export function namesAuthor(
 }
 
 /**
+ * The provenances a PERSON wrote: typed, imported, and the Sent seed (they had written to the
+ * address). `promoted` — a Screener press or the act — is inference. `@trafficflow/db` holds a
+ * pinned copy (`CUTLINE_PERSON_WRITTEN_PROVENANCE`) for the queue's SQL.
+ */
+export const PERSON_WRITTEN_PROVENANCE: ReadonlySet<string> = new Set(["manual", "migrated", "seeded-from-sent"]);
+
+/**
+ * DOES THIS RULE CARRY A PERSON'S CONSENT TO THIS ADDRESS — the rule half of the gate's
+ * address-level consent (`rules.ts`), the one fact the identity hold yields to: an enabled allow
+ * `sender` rule a person wrote, naming the author. The gate and the client's held-claim term ask it.
+ */
+export function personConsentRule(
+  r: Pick<ClaimingRule, "kind" | "match" | "destination" | "provenance"> & { enabled: boolean; effect?: string },
+  author: string | null,
+): boolean {
+  return r.enabled && r.kind === "sender" && r.effect !== "deny" && effectForDestination(r.destination) === "allow"
+    && PERSON_WRITTEN_PROVENANCE.has(r.provenance) && namesAuthor(r, author);
+}
+
+/**
  * THE ONE CLAIM: does `r` file this message? The principal (author or header), then the subject
  * term, then the body term — conjuncts, so a term only ever turns a claim into a decline. A header
  * rule without the headers, or a body term without the text, answers `unknown`, never a guess.
