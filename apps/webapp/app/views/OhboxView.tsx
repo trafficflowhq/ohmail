@@ -404,11 +404,10 @@ export function OhboxView({
    * bottom; reported). A read message leaves "New for you" NOW — keeping read rows made a read mailbox look
    * unread all session: the moment the selector re-files a row it slides (`SETTLE_MS`) and `dismissed` releases
    * its slot. The one unmoved row is the message being read — its place is held until the reader leaves or answers
-   * it ({@link armRead}). `promoted` is the reverse move: an explicit mark-unread enters at the FRONT of New and
-   * cancels a slide in flight — the later explicit act wins, immediately.
+   * it ({@link armRead}). {@link returnToNew} is the reverse move: an explicit mark-unread cancels a slide in flight
+   * and re-enters New at its ARRIVAL place, exactly where a surface that only received the change puts it.
    */
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
-  const [promoted, setPromoted] = useState<Set<string>>(() => new Set());
   const [settling, setSettling] = useState<Set<string>>(() => new Set());
   /**
    * EVERY MESSAGE THE PINNED BLOCK STANDS FOR — the rows' members, flattened. The session order,
@@ -422,19 +421,18 @@ export function OhboxView({
   );
   const resurfacedOrder = useRef<string[]>([]);
   const newOrder = useRef<string[]>([]);
-  /** Slides in flight, id → timer handle. Cancelled by `promote` and by unmount. */
+  /** Slides in flight, id → timer handle. Cancelled by `returnToNew` and by unmount. */
   const slideTimers = useRef<Map<string, number>>(new Map());
 
   /**
-   * Record an explicit "this is unread again" for one or more ids (see `promoted`). Four
-   * halves, none housekeeping: the id joins the promote set so the next reconcile leads New
-   * with it; the slide timer is torn up and `settling` comes off, so a row caught mid-descent
-   * stops where it is; and it leaves `dismissed`, so a completed slide cannot keep filtering it
-   * out of the order it is being promoted into. NOT pruned when a row leaves the Ohbox: the set
-   * is bounded by explicit acts in one session and a held id is inert once the row is in the
-   * New order — a prune would be a second writer of the same fact for no behaviour.
+   * Record an explicit "this is unread again" for one or more ids. The slide timer is torn up and
+   * `settling` comes off, so a row caught mid-descent stops where it is; and it leaves `dismissed`,
+   * so a completed slide cannot keep filtering it out of New. WHERE it re-enters is not decided
+   * here: `reconcile` merges it at the selector's arrival rank, so the surface that pressed and every
+   * surface that received the change list it in one place (leading New with it kept the pressing
+   * surface disagreeing with every other for the rest of the session).
    */
-  const promote = useCallback((ids: readonly string[]) => {
+  const returnToNew = useCallback((ids: readonly string[]) => {
     for (const id of ids) {
       const timer = slideTimers.current.get(id);
       if (timer === undefined) continue;
@@ -445,11 +443,6 @@ export function OhboxView({
       if (!ids.some((id) => prev.has(id))) return prev;
       const next = new Set(prev);
       for (const id of ids) next.delete(id);
-      return next;
-    });
-    setPromoted((prev) => {
-      const next = new Set(prev);
-      for (const id of ids) next.add(id);
       return next;
     });
     setDismissed((prev) => {
@@ -482,8 +475,8 @@ export function OhboxView({
    * selector ranks after it (for New: date desc, so a genuinely new arrival enters at the top), at
    * the end when none. A merge, not a re-sort: kept rows never move relative to each other, and an
    * OLD unread arrival (a backfill, a foreign mark-unread) files at its date slot. The rank is the
-   * id's index in `current`, the selector's own output. `lead` is the promote block: explicit
-   * unreads go to the front; once placed they are kept rows. A dismissal is spent when the selector
+   * id's index in `current`, the selector's own output — an explicit unread included, which is
+   * therefore at its arrival place on every surface at once. A dismissal is spent when the selector
    * stops filing the row under "Earlier" (`dropped`) — a permanent one would swallow the way back
    * for mail marked unread elsewhere.
    */
@@ -491,19 +484,17 @@ export function OhboxView({
   const reconcile = (
     prev: string[],
     current: EngineMessage[],
-    front?: ReadonlySet<string>,
   ): string[] => {
     const keep = prev.filter((id) => byId.has(id) && !dropped(id));
     const have = new Set(keep);
     const rank = new Map(current.map((m, i) => [m.id, i]));
-    const lead: string[] = [];
     const fresh: string[] = [];
     for (const m of current) {
       if (dropped(m.id) || have.has(m.id)) continue;
       have.add(m.id);
-      (front?.has(m.id) ? lead : fresh).push(m.id);
+      fresh.push(m.id);
     }
-    if (fresh.length === 0) return lead.length > 0 ? [...lead, ...keep] : keep;
+    if (fresh.length === 0) return keep;
     /**
      * One pass, not one scan per fresh id: the naive splice is
      * O(kept × fresh), maximised by the most ordinary case — a cold mount,
@@ -527,9 +518,9 @@ export function OhboxView({
       merged.push(id);
     }
     for (; ki < keep.length; ki += 1) merged.push(keep[ki]!);
-    return lead.length > 0 ? [...lead, ...merged] : merged;
+    return merged;
   };
-  // Resurfaced takes no promote set: that group is the worker's pin, not a reading order, and a
+  // Resurfaced keeps the pin's order: that group is the worker's pin, not a reading order, and a
   // `u` on a resurfaced row leaves it exactly where the pin put it.
   /**
    * The pin claims a row out of the session orders — the display half of the selector's dedup. The selector
@@ -544,7 +535,7 @@ export function OhboxView({
   const pinnedIds = new Set(resurfaced.map((m) => m.id));
   resurfacedOrder.current = reconcile(resurfacedOrder.current, resurfaced)
     .filter((id) => pinnedIds.has(id) || earlierIds.has(id));
-  newOrder.current = reconcile(newOrder.current, newForYou, promoted)
+  newOrder.current = reconcile(newOrder.current, newForYou)
     .filter((id) => !pinnedIds.has(id));
 
   // The three groups as DISPLAYED: session order for the two upper ones, and "Earlier" with the
@@ -817,9 +808,9 @@ export function OhboxView({
   const runBulk = useCallback(
     (action: BulkAction) => {
       // The selection's `unread` direction is the same explicit act `u` is, over more rows, so it
-      // re-surfaces them the same way — see `promoted`. Only the direction, never the toggle:
-      // `read` has nothing to promote and `move`/the horizons take the rows out of this list.
-      if (action === "unread") promote(pickedIds);
+      // returns them to New the same way — see `returnToNew`. Only the direction, never the toggle:
+      // `read` has nothing to return and `move`/the horizons take the rows out of this list.
+      if (action === "unread") returnToNew(pickedIds);
       /* A set holding the open row takes it from under the cursor like a single verb does. */
       if (selectedId != null && pickedIds.includes(selectedId)) verbTook.current = { id: selectedId, at: Date.now() };
       /* A REFUSAL KEEPS THE SELECTION. Clearing afterwards is right for a verb that HAPPENED —
@@ -830,7 +821,7 @@ export function OhboxView({
       if (bulk.run(action, pickedIds)) clearPicked();
       else setPickPanel(null);
     },
-    [bulk, pickedIds, clearPicked, promote, selectedId],
+    [bulk, pickedIds, clearPicked, returnToNew, selectedId],
   );
 
   /**
@@ -1148,17 +1139,17 @@ export function OhboxView({
    * direction produces the same state from any state, which is why the bulk vocabulary has `read` and `unread` as separate
    * members; the single-message case must not disagree. The pin is why these are not `onMarkSeen` at the call site: `u`
    * inside the dwell window would otherwise be undone when the dwell arms and saves the read. So `u` sets the pin AND lets go
-   * of its own message's hold; the pin covers the dwell and re-entry. And it calls `promote`, about placement: a row just
-   * made unread moves back above the "Earlier" line, and `promote` also cancels a slide in flight.
+   * of its own message's hold; the pin covers the dwell and re-entry. And it calls `returnToNew`: a row just made unread
+   * moves back above the "Earlier" line at its arrival place, and a slide in flight is cancelled.
    */
   const markUnread = useCallback((m: EngineMessage) => {
     pinnedUnread.current = m.id;
     // Through `hold`, so letting go re-bolds the row and puts the verb back — the presentation half
     // of "the later explicit act wins" (see `armedRead`).
     if (heldRead.current === m.id) hold(null);
-    promote([m.id]);
+    returnToNew([m.id]);
     onMarkSeen([m.id], true);
-  }, [onMarkSeen, promote, hold]);
+  }, [onMarkSeen, returnToNew, hold]);
 
   const markRead = useCallback((m: EngineMessage) => {
     // Reading it is consent for the dwell to have been right, so the pin is released. A hold, if
@@ -1265,7 +1256,7 @@ export function OhboxView({
    * transitions over); only then is the id dropped and the row redrawn under "Earlier" — same-tick
    * dropping is a teleport. It re-judges its premise when it lands (a fire-time re-read, like the arm's):
    * 280 ms is long enough for `u`, another client, or a filing to change the answer, so completion asks
-   * `earlierRef` again and abandons the move if "Earlier" is no longer where the row belongs; `promote`
+   * `earlierRef` again and abandons the move if "Earlier" is no longer where the row belongs; `returnToNew`
    * cancels the timer outright for the explicit case.
    */
   const slideOut = useCallback((id: string) => {
@@ -2570,7 +2561,7 @@ export function OhboxView({
               /* The pane's read-state buttons press `u`/`⇧I` and fall back to `onAction("unread")`
                  — a FLIP — only where no keymap answers. A flip resolved ABOVE this view would
                  derive from the store's flag and invert the verb on an armed message, and it
-                 would skip the pin/promote/armed machinery either way. So the fallback is routed
+                 would skip the pin/return/armed machinery either way. So the fallback is routed
                  through the same two directions the keys take; everything else passes through. */
               if (a === "unread") {
                 if (readSet.length > 0) markConversationRead(selected);
