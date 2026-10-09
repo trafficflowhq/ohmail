@@ -70,7 +70,7 @@ export function Hero() {
 
       <div className="l-hero-ctas l-rise" style={{ "--rise": "4.1" } as CSSProperties}>
         {/* Scrolls to pricing; the tier cards there open the signup modal. */}
-        <a className="btn primary l-btn-lg" href="#pricing">
+        <a className="btn primary l-btn-lg" href="#pricing" data-ga-lead="hero">
           <DotLabel text={t("ctaGet")} />
         </a>
         <a className="btn l-btn-lg" href="#demo">

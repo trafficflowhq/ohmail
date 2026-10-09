@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import createNextIntlPlugin from "next-intl/plugin";
-import { API_BASE, rewritesFor } from "./routes.mjs";
+import { API_BASE, MARKETING_PATHS, rewritesFor } from "./routes.mjs";
+import { assertMeasurementId, withAnalytics } from "./analytics.mjs";
 const withNextIntl = createNextIntlPlugin();
 
 /* The route table is `routes.mjs` — one declaration read by this config AND by every
@@ -450,6 +451,65 @@ const STATIC_SECURITY_HEADERS = [
 ];
 
 /**
+ * The header rules, for a build with or without a website measurement id (`analytics.mjs`).
+ * Without one they are exactly the two rules every build had. With one, the website's documents
+ * (`MARKETING_PATHS`) get the baseline plus the Google sources, and the blanket rule EXCLUDES them
+ * by lookahead for the `/demo` reason above: two CSP headers intersect. Every other path, the
+ * branded 404 included, keeps the baseline; credential pages are re-set by middleware as before.
+ *
+ * @param {string | null} gaId
+ */
+export function headerRules(gaId) {
+  const demo = {
+    // FIRST and EXCLUSIVE — see the note above SHARED_CSP. The demo is the real mail
+    // client in demo mode (`app/(product)/demo/page.tsx`), framed same-origin by the
+    // landing, so it needs the baseline bundle policy with framing relaxed to `'self'`.
+    // The `/((?!demo).*)` rule below excludes it by negative lookahead so it never also
+    // receives the blanket `frame-ancestors 'none'` header — two CSP headers intersect,
+    // they do not override, and the intersection would be `'none'` and a blank frame.
+    source: "/demo",
+    headers: [
+      { key: "Content-Security-Policy", value: DEMO_CSP },
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+    ],
+  };
+  if (gaId === null) {
+    return [
+      demo,
+      {
+        // Everything else, including `/`. The negative lookahead keeps the blanket policy
+        // off `/demo` — the one path in the deployment that may be framed by this origin.
+        source: "/((?!demo).*)",
+        headers: [
+          { key: "Content-Security-Policy", value: BASELINE_CSP },
+          ...STATIC_SECURITY_HEADERS,
+        ],
+      },
+    ];
+  }
+  const site = MARKETING_PATHS.map((p) => p.slice(1)).join("|");
+  return [
+    demo,
+    ...MARKETING_PATHS.map((source) => ({
+      source,
+      headers: [
+        { key: "Content-Security-Policy", value: withAnalytics(BASELINE_CSP) },
+        ...STATIC_SECURITY_HEADERS,
+      ],
+    })),
+    {
+      source: `/((?!demo)(?!(?:${site})$).*)`,
+      headers: [
+        { key: "Content-Security-Policy", value: BASELINE_CSP },
+        ...STATIC_SECURITY_HEADERS,
+      ],
+    },
+  ];
+}
+
+/**
  * THE GITHUB STAR COUNT, FETCHED ONCE PER BUILD.
  *
  * The landing's nav renders a link to the public repository with its star count. That
@@ -564,32 +624,7 @@ const nextConfig = {
   },
 
   async headers() {
-    return [
-      {
-        // FIRST and EXCLUSIVE — see the note above SHARED_CSP. The demo is the real mail
-        // client in demo mode (`app/(product)/demo/page.tsx`), framed same-origin by the
-        // landing, so it needs the baseline bundle policy with framing relaxed to `'self'`.
-        // The `/((?!demo).*)` rule below excludes it by negative lookahead so it never also
-        // receives the blanket `frame-ancestors 'none'` header — two CSP headers intersect,
-        // they do not override, and the intersection would be `'none'` and a blank frame.
-        source: "/demo",
-        headers: [
-          { key: "Content-Security-Policy", value: DEMO_CSP },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "SAMEORIGIN" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-        ],
-      },
-      {
-        // Everything else, including `/`. The negative lookahead keeps the blanket policy
-        // off `/demo` — the one path in the deployment that may be framed by this origin.
-        source: "/((?!demo).*)",
-        headers: [
-          { key: "Content-Security-Policy", value: BASELINE_CSP },
-          ...STATIC_SECURITY_HEADERS,
-        ],
-      },
-    ];
+    return headerRules(assertMeasurementId(process.env));
   },
 
   async rewrites() {

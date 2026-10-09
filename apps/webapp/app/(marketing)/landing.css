@@ -4465,3 +4465,62 @@ html[data-demo-full] {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* ── visit-statistics notice (only on a build with a measurement id) ─
+   In the flow above the bar, never fixed: it can push the hero down a
+   line on a phone but cannot cover a call to action. A browser that has
+   decided is stamped on <html> before paint, so the notice never flashes. */
+.l-consent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 16px;
+  padding: 10px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--hair-soft);
+  color: var(--ink2);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+html[data-analytics] .l-consent {
+  display: none;
+}
+.l-consent-text {
+  margin: 0;
+  max-width: 68ch;
+}
+.l-consent-text a {
+  color: var(--ink);
+}
+.l-consent-actions {
+  display: flex;
+  gap: 8px;
+}
+.l-consent .btn {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+.l-consent-change {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.l-consent-change:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (max-width: 600px) {
+  .l-consent {
+    gap: 6px 12px;
+    padding: 8px 14px;
+    font-size: 12.5px;
+  }
+  .l-consent .btn {
+    padding: 5px 12px;
+  }
+}

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Wordmark } from "../components/Wordmark";
 import { legalRobots } from "../legal-robots";
 import { refuseOnSelfHost } from "../../self-host-marketing";
+import { analyticsId } from "../analytics-id";
 
 export const metadata: Metadata = {
   title: "Subprocessors — ohmail",
@@ -23,6 +24,7 @@ export default function SubprocessorsPage() {
      ohmail.app — the vendors we contract with. An operator's install has its own hosting and
      none of ours, so every row here would be a false statement about their processing. */
   refuseOnSelfHost();
+  const counted = analyticsId() !== null;
   return (
     <main className="l-legal l-legal-wide">
       <a className="l-legal-brand" href="/">
@@ -41,8 +43,9 @@ export default function SubprocessorsPage() {
         <p>
           <strong>ohmail Desktop uses none of this.</strong> It has no account and
           no server of ours: nothing on this page touches you if you never sign up
-          for Cloud. On macOS, Windows and Linux alike the app is a real mail
-          client, running against your own server rather than ours.
+          for Cloud{counted ? ", apart from visit statistics on this website if you agree to them" : ""}.
+          On macOS, Windows and Linux alike the app is a real mail client, running
+          against your own server rather than ours.
         </p>
         <p>
           Not all of these are processing on any given day. They are listed
@@ -119,6 +122,21 @@ export default function SubprocessorsPage() {
                 <td>Your address and the message we send you</td>
                 <td>USA / EU</td>
               </tr>
+              {counted ? (
+                <tr>
+                  <th scope="row">Google (Google Ireland Limited, Google LLC)</th>
+                  <td>
+                    Visit statistics for this website (Google Analytics), only if
+                    you accept them on the site. Never in the apps
+                  </td>
+                  <td>
+                    Pages opened and sign-up or download presses on this website,
+                    referrer, browser and device type, approximate location, an
+                    Analytics cookie id. Never your mail
+                  </td>
+                  <td>EU / USA</td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -159,6 +177,12 @@ export default function SubprocessorsPage() {
                   stay. Both go when you remove the mailbox or delete your account.
                 </td>
               </tr>
+              {counted ? (
+                <tr>
+                  <th scope="row">Website visit statistics (Google Analytics)</th>
+                  <td>At most 14 months, by the retention setting of our Analytics property</td>
+                </tr>
+              ) : null}
               <tr>
                 <th scope="row">The copy in the former database</th>
                 <td>Frozen on 3 August 2026; kept until that database is deleted</td>

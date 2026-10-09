@@ -6,6 +6,9 @@ import { loadCatalog } from "../../i18n/catalog";
 import { CANONICAL_ORIGIN } from "../canonical-host";
 import type { AppLocale } from "../shell/locale";
 import { Providers } from "./providers";
+import { analyticsId } from "./analytics-id";
+import { Analytics } from "./components/Analytics";
+import { CONSENT_DENIED, CONSENT_GRANTED, CONSENT_KEY } from "../../analytics.mjs";
 
 /**
  * The marketing shell, once — shared by the root layouts that mount it. The marketing site is bilingual,
@@ -142,6 +145,13 @@ const THEME_BOOT =
   `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";` +
   `if(f==="ohmarchy")try{document.documentElement.dataset.face="ohmarchy"}catch(e){}})()`;
 
+/* A decided browser never sees the notice flash: the choice is stamped on <html> before first
+   paint and `landing.css` hides the notice under it. Emitted only when the build has an id. */
+const CONSENT_BOOT =
+  `(function(){try{var c=localStorage.getItem(${JSON.stringify(CONSENT_KEY)});` +
+  `if(c===${JSON.stringify(CONSENT_GRANTED)}||c===${JSON.stringify(CONSENT_DENIED)})` +
+  `document.documentElement.dataset.analytics=c}catch(e){}})()`;
+
 /**
  * The `<html>` of a marketing document.
  *
@@ -156,11 +166,13 @@ export async function MarketingRoot(
   { locale, children }: { locale: AppLocale; children: ReactNode },
 ) {
   const messages = await loadCatalog(locale);
+  const gaId = analyticsId();
   return (
     <html lang={locale} suppressHydrationWarning>
       <body className="mo-canvas l-body">
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+        <script dangerouslySetInnerHTML={{ __html: gaId ? THEME_BOOT + ";" + CONSENT_BOOT : THEME_BOOT }} />
         <NextIntlClientProvider locale={locale} messages={messages}>
+          {gaId ? <Analytics id={gaId} /> : null}
           <Providers>{children}</Providers>
         </NextIntlClientProvider>
       </body>

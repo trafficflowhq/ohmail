@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Wordmark } from "../components/Wordmark";
 import { legalRobots } from "../legal-robots";
 import { refuseOnSelfHost } from "../../self-host-marketing";
+import { analyticsId } from "../analytics-id";
+import { AnalyticsChoiceButton } from "../components/Analytics";
 
 export const metadata: Metadata = {
   title: "Privacy — ohmail",
@@ -38,13 +40,45 @@ export default function PrivacyPage() {
           <a href="mailto:support@ohmail.app">support@ohmail.app</a>).
         </p>
 
-        <h2>No analytics, no trackers</h2>
-        <p>
-          This website uses no analytics, no advertising trackers, no
-          third-party scripts, and no tracking cookies. Your theme preference
-          is stored in your own browser (localStorage) and is never
-          transmitted.
-        </p>
+        {analyticsId() !== null ? (
+          <>
+            <h2 id="analytics">Visit statistics, only if you agree</h2>
+            <p>
+              This website can count visits with Google Analytics, provided by
+              Google Ireland Limited and Google LLC. It loads only after you
+              accept the notice on the site; until then, and if you decline,
+              nothing is loaded from Google and nothing is sent. Your choice is
+              stored in your own browser (localStorage) and you can change it at
+              any time: <AnalyticsChoiceButton label="change your choice" />.
+            </p>
+            <p>
+              If you accept, Google receives the pages you open on this website,
+              the buttons you press to sign up or download, where you came from,
+              and your browser, device type and approximate location, along with
+              two Google Analytics cookies that recognise a returning browser. No
+              mail content, no address, no name and nothing you type is sent.
+              Advertising features, ad personalisation and Google signals are
+              off. Google may process the data in the USA. Visit data is kept no
+              longer than our Analytics retention setting, at most 14 months.
+            </p>
+            <p>
+              Only this website. The ohmail apps — the web app after you sign
+              in, the desktop app and the phone app — load no analytics and no
+              trackers. Your theme preference is stored in your own browser
+              (localStorage) and is never transmitted.
+            </p>
+          </>
+        ) : (
+          <>
+            <h2>No analytics, no trackers</h2>
+            <p>
+              This website uses no analytics, no advertising trackers, no
+              third-party scripts, and no tracking cookies. Your theme preference
+              is stored in your own browser (localStorage) and is never
+              transmitted.
+            </p>
+          </>
+        )}
 
         <h2>The live demo</h2>
         <p>

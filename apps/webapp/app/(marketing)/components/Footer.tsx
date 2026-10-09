@@ -1,17 +1,19 @@
 import { useTranslations } from "next-intl";
 import { LangSwitch } from "./LangSwitch";
 import { Wordmark } from "./Wordmark";
+import { AnalyticsChoiceButton } from "./Analytics";
+import { analyticsId } from "../analytics-id";
 
 /**
  * The footer's sign-off is the promise the whole page argues — the mailbox is the source
- * of truth, so leaving costs nothing — set as a statement rather than a badge. The line
- * it replaced ("No analytics. No trackers.") was true of this site and stays true (the
- * no-third-party guard proves the marketing surface loads nothing off-origin), but it is
- * a fact about the website, not the product's reason to exist; it keeps a quiet second
- * line, scoped to what it can prove: this site.
+ * of truth, so leaving costs nothing — set as a statement rather than a badge. The quiet
+ * second line is a fact about the website only: a build without a measurement id loads
+ * nothing off-origin and says so; a build with one says what it counts and only after
+ * consent, and carries the control that changes the visitor's choice.
  */
 export function Footer() {
   const t = useTranslations("footer");
+  const counted = analyticsId() !== null;
   return (
     <footer className="l-footer">
       <div className="l-footer-inner">
@@ -26,7 +28,14 @@ export function Footer() {
               <path d="M8 1.8l5.2 2v4.1c0 3.2-2.2 5.3-5.2 6.3-3-1-5.2-3.1-5.2-6.3V3.8z" />
               <path d="M5.6 8.2l1.7 1.7 3.1-3.6" />
             </svg>
-            {t("noTrackers")}
+            {counted ? (
+              <>
+                {t("analytics")}{" "}
+                <AnalyticsChoiceButton label={t("analyticsChoice")} />
+              </>
+            ) : (
+              t("noTrackers")
+            )}
           </p>
         </div>
         <nav className="l-footer-nav" aria-label={t("legalNav")}>

@@ -46,7 +46,7 @@ export function Trial() {
             hardware need neither a trial nor a card. It points at the section that
             owns those options rather than restating them. */}
         <p className="l-trial-self">
-          <a href="#get">{t("selfhost")}</a>
+          <a href="#get" data-ga-lead="trial">{t("selfhost")}</a>
         </p>
       </Reveal>
     </section>

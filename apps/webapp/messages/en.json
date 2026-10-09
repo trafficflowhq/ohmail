@@ -2249,11 +2249,20 @@
     "tagline": "Consent-first email on the mailboxes you already own.",
     "promise": "Your mailbox is the source of truth. Leave anytime — it stays organized.",
     "noTrackers": "No analytics on this site.",
+    "analytics": "Visit statistics on this website, only if you agree. Never in the app, never on your mail.",
+    "analyticsChoice": "Change",
     "imprint": "Imprint",
     "privacy": "Privacy",
     "subprocessors": "Subprocessors",
     "copyright": "© 2026 ohmail",
     "legalNav": "Legal"
+  },
+  "analytics": {
+    "label": "Visit statistics",
+    "notice": "May we count visits to this website with Google Analytics? Pages and clicks only — never your mail, never in the app.",
+    "more": "Details",
+    "accept": "Accept",
+    "decline": "Decline"
   },
   "siteMeta": {
     "title": "ohmail — Consent-first email on your own mailboxes.",

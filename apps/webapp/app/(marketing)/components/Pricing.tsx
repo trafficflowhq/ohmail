@@ -74,11 +74,11 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
             <li>{t("desktopHostFeat")}</li>
           </ul>
           {/* Down to the section that owns the per-platform links, not out to GitHub. */}
-          <a className="btn primary l-btn-lg l-price-cta" href="#download">
+          <a className="btn primary l-btn-lg l-price-cta" href="#download" data-ga-lead="pricing_desktop">
             {t("desktopCta")}
           </a>
           <p className="l-price-ctanote">{t("desktopCtaNote")}</p>
-          <button type="button" className="l-price-notify" onClick={() => open("desktop")}>
+          <button type="button" className="l-price-notify" data-ga-lead="pricing_desktop_notify" onClick={() => open("desktop")}>
             {t("desktopNotify")}
           </button>
         </Reveal>
@@ -108,7 +108,7 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
             <li>{t("selfWayHome")}</li>
             <li>{t("selfWayDesktop")}</li>
           </ul>
-          <a className="btn l-btn-lg l-price-cta" href={SELF_HOST_GUIDE_URL} rel="noreferrer">
+          <a className="btn l-btn-lg l-price-cta" href={SELF_HOST_GUIDE_URL} rel="noreferrer" data-ga-lead="pricing_selfhost">
             {t("selfCta")}
           </a>
           <p className="l-price-ctanote">
@@ -223,11 +223,11 @@ function CloudTier({
         // `?plan=` is a HINT the wizard may use to preselect; it is never the authority on
         // what gets bought. `billing.checkout(plan)` is called from the plan step with the
         // plan the person clicked there, and Stripe prices it from `PLAN_LIMITS` server-side.
-        <a className={cls} href={`/join?plan=${id}${annual ? "&interval=year" : ""}`}>
+        <a className={cls} href={`/join?plan=${id}${annual ? "&interval=year" : ""}`} data-ga-lead={`pricing_${id}`}>
           {t("cloudCta", { tier: name })}
         </a>
       ) : (
-        <button type="button" className={cls} onClick={() => onPick(id)}>
+        <button type="button" className={cls} data-ga-lead={`pricing_${id}`} onClick={() => onPick(id)}>
           {t("cloudCta", { tier: name })}
         </button>
       )}

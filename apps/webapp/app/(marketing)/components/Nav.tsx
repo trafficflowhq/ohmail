@@ -136,7 +136,7 @@ export function Nav() {
               <a className="l-nav-signin" href="/login">
                 {t("signIn")}
               </a>
-              <a className="btn primary l-nav-cta" href="#get">
+              <a className="btn primary l-nav-cta" href="#get" data-ga-lead="nav">
                 <DotLabel text={t("cta")} />
               </a>
             </>

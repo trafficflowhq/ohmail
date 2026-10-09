@@ -109,14 +109,14 @@ export const REFRESH_SCOPED_PATHS = Object.freeze([REFRESH_PATH, SIGN_OUT_PATH])
  *
  * `handler: true` marks a path a ROUTE HANDLER answers rather than a page (see `HANDLER_PATHS`).
  *
- * @typedef {{ path: string, edge: boolean, handler?: boolean, why?: string }} OwnRoute
+ * @typedef {{ path: string, edge: boolean, handler?: boolean, marketing?: boolean, why?: string }} OwnRoute
  * @type {readonly Readonly<OwnRoute>[]}
  */
 export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
-  { path: "/", edge: true },
-  { path: "/privacy", edge: true },
-  { path: "/imprint", edge: true },
-  { path: "/subprocessors", edge: true },
+  { path: "/", edge: true, marketing: true },
+  { path: "/privacy", edge: true, marketing: true },
+  { path: "/imprint", edge: true, marketing: true },
+  { path: "/subprocessors", edge: true, marketing: true },
   // `/de` is the GERMAN landing — the same composition `/` renders, under a second marketing
   // root layout that pins the German `lang` attribute (`app/(marketing-de)`). A path rather than
   // a negotiated body on `/`: one URL with two bodies needs `Vary: Accept-Language` to be
@@ -124,7 +124,7 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   // records that, measured against a real `next start`). The legal pages
   // have no German twin on purpose — their text is binding and deliberately outside the
   // catalogue — so this is one path, not a mirrored tree.
-  { path: "/de", edge: true },
+  { path: "/de", edge: true, marketing: true },
   // `/resume` is INTERNAL like `/mailbox`: the rewrite target for a browser holding the
   // `tf_resume` marker but no usable access cookie. Middleware 308s a direct request back
   // to `/`, so it never appears in the address bar — but it is a path this deployment
@@ -224,6 +224,13 @@ export const OWN_PATHS = Object.freeze(OWN_ROUTES.map((r) => r.path));
 
 /** The subset the middleware matcher must carry, and nothing else. */
 export const EDGE_PATHS = Object.freeze(OWN_ROUTES.filter((r) => r.edge).map((r) => r.path));
+
+/**
+ * The WEBSITE's documents — the paths where the optional visit statistics may run and where their
+ * CSP sources are added (`analytics.mjs`). A positive list: a path missing here keeps the product
+ * policy, never the reverse. The branded 404 is not on it, since a catch-all cannot be listed.
+ */
+export const MARKETING_PATHS = Object.freeze(OWN_ROUTES.filter((r) => r.marketing).map((r) => r.path));
 
 /**
  * Flathub reads `/.well-known/org.flathub.VerifiedApps.txt` on this domain to prove the app id

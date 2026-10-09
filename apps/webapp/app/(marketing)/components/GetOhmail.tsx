@@ -130,7 +130,7 @@ export function GetOhmail() {
           <em className="l-opt">{t("standaloneTag")}</em>
         </h3>
         <p className="l-get-body">{t("standaloneBody")}</p>
-        <a className="l-get-link" href="#download">
+        <a className="l-get-link" href="#download" data-ga-lead="get_desktop">
           {t("standaloneCta")}
         </a>
       </Reveal>
@@ -150,7 +150,7 @@ export function GetOhmail() {
               <span className="l-get-disc">{c.icon}</span>
               <h4 className="l-get-name">{t(`${c.id}Name`)}</h4>
               <p className="l-get-body">{t(`${c.id}Body`)}</p>
-              <a className="l-get-link" href={c.href} rel="noreferrer">
+              <a className="l-get-link" href={c.href} rel="noreferrer" data-ga-lead={`get_${c.id}`}>
                 {t(`${c.id}Cta`)}
               </a>
             </Reveal>
@@ -167,7 +167,7 @@ export function GetOhmail() {
         <p className="l-get-way is-managed">{t("wayManaged")}</p>
         <p className="l-get-q">{t("managedLead")}</p>
         <p className="l-get-mbody">{t("managedBody")}</p>
-        <a className="l-get-link" href="#pricing">
+        <a className="l-get-link" href="#pricing" data-ga-lead="get_managed">
           {t("managedCta")}
         </a>
       </Reveal>

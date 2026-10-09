@@ -66,6 +66,7 @@ export function Downloads() {
                 className={p.id === yours ? "btn primary l-dl-btn" : "btn l-dl-btn"}
                 href={p.primary.url}
                 rel="noreferrer"
+                data-ga-download={p.id}
                 /* The asset is a binary on another host, so `download` cannot rename it —
                    it is here to say "this is a file", which is what stops a browser from
                    trying to navigate to it. */
@@ -81,7 +82,7 @@ export function Downloads() {
                      release cannot attach two files under one name. */
                   <Fragment key={f.asset}>
                     {" · "}
-                    <a href={f.url} rel="noreferrer" download>
+                    <a href={f.url} rel="noreferrer" download data-ga-download={p.id}>
                       {t(f.labelKey)}
                     </a>
                   </Fragment>
@@ -108,7 +109,7 @@ export function Downloads() {
         <ul className="l-dl-row l-dl-mobile">
           <li className="l-dl-col">
             <PlatformGlyph id="android" />
-            <a className="btn l-dl-btn" href={ANDROID_RELEASE_URL} rel="noreferrer">
+            <a className="btn l-dl-btn" href={ANDROID_RELEASE_URL} rel="noreferrer" data-ga-download="android">
               {t("androidCta")}
             </a>
             <p className="l-dl-fmt">{t("androidFormat")}</p>

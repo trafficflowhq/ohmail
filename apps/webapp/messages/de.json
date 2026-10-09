@@ -2249,11 +2249,20 @@
     "tagline": "E-Mail auf den Postfächern, die du längst hast, und nichts ohne dein Ja.",
     "promise": "Dein Postfach ist die Quelle der Wahrheit. Geh, wann du willst — es bleibt organisiert.",
     "noTrackers": "Keine Analytics auf dieser Seite.",
+    "analytics": "Besuchsstatistik auf dieser Website, nur mit deinem Ja. Nie in der App, nie auf deiner Mail.",
+    "analyticsChoice": "Ändern",
     "imprint": "Impressum",
     "privacy": "Datenschutz",
     "subprocessors": "Auftragsverarbeiter",
     "copyright": "© 2026 ohmail",
     "legalNav": "Rechtliches"
+  },
+  "analytics": {
+    "label": "Besuchsstatistik",
+    "notice": "Dürfen wir Besuche dieser Website mit Google Analytics zählen? Nur Seiten und Klicks — nie deine Mail, nie in der App.",
+    "more": "Details",
+    "accept": "Akzeptieren",
+    "decline": "Ablehnen"
   },
   "siteMeta": {
     "title": "ohmail — E-Mail auf deinen eigenen Postfächern, und nichts ohne dein Ja.",
