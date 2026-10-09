@@ -64,6 +64,8 @@ export {
   type SessionRenewalDoor,
   type StoreReadSource,
 } from "./session-reask.js";
+/** A file list the wire failed is asked again on a completed drain — one door, browser and phone. */
+export { watchWireFailedLists } from "./attachment-reask.js";
 
 /**
  * UNKNOWN IS NOT EMPTY — one reading of what a message list may say about itself, for the phone

@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { REASK_MAX, wireFailed, type EngineMessage, type OhmailEngine } from "@ohmail/client-engine";
+import { watchWireFailedLists, type EngineMessage, type OhmailEngine } from "@ohmail/client-engine";
 import {
   fileRetryIsOffered, isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
 } from "../components/AttachmentStrip";
@@ -401,9 +401,12 @@ export function useMessageAttachments(
    */
   const engineRef = useRef(engine);
 
-  /** The one ask, with everything an ask entails — the probe escalation and the calendar pass. */
+  /**
+   * The one ask, with everything an ask entails — the probe escalation and the calendar pass.
+   * `fresh` is the bounded re-ask of a failed list (a drain, a revival): `reaskAttachments`.
+   */
   const ask = useCallback(
-    (id: string): Promise<void> => {
+    (id: string, fresh = false): Promise<void> => {
       // Metadata only: `cost: "read"`, one indexed row read, nothing reaches IMAP. The bytes
       // are a separate, deliberate act — never speculative, never per row, because a paid fetch
       // needs a person behind it.
@@ -413,7 +416,7 @@ export function useMessageAttachments(
       // probe exists to settle — one single-flight `POST /auth/refresh` whose answer either heals
       // the session silently (and the revival below re-asks this list) or confirms the death that
       // puts the real re-auth prompt on screen. A no-op wherever no probe is registered.
-      return engine.loadAttachments(id).then((outcome) => {
+      return (fresh ? engine.reaskAttachments(id) : engine.loadAttachments(id)).then((outcome) => {
         /*
          * A completion that outlived its selection is re-released, not acted on: the engine does not
          * cancel a list read on release, so a reader who left the thread before a slow response
@@ -586,7 +589,8 @@ export function useMessageAttachments(
    * makes the re-ask a fresh question rather than the refused answer served from memory.
    */
   useEffect(() => {
-    if (!available || !messageId) return;
+    // Open with nothing selected, as the subscription above is: a News card holds its own list.
+    if (!available) return;
     return subscribeSessionRevival(() => {
       // The whole release set, not the focused id alone: a sibling panel's list 401s the same
       // way the focused one does, and a revival that healed one strip while its neighbour kept
@@ -594,8 +598,7 @@ export function useMessageAttachments(
       for (const id of [...wantedIds()]) {
         const held = engine.attachmentsOf(id);
         if (held.state !== "failed" || !isAuthListFailure(held.code)) continue;
-        engine.releaseAttachments(id);
-        void engine.loadAttachments(id);
+        void askRef.current(id, true);
       }
     });
   }, [engine, messageId, available, wantedIds]);
@@ -607,23 +610,8 @@ export function useMessageAttachments(
    * for minutes after a short drop while every other request answered 200.
    */
   useEffect(() => {
-    if (!available || !messageId) return;
-    const asks = new Map<string, number>();
-    let seen = engine.drainsCompleted();
-    return engine.subscribe(() => {
-      const n = engine.drainsCompleted();
-      if (n <= seen) return;
-      seen = n;
-      for (const id of [...wantedIds()]) {
-        const held = engine.attachmentsOf(id);
-        if (held.state !== "failed" || !wireFailed(held.code)) { asks.delete(id); continue; }
-        const k = asks.get(id) ?? 0;
-        if (k >= REASK_MAX) continue;
-        asks.set(id, k + 1);
-        engine.releaseAttachments(id);
-        void engine.loadAttachments(id);
-      }
-    });
+    if (!available) return;
+    return watchWireFailedLists(engine, wantedIds, (id) => void askRef.current(id, true));
   }, [engine, messageId, available, wantedIds]);
 
   /**

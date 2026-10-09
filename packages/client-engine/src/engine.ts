@@ -47,6 +47,7 @@ import { countNotify } from "./client-vitals.js";
 import { sendFingerprint } from "./send-fingerprint.js";
 import { OUTBOX_WITHDRAWN_CODE, UNJUDGED_WRITE_CODES, type UnjudgedWriteCode } from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
+import { REASK_MAX, wireFailed } from "./wire-reask.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
 import {
   MemoryMirrorStore, OUTBOX_PROTOCOL, type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices,
@@ -1701,6 +1702,8 @@ export const INLINE_IMAGE_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 
 /** The stable empty answer of {@link OhmailEngine.inlineImagesOf} — one identity, never mutated. */
 const NO_INLINE_IMAGES: ReadonlyMap<string, string> = new Map();
+/** A pass that re-asks no failed part — every pass but a drain's. */
+const NO_RETRY: ReadonlySet<string> = new Set();
 
 /**
  * The per-part ceiling on an AUTOMATICALLY fetched calendar part, in bytes — 256 KiB.
@@ -2903,6 +2906,18 @@ export class OhmailEngine {
   /** In-flight inline-image passes by message id — single-flight, see {@link OhmailEngine.loadInlineImages}. */
   private readonly inlineImageRequests = new Map<string, Promise<void>>();
   /**
+   * WHAT AN OPEN LETTER'S DOCUMENT ASKED TO DRAW — `loadInlineImages`' last list — with the wire
+   * re-asks each part has spent and whether a pass is owed after the one in flight. It lives with
+   * the reader: the release that drops the byte state drops it, {@link OhmailEngine.reaskAttachments}
+   * keeps it. It is what lets a list or a part that answers LATER draw the picture in place.
+   */
+  private readonly inlineImageAsks = new Map<string, { cids: readonly string[]; reasks: Map<string, number>; again: boolean }>();
+  /**
+   * `messageId:attachmentId` of the part a pass is fetching now. Its own arrival owes no second
+   * pass: one would spend the per-pass budget again on the parts past {@link INLINE_IMAGE_MAX_PARTS}.
+   */
+  private readonly inlinePassParts = new Set<string>();
+  /**
    * `attachmentId → decoded ics text` per message — what an event-preview surface parses and
    * renders. Text, not a parsed structure: the engine holds bytes and their decodings, and the
    * ics grammar belongs to `@trafficflow/core/ics` at the render site. Replaced on every fill,
@@ -3890,6 +3905,7 @@ export class OhmailEngine {
       // rendered from "the overlay's claim" to "the server's identical statement".
       this.sweepAwaitingEcho(epoch);
       this.drainsDone += 1;
+      this.reaskInlineParts();
       this.settledEpoch = epoch;
       // THE SETTLE'S ONE PUBLISH, after the stamp {@link OhmailEngine.freshness} reads: the last
       // page, the prune, the retired copies and overlays and the stamp are one snapshot, never
@@ -10158,6 +10174,8 @@ export class OhmailEngine {
       .then((outcome) => {
         this.attachmentLists.set(messageId, outcome);
         this.notify();
+        // A list that answers after the letter's pictures were asked for (a re-ask, a Retry) draws them.
+        if (outcome.state === "ready") this.healInlineImages(messageId, true);
         return outcome;
       })
       .finally(() => {
@@ -10230,6 +10248,12 @@ export class OhmailEngine {
         // names it — revoke now rather than hold the whole file until the document dies.
         if (minted.url !== undefined && this.itemOf(messageId, attachmentId)?.objectUrl !== minted.url) {
           this.revokeUrl(minted.url);
+        }
+        // A picture the open letter's document asked for: bytes a press fetched draw in the
+        // text too, not on the card alone.
+        const asked = current.contentId !== null ? this.inlineImageAsks.get(messageId) : undefined;
+        if (asked?.cids.includes(current.contentId!) && !this.inlinePassParts.has(flightKey)) {
+          this.healInlineImages(messageId, false);
         }
       })
       .catch((err: unknown) => {
@@ -10305,21 +10329,70 @@ export class OhmailEngine {
    */
   async loadInlineImages(messageId: string, contentIds: readonly string[]): Promise<void> {
     if (!this.attachmentsAvailable() || contentIds.length === 0) return;
+    const asked = this.inlineImageAsks.get(messageId);
+    this.inlineImageAsks.set(messageId, { cids: [...contentIds], reasks: asked?.reasks ?? new Map(), again: asked?.again ?? false });
+    return this.runInlineImages(messageId, contentIds, NO_RETRY);
+  }
 
+  /** The single-flight gate. `retry` names the parts a drain re-asks; a pass owed meanwhile runs after. */
+  private runInlineImages(messageId: string, contentIds: readonly string[], retry: ReadonlySet<string>): Promise<void> {
     const inFlight = this.inlineImageRequests.get(messageId);
     if (inFlight) return inFlight;
 
-    const request = this.fetchInlineImages(messageId, contentIds)
+    const request = this.fetchInlineImages(messageId, contentIds, retry)
       .catch(() => {})
       .finally(() => {
         this.inlineImageRequests.delete(messageId);
+        const asked = this.inlineImageAsks.get(messageId);
+        if (asked?.again) {
+          asked.again = false;
+          void this.runInlineImages(messageId, asked.cids, NO_RETRY);
+        }
       });
     this.inlineImageRequests.set(messageId, request);
     return request;
   }
 
+  /**
+   * A LIST OR A PART ANSWERED AFTER THE PASS GAVE UP ON IT — a surface's re-ask, a press on the
+   * card: draw what the open letter's document asked for, in place. A pass in flight is either
+   * waiting on this very answer (`waiting`, its own list) or owes one more pass when it ends.
+   */
+  private healInlineImages(messageId: string, waiting: boolean): void {
+    const asked = this.inlineImageAsks.get(messageId);
+    if (!asked) return;
+    if (!this.inlineImageRequests.has(messageId)) void this.runInlineImages(messageId, asked.cids, NO_RETRY);
+    else if (!waiting) asked.again = true;
+  }
+
+  /**
+   * A DRAIN COMPLETED: the server answers again. A picture part the WIRE failed for an open letter
+   * is asked again on the file list's terms — {@link wireFailed}, at most {@link REASK_MAX} per
+   * episode — and nothing else is: a cid no part carries, a refusal the server answered, a part the
+   * gates below refuse.
+   */
+  private reaskInlineParts(): void {
+    for (const [messageId, asked] of this.inlineImageAsks) {
+      if (this.inlineImageRequests.has(messageId)) continue;
+      const held = this.attachmentLists.get(messageId);
+      if (held?.state !== "ready") continue;
+      const have = this.inlineImages.get(messageId);
+      const retry = new Set<string>();
+      for (const cid of new Set(asked.cids)) {
+        if (have?.has(cid)) continue;
+        const item = held.items.find((i) => i.contentId === cid);
+        if (item?.state !== "failed" || !wireFailed(item.code ?? null)) continue;
+        const spent = asked.reasks.get(item.id) ?? 0;
+        if (spent >= REASK_MAX) continue;
+        asked.reasks.set(item.id, spent + 1);
+        retry.add(item.id);
+      }
+      if (retry.size > 0) void this.runInlineImages(messageId, asked.cids, retry);
+    }
+  }
+
   /** The working half of {@link OhmailEngine.loadInlineImages}, behind its single-flight gate. */
-  private async fetchInlineImages(messageId: string, contentIds: readonly string[]): Promise<void> {
+  private async fetchInlineImages(messageId: string, contentIds: readonly string[], retry: ReadonlySet<string>): Promise<void> {
     await this.loadAttachments(messageId);
     const held = this.attachmentLists.get(messageId);
     if (held?.state !== "ready") return;
@@ -10350,7 +10423,13 @@ export class OhmailEngine {
 
     const minted: Array<[string, string]> = [];
     for (const item of wanted) {
-      await this.openAttachment(messageId, item.id);
+      const part = `${messageId}:${item.id}`;
+      this.inlinePassParts.add(part);
+      try {
+        await this.openAttachment(messageId, item.id, retry.has(item.id) ? { retry: true } : {});
+      } finally {
+        this.inlinePassParts.delete(part);
+      }
       const blob = this.attachmentBlobOf(messageId, item.id);
       if (!blob) continue;
       // PER PART: a byte read that throws (a device FileReader refusal) costs that image its
@@ -10508,6 +10587,18 @@ export class OhmailEngine {
     this.forceReleaseAttachments(messageId);
   }
 
+  /**
+   * ASK A FAILED LIST AGAIN AS A FRESH QUESTION — the surfaces' bounded re-ask after a drop or a
+   * revived session. The release a reader's leaving makes, but the reader is still here: what its
+   * document asked to draw is kept, so the answer draws the pictures in place.
+   */
+  reaskAttachments(messageId: string): Promise<AttachmentsOutcome> {
+    const asked = this.inlineImageAsks.get(messageId);
+    this.releaseAttachments(messageId);
+    if (asked) this.inlineImageAsks.set(messageId, asked);
+    return this.loadAttachments(messageId);
+  }
+
   /** Revoke everything, for a teardown that is losing the whole engine. Live seeds included —
    *  and seeds whose copy list was never published (a forward still waiting on its parent hold
    *  minted compose URLs with no `attachmentLists` entry to find them under). */
@@ -10542,6 +10633,7 @@ export class OhmailEngine {
     const held = this.attachmentLists.get(messageId);
     this.objectUrls.releaseOwner(messageId);
     this.inlineImages.delete(messageId);
+    this.inlineImageAsks.delete(messageId);
     this.calendarTexts.delete(messageId);
     if (held) this.attachmentLists.set(messageId, held);
     this.keptListFailures.delete(messageId);
@@ -10566,6 +10658,7 @@ export class OhmailEngine {
     this.sentAttachmentSeeds.delete(messageId);
     this.attachmentLists.delete(messageId);
     this.inlineImages.delete(messageId);
+    this.inlineImageAsks.delete(messageId);
     this.calendarTexts.delete(messageId);
     this.notify();
   }

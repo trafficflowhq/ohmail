@@ -8,6 +8,7 @@
  * server answering again — at most {@link REASK_MAX} times per episode.
  */
 import { STORE_ANSWER_TIMEOUT_MS } from "./store-timeline.js";
+import { REASK_MAX, wireFailed } from "./wire-reask.js";
 
 /** A platform's session, as far as a refused read needs it. */
 export interface SessionRenewalDoor {
@@ -43,23 +44,7 @@ export function sessionRefused(cause: string | null): boolean {
   return cause !== null && cause.split(" ").includes("401");
 }
 
-/** Re-asks per episode of a wire failure: the drain that completed says the server answers, not that this read will. */
-export const REASK_MAX = 3;
-
-/**
- * DID THE WIRE FAIL — no answer reached us — rather than the server answer? `network` and `timeout`
- * (the HTTP adapter's codes; `timeout` is also a walker's own ceiling), a bare `TypeError` or
- * `AbortError` from a raw fetch, and `offline_read_only` (the paired desktop's refusal while the
- * account is out of reach). Never a 401 (the session's door) or any other status: those are answers.
- */
-export function wireFailed(cause: string | null): boolean {
-  if (cause === null) return false;
-  const words = cause.split(" ");
-  if (words.includes("offline_read_only")) return true;
-  if (words.some((w) => /^\d{3}$/.test(w))) return false;
-  return words.includes("network") || words.includes("timeout")
-    || (words.length === 1 && (words[0] === "TypeError" || words[0] === "AbortError"));
-}
+export { REASK_MAX, wireFailed };
 
 export interface SessionReask {
   /** Watch the read and the session. Returns the stop; a second attach re-reads the read. */

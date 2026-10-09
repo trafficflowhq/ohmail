@@ -1346,6 +1346,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       : null),
     [engine, showToast, zone],
   );
+  // The held file lists heal after a drop, for as long as this facade serves (`watchLists`).
+  useEffect(() => acts?.watchLists(), [acts]);
 
   /*
    * The reconnect flush. A retryable rejection parks its mutation on the engine's queue under

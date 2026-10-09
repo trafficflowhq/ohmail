@@ -121,6 +121,7 @@ import {
   beginDerive,
   takeClientEngineVitals,
   joinableStandingSend,
+  watchWireFailedLists,
   type MessageBody,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
@@ -2930,6 +2931,12 @@ export interface LiveWorldActions {
    */
   loadInlineImages(messageId: string, contentIds: string[]): void;
   /**
+   * HEAL THE HELD FILE LISTS AFTER A DROP — the web's door (`watchWireFailedLists`) over the lists
+   * this facade holds: one the wire failed is asked again when a drain completes, and an open
+   * letter's pictures draw when it answers. The world layer owns the lifetime; returns the stop.
+   */
+  watchLists(): () => void;
+  /**
    * One attachment's BYTES for the share sheet — `openAttachment` (single-flight, the server's
    * ceiling respected) and the held Blob read back as base64. The refusals are the engine's
    * own states, returned rather than thrown: the tile renders each one a sentence.
@@ -3504,6 +3511,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       if (!listHolds.has(lid)) engine.releaseAttachments(lid);
     }
   };
+
+  const watchLists = (): (() => void) => watchWireFailedLists(engine, () => listHolds.keys());
 
   const loadInlineImages = (messageId: string, contentIds: string[]): void => {
     if (contentIds.length === 0) return;
@@ -5266,7 +5275,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     discardQueued: (key) => engine.withdrawQueued(key),
     releaseConfirmed,
     openMessage, leaveMessage, hydrateMessage, forwardFetch, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
-    openAttachmentBytes,
+    watchLists, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markGlanced, markAllSeen, move,
