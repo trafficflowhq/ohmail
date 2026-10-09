@@ -75,6 +75,14 @@ ask at once.
 Marking a message unread puts it back in New where it arrived, on the device you marked it on as well
 as on your others. It used to go to the top of New there.
 
+### A picture inside a letter appears once the connection is back
+<!-- changes: fix-026-inline-picture-heals.md -->
+
+If the connection dropped for a moment while a letter with a picture in its text opened, the text
+showed without the picture until the letter was closed and reopened. The picture is now fetched again
+when the app reaches the server, and appears in place. The same applies to a meeting invitation's
+event card, to letters opened from News, and to the phone's reader.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
