@@ -12,6 +12,7 @@ import {
   type KnownSenders, type OhboxPolicy, type Rule,
 } from "./rules.js";
 import { claimedIdentity, registrableDomain, type IdentityFact } from "./sender-check.js";
+import { authScreens } from "./sender-headers.js";
 import { isProviderBrand, providerBrand } from "./authserv-ids.js";
 import { isSharedProviderDomain } from "./rule-order.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
@@ -799,7 +800,7 @@ async function correspondentAtGate(
 ): Promise<{ author: string; evidence: CorrespondentEvidence } | null> {
   // A held identity claim is not an unanswered stranger: a reply citing your Sent copy does not
   // make "PostFinance" at gmail.com PostFinance, and nothing is taught.
-  if (decision.source !== "screener" || decision.matchedRuleId !== null || auth === "fail"
+  if (decision.source !== "screener" || decision.matchedRuleId !== null || authScreens(auth)
     || decision.identity !== undefined) return null;
   const author = gateAuthor(msg)?.toLowerCase() ?? null;
   if (author === null || known.addresses.has(author)) return null;
@@ -1161,7 +1162,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
        too and had no cutoff at all, and a cutoff enforced at one of two doors is not a cutoff. */
     const preBaselineBacklog = !screenerAdmits({
       arrivedAt, cutoff: deps.screeningCutoff, source: decision.source,
-      authFailed: authVerdict === "fail",
+      authFailed: authScreens(authVerdict),
     });
 
     /* ── THE GATE DEFERS TO THE MAILBOX'S TRAVELLING DECISIONS WHILE THEY AWAIT THEIR ANSWER ──
@@ -1174,7 +1175,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
      */
     const heldForImport = deps.importHold !== undefined
       && decision.source === "screener"
-      && authVerdict !== "fail"
+      && !authScreens(authVerdict)
       && documentKeeps(deps.importHold, normalized, authVerdict, ohboxPolicy, change.locator.folder, ownAddresses, senderCheck);
 
     /* AHEAD OF `sensitive`, which is the one ordering choice here worth stating. A sensitivity

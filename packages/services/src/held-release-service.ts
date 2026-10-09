@@ -1,11 +1,12 @@
-import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import {
   AccountErasedError, accountSettings, applyScreenerDecision, auditAction, auditLog, changeLog,
-  contactOnlyHeldWhere, destinationIsDecisionSql, folderState, lockAccountRuleKeys, mailboxes, messages, recordRuleDelta,
-  ruleNamesSenderSql, rules as rulesTbl, senderHasPersonConsentSql, seqBounds, type LedgerTx, type Tx,
+  contactOnlyHeldWhere, destinationIsDecisionSql, folderState, lockAccountRuleKeys, mailboxes, messages, personSkipSql,
+  recordRuleDelta, ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { checkUncheckedById } from "@trafficflow/core/adapters/drizzle-repo";
+import { SCREENING_AUTH_VERDICTS } from "@trafficflow/core/mail";
 import { SCREENER_FOLDER } from "./screener-service.js";
 import { recordSettingsChange } from "./consent-seed.js";
 import { ServiceError } from "./errors.js";
@@ -132,9 +133,10 @@ function heldAtGate(d: ReturnType<typeof dialect>, accountId: string) {
     eq(folderState.desiredFolder, SCREENER_FOLDER),
     eq(folderState.observedFolder, SCREENER_FOLDER),
     // A claim the identity fact holds is the Screener's question, with its sentence, never a release —
-    // unless a person consented to the address, whose mail the gate never holds for its name.
+    // unless the person skip takes it (`personSkipSql`): a person consented to the address and the
+    // gate would not hold the row now, its stored authentication verdict included.
     sql`(${messages.senderCheck} is null or ${messages.senderCheck} <> 'impersonation'
-      or ${senderHasPersonConsentSql(d, accountId, sql`lower(${messages.fromAddress})`)})`,
+      or ${personSkipSql(d, accountId, { sender: sql`lower(${messages.fromAddress})`, auth: sql`${messages.authVerdict}` }, SCREENING_AUTH_VERDICTS)})`,
     sql`exists (
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId}
@@ -153,15 +155,23 @@ function heldAtGate(d: ReturnType<typeof dialect>, accountId: string) {
   );
 }
 
-/** Of `senders` (lower-cased, the offer's own, bounded), those a person consented to at the address. */
-async function personConsentedAmong(db: Tx, accountId: string, senders: readonly string[]): Promise<Set<string>> {
-  const d = dialect(db);
-  const out = new Set<string>();
-  for (const s of senders) {
-    const rows = await d.exec(db, sql`select case when ${senderHasPersonConsentSql(d, accountId, sql`${s}`)} then 1 else 0 end`);
-    if (Number(rows[0]?.[0] ?? 0) === 1) out.add(s);
-  }
-  return out;
+/**
+ * THE CONTACT LINE'S BAG, ONE FUNCTION: the rows {@link heldReleaseSenders} counts for a sender are
+ * the rows {@link releaseHeld} hands the Screener's door to move (`within`), so the press moves what
+ * the offer showed and nothing it left out — a placement by a writer the offer does not know, a row
+ * in flight, one the person is replying to or deferred, a claim the person skip does not take.
+ */
+function contactLineBag(d: ReturnType<typeof dialect>, accountId: string, ownAddresses: readonly string[]): SQL {
+  return and(heldAtGate(d, accountId), ...contactOnlyHeldWhere(d, { ownAddresses }))!;
+}
+
+/** The named senders' rows in {@link contactLineBag} the identity check never reached, checked by id. */
+async function checkContactLine(db: Tx, accountId: string, own: readonly string[], senders: readonly string[]): Promise<void> {
+  const rows = await db.select({ id: messages.id }).from(folderState)
+    .innerJoin(messages, eq(messages.id, folderState.messageId))
+    .where(and(contactLineBag(dialect(db), accountId, own), isNull(messages.senderCheck),
+      inArray(sql`lower(${messages.fromAddress})`, [...senders])));
+  if (rows.length > 0) await checkUncheckedById(db, accountId, rows.map((r) => r.id));
 }
 
 /**
@@ -242,7 +252,7 @@ export async function heldReleaseSenders(db: Tx, accountId: string): Promise<Hel
     .select({ sender, count: sql<number>`${d.castInt(sql`count(${messages.id})`)}` })
     .from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
-    .where(and(heldAtGate(d, accountId), ...contactOnlyHeldWhere(d, { ownAddresses: own })))
+    .where(contactLineBag(d, accountId, own))
     .groupBy(sender)
     .orderBy(sql`count(${messages.id}) desc`, sender)
     .limit(HELD_RELEASE_GROUPS_MAX);
@@ -481,10 +491,13 @@ export async function releaseHeld(
       ? groups
       : groups.filter((g) => wanted.includes(g.ruleId));
     const asked = new Set((wantedSenders ?? []).map((a) => a.trim().toLowerCase()));
+    /* THE PRESS CHECKS WHAT IT WOULD MOVE FIRST (mail 0148), before it reads its offer: the named
+       senders' rows the check never reached are checked now, so the count it reports and the bag the
+       door moves read the same facts. */
+    const own = asked.size === 0 ? [] : await ownAddressesOf(bridgeTx(t), ctx.accountId);
+    if (asked.size > 0) await checkContactLine(bridgeTx(t), ctx.accountId, own, [...asked]);
     const namedSenders = asked.size === 0 ? []
       : (await heldReleaseSenders(bridgeTx(t), ctx.accountId)).filter((g) => asked.has(g.sender));
-    // The senders whose claims the offer counted (`heldAtGate`'s person skip): their press moves them.
-    const consented = await personConsentedAmong(bridgeTx(t), ctx.accountId, namedSenders.map((g) => g.sender));
     if (named.length === 0 && namedSenders.length === 0) return { released: [], releasedSenders: [], total: 0 };
     /* READ BEFORE THE WRITE, and that order is load-bearing: the re-arm below puts each rule in
        flight, which is exactly what {@link decidedRule} excludes, so the same count asked
@@ -526,16 +539,16 @@ export async function releaseHeld(
        rule the person made by pressing, their held mail desired into the Ohbox and the retro
        re-armed for the rest — the same act as an Ohbox press over a waiting sender. It writes
        desired state only; the reconciler moves the mail. */
+    const bag = contactLineBag(dialect(bridgeTx(t)), ctx.accountId, own);
     for (const g of namedSenders) {
       try {
         // `t` is the fenced transaction, branded by the handle it came from: no hand carry.
         await applyScreenerDecision(bridgeTx(t), {
           accountId: ctx.accountId, scope: "sender", address: g.sender, appliedFolder: "INBOX", decision: "yes",
           triggeringActionId: `held-release:${g.sender}`, now, stampBaseline: false, applyRetro: true,
-          // The offer counts a claim only from an address a person consented to (`heldAtGate`), whose
-          // claims move with the rest; any other claim waits for its own press, and an unchecked row is
-          // checked first, so a claim it carries is one of them.
-          decidedBy: "person", overExisting: "converge", marked: consented.has(g.sender) ? "pressed" : "none",
+          // THE OFFER'S OWN BAG (`contactLineBag`), which the door reads before it writes anything:
+          // every row it admits moves, a claim the person skip takes included, and nothing else does.
+          decidedBy: "person", overExisting: "converge", marked: "pressed", within: bag,
           checkUnchecked: checkUncheckedById,
         });
       } catch (err) {

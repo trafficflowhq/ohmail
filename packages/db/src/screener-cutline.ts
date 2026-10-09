@@ -251,24 +251,52 @@ export function heldClaimInsideSql(
 /**
  * HELD BY THE IDENTITY FACT (mail 0148): a message of this sender sits at the gate naming a company
  * its address is not — whatever rule or contact decided the sender otherwise (the act's promotion, a
- * domain rule, an inferred contact). Such a sender is waiting again while the claim is inside the
- * cutline ({@link heldClaimInsideSql}); no release takes the row whatever its age. Not a sender a
- * PERSON consented to at the address ({@link senderHasPersonConsentSql}): the gate holds nothing of
- * theirs, so the list and the count do not ask about them either.
+ * domain rule, an inferred contact). Such a sender is waiting again while the claim keeps them so
+ * ({@link heldClaimWaitsSql}); no release takes the row whatever its age. `screening` is core's
+ * `SCREENING_AUTH_VERDICTS` ({@link personSkipSql}).
  */
-export function senderHasHeldClaimSql(d: Dialect, accountId: string, senderExpr: SQL, cutoff: Date): SQL {
-  const inside = heldClaimInsideSql(d, {
+export function senderHasHeldClaimSql(
+  d: Dialect, accountId: string, senderExpr: SQL, cutoff: Date, screening: readonly string[],
+): SQL {
+  const waits = heldClaimWaitsSql(d, accountId, {
     folder: sql`hf.desired_folder`, deletedAt: sql`hm.deleted_at`, senderCheck: sql`hm.sender_check`,
     by: sql`hm.sender_check_by`, date: sql`hm.date`, arrivedAt: sql`hm.arrived_at`,
-    recordedAt: sql`hm.created_at`, mailboxId: sql`hm.mailbox_id`,
-  }, cutoff);
-  return sql`(exists (
+    recordedAt: sql`hm.created_at`, mailboxId: sql`hm.mailbox_id`, sender: senderExpr, auth: sql`hm.auth_verdict`,
+  }, cutoff, screening);
+  return sql`exists (
     select 1 from messages hm
       join folder_state hf on hf.message_id = hm.id
      where hm.account_id = ${d.castUuid(accountId)}
        and lower(hm.from_address) = ${senderExpr}
-       and ${inside}
-  ) and not ${senderHasPersonConsentSql(d, accountId, senderExpr)})`;
+       and ${waits}
+  )`;
+}
+
+/**
+ * A HELD CLAIM THAT KEEPS ITS SENDER WAITING: inside the cutline ({@link heldClaimInsideSql}) and not
+ * skipped for a person's consent ({@link personSkipSql}). One row's answer, read by the queue's
+ * `exists` and the count's aggregate alike, so the two cannot ask different questions.
+ */
+export function heldClaimWaitsSql(
+  d: Dialect, accountId: string, r: Parameters<typeof heldClaimInsideSql>[1] & { sender: SQL; auth: SQL },
+  cutoff: Date, screening: readonly string[],
+): SQL {
+  return sql`(${heldClaimInsideSql(d, r, cutoff)} and not ${personSkipSql(d, accountId, r, screening)})`;
+}
+
+/**
+ * THE PERSON SKIP, ONE SPELLING: a person consented to the address ({@link senderHasPersonConsentSql})
+ * and the row's STORED authentication verdict is not one the gate screens on, so the gate would not
+ * hold this row now. `screening` is core's `SCREENING_AUTH_VERDICTS`, handed in by the caller: this
+ * package does not import core and spells no verdict of its own. The queue, the count and the release
+ * offer read it; the client's twin is `consent-cutline.ts#personSkip`.
+ */
+export function personSkipSql(
+  d: Dialect, accountId: string, row: { sender: SQL; auth: SQL }, screening: readonly string[],
+): SQL {
+  const screens = screening.length === 0 ? sql`false`
+    : sql`coalesce(${row.auth}, '') in (${sql.join(screening.map((v) => sql`${v}`), sql`, `)})`;
+  return sql`(${senderHasPersonConsentSql(d, accountId, row.sender)} and not (${screens}))`;
 }
 
 /**

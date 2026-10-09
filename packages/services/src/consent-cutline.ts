@@ -1,10 +1,10 @@
 import { sql, type SQL } from "drizzle-orm";
-import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, type ScreeningScope } from "@trafficflow/core/mail";
+import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, SCREENING_AUTH_VERDICTS, type ScreeningScope } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
-  activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, heldClaimInsideSql, resolveCutline,
-  ruleMatchKeySql, senderHasHeldClaimSql, senderHasPersonConsentSql, senderIsDecidedSql, senderIsOwnSql,
+  activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, heldClaimWaitsSql, resolveCutline,
+  ruleMatchKeySql, senderHasHeldClaimSql, senderIsDecidedSql, senderIsOwnSql,
 } from "@trafficflow/db";
 
 /**
@@ -178,14 +178,15 @@ export async function cutlineCounts(
              -- Activity is measured over all six presented folders (above); membership in the
              -- undecided counts is not. See UNDECIDED_RESIDENCES.
              ${anyOf(sql`fs.desired_folder in ${undecidedResidences}`)} as undecided_residence,
-             -- A claim the gate holds inside the cutline, dated by who wrote the fact (mail 0149):
-             -- the queue's own term (senderHasHeldClaimSql), so the count and the list agree. Its
-             -- person-consent half is asked per sender below, beside the active test.
-             ${anyOf(heldClaimInsideSql(d, {
+             -- A held claim that keeps its sender waiting, per row: the queue's own term
+             -- (heldClaimWaitsSql, read by senderHasHeldClaimSql), so the count and the list agree,
+             -- the person skip and its authentication half included.
+             ${anyOf(heldClaimWaitsSql(d, ctx.accountId, {
                folder: sql`fs.desired_folder`, deletedAt: sql`m.deleted_at`, senderCheck: sql`m.sender_check`,
                by: sql`m.sender_check_by`, date: sql`m.date`, arrivedAt: sql`m.arrived_at`,
                recordedAt: sql`m.created_at`, mailboxId: sql`m.mailbox_id`,
-             }, cutoff))}
+               sender: sql`lower(m.from_address)`, auth: sql`m.auth_verdict`,
+             }, cutoff, SCREENING_AUTH_VERDICTS))}
                as held_claim
         from messages m
         join folder_state fs on fs.message_id = m.id
@@ -210,12 +211,12 @@ export async function cutlineCounts(
                   and exists (select 1 from decided_domain dd
                                where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))
               or ${senderIsDecidedSql(d, ctx.accountId, sql`i.addr`)})
-              and not ${senderHasHeldClaimSql(d, ctx.accountId, sql`i.addr`, cutoff)}) as decided,
+              and not ${senderHasHeldClaimSql(d, ctx.accountId, sql`i.addr`, cutoff, SCREENING_AUTH_VERDICTS)}) as decided,
              (${activeSenderExpr(d, resolved, {
                anyUnread: sql`i.any_unread`,
                anyUnreadInWindow: sql`i.any_unread_in_window`,
                newest: sql`i.newest`,
-             })} or (i.held_claim and not ${senderHasPersonConsentSql(d, ctx.accountId, sql`i.addr`)})) as active
+             })} or i.held_claim) as active
         from inbound i
     )
     select count(*) filter (where decided)                        as decided,

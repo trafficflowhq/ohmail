@@ -18,6 +18,19 @@
  */
 export type AuthVerdict = "unauthenticated" | "unavailable" | "pass" | "fail";
 
+/**
+ * THE VERDICTS ON WHICH THE GATE SCREENS A SENDER IT WOULD OTHERWISE ADMIT — the demote-only member
+ * above, as a list. `rules.ts#evaluateRules` screens through {@link authScreens}, and a reader asking
+ * whether the gate would hold a STORED row now (the Screener's person skip, on both stores and on the
+ * client) reads this list, never its own spelling. Absent and unrecognised are outside it.
+ */
+export const SCREENING_AUTH_VERDICTS: readonly AuthVerdict[] = ["fail"];
+
+/** Does the gate screen on this verdict ({@link SCREENING_AUTH_VERDICTS})? */
+export function authScreens(auth: AuthVerdict | null | undefined): boolean {
+  return auth != null && SCREENING_AUTH_VERDICTS.includes(auth);
+}
+
 /** How an address came to be on a conversation. `sender_named` is a claim, never evidence. */
 export type CounterpartyEvidence = "we_wrote" | "they_wrote" | "sender_named";
 

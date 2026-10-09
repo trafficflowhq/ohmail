@@ -37,7 +37,7 @@ import type {
 import {
   applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
   DESTINATIONS, effectForDestination, isDecidedDestination,
-  resolveOhboxPolicy, senderCheckAll, senderDomainOf, senderFacts, BRANDS,
+  resolveOhboxPolicy, senderCheckAll, senderDomainOf, senderFacts, BRANDS, SCREENING_AUTH_VERDICTS,
 } from "@trafficflow/core/mail";
 /* The verdict derivation moved to its own leaf when `materializeScreenerSuggestion` became its
    third reader — one reading for the page, the purchase and the `/sync` entity. */
@@ -1675,9 +1675,9 @@ export class ScreenerReadService {
   ): Array<SQL | undefined> {
     const { reps, d } = held;
     const sender = sql`lower(${reps.fromAddress})`;
-    // A claim the gate holds INSIDE the cutline, dated by its arrival (mail 0148): never by its
-    // Date, which the sender writes; never one the backfill stamped on mail from before the cutline.
-    const claim = cutline ? senderHasHeldClaimSql(d, ctx.accountId, sender, cutline.cutoff) : undefined;
+    // A held claim that keeps its sender waiting (`heldClaimWaitsSql`): dated by who wrote the fact,
+    // never by its Date, and skipped for a person's consent only where the gate would not hold it now.
+    const claim = cutline ? senderHasHeldClaimSql(d, ctx.accountId, sender, cutline.cutoff, SCREENING_AUTH_VERDICTS) : undefined;
     return [
       eq(reps.rank, 1),
       cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline)} or ${claim})` : undefined,

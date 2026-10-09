@@ -1,5 +1,5 @@
 import {
-  counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
+  authScreens, counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
 import { ORGANIZED_FOLDERS, canonicalDestination, isConsentingDestination } from "@trafficflow/core/destinations";
 import {
@@ -426,16 +426,17 @@ function heldAheadOfTheCopy(reader: EntityReader, messages: readonly EngineMessa
 }
 const NO_SENDERS: ReadonlySet<string> = new Set();
 
-/** The senders a claim at the gate is held for inside the cutline, dated by the arrival key (mail 0147, 0148) — the
- *  server's `senderHasHeldClaimSql` with its cutoff, and like it not a sender a person consented to at the address. */
+/** The senders a claim at the gate is held for inside the cutline ({@link claimInside}) — the server's
+ *  `senderHasHeldClaimSql` with its cutoff, and like it not a row the person skip takes ({@link personSkip}). */
 function sendersWithAHeldClaim(
   messages: readonly EngineMessage[], cutoff: number, index: ConsentIndex,
+  imports: ConsentOptions["firstImportDoneAt"],
 ): ReadonlySet<string> {
   const out = new Set<string>();
   for (const m of messages) {
-    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && storeInstantOf(m) >= cutoff) {
+    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation" && claimInside(m, cutoff, imports)) {
       const key = senderKey(m.from.address);
-      if (!personConsented(index, m, key)) out.add(key);
+      if (!personSkip(index, m, key)) out.add(key);
     }
   }
   return out;
@@ -449,6 +450,14 @@ function sendersWithAHeldClaim(
 function personConsented(index: ConsentIndex, m: EngineMessage, key: string): boolean {
   const named = scoped(index, m.mailboxId).allBySender.get(key) ?? [];
   return named.some((r) => personConsentRule({ ...r, effect: effectForDestination(r.destination) }, key));
+}
+
+/**
+ * THE PERSON SKIP, the server's `personSkipSql` over the mirror: a person consented to the address and
+ * the gate would not screen this row's stored verdict ({@link authScreens}), so it would not hold it now.
+ */
+function personSkip(index: ConsentIndex, m: EngineMessage, key: string): boolean {
+  return personConsented(index, m, key) && !authScreens(m.authVerdict);
 }
 
 /**
@@ -536,10 +545,10 @@ export function senderActivity(
     // means "retire nobody". Every dated row reaches the same answer either way.
     if (allTime) { out.set(key, "active"); continue; }
     // A claim the gate holds inside the cutline keeps its sender active ({@link claimInside}, never by its
-    // Date): the server's `senderHasHeldClaimSql`, so queue, counts and partition agree — and, like it,
-    // not for a sender a person consented to at the address (the gate holds none of theirs).
+    // Date): the server's `heldClaimWaitsSql`, so queue, counts and partition agree — and, like it, not a
+    // row the person skip takes ({@link personSkip}).
     if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation"
-        && claimInside(m, cutoff, opts.firstImportDoneAt) && !(index !== null && personConsented(index, m, key))) {
+        && claimInside(m, cutoff, opts.firstImportDoneAt) && !(index !== null && personSkip(index, m, key))) {
       out.set(key, "active");
       continue;
     }
@@ -592,7 +601,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   // own-sent branch below. One call, so the two halves of the partition cannot disagree about
   // where the cutline is.
   const { cutoff } = cutlineFor(opts);
-  const heldClaim = sendersWithAHeldClaim(messages, cutoff, index);
+  const heldClaim = sendersWithAHeldClaim(messages, cutoff, index, opts.firstImportDoneAt);
 
   const placeOf = new Map<string, Folder | null>();
   /** Messages whose sender is consented, by thread — the anchor the thread rule uses. */

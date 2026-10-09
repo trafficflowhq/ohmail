@@ -360,14 +360,19 @@ export async function heldRowsForSender(
   return heldRows(tx, accountId, withPutBack(senderIs(address), o), mailboxId);
 }
 
-/** `skipPutBack` — leave out a message the person put back from automatic filing (mail 0138). */
-export interface HeldRowsOptions { skipPutBack?: boolean }
+/**
+ * `skipPutBack` — leave out a message the person put back from automatic filing (mail 0138).
+ * `within` — the caller's own bag over `messages` and `folder_state`: only rows it admits are read.
+ */
+export interface HeldRowsOptions { skipPutBack?: boolean; within?: SQL }
 
 /* AN AUTOMATIC DECISION NEVER FILES WHAT THE PERSON PUT BACK: the auto-apply pass reads the column
    as its sixth exclusion, and the act on suggestions decides through this door, so its held bag
    leaves those rows at the gate. A person's own decision still moves them. */
-const withPutBack = (extra: SQL, o: HeldRowsOptions): SQL =>
-  (o.skipPutBack === true ? sql`${extra} and ${folderState.autoFilingUndoneAt} is null` : extra);
+const withPutBack = (extra: SQL, o: HeldRowsOptions): SQL => {
+  const put = o.skipPutBack === true ? sql`${extra} and ${folderState.autoFilingUndoneAt} is null` : extra;
+  return o.within === undefined ? put : sql`${put} and ${o.within}`;
+};
 
 /**
  * Every held row for ONE domain — `domainOf`, translated to SQL — account-wide unless `mailboxId`
@@ -453,11 +458,17 @@ export interface ApplyScreenerDecisionInput {
   /**
    * WHICH MARKED ROWS THE DECISION MOVES (mail 0148). `pressed`, the default: a person's press moves
    * a claim only from the address they pressed on, the row that told them; a domain press leaves
-   * another address's claim to its own press. `none`: the held-release press, whose offer counts
-   * neither a claim nor a row that FAILED authentication, moves neither — exactly what it counted.
-   * A pass's yes moves only rows the check cleared.
+   * another address's claim to its own press. `none`: moves no claim and no row that FAILED
+   * authentication. A pass's yes moves only rows the check cleared.
    */
   marked?: "pressed" | "none";
+  /**
+   * THE CALLER'S BAG (FIX-026): the held rows this decision may move, as the caller counted them —
+   * its own predicate over `messages` and `folder_state`, read before this decision writes anything
+   * and asked again after the check, so a press moves exactly what its offer showed. The held-release
+   * contact line passes its offer's.
+   */
+  within?: SQL;
   /**
    * THE CHECK A PRESS RUNS FIRST (mail 0148): writes the identity fact for held rows the check has
    * not reached, by id, before anything moves (`@trafficflow/core#checkUncheckedById`; this package
@@ -571,6 +582,22 @@ export async function applyScreenerDecision(
     }
   }
 
+  const held = { skipPutBack: decidedBy === "pass", within: input.within };
+  const readBag = () => (scope === "domain"
+    ? heldRowsForDomain(tx, accountId, domain, undefined, held)
+    : heldRowsForSender(tx, accountId, address, undefined, held));
+  /* A CALLER'S BAG IS READ BEFORE THIS DECISION WRITES ANYTHING (FIX-026): the rule and the contact
+     written below change what it admits, and the press moves what its offer counted. Its unchecked
+     rows are checked first and the bag is asked again over the facts just written. */
+  const readCallerBag = async (): Promise<AppliedScreenerRow[]> => {
+    const bag = await readBag();
+    const unread = bag.filter((r) => r.senderCheck === null).map((r) => r.messageId);
+    if (unread.length === 0 || !input.checkUnchecked) return bag;
+    await input.checkUnchecked(tx, accountId, unread);
+    return readBag();
+  };
+  const callerBag = input.within === undefined ? null : await readCallerBag();
+
   // Read inside the decide's own transaction, so the priority answers the rules this write sees.
   const priority = scope === "sender" && liftOverDomain && domain !== ""
     ? addressPriorityOver(
@@ -631,15 +658,13 @@ export async function applyScreenerDecision(
     if (source === "person") await upgradeContactsToPerson(tx, accountId, [address]);
   }
 
-  const held = { skipPutBack: decidedBy === "pass" };
-  const heldMail = scope === "domain"
-    ? await heldRowsForDomain(tx, accountId, domain, undefined, held)
-    : await heldRowsForSender(tx, accountId, address, undefined, held);
+  const heldMail = callerBag ?? await readBag();
 
   /* A PRESS CHECKS WHAT IT WOULD MOVE FIRST, as the gate release does: the rows the check never
      reached get the fact through the caller's checker and are read back, so an unchecked claim at
-     another address is marked before anything moves. A pass's yes refused every unchecked row above. */
-  const unchecked = passAdmits ? [] : heldMail.filter((r) => r.senderCheck === null).map((r) => r.messageId);
+     another address is marked before anything moves. A pass's yes refused every unchecked row above;
+     a caller's bag was checked when it was read. */
+  const unchecked = passAdmits || callerBag !== null ? [] : heldMail.filter((r) => r.senderCheck === null).map((r) => r.messageId);
   if (unchecked.length > 0 && input.checkUnchecked) {
     await input.checkUnchecked(tx, accountId, unchecked);
     for (let i = 0; i < unchecked.length; i += HELD_CHECK_READ_BATCH) {

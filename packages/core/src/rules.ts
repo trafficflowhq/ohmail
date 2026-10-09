@@ -1,5 +1,5 @@
 import { parseMessageIds } from "./threading.js";
-import type { AuthVerdict } from "./sender-headers.js";
+import { authScreens, type AuthVerdict } from "./sender-headers.js";
 import type { IdentityFact } from "./sender-check.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 import {
@@ -183,7 +183,7 @@ export interface ScreenerAdmission {
   cutoff: Date | undefined;
   /** `evaluateRules`' verdict source: only the GATE's own `"screener"` is subordinated. */
   source: RuleDecision["source"];
-  /** `auth === "fail"` — a statement about THIS message that an old date must never excuse. */
+  /** `authScreens(auth)` — a statement about THIS message that an old date must never excuse. */
   authFailed: boolean;
 }
 
@@ -1182,7 +1182,7 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
      HIGH-2): for authenticated own mail a sender rule naming one of the account's own addresses is
      read as if it did not exist, so the mail takes the own-mail branch below. A forged own From that
      fails authentication is not own mail and keeps every rule. */
-  const ownMail = author !== null && auth !== "fail" && ownAddresses.has(author.toLowerCase());
+  const ownMail = author !== null && !authScreens(auth) && ownAddresses.has(author.toLowerCase());
   const rules = ownMail
     ? input.rules.filter((r) => !(r.kind === "sender" && ownAddresses.has(ruleMatchKey(r.match))))
     : input.rules;
@@ -1200,7 +1200,7 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   if (winner) {
     const denies = winner.effect === "deny" || effectForDestination(winner.destination) === "deny";
     if (denies) return { destination: winner.destination, matchedRuleId: winner.id, source: "rule" };
-    if (auth === "fail") return screened;
+    if (authScreens(auth)) return screened;
     if (hold) return { ...screened, ...rides };
     const demoted = policyDemotion(msg, winner, ohboxPolicy);
     if (demoted) return { ...demoted, ...rides };
@@ -1228,7 +1228,7 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
     if (ownMail) return { destination: null, matchedRuleId: null, source: "own", ...rides };
     return screened;
   }
-  if (auth === "fail") return { ...screened, ...rides };
+  if (authScreens(auth)) return { ...screened, ...rides };
 
   const heur = headerHeuristic(msg);
   if (heur) return { ...heur, ...rides };

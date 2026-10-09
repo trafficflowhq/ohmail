@@ -415,7 +415,8 @@ export {
  */
 export {
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
-  senderHasHeldClaimSql, heldClaimInsideSql, senderHasPersonConsentSql, CUTLINE_PERSON_WRITTEN_PROVENANCE,
+  senderHasHeldClaimSql, heldClaimInsideSql, heldClaimWaitsSql, personSkipSql, senderHasPersonConsentSql,
+  CUTLINE_PERSON_WRITTEN_PROVENANCE,
   mailboxCountsAsOwn, mailboxCountsAsOwnSql,
   heldSortKey,
   cutlineInstant,
