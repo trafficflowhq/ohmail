@@ -138,9 +138,15 @@ running under it, at any screen width and text size.
 <!-- changes: web-026-landing-analytics.md -->
 
 The ohmail.app website can now count visits with Google Analytics. Nothing loads until you accept the
-one-line notice, and you can change your choice from the footer or the privacy page. Only pages and
-sign-up or download presses are counted, never your mail and never in the apps. Self-hosted installs
-carry no analytics.
+one-line notice, and you can change your choice from the footer or the privacy page. Self-hosted
+installs carry no analytics.
+
+### What the website's visit statistics count
+<!-- changes: web-026-landing-engagement-events.md -->
+
+If you accept the website's statistics, it counts the pages you open, which sections you see, the plan,
+download or way of running ohmail you choose, the questions you open, a first use of the live demo, a language
+switch and the steps of the website's sign-up form. Never what you type, never your mail and never in the apps.
 
 ### Still to come
 
