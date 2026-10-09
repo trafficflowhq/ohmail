@@ -83,6 +83,26 @@ showed without the picture until the letter was closed and reopened. The picture
 when the app reaches the server, and appears in place. The same applies to a meeting invitation's
 event card, to letters opened from News, and to the phone's reader.
 
+### A later name check no longer returns a sender to the Screener
+<!-- changes: fix-026-screener-claim-term-followup.md -->
+
+When the company-name check reached held mail stored before it existed, the Screener could list that sender
+again, including senders you had added as contacts or admitted by domain. From this release on, a check that
+reaches mail after it was stored no longer does; mail an earlier version marked this way leaves the list once it
+is older than your screening window. New mail held for a name that claims a company is listed, also when your
+mail server gives no receive time, and a desktop paired with Cloud places it as the web does. Held mail from a
+contact you added is offered for release again, and releasing it moves exactly what the offer counted. A message
+from a contact's address that claims a company and fails authentication stays in the Screener.
+
+### The away responder's switch no longer says On before you save
+<!-- changes: fix-026-away-switch-says-what-is-saved.md -->
+
+In Settings → Away responder, pressing the switch changed the line beside it to "On. Replies to new mail"
+although nothing was saved, and leaving the page dropped the change without a word. The line now states
+the saved responder; an unsaved change is named under the switch with its own Save, and leaving with one
+asks whether to discard it. The same holds on the phone, where the end-date line and a failed save's
+sentence now also state the saved responder.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
