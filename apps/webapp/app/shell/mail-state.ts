@@ -910,6 +910,12 @@ export interface MailboxFacts {
    */
   hostedMessageCount?: number;
   /**
+   * When the ACCOUNT finished this mailbox's first import, on a Cloud-paired desktop only (its own
+   * {@link initialImportCompletedAt} is the mirror's first pull). The Screener dates a Cloud claim
+   * against this one (`consent-options.ts#firstImportsOf`); nothing else reads it. Absent elsewhere.
+   */
+  hostedImportCompletedAt?: string | null;
+  /**
    * HOW MANY OF THE ACCOUNT'S ROWS THIS COPY COULD NOT STORE — the Cloud-paired desktop's
    * overlay beside `errorCode: "storage"` (`cloud-engine.ts` `decorateStoreStuck`). The count is
    * the ACCOUNT's, the same on every row; `retrying` is the part "Sync now" re-applies; `exact`

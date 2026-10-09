@@ -40,24 +40,27 @@ export function shellConsentOptions(
 /** Each mailbox's first-import stamp by id (`ConsentOptions.firstImportDoneAt`). */
 export type FirstImports = Readonly<Record<string, string | null>>;
 
+/** The two stamps a `GET /mailboxes` row may carry for {@link firstImportsOf}. */
+type ImportFacts = ReadonlyArray<{ id: string; initialImportCompletedAt?: string | null; hostedImportCompletedAt?: string | null }>;
+
 /**
- * THE FIRST-IMPORT STAMPS OF `GET /mailboxes`, by mailbox id: `null` while an import runs. A mailbox
- * whose server sent no stamp is left out (an older server), and no facts at all is `undefined`, which
- * the partition reads as every import finished.
+ * THE FIRST-IMPORT STAMPS OF `GET /mailboxes`, by mailbox id: `null` while an import runs. A
+ * Cloud-paired desktop's row carries the ACCOUNT's stamp beside its mirror's own, and the account's is
+ * the one the server dates a Cloud claim by, so it is read first. A mailbox whose server sent no stamp
+ * is left out (an older server), and no facts at all is `undefined`: every import finished.
  */
-export function firstImportsOf(
-  facts: ReadonlyArray<{ id: string; initialImportCompletedAt?: string | null }> | null,
-): FirstImports | undefined {
+export function firstImportsOf(facts: ImportFacts | null): FirstImports | undefined {
   if (facts === null) return undefined;
   const out: Record<string, string | null> = {};
-  for (const m of facts) if (m.initialImportCompletedAt !== undefined) out[m.id] = m.initialImportCompletedAt;
+  for (const m of facts) {
+    const stamp = m.hostedImportCompletedAt !== undefined ? m.hostedImportCompletedAt : m.initialImportCompletedAt;
+    if (stamp !== undefined) out[m.id] = stamp;
+  }
   return out;
 }
 
 /** {@link firstImportsOf} as a memo key: the sorted (id, stamp) pairs, or `"none"` without facts. */
-export function firstImportsKey(
-  facts: ReadonlyArray<{ id: string; initialImportCompletedAt?: string | null }> | null,
-): string {
+export function firstImportsKey(facts: ImportFacts | null): string {
   const imports = firstImportsOf(facts);
   return imports === undefined ? "none" : JSON.stringify(Object.entries(imports).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }

@@ -534,6 +534,13 @@ export interface CloudMirror {
    */
   hostedCounts(): ReadonlyMap<string, number>;
   /**
+   * When the hosted account finished each hosted mailbox's FIRST IMPORT (`null` while it runs), per
+   * hosted mailbox id — the stamp the server's Screener dates a held claim against. Rebuilt at every
+   * mailbox refresh; absent for a mailbox whose answer carried none (an older server). Never copied
+   * onto the mirror's own row ({@link mailboxRow}), whose stamp is this mirror's first pull.
+   */
+  hostedImports(): ReadonlyMap<string, string | null>;
+  /**
    * The freshness contract's verdict for this mirror (INSTANT-ARCH §6.6) — the same three states
    * the client engine's `freshness()` derives, from this mirror's completion stamp ({@link
    * CursorState.lastDrainAt}) against the shared `STALE_RESUME_MS`, the same `mirrorFreshness`
@@ -2585,6 +2592,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * Empty until a counted refresh lands, and an empty map is served as "no number", never as 0.
    */
   let hostedCounts = new Map<string, number>();
+  /** The hosted first-import stamps — see {@link CloudMirror.hostedImports}. Empty until a refresh lands. */
+  let hostedImports = new Map<string, string | null>();
   /** When counts were last ASKED for (not when they last changed). `-Infinity` ⇒ never. */
   let countsAskedAt = Number.NEGATIVE_INFINITY;
   /**
@@ -2686,6 +2695,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     const hosted = body.items as MailboxDTO[];
     const out = await applyMailboxRefresh(cfg.db, cfg.world, hosted, now());
     knownMailboxes = out.known;
+    // REBUILT WHOLE on every refresh, and only a string or null is kept: a wire boundary.
+    const imports = new Map<string, string | null>();
+    for (const m of hosted) {
+      const v: unknown = m.initialImportCompletedAt;
+      if (typeof v === "string" || v === null) imports.set(m.id, v);
+    }
+    hostedImports = imports;
     hostedMailboxIds = hosted.map((m) => m.id);
     boxesAsk = Math.max(boxesAsk, ask);
     await cfg.onMailboxes?.().catch(() => undefined);
@@ -4283,6 +4299,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // and the map is REPLACED rather than mutated on each counted refresh, so a reader can never
     // observe a half-built one.
     hostedCounts: () => hostedCounts,
+    hostedImports: () => hostedImports,
     // THE SHARED THREE-STATE DERIVATION — literally the function `OhmailEngine.freshness()`
     // calls, over this mirror's own stamp and this process's own clock. One derivation, three
     // renderers (the web ladder, the phone's wordmark line, the desktop window over

@@ -116,6 +116,9 @@ describe("the desktop mailbox-facts seam", () => {
          probe taxonomy, so the value here is one a real engine answers with. */
       sendingUnsettledReason: "auth",
       hostedMessageCount: 4200,
+      /* The ACCOUNT's first-import stamp, on the Cloud door beside the mirror's own above: the
+         Screener dates a Cloud claim by it, so it arrives untouched and apart. */
+      hostedImportCompletedAt: "2026-08-30T08:00:00.000Z",
       /* The Cloud mirror's refused-row count beside `errorCode: "storage"` — the whole shape,
          which the seam forwards only whole. */
       storeRefusals: { count: 612, retrying: 500, exact: true },
@@ -167,6 +170,7 @@ describe("the desktop mailbox-facts seam", () => {
     // account, which is the failure `hostedMessageCount`'s comment names.
     expect(got!.serverMessageCount).toBe(4242);
     expect(got!.hostedMessageCount).toBe(4200);
+    expect(got!.hostedImportCompletedAt).toBe("2026-08-30T08:00:00.000Z");
     expect(got!.messageCount).toBe(4210);
     expect(got!.pendingMoves).toBe(4);
     expect(got!.errorLocalServer).toBe(true);
