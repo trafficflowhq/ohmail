@@ -66,6 +66,7 @@ import {
   splitRoutingPlan,
   withResolution,
   isOwnSubject,
+  moveSubjectIds,
   refusedAsOwnAddress,
   worstStatus,
   type PressMove,
@@ -596,8 +597,10 @@ export function useShellVerbs({
     const sender = senderScreening(read, seedId);
     if (!sender) return null;
     /* SENDER SCOPE AND NO RETRO: the press is about these messages, not a domain, and nobody
-       asked the server to walk the backlog. */
-    const planned = planScreeningChange(sender, view as ScreeningDest, "sender", true, false);
+       asked the server to walk the backlog. OUR OWN LETTER TEACHES NOTHING: a rule about our own
+       address is refused at the door and decides none of our mail, so it moves with no rule. */
+    const own = isOwnSubject(read, seedId, undefined, ownAddresses);
+    const planned = planScreeningChange(sender, view as ScreeningDest, "sender", !own, false);
     /**
      * AND IT MOVES THE MESSAGE IT WAS PRESSED ON, not the sender's whole visible backlog.
      *
@@ -623,7 +626,7 @@ export function useShellVerbs({
      * this press names are minted here, and only those — never the sender's visible backlog.
      */
     const wanted = FOLDER_OF_VIEW[view];
-    const decided = planned.mutations.some((x) => x.kind === "screener_decide");
+    const decided = !own && planned.mutations.some((x) => x.kind === "screener_decide");
     const named: PressMove[] = decided ? [] : [...only]
       .map((id) => read.get<EngineMessage>("message", id))
       .filter((msg): msg is EngineMessage => msg != null && wanted != null && msg.folder !== wanted)
@@ -638,7 +641,11 @@ export function useShellVerbs({
        commit re-reads the ladder from, and the named ids are what the overlay shows moved. The
        press does not re-derive either — a second derivation is how the row that moves and the
        rule that is written come to be about different people. */
-    return { plan: { ...planned, mutations, moved }, moves: named, who, address: sender.address, named: [...only] };
+    /* Ours decides nothing, our own mail held at the gate included: no rule, no decision. */
+    const plan: ScreeningPlan = own
+      ? { ...planned, mutations: [], ruleMutations: [], ruleState: "none", rule: false, ruleScope: null, retro: false, moved }
+      : { ...planned, mutations, moved };
+    return { plan, moves: named, who, address: sender.address, named: [...only] };
   });
 
   /** Whether a plan's routing half carries a Screener decision — see {@link fileThroughRouting}. */
@@ -713,7 +720,14 @@ export function useShellVerbs({
   });
 
   const moveToPlace = useStableCallback((m: EngineMessage, view: OhmailView) => {
-    const planned = planMoveToPlace(m.id, view, new Set([m.id]), m);
+    /* A CONVERSATION WHOSE NEWEST LETTER IS OURS moves the letters other people sent in it
+       (`moveSubjectIds`): one sender's on this arm, several senders' through the selection's. */
+    const subjects = moveSubjectIds(withRow(engine.verbRead(), m), m.id, ownAddresses);
+    const senders = new Set(subjects.map((id) => engine.verbRead().get<EngineMessage>("message", id)?.from.address.trim().toLowerCase()));
+    if (senders.size > 1) { onBulkAction(`move:${view}` as BulkAction, subjects); return; }
+    const planned = subjects[0] === m.id
+      ? planMoveToPlace(m.id, view, new Set([m.id]), m)
+      : planMoveToPlace(subjects[subjects.length - 1]!, view, new Set(subjects));
     /* The pressed row is its own seed, so there is always a sender to route. */
     if (!planned) return;
     /* NO EMPTY-PLAN SHORTCUT, deliberately: a plan with nothing in it dispatches nothing and
@@ -1446,7 +1460,10 @@ export function useShellVerbs({
       if (!FOLDER_OF_VIEW[view]) return false;
       const bySender = new Map<string, string[]>();
       const unheld: EngineMutation[] = [];
-      for (const id of ids) {
+      /* A picked conversation whose newest letter is ours moves what other people sent in it. */
+      const verbs = engine.verbRead();
+      const picked = [...new Set(ids.flatMap((id) => (rowOf(id) ? moveSubjectIds(withRow(verbs, rowOf(id)!), id, ownAddresses) : [id])))];
+      for (const id of picked) {
         const m = rowOf(id);
         /* A row neither the mirror nor a page holds is still moved, by id: the server answers. */
         if (!m) {

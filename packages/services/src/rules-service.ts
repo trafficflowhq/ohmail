@@ -630,6 +630,18 @@ export class RulesService {
         });
       }
 
+      /* A RULE ABOUT ONE OF OUR OWN ADDRESSES IS PAUSED OR REMOVED, NEVER WRITTEN: the rule as it
+         would stand is asked, so a key moved there and a retarget of one made before the create door
+         refused it (a Move on our own letter PATCHed one) are refused alike. Before any write or travel. */
+      const pauseOnly = patch.enabled === false && !retroAsked
+        && Object.keys(set).every((k) => k === "updatedAt" || k === "enabled");
+      if (before !== undefined && !pauseOnly) {
+        await refuseOwnAddressRule(bridgeTx(tx), ctx.accountId, {
+          kind: (set.kind as string | undefined) ?? before.kind,
+          match: (set.match as string | undefined) ?? before.match,
+        });
+      }
+
       // THE PLACE, NOT ITS SPELLING: a rule stored before the News rename says `ohmail/Reads`, and
       // `canonicalDestination` (the rename's alias table) makes it the same place as `ohmail/News`.
       // A PATCH naming the place the rule already files to keeps the stored spelling, moves nothing
@@ -714,8 +726,6 @@ export class RulesService {
         bodyContains: set.bodyContains === undefined ? before.bodyContains : (set.bodyContains as string | null),
       };
       const keyMoved = !sameRuleKey(oldKey, newKey);
-      // An edit may not move a rule onto one of the account's own addresses, as a create may not.
-      if (keyMoved) await refuseOwnAddressRule(bridgeTx(tx), ctx.accountId, newKey);
       let acting: Pick<FoundRule, "destination"> = before;
       if (!keyMoved) {
         const c = await convergeRuleKey(bridgeTx(tx), { accountId: ctx.accountId, key: oldKey, survivor: id });

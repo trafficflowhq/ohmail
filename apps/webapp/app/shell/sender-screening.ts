@@ -24,6 +24,7 @@ import {
   ruleTwins,
   rulesList,
   senderKey,
+  threadOf,
   twinWinner,
   type EngineMessage,
   type EngineMutation,
@@ -298,6 +299,19 @@ export function isOwnSubject(
   const subject = senderKey(address ?? seed.from.address);
   if (ownAddresses.some((a) => senderKey(a) === subject)) return true;
   return address === undefined && isOwnSent(seed);
+}
+
+/**
+ * WHAT A MOVE PRESS ON A ROW MOVES. A row is its conversation's newest letter; where that letter is
+ * our own and the conversation holds letters from other people, the press is about theirs, which
+ * move under their senders' rules while our Sent copies stay in Sent. Our letter with nobody
+ * else's beside it is moved as itself (the caller writes no rule for it). Oldest first.
+ */
+export function moveSubjectIds(reader: EntityReader, messageId: string, ownAddresses: readonly string[]): string[] {
+  if (!isOwnSubject(reader, messageId, undefined, ownAddresses)) return [messageId];
+  const received = threadOf(reader, messageId)
+    .filter((m) => !isOwnSubject(reader, m.id, undefined, ownAddresses)).map((m) => m.id);
+  return received.length > 0 ? received : [messageId];
 }
 
 /** Did the server refuse a rule or a decision of this press as being about our own address? Said

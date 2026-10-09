@@ -879,8 +879,9 @@ export interface ApplyRuleRequestInput {
 
 /**
  * The applier's closed set. `no_such_rule`: an update or a delete legitimately found nothing.
- * `own_address`: a create keyed on one of the account's own addresses (`ruleKeyIsOwnAddress`),
- * refused as every press door refuses it, so an older reader's request writes no such rule here.
+ * `own_address`: a create keyed on one of the account's own addresses (`ruleKeyIsOwnAddress`), or an
+ * update of such a rule other than a pause, refused as every press door refuses it, so an older
+ * reader's request writes no such rule here.
  * `shared_provider_domain`: a rule that would let everyone at a shared provider through
  * (`sharedProviderAllowRefusal`), which admits nobody and is refused at every door.
  */
@@ -1069,6 +1070,11 @@ export async function applyRuleRequest(
     await endsLearning();
     return { applied: true, op: "delete", ruleId: found.id, lastSeq: seqs[seqs.length - 1]! };
   }
+
+  // A rule about one of our own addresses is paused or removed, never written: the edit door's rule.
+  const pauseOnly = payload.set.enabled === false && payload.set.destination === undefined
+    && payload.set.priority === undefined && !payload.retroAsked;
+  if (!pauseOnly && await ruleKeyIsOwnAddress(tx, accountId, key, input.ownAddresses)) return { applied: false, refusal: "own_address" };
 
   const set: Partial<typeof rulesTbl.$inferInsert> = { updatedAt: now };
   if (payload.set.destination !== undefined) {

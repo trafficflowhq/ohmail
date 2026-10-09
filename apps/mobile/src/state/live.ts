@@ -2200,7 +2200,9 @@ export function planPhoneRouting(
 ): EngineMutation[] {
   const folder = FOLDER_OF_VIEW[intent.dest];
   if (!folder || intent.from === undefined) return [];
-  const ruled = releaseRules(reader, intent.address, intent.from as Folder, folder).mutations;
+  // A press that decided no rule (our own letter among them) commits none: its sentence said so.
+  const ruled = (intent as PhoneMoveIntent).holdsRule === false
+    ? [] : releaseRules(reader, intent.address, intent.from as Folder, folder).mutations;
   const rules = (intent as PhoneMoveIntent).retro === true ? [...ruled] : withoutBacklog(ruled);
   /* THE LETTER'S HALF, for a kill between the press's record and the letter's dispatch: a letter the
      press named, still in the folder the press found it in, moves with the rule. A dispatched move
@@ -4225,7 +4227,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* The plan as DATA first: nothing reaches `engine.mutate` until the list is known non-empty
        and no request of ours is still waiting on the organizer for this message. The move goes
        LAST so that, reading back, it is the first queued answer found and names its own holder. */
-    const routing = row.presentedFolder === folder ? null : releaseRules(raw, m.from.address, row.presentedFolder, folder);
+    /* OUR OWN LETTER TEACHES NOTHING: a rule about our own address is refused at the door and
+       decides none of our mail, so it moves with no rule and the plain sentence (`isOwn`). */
+    const routing = row.presentedFolder === folder || isOwn(messageId) ? null : releaseRules(raw, m.from.address, row.presentedFolder, folder);
     // A DOMAIN rule this sender cannot be moved out from under: said, and nothing is sent.
     if (routing?.kind === "stands") {
       toast(refuse("liveReleaseRuleStands", m.from.address, routing.domain));
