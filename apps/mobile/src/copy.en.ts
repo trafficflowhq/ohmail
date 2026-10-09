@@ -2128,6 +2128,12 @@ const TABLE = {
   awayFailedStillOff: "Could not save — the responder is still off.",
   awayIncomplete: "Add a message before turning this on.",
   awayUnreachable: "Your away settings could not be read just now. Nothing here has changed.",
+  /** A change not saved yet, and leaving with one — the web's `away.unsaved*` and `away.leave*`. */
+  awayUnsavedStillOff: "Not saved yet — the responder stays off until you save.",
+  awayUnsavedStillOn: "Not saved yet — the saved responder stays on until you save.",
+  awayLeaveAsk: "Leave without saving?",
+  awayLeaveDiscard: "Discard changes",
+  awayLeaveKeep: "Keep editing",
   /**
    * PHONE-ONLY (1/6): the Settings row that opens this screen, and its second line — the rail's
    * own idiom, and the one place a person looks for a standing order before a trip.

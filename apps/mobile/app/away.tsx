@@ -10,6 +10,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { View } from "react-native";
+import { useNavigation } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
 import { Copy } from "../src/copy";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { readAwayAnswer, saveAway } from "../src/net/away";
@@ -18,7 +20,7 @@ import { calendarDayLabel, dayEndIso, readerZone, setTimeLabel } from "../src/st
 import { useWorld } from "../src/state/world";
 import {
   awayAudienceWide, awayPileWords, awayRefusalLine, awaySaveBlocked, awaySaveBody, awaySay,
-  type AwayRefusal, type AwayRow,
+  awayStatedLine, awayUnsaved, awayUnsavedLine, type AwayRefusal, type AwayRow,
 } from "../src/ui/away-form";
 import { Button, Panel, Rule, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
@@ -64,6 +66,9 @@ function AwayBody() {
   const [picking, setPicking] = useState(false);
   /** The holder's refusal of the last away change sent from here, as the read reports it. */
   const [refused, setRefused] = useState<AwayRefusal | null>(null);
+  const navigation = useNavigation();
+  /** A leave the stack held for an unsaved change: Discard dispatches it, Keep editing drops it. */
+  const [leaving, setLeaving] = useState<null | { action: Parameters<typeof navigation.dispatch>[0] }>(null);
 
   /** Take a server row as the truth on screen — the values shown are always the stored ones. */
   const adopt = useCallback((row: AwayRow) => {
@@ -96,6 +101,16 @@ function AwayBody() {
      turned on. The webapp's `incomplete`, at the same door. */
   const incomplete = enabled && body.trim() === "";
   const canSave = read !== null && !saving && !blocked && !incomplete;
+  /* THE EDIT AGAINST THE SAVED ROW. While they differ the line under the switch says so, and the
+     stack asks before this screen goes — Back, the swipe and the rail alike. */
+  const unsaved = awayUnsaved(read, { enabled, body, endsAt });
+  usePreventRemove(unsaved && !saving, ({ data }) => setLeaving({ action: data.action }));
+  const discardAndLeave = () => {
+    const held = leaving;
+    setLeaving(null);
+    if (read !== null) adopt(read);
+    if (held !== null) navigation.dispatch(held.action);
+  };
 
   const save = async () => {
     const next = awaySaveBody(read, { enabled, body, endsAt });
@@ -142,9 +157,24 @@ function AwayBody() {
                 { value: "on", label: Copy.awaySwitchOn },
               ]}
             />
+            {/* THE SAVED RESPONDER, never the segment's position — see `awayStatedLine`. */}
             <Txt variant="note" tone="ink2" style={{ marginTop: 10 }}>
-              {enabled ? Copy.awayOn : Copy.awayOff}
+              {awayStatedLine(read) ?? " "}
             </Txt>
+            {/* AN UNSAVED CHANGE, said here with the Save that settles it, in view. */}
+            {unsaved && read !== null ? (
+              <View style={{ marginTop: 10, gap: 10 }}>
+                <Txt variant="note" tone="ink" accessibilityLiveRegion="polite">{awayUnsavedLine(read)}</Txt>
+                <View style={{ flexDirection: "row" }}>
+                  <Button
+                    label={saving ? Copy.awaySaving : Copy.awaySave}
+                    variant="solid"
+                    disabled={!canSave}
+                    onPress={() => void save()}
+                  />
+                </View>
+              </View>
+            ) : null}
             {/* WHERE THE REPLIES COME FROM — this phone when it organizes the mailbox itself,
                 otherwise the machine the More screen names. Neither sentence is a default: the
                 world already knows which install holds this mailbox. */}
@@ -245,6 +275,15 @@ function AwayBody() {
           ) : null}
         </View>
       </Scroller>
+
+      {/* LEAVING WITH AN UNSAVED CHANGE ASKS. Closing the sheet is Keep editing. */}
+      <Sheet open={leaving !== null} onClose={() => setLeaving(null)} label={Copy.awayLeaveAsk}>
+        <Txt variant="note" tone="ink" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+          {read !== null ? awayUnsavedLine(read) : Copy.awayLeaveAsk}
+        </Txt>
+        <SheetRow label={Copy.awayLeaveDiscard} onPress={discardAndLeave} />
+        <SheetRow label={Copy.awayLeaveKeep} onPress={() => setLeaving(null)} />
+      </Sheet>
 
       <Sheet open={picking} onClose={() => setPicking(false)} label={Copy.awayUntilLabel}>
         <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>

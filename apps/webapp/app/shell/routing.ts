@@ -397,8 +397,10 @@ export function normalizedHash(hash: string): string | null {
 
 export function useHashRoute(): Route {
   const subscribe = useCallback((cb: () => void) => {
-    window.addEventListener("hashchange", cb);
-    return () => window.removeEventListener("hashchange", cb);
+    /* A pane holding an unsaved change sees a Back press or a link BEFORE the route does. */
+    const onChange = (e: Event): void => { if (!heldOnHashChange(e)) cb(); };
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
   }, []);
   const hash = useSyncExternalStore(
     subscribe,
@@ -437,11 +439,57 @@ function switchKeyForHash(hash: string): string {
   return switchKeyOf(parseHash(hash));
 }
 
+/**
+ * A PANE WITH AN UNSAVED CHANGE ASKS BEFORE THE ROUTE LEAVES IT. One hold at a time, taken by the
+ * pane while its draft differs from what is stored and released when it no longer does. Every verb
+ * below asks it before writing the hash; a Back press or a link has already moved the hash, so
+ * `useHashRoute` puts it back before the shell sees it and asks the same question. `ask` gets the
+ * leave itself: the pane calls it on Discard and drops it on Keep editing.
+ */
+interface LeaveHold { at: string; ask: (leave: () => void) => void }
+let leaveHold: LeaveHold | null = null;
+
+export function holdLeave(ask: (leave: () => void) => void): () => void {
+  const hold: LeaveHold = { at: window.location.hash, ask };
+  leaveHold = hold;
+  return () => { if (leaveHold === hold) leaveHold = null; };
+}
+
+/** True when the hold asked instead: `resume` runs only if the pane answers Discard. */
+function heldBefore(next: string, resume: () => void): boolean {
+  const hold = leaveHold;
+  if (hold === null || switchKeyForHash(next) === switchKeyForHash(hold.at)) return false;
+  hold.ask(() => {
+    if (leaveHold === hold) leaveHold = null;
+    resume();
+  });
+  return true;
+}
+
+/* Both subscribers of one `hashchange` (the shell and the desktop gate) get ONE verdict. */
+let lastHashEvent: { e: Event; held: boolean } | null = null;
+function heldOnHashChange(e: Event): boolean {
+  if (lastHashEvent?.e === e) return lastHashEvent.held;
+  const target = window.location.hash;
+  const hold = leaveHold;
+  const held = hold !== null && switchKeyForHash(target) !== switchKeyForHash(hold.at);
+  if (held) {
+    /* The address goes back first, so the bar never names a place that is not on screen. */
+    window.history.replaceState(
+      window.history.state, "", hold.at || `${window.location.pathname}${window.location.search}`,
+    );
+    heldBefore(target, () => { window.location.hash = target; });
+  }
+  lastHashEvent = { e, held };
+  return held;
+}
+
 export function go(view: Exclude<ViewId, "tag" | "folder">): void {
+  const next = `#/${view}`;
+  if (heldBefore(next, () => go(view))) return;
   /* THE SWITCH MARK STARTS AT THE NAVIGATION AND ENDS WHEN THAT VIEW IS ON SCREEN — one call
      site per verb, and the end is the shell's (`useSwitchEnd`). Here rather than in the controls
      because the rail, the palette, the number keys and a deep link all arrive through these. */
-  const next = `#/${view}`;
   beginSwitch(switchKeyForHash(next));
   window.location.hash = next;
 }
@@ -456,9 +504,11 @@ export function goFirstRun(
   const base = opts.rerun
     ? "#/first-run/again"
     : opts.add ? "#/first-run/add" : "#/first-run";
-  window.location.hash = opts.mailboxId
+  const next = opts.mailboxId
     ? `${base}?mailbox=${encodeURIComponent(opts.mailboxId)}`
     : base;
+  if (heldBefore(next, () => goFirstRun(opts))) return;
+  window.location.hash = next;
 }
 
 /**
@@ -480,12 +530,14 @@ export function nameFirstRunMailbox(mailboxId: string): void {
 
 export function goTag(tagId: string): void {
   const next = `#/tag/${tagId}`;
+  if (heldBefore(next, () => goTag(tagId))) return;
   beginSwitch(switchKeyForHash(next));
   window.location.hash = next;
 }
 
 export function goFolder(folderId: string): void {
   const next = `#/folder/${folderId}`;
+  if (heldBefore(next, () => goFolder(folderId))) return;
   beginSwitch(switchKeyForHash(next));
   window.location.hash = next;
 }
@@ -500,12 +552,14 @@ export function goFolder(folderId: string): void {
  */
 export function goAddress(address: string): void {
   const next = addressHash(address);
+  if (heldBefore(next, () => goAddress(address))) return;
   beginSwitch(switchKeyForHash(next));
   window.location.hash = next;
 }
 
 export function goScreener(segment: ScreenerSegmentId): void {
   const next = segment === "waiting" ? "#/screener" : `#/screener/${segment}`;
+  if (heldBefore(next, () => goScreener(segment))) return;
   beginSwitch(switchKeyForHash(next));
   window.location.hash = next;
 }
@@ -513,6 +567,7 @@ export function goScreener(segment: ScreenerSegmentId): void {
 /** The first pile keeps the bare `#/triage`, so every link that already exists still lands. */
 export function goTriage(pile: TriagePileId): void {
   const next = pile === "reply" ? "#/triage" : `#/triage/${pile}`;
+  if (heldBefore(next, () => goTriage(pile))) return;
   beginSwitch(switchKeyForHash(next));
   window.location.hash = next;
 }
@@ -526,7 +581,9 @@ export function goTriage(pile: TriagePileId): void {
  * history and Back/Forward walk them.
  */
 export function goSettings(pane: PaneId): void {
-  window.location.hash = `#/settings/${pane}`;
+  const next = `#/settings/${pane}`;
+  if (heldBefore(next, () => goSettings(pane))) return;
+  window.location.hash = next;
 }
 
 /**

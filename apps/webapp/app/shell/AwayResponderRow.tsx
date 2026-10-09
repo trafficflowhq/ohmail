@@ -40,6 +40,7 @@ import {
 import { away as awayApi, type AwayResponderSaveWire, type AwayResponderWire } from "../api-client";
 import { dayEnd, dayStamp, dayValue, tomorrowNine } from "./format";
 import { noteOf, TravelledChangeNote, type TravelledNote } from "./travelled-change";
+import { holdLeave } from "./routing";
 import { activeFormatLocale } from "./locale";
 
 /**
@@ -133,6 +134,16 @@ export const AWAY_COPY = {
   failedStillOff: "Could not save — the responder is still off.",
   incomplete: "Add a message before turning this on.",
   unreachable: "Your away settings could not be read just now. Nothing here has changed.",
+  /**
+   * A CHANGE NOT SAVED YET, said beside the switch with its own Save. The line above states the
+   * SAVED responder; this one says the edit below it has not reached it.
+   */
+  unsavedStillOff: "Not saved yet — the responder stays off until you save.",
+  unsavedStillOn: "Not saved yet — the saved responder stays on until you save.",
+  /** And leaving with one: asked, never dropped in silence. */
+  leaveAsk: "Leave without saving?",
+  leaveDiscard: "Discard changes",
+  leaveKeep: "Keep editing",
 } as const;
 
 type Audience = AwayResponderWire["audience"];
@@ -194,7 +205,7 @@ const THROTTLE_IDS: readonly Throttle[] = ["always", "per_message", "per_day", "
  * does not preserve — so a string or array comparison would call a request that landed exactly as
  * asked somebody else's edit. `body` is stored verbatim, so it compares as written.
  */
-function sameAsAsked(now: AwayResponderWire, asked: Draft): boolean {
+function sameAsAsked(now: Draft, asked: Draft): boolean {
   const instant = (v: string | null): number | null => {
     if (v === null) return null;
     const t = new Date(v).getTime();
@@ -208,6 +219,11 @@ function sameAsAsked(now: AwayResponderWire, asked: Draft): boolean {
     && now.audience === asked.audience
     && now.throttle === asked.throttle
     && set(now.piles ?? AWAY_PILES_DEFAULT) === set(asked.piles ?? AWAY_PILES_DEFAULT);
+}
+
+/** Does the draft differ from the saved row? An emptied message is the absent one. */
+function unsavedIn(draft: Draft, saved: Draft): boolean {
+  return !sameAsAsked({ ...saved, body: saved.body || null }, { ...draft, body: draft.body || null });
 }
 
 const ASKED_POLL_MS = 20_000;
@@ -269,7 +285,17 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * not sending while it is.
    */
   const [draft, setDraft] = useState<Draft | null>(null);
+  /**
+   * THE ROW AS STORED, which is what the status line states. The switch shows the draft; the
+   * sentence beside it may not, or "On. Replies to new mail" stands over a responder that is off.
+   */
+  const [saved, setSaved] = useState<Draft | null>(null);
   const [pending, setPending] = useState(false);
+  /** Which Save was pressed — its answer is said beside it, in view. */
+  const [from, setFrom] = useState<"top" | "bottom">("bottom");
+  /** A leave the route held for the unsaved change: Discard runs it, Keep editing drops it. */
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  const unsavedRef = useRef<HTMLDivElement | null>(null);
   /**
    * `asked` IS NOT `saved`, and it is the one distinction this row's answer has to carry: on an
    * account another install organizes, the write did not happen here and a request is waiting.
@@ -333,6 +359,7 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * about mail going out in somebody's name.
    */
   const stored = useRef<Draft | null>(null);
+  const keep = (row: Draft): void => { stored.current = row; setSaved(row); };
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -346,12 +373,12 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
       try {
         const loaded = await wireOf().state();
         if (!alive.current) return;
-        stored.current = {
+        keep({
           enabled: loaded.enabled, body: loaded.body,
           startsAt: loaded.startsAt, endsAt: loaded.endsAt,
           audience: loaded.audience, throttle: loaded.throttle,
           piles: loaded.piles ?? [...AWAY_PILES_DEFAULT],
-        };
+        });
         setDraft({
           enabled: loaded.enabled, body: loaded.body,
           startsAt: loaded.startsAt, endsAt: loaded.endsAt,
@@ -377,7 +404,28 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
     })();
   }, []);
 
-  if (!draft) return unreachable ? <p className="set-note-inline">{t("unreachable")}</p> : null;
+  /**
+   * AN UNSAVED CHANGE HOLDS THE ROUTE. While the draft differs from the stored row, leaving the
+   * pane asks first (`holdLeave`), and closing or reloading the tab asks the browser's question.
+   * Not while a save is in flight: that request is already out and its answer is the state.
+   */
+  const unsaved = draft !== null && saved !== null && unsavedIn(draft, saved);
+  const holding = unsaved && !pending;
+  useEffect(() => {
+    if (!holding) { setLeaving(null); return; }
+    const release = holdLeave((leave) => setLeaving(() => leave));
+    const onUnload = (e: BeforeUnloadEvent): void => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onUnload);
+    return () => { release(); window.removeEventListener("beforeunload", onUnload); };
+  }, [holding]);
+  /* The question is asked where it is read: focus moves to it and it scrolls into view. */
+  useEffect(() => {
+    if (leaving === null) return;
+    unsavedRef.current?.scrollIntoView?.({ block: "nearest" });
+    unsavedRef.current?.focus();
+  }, [leaving]);
+
+  if (!draft || !saved) return unreachable ? <p className="set-note-inline">{t("unreachable")}</p> : null;
 
   // The MESSAGE alone now: the responder composes no subject of its own, so the only thing that
   // can be missing is the words. The server holds the same line (`liveResponders` skips a responder
@@ -427,12 +475,14 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
             const refused = refusalOf(now);
             if (refused) { setRefusal(refused); setState("refused"); return; }
             if (now.updatedAt !== askedAt) {
-              setDraft({
+              const row: Draft = {
                 enabled: now.enabled, body: now.body,
                 startsAt: now.startsAt, endsAt: now.endsAt,
                 audience: now.audience, throttle: now.throttle,
                 piles: now.piles ?? [...AWAY_PILES_DEFAULT],
-              });
+              };
+              keep(row);
+              setDraft(row);
               changed.current?.({
                 enabled: now.enabled, audience: now.audience, throttle: now.throttle,
                 piles: now.piles ?? [...AWAY_PILES_DEFAULT],
@@ -477,13 +527,14 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         const echoed = await wireOf().save(draft);
         if (!alive.current) return;
         // Set from the ECHO, never from what was asked for: the server is what the worker reads.
-        stored.current = {
+        const row: Draft = {
           enabled: echoed.enabled, body: echoed.body,
           startsAt: echoed.startsAt, endsAt: echoed.endsAt,
           audience: echoed.audience, throttle: echoed.throttle,
           piles: echoed.piles ?? [...AWAY_PILES_DEFAULT],
         };
-        setDraft(stored.current);
+        keep(row);
+        setDraft(row);
         changed.current?.({
           enabled: echoed.enabled, audience: echoed.audience, throttle: echoed.throttle,
           piles: echoed.piles ?? [...AWAY_PILES_DEFAULT],
@@ -517,11 +568,46 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
     })();
   };
 
+  /** WHAT THE LAST PRESS DID, said beside the Save that was pressed (`from`). */
+  const outcome = (
+    <>
+      {state === "saved" ? (
+        <span className="set-note-inline" role="status">{t("saved")}</span>
+      ) : null}
+      {state === "asked" ? (
+        <span className="set-note-inline" role="status">{t("asked")}</span>
+      ) : null}
+      {state === "applied" ? (
+        <span className="set-note-inline" role="status">{t("applied")}</span>
+      ) : null}
+      {state === "changedElsewhere" ? (
+        <span className="set-note-inline" role="status">{t("changedElsewhere")}</span>
+      ) : null}
+      {state === "refused" ? <TravelledChangeNote note={refusal} className="set-note-inline" /> : null}
+      {state === "failed" ? (
+        <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
+      ) : null}
+      {/* THE SENTENCE FOLLOWS THE SWITCH, which by now shows the SAVED state — a refusal that
+          says only "that did not save" leaves somebody not knowing whether mail is going out in
+          their name. Its own state rather than a re-derivation of `complete`: that predicate
+          reads the reverted draft, and a stored responder with no body would have answered
+          "Add a message before turning this on." to an outage. */}
+      {state === "failedWire" ? (
+        <span className="set-note-inline" role="alert">
+          {draft.enabled ? t("failedStillOn") : t("failedStillOff")}
+        </span>
+      ) : null}
+      {state === "expired" ? (
+        <span className="set-note-inline" role="alert">{t("untilExpired")}</span>
+      ) : null}
+    </>
+  );
+
   return (
     <>
       <SettingsRow
         label={t("title")}
-        description={draft.enabled ? t("on") : t("off")}
+        description={saved.enabled ? t("on") : t("off")}
         control={
           <Switch
             checked={draft.enabled}
@@ -531,6 +617,38 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
           />
         }
       />
+      {/* THE UNSAVED CHANGE, under the switch and in view, with the Save that settles it. The line
+          above states the stored responder; this says the edit has not reached it. A held leave
+          turns the same block into the question, so it is asked where the change is named. */}
+      {unsaved || (from === "top" && state !== "idle") ? (
+        <div
+          ref={unsavedRef}
+          className="set-actions away-unsaved"
+          role={leaving !== null ? "alertdialog" : undefined}
+          aria-label={leaving !== null ? t("leaveAsk") : undefined}
+          aria-describedby={unsaved ? "away-unsaved-what" : undefined}
+          tabIndex={-1}
+        >
+          {unsaved ? (
+            <p className="set-note-inline" id="away-unsaved-what" role={leaving !== null ? undefined : "status"}>
+              {saved.enabled ? t("unsavedStillOn") : t("unsavedStillOff")}
+            </p>
+          ) : null}
+          {unsaved && leaving !== null ? (
+            <>
+              <Button variant="primary" onClick={() => { const leave = leaving; setDraft(saved); setState("idle"); setLeaving(null); leave(); }}>
+                {t("leaveDiscard")}
+              </Button>
+              <Button variant="ghost" onClick={() => setLeaving(null)}>{t("leaveKeep")}</Button>
+            </>
+          ) : unsaved ? (
+            <Button variant="primary" onClick={() => { setFrom("top"); save(); }} disabled={pending}>
+              {pending ? t("saving") : t("save")}
+            </Button>
+          ) : null}
+          {from === "top" ? outcome : null}
+        </div>
+      ) : null}
       {/* THE ONE THING SOMEBODY WRITES IS A FIELD, NOT A ROW. `SettingsRow` puts its control at
           the right of a label, which is right for a switch and wrong for prose: the message got a
           three-row textarea in a narrow gutter, so the one control in Settings whose content is a
@@ -670,11 +788,11 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
       </SettingsField>
       {/* WHAT THE DATE MEANS RIGHT NOW, and only while it means something. A responder that is off
           already says so in the row's own description, and one with no date has nothing to add. */}
-      {draft.enabled && endsAt !== null ? (
+      {saved.enabled && saved.endsAt !== null ? (
         <p className="set-note-inline">
-          {expired
-            ? t("untilPast", { date: dayStamp(endsAt) })
-            : t("untilOn", { date: dayStamp(endsAt) })}
+          {new Date(saved.endsAt).getTime() < Date.now()
+            ? t("untilPast", { date: dayStamp(saved.endsAt) })
+            : t("untilOn", { date: dayStamp(saved.endsAt) })}
         </p>
       ) : null}
       {/* THE RATE. `SegmentedControl` because the four members are one ordered range and somebody
@@ -714,38 +832,10 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
           only control here that sends mail, so whether the press took has to reach somebody who
           is not watching the pixels. */}
       <SettingsActions>
-        <Button variant="primary" onClick={save} disabled={pending}>
+        <Button variant="primary" onClick={() => { setFrom("bottom"); save(); }} disabled={pending}>
           {pending ? t("saving") : t("save")}
         </Button>
-        {state === "saved" ? (
-          <span className="set-note-inline" role="status">{t("saved")}</span>
-        ) : null}
-        {state === "asked" ? (
-          <span className="set-note-inline" role="status">{t("asked")}</span>
-        ) : null}
-        {state === "applied" ? (
-          <span className="set-note-inline" role="status">{t("applied")}</span>
-        ) : null}
-        {state === "changedElsewhere" ? (
-          <span className="set-note-inline" role="status">{t("changedElsewhere")}</span>
-        ) : null}
-        {state === "refused" ? <TravelledChangeNote note={refusal} className="set-note-inline" /> : null}
-        {state === "failed" ? (
-          <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
-        ) : null}
-        {/* THE SENTENCE FOLLOWS THE SWITCH, which by now shows the SAVED state — a refusal that
-            says only "that did not save" leaves somebody not knowing whether mail is going out in
-            their name. Its own state rather than a re-derivation of `complete`: that predicate
-            reads the reverted draft, and a stored responder with no body would have answered
-            "Add a message before turning this on." to an outage. */}
-        {state === "failedWire" ? (
-          <span className="set-note-inline" role="alert">
-            {draft.enabled ? t("failedStillOn") : t("failedStillOff")}
-          </span>
-        ) : null}
-        {state === "expired" ? (
-          <span className="set-note-inline" role="alert">{t("untilExpired")}</span>
-        ) : null}
+        {from === "bottom" ? outcome : null}
       </SettingsActions>
     </>
   );

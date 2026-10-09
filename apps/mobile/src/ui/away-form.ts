@@ -92,6 +92,35 @@ export function awaySaveBlocked(edits: AwayEdits, now: Date): boolean {
   return awaySay(edits.enabled, edits.endsAt, now) === "expired";
 }
 
+/**
+ * THE SWITCH'S SENTENCE STATES THE SAVED ROW, never the edit: "On. Replies to new mail" over a
+ * responder that is still off is what somebody reads before closing the screen for a holiday.
+ * `null` while there is no read — the line says nothing rather than a default.
+ */
+export function awayStatedLine(read: AwayRow | null): string | null {
+  if (read === null) return null;
+  return read.enabled ? Copy.awayOn : Copy.awayOff;
+}
+
+/**
+ * DO THE EDITS DIFFER FROM THE SAVED ROW? Compared as the save would write them (an empty message
+ * is `null`, an instant by its time), so typing and deleting a word is no change. Drives the
+ * unsaved sentence and the question on leaving.
+ */
+export function awayUnsaved(read: AwayRow | null, edits: AwayEdits): boolean {
+  if (read === null) return false;
+  const at = (v: string | null): number | null => (v === null ? null : Date.parse(v));
+  const body = edits.body.trim() === "" ? null : edits.body;
+  return read.enabled !== edits.enabled
+    || (read.body?.trim() ? read.body : null) !== body
+    || at(read.endsAt) !== at(edits.endsAt);
+}
+
+/** The sentence for an unsaved change: what the SAVED responder keeps doing until the save. */
+export function awayUnsavedLine(read: AwayRow): string {
+  return read.enabled ? Copy.awayUnsavedStillOn : Copy.awayUnsavedStillOff;
+}
+
 /** The folder names the phone has words for, and the word for each. */
 const PILE_WORD: Readonly<Record<string, "ohbox" | "reads" | "receipts" | "screener">> = {
   "INBOX": "ohbox",
