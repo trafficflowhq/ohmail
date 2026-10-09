@@ -60,6 +60,21 @@ domain; under any other company's name it keeps its warning and waits at the Scr
 report that names only the failed recipient. A copy of your own sent mail no longer merges with a
 received message that carries the same Message-ID.
 
+### Search on the desktop answers faster
+<!-- changes: perf-026-desktop-search.md -->
+
+The desktop's whole-mailbox search and every list page read from the device's store no longer scan an
+index for each row they show. Once the first sync after a launch has settled and the window has been
+quiet for three seconds, the first search no longer pays for opening the store cold. A typed search
+asks the store 100 ms after the last key instead of 250 ms; Enter, a pressed facet and a sort change
+ask at once.
+
+### Marking a message unread puts it back where it arrived
+<!-- changes: fix-026-unread-returns-to-its-place.md -->
+
+Marking a message unread puts it back in New where it arrived, on the device you marked it on as well
+as on your others. It used to go to the top of New there.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
