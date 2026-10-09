@@ -116,6 +116,21 @@ export function awayUnsaved(read: AwayRow | null, edits: AwayEdits): boolean {
     || at(read.endsAt) !== at(edits.endsAt);
 }
 
+/**
+ * THE END-DATE SENTENCE, from the SAVED row and only while it is on: "On until" over a responder
+ * that is off, or over an end date nobody saved, is the same lie as the switch line's.
+ */
+export function awaySavedUntil(read: AwayRow | null, now: Date): "onUntil" | "expired" | null {
+  if (read === null || !read.enabled || read.endsAt === null) return null;
+  const say = awaySay(true, read.endsAt, now);
+  return say === "onUntil" || say === "expired" ? say : null;
+}
+
+/** A failed save names what is STORED; the edit stays on screen as the unsaved change. */
+export function awayFailedLine(read: AwayRow | null): string {
+  return read?.enabled ? Copy.awayFailedStillOn : Copy.awayFailedStillOff;
+}
+
 /** The sentence for an unsaved change: what the SAVED responder keeps doing until the save. */
 export function awayUnsavedLine(read: AwayRow): string {
   return read.enabled ? Copy.awayUnsavedStillOn : Copy.awayUnsavedStillOff;

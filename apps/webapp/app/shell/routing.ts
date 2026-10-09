@@ -449,8 +449,10 @@ function switchKeyForHash(hash: string): string {
 interface LeaveHold { at: string; ask: (leave: () => void) => void }
 let leaveHold: LeaveHold | null = null;
 
-export function holdLeave(ask: (leave: () => void) => void): () => void {
-  const hold: LeaveHold = { at: window.location.hash, ask };
+export function holdLeave(
+  ask: (leave: () => void) => void, at: string = window.location.hash,
+): () => void {
+  const hold: LeaveHold = { at, ask };
   leaveHold = hold;
   return () => { if (leaveHold === hold) leaveHold = null; };
 }

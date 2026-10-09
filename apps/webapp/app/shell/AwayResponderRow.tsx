@@ -221,9 +221,17 @@ function sameAsAsked(now: Draft, asked: Draft): boolean {
     && set(now.piles ?? AWAY_PILES_DEFAULT) === set(asked.piles ?? AWAY_PILES_DEFAULT);
 }
 
-/** Does the draft differ from the saved row? An emptied message is the absent one. */
+/**
+ * Does the draft differ from the saved row? Compared as the pass reads them: an emptied message is
+ * the absent one, and the piles are the EFFECTIVE scope, so an old spelling or an inert Screener
+ * pile that a pile toggle canonicalises is no change.
+ */
 function unsavedIn(draft: Draft, saved: Draft): boolean {
-  return !sameAsAsked({ ...saved, body: saved.body || null }, { ...draft, body: draft.body || null });
+  const asSent = (d: Draft): Draft => ({
+    ...d, body: d.body || null,
+    piles: [...awayEffectivePiles(d.piles ?? AWAY_PILES_DEFAULT, d.audience)] as Piles,
+  });
+  return !sameAsAsked(asSent(saved), asSent(draft));
 }
 
 const ASKED_POLL_MS = 20_000;
@@ -413,7 +421,8 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
   const holding = unsaved && !pending;
   useEffect(() => {
     if (!holding) { setLeaving(null); return; }
-    const release = holdLeave((leave) => setLeaving(() => leave));
+    /* The pane's own place, so its own nav entry under a bare `#/settings` is no leave. */
+    const release = holdLeave((leave) => setLeaving(() => leave), "#/settings/away");
     const onUnload = (e: BeforeUnloadEvent): void => { e.preventDefault(); e.returnValue = ""; };
     window.addEventListener("beforeunload", onUnload);
     return () => { release(); window.removeEventListener("beforeunload", onUnload); };

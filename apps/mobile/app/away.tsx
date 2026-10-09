@@ -20,7 +20,8 @@ import { calendarDayLabel, dayEndIso, readerZone, setTimeLabel } from "../src/st
 import { useWorld } from "../src/state/world";
 import {
   awayAudienceWide, awayPileWords, awayRefusalLine, awaySaveBlocked, awaySaveBody, awaySay,
-  awayStatedLine, awayUnsaved, awayUnsavedLine, type AwayRefusal, type AwayRow,
+  awayFailedLine, awaySavedUntil, awayStatedLine, awayUnsaved, awayUnsavedLine,
+  type AwayRefusal, type AwayRow,
 } from "../src/ui/away-form";
 import { Button, Panel, Rule, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
@@ -131,10 +132,12 @@ function AwayBody() {
     setSaid(out.kind === "asked" ? "asked" : "saved");
   };
 
-  const untilLine =
-    endsAt === null ? Copy.awayUntilNone
-      : say === "expired" ? Copy.awayUntilPast(setTimeLabel(endsAt, now, zone))
-        : Copy.awayUntilOn(setTimeLabel(endsAt, now, zone));
+  /* The field's value is the edit; the sentence about it is the SAVED row's (`awaySavedUntil`). */
+  const untilValue = endsAt === null ? Copy.awayUntilNone : setTimeLabel(endsAt, now, zone);
+  const savedUntil = awaySavedUntil(read, now);
+  const savedUntilLine = savedUntil === null || read?.endsAt == null ? null
+    : savedUntil === "expired" ? Copy.awayUntilPast(setTimeLabel(read.endsAt, now, zone))
+      : Copy.awayUntilOn(setTimeLabel(read.endsAt, now, zone));
 
   return (
     <Screen>
@@ -208,7 +211,10 @@ function AwayBody() {
         <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>
           <Section style={{ paddingTop: 16 }}>{Copy.awayUntilLabel}</Section>
           <View style={{ paddingHorizontal: 20, gap: 10 }}>
-            <Txt variant="note" tone={say === "expired" ? "ink" : "ink2"}>{untilLine}</Txt>
+            <Txt variant="note" tone="ink2">{untilValue}</Txt>
+            {savedUntilLine !== null ? (
+              <Txt variant="note" tone={savedUntil === "expired" ? "ink" : "ink2"}>{savedUntilLine}</Txt>
+            ) : null}
             {say === "expired" ? (
               <Txt variant="caption" tone="ink3">{Copy.awayUntilExpired}</Txt>
             ) : null}
@@ -266,7 +272,7 @@ function AwayBody() {
                 : said === "asked" ? Copy.awayAsked
                   : said === "changed" ? Copy.awayChangedElsewhere
                     : said === "unreachable" ? Copy.awayUnreachable
-                      : enabled ? Copy.awayFailedStillOn : Copy.awayFailedStillOff}
+                      : awayFailedLine(read)}
             </Txt>
           ) : asked && read === null ? (
             <Txt variant="note" tone="ink">{Copy.awayUnreachable}</Txt>
@@ -277,7 +283,7 @@ function AwayBody() {
       </Scroller>
 
       {/* LEAVING WITH AN UNSAVED CHANGE ASKS. Closing the sheet is Keep editing. */}
-      <Sheet open={leaving !== null} onClose={() => setLeaving(null)} label={Copy.awayLeaveAsk}>
+      <Sheet open={leaving !== null} onClose={() => setLeaving(null)} label={Copy.awayLeaveAsk} cancel="own">
         <Txt variant="note" tone="ink" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
           {read !== null ? awayUnsavedLine(read) : Copy.awayLeaveAsk}
         </Txt>
