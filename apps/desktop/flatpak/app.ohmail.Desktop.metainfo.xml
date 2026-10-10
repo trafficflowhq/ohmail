@@ -74,6 +74,29 @@
   </screenshots>
 
   <releases>
+    <release version="0.25.20" date="2026-10-10">
+      <description>
+        <ul>
+          <li>The Linux app no longer crashes at launch without GPU rendering</li>
+          <li>On Android, a long html message scrolls with the reader</li>
+          <li>Mail servers that do not state message sizes import faster</li>
+          <li>Warnings show in the warning colour again</li>
+          <li>Mail from people you wrote to is released on time after the clock is set back</li>
+          <li>Answers to your mail arrive; only the people you wrote to are remembered</li>
+          <li>Search on the desktop answers faster</li>
+          <li>Marking a message unread puts it back where it arrived</li>
+          <li>A picture inside a letter appears once the connection is back</li>
+          <li>A later name check no longer returns a sender to the Screener</li>
+          <li>The away responder's switch no longer says On before you save</li>
+          <li>The Screener says when nothing is screened yet</li>
+          <li>Moving your own letter writes no rule about your own address</li>
+          <li>A draft sent from another device no longer leaves a dead editor</li>
+          <li>A year press in History fills the rows around it</li>
+          <li>Visit statistics on ohmail.app, only if you agree</li>
+          <li>What the website's visit statistics count</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.25.19" date="2026-10-09">
       <description>
         <ul>
@@ -138,19 +161,6 @@
           <li>The update menu can no longer freeze the desktop window</li>
           <li>An update whose installer does not start no longer closes the app</li>
           <li>The alert mail sends what matters, at most once per kind of problem every six hours</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.25.15" date="2026-10-05">
-      <description>
-        <ul>
-          <li>Fewer presses fail beside another change, and a rule keeps its place</li>
-          <li>Behind your own terminator, the proxy alone decides who a visitor is</li>
-          <li>A message waiting for a connection goes from one window</li>
-          <li>The phone and the desktop app say when a message could not be read</li>
-          <li>A wrong code is never retried as a session renewal</li>
-          <li>Held messages stay out of Ohbox conversations</li>
-          <li>The ⋯ button in a message's header is a plain icon again</li>
         </ul>
       </description>
     </release>

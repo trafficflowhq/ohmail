@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.25.20] — 2026-10-10
+
 ### The Linux app no longer crashes at launch without GPU rendering
 <!-- changes: fix-026-issue-9-webkit-crash.md -->
 
@@ -147,11 +154,6 @@ installs carry no analytics.
 If you accept the website's statistics, it counts the pages you open, which sections you see, the plan,
 download or way of running ohmail you choose, the questions you open, a first use of the live demo, a language
 switch and the steps of the website's sign-up form. Never what you type, never your mail and never in the apps.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.25.19] — 2026-10-09
 
@@ -11869,7 +11871,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.19...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.25.20...HEAD
+[0.25.20]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.20
 [0.25.19]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.19
 [0.25.18]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.18
 [0.25.17]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.25.17
