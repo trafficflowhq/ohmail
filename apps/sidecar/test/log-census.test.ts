@@ -619,6 +619,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // db.ts — the timed log flush (the walwriter PGlite lacks) failed one write; it is tried again
   // at the next deadline.
   local_db_flush_failed: "error",
+  // db.ts — the store's database ended under it (a failed fsync PANICs Postgres and PGlite's WASM
+  // aborts). Said once, `err` + `reason`: every later statement is refused, and the engine ends its
+  // process so the next start recovers from the log. `error` by the `_fatal` suffix.
+  local_db_fatal: "error",
   // db.ts — the close door. A call that reached the store after its close began is refused unrun,
   // said once with the `method` it used; and a close whose admitted calls outran the bound left the
   // store open for the next launch, `err` carrying how many and how long.

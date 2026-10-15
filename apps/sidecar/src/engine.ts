@@ -229,7 +229,11 @@ import { awaitFirstPage, firstPageDoorArmed } from "./first-page-gate.js";
  */
 export type OpenLocalDbFn = (
   dataDir: string,
-  opts: { log?: Diagnostic; onPhase?: (phase: LocalDbOpenPhase, progress?: MigrationProgress) => void },
+  opts: {
+    log?: Diagnostic;
+    onPhase?: (phase: LocalDbOpenPhase, progress?: MigrationProgress) => void;
+    onFatal?: (fatal: Error) => void;
+  },
 ) => Promise<OpenLocalDb>;
 import {
   endLegacyOrganizerPauses, ensureLocalWorld, loadLocalRoster, loadUnattachedLocalRoster,
@@ -507,6 +511,12 @@ export interface SidecarConfig {
    * watching it.
    */
   onPhase?: (phase: BootPhase, progress?: MigrationProgress) => void;
+  /**
+   * Told once, at the trap itself, when the local store's database ends under it (`db.ts`'s
+   * `onFatal`): `main.ts` ends the process right there, the shell starts the engine again, and the
+   * store recovers what was committed from its log.
+   */
+  onStoreFatal?: (fatal: Error) => void;
   /**
    * Host mode — this install serves its owner's other devices (Phase 3). Armed, three things
    * exist that otherwise do not: the stdio door gains the window-only pairing mint
@@ -2022,6 +2032,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const opened: OpenLocalDb = await (config.store ?? openLocalDb)(config.dataDir, {
     log,
     ...(config.onPhase ? { onPhase: config.onPhase } : {}),
+    ...(config.onStoreFatal ? { onFatal: config.onStoreFatal } : {}),
   });
   // Everything after the store: identity, the key ring, the AI assembly, the route table. Named
   // so the narration a window renders never just stops at the last database phase.

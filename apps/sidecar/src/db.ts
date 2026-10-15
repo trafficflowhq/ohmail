@@ -21,7 +21,8 @@ import {
   SCHEDULED_STORE_METHODS, STORE_FLUSH, createStoreScheduler, currentStoreLane, inStoreLane,
   outsideStoreLanes, scheduleStoreLanes, type StoreLaneCensus,
 } from "./store-lanes.js";
-import { LocalStoreFs } from "./pglite-transport.js";
+import { LocalStoreFs, StoreFsyncMissingError } from "./pglite-transport.js";
+import { writeAtomicFileSynced } from "./fs-atomic.js";
 import { afterFirstPage } from "./first-page-gate.js";
 import { makeStoreInMemory } from "./fresh-store.js";
 import { keepIngestPlans } from "./pglite-plans.js";
@@ -54,11 +55,11 @@ export const LOCAL_STORE_EXTENSIONS = { pg_trgm, btree_gin } as const;
  * THE INGEST'S OWN TRANSACTION DOES NOT WAIT FOR THE FLUSH — that transaction, and nothing else on
  * this database or any other (`local-store-durability.test.ts` says so, from both sides).
  *
- * It does NOT make the write asynchronous: the log is opened `O_DSYNC` ({@link WAL_SYNC_METHOD}),
- * so a kill takes what is in `wal_buffers`, not everything since the last checkpoint. It stops a
- * commit FORCING the partial page out, making the writes bigger and fewer, and an import is
- * bandwidth-limited by exactly that. The scope is the TRANSACTION: gone session-wide, a statement
- * dirtying hundreds of buffers pays the flush at every eviction instead, 2 474 ms against 77 ms.
+ * It does NOT make the write asynchronous: the log's pages reach the page cache as written, so a
+ * kill takes what is in `wal_buffers`, not everything since the last checkpoint. It stops a commit
+ * FORCING the partial page out and its sync ({@link WAL_SYNC_METHOD}); those forced writes are what
+ * bound an import. The scope is the TRANSACTION: gone session-wide, a statement dirtying hundreds
+ * of buffers pays the flush at every eviction instead, 2 474 ms against 77 ms.
  */
 const INGEST_SYNCHRONOUS_COMMIT = "off";
 
@@ -101,34 +102,74 @@ const flushTransaction = Object.assign(
 );
 
 /**
- * HOW THE LOG IS WRITTEN, AND THE ONE PROPERTY THIS STORE'S DURABILITY RESTS ON.
- *
- * PGlite's emulated filesystem implements NO flush — 500 inserts issue 509 writes and zero
- * fsync-class calls, and an explicit `CHECKPOINT` issues 42 and zero — so nothing here is durable
- * because somebody flushed it. It is durable because Postgres' Linux default opens the log
- * `O_DSYNC` and the write itself reaches the disk. Change it and a rule, a draft or a send-lock
- * claim stops surviving a power loss while every test still passes, because a process kill leaves
- * the page cache intact. So the value is asserted at every open rather than assumed.
+ * HOW THE LOG REACHES THE DISK: `fsync`. Postgres writes the log plainly and syncs it at each commit
+ * through `LocalStoreFs`'s fsync (`pglite-transport.ts`), the route every other durable write takes.
+ * `open_datasync` leaned on the descriptor instead, and PGlite maps that flag to Node's `O_SYNC`,
+ * which Node on Windows does not have: there the log stayed in the cache. On Linux a commit measured
+ * the same either way and a bulk transaction a fifth. `fdatasync` would sync nothing (PGlite's
+ * Emscripten answers it without a call). Set by {@link configureStoreLog}, read back at every open,
+ * and proved by one commit ({@link assertCommitSynced}): a process kill keeps the page cache, so
+ * no other test would see it go.
  */
-const WAL_SYNC_METHOD = "open_datasync";
+const WAL_SYNC_METHOD = "fsync";
 
 /** Thrown when the store would open with a log this build cannot vouch for. See {@link WAL_SYNC_METHOD}. */
 export class ForeignWalSyncMethodError extends Error {
   constructor(readonly found: string) {
     super(
-      `the local store would open with wal_sync_method = ${found}, not ${WAL_SYNC_METHOD}: this `
-      + "store has no fsync behind it, so that descriptor is the whole of its durability and a "
-      + "rule, a draft or a send-lock claim would stop surviving a power loss",
+      `the local store would open with wal_sync_method = ${found}, not ${WAL_SYNC_METHOD}: a `
+      + "commit's log record would not be synced to the disk, and a rule, a draft or a send-lock "
+      + "claim would stop surviving a power loss",
     );
     this.name = "ForeignWalSyncMethodError";
   }
 }
 
+/** What the server says the log's method is: the setting in force, never the file's. */
+async function walSyncMethodOf(client: PGlite): Promise<string> {
+  const rows = await client.query<Record<string, string>>("show wal_sync_method");
+  return String(Object.values(rows.rows[0] ?? {})[0]);
+}
+
 /** Read it back from the server and refuse anything else — never from a config file. */
 async function assertWalSyncMethod(client: PGlite): Promise<void> {
-  const rows = await client.query<Record<string, string>>("show wal_sync_method");
-  const found = String(Object.values(rows.rows[0] ?? {})[0]);
+  const found = await walSyncMethodOf(client);
   if (found !== WAL_SYNC_METHOD) throw new ForeignWalSyncMethodError(found);
+}
+
+/** The data directory's own settings file, which Postgres reads at a start and ALTER SYSTEM writes. */
+const STORE_AUTO_CONF = "postgresql.auto.conf";
+const AUTO_CONF_HEAD = ["# Do not edit this file manually!", "# It will be overwritten by the ALTER SYSTEM command."];
+
+/**
+ * Put {@link WAL_SYNC_METHOD} in the store's `postgresql.auto.conf` before Postgres reads it: the
+ * method is read at a start and cannot be SET in a session. Every other line is kept, the file is
+ * written only when it says something else, and it is synced and renamed into place, so a cut
+ * leaves the old file or the new one. `true` when it wrote.
+ */
+async function configureStoreLog(pgDataDir: string): Promise<boolean> {
+  const path = join(pgDataDir, STORE_AUTO_CONF);
+  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const kept = current.split("\n").filter((line) => line.trim() !== "" && !/^\s*wal_sync_method\s*=/.test(line));
+  const next = `${[...(kept.length > 0 ? kept : AUTO_CONF_HEAD), `wal_sync_method = '${WAL_SYNC_METHOD}'`].join("\n")}\n`;
+  if (next === current) return false;
+  await writeAtomicFileSynced(path, next, 0o600);
+  return true;
+}
+
+/**
+ * THE LOG'S ROUTE, PROVED AT THE OPEN: one commit, and its record must reach the disk through the
+ * store's fsync. The setting read back says what Postgres will do; this says it does, on this
+ * platform with this PGlite — a method that syncs nothing, or a route that bypasses the fsync,
+ * refuses here by name. The commit writes one transactional log message and touches no table; a
+ * commit that wrote no log record of its own (`txid_current()`) is flushed lazily and proves nothing.
+ */
+export async function assertCommitSynced(
+  client: Pick<PGlite, "query">, synced: { readonly files: number },
+): Promise<void> {
+  const before = synced.files;
+  await client.query("SELECT pg_logical_emit_message(true, 'ohmail', 'commit synced')");
+  if (synced.files <= before) throw new StoreFsyncMissingError("a commit's log record did not go through it");
 }
 
 /**
@@ -188,7 +229,8 @@ function createLogFlush(
     if (stopped) return;
     owed = false;
     void write().catch((err: unknown) => {
-      if (!stillOpen()) return;
+      // Not tried again on a database that ended: it was said once, and nothing more is written.
+      if (!stillOpen() || isStoreAbort(err)) return;
       owed = true;
       log?.("local_db_flush_failed", {
         err,
@@ -320,15 +362,104 @@ function installCloseDoor(client: PGlite, log: Diagnostic | undefined): CloseDoo
 /** A transaction handle's statement methods: the ingest write runs on these, not on `client`. */
 const MARKED_TX_STATEMENTS = new Set<PropertyKey>(["query", "exec", "sql"]);
 
+/** Every statement after the store's database ended. `first` is the throw that ended it. */
+export class StoreAbortedError extends Error {
+  constructor(readonly first: unknown) {
+    super("the local store stopped: its database ended after a failed write, so nothing more is "
+      + "read or written until the engine starts it again and recovers what was committed");
+    this.name = "StoreAbortedError";
+  }
+}
+
+/**
+ * Did this throw end the store's database? A WASM trap anywhere in its cause chain — Postgres
+ * PANICs on a failed fsync and PGlite's instance aborts — or the refusal that follows one.
+ */
+export function isStoreAbort(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur = err;
+  for (let depth = 0; depth < 6 && cur !== null && cur !== undefined && !seen.has(cur); depth++) {
+    seen.add(cur);
+    if (cur instanceof StoreAbortedError || cur instanceof WebAssembly.RuntimeError) return true;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** The store's one latch, read at both its doors: {@link marked}, and {@link guardStoreModule} beneath. */
+export interface StoreLatch {
+  refusal(): StoreAbortedError | null;
+  saw(err: unknown): void;
+}
+
+/** Shuts on the first {@link isStoreAbort} it sees, and tells `onAbort` once, synchronously, right there. */
+export function storeLatch(onAbort?: (fatal: StoreAbortedError) => void): StoreLatch {
+  let aborted: StoreAbortedError | null = null;
+  return {
+    refusal: () => aborted,
+    saw: (err) => {
+      if (aborted !== null || !isStoreAbort(err)) return;
+      aborted = new StoreAbortedError(err);
+      try { onAbort?.(aborted); } catch { /* a caller's handler never replaces the statement's error */ }
+    },
+  };
+}
+
+/** PGlite's entries into Postgres, which `execProtocolRaw` reads off its module at every statement. */
+const STORE_MODULE_ENTRIES = ["_interactive_write", "_interactive_one", "_interactive_read"] as const;
+
+/** Thrown at the open when a statement could reach Postgres without passing the store's latch. */
+export class StoreModuleUnguardedError extends Error {
+  constructor(readonly entry: string) {
+    super(`PGlite's module has no ${entry} to put behind the store's latch: a statement queued behind `
+      + "a failed write would run on a dead database, and could answer an empty success");
+    this.name = "StoreModuleUnguardedError";
+  }
+}
+
+/**
+ * THE INNERMOST DOOR, where every statement enters Postgres after PGlite's own queue. A failed sync
+ * PANICs Postgres and the WASM traps inside `_interactive_one`, synchronously: the latch shuts there,
+ * before a statement queued behind it can run (an engine that exits in `onAbort` leaves none to run),
+ * and every later entry is refused unrun. An accessor, not an assignment: Emscripten binds an export
+ * lazily by assigning over it, and what it assigns lands behind the guard instead of replacing it.
+ */
+export function guardStoreModule(pg: Pick<PGlite, "Module">, latch: StoreLatch): void {
+  const mod = pg.Module as unknown as Record<string, unknown>;
+  for (const name of STORE_MODULE_ENTRIES) {
+    let entry = mod[name];
+    if (typeof entry !== "function") throw new StoreModuleUnguardedError(name);
+    const guard = (...args: unknown[]): unknown => {
+      const refused = latch.refusal();
+      if (refused !== null) throw refused;
+      try {
+        return (entry as (...a: unknown[]) => unknown)(...args);
+      } catch (err) {
+        latch.saw(err);
+        throw err;
+      }
+    };
+    Object.defineProperty(mod, name, {
+      configurable: true,
+      enumerable: true,
+      get: () => guard,
+      set: (next: unknown) => { if (typeof next === "function") entry = next; },
+    });
+  }
+}
+
 /** Run one statement call, marking whatever it throws or rejects with as the store's. */
-function marked(op: string, call: () => unknown): Promise<unknown> {
+function marked(op: string, call: () => unknown, latch: StoreLatch): Promise<unknown> {
+  const refused = latch.refusal();
+  if (refused !== null) return Promise.reject(markStoreStatement(op, refused));
   let out: unknown;
   try {
     out = call();
   } catch (err) {
+    latch.saw(err);
     return Promise.reject(markStoreStatement(op, err));
   }
-  return Promise.resolve(out).catch((err: unknown) => { throw markStoreStatement(op, err); });
+  return Promise.resolve(out).catch((err: unknown) => { latch.saw(err); throw markStoreStatement(op, err); });
 }
 
 /**
@@ -336,9 +467,13 @@ function marked(op: string, call: () => unknown): Promise<unknown> {
  * transaction (no lane condition) the handle's `query`/`exec`/`sql` and the driver's own begin and
  * commit: a rejection out of `transaction` that the body did not throw is the driver's. What the BODY
  * throws passes through unmarked — the pipeline's own errors stay its own, read by a sentinel, not by
- * class. See `StoreStatementFaultError`.
+ * class. See `StoreStatementFaultError`. AND IT READS THE STORE'S LATCH ({@link storeLatch}): once shut
+ * (at the trap, by {@link guardStoreModule}) every statement is refused with {@link StoreAbortedError}
+ * before it is admitted, and a rejection carrying a trap shuts it too.
  */
-export function markStoreStatements(client: PGlite): { client: PGlite; storeWrites: () => number } {
+export function markStoreStatements(
+  client: PGlite, latch: StoreLatch = storeLatch(),
+): { client: PGlite; storeWrites: () => number } {
   const writes = storeWriteGauge();
   for (const name of SCHEDULED_STORE_METHODS) {
     const original = (client as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[name]!;
@@ -348,9 +483,11 @@ export function markStoreStatements(client: PGlite): { client: PGlite; storeWrit
       value: function markedCall(this: PGlite, ...args: unknown[]): Promise<unknown> {
         if (name !== "transaction" || typeof args[0] !== "function") {
           const text = typeof args[0] === "string" ? args[0] : "";
-          return marked(`store.${name}`, () => original.apply(this, args))
+          return marked(`store.${name}`, () => original.apply(this, args), latch)
             .then((v) => { if (name === "exec" ? anyWrite(text) : statementKind(text) === "write") writes.committed(true); return v; });
         }
+        const refused = latch.refusal();
+        if (refused !== null) return Promise.reject(markStoreStatement("store.transaction", refused));
         const body = args[0] as (tx: object) => Promise<unknown>;
         let wrote = false;
         let bodyThrew = false;
@@ -362,7 +499,7 @@ export function markStoreStatements(client: PGlite): { client: PGlite; storeWrit
                 const value = Reflect.get(target, prop, receiver) as unknown;
                 if (!MARKED_TX_STATEMENTS.has(prop) || typeof value !== "function") return value;
                 return (...a: unknown[]) => marked(`store.tx.${String(prop)}`,
-                  () => (value as (...b: unknown[]) => unknown).apply(target, a))
+                  () => (value as (...b: unknown[]) => unknown).apply(target, a), latch)
                   .then((v) => {
                     const text = typeof a[0] === "string" ? a[0] : "";
                     if (prop === "exec" ? anyWrite(text) : statementKind(text) === "write") wrote = true;
@@ -380,9 +517,11 @@ export function markStoreStatements(client: PGlite): { client: PGlite; storeWrit
         try {
           out = Promise.resolve(original.call(this, markedBody, ...args.slice(1)));
         } catch (err) {
+          latch.saw(err);
           return Promise.reject(markStoreStatement("store.transaction", err));
         }
         return out.then((v) => { writes.committed(wrote); return v; }, (err: unknown) => {
+          latch.saw(err);
           throw bodyThrew && err === bodyErr ? err : markStoreStatement("store.transaction", err);
         });
       },
@@ -654,6 +793,12 @@ export interface OpenLocalDbOptions {
    * through the ILIKE degrade. Only for a data directory that never had them.
    */
   withoutSearchExtensions?: true;
+  /**
+   * Told once when the store's database ends under it (a failed fsync PANICs Postgres), synchronously
+   * at the trap, before any statement queued behind the failing one runs. Every later statement is
+   * refused; the engine ends its process right there, and the next start recovers from the log.
+   */
+  onFatal?: (fatal: StoreAbortedError) => void;
 }
 
 /**
@@ -1292,6 +1437,8 @@ async function checkpointWal(
     // failure. `stillOpen` is read AFTER the await, which is the only moment that can tell the two
     // apart — checking before it would report the race as an error on every clean shutdown.
     if (!stillOpen()) return 0;
+    // A database that ended said so once (`local_db_fatal`): it is not open and serving.
+    if (isStoreAbort(err)) return 0;
     log?.("local_db_checkpoint_failed", {
       err,
       reason: "the write-ahead log could not be checkpointed; the database is open and serving, " +
@@ -1651,6 +1798,9 @@ function claimLockFile(path: string): void {
     try {
       // A TRAILING NEWLINE, as before: `cat`ing this file in a terminal is how somebody debugs it.
       writeSync(fd, `${JSON.stringify(selfLockRecord())}\n`);
+      /* ON THE DISK BEFORE THE NAME IS: unsynced, a power cut on ext4 kept the link and lost the
+         bytes, and the empty lock refused the next start for a minute. */
+      fsyncSync(fd);
     } finally {
       closeSync(fd);
     }
@@ -1746,6 +1896,16 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   const flushEvery = positiveInterval("logFlushIntervalMs", opts.logFlushIntervalMs, INGEST_LOG_FLUSH_MS);
   const slowCheckpointMs = opts.slowCheckpointFloorMs ?? CHECKPOINT_SLOW_MS;
   const closeWaitMs = positiveInterval("closeWaitMs", opts.closeWaitMs, STORE_CLOSE_WAIT_MS);
+  /* ONE LATCH FOR BOTH DOORS, made before the first start: the end is said once and told to
+     `onFatal` at the trap itself. See {@link guardStoreModule}. */
+  const latch = storeLatch((fatal) => {
+    log?.("local_db_fatal", {
+      err: fatal.first,
+      reason: "the store's database ended after a failed write: every later statement is refused, "
+        + "nothing more is written, and the next start recovers what was committed",
+    });
+    opts.onFatal?.(fatal);
+  });
   mkdirSync(dataDir, { recursive: true });
   const unlock = lockDataDir(dataDir, log);
   try {
@@ -1771,21 +1931,41 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // and read from the directory rather than from PGlite, which says nothing until it is done.
     opts.onPhase?.(openPhaseFor(dataDir));
     const tOpen = Date.now();
-    /* PGlite's NodeFS with the protocol transport kept in memory (`pglite-transport.ts`); the log,
-       the relations and the durability properties below are the disk exactly as before.
+    /* PGlite's NodeFS with the protocol transport kept in memory and an fsync of its own
+       (`pglite-transport.ts`); the log, the relations and the control file are the disk.
        AWAITED HERE ON PURPOSE: `new PGlite()` returns before the WASM, the mount and Postgres'
        startup are done, and without the wait all of it would be attributed to `adoptBaseline`. */
-    const startPglite = async (): Promise<PGlite> => {
+    const startPglite = async (): Promise<{ pg: PGlite; storeFs: LocalStoreFs }> => {
       if (fresh) await makeFreshStore(pgDataDir, log);
+      /* A cluster on the disk takes the log's method before Postgres reads its settings. */
+      if (existsSync(join(pgDataDir, "PG_VERSION"))) await configureStoreLog(pgDataDir);
+      const storeFs = new LocalStoreFs(pgDataDir);
       const pg = new PGlite({
         dataDir: pgDataDir,
-        fs: new LocalStoreFs(pgDataDir),
+        fs: storeFs,
         ...(opts.withoutSearchExtensions ? {} : { extensions: LOCAL_STORE_EXTENSIONS }),
       });
       await pg.waitReady;
-      return pg;
+      /* BEFORE ANY STATEMENT, like the log's method below: a PGlite upgrade that moved the hook
+         would otherwise take the store's fsync away, and only a power cut would show it; the latch
+         goes in front of Postgres here too. Closed first, so a refusal leaves no second instance on
+         the directory once the lock is gone. */
+      try {
+        storeFs.assertSynced();
+        guardStoreModule(pg, latch);
+      } catch (err) {
+        await pg.close().catch(() => undefined);
+        throw err;
+      }
+      /* A cluster `initdb` made on this very start read none of ours: set it, and start once more. */
+      if (await walSyncMethodOf(pg) !== WAL_SYNC_METHOD && await configureStoreLog(pgDataDir)) {
+        await pg.close();
+        return startPglite();
+      }
+      return { pg, storeFs };
     };
-    client = await startPglite();
+    let started = await startPglite();
+    client = started.pg;
     /* A STORE MADE BEFORE THE MARKER, which a kill inside `initdb` could leave half made with no
        marker to say so. One holding nothing is made again; one holding anything is left alone. */
     if (!fresh && await storeHoldsNothing(client)) {
@@ -1794,11 +1974,13 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       markStoreUnfinished(dataDir);
       fresh = true;
       opts.onPhase?.("creating_store");
-      client = await startPglite();
+      started = await startPglite();
+      client = started.pg;
     }
-    /* BEFORE ANY WRITE, because this is the property every other durability claim in this file
-       rests on and a wrong one is invisible to every test. See {@link WAL_SYNC_METHOD}. */
+    /* BEFORE ANY OTHER WRITE: what every durability claim in this file rests on, the method read
+       back and then one commit's record seen reaching the disk. See {@link WAL_SYNC_METHOD}. */
     await assertWalSyncMethod(client);
+    await assertCommitSynced(client, started.storeFs.synced);
     /**
      * THE FAIR SHARE, IN FRONT OF THE HANDLE AND BEFORE ANYTHING ELSE HOLDS IT.
      *
@@ -1848,7 +2030,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const migrateMs = Date.now() - tMigrate;
     /* THE STORE'S MARK, OUTERMOST — above the close door, so a call it refuses is the store's — and
        after the migrator, whose refusal names its own statement. See {@link markStoreStatements}. */
-    const statementMark = markStoreStatements(client);
+    const statementMark = markStoreStatements(client, latch);
     assertOneStoreClient(client, { "statement mark": statementMark.client });
     // AFTER the migrator (the table must exist on a first launch) and BEFORE serving: a rewrite
     // holds an exclusive lock, and the one place that lock collides with nothing is here, where
@@ -1938,6 +2120,9 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
 
     const terminate = async (): Promise<void> => {
       try {
+        /* A store whose database ended has nothing to shut down, and is never recorded as closed:
+           the next launch mints a new generation and replays the log. */
+        if (latch.refusal() !== null) return;
         // Postgres takes its own shutdown checkpoint here, which is why there is not one of ours.
         await client.close();
         /* AND ONLY THEN is the run recorded as closed — after the shutdown checkpoint, so the

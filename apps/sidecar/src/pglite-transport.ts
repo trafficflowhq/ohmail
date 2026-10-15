@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { NodeFS } from "@electric-sql/pglite/nodefs";
 import { PGDATA } from "@electric-sql/pglite/basefs";
 
@@ -43,7 +44,21 @@ interface EmFs {
   destroyNode(node: EmNode): void;
   isFile(mode: number): boolean;
   ErrnoError: new (errno: number) => Error;
-  filesystems: { MEMFS: { ops_table: { file: { node: EmNodeOps; stream: unknown } } | null } };
+  filesystems: {
+    MEMFS: { ops_table: { file: { node: EmNodeOps; stream: unknown } } | null };
+    NODEFS?: EmNodeFs;
+  };
+}
+/* An open file on the NODEFS mount: `nfd` is the host descriptor, absent for a directory. */
+interface EmStream {
+  nfd?: number;
+  node: EmNode;
+}
+export type StoreFsyncOp = (stream: EmStream) => number;
+interface EmNodeFs {
+  stream_ops: { fsync?: StoreFsyncOp };
+  realPath(node: EmNode): string;
+  tryFSOperation<T>(op: () => T): T;
 }
 
 const ENOENT = 44, EPERM = 63, EXDEV = 75;
@@ -92,15 +107,109 @@ function keepTransportInMemory(FS: EmFs, pgdata: string, names: ReadonlySet<stri
   };
 }
 
+/** The syncs the store's fsync has made since its filesystem was mounted. The open's guard reads it. */
+export interface StoreSyncCount {
+  files: number;
+  directories: number;
+}
+
+/* What a platform answers when it cannot sync a directory at all — Windows refuses one opened for
+   reading. Postgres skips these for a directory, and so does this; anything else is a failure. */
+const DIRECTORY_SYNC_REFUSED: ReadonlySet<string> = new Set(["EISDIR", "EACCES", "EPERM", "EBADF", "EINVAL", "ENOTSUP"]);
+
+function refusedForDirectory(err: unknown): boolean {
+  return DIRECTORY_SYNC_REFUSED.has(String((err as NodeJS.ErrnoException | null)?.code));
+}
+
+/** Sync a directory's entries; `false` where the platform cannot. */
+function syncDirectory(path: string): boolean {
+  let fd: number;
+  try {
+    fd = fs.openSync(path, "r");
+  } catch (err) {
+    if (refusedForDirectory(err)) return false;
+    throw err;
+  }
+  try {
+    fs.fsyncSync(fd);
+    return true;
+  } catch (err) {
+    if (refusedForDirectory(err)) return false;
+    throw err;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /**
- * PGlite's own NodeFS, with {@link keepTransportInMemory} applied in `initialSyncFs` — the one hook
- * that runs after the module has mounted the data directory and before Postgres starts. (A preRun
- * would depend on Emscripten running that array in reverse.)
+ * THE STORE'S FSYNC, WHICH PGLITE'S NODE FILESYSTEM DOES NOT HAVE. Emscripten's NODEFS defines
+ * none, so every `pg_fsync` answered 0 having synced nothing: the control file at each open and
+ * checkpoint, the relations a checkpoint wrote, the log's recycling renames. A power cut inside
+ * the writeback window then left a store that would not open, or one that opened without the rows
+ * committed since its open. With this, Postgres' own durability reaches the disk; a failed sync
+ * reaches Postgres as its errno. A directory's stream holds no descriptor, so it is opened here.
+ */
+function installStoreFsync(FS: EmFs, count: StoreSyncCount): StoreFsyncOp {
+  const nodefs = FS.filesystems.NODEFS;
+  if (!nodefs) throw new StoreFsyncMissingError("PGlite's node filesystem is not registered");
+  const fsync: StoreFsyncOp = (stream) => nodefs.tryFSOperation(() => {
+    if (typeof stream.nfd === "number") {
+      fs.fsyncSync(stream.nfd);
+      count.files += 1;
+    } else if (syncDirectory(nodefs.realPath(stream.node))) {
+      count.directories += 1;
+    }
+    return 0;
+  });
+  nodefs.stream_ops.fsync = fsync;
+  return fsync;
+}
+
+/** The open refuses a store whose start did not sync through {@link installStoreFsync}'s fsync. */
+export class StoreFsyncMissingError extends Error {
+  constructor(readonly reading: string) {
+    super(
+      `the local store's filesystem cannot vouch for its fsync: ${reading}. Without it the control `
+      + "file and the relations reach the disk only when the system gets round to it, so a power "
+      + "cut could lose a rule or a draft, or leave the store unopenable",
+    );
+    this.name = "StoreFsyncMissingError";
+  }
+}
+
+/**
+ * Why a started store's fsync cannot be vouched for, or `null`: it must be the one this filesystem
+ * installed, still in place, and the start's own control-file write must have gone through it —
+ * which a hook that moved past Postgres' start would not see, nor a store running with fsync off.
+ */
+export function storeFsyncFault(installed: unknown, current: unknown, files: number): string | null {
+  if (typeof installed !== "function") return "the start hook that installs it never ran";
+  if (current !== installed) return "another fsync replaced it after it was installed";
+  if (files < 1) return "the start synced nothing through it";
+  return null;
+}
+
+/**
+ * PGlite's own NodeFS, with {@link keepTransportInMemory} and {@link installStoreFsync} applied in
+ * `initialSyncFs` — the one hook that runs after the module has mounted the data directory and
+ * before Postgres starts. (A preRun would depend on Emscripten running that array in reverse.)
  */
 export class LocalStoreFs extends NodeFS {
+  readonly synced: StoreSyncCount = { files: 0, directories: 0 };
+  #fsync: StoreFsyncOp | undefined;
+
   override async initialSyncFs(): Promise<void> {
     await super.initialSyncFs();
     if (!this.pg) throw new Error("the store's filesystem was synced before PGlite handed it a module");
-    keepTransportInMemory(this.pg.Module.FS as unknown as EmFs, PGDATA);
+    const FS = this.pg.Module.FS as unknown as EmFs;
+    keepTransportInMemory(FS, PGDATA);
+    this.#fsync = installStoreFsync(FS, this.synced);
+  }
+
+  /** After `waitReady`: throw {@link StoreFsyncMissingError} unless the start synced through this fsync. */
+  assertSynced(): void {
+    const FS = this.pg?.Module?.FS as unknown as EmFs | undefined;
+    const fault = storeFsyncFault(this.#fsync, FS?.filesystems.NODEFS?.stream_ops.fsync, this.synced.files);
+    if (fault !== null) throw new StoreFsyncMissingError(fault);
   }
 }

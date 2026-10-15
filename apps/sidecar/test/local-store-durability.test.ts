@@ -26,15 +26,13 @@ import { freshDataDir } from "./_datadir.js";
  * a statement that dirties hundreds of buffers pays a flush at every eviction instead — 2 474 ms
  * against 77 ms for the same work, which is the store's own compaction and a mailbox erase; it has
  * to be OFF in every other database, since the Cloud's Postgres holds mail for people who are not
- * the one running this process; `fsync` has to stay on; and the LOG HAS TO BE OPENED `O_DSYNC`.
+ * the one running this process; `fsync` has to stay on; and the LOG HAS TO BE SYNCED BY `fsync`.
  *
- * THE LAST ONE IS THE LOAD-BEARING ONE AND IT WAS UNASSERTED. This store has no flush at all —
- * measured at the `node:fs` seam, 500 inserts issue 509 writes and zero fsync-class calls, and an
- * explicit `CHECKPOINT` issues 42 and zero — so `fsync = on` buys nothing by itself and every
- * durability property here comes from `wal_sync_method = open_datasync` making the WRITE reach
- * the disk. Which also narrows the claim above it: the relaxed commit does not make the write
- * asynchronous, it stops a commit forcing the partial page out, so what a kill costs is what is
- * still in `wal_buffers` and not everything since the last checkpoint.
+ * THE LAST ONE WAS UNASSERTED, and the log's commits rest on it: the store's `wal_sync_method` is
+ * `fsync`, through the fsync PGlite's filesystem used to answer having synced nothing
+ * (`local-store-fsync.test.ts` reads it). The relaxed commit does not make the write asynchronous:
+ * it stops a commit forcing the partial page out and its sync, so a kill costs what is still in
+ * `wal_buffers`, not everything since the last checkpoint.
  */
 
 const dirs: string[] = [];
@@ -70,23 +68,21 @@ async function gucIn(runner: { execute: (q: string) => Promise<unknown> }, name:
 
 describe("the local store's durability", () => {
   /**
-   * ── AND THE LOG IS OPENED SO THAT A WRITE REACHES THE DISK ──────────────────────────────────
+   * ── AND THE LOG IS SYNCED AT EACH COMMIT ────────────────────────────────────────────────────
    *
    * The one property the other four rest on, and the only one whose loss no other test could see:
    * a process kill leaves the page cache intact, so the kill guard in `slow/local-db.test.ts`
    * would stay green over a store that had quietly stopped surviving a power loss. Asserted from
    * the SERVER rather than from a config file, and the open itself refuses — `ForeignWalSyncMethodError`.
-   *
-   * WATCHED FAILING: change `WAL_SYNC_METHOD` to `fdatasync` and the open refuses by name, which
-   * is the mutation the performance work wanted to ship and this refuses.
+   * `fdatasync` would sync nothing here: PGlite's Emscripten answers it without a call.
    */
-  it("opens its log O_DSYNC, which is the whole of this store's durability", async () => {
+  it("syncs its log with fsync, the setting read back from the server", async () => {
     const dir = await freshDataDir("ohmail-walmethod-");
     dirs.push(dir);
     const h = await openLocalDb(dir);
     open.push(h);
-    expect(await guc(h, "wal_sync_method"), "the log is not opened so that a write reaches the "
-      + "disk, and this store has no flush behind it").toBe("open_datasync");
+    expect(await guc(h, "wal_sync_method"), "the log is not synced by the store's fsync, so a commit "
+      + "no longer waits for its record").toBe("fsync");
   });
 
   it("relaxes the flush inside the ingest's transaction and nowhere else, and still fsyncs", async () => {

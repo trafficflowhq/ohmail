@@ -7,12 +7,12 @@ import { PGLITE_TRANSPORT_NAMES } from "./pglite-transport.js";
 /**
  * A NEW STORE IS MADE IN MEMORY AND WRITTEN TO ITS DIRECTORY ONCE.
  *
- * `initdb` on the store's own disk writes its log a page at a time through the `O_DSYNC` descriptor
- * this store's durability rests on: about 3 400 synchronous writes, 5.4 s of a first start on a
- * Linux desktop, where the same `initdb` in memory takes 0.35 s. So a worker makes the cluster in
- * memory, shuts it down cleanly and writes its files out, `PG_VERSION` last: until that file exists
- * a kill leaves what `storeUnfinished` already sets aside. A worker rather than this thread, so the
- * second PGlite's memory leaves with it.
+ * `initdb` on the store's own disk writes its log a page at a time through an `O_DSYNC` descriptor
+ * (its default, before the store's settings exist): about 3 400 synchronous writes, 5.4 s of a
+ * first start on a Linux desktop, where the same `initdb` in memory takes 0.35 s. So a worker makes
+ * the cluster in memory, shuts it down cleanly and writes its files out, `PG_VERSION` last: until
+ * that file exists a kill leaves what `storeUnfinished` already sets aside. A worker rather than
+ * this thread, so the second PGlite's memory leaves with it.
  */
 const MAKER = `
 const { parentPort, workerData } = require("node:worker_threads");

@@ -13,6 +13,17 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Rules and drafts on the desktop survive a power cut
+<!-- changes: one-oh-local-store-fsync.md -->
+
+On the desktop, a power cut or a system crash shortly after ohmail opened, or shortly after its regular
+housekeeping, could lose the rules, drafts and other changes saved on the computer since, or leave the local copy
+unopenable until it was set aside and read again from the mail server, without what only the computer kept. On
+Windows the same could happen to anything saved in the seconds before a cut, at any time. ohmail now syncs its
+local database to the disk at every save, on Linux, macOS and Windows alike, so what you saved survives. If the
+disk refuses a write, ohmail stops its engine on the spot and starts it again, which recovers what was saved; a
+save caught in that moment is never reported as done.
+
 ### PDF previews work on a self-hosted install
 <!-- changes: split-s9p-product-inputs.md -->
 

@@ -383,6 +383,20 @@ function armShutdownDeadline(log: Diagnostic, reason: string, inFlight: () => nu
   }, SHUTDOWN_DEADLINE_MS);
 }
 
+/** The code a store whose database ended leaves with; the shell restarts an engine that exits with it. */
+const STORE_FATAL_EXIT = 1;
+
+/**
+ * A STORE WHOSE DATABASE ENDED ENDS THE ENGINE ON THE SPOT. Both doors' `onStoreFatal`: `db.ts`
+ * calls it at the trap itself, after its one `local_db_fatal` line. Nothing is awaited, because an
+ * awaited close lets a statement queued behind the failed one reach the dead database, where it
+ * spun at full CPU or answered an empty success. The shell restarts the engine and the open
+ * recovers what was committed from the log.
+ */
+function exitOnStoreFatal(): never {
+  process.exit(STORE_FATAL_EXIT);
+}
+
 /**
  * THE LOCAL ORGANIZER'S BRIDGE: requests to the engine, and the shell's `leaving` frame to its
  * latch, so a stop the shell marks as a restart keeps the organizer claim. Exported so the restart
@@ -466,6 +480,7 @@ export async function runSidecar(): Promise<void> {
     // The power reader is this entry's to supply: the engine is also the phone's, and must not import it.
     sidecar = await createSidecar({
       ...configFromEnv(), log, logger, hostPower: createHostPower(), onPhase: bootPhaseEmitter(stdout),
+      onStoreFatal: exitOnStoreFatal,
     });
   } catch (err) {
     log("start_failed", { err });
@@ -605,6 +620,7 @@ export async function runCloudSidecar(): Promise<void> {
     // Same single-voiced window as the local door's — see `bootPhaseEmitter`.
     cloud = await createCloudSidecar({
       ...cloudConfigFromEnv(), log, onPhase: bootPhaseEmitter(stdout),
+      onStoreFatal: exitOnStoreFatal,
       // The mirror starts after `ready`, so the host exists by the time a mailbox can be named.
       onServedMailbox: (mailboxId) => host?.mailbox(mailboxId) ?? Promise.resolve(),
     });

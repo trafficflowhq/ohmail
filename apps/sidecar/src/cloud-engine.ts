@@ -144,6 +144,8 @@ export interface CloudSidecarConfig {
    * (`main.ts` turning it into `phase` frames), as the local engine's. See `SidecarConfig.onPhase`.
    */
   onPhase?: (phase: CloudBootPhase, progress?: MigrationProgress) => void;
+  /** Told once when the mirror's store ends under it — the local engine's `SidecarConfig.onStoreFatal`. */
+  onStoreFatal?: (fatal: Error) => void;
   /**
    * Told the mailbox this launch serves when `ready` could not name one (a paired install, whose
    * world has no row until the first mailbox list lands) — `main.ts` writes it as a `mailbox`
@@ -673,6 +675,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
   const opened: OpenLocalDb = await openLocalDb(config.dataDir, {
     ...(log ? { log } : {}),
     ...(config.onPhase ? { onPhase: config.onPhase } : {}),
+    ...(config.onStoreFatal ? { onFatal: config.onStoreFatal } : {}),
     underLock: () => {
       enforceMirrorOwner(config.dataDir, config.address, cloudBase, log, {
         identityPending: config.identityPending !== undefined,
