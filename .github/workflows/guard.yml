@@ -13,6 +13,7 @@ name: guard
 # under review are fetched as objects and read with git, and nothing out of them runs. The title and
 # the description reach the checker as a JSON file, never through this file's own text or the
 # environment. In a merge group the pull request is read from the API by the number in the group's ref.
+# Proof of the maintainer branch rule; this pull request is closed without merging.
 
 on:
   pull_request_target:
