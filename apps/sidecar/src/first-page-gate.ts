@@ -92,6 +92,17 @@ export function firstPageDoorArmed(): boolean {
 }
 
 /**
+ * THE SCREENER'S READS WAIT FOR THE READER'S FIRST PAGE TOO. The window asks them at mount, beside
+ * the outbox read its first page waits on, and on the large rig mirror `GET /screener` and
+ * `GET /screener/unscreened` each hold the loop about 0.75 s: the first page was asked 2.2 s after
+ * `serving`. Reads only — a press is never held — and only where a door armed the gate.
+ */
+export function yieldsToFirstPage(method: string, pathname: string): boolean {
+  if (method.toUpperCase() !== "GET") return false;
+  return pathname === "/screener" || pathname.startsWith("/screener/");
+}
+
+/**
  * The bootstrap's first page has been answered. Idempotent and once per process: later pages, and
  * every later drain, are not what this gate is about.
  */

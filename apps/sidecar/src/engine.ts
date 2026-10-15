@@ -221,7 +221,7 @@ import {
   type OpenLocalDb,
 } from "./db.js";
 import { forPerson, inStoreLane, ingestIsRunning } from "./store-lanes.js";
-import { awaitFirstPage, firstPageDoorArmed } from "./first-page-gate.js";
+import { awaitFirstPage, firstPageDoorArmed, yieldsToFirstPage } from "./first-page-gate.js";
 
 /**
  * The shape {@link SidecarConfig.store} supplies — `openLocalDb`'s own signature, named so a
@@ -8697,6 +8697,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         } catch { /* the pipeline below meets the same fault inside its envelope */ }
         if (refused && !isEndedBearerExit(req.method, new URL(req.url).pathname)) {
           return launchSessionExpiredResponse();
+        }
+        /* THE LIST BEFORE THE SCREENER'S COUNTS: those reads hold the store for seconds on a large
+           mirror and the window asks them beside its first page (`yieldsToFirstPage`). Bounded by
+           the drain's grace; the window's door only, never a paired device's. */
+        if (firstPageDoorArmed() && yieldsToFirstPage(req.method, new URL(req.url).pathname)) {
+          await awaitFirstPage();
         }
         /* THE WINDOW'S OWN PULL FAILURE, into this log. Its own door, ahead of the local-action
            chain: it carries no mailbox, writes nothing, and is authorised by the same launch

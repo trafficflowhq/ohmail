@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The desktop app shows your mail sooner after it starts
+<!-- changes: one-oh-start-to-list-window-wait.md -->
+
+On a large mailbox the desktop app waited about two seconds after it started before it asked for the first
+page of your mail, while its engine answered the Screener's counts. The list now comes first and the counts
+follow it.
+
 ### Rules and drafts on the desktop survive a power cut
 <!-- changes: one-oh-local-store-fsync.md -->
 
