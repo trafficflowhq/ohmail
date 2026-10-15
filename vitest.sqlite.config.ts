@@ -174,6 +174,8 @@ export default defineConfig({
       /* The Screener queue's `total`: the standalone phone serves `GET /screener` from this store,
          so the count and the page walk it equals are measured here too. */
       "packages/services/test/screener-total-dialect.test.ts",
+      // The cheaper queue answers as the old one did, on the store the phone serves it from.
+      "packages/services/test/screener-reads-same-answer.test.ts",
       // A reading install lists the whole gate: the standalone phone reading a mailbox another device organizes.
       "packages/services/test/screener-reader-queue-is-the-gate.test.ts",
       // The Screener queue's sort key and cursor: the header else the arrival, read back through

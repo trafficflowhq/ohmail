@@ -320,11 +320,12 @@ describe.skipIf(!PG_UP)("the Screener pages exactly once, on real Postgres", () 
 
     // Every statement that reads held mail is bounded. `from_address` identifies the queue read
     // and excludes the `routing_decisions` lookup for stored suggestions, which is bounded by
-    // the page's own id list. The first page's `total` is the one aggregate over the same
-    // subquery: it returns ONE row whatever the held set, so it is named and counted apart.
+    // the page's own id list. The first page's `total` rides the page itself, a window over the
+    // filtered queue computed before the LIMIT: no second statement re-reads the held set.
     const isCount = (q: string) => /^select count\(\*\) from \(/i.test(q.trim());
     const held = statements.filter((q) => /from_address/i.test(q) && /desired_folder/i.test(q));
-    expect(held.filter(isCount), "the first page states its total with one count").toHaveLength(1);
+    expect(held.filter(isCount), "the first page states its total without a second read").toHaveLength(0);
+    expect(held.filter((q) => /\bover \(\)/i.test(q)), "the total is the page's own window").toHaveLength(1);
     const heldReads = held.filter((q) => !isCount(q));
     expect(heldReads.length).toBeGreaterThan(0);
     for (const q of heldReads) expect(q.toLowerCase()).toMatch(/\blimit\b/);

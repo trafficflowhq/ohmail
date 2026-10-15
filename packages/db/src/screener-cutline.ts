@@ -141,7 +141,8 @@ export function resolveCutline(f: CutlineFacts): ResolvedCutline {
 }
 
 /**
- * The ACTIVE test over a sender's three aggregates, which is the whole rule.
+ * The ACTIVE test over a sender's three aggregates, which is the whole rule — or over one
+ * message's own three values, where a reader asks whether ANY message satisfies it.
  *
  * `newest` is the newest {@link cutlineInstant} in the group, so an undated message is weighed by
  * its arrival rather than read as "not recent". The null test stays because this builder does not
@@ -162,10 +163,12 @@ export function activeSenderExpr(
 /**
  * IS THIS ROW'S SENDER STILL WORTH A DECISION — the correlated form a row-level reader needs.
  *
- * `senderExpr` is the outer query's already-lowercased address. The aggregates are recomputed per
- * sender inside the subquery rather than joined, so a caller adds one predicate and changes
- * nothing else about its query; `having` carries {@link activeSenderExpr} unchanged, which is what
- * makes this and the counts one rule rather than two that agree today.
+ * `senderExpr` is the outer query's already-lowercased address. {@link activeSenderExpr} is asked
+ * of each MESSAGE, its operands the row's own: an `or` of "any row" terms is "any row of the or",
+ * so one message that satisfies it is the group's answer, and a mailbox's window applies to the rows
+ * of that mailbox exactly as it did to its group. Asked per row, the probe stops at the first such
+ * message and dates a row before it reads its folder; the grouped form read every message of the
+ * sender and its folder (74k: 3.5k senders, about 55 ms per read). Same builder, same answer.
  */
 export function senderIsActiveSql(
   d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet,
@@ -173,22 +176,19 @@ export function senderIsActiveSql(
   const folders = sql`(${sql.join(CUTLINE_PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
   const at = cutlineInstant({ date: sql`mc.date`, arrivedAt: sql`mc.created_at` });
   const activeAt = (c: ResolvedCutline): SQL => activeSenderExpr(d, c, {
-    anyUnread: anyOf(sql`mc.unread`),
-    anyUnreadInWindow: anyOf(sql`mc.unread and ${at} is not null and ${at} >= ${d.ts(c.cutoff)}`),
-    newest: sql`max(${at})`,
+    anyUnread: sql`mc.unread`,
+    anyUnreadInWindow: sql`(mc.unread and ${at} is not null and ${at} >= ${d.ts(c.cutoff)})`,
+    newest: at,
   });
   const split = cutlineArms(set);
-  // Several windows: one group per (sender, mailbox), and the sender is active in ANY of them.
-  const groupBy = "one" in split ? sql`lower(mc.from_address)` : sql`lower(mc.from_address), mc.mailbox_id`;
   const active = "one" in split ? activeAt(split.one) : perMailboxSql(d, split.arms, sql`mc.mailbox_id`, activeAt);
   return sql`exists (
     select 1 from messages mc
       join folder_state fsc on fsc.message_id = mc.id
      where mc.account_id = ${d.castUuid(accountId)}
-       and fsc.desired_folder in ${folders}
        and lower(mc.from_address) = ${senderExpr}
-     group by ${groupBy}
-    having ${active}
+       and ${active}
+       and fsc.desired_folder in ${folders}
   )`;
 }
 

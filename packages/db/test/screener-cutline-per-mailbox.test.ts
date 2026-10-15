@@ -10,8 +10,9 @@ import {
 /**
  * ONE CUTLINE PER MAILBOX, AND ONE CUTLINE IS TODAY'S STATEMENT (RULING-026). A map whose values
  * are all one cutline renders the single form byte for byte, on both stores; two distinct cutlines
- * render one group per (sender, mailbox) and a per-mailbox CASE whose `else` admits. The rows are
- * driven on both stores by `packages/services/test/screener-reader-queue-is-the-gate.test.ts`.
+ * weigh each message by its own mailbox's window, a per-mailbox CASE whose `else` admits, asked per
+ * message rather than per group (`screener-reads-same-answer.test.ts` holds the two forms equal).
+ * The rows are driven on both stores by `packages/services/test/screener-reader-queue-is-the-gate.test.ts`.
  */
 
 const NOW = new Date("2026-10-12T00:00:00Z");
@@ -42,10 +43,10 @@ describe.each(STORES)("the cutline set on %s", (_name, d, render) => {
       .toEqual(render(senderHasHeldClaimSql(d, ACCOUNT, sender, THIRTY.cutoff, [])));
   });
 
-  it("two cutlines group by (sender, mailbox) and weigh each mailbox by its own", () => {
+  it("two cutlines weigh each message by its own mailbox's window", () => {
     const q = render(senderIsActiveSql(d, ACCOUNT, sender, new Map([[A, THIRTY], [B, WHOLE]])));
-    expect(q.sql).toContain("group by lower(mc.from_address), mc.mailbox_id");
-    expect(q.sql).toMatch(/having \(case mc\.mailbox_id when .+ else \(true\) end\)/s);
+    expect(q.sql).not.toContain("group by");
+    expect(q.sql).toMatch(/and \(case mc\.mailbox_id when .+ else \(true\) end\)/s);
     expect(q.params).toContain(A);
     expect(q.params).toContain(B);
   });

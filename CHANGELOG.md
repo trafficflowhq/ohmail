@@ -13,6 +13,12 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The Screener answers in a fraction of the time on a large mailbox
+<!-- changes: one-oh-screener-reads-fast.md -->
+
+On a large mailbox the Screener's count and its offer to screen the Ohbox each took most of a second to
+read, and the desktop app answered nothing else meanwhile. They now take a fraction of that.
+
 ### The desktop app shows your mail sooner after it starts
 <!-- changes: one-oh-start-to-list-window-wait.md -->
 

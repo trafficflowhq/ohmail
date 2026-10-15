@@ -946,7 +946,8 @@ export class ScreenerReadService {
     const preference = await getScreeningPreference(ctx);
     // EACH MAILBOX BY ITS ORGANIZER'S WINDOW (RULING-026): the one resolver `GET /consent` reads too.
     const cutline = cutlinesOf(await effectiveScreeningWindows(ctx), ctx.now());
-    const windowed = await this.heldSenderPage(ctx, { after, limit: limit + 1, cutline });
+    // The whole queue's size, stated where the keyset starts, from the same statement; an onward page states none.
+    const { rows: windowed, total } = await this.heldSenderPage(ctx, { after, limit: limit + 1, cutline, withTotal: after === null });
     const unfiltered = windowed.slice(0, limit);
 
     // ── A SENDER THIS INSTALL HAS ALREADY DECIDED ON LEAVES THE QUEUE (0.14.1) ────
@@ -972,8 +973,6 @@ export class ScreenerReadService {
       return outstandingSenders.has(lower) || outstandingDomains.has(domainOf(lower));
     };
     const pageRows = unfiltered.filter((r) => !isDecided(r.fromAddress));
-    // The whole queue's size, stated where the keyset starts; an onward page states none.
-    const total = after === null ? await this.heldSenderTotal(ctx, { cutline }) : undefined;
     /**
      * ONE ENTRY PER SUBJECT (0.20): an account-wide decision queues one request PER MAILBOX, and
      * mapping rows 1:1 rendered the same sender N times — the exact double this field's contract
@@ -1587,8 +1586,8 @@ export class ScreenerReadService {
   }
 
   /**
-   * ONE HELD MESSAGE PER SENDER, AS A WINDOW — the subquery both the page and the purchase read,
-   * which is what makes them name the same message rather than merely agree about it.
+   * ONE HELD MESSAGE PER SENDER, AS A WINDOW ({@link heldWindow}) — what both the page and the
+   * purchase read, which is what makes them name the same message rather than merely agree about it.
    *
    * `row_number() over (partition by k order by o) = 1` rather than `distinct on`: the second
    * exists only on the server, and the representative must be chosen the same way on both stores.
@@ -1601,6 +1600,32 @@ export class ScreenerReadService {
   // `reps.rank` typed at the two call sites, and any annotation wide enough to write by hand
   // erases it to `{ [x: string]: any }`.
   protected heldSenderReps(ctx: ServiceContext, extra?: SQL) {
+    const { d, sortKey, filters, window } = this.heldWindow(ctx, extra);
+    // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
+    const reps = ctx.db.select({ ...HELD_COLUMNS, ...window }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(...filters))
+      .as("reps");
+    return { reps, sortKey, d };
+  }
+
+  /**
+   * THE SAME WINDOW, CARRYING ONLY WHAT THE QUEUE'S FILTERS AND ORDER READ — the page joins its own
+   * rows back by id. The window sorts every held message of the account; carried whole (subject,
+   * snippet, locator) that sort left memory for disk on a large mailbox (74k: 12k held rows, 6 MB).
+   */
+  private heldSenderKeys(ctx: ServiceContext) {
+    const { d, filters, window } = this.heldWindow(ctx);
+    // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
+    const reps = ctx.db.select({ messageId: messages.id, fromAddress: messages.fromAddress, ...window }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(...filters))
+      .as("reps");
+    return { reps, d };
+  }
+
+  /** The window's predicate and its four columns, ONE definition for both projections above. */
+  private heldWindow(ctx: ServiceContext, extra?: SQL) {
     const d = dialect(ctx.db);
     // The one sort key (`@trafficflow/db#heldSortKey`): the header, else the mailbox's arrival —
     // the two worker passes choose the same representative by it.
@@ -1615,9 +1640,7 @@ export class ScreenerReadService {
       isNull(messages.deletedAt),
     ];
     if (extra) filters.push(extra);
-    // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
-    const reps = ctx.db.select({
-      ...HELD_COLUMNS,
+    const window = {
       // Decoded by the column's own reader, so the cursor carries the key the page sorted by.
       sortKey: sortKey.mapWith(messages.date).as("sort_key"),
       rank: sql<number>`row_number() over (
@@ -1633,11 +1656,8 @@ export class ScreenerReadService {
         partition by ${sender}
         order by case when ${messages.senderCheck} = 'impersonation' then 1 else 0 end desc, ${sortKey} desc, ${messages.id} desc
       )`.as("sender_marked_brand"),
-    }).from(messages)
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .where(and(...filters))
-      .as("reps");
-    return { reps, sortKey, d };
+    };
+    return { d, sortKey, filters, window };
   }
 
   /**
@@ -1661,9 +1681,11 @@ export class ScreenerReadService {
        * gets. See below for why it sits in the OUTER query.
        */
       cutline?: CutlineSet;
+      /** Count the whole queue in the same statement — the first page's `total`. */
+      withTotal?: boolean;
     },
-  ): Promise<ScreenerRow[]> {
-    const held = this.heldSenderReps(ctx);
+  ): Promise<{ rows: ScreenerRow[]; total: number | undefined }> {
+    const held = this.heldSenderKeys(ctx);
     const { reps, d } = held;
 
     /* ── THE CUTLINE, WITH THE RANK AND BEFORE THE LIMIT ────────────────────────────────────
@@ -1681,8 +1703,18 @@ export class ScreenerReadService {
        they were already ANSWERED. UNCONDITIONAL, unlike `active` — the cutline is a SETTING a
        caller may not have read, and this is not. Their held mail is not hidden by it: the
        held-releases surface and the gate-release pass both reach the rows this excludes. */
-    // scoped-by: `reps` is the account-scoped messages subquery defined above (eq messages.accountId, ctx.accountId)
-    const rows = await ctx.db.select().from(reps)
+    /* THE TOTAL RIDES THE PAGE: a window over the filtered queue is computed before the ORDER BY
+       and the LIMIT, so it counts every waiting sender the page's own predicate admits, less the
+       in-flight ones. A second statement re-ran the whole window and its filters (74k: ~250 ms). */
+    const waitingTotal = opts.withTotal
+      ? sql<number | string>`sum(case when ${this.decisionInFlightSql(ctx, d, sql`lower(${reps.fromAddress})`)} then 0 else 1 end) over ()`
+        .as("waiting_total")
+      : sql<null>`null`.as("waiting_total");
+    // scoped-by: `reps` is the account-scoped messages subquery (eq messages.accountId, ctx.accountId)
+    const page = ctx.db.select({
+      messageId: reps.messageId, sortKey: reps.sortKey, senderMarked: reps.senderMarked,
+      senderMarkedBrand: reps.senderMarkedBrand, waitingTotal,
+    }).from(reps)
       .where(and(
         ...this.waitingFilters(ctx, held, opts.cutline),
         opts.after
@@ -1694,23 +1726,38 @@ export class ScreenerReadService {
           : undefined,
       ))
       .orderBy(desc(reps.sortKey), desc(reps.messageId))
-      .limit(opts.limit);
+      .limit(opts.limit)
+      .as("page");
+    // scoped-by: `page` holds only ids of the account-scoped `reps` subquery above
+    const rows = await ctx.db.select({
+      ...HELD_COLUMNS, sortKey: page.sortKey, senderMarked: page.senderMarked,
+      senderMarkedBrand: page.senderMarkedBrand, waitingTotal: page.waitingTotal,
+    }).from(page)
+      .innerJoin(messages, eq(messages.id, page.messageId))
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .orderBy(desc(page.sortKey), desc(page.messageId));
 
-    return rows.map(toScreenerRow);
+    // `sum` is a bigint on the server and arrives as a string there; no row is an empty queue.
+    const total = opts.withTotal ? Number(rows[0]?.waitingTotal ?? 0) : undefined;
+    return { rows: rows.map(toScreenerRow), total };
   }
 
   /**
-   * THE PAGE'S OWN FILTERS — representative, cutline, decided, own — shared with the count below,
-   * so `total` and a walk of every page are one predicate and cannot drift apart.
+   * THE PAGE'S OWN FILTERS — representative, cutline, decided, own — which the page's `total`
+   * counts through as well, so `total` and a walk of every page are one predicate.
    */
   private waitingFilters(
-    ctx: ServiceContext, held: ReturnType<ScreenerReadService["heldSenderReps"]>, cutline?: CutlineSet,
+    ctx: ServiceContext, held: ReturnType<ScreenerReadService["heldSenderKeys"]>, cutline?: CutlineSet,
   ): Array<SQL | undefined> {
     const { reps, d } = held;
     const sender = sql`lower(${reps.fromAddress})`;
     // A held claim that keeps its sender waiting (`heldClaimWaitsSql`): dated by who wrote the fact,
     // never by its Date, and skipped for a person's consent only where the gate would not hold it now.
-    const claim = cutline ? senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS) : undefined;
+    // Such a claim is a live held message marked 'impersonation', a row of the window's partition,
+    // so `sender_marked` is 1 wherever one can exist: asked first, the probe skips every other sender.
+    const claim = cutline
+      ? sql`(${reps.senderMarked} = 1 and ${senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS)})`
+      : undefined;
     return [
       eq(reps.rank, 1),
       cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline)} or ${claim})` : undefined,
@@ -1724,28 +1771,19 @@ export class ScreenerReadService {
   }
 
   /**
-   * HOW MANY SENDERS THE WHOLE QUEUE HOLDS — the page's predicate with no keyset and no limit,
-   * minus the senders an in-flight decision (`pending`/`sent`, the ones `list` leaves off its
-   * pages) already took. Counted inside the same account-scoped `reps` subquery, and the in-flight
-   * test is a subquery too, so no id list leaves the store however many decisions are queued.
+   * A DECISION ABOUT THIS SENDER IS IN FLIGHT — `pending`/`sent`, the ones `list` leaves off its
+   * pages and names in `pendingDecisions`. A subquery, so no id list leaves the store however many
+   * decisions are queued.
    */
-  protected async heldSenderTotal(ctx: ServiceContext, opts: { cutline?: CutlineSet }): Promise<number> {
-    const held = this.heldSenderReps(ctx);
-    const { reps, d } = held;
-    const sender = sql`lower(${reps.fromAddress})`;
+  private decisionInFlightSql(ctx: ServiceContext, d: ReturnType<typeof dialect>, sender: SQL): SQL {
     const field = (key: string) => d.jsonText(sql`o.payload`, key);
     // scoped-by: `o.account_id` leads the in-flight read (organizer_requests is per account)
-    const inFlight = sql`exists (
+    return sql`exists (
       select 1 from organizer_requests o
        where o.account_id = ${d.castUuid(ctx.accountId)}
          and o.state in ('pending', 'sent')
          and ${ruleNamesSenderSql(d, { kind: field("scope"), match: field("match"), destination: field("appliedFolder") }, sender)}
     )`;
-    // scoped-by: `reps` is the account-scoped messages subquery (eq messages.accountId, ctx.accountId)
-    const [row] = await ctx.db.select({ n: sql<number | string>`count(*)` }).from(reps)
-      .where(and(...this.waitingFilters(ctx, held, opts.cutline), sql`not ${inFlight}`));
-    // `count(*)` is a bigint on the server and arrives as a string there.
-    return Number(row?.n ?? 0);
   }
 
   /**

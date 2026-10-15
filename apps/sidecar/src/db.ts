@@ -980,6 +980,40 @@ export async function analyzeSearchIfStale(client: PGlite): Promise<boolean> {
   }
 }
 
+/** The small tables the Screener's reads plan around, analyzed once when they never were. */
+export const PLANNER_STATISTICS_TABLES = ["mailboxes"] as const;
+
+/**
+ * THE MAILBOX TABLE'S PLANNER STATISTICS, which no store ever had: PGlite has no autovacuum and the
+ * search look above names four other tables. Unanalyzed, the Ohbox offer's `organizer` mailbox test
+ * read at its default selectivity, so the planner took a whole 74k mailbox for a thousand rows and
+ * sorted all of it for every page of the walk (about 130 ms a page; 8 ms analyzed). A table holding
+ * rows and never analyzed (`reltuples` -1) is analyzed; one already analyzed costs a catalog read.
+ * Returns the tables analyzed; a refusal leaves the planner's defaults and answers nothing.
+ */
+export async function analyzeNeverAnalyzed(
+  client: PGlite, tables: readonly string[] = PLANNER_STATISTICS_TABLES,
+): Promise<string[]> {
+  const done: string[] = [];
+  try {
+    for (const t of tables) {
+      const r = await client.query<{ rt: number; held: boolean }>(
+        `SELECT COALESCE((SELECT c.reltuples FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+                  WHERE ns.nspname = 'public' AND c.relname = '${t}'), 0)::float8 AS rt,
+         EXISTS (SELECT 1 FROM public.${t}) AS held`,
+      );
+      const row = r.rows[0];
+      if (row !== undefined && row.rt < 0 && row.held) {
+        await client.exec(`ANALYZE public.${t}`);
+        done.push(t);
+      }
+    }
+  } catch {
+    // Maintenance: the reads still answer, on the planner's defaults.
+  }
+  return done;
+}
+
 /**
  * Reclaim the body table's dead space, when — and only when — it dominates the table. On a real
  * install (2026-08-21) `message_bodies` held ~1.6 GB of content in 21 GB on disk: dead tuples from a
@@ -2115,7 +2149,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     /* THE STATISTICS LOOK IS MAINTENANCE, so it waits for the reader's first page: it counts every
        row of four tables (17.5 s on one measured launch) and nothing before that page needs it. */
     const cancelStatistics = afterFirstPage(() => {
-      if (!closed) void analyzeSearchIfStale(client);
+      if (!closed) void analyzeNeverAnalyzed(client).then(() => (closed ? false : analyzeSearchIfStale(client)));
     });
 
     const terminate = async (): Promise<void> => {
