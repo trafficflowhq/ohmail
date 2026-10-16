@@ -6,7 +6,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runMigrations } from "@trafficflow/db/admin";
 import { MAIL_JOURNAL } from "@trafficflow/db/journal";
-import { journalDrift, realPgAvailable } from "@trafficflow/db/testing";
+import { REQUIRE_PG_ENV, journalDrift, realPgAvailable } from "@trafficflow/db/testing";
 import { DB_URL, refuseDriftedSharedDb } from "./_workerdb.js";
 
 /**
@@ -153,6 +153,36 @@ describe.skipIf(!UP)("a database whose migration journal is not this tree's", ()
     }
   }
 
+  /**
+   * `realPgAvailable` UNDER ONE POLICY, pinned for the call and put back. A refused database is a
+   * skip (false, and the sentence on stderr) when `TF_REQUIRE_PG` is unset, and a throw carrying the
+   * same sentence when it is "1" — which every CI job sets. Read under whatever the run happened to
+   * set, the false-answer arms were red in CI three times out of three and green on a laptop, and the
+   * throwing half was never asked at all. Each refusal arm now asks both.
+   */
+  async function realPgUnder(
+    requirePg: "1" | undefined,
+  ): Promise<{ answer: boolean | "threw"; thrown: string; written: string }> {
+    const saved = process.env[REQUIRE_PG_ENV];
+    if (requirePg === undefined) delete process.env[REQUIRE_PG_ENV];
+    else process.env[REQUIRE_PG_ENV] = requirePg;
+    const written: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      const answer = await realPgAvailable(PRIVATE_URL);
+      return { answer, thrown: "", written: written.join("") };
+    } catch (e) {
+      return { answer: "threw", thrown: e instanceof Error ? e.message : String(e), written: written.join("") };
+    } finally {
+      spy.mockRestore();
+      if (saved === undefined) delete process.env[REQUIRE_PG_ENV];
+      else process.env[REQUIRE_PG_ENV] = saved;
+    }
+  }
+
   // ── the admitting half, first: a refusal whose positive control is missing proves nothing ──
 
   it("admits a freshly migrated database — all three doors", async () => {
@@ -184,25 +214,29 @@ describe.skipIf(!UP)("a database whose migration journal is not this tree's", ()
 
   it("realPgAvailable answers false and writes the sentence to stderr", async () => {
     await withForeignRow(async () => {
-      const written: string[] = [];
-      const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
-        written.push(String(chunk));
-        return true;
-      });
-      let answer: boolean;
-      try {
-        answer = await realPgAvailable(PRIVATE_URL);
-      } finally {
-        spy.mockRestore();
-      }
+      const { answer, written: line } = await realPgUnder(undefined);
       expect(answer).toBe(false);
-      const line = written.join("");
       expect(line).toContain("refusing this database");
       expect(line).toContain(PRIVATE_DB);
       expect(line).toContain(String(FOREIGN_WHEN));
       expect(line).toContain(String(TREE_MAX));
       expect(line).toContain("does not declare");
       expect(line).not.toContain("edited since");
+    });
+  });
+
+  it("with TF_REQUIRE_PG=1, realPgAvailable throws that sentence instead of answering", async () => {
+    await withForeignRow(async () => {
+      const { answer, thrown, written } = await realPgUnder("1");
+      expect(answer).toBe("threw");
+      expect(thrown).toContain(`${REQUIRE_PG_ENV}=1 and the database at`);
+      expect(thrown).toContain(PRIVATE_DB);
+      expect(thrown).toContain(String(FOREIGN_WHEN));
+      expect(thrown).toContain(String(TREE_MAX));
+      expect(thrown).toContain("does not declare");
+      expect(thrown).toContain("nothing was measured");
+      // and the stderr line is written before the throw, so a run that catches it still says why
+      expect(written).toContain("refusing this database");
     });
   });
 
@@ -280,20 +314,14 @@ describe.skipIf(!UP)("a database whose migration journal is not this tree's", ()
       expect(answered).toBe("rejected");
 
       // Both policies refuse, and say which of the two states this is.
-      const written: string[] = [];
-      const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
-        written.push(String(chunk));
-        return true;
-      });
-      let answer: boolean;
-      try {
-        answer = await realPgAvailable(PRIVATE_URL);
-      } finally {
-        spy.mockRestore();
-      }
-      expect(answer).toBe(false);
-      expect(written.join("")).toContain("could not be read at all");
-      expect(written.join("")).toContain("neither drift nor its absence");
+      const skipped = await realPgUnder(undefined);
+      expect(skipped.answer).toBe(false);
+      expect(skipped.written).toContain("could not be read at all");
+      expect(skipped.written).toContain("neither drift nor its absence");
+      const required = await realPgUnder("1");
+      expect(required.answer).toBe("threw");
+      expect(required.thrown).toContain("could not be read at all");
+      expect(required.thrown).toContain("neither drift nor its absence");
 
       const verdict = await refuseDriftedSharedDb(PRIVATE_URL).then(
         () => "admitted",
