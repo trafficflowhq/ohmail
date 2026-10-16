@@ -1063,6 +1063,8 @@ const TABLE = {
         return "this phone could not delete the mail and the stored password of the mailbox on it";
       case "engine_key_not_removed":
         return "the keystore would not remove the key that opens this mailbox's stored password";
+      case "engine_store_not_durable":
+        return "this phone's database would not promise to keep a saved change through a power cut, so the mailbox on it was not opened";
       /* A code this build does not know is a newer store talking to an older deck. Saying the code
          is better than saying nothing, and it is the one arm that can reach a screen unworded. */
       default: return code;

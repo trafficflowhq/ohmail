@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The phone keeps a saved change through a power cut
+<!-- changes: one-oh-phone-engine-store-durable.md -->
+
+On a phone that organizes its mailbox itself, a power cut or a system crash just after ohmail saved a change could
+undo that change when the app next opened: a filed or deleted message, a decision, a sent message's record. The
+phone's mailbox database now syncs to the disk at every save, as its copy of the mail list already did, and if the
+phone's database will not do that, ohmail says so and does not open the mailbox.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

@@ -322,6 +322,8 @@ export default defineConfig({
       // gen_random_uuid`, the server twin's id default. The file carries a premise case for the
       // other project rather than skipping there silently.
       "apps/sidecar/test/phone-engine-boot.test.ts",
+      // The phone engine store's open path sets and reads back synchronous = EXTRA, on a real file.
+      "apps/mobile/test/engine-store-durable-commits.test.ts",
       "apps/sidecar/test/phone-local-retention.test.ts",
       // THE CLAIM THAT COMPOSITION WRITES, against a real mail server — same reason as the line
       // above, plus a private IMAP server it names its own variables for. It carries a premise

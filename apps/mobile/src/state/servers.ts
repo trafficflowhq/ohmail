@@ -31,7 +31,9 @@ export type StoreFaultCode =
   /* The removal of the mailbox on this phone — its store, its key, and the durable record that
      says the removal started. See {@link ServerProfileStore.markEngineRemoval}. */
   | "engine_removal_not_recorded" | "engine_removal_still_recorded"
-  | "engine_store_not_deleted" | "engine_key_not_removed";
+  | "engine_store_not_deleted" | "engine_key_not_removed"
+  /* The engine's store opened without durable commits — see `holdDurableCommits`. */
+  | "engine_store_not_durable";
 
 export class StoreFault extends Error {
   constructor(readonly code: StoreFaultCode, message: string) {

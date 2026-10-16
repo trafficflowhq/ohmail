@@ -30,6 +30,33 @@ export const ENGINE_DB_FILE = "ohmail-engine.db";
 export const ENGINE_DB_OPEN_OPTIONS = { finalizeUnusedStatementsBeforeClosing: false } as const;
 export type EngineDbOpenOptions = typeof ENGINE_DB_OPEN_OPTIONS;
 
+/**
+ * Every commit on the disk when it is acknowledged — the mirror store's rule (`sql-store.ts`), for
+ * the store that is the authority. expo-sqlite opens with SQLite's defaults: a rollback journal at
+ * synchronous FULL, whose commit is the journal's unlink with no directory sync after it. A power
+ * cut just after a commit can bring the journal back and the next open rolls the commit away — a
+ * saved change, a filed message, a sealed credential, gone with nothing corrupted to say so. EXTRA
+ * syncs the directory after the unlink. Per connection, outside a transaction, and READ BACK: the
+ * driver may be built with a different default or a fixed level, and a setting that did not take
+ * is the same silent loss.
+ */
+export const ENGINE_DURABLE_COMMITS = "PRAGMA synchronous = EXTRA";
+/** What `PRAGMA synchronous` answers for EXTRA. */
+export const SYNCHRONOUS_EXTRA = 3;
+
+/** Set {@link ENGINE_DURABLE_COMMITS} on this connection and refuse it if the read-back is not EXTRA. */
+export async function holdDurableCommits(exec: PhoneSqlExecutor): Promise<void> {
+  await exec.all(ENGINE_DURABLE_COMMITS, []);
+  const level = (await exec.all("PRAGMA synchronous", [])).rows[0]?.[0];
+  if (Number(level) !== SYNCHRONOUS_EXTRA) {
+    throw new StoreFault(
+      "engine_store_not_durable",
+      `"${ENGINE_DB_FILE}" did not take synchronous = EXTRA (it reads ${String(level)}), so a ` +
+        `saved change could be lost to a power cut`,
+    );
+  }
+}
+
 /** Rows as arrays with the statement's own column names — the engine's store contract. */
 export interface PhoneSqlRows {
   readonly columns: readonly string[];
@@ -251,6 +278,9 @@ export async function openLocalEnginePlatform(deps: EngineStoreSeams & {
   }
   const exec = expoEngineExecutor(await deps.openDatabase(ENGINE_DB_FILE, ENGINE_DB_OPEN_OPTIONS));
   try {
+    /* Before anything is written through it. A refusal is thrown as our own fault and closes the
+       store below: an engine on a store that may roll back an acknowledged commit does not start. */
+    await holdDurableCommits(exec);
     const kek = await ensureKek(deps.kv, deps.randomKekHex);
     if (kek.kind === "refused") {
       await exec.close().catch(() => undefined);
@@ -258,8 +288,9 @@ export async function openLocalEnginePlatform(deps: EngineStoreSeams & {
     }
     return { kind: "ready", exec, keks: kekRing(kek.hex) };
   } catch (err) {
-    /* Not one of ours: a keystore or a driver raising its own exception. Re-thrown rather than
-       worded, so it reaches the door as the platform's own words — the diagnostic rule. */
+    /* A keystore or a driver raising its own exception, or the durability refusal above. Re-thrown
+       rather than worded here: the door's `faultDetail` words our own fault by its code and quotes
+       the platform's words verbatim — the diagnostic rule. */
     await exec.close().catch(() => undefined);
     throw err;
   }

@@ -687,6 +687,8 @@ export const DE: Deck = {
         return "dieses Telefon konnte die Post und das gespeicherte Passwort des Postfachs auf ihm nicht löschen";
       case "engine_key_not_removed":
         return "der Schlüsselspeicher wollte den Schlüssel nicht entfernen, der das gespeicherte Passwort dieses Postfachs öffnet";
+      case "engine_store_not_durable":
+        return "die Datenbank dieses Telefons sicherte nicht zu, eine gespeicherte Änderung über einen Stromausfall zu behalten, deshalb wurde das Postfach darauf nicht geöffnet";
       default: return code;
     }
   },
