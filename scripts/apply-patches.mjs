@@ -242,8 +242,9 @@ function packagePositions(dir, rel, out) {
  * name and version, or is optional with a platform that excludes this host; a package directory the lock
  * does not name is EXTRA unless `--extra` names it (with everything inside it). An empty read refuses.
  * ORPHAN: an optional entry no installed package needs may be absent. npm 10.9.8 installs one whose only
- * dependents are platform-excluded (sharp's wasm32 build and @emnapi/runtime under it); Vercel's npm leaves
- * it out. It is admitted only when the lock names at least one dependent (dependencies, optional, peer or
+ * dependents are platform-excluded (sharp's wasm32 build and @emnapi/runtime under it); npm 11 leaves it out.
+ * The Vercel installs pin the lock's npm (each app's vercel.json, test/vercel-install-npm-pin.test.ts), so this
+ * admission is the safety net for an install by another npm, not the ordinary path. It is admitted only when the lock names at least one dependent (dependencies, optional, peer or
  * dev) and every one is absent from the disk; the root, a workspace and any present package always need
  * it, and a patched package is never admitted absent. */
 function verifyTree(treeRoot, { extra = [], tree = ".", patched = [] } = {}) {

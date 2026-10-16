@@ -10,5 +10,5 @@
       "memory": 1024
     }
   },
-  "installCommand": "cd ../.. && npm ci --ignore-scripts && node scripts/apply-patches.mjs apply"
+  "installCommand": "cd ../.. && npx --yes npm@10.9.8 ci --ignore-scripts && node scripts/apply-patches.mjs apply"
 }

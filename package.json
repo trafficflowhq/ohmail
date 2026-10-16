@@ -3,6 +3,9 @@
   "version": "0.26.1",
   "private": true,
   "license": "AGPL-3.0-only",
+  "engines": {
+    "npm": "^10.9.8"
+  },
   "scripts": {
     "test": "vitest run",
     "test:sqlite": "vitest run --config vitest.sqlite.config.ts",
