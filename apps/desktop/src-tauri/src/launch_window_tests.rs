@@ -4,9 +4,10 @@
 use super::*;
 use std::sync::Mutex;
 
-/// Records every call in order; `absent` is a window that does not exist yet.
+/// Records every call in order; `absent` is a window that does not exist yet; the third field is
+/// when the first show happened.
 #[derive(Clone, Default)]
-struct Rec(Arc<Mutex<Vec<String>>>, Arc<AtomicBool>);
+struct Rec(Arc<Mutex<Vec<String>>>, Arc<AtomicBool>, Arc<Mutex<Option<Instant>>>);
 
 impl Rec {
     fn calls(&self) -> Vec<String> {
@@ -24,6 +25,7 @@ impl Surface for Rec {
             return false;
         }
         self.0.lock().unwrap().push("show".to_string());
+        self.2.lock().unwrap().get_or_insert_with(Instant::now);
         true
     }
 }
@@ -132,11 +134,23 @@ fn a_page_that_never_reports_is_shown_after_the_bound() {
     let said = Arc::new(Mutex::new(None));
     let slot = Arc::clone(&said);
     let bound = Duration::from_millis(150);
+    let armed = Instant::now();
     let fallback = arm_fallback(Arc::clone(&launch), bound, move |at| *slot.lock().unwrap() = Some(at));
     std::thread::sleep(Duration::from_millis(40));
-    assert!(rec.calls().is_empty(), "still hidden inside the bound");
+    let early = rec.calls();
+    // The sample says "hidden inside the bound" only when it WAS taken inside the bound. The clock
+    // is read after the sample, so a reading under the bound proves the sample came before it. A
+    // loaded macOS runner has slept this thread past 150 ms (the v0.26.0 tag build, #27), and
+    // then the sample proves nothing either way; the show's own instant below still holds the
+    // property, on every run.
+    if armed.elapsed() < bound {
+        assert!(early.is_empty(), "still hidden inside the bound");
+    }
     fallback.join().unwrap();
     assert_eq!(rec.calls(), vec!["show"], "shown by the bound");
+    let shown = rec.2.lock().unwrap().expect("the show was recorded");
+    let waited = shown.duration_since(armed);
+    assert!(waited >= bound, "shown {waited:?} after arming, before the bound");
     let at = said.lock().unwrap().expect("the fallback's show is said");
     assert!(at >= bound, "not before the bound: {at:?}");
 }
