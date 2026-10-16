@@ -47,22 +47,49 @@ async function direct<T>(cfg: ReturnType<typeof greenmailConfig>, fn: (c: ImapFl
   try { return await fn(c); } finally { await c.logout().catch(() => undefined); }
 }
 
-/** Claims in `ohmail/_meta`, read on GreenMail past the relay. */
-async function claimsOn(cfg: ReturnType<typeof greenmailConfig>): Promise<Array<{ installId: string; kind: string }>> {
+type ClaimSeen = { installId: string; kind: string; deleted: boolean; heartbeat: number };
+
+/** One read of `ohmail/_meta` on GreenMail past the relay: every claim, and whether it is marked `\Deleted`. */
+async function claimsRead(cfg: ReturnType<typeof greenmailConfig>): Promise<ClaimSeen[]> {
   return direct(cfg, async (c) => {
     if (!(await c.list()).some((f) => f.path === META_PATH)) return [];
     const lock = await c.getMailboxLock(META_PATH);
     try {
-      const out: Array<{ installId: string; kind: string }> = [];
-      for await (const m of c.fetch("1:*", { uid: true, headers: true })) {
+      const out: ClaimSeen[] = [];
+      for await (const m of c.fetch("1:*", { uid: true, headers: true, flags: true })) {
         const claim = m.headers ? parseClaim(m.headers.toString("utf8")) : null;
-        if (claim && !("malformed" in claim)) out.push({ installId: claim.installId, kind: claim.kind });
+        if (claim && !("malformed" in claim)) {
+          out.push({
+            installId: claim.installId, kind: claim.kind,
+            deleted: m.flags?.has("\\Deleted") ?? false, heartbeat: claim.heartbeat.getTime(),
+          });
+        }
       }
       return out;
     } finally {
       lock.release();
     }
   });
+}
+
+/**
+ * The claims STANDING in `ohmail/_meta`, read between renews. A renew appends the new claim, marks
+ * the old one `\Deleted` and expunges it (`organizer-lease.ts`, at ORGANIZER_KIND_WORDS), so a read
+ * landing inside that window sees one install twice — measured on this rig: the old uid flagged
+ * `\Deleted` beside the new one, gone 100 ms later. That is the protocol, not a second claim, and a
+ * single read could not tell the two apart. So this reads until a read shows no `\Deleted` record
+ * and no install twice, and answers what that read holds; a duplicate that never clears is
+ * answered as it stands after the bound, and the caller's assertion names it.
+ */
+async function claimsOn(cfg: ReturnType<typeof greenmailConfig>): Promise<Array<{ installId: string; kind: string }>> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const seen = await claimsRead(cfg);
+    const ids = seen.map((s) => s.installId);
+    const settled = !seen.some((s) => s.deleted) && new Set(ids).size === ids.length;
+    if (settled || Date.now() > deadline) return seen.map(({ installId, kind }) => ({ installId, kind }));
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 async function inFolder(cfg: ReturnType<typeof greenmailConfig>, path: string, messageId: string): Promise<number> {
@@ -198,19 +225,26 @@ describe("rig (c) — the organizer on a DavMail-shaped server", () => {
     const deliver = async (messageId: string): Promise<void> => {
       await direct(base, (c) => c.append("INBOX", eml({ to: base.auth.user, subject: "first contact", messageId })).then(() => undefined));
     };
-    /** Sample both engines for `ms`; every sample must have exactly one organizing, the expected one. */
-    const window = async (organizer: Sidecar, reader: Sidecar, ms: number): Promise<number> => {
-      const startAppends = gm.appends.filter((a) => a === "ohmail/_meta").length;
-      const end = Date.now() + ms;
+    /**
+     * Sample both engines until the organizer has renewed `renews` times (and for at least ten
+     * samples); every sample must have exactly one organizing, the expected one. COUNTED IN RENEWS,
+     * NOT IN TIME: a renew rides the organizer's cycle, and the cycle's length is the local store's
+     * work — measured on this rig at 1.6 s apart on an idle machine and 5 s apart under load, with a
+     * 2.8 s store checkpoint in the cycle. A fixed 9 s window counted anywhere from one renew to five
+     * for the same correct engine. The bound is only for an organizer that never renews at all.
+     */
+    const window = async (organizer: Sidecar, reader: Sidecar, renews: number): Promise<void> => {
+      const appended = (): number => gm.appends.filter((a) => a === "ohmail/_meta").length;
+      const startAppends = appended();
+      const deadline = Date.now() + 90_000;
       let samples = 0;
-      while (Date.now() < end) {
+      while (appended() - startAppends < renews || samples < 10) {
+        expect(Date.now() < deadline, `fewer than ${renews} renews in 90 s: ${appended() - startAppends}`).toBe(true);
         expect(organizer.organizerState().organizing, "the organizer stopped organizing").toBe(true);
         expect(reader.organizerState().organizing, "TWO ORGANIZERS: the reader organized").toBe(false);
         samples += 1;
         await new Promise((r) => setTimeout(r, 150));
       }
-      expect(samples).toBeGreaterThan(10);
-      return gm.appends.filter((a) => a === "ohmail/_meta").length - startAppends;
     };
 
     const a = await launchAt(dirs[0]!, "Desk A");
@@ -220,8 +254,7 @@ describe("rig (c) — the organizer on a DavMail-shaped server", () => {
 
     const one = `two-1-${randomUUID()}@x`;
     await deliver(one);
-    const renewsA = await window(a, b, 9_000);
-    expect(renewsA, "fewer than three renews in the window").toBeGreaterThanOrEqual(3);
+    await window(a, b, 3);
     expect(await inFolder(base, "ohmail.Screener", one)).toBe(1);
     expect(await inFolder(base, "INBOX", one)).toBe(0);
     expect((await claimsOn(base)).map((c) => c.installId)).toEqual([a.world.accountId]);
@@ -235,17 +268,32 @@ describe("rig (c) — the organizer on a DavMail-shaped server", () => {
     await opened.close();
     const b2 = await launchAt(dirs[1]!, "Desk B");
     expect(b2.organizerState()).toMatchObject({ organizing: true });
-    await until(async () => !a.organizerState().organizing, 15_000, "the displaced engine standing down");
+    /* A sees the takeover at its next cycle, so this waits on A's own renews, not on a clock. A
+       displaced engine that has not renewed since B's claim landed is only slow; one that renews
+       over B's standing claim twice more has read the takeover and kept organizing — the
+       two-organizers failure, and it is named as that rather than as a timeout. (Its heartbeat
+       standing when B claimed is one, and a renew already in flight across B's write is a second.) */
+    const heartbeatsOverB = new Set<number>();
+    const standDownBy = Date.now() + 90_000;
+    while (a.organizerState().organizing) {
+      const seen = await claimsRead(base);
+      if (seen.some((c) => c.installId === b2.world.accountId && !c.deleted)) {
+        for (const c of seen) if (c.installId === a.world.accountId && !c.deleted) heartbeatsOverB.add(c.heartbeat);
+      }
+      expect(heartbeatsOverB.size, "TWO ORGANIZERS: the displaced engine kept renewing over the takeover's claim")
+        .toBeLessThanOrEqual(2);
+      expect(Date.now() < standDownBy, "the displaced engine neither stood down nor renewed in 90 s").toBe(true);
+      await new Promise((r) => setTimeout(r, 250));
+    }
 
     const two = `two-2-${randomUUID()}@x`;
     await deliver(two);
-    const renewsB = await window(b2, a, 9_000);
-    expect(renewsB, "fewer than three renews after the takeover").toBeGreaterThanOrEqual(3);
+    await window(b2, a, 3);
     expect(await inFolder(base, "ohmail.Screener", two)).toBe(1);
     expect(await inFolder(base, "INBOX", two)).toBe(0);
     expect((await claimsOn(base)).map((c) => c.installId)).toEqual([b2.world.accountId]);
     expect(gm.internalDatesRemoved).toBeGreaterThan(0);
     expect(gm.uidExpungesUnanswered).toBe(0);
-  }, 180_000);
+  }, 300_000);
 });
 
