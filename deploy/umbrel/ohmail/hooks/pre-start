@@ -13,7 +13,7 @@
 #     install can be rebuilt on ANY machine — losing the device must not mean losing the
 #     key. A seed-derived key would be exactly as safe on the device and strictly worse
 #     off it.
-#   · The PER-SERVICE env files the compose reads (data/env/{db,api,organizer,minio}.env)
+#   · The PER-SERVICE env files the compose reads (data/env/{db,api,organizer,rustfs}.env)
 #     are DERIVED from secrets.env on every start, so the api and the organizer can never
 #     disagree about the key ring or the storage block — the same reasoning as the
 #     deliberate duplication in deploy/selfhost/docker-compose.yml, produced here by one
@@ -40,13 +40,13 @@ SETTINGS="${ENV_DIR}/settings.env"
 
 # Container hostnames, in Umbrel's <app-id>_<service>_1 convention.
 DB_HOST="ohmail_db_1"
-MINIO_HOST="ohmail_minio_1"
+RUSTFS_HOST="ohmail_rustfs_1"
 MAILPIT_HOST="ohmail_mailpit_1"
 PROXY_HOST="ohmail_proxy_1"
 
 mkdir -p "${ENV_DIR}" \
          "${DATA_DIR}/postgres" \
-         "${DATA_DIR}/minio" \
+         "${DATA_DIR}/rustfs" \
          "${DATA_DIR}/caddy/state" \
          "${DATA_DIR}/caddy/config"
 
@@ -63,7 +63,7 @@ mkdir -p "${ENV_DIR}" \
 # `docker compose`, where nothing strips the marker. Idempotent, and a no-op on a
 # device where umbrelOS already did it.
 rm -f "${DATA_DIR}/postgres/.gitkeep" \
-      "${DATA_DIR}/minio/.gitkeep" \
+      "${DATA_DIR}/rustfs/.gitkeep" \
       "${DATA_DIR}/caddy/state/.gitkeep" \
       "${DATA_DIR}/caddy/config/.gitkeep"
 
@@ -93,7 +93,7 @@ if [[ ! -f "${SECRETS}" ]]; then
 # read the rows written under the version it is missing.
 POSTGRES_PASSWORD=$(rand_hex 24)
 TF_KEK_V1=$(rand_hex 32)
-MINIO_ROOT_PASSWORD=$(rand_hex 24)
+RUSTFS_ROOT_PASSWORD=$(rand_hex 24)
 TF_ORGANIZER_INSTALL_ID=ohmail-selfhost:$(rand_hex 6)
 EOF
 fi
@@ -108,6 +108,15 @@ fi
 # so an existing install keeps every value it already has.
 if ! grep -q '^TF_ORGANIZER_INSTALL_ID=' "${SECRETS}"; then
   echo "TF_ORGANIZER_INSTALL_ID=ohmail-selfhost:$(rand_hex 6)" >> "${SECRETS}"
+fi
+
+# ── upgrade backfill: installs whose secrets.env predates RustFS ────────────────────
+# An install made while the store was MinIO holds MINIO_ROOT_PASSWORD and no credential
+# under the new name, and every derived file below reads the new name under `set -u`. The
+# RustFS store starts empty in a directory of its own (data/rustfs), so it takes a fresh
+# value; MinIO's line stays where it is, like every other line in this file.
+if ! grep -q '^RUSTFS_ROOT_PASSWORD=' "${SECRETS}"; then
+  echo "RUSTFS_ROOT_PASSWORD=$(rand_hex 24)" >> "${SECRETS}"
 fi
 
 # shellcheck disable=SC1090
@@ -127,10 +136,10 @@ ring_lines() {
 storage_lines() {
   cat <<EOF
 TF_STORAGE_KIND=s3
-S3_ENDPOINT=http://${MINIO_HOST}:9000
+S3_ENDPOINT=http://${RUSTFS_HOST}:9000
 S3_REGION=us-east-1
 S3_ACCESS_KEY_ID=ohmail-staging
-S3_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+S3_SECRET_ACCESS_KEY=${RUSTFS_ROOT_PASSWORD}
 S3_BUCKET=ohmail-staging
 EOF
 }
@@ -158,9 +167,17 @@ $(ring_lines)
 $(storage_lines)
 EOF
 
-cat > "${ENV_DIR}/minio.env" <<EOF
-MINIO_ROOT_USER=ohmail-staging
-MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+# The store's credential (RUSTFS_ACCESS_KEY / RUSTFS_SECRET_KEY) and the bucket init's (rc
+# reads the RUSTFS_ROOT_* pair). No call home and no console: RustFS asks its vendor for the
+# latest version on every start unless told not to, and serves a web console on :9001 that
+# nothing here uses.
+cat > "${ENV_DIR}/rustfs.env" <<EOF
+RUSTFS_ROOT_USER=ohmail-staging
+RUSTFS_ROOT_PASSWORD=${RUSTFS_ROOT_PASSWORD}
+RUSTFS_ACCESS_KEY=ohmail-staging
+RUSTFS_SECRET_KEY=${RUSTFS_ROOT_PASSWORD}
+RUSTFS_CHECK_UPDATE=false
+RUSTFS_CONSOLE_ENABLE=false
 EOF
 
 # ── settings: seeded once, the operator's file from then on ────────────────────────
@@ -287,7 +304,7 @@ ${ORIGIN} {
 	# Never attach an anonymous policy to the bucket.
 	@staging path /${BUCKET}/*
 	handle @staging {
-		reverse_proxy ohmail_minio_1:9000
+		reverse_proxy ohmail_rustfs_1:9000
 	}
 
 	handle {

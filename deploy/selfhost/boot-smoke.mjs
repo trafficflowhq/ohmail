@@ -76,8 +76,8 @@ const COMPOSE = process.env.SMOKE_COMPOSE?.split(/\s+/) ?? [
   "-f", path.join(HERE, "docker-compose.yml"),
   "--env-file", ENV_FILE,
 ];
-/** Where the compose's MinIO (in-network `minio:9000`) is published on this host. */
-const MINIO_HOSTPORT = process.env.SMOKE_MINIO ?? "127.0.0.1:3903";
+/** Where the compose's RustFS (in-network `rustfs:9000`) is published on this host. */
+const STORE_HOSTPORT = process.env.SMOKE_STORE ?? "127.0.0.1:3903";
 /** Where GreenMail's SMTP (in-network `greenmail:3025`) is published on this host. */
 const SMTP_HOSTPORT = process.env.SMOKE_SMTP ?? "127.0.0.1:3026";
 const READY_TIMEOUT_MS = Number(process.env.SMOKE_READY_TIMEOUT_MS ?? 420_000);
@@ -208,7 +208,7 @@ function run(cmd, args, opts = {}) {
 }
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
-/** The dotenv values the compose was started with (MinIO credential for the download half). */
+/** The dotenv values the compose was started with (RustFS credential for the download half). */
 function envFileValues() {
   const out = {};
   for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
@@ -240,7 +240,7 @@ async function main() {
   assert(hello.flavor === "selfhost", "flavor must be selfhost", hello);
   assert(hello.needsSetup === true, "a fresh box must advertise needsSetup:true (is this a re-run against a dirty stack? `docker compose down -v` first)", hello);
   assert(hello.auth?.publicSignup === false, "open signup must NOT exist on this composition", hello);
-  assert(hello.features?.staging === true, "staging must be armed — the compose wires MinIO through the storage factory", hello);
+  assert(hello.features?.staging === true, "staging must be armed — the compose wires RustFS through the storage factory", hello);
   assert(hello.features?.pairing === true, "pairing must be announced — this table mounts /pair*", hello);
   assert(hello.features?.sse === true, "sse is pinned on for the long-running server", hello);
   ok("capability statement is the fresh-box truth");
@@ -492,9 +492,9 @@ async function main() {
     await put.text().catch(() => ""));
 
   // THE PRIVATE-BUCKET TRIPWIRE. Exposing `/<bucket>/*` through the proxy is safe ONLY because
-  // unsigned requests 403 — an anonymous bucket policy (one `mc anonymous set` away) would turn
-  // the route into a public byte store, and nothing else in the stack would notice. Both verbs:
-  // GET is the read leak, PUT is the free upload.
+  // unsigned requests 403 — an anonymous bucket policy (one `rc bucket anonymous set` away) would
+  // turn the route into a public byte store, and nothing else in the stack would notice. Both
+  // verbs: GET is the read leak, PUT is the free upload.
   const bareObject = `${grantUrl.origin}${grantUrl.pathname}`;
   const anonGet = await fetch(bareObject);
   assert(anonGet.status === 403,
@@ -507,12 +507,14 @@ async function main() {
 
   // Download with the SERVICE credential — the same read the send path performs when it
   // resolves a staged attachment — and compare bytes. This half runs on the INTERNAL wire
-  // (the published MinIO port), which is where the api and organizer live.
+  // (the published RustFS port), which is where the api and organizer live.
   const envValues = envFileValues();
-  const s3User = envValues.MINIO_ROOT_USER ?? "ohmail-staging";
-  const s3Pass = envValues.MINIO_ROOT_PASSWORD;
-  assert(typeof s3Pass === "string" && s3Pass.length > 0, `MINIO_ROOT_PASSWORD missing from ${ENV_FILE}`);
-  const objectUrl = `http://${MINIO_HOSTPORT}${grantUrl.pathname}`;
+  // The compose reads the MinIO-era names when the RustFS ones are unset or empty; so does this.
+  const s3User = envValues.RUSTFS_ROOT_USER || envValues.MINIO_ROOT_USER || "ohmail-staging";
+  const s3Pass = envValues.RUSTFS_ROOT_PASSWORD || envValues.MINIO_ROOT_PASSWORD;
+  assert(typeof s3Pass === "string" && s3Pass.length > 0,
+    `neither RUSTFS_ROOT_PASSWORD nor MINIO_ROOT_PASSWORD is set in ${ENV_FILE}`);
+  const objectUrl = `http://${STORE_HOSTPORT}${grantUrl.pathname}`;
   const downloaded = path.join(tmp, "download.bin");
   const dl = run("curl", [
     "-sS", "-o", downloaded, "-w", "%{http_code}",

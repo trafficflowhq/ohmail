@@ -80,7 +80,7 @@ working default. The five:
   Generate it with `openssl rand -hex 32`. **Copy this value somewhere safe
   now** — a password manager is fine. Losing it means every connected
   mailbox has to be re-entered. See [BACKUP.md](./BACKUP.md).
-- **`MINIO_ROOT_PASSWORD`** — the attachment-staging store's credential.
+- **`RUSTFS_ROOT_PASSWORD`** — the attachment-staging store's credential.
   `openssl rand -hex 24`. It never leaves the box, but pick a real value.
 - **`TF_ORGANIZER_INSTALL_ID`** — this install's organizer identity, the name
   its claim carries inside each connected mailbox (`ohmail/_meta`). That claim
@@ -182,9 +182,9 @@ The first start pulls the images, creates the database, and applies the
 schema. Watch it settle with `docker compose ps`. What a good boot looks
 like, within a couple of minutes:
 
-- `web`, `api`, `organizer`, `db`, `minio`, `mailpit` — `running (healthy)`
+- `web`, `api`, `organizer`, `db`, `rustfs`, `mailpit` — `running (healthy)`
 - `proxy` — `running` (it carries no health check)
-- `minio-init` — gone from `ps`, or `Exited (0)` in `docker compose ps -a`:
+- `rustfs-init` — gone from `ps`, or `Exited (0)` in `docker compose ps -a`:
   it runs once to create the staging bucket and is supposed to exit.
 
 ## 6. Create the first account
@@ -348,6 +348,25 @@ It is this install's name in every connected mailbox's `ohmail/_meta`
 claim. Older stacks ran under a shared default name; after this update each
 already-connected mailbox may ask for one "Organize here" confirmation, and
 then stays organized under the install's own name.
+
+**One-time, updating an install created while the staging store was MinIO:**
+the bundled store is now RustFS. Your `.env` needs no edit: the compose file
+reads `MINIO_ROOT_PASSWORD` (and `MINIO_ROOT_USER`) when
+`RUSTFS_ROOT_PASSWORD` (and `RUSTFS_ROOT_USER`) are unset, so you can rename
+the lines whenever you like. The new store starts empty. It only ever holds
+attachments on their way into a message you are sending, so the one thing
+this can affect is a message whose attachment was uploaded before the update
+and sent after it. That send is refused because the attachment could not be
+read, and trying again does not help: attach the file again. Then remove the
+old store's container and its data:
+
+```sh
+docker compose up -d --remove-orphans
+docker volume rm ohmail_minio_data
+```
+
+The volume is named after the project, `ohmail` unless `OHMAIL_PROJECT` in
+`.env` says otherwise; `docker volume ls` shows it.
 
 **One-time, if you keep your own compose file or run another proxy in front
 of the api:** the api takes a visitor's address only from the proxies named

@@ -1048,7 +1048,7 @@ function loadAttachmentStagingConfig(
     } catch { /* refused below */ }
     if (!endpointUrl || (endpointUrl.protocol !== "http:" && endpointUrl.protocol !== "https:")
       || endpointUrl.hostname === "") {
-      throw new Error("S3_ENDPOINT must be an absolute http(s) URL, e.g. http://minio:9000");
+      throw new Error("S3_ENDPOINT must be an absolute http(s) URL, e.g. http://rustfs:9000");
     }
     return {
       attachmentStaging: {

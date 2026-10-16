@@ -112,9 +112,9 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
       if (twin.shm_size && !(svc.options ?? "").includes(`--shm-size=${twin.shm_size}`)) problems.push(`SHM ${id}.${name} lacks --shm-size=${twin.shm_size}`);
     }
   }
-  /* MinIO and Dovecot start by `docker run` (a service cannot be given a command or a checkout file). */
+  /* RustFS and Dovecot start by `docker run` (a service cannot be given a command or a checkout file). */
   const runText = Object.values(wf.jobs).flatMap((j) => j.steps.map((s) => s.run ?? "")).join("\n");
-  for (const [name, port] of [["minio", "3902:9000"], ["dovecot", "3144:143"]] as const) {
+  for (const [name, port] of [["rustfs", "3902:9000"], ["dovecot", "3144:143"]] as const) {
     if (!runText.includes(services[name].image)) problems.push(`IMAGE ${name} is not started at docker-compose.yml's ${services[name].image}`);
     if (!runText.includes(`-p 127.0.0.1:${port}`)) problems.push(`PORTS ${name} is not published at 127.0.0.1:${port}`);
   }
@@ -153,8 +153,8 @@ describe("the suite workflow", () => {
     expect(workflowProblems(tag, composeText)).toEqual([expect.stringMatching(/^IMAGE suite\.postgres is postgres:17/)]);
     const port = workflowText.replace('ports: ["3143:3143", "3025:3025"]', 'ports: ["3144:3143", "3025:3025"]');
     expect(workflowProblems(port, composeText)).toEqual([expect.stringMatching(/^PORTS suite\.greenmail /)]);
-    const minio = workflowText.replace("-p 127.0.0.1:3902:9000", "-p 127.0.0.1:9000:9000");
-    expect(workflowProblems(minio, composeText)).toEqual([expect.stringMatching(/^PORTS minio /)]);
+    const rustfs = workflowText.replace("-p 127.0.0.1:3902:9000", "-p 127.0.0.1:9000:9000");
+    expect(workflowProblems(rustfs, composeText)).toEqual([expect.stringMatching(/^PORTS rustfs /)]);
   });
 
   it("refuses a workflow that grants more than contents: read, a job that sets its own, and an action not pinned to a commit", () => {

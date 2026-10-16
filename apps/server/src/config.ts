@@ -480,7 +480,7 @@ function loadStorageConfig(env: NodeJS.ProcessEnv, origin: string): StorageConfi
     } catch { /* refused below */ }
     if (!endpointUrl || (endpointUrl.protocol !== "http:" && endpointUrl.protocol !== "https:")
       || endpointUrl.hostname === "") {
-      throw new Error("S3_ENDPOINT must be an absolute http(s) URL, e.g. http://minio:9000");
+      throw new Error("S3_ENDPOINT must be an absolute http(s) URL, e.g. http://rustfs:9000");
     }
     if (endpointUrl.username || endpointUrl.password) {
       throw new Error("S3_ENDPOINT must not embed credentials — they belong in S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY");

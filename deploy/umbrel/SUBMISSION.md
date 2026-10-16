@@ -15,7 +15,7 @@ Verified (2026-08-22, re-checked against the live registries and a current
 
 - All eight images resolve, and every digest in `docker-compose.yml` is the one the
   registry returns for that tag: the three ohmail images at `0.11.0`, Postgres 16.15,
-  Caddy 2.10.2, MinIO, mc, Mailpit v1.24.2. The three ohmail images are public OCI
+  Caddy 2.10.2, RustFS, rc, Mailpit v1.24.2. The three ohmail images are public OCI
   **indexes** carrying `linux/amd64` and `linux/arm64` — index digests, not
   per-architecture ones, which is what the store asks for.
 - `npm run lint:apps -- ohmail --check-images`: `No issues found`, exit 0. That check
@@ -92,7 +92,7 @@ dc() { docker compose --compatibility -p ohmail -f docker-compose.yml -f emulati
 # Everything except the TLS front door: Caddy would chase a certificate for a domain
 # that does not resolve, which says nothing about the app. Its config was just
 # validated, which is the part of it this run can check.
-dc up -d db minio minio-init api organizer web mailpit
+dc up -d db rustfs rustfs-init api organizer web mailpit
 docker ps --format '{{.Names}}' | grep -x ohmail_db_1    # the naming the env files assume
 dc ps                                                    # api and organizer must reach (healthy)
 dc logs api | grep -A6 'FIRST-RUN SETUP'                 # the one-time token is printed once

@@ -12,8 +12,9 @@
 #              objects — which is why it carries the SAME storage variables as `api`:
 #              an organizer without them would leave the staging bucket growing forever.
 #   db         Postgres 16 — the operator's own database, plain URLs, no pooler.
-#   minio      S3-compatible object storage for attachment staging. Internal only.
-#   minio-init one shot: creates the staging bucket. MinIO does not auto-create buckets
+#   rustfs     S3-compatible object storage for attachment staging. Internal only.
+#   rustfs-init
+#              one shot: creates the staging bucket. RustFS does not auto-create buckets,
 #              and the storage client deliberately has no CreateBucket call — without this
 #              the FIRST upload (not the boot) would be the thing that failed.
 #   mailpit    an SMTP sink with a web UI (http://127.0.0.1:8025 on the box) so
@@ -21,7 +22,9 @@
 #              SMTP_URL at a real relay to deliver mail for real.
 #
 # Configuration lives in `.env` beside this file — copy `.env.example` and fill it in.
-# Required values fail `docker compose config` loudly rather than booting half a stack.
+# Required values fail `docker compose config` loudly rather than booting half a stack; the
+# staging store's credential, which has an older name to fall back to, is refused by the store
+# itself at start instead (see the `api` service).
 #
 # The three ohmail services run PREBUILT images from ghcr.io/trafficflowhq — `docker compose
 # up -d` pulls them, at the release this file ships with; OHMAIL_IMAGE_TAG in .env pins another
@@ -82,6 +85,11 @@ services:
       # path `/<bucket>/*` — path-style object addressing puts the bucket in the URL. Must
       # stay the same value the api and organizer read, which the shared default guarantees.
       S3_BUCKET: ${S3_BUCKET:-ohmail-staging}
+      # Where routes.caddy sends that route. Named here rather than only in that file: `docker
+      # compose up -d` recreates a service when its definition changes, never when a file it
+      # mounts does, so an update that moved the store would otherwise leave this proxy sending
+      # uploads to the old one.
+      OHMAIL_STAGING_STORE: rustfs:9000
     ports:
       # A publish with no address binds 0.0.0.0 AND [::] — every interface the box has, a rented
       # VPS's public IP included. The default is loopback: unreachable until the operator says
@@ -126,7 +134,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      minio-init:
+      rustfs-init:
         condition: service_completed_successfully
       mailpit:
         condition: service_started
@@ -140,21 +148,28 @@ services:
       TF_KEK_V1: ${TF_KEK_V1:?set TF_KEK_V1 in .env — 64 hex chars, e.g. `openssl rand -hex 32`; it encrypts mailbox credentials at rest}
       TF_KEK_V2: ${TF_KEK_V2:-}
       TF_KEK_V3: ${TF_KEK_V3:-}
-      # Object storage for attachment staging — the bundled MinIO by default. The organizer
+      # Object storage for attachment staging — the bundled RustFS by default. The organizer
       # below MUST carry the identical block: it is the only process that deletes objects.
       # Browser uploads work through the proxy: grants are presigned against the PUBLIC origin
       # (S3_PUBLIC_ENDPOINT, defaulting to OHMAIL_ORIGIN in the server) and the Caddyfile's
-      # `/<bucket>/*` route carries the PUT to MinIO with the Host preserved — same-origin for
+      # `/<bucket>/*` route carries the PUT to RustFS with the Host preserved — same-origin for
       # the browser, valid SigV4 for the store. Set S3_PUBLIC_ENDPOINT only for an EXTERNAL
       # store whose own address is browser-reachable. This variable sits on `api` alone: it
       # shapes upload grants, and only the api mints those — the organizer's wire (download,
       # delete) stays on the in-network endpoint either way.
       TF_STORAGE_KIND: s3
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://rustfs:9000}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
       S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-ohmail-staging}
-      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env — the staging store credential}
+      # The store credential. MINIO_ROOT_USER / MINIO_ROOT_PASSWORD are the names a .env made
+      # before RustFS replaced MinIO holds; they are read when the new names are unset, here and
+      # in every block below, so an update needs no edit to .env. This is the one required value
+      # compose does not refuse at interpolation: compose resolves a `:?` nested in a default
+      # even when the outer name is set, so a required fallback would refuse every .env that
+      # holds only the new name. With neither set, the store refuses to start ("RUSTFS_SECRET_KEY
+      # must not be empty") and nothing that needs it starts either.
+      S3_ACCESS_KEY_ID: ${RUSTFS_ROOT_USER:-${MINIO_ROOT_USER:-ohmail-staging}}
+      S3_SECRET_ACCESS_KEY: ${RUSTFS_ROOT_PASSWORD:-${MINIO_ROOT_PASSWORD:-}}
       S3_BUCKET: ${S3_BUCKET:-ohmail-staging}
       # Outbound product mail (verification, notices). The bundled mailpit sink by default;
       # point SMTP_URL at a real relay to actually deliver. Both-or-neither: a half-set SMTP
@@ -285,10 +300,10 @@ services:
       # process that ever DELETES them. Give the organizer a different (or no) block and the
       # bucket grows without bound while everything looks healthy.
       TF_STORAGE_KIND: s3
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://rustfs:9000}
       S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-ohmail-staging}
-      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      S3_ACCESS_KEY_ID: ${RUSTFS_ROOT_USER:-${MINIO_ROOT_USER:-ohmail-staging}}
+      S3_SECRET_ACCESS_KEY: ${RUSTFS_ROOT_PASSWORD:-${MINIO_ROOT_PASSWORD:-}}
       S3_BUCKET: ${S3_BUCKET:-ohmail-staging}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # A mail server on your own network. THE SAME VALUE THE api GETS, and for the same reason the
@@ -355,30 +370,35 @@ services:
       timeout: 3s
       retries: 30
 
-  minio:
-    image: ghcr.io/trafficflowhq/mirror-minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+  rustfs:
+    image: ghcr.io/trafficflowhq/mirror-rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
     restart: unless-stopped
-    command: server /data
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ohmail-staging}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ROOT_USER:-${MINIO_ROOT_USER:-ohmail-staging}}
+      RUSTFS_SECRET_KEY: ${RUSTFS_ROOT_PASSWORD:-${MINIO_ROOT_PASSWORD:-}}
+      # No call home and no console. RustFS asks its vendor for the latest version on every
+      # start unless told not to, and serves a web console on :9001 that nothing here uses.
+      RUSTFS_CHECK_UPDATE: "false"
+      RUSTFS_CONSOLE_ENABLE: "false"
     volumes:
-      - minio_data:/data
+      - rustfs_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # /health/ready, not /health: the listener answers before storage and IAM are up, and
+      # rustfs-init, which waits on this check, runs once.
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health/ready"]
       interval: 2s
       timeout: 3s
       retries: 30
 
-  minio-init:
-    image: ghcr.io/trafficflowhq/mirror-minio-mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+  rustfs-init:
+    image: ghcr.io/trafficflowhq/mirror-rustfs-rc:v0.1.36@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
     restart: "no"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ohmail-staging}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-${MINIO_ROOT_USER:-ohmail-staging}}
+      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-${MINIO_ROOT_PASSWORD:-}}
       S3_BUCKET: ${S3_BUCKET:-ohmail-staging}
     # The one-shot bucket creation. `--ignore-existing` makes restarts idempotent. Grant
     # minting presigns locally — a missing bucket would surface only at the first UPLOAD,
@@ -386,7 +406,7 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing "local/$$S3_BUCKET"
+      - rc alias set local http://rustfs:9000 "$$RUSTFS_ROOT_USER" "$$RUSTFS_ROOT_PASSWORD" && rc bucket create --ignore-existing "local/$$S3_BUCKET"
 
   mailpit:
     image: ghcr.io/trafficflowhq/mirror-mailpit:v1.24.2@sha256:3ad9483ac2dea937ae402b95435ab12c3355d2373a1002a49491db0be536d8fa
@@ -398,6 +418,6 @@ services:
 
 volumes:
   db_data:
-  minio_data:
+  rustfs_data:
   caddy_data:
   caddy_config:

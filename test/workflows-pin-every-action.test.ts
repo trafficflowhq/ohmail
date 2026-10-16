@@ -610,7 +610,7 @@ describe("every container image a workflow runs is named by its digest, unless t
     ]);
     const own = all.flatMap((r) => r.own).map(imageOf);
     const mirrors = own.filter((i) => MIRROR.test(i));
-    expect(mirrors.length, "the mirrored Postgres and MinIO the suite runs").toBeGreaterThan(0);
+    expect(mirrors.length, "the mirrored Postgres and RustFS the suite runs").toBeGreaterThan(0);
     expect(mirrors.filter((i) => !MIRRORED.has(i)), "a mirrored image images.lock does not name at that digest").toEqual([]);
     expect(MIRRORED.has(mirrors[0].replace(/[0-9a-f]{64}$/, "0".repeat(64))), "the control: another digest is not the locked one").toBe(false);
     expect(own.length - mirrors.length, "the prune check's three reads of the staged image").toBe(3);

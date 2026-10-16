@@ -29,7 +29,7 @@ is gone is the organizing, and every credential — which means starting over.
    nightly `pg_dump`, not as a copy of the volume directory — a dump is
    consistent, portable across Postgres versions, and restorable with one
    command.
-3. **The staging store (optional).** The MinIO volume holds attachment
+3. **The staging store (optional).** The RustFS volume holds attachment
    uploads in flight. It is transient by design — the organizer cleans it —
    and losing it can only affect a send that was mid-flight at that moment.
    Skip it unless volume-level backups cost you nothing.

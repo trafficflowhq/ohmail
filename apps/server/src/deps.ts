@@ -80,7 +80,7 @@ type Db = PostgresJsDatabase<typeof schema>;
 
 /**
  * THE ENV-KIND FACTORY over the two staging-storage implementations (Ruling 3): `supabase`
- * selects the managed host's client verbatim, `s3` the SigV4 client MinIO and AWS both speak.
+ * selects the managed host's client verbatim, `s3` the SigV4 client RustFS and AWS both speak.
  * The switch is EXHAUSTIVE over {@link StorageConfig} — an unknown kind cannot reach here at all,
  * because `loadStorageConfig` already refused it at boot (config.test.ts pins that refusal), and
  * a kind added to the union without an arm here is a compile error, not a runtime surprise.
@@ -254,7 +254,7 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     // silent unmetered.
     storageCapOf: async () => UNMETERED_STORAGE_CAP,
     // ── AND THIS IS THE WAY ROUND THAT CAP, when the operator armed object storage ──────────
-    // The browser mints a grant, PUTs the bytes straight into the bucket (MinIO on the compose;
+    // The browser mints a grant, PUTs the bytes straight into the bucket (RustFS on the compose;
     // any S3 endpoint or a Supabase project via TF_STORAGE_KIND), and the send carries a
     // reference — the managed transport verbatim, behind the same factory-over-the-request-db
     // shape. ABSENT when no storage is configured, and the absence is load-bearing: the mint

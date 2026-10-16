@@ -42,7 +42,7 @@ const compose = parse(readFileSync(join(ROOT, "docker-compose.yml"), "utf8")) as
 describe("the :5433 test box gets a /dev/shm big enough for its statistics", () => {
   it("the parser reads the file's services, and the box among them", () => {
     const names = Object.keys(compose.services ?? {});
-    expect(names, "no services parsed out of the root docker-compose.yml").toEqual(expect.arrayContaining(["db", "greenmail", "minio"]));
+    expect(names, "no services parsed out of the root docker-compose.yml").toEqual(expect.arrayContaining(["db", "greenmail", "rustfs"]));
     expect(compose.services?.db?.image, "the db service is not the Postgres box").toMatch(/^(?:ghcr\.io\/trafficflowhq\/mirror-)?postgres:/);
     expect(compose.services?.db?.ports, "the db service does not publish :5433").toEqual([expect.stringMatching(/:5433:5432$/)]);
   });

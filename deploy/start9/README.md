@@ -24,7 +24,7 @@ StartOS package translates them, it does not re-decide them.
 
 - **Images** — the published `ghcr.io/trafficflowhq/ohmail-{server,worker,web}`
   images (amd64 + arm64), pinned by tag, in the manifest's `images:` map alongside
-  `postgres:16` and a MinIO image. Same images as every other install; the package
+  `postgres:16` and a RustFS image. Same images as every other install; the package
   adds no build of its own.
 - **Daemons** — one per process, with the same readiness semantics as the compose
   stack's health checks and the same ordering: postgres ready → bucket ensured →
@@ -64,7 +64,7 @@ StartOS package translates them, it does not re-decide them.
 - **Backups** — `backups.ts` covers the Postgres volume and the generated
   secrets. The key that encrypts mailbox credentials must be in every backup;
   losing it means re-entering every connected mailbox
-  (see `docs/self-host/BACKUP.md`). The MinIO volume is transient staging and may
+  (see `docs/self-host/BACKUP.md`). The RustFS volume is transient staging and may
   be excluded.
 
 ## What the slice needs

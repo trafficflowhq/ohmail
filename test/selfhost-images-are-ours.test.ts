@@ -11,9 +11,9 @@ import { publicRel } from "./support/public-root.mjs";
  *
  * On 2026-09-12 both MinIO repositories were deleted from Docker Hub. Every self-host install
  * — on the shipped release as much as on the candidate — could no longer pull its object
- * store: a fresh `docker compose up` died at `minio-init` with `pull access denied`. Nothing
- * in this project had changed. Somebody else's registry decided it, and the blast radius was
- * every operator running our software.
+ * store (MinIO then): a fresh `docker compose up` died at `minio-init` with `pull access denied`.
+ * Nothing in this project had changed. Somebody else's registry decided it, and the blast radius
+ * was every operator running our software.
  *
  * So the stack now names ONE registry, ours. The images we build are built by the release
  * workflow; the images we do not build are COPIED into `ghcr.io/trafficflowhq` by
@@ -163,13 +163,13 @@ describe("a shipped stack boots only images we serve", () => {
     /* THE POSITIVE CONTROL. Everything above passes trivially against a compose with no images
        and against a checker that returns []. This injects the exact defect of 2026-09-12. */
     const hurt = rd(SHIPPED[0]!).replace(
-      /^(\s*image:\s*)ghcr\.io\/trafficflowhq\/mirror-minio:.*$/m,
-      "$1minio/minio:RELEASE.2025-04-22T22-12-26Z",
+      /^(\s*image:\s*)ghcr\.io\/trafficflowhq\/mirror-rustfs:.*$/m,
+      "$1rustfs/rustfs:1.0.1",
     );
     expect(hurt, "the substitution matched nothing — the control is vacuous").not.toEqual(rd(SHIPPED[0]!));
     const said = refusals(hurt, rows).join("\n");
-    expect(said).toContain("minio/minio:RELEASE.2025-04-22T22-12-26Z is not served by us");
-    expect(said).toContain("registry: minio");
+    expect(said).toContain("rustfs/rustfs:1.0.1 is not served by us");
+    expect(said).toContain("registry: rustfs");
   });
 
   it("a mirrored image whose digest drifts from the lock is refused", () => {
@@ -191,7 +191,7 @@ describe("a shipped stack boots only images we serve", () => {
 describe("the registry that deleted these images is named nowhere", () => {
   /* NOT a style rule: `minio/minio` and `minio/mc` on Docker Hub are gone, and a compose that
      still names them cannot pull at all. The shipped stacks are mirrored; the dev harness is
-     repointed at quay, which serves the identical manifests. */
+     repointed at quay, which served the identical manifests. */
   const composes = everyCompose();
 
   it("every compose in the repository is covered", () => {
@@ -214,7 +214,7 @@ describe("the registry that deleted these images is named nowhere", () => {
     expect(dead("docker.io/minio/minio:RELEASE.2025-04-22T22-12-26Z")).toBe(true);
     /* …and does not fire on the two refs that are fine, which is the other half of it. */
     expect(dead("quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z")).toBe(false);
-    expect(dead("ghcr.io/trafficflowhq/mirror-minio:RELEASE.2025-04-22T22-12-26Z")).toBe(false);
+    expect(dead("ghcr.io/trafficflowhq/mirror-rustfs:1.0.1")).toBe(false);
   });
 });
 
@@ -373,7 +373,7 @@ describe("the mirror script refuses, and is idempotent", () => {
 
   it("an upstream that is gone and was never mirrored is refused by name", () => {
     const r = rig();
-    execFileSync("bash", ["-c", `rm -f "${r.state}"/quay*`]);
+    execFileSync("bash", ["-c", `rm -f "${r.state}"/docker.io_rustfs*`]);
     const { out, rc } = run(r);
     expect(rc).toBe(1);
     expect(out).toContain("is not readable, and ghcr.io/trafficflowhq/");

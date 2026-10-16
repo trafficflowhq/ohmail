@@ -93,14 +93,14 @@ Plainly, so you can decide with open eyes:
   (likewise `apps/worker/Dockerfile.selfhost` → `ohmail-worker` and
   `apps/webapp/Dockerfile` → `ohmail-web`), then set `OHMAIL_IMAGE_TAG=local`.
 - **Every image comes from one registry: ours.** Not just the three we
-  build — Caddy, Postgres, MinIO, `mc` and Mailpit are copied into
+  build — Caddy, Postgres, RustFS, `rc` and Mailpit are copied into
   `ghcr.io/trafficflowhq` too, and the compose pulls those copies, pinned by
   digest. A copy is byte-identical to the original, so the digest in
   [`deploy/selfhost/images.lock`](../../deploy/selfhost/images.lock) names
   both and you can check ours against upstream yourself. The reason is
-  plain: on 12 September 2026 both MinIO images were deleted from Docker
-  Hub, and every install that tried a fresh `docker compose up` lost its
-  object store that day. Nobody else's registry decides whether your stack
+  plain: on 12 September 2026 both MinIO images, our object store then, were
+  deleted from Docker Hub, and every install that tried a fresh
+  `docker compose up` lost its object store that day. Nobody else's registry decides whether your stack
   starts now. The lock also records what each image is licensed under and
   where its source is.
 - **To move a pinned version**, edit that row in `images.lock` — the tag and
@@ -156,7 +156,7 @@ Every path lands on the same stack, so every guide shares the same facts:
 Four readings, in order, and each one tells you which half is wrong:
 
 1. **Every service is healthy.** `docker compose ps` — `db`, `api`, `web`,
-   `organizer`, `minio` and `proxy` all `running`, and the ones that declare a
+   `organizer`, `rustfs` and `proxy` all `running`, and the ones that declare a
    health check `(healthy)`. `api` only reports healthy after its boot
    migrations verified the schema, so a healthy `api` is a migrated database.
 2. **The API answers as ohmail.** `curl -s https://mail.example.com/api/hello`

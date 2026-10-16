@@ -658,10 +658,10 @@ export function makeSupabaseStagingStorage(
 /** Where an S3-compatible staging bucket lives and what may talk to it. Parsed from the frozen
  *  `S3_*` variable set by the self-host server's config loader; the names here match those. */
 export interface S3StagingStorageConfig {
-  /** `https://s3.<region>.amazonaws.com`, or the operator's own endpoint (`http://minio:9000`,
+  /** `https://s3.<region>.amazonaws.com`, or the operator's own endpoint (`http://rustfs:9000`,
    *  a reverse-proxied path). Scheme, host, port and any base path are all honoured. */
   endpoint: string;
-  /** The SigV4 signing region. MinIO accepts whatever it was started with (`us-east-1` default). */
+  /** The SigV4 signing region. RustFS accepts whatever it was started with (`us-east-1` default). */
   region: string;
   accessKeyId: string;
   secretAccessKey: string;
@@ -670,7 +670,7 @@ export interface S3StagingStorageConfig {
   /**
    * The endpoint a BROWSER can reach — `S3_PUBLIC_ENDPOINT` on the self-host server, defaulted to
    * `OHMAIL_ORIGIN`; absent ⇒ {@link endpoint}. `download` and `remove` reach the store by its
-   * in-network name (`http://minio:9000`); the presigned PUT runs in a browser that cannot
+   * in-network name (`http://rustfs:9000`); the presigned PUT runs in a browser that cannot
    * resolve that name and whose CSP refuses off-origin requests. SigV4 covers the `Host` header,
    * so the grant is signed against the browser-facing origin and the reverse proxy must carry the
    * PUT with the Host PRESERVED. SECURITY INVARIANT: routing `/<bucket>/*` through the public
@@ -724,10 +724,10 @@ export function s3StagingObjectUrl(
 }
 
 /**
- * The S3-compatible implementation of the same three-method port — MinIO, or any S3 endpoint.
+ * The S3-compatible implementation of the same three-method port — RustFS, or any S3 endpoint.
  * SigV4 via `aws4fetch`; three HTTP shapes do not justify an SDK. The grant is minted LOCALLY: a
  * presigned PUT is pure key derivation, so misconfiguration surfaces at UPLOAD time as the
- * client's 403 (harmless: a row whose object never arrives is swept as a 404); the live MinIO
+ * client's 403 (harmless: a row whose object never arrives is swept as a 404); the live RustFS
  * suite and the compose boot-smoke verify the round trip. The grant binds the content type; there
  * is no `x-upsert` equivalent — a plain S3 PUT overwrites, and the exposure is one account
  * re-PUTting its OWN ticket's path, which the send re-measures. Deletes are per-object, and 404

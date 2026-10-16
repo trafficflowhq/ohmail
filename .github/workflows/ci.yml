@@ -3,7 +3,7 @@ name: ci
 # The test suite, on every pull request, nightly and by hand.
 #
 # The suite runs serially in measured shards (test/support/ci-shards.json). Each shard gets its own
-# Postgres, GreenMail and MinIO and makes its own database with scripts/lane-db.sh, so the
+# Postgres, GreenMail and RustFS and makes its own database with scripts/lane-db.sh, so the
 # *.pg.test.ts files run against a real server. TF_REQUIRE_PG=1 turns a missing database into a failure
 # instead of a skip. A file marked `@postpush: alone` runs in a job of its own on a database made from
 # empty, because it reads state its own seeding does not own. A new test file needs no edit here: a
@@ -92,6 +92,7 @@ jobs:
       IMAP_HOST: 127.0.0.1
       IMAP_PORT: "3143"
       TF_REQUIRE_PG: "1"
+      TF_REQUIRE_RUSTFS: "1"
       SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -128,21 +129,23 @@ jobs:
           node scripts/bundle-host.mjs server
           node scripts/bundle-host.mjs worker
 
-      # A service container cannot be given a command, and MinIO needs `server /data`.
-      - name: Start MinIO
+      # A service container cannot publish a port on loopback only, so RustFS starts by `docker run`.
+      - name: Start RustFS
         env:
-          MINIO_ROOT_USER: tf-staging
-          MINIO_ROOT_PASSWORD: tf-staging-password
+          RUSTFS_ACCESS_KEY: tf-staging
+          RUSTFS_SECRET_KEY: tf-staging-password
+          RUSTFS_CHECK_UPDATE: "false"
+          RUSTFS_CONSOLE_ENABLE: "false"
         run: |
           set -euo pipefail
-          docker run -d --name minio -p 127.0.0.1:3902:9000 -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
-            ghcr.io/trafficflowhq/mirror-minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e \
-            server /data
+          docker run -d --name rustfs -p 127.0.0.1:3902:9000 -e RUSTFS_ACCESS_KEY -e RUSTFS_SECRET_KEY \
+            -e RUSTFS_CHECK_UPDATE -e RUSTFS_CONSOLE_ENABLE \
+            ghcr.io/trafficflowhq/mirror-rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:3902/minio/health/live >/dev/null 2>&1; then echo "minio up after ${i}s"; exit 0; fi
+            if curl -fsS http://127.0.0.1:3902/health/ready >/dev/null 2>&1; then echo "rustfs ready after ${i}s"; exit 0; fi
             sleep 1
           done
-          echo "minio never came up"; exit 1
+          echo "rustfs never came up"; exit 1
 
       - name: Does this shard dial Dovecot
         id: dovecot

@@ -3056,7 +3056,7 @@
       "packages/core/test/webpush.test.ts",
       "packages/db/test/alerts.test.ts",
       "packages/db/test/arrival-order-index.test.ts",
-      "packages/db/test/attachment-staging-s3.minio.test.ts",
+      "packages/db/test/attachment-staging-s3.rustfs.test.ts",
       "packages/db/test/away-piles-closed.pg.test.ts",
       "packages/db/test/change-wake-end.pg.test.ts",
       "packages/db/test/closed-set-parity.test.ts",

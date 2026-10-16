@@ -77,7 +77,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      minio-init:
+      rustfs-init:
         condition: service_completed_successfully
       mailpit:
         condition: service_started
@@ -133,40 +133,42 @@ services:
       timeout: 3s
       retries: 30
 
-  minio:
-    image: ghcr.io/trafficflowhq/mirror-minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+  rustfs:
+    image: ghcr.io/trafficflowhq/mirror-rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
     restart: on-failure
-    command: server /data
+    # The image runs as uid 10001, which cannot write the root-owned bind mount below.
+    user: "0:0"
     env_file:
-      - ${APP_DATA_DIR}/data/env/minio.env
+      - ${APP_DATA_DIR}/data/env/rustfs.env
     volumes:
-      - ${APP_DATA_DIR}/data/minio:/data
+      - ${APP_DATA_DIR}/data/rustfs:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # /health/ready, not /health: the listener answers before storage and IAM are up.
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health/ready"]
       interval: 2s
       timeout: 3s
       retries: 30
 
-  minio-init:
-    image: ghcr.io/trafficflowhq/mirror-minio-mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+  rustfs-init:
+    image: ghcr.io/trafficflowhq/mirror-rustfs-rc:v0.1.36@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
-    # One-shot, but retrying is safe (`--ignore-existing`), so a failed attempt — MinIO
+    # One-shot, but retrying is safe (`--ignore-existing`), so a failed attempt — RustFS
     # blinking during a device reboot, say — heals itself instead of wedging `api`'s
     # start gate.
     restart: on-failure
     environment:
       S3_BUCKET: ohmail-staging
     env_file:
-      - ${APP_DATA_DIR}/data/env/minio.env
+      - ${APP_DATA_DIR}/data/env/rustfs.env
     # One-shot bucket creation, idempotent across restarts. The storage client
     # deliberately has no CreateBucket call, so the bucket must exist before `api`
     # is allowed to start — otherwise the FIRST upload, not the boot, would fail.
     entrypoint:
       - /bin/sh
       - -c
-      - mc alias set local http://ohmail_minio_1:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing "local/$$S3_BUCKET"
+      - rc alias set local http://ohmail_rustfs_1:9000 "$$RUSTFS_ROOT_USER" "$$RUSTFS_ROOT_PASSWORD" && rc bucket create --ignore-existing "local/$$S3_BUCKET"
 
   mailpit:
     image: ghcr.io/trafficflowhq/mirror-mailpit:v1.24.2@sha256:3ad9483ac2dea937ae402b95435ab12c3355d2373a1002a49491db0be536d8fa

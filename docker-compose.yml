@@ -39,19 +39,21 @@ services:
       - "${OHMAIL_DEV_BIND:-127.0.0.1}:3143:3143"   # IMAP
       - "${OHMAIL_DEV_BIND:-127.0.0.1}:3025:3025"   # SMTP
 
-  minio:
-    # Docker Hub deleted both MinIO repositories on 2026-09-12, and Quay's copy refuses an
-    # anonymous pull, so this stack boots our own mirrored copy, as the shipped stacks do
-    # (deploy/selfhost/images.lock): the digest below is the one Docker Hub served.
-    image: ghcr.io/trafficflowhq/mirror-minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
-    command: server /data
+  rustfs:
+    # MinIO is dead (both its Docker Hub repositories were deleted on 2026-09-12), so the
+    # object store is RustFS. Like the shipped stacks (deploy/selfhost/images.lock) this
+    # boots our own mirrored copy.
+    image: ghcr.io/trafficflowhq/mirror-rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
     environment:
-      MINIO_ROOT_USER: tf-staging
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-tf-staging-password}
+      RUSTFS_ACCESS_KEY: tf-staging
+      RUSTFS_SECRET_KEY: ${RUSTFS_ROOT_PASSWORD:-tf-staging-password}
+      # No call home and no console, as in the shipped stacks (test/rustfs-stays-quiet.test.ts).
+      RUSTFS_CHECK_UPDATE: "false"
+      RUSTFS_CONSOLE_ENABLE: "false"
     ports:
-      - "${OHMAIL_DEV_BIND:-127.0.0.1}:3902:9000"   # object-store API — attachment-staging-s3.minio.test.ts round-trips against it
+      - "${OHMAIL_DEV_BIND:-127.0.0.1}:3902:9000"   # object-store API — attachment-staging-s3.rustfs.test.ts round-trips against it
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health/ready"]
       interval: 2s
       timeout: 3s
       retries: 30

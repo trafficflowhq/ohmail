@@ -10,10 +10,10 @@ import {
  * ═══ THE SIGNED-URL HALF OF THE OBJECT STORE: ADDRESSING, THE PRESIGNED GRANT, AND THE WIRE ═══
  *
  * Everything here runs against an injected `fetch` — no network in this file, same rule as the
- * hosted-storage suite above it. The live MinIO round trip is `attachment-staging-s3.minio.test.ts`.
+ * hosted-storage suite above it. The live RustFS round trip is `attachment-staging-s3.rustfs.test.ts`.
  * What IS decidable here, and pinned:
  *
- *  · **Addressing is endpoint-driven.** MinIO (an IP or operator hostname) takes PATH-STYLE URLs
+ *  · **Addressing is endpoint-driven.** RustFS (an IP or operator hostname) takes PATH-STYLE URLs
  *    — the bucket in the path — and real AWS takes virtual-host style. The choice is baked into
  *    the SIGNATURE (SigV4 signs the Host header), so getting it wrong is not a redirect, it is a
  *    403 on every request. Mutation: force one style → the other family's test goes red.
@@ -92,7 +92,7 @@ function recordingFetch(respond: (req: Request) => Response) {
 }
 
 describe("s3StagingObjectUrl — addressing is a property of the ENDPOINT", () => {
-  it("path-style for MinIO and any operator endpoint: bucket in the path, host untouched", () => {
+  it("path-style for RustFS and any operator endpoint: bucket in the path, host untouched", () => {
     expect(s3StagingObjectUrl(CFG, "acc-1/tick-2"))
       .toBe("http://127.0.0.1:3902/staging/acc-1/tick-2");
   });
@@ -154,7 +154,7 @@ describe("signUpload — the presigned PUT grant", () => {
 });
 
 describe("signUpload with a PUBLIC endpoint — the grant is addressed (and signed) for the browser", () => {
-  /** The self-host shape: internal MinIO for the service wire, the proxy origin for the browser. */
+  /** The self-host shape: internal RustFS for the service wire, the proxy origin for the browser. */
   const SPLIT: S3StagingStorageConfig = { ...CFG, publicEndpoint: "https://mail.example.com" };
 
   it("builds the upload URL from publicEndpoint — path-style under the proxy origin, not the store's host", async () => {

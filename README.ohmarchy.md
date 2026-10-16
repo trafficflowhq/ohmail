@@ -770,7 +770,7 @@ docker compose logs api   # the first-run setup token is printed here, once
 Open your `OHMAIL_ORIGIN` in a browser and register with that setup token —
 there is no public signup on a self-host server. The stack is Caddy as the
 one origin (automatic TLS on a real domain), the web app, the API server,
-the sync organizer, Postgres, MinIO for attachment staging, and a local
+the sync organizer, Postgres, RustFS for attachment staging, and a local
 mail sink for verification mail until you point `SMTP_URL` at a real relay.
 `deploy/selfhost/docker-compose.yml` documents every service and
 `deploy/selfhost/.env.example` every setting.

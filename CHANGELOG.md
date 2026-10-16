@@ -21,6 +21,16 @@ undo that change when the app next opened: a filed or deleted message, a decisio
 phone's mailbox database now syncs to the disk at every save, as its copy of the mail list already did, and if the
 phone's database will not do that, ohmail says so and does not open the mailbox.
 
+### A self-hosted install keeps attachments in RustFS
+<!-- changes: selfhost-rustfs.md -->
+
+The self-host and Umbrel stacks now hold attachments on their way into a sent message in RustFS instead of
+MinIO, whose repositories are archived and whose last release gets no more fixes. RustFS runs with its update
+check and its web console off. An existing install updates with no edit to `.env`. The new store starts empty,
+so a message whose attachment was uploaded before the update needs that file attached again; the old store's
+container and volume can then be removed, as "Updates" in `docs/self-host/VPS.md` shows. Contributed by sysrex
+in #43.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

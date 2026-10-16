@@ -29,7 +29,7 @@ ohmail/
   docker-compose.yml        the stack, Umbrel-shaped, every image digest-pinned
   hooks/pre-start           generates secrets, seeds settings.env, renders the Caddyfile
   data/caddy/Caddyfile      committed placeholder; the hook renders the real one
-  data/{postgres,minio,caddy/state,caddy/config}/.gitkeep
+  data/{postgres,rustfs,caddy/state,caddy/config}/.gitkeep
                             the bind-mount source directories, committed empty
 ```
 

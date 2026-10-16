@@ -25,9 +25,9 @@
 #     IMAP mailboxes and seed real messages without touching anything outside the compose;
 #   · the proxy serves plain HTTP on localhost:3080 instead of 80/443 (no TLS ceremony, no
 #     privileged-port clash with whatever else runs on the machine);
-#   · MinIO's object-storage port is published on loopback so the smoke can exercise the presigned
+#   · RustFS's object-storage port is published on loopback so the smoke can exercise the presigned
 #     upload/download round-trip from outside the network (the presigned URL names
-#     `minio:9000`, so the smoke dials the published port while preserving that Host);
+#     `rustfs:9000`, so the smoke dials the published port while preserving that Host);
 #   · the organizer polls fast, so "seeded mail appears in /sync" is seconds, not minutes.
 
 services:
@@ -69,7 +69,7 @@ services:
       POLL_INTERVAL_MS: "5000"
       TF_ROSTER_INTERVAL_MS: "5000"
 
-  minio:
+  rustfs:
     ports:
       - "127.0.0.1:3903:9000"
 

@@ -15,13 +15,13 @@ invitation.
 - Upstream: https://github.com/trafficflowhq/ohmail (AGPL-3.0)
 - Images: `ghcr.io/trafficflowhq/ohmail-{server,worker,web}:0.11.0`, built by the
   upstream repository's release workflow, linux/amd64 + linux/arm64, pinned by
-  multi-arch index digest. Postgres, MinIO, Caddy and Mailpit sidecars pinned the
+  multi-arch index digest. Postgres, RustFS, Caddy and Mailpit sidecars pinned the
   same way.
 
 ### Topology
 
 Seven services: Caddy (TLS front door), the web app, the API server, the sync worker,
-Postgres, MinIO (attachment staging), and Mailpit (default sink for verification
+Postgres, RustFS (attachment staging), and Mailpit (default sink for verification
 mail). All state lives under `${APP_DATA_DIR}/data/...`. Secrets are generated
 on-device by `hooks/pre-start` into `data/env/` — the person installing never handles
 them. Why they are generated rather than derived from the device seed is the first of
@@ -31,7 +31,7 @@ the two departures below.
 
 **Secrets are random and written to a file, not `derive_entropy`.** The guidance
 prefers device-seed-derived values for package-generated local secrets, and for the
-Postgres and MinIO passwords either would do. The credential-encryption key is the
+Postgres and RustFS passwords either would do. The credential-encryption key is the
 reason we generate instead: it is the one value a user is told to copy into a password
 manager, because with it plus a database dump the install can be rebuilt on another
 machine. A seed-derived key is exactly as safe on the device and strictly worse off it

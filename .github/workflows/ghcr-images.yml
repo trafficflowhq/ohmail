@@ -61,7 +61,7 @@
 # and less flaky than emulating a Node toolchain under QEMU.
 #
 # EVERY OTHER IMAGE IN THE COMPOSE HAS AN arm64 VARIANT, which is what makes the arm64 boot
-# gate possible rather than aspirational: caddy, postgres, minio, minio/mc and mailpit all
+# gate possible rather than aspirational: caddy, postgres, rustfs, rustfs/rc and mailpit all
 # publish linux/arm64 in their own manifest lists — and we now serve those manifests ourselves,
 # whole, so the arm64 half of each is ours to keep too. The base these three are built from
 # (`node:22-bookworm-slim`, named in each Dockerfile by its multi-arch index digest, so the base
@@ -138,12 +138,12 @@ jobs:
           cat "$GITHUB_OUTPUT"
 
   # THE THIRD-PARTY HALF OF THE STACK, SERVED BY US. `deploy/selfhost/images.lock` names every
-  # image the compose boots that this repository does not build — caddy, postgres, minio, mc and
+  # image the compose boots that this repository does not build — caddy, postgres, rustfs, rc and
   # mailpit — and this job copies each into `ghcr.io/trafficflowhq` before the boot gate needs it.
   #
-  # WHY IT EXISTS: on 2026-09-12 both MinIO repositories were deleted from Docker Hub, and every
-  # self-host install — on the release before this one as much as on this one — could no longer
-  # pull its object store. The boot gate caught it and refused to promote, which is the gate
+  # WHY IT EXISTS: on 2026-09-12 both MinIO repositories (the object store before RustFS) were
+  # deleted from Docker Hub, and every self-host install — on the release before this one as much
+  # as on this one — could no longer pull its object store. The boot gate caught it and refused to promote, which is the gate
   # working; but an upstream can do that on any day, to any of these, and a release is not the
   # only thing it breaks. An install that pulls only from us cannot be taken down that way.
   #
@@ -365,7 +365,7 @@ jobs:
             echo "OHMAIL_ORIGIN=http://localhost"
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
             echo "TF_KEK_V1=$(openssl rand -hex 32)"
-            echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)"
+            echo "RUSTFS_ROOT_PASSWORD=$(openssl rand -hex 16)"
             echo "TF_ORGANIZER_INSTALL_ID=ohmail-selfhost:smoke-$(openssl rand -hex 6)"
             echo "OHMAIL_IMAGE_TAG=$STAGE_TAG"
           } >> .env
@@ -387,9 +387,9 @@ jobs:
             esac
           done
           # PULLED ONE BY ONE, so an image that cannot be fetched is reported AS that image and
-          # that registry. On 2026-09-12 this gate died at `minio-init` and the operative line was
-          # `pull access denied for minio/mc` — the whole diagnosis, arrived at by reading a
-          # service's crash. It is produced on purpose now rather than found in a log.
+          # that registry. On 2026-09-12 this gate died at the object store's init step and the
+          # operative line was `pull access denied for minio/mc` — the whole diagnosis, arrived at
+          # by reading a service's crash. It is produced on purpose now rather than found in a log.
           FAILED=""
           for REF in $(docker compose config --images); do
             docker pull -q "$REF" >/dev/null 2>&1 || FAILED="$FAILED $REF"
