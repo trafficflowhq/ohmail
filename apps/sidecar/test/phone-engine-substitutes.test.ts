@@ -80,16 +80,6 @@ describe("every substitution row names something real, in both directions", () =
     expect(missing).toEqual([]);
   });
 
-  it("sends each ONE_BUILD source file to its own built copy, and the source exists", () => {
-    // The built half exists only after a build, so it is read by name here and by the census over
-    // the artifact (`no-node-builtins.test.ts`); a row naming the wrong twin would ship both.
-    const rows = Object.entries(aliases.ONE_BUILD);
-    expect(rows.length).toBe(4);
-    const wrong = rows.filter(([src, built]) => !existsSync(src)
-      || built !== src.replace(/\/src\/([^/]+)\.ts$/, "/dist/$1.js") || built === src);
-    expect(wrong).toEqual([]);
-  });
-
   it("answers every Node builtin the table claims to, as a file or as an installed package", () => {
     const fromApp = createRequire(join(aliases.MOBILE, "noop.js"));
     const unresolved: string[] = [];

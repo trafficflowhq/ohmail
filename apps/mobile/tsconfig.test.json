@@ -1,0 +1,15 @@
+{
+  "//": "The phone app's TESTS, typed for the runtime they run on: Node 22 under vitest, not Hermes. The one difference from the app's program is DOM.Iterable. Without it the global URLSearchParams iterators come only from react-native's globals.d.ts, as the pre-5.6 IterableIterator, so the global URL is not assignable to Node's url.URL and every `fileURLToPath(new URL(rel, import.meta.url))` here fails to typecheck although Node runs it. Node's URLSearchParams does return iterator objects (with map, filter, take), so DOM.Iterable is the true reading of this runtime. Named tsconfig.test.json, not test/tsconfig.json: vite reads the nearest tsconfig.json for each test file, and that stays the app's. The include is the whole app, not test/ alone: setTimeout is declared three times (react-native and DOM return number, Node returns a Timeout) and the overload that wins follows the program's file order; with the app's files first, Node's wins, which is what these tests run on. test/fixtures holds deliberately wrong components the censuses read as text.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["DOM", "DOM.Iterable", "ESNext"]
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "test/fixtures"
+  ]
+}

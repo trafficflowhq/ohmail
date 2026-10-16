@@ -6,6 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "test:sqlite": "vitest run --config vitest.sqlite.config.ts",
+    "typecheck:mobile": "tsc --noEmit -p apps/mobile/tsconfig.json && tsc --noEmit -p apps/mobile/tsconfig.test.json",
+    "test:mobile": "node scripts/apply-patches.mjs apply && vitest run apps/mobile/test packages/client-engine/test && vitest run --config vitest.sqlite.config.ts apps/mobile/test",
     "build": "tsc -b",
     "db:setup:prod": "tsx --conditions=ohmail-source packages/db/src/setup-prod-cli.ts"
   },

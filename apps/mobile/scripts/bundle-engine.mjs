@@ -35,7 +35,7 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import aliases from "../../sidecar/src/phone/aliases.js";
@@ -99,6 +99,13 @@ export function stripBuildPaths(text, repo = REPO) {
 
 /** The bundler this artifact is reproducible for. One spelling, read by the refusal below too. */
 export const ESBUILD_VERSION = "0.24.0";
+
+/**
+ * The export conditions the phone's builds resolve under — one spelling for both builds and for the
+ * census (`test/no-node-builtins.test.ts`) that reads every workspace export through them: none may
+ * select a package's `dist/`, which exists only in a tree that ran `npm run build`.
+ */
+export const PHONE_CONDITIONS = ["react-native", "browser", "import", "default"];
 
 /**
  * THE PINNED BUNDLER — the environment, the shared acquirer, this checkout, then a refusal.
@@ -223,12 +230,13 @@ export function workspaceSourceAliases(repo = REPO) {
  *  6. a package in `aliases.ONE_COPY` is resolved from its anchor's directory, whoever imports it;
  *  7. a row of `aliases.PACKAGE_MODULE_SUBSTITUTES` applies only when the importer IS the named file
  *     inside that package (the path after its last `node_modules/`) and the specifier matches whole;
- *     a bare target is resolved from the importer's own directory, so it names the same copy;
- *  8. a module RESOLVING to a source file in `aliases.ONE_BUILD` takes its built copy instead, when
- *     that copy exists — decided by the resolved path, never the specifier. Off for the published
- *     resolution (`workspaceSources`), which reaches no built copy at all.
+ *     a bare target is resolved from the importer's own directory, so it names the same copy.
+ *
+ * There is no rule sending a workspace module to its built `dist/` copy, and there must not be one:
+ * every workspace export selects source under `PHONE_CONDITIONS`, so a tree that ran `npm run build`
+ * and one that did not bundle the same bytes (`test/no-node-builtins.test.ts` reads both facts).
  */
-function substitutions(extraBare = {}, { oneBuild = true } = {}) {
+function substitutions(extraBare = {}) {
   const bare = aliases.bareSpecifiers();
   /* The table wins every collision: `@trafficflow/api/desktop-host` is a SUBSTITUTE, and a
      workspace-source entry for the same name would put the desktop's door back in the bundle. */
@@ -238,7 +246,6 @@ function substitutions(extraBare = {}, { oneBuild = true } = {}) {
   const external = new Set(aliases.EXTERNAL);
   const sidecarSrc = join(REPO, "apps", "sidecar", "src");
   const oneCopy = new Set(aliases.ONE_COPY.packages);
-  const oneBuildNames = new Set(Object.keys(aliases.ONE_BUILD).map((p) => basename(p).replace(/\.ts$/, "")));
   /** Every substitution the build actually performed, for the report and for the census. */
   const applied = [];
 
@@ -392,17 +399,6 @@ function substitutions(extraBare = {}, { oneBuild = true } = {}) {
           applied.push([args.path, resolved]);
           return { path: resolved };
         }
-        // 8 — one build of a workspace module: the resolved source file, when its built copy exists.
-        if (oneBuild && oneBuildNames.has(basename(args.path).replace(/\.(js|ts)$/, ""))) {
-          const r = await build.resolve(args.path, {
-            resolveDir: args.resolveDir, importer: args.importer, kind: args.kind, pluginData: { viaTable: true },
-          });
-          const built = r.errors.length === 0 && Object.hasOwn(aliases.ONE_BUILD, r.path) ? aliases.ONE_BUILD[r.path] : null;
-          if (built && existsSync(built)) {
-            applied.push([args.path, built]);
-            return { path: built };
-          }
-        }
         return null;   // everything else resolves normally
       });
     },
@@ -498,8 +494,7 @@ const imapflowReaderPlugin = {
 
 export async function buildPhoneEngine({ write = true, workspaceSources = false } = {}) {
   const esbuild = await loadEsbuild();
-  const { plugin, applied } = substitutions(workspaceSources ? workspaceSourceAliases(REPO) : {},
-    { oneBuild: !workspaceSources });
+  const { plugin, applied } = substitutions(workspaceSources ? workspaceSourceAliases(REPO) : {});
   mkdirSync(OUT_DIR, { recursive: true });
   mkdirSync(PACKAGED_DIR, { recursive: true });
 
@@ -517,7 +512,7 @@ export async function buildPhoneEngine({ write = true, workspaceSources = false 
     /* The app's bundler consumes this file; `cjs` is what it expects from a pre-bundled module, and
        it is also what makes the two native `require`s come out as requires rather than imports. */
     mainFields: ["react-native", "browser", "module", "main"],
-    conditions: ["react-native", "browser", "import", "default"],
+    conditions: PHONE_CONDITIONS,
     absWorkingDir: REPO,
     inject: aliases.INJECT,
     /* The app version (`app.json`), the engine's build label where the app was built with no commit. */
@@ -590,7 +585,7 @@ export async function bundleProbe(entrySource) {
     format: "cjs",
     target: "es2022",
     mainFields: ["react-native", "browser", "module", "main"],
-    conditions: ["react-native", "browser", "import", "default"],
+    conditions: PHONE_CONDITIONS,
     absWorkingDir: REPO,
     inject: aliases.INJECT,
     metafile: true,
@@ -644,19 +639,63 @@ export function externalsIn(metafile) {
 }
 
 /**
- * Every workspace module the graph carries TWICE — as its source (`src/x.ts`) and as its built
- * copy (`dist/x.js`) of the same package — as `[source, built]` pairs. Each pair is one module's
- * code and tables shipped twice, and two instances of one module's state. Expected: none; a new
- * pair is a row in `aliases.ONE_BUILD`.
+ * Every input of the graph that is a workspace package's BUILT copy (`<pkg>/dist/…`). Expected:
+ * none. `dist/` exists only where `npm run build` ran, so a module reached through it makes the
+ * artifact depend on whether this tree was built — the Android job bundles with none, CI after a
+ * build — and a module reached as both its source and its built copy ships twice.
  */
-export function twinsIn(metafile) {
-  const inputs = new Set(Object.keys(metafile.inputs));
-  const pairs = [];
-  for (const p of inputs) {
-    const m = p.match(/^((?:packages|apps)\/[^/]+)\/src\/(.+)\.tsx?$/);
-    if (m && inputs.has(`${m[1]}/dist/${m[2]}.js`)) pairs.push([p, `${m[1]}/dist/${m[2]}.js`]);
+export function builtCopiesIn(metafile) {
+  return Object.keys(metafile.inputs).filter((p) => /^(?:packages|apps)\/[^/]+\/dist\//.test(p)).sort();
+}
+
+/**
+ * The target each export of one manifest selects under the phone's conditions, as Node and esbuild
+ * read a conditional map: the first key, in the map's own order, that is an active condition (for
+ * an `import` and for a `require` alike), recursing into nested maps.
+ *
+ * @param {string} name the package name
+ * @param {Record<string, unknown> | string} exportsField the manifest's `exports`
+ * @returns {Record<string, string | null>} `name/subpath` → selected target, null where none is
+ */
+export function selectedExportTargets(name, exportsField) {
+  const pick = (target, active) => {
+    if (typeof target === "string") return target;
+    if (!target || typeof target !== "object") return null;
+    for (const [key, value] of Object.entries(target)) {
+      if (!active.has(key)) continue;
+      const chosen = pick(value, active);
+      if (chosen !== null) return chosen;
+    }
+    return null;
+  };
+  const map = typeof exportsField === "string" ? { ".": exportsField } : exportsField;
+  const out = {};
+  for (const [sub, target] of Object.entries(map)) {
+    const spec = sub === "." ? name : `${name}${sub.slice(1)}`;
+    for (const kind of ["import", "require"]) {
+      const active = new Set([...PHONE_CONDITIONS.filter((c) => c !== "import"), kind, "default"]);
+      const chosen = pick(target, active);
+      if (!Object.hasOwn(out, spec) || (chosen !== null && /^\.\/dist\//.test(chosen))) out[spec] = chosen;
+    }
   }
-  return pairs.sort((a, b) => a[0].localeCompare(b[0]));
+  return out;
+}
+
+/** {@link selectedExportTargets} over every workspace package that declares `exports`. */
+export function workspaceExportTargets(repo = REPO) {
+  const out = {};
+  for (const group of ["packages", "apps"]) {
+    const groupDir = join(repo, group);
+    if (!existsSync(groupDir)) continue;
+    for (const dir of readdirSync(groupDir).sort()) {
+      const manifest = join(groupDir, dir, "package.json");
+      if (!existsSync(manifest)) continue;
+      const pkg = JSON.parse(readFileSync(manifest, "utf8"));
+      if (!pkg.name || !pkg.exports) continue;
+      Object.assign(out, selectedExportTargets(pkg.name, pkg.exports));
+    }
+  }
+  return out;
 }
 
 /* `pathToFileURL`, never `file://${argv[1]}`: the raw splice is false for any path needing

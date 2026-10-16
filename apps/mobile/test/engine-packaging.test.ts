@@ -198,9 +198,10 @@ const SIZE_CEILING = 6_533_000;
 const withinCeiling = (path: string): boolean => statSync(path).size <= SIZE_CEILING;
 
 /**
- * Both resolutions, each by bytes: the artifact built here (through `dist/`) and the published
- * resolution the APK is built from. A ceiling read over one alone guards a bundle nobody installs
- * or lets the installed one grow unread; every resolution over it is named with its size.
+ * Both resolutions, each by bytes: the artifact built here (through each package's exports) and
+ * the source-table resolution (`test/published-phone-engine-parity.test.ts` compares the two). A
+ * ceiling read over one alone guards a bundle nobody installs or lets the installed one grow
+ * unread; every resolution over it is named with its size.
  */
 const overCeiling = (readings: Record<string, string>): string[] =>
   Object.entries(readings).map(([name, path]) => [name, statSync(path).size] as const)

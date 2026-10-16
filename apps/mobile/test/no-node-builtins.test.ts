@@ -38,7 +38,10 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { BUNDLE, IMAPFLOW_REARM_MARKER, METAFILE, OUT_DIR, nodeSpecifiersIn, externalsIn, REPO, twinsIn } from "../scripts/bundle-engine.mjs";
+import {
+  BUNDLE, IMAPFLOW_REARM_MARKER, METAFILE, OUT_DIR, nodeSpecifiersIn, externalsIn, REPO, builtCopiesIn,
+  selectedExportTargets, workspaceExportTargets,
+} from "../scripts/bundle-engine.mjs";
 import { requiresIn } from "../scripts/verify-phone-engine-repro.mjs";
 
 interface Metafile {
@@ -430,22 +433,37 @@ describe("the phone engine carries one copy of each package", () => {
 });
 
 /**
- * ONE COPY OF EACH WORKSPACE MODULE. A module reached both as its source and as its built copy
- * ships its code and tables twice (the shared-provider list rode four times). `aliases.ONE_BUILD`
- * sends each source copy to the built one; a new pair is red here until it has a row.
+ * THE ENGINE IS BUILT FROM SOURCE, WHETHER OR NOT THIS TREE WAS BUILT. The Android job bundles
+ * straight after `npm ci`, with no `dist/` anywhere; CI and a contributor bundle after
+ * `npm run build`. A workspace module reached through its built copy makes those two artifacts
+ * differ, so the one measured is not the one that ships, and a module reached both ways ships its
+ * code and tables twice (the shared-provider list once rode four times). Two readings: the graph
+ * (fires in a tree that has `dist/`, which is where it can happen), and every workspace export
+ * under the phone's own conditions (fires in any tree, built or not).
  */
-describe("the phone engine carries each workspace module once", () => {
-  it("no package contributes one module as both its source and its built copy", () => {
-    expect(twinsIn(meta)).toEqual([]);
+describe("the phone engine reaches no workspace package's built copy", () => {
+  it("no input of the graph is a workspace package's dist/", () => {
+    expect(builtCopiesIn(meta)).toEqual([]);
   });
 
-  it("REFUSES a planted twin — the reading can fire", () => {
-    // Whichever half the graph holds, the other is planted beside it.
-    const SRC = "packages/core/src/sender-check.ts";
+  it("REFUSES a planted built copy — the reading can fire", () => {
     const DIST = "packages/" + "core/dist/sender-check.js";
-    const held = [SRC, DIST].filter((k) => meta.inputs[k] !== undefined);
-    expect(held, "sender-check is in the graph once").toHaveLength(1);
-    const planted = { inputs: { ...meta.inputs, [held[0] === SRC ? DIST : SRC]: { bytes: 1 } } };
-    expect(twinsIn(planted)).toEqual([[SRC, DIST]]);
+    expect(meta.inputs["packages/core/src/sender-check.ts"], "sender-check is in the graph").toBeDefined();
+    expect(builtCopiesIn({ inputs: { ...meta.inputs, [DIST]: { bytes: 1 } } }))
+      .toEqual([...builtCopiesIn(meta), DIST].sort());
+  });
+
+  it("no workspace export the phone's conditions select is a built copy", () => {
+    const targets = workspaceExportTargets(REPO);
+    // The vacuous-green guard: the census read the manifests and selected their source targets.
+    expect(Object.keys(targets).length, "workspace exports read").toBeGreaterThan(60);
+    expect(Object.values(targets).filter((t) => t?.startsWith("./src/")).length).toBeGreaterThan(60);
+    expect(Object.entries(targets).filter(([, t]) => /^\.\/dist\//.test(t ?? "")).map(([s, t]) => `${s} -> ${t}`))
+      .toEqual([]);
+  });
+
+  it("REFUSES an export whose phone condition names the built copy", () => {
+    const planted = { ".": { types: "./src/index.ts", import: "./" + "dist/index.js", default: "./src/index.ts" } };
+    expect(selectedExportTargets("@planted/pkg", planted)).toEqual({ "@planted/pkg": "./" + "dist/index.js" });
   });
 });

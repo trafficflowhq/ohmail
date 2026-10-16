@@ -1,4 +1,5 @@
 {
+  "//": "The APP's program: what Metro bundles and Hermes runs, typed with Expo's lib (DOM + ESNext, no DOM.Iterable). The tests under test/ are Node programs run by vitest and are checked by tsconfig.test.json, which types them for that runtime. `npm run typecheck:mobile` at the root runs both.",
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true
@@ -9,6 +10,6 @@
   ],
   "exclude": [
     "node_modules",
-    "test/fixtures"
+    "test"
   ]
 }

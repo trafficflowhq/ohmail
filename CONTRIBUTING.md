@@ -59,6 +59,32 @@ happened, what you expected. If it is visual, a screenshot beats a description.
 - Add or extend a test for behaviour you change.
 - Match the surrounding style. There is no formatter config to fight with.
 
+## Running the tests
+
+The root is an npm workspace with one lockfile. After `npm ci`, apply the
+patches this repository carries to its dependencies (it is idempotent):
+
+```bash
+npm ci
+node scripts/apply-patches.mjs apply
+```
+
+- `npm test` runs the whole suite (vitest).
+- `npm run build` compiles the workspace's TypeScript projects (`tsc -b`).
+- **The phone app** (`apps/mobile`, Android and iOS from one tree) has its own
+  two commands:
+  - `npm run typecheck:mobile` typechecks the app as the phone runs it
+    (`apps/mobile/tsconfig.json`) and its tests as Node runs them
+    (`apps/mobile/tsconfig.test.json`).
+  - `npm run test:mobile` applies the patches, then runs the phone app's tests
+    and the engine package they drive (`apps/mobile/test`,
+    `packages/client-engine/test`), and the phone's file on the device
+    store's own project. The tests that read the phone's mail engine bundle it
+    themselves; to bundle it by hand, `node apps/mobile/scripts/bundle-engine.mjs`.
+    The bundle is the same whether or not you ran `npm run build` first.
+- The desktop app installs and checks on its own; see `CLAUDE.md` and
+  "Build the desktop app yourself" in the README.
+
 ## Sign your commits (DCO) — and no CLA
 
 **There is no contributor licence agreement and no copyright assignment.** You

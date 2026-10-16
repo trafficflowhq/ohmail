@@ -4,16 +4,18 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *
  * Every census over the phone's bundle — the builtin census, the packaging census, the size
- * ceiling, the dialect census's phone arm — reads an artifact built HERE, where the workspace
- * packages resolve through each package's `dist/`. The APK a person installs is built in the
- * PUBLISHED repository, whose generated manifests point every subpath at `src/`. Two resolutions,
- * one entry point, and nothing had ever compared them: the published tree could gain or lose a
- * module and every gate here would stay green.
+ * ceiling, the dialect census's phone arm — reads the artifact the bundler resolves through each
+ * package's `exports`. The other resolution names every workspace subpath's source file directly
+ * (`workspaceSourceAliases`), the table the publish manifests were once generated with. Two
+ * resolutions, one entry point, and nothing had ever compared them: one could gain or lose a module
+ * and every gate here would stay green.
  *
  * So the bundle is built both ways and the two are compared on the facts the censuses claim: the
  * workspace source files the graph reaches, what is left for the app's own bundler to resolve,
  * that no Node builtin survives either way, and that the two artifacts are the same size to within
- * a few per cent — which is what makes the ceiling measured here a bound on the one that ships.
+ * a few per cent — which is what makes the ceiling measured on one a bound on the other.
+ * Neither resolution reaches a built `dist/` copy, so neither depends on whether this tree ran
+ * `npm run build` (`apps/mobile/test/no-node-builtins.test.ts` holds that).
  *
  * It lives at the root rather than beside the other bundle censuses because it is a question about
  * the PUBLISH, and because `apps/mobile`'s own privacy census forbids the workspace scope anywhere
@@ -22,17 +24,10 @@
  *
  * ── WHAT IT DOES NOT CLAIM ────────────────────────────────────────────────────────────────
  *
- * Not byte equality: `dist/*.js` is TypeScript compiled by `tsc` and `src/*.ts` the same source
- * transformed by the bundler, so the two artifacts differ by construction (a little, at this base).
- * And not the third-party half: the published tree installs with npm over a generated lockfile and
- * this one with pnpm, which resolve a few transitive versions differently — measured against a
- * clone of the published repository at its own payload tip, two of 536 third-party inputs and
- * ~67 KB. That difference belongs to a lockfile, not to this table, and it is outside what a
- * second build in one tree can see.
- *
- * The premise this rests on IS measured: built in that clone, the phone engine reached 241
- * workspace source files, and the workspace-source build here reaches the same 241, with no file
- * on either side alone.
+ * Not byte equality: esbuild marks a CommonJS `require` wrapper by how its importer was resolved,
+ * through a package's exports or through the source table, so a few bytes differ by construction.
+ * And not the third-party half: both builds read this tree's one installed `node_modules`, so a
+ * dependency that moved is the lockfile's question, outside what a second build here can see.
  *
  * ── THE ARTIFACT ON DISK IS NOT TOUCHED ───────────────────────────────────────────────────
  *
@@ -126,13 +121,13 @@ describe("the two resolutions reach the same phone engine", () => {
   });
 
   /**
-   * THE SIZE CEILING IS MEASURED HERE AND SPENT THERE.
+   * THE SIZE CEILING IS MEASURED ON ONE AND HOLDS FOR THE OTHER.
    *
-   * `apps/mobile/test/engine-packaging.test.ts` pins the artifact this tree writes. The artifact a
-   * phone carries is the published tree's, so that pin bounds the shipped file only while the two
-   * are close. A small bound, well above the difference measured — wide enough that ordinary
-   * drift in how `tsc` and the bundler each render the same source does not fire it, narrow enough
-   * that a megabyte arriving on one side only does.
+   * `apps/mobile/test/engine-packaging.test.ts` pins the artifact the bundler writes, so that pin
+   * bounds the other resolution only while the two are close. A small bound, well above the
+   * difference measured (15 bytes at this base: esbuild's interop flag on five `require` wrappers,
+   * which follows how the importing module was resolved), narrow enough that a megabyte arriving
+   * on one side only fires it.
    */
   it("are the same size to within three per cent", () => {
     const here = Buffer.byteLength(shipped.text, "utf8");
