@@ -36,7 +36,8 @@ packages and the whole build.
 The workflows are in `.github/workflows/`. `build.yml` runs on pull requests and on `main`: on macOS, Windows and
 Linux it typechecks the window, builds the UI bundle and smokes it, runs the Rust tests in both configurations,
 packages the app and opens what it built; its engine job bundles the engine on its own. `android.yml` builds the
-phone app, `dco.yml` checks sign-offs and `guard.yml` refuses a fork's change to the workflows,
+phone app. On a pull request the platform jobs and the phone build run only when it changes what they build
+(`.github/scripts/pr-build-scope.sh`); the engine jobs always run. `dco.yml` checks sign-offs and `guard.yml` refuses a fork's change to the workflows,
 their tools or the push gate's baseline. Tests sit beside the code they cover: `apps/desktop/test`, and the
 `*_tests.rs` files in `apps/desktop/src-tauri/src`. Add or extend a test for behaviour you change.
 

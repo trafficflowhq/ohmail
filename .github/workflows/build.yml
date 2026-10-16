@@ -151,8 +151,46 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # ── WHICH PLATFORM BUILDS A PULL REQUEST NEEDS ─────────────────────────────
+  #
+  # The six platform jobs below are an hour of runners each, and the free pool
+  # is shared by every open pull request and by the release: on 2026-10-16 the
+  # release's own bump and tag runs queued for over thirty minutes behind pull
+  # requests that changed tests and docs. So on a PULL REQUEST, and only there,
+  # they run when the pull request changes something a build reads; which paths
+  # those are is `.github/scripts/pr-build-scope.sh`'s to say. A push to main, a
+  # `v*` tag, a merge group and a dispatch skip this job and build everything:
+  # the release takes its installers from the tag run, and main's run is the
+  # whole proof of what landed.
+  #
+  # `engine` and `engine-bearing UI` are REQUIRED contexts and never wait on
+  # this: a required context has to report on every pull request. Each gated job
+  # starts with `!cancelled()`, because a job that needs a skipped job is skipped
+  # with it unless its condition says otherwise; and it builds whenever this job
+  # did not succeed, so a decision that could not be read never skips a build.
+  changes:
+    name: changes · which platform builds this pull request needs
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      desktop: ${{ steps.scope.outputs.desktop }}
+    steps:
+      # The pull request's merge commit and its first parent, the base it merges
+      # into: the diff between the two is exactly what the pull request changes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Read the paths it changes
+        id: scope
+        run: bash .github/scripts/pr-build-scope.sh --base HEAD^1 --head HEAD
+
   macos:
     name: macOS · smoke · engine · universal app · dmg
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: macos-15
     timeout-minutes: 60
     # THE RELEASE ENVIRONMENT, ON A RELEASE TAG ONLY. A run on a `v*` tag takes it, and an Apple
@@ -838,6 +876,8 @@ jobs:
 
   windows:
     name: Windows · smoke · engine · nsis setup
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -1167,6 +1207,8 @@ jobs:
 
   linux:
     name: Linux · smoke · engine · appimage + deb + rpm
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: ubuntu-latest
     # Seventy-five and not sixty since the perf smoke joined this job: importing five thousand
     # messages and letting the process group settle is minutes on top of three packaged artifacts.
@@ -2329,6 +2371,8 @@ jobs:
 
   linux-arm64:
     name: Linux arm64 · smoke · engine · appimage + deb + rpm
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     # GitHub's hosted arm64 Linux runner, free for public repositories. It is a
     # NATIVE machine, not emulation: everything below compiles and runs as
     # aarch64, which is what makes the checks worth running here rather than
@@ -3188,7 +3232,9 @@ jobs:
   # ==========================================================================
   linux-rpm-install:
     name: Linux · the .rpm installs on Fedora
+    # Gated through `linux`, whose package it installs: it runs when `linux` built one.
     needs: linux
+    if: ${{ !cancelled() && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -3366,6 +3412,8 @@ jobs:
   # ==========================================================================
   linux-flatpak:
     name: Linux · flatpak builds offline
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:

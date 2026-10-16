@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { publicPath } from "./support/public-root.mjs";
+import { evalIf } from "./support/workflow-if.js";
 
 /**
  * THE RELEASE BUILD RUNS AT THE VERSION TAG, AND NOTHING IN IT KEYS ON THE REF.
@@ -31,14 +32,22 @@ describe("build.yml runs at the version tag", () => {
     expect(wf.on?.push?.tags, "build.yml no longer runs on the release tag").toContain("v*");
   });
 
-  it("the parser reads the eight jobs, and no job is gated on the ref or the event", () => {
+  /* A pull request's platform jobs ask `changes` (test/pr-build-scope.test.ts), which is skipped at the tag;
+     every other job's condition is evaluated here as the tag push reads it. */
+  it("the parser reads the eight jobs, and every job but the pull request's `changes` runs at the tag", () => {
     const jobs = Object.keys(wf.jobs ?? {});
     expect(jobs.length).toBeGreaterThanOrEqual(JOBS.length);
     expect(jobs).toEqual(expect.arrayContaining(JOBS));
-    const gated = Object.entries(wf.jobs ?? {})
-      .filter(([, job]) => /github\.ref|github\.event_name|refs\/tags/.test(String(job.if ?? "")))
+    const atTag = {
+      "github.event_name": "push", "github.ref": "refs/tags/v1.2.3", "github.repository": "trafficflowhq/ohmail",
+      "needs.changes.result": "skipped", "needs.changes.outputs.desktop": "", "needs.linux.result": "success",
+    };
+    const skipped = Object.entries(wf.jobs ?? {})
+      .filter(([name, job]) => name !== "changes" && !evalIf(String(job.if ?? "true"), atTag))
       .map(([name, job]) => `${name}: if: ${String(job.if)}`);
-    expect(gated, "a job gated on the ref or the event may not run at the tag").toEqual([]);
+    expect(skipped, "a job skipped at the tag is an installer the release cannot have").toEqual([]);
+    const planted = { ...wf.jobs!.macos, if: "${{ github.event_name == 'pull_request' }}" };
+    expect(evalIf(String(planted.if), atTag), "the reader, watched failing on a job gated off the tag").toBe(false);
   });
 
   it("every job names the run's own commit, which on a tag push is the tagged one", () => {

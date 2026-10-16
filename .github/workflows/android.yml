@@ -1,8 +1,10 @@
 # The Android APK: build it in THIS repository's own Actions, from this tree.
 #
-# Three jobs, and the split between the last two is the whole security posture:
+# Three jobs build (a fourth, `changes`, only tells `apk` whether a pull request needs it), and
+# the split between the last two is the whole security posture:
 #
-#   · apk — every push to main (and every pull request) runs the whole native build:
+#   · apk — every push to main (and every pull request that changes what the phone's build
+#     reads; see `changes` below) runs the whole native build:
 #     workspace install, `expo prebuild`, Gradle release assembly. The APK it produces is
 #     signed with the locally generated DEBUG keystore — installable for smoke-testing, never
 #     attached to a release — and is kept briefly as a workflow artifact. Pull requests never
@@ -108,10 +110,37 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # ── which pull requests need the APK ────────────────────────────────────────────────────
+  # On a pull request, and only there, the APK is built when the pull request changes something the
+  # phone's build reads: apps/mobile, the engine it bundles and that engine's packages, the install,
+  # the patches, the build scripts, this workflow and the scripts it runs. Which paths those are is
+  # `.github/scripts/pr-build-scope.sh`'s to say (build.yml asks it the same question for the desktop).
+  # A push to main, a merge group and a dispatch skip this job and build the APK as before. `apk`
+  # starts with `!cancelled()` because a job that needs a skipped job is skipped with it unless its
+  # condition says otherwise, and builds whenever this job did not succeed.
+  changes:
+    name: android · changes · does this pull request need the APK
+    if: github.repository == 'trafficflowhq/ohmail' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      android: ${{ steps.scope.outputs.android }}
+    steps:
+      # The pull request's merge commit and its first parent, the base it merges into.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Read the paths it changes
+        id: scope
+        run: bash .github/scripts/pr-build-scope.sh --base HEAD^1 --head HEAD
+
   # ── the build check: prove the tree still builds an installable APK ─────────────────────
   apk:
     name: android · prebuild · gradle · debug-signed APK
-    if: github.repository == 'trafficflowhq/ohmail' && !startsWith(github.ref, 'refs/tags/')
+    needs: changes
+    if: ${{ !cancelled() && github.repository == 'trafficflowhq/ohmail' && !startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.android == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:

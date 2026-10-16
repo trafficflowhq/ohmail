@@ -48,6 +48,17 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   engine job typechecks and bundles the engine source on its own. All must pass;
   the smoke is what catches a view that lays out but draws nothing, and the
   artifact inspection is what catches a build that grew a network call.
+- On a pull request the platform jobs (macOS, Windows, both Linux
+  architectures, the rpm install and the flatpak) and the Android APK build run
+  only when the pull request changes something they build: the desktop app or
+  the phone app, the engine and the packages it bundles, the web app's views the
+  desktop window renders, `patches/`, `scripts/`, the root manifests and
+  lockfile, Cargo files, the workflow itself, or the version files a release
+  bump writes. A pull request that changes only tests, docs or other workflows
+  skips them, and they show as skipped. `.github/scripts/pr-build-scope.sh`
+  decides, and its `changes` job prints why. The engine job and the
+  engine-bearing UI smoke run on every pull request, and a push to `main`, a
+  release tag and a manual run build every platform.
 - The workflows under `.github/`, the tools under `scripts/` they run and the
   push gate's baseline under `.gate/` are changed by the maintainers. The
   **guard** check fails a pull request from a fork that changes them. If you
