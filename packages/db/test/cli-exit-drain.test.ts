@@ -154,7 +154,7 @@ const EXIT_MARK = "___EXIT=";
  */
 function run(entry: string, env: NodeJS.ProcessEnv): Promise<Ran> {
   const cmd =
-    `{ "${process.execPath}" --import tsx/esm --import "${PIN_SHIM}" "${entry}" 2>&1; ` +
+    `{ "${process.execPath}" --conditions=ohmail-source --import tsx/esm --import "${PIN_SHIM}" "${entry}" 2>&1; ` +
     `echo "${EXIT_MARK}$?"; } | cat`;
   return new Promise((resolve, reject) => {
     const child = spawn("/bin/sh", ["-c", cmd], {

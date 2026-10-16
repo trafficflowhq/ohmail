@@ -60,7 +60,7 @@ interface ChildRun {
 
 /** Run the child in one mode and collect its NDJSON. */
 async function runChild(mode: "guarded" | "bare", rounds: number, dbUrl: string): Promise<ChildRun> {
-  const child = spawn(process.execPath, ["--import", "tsx/esm", CHILD, mode], {
+  const child = spawn(process.execPath, ["--conditions=ohmail-source", "--import", "tsx/esm", CHILD, mode], {
     cwd: WORKER_DIR,
     env: { ...process.env, TF_CHILD_DB_URL: dbUrl, TF_CHILD_ROUNDS: String(rounds) },
     stdio: ["ignore", "pipe", "pipe"],

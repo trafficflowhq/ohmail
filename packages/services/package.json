@@ -4,9 +4,24 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./auth": "./src/auth.ts",
-    "./mail": "./src/mail.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./auth": {
+      "types": "./src/auth.ts",
+      "ohmail-source": "./src/auth.ts",
+      "node": "./dist/auth.js",
+      "default": "./src/auth.ts"
+    },
+    "./mail": {
+      "types": "./src/mail.ts",
+      "ohmail-source": "./src/mail.ts",
+      "node": "./dist/mail.js",
+      "default": "./src/mail.ts"
+    }
   },
   "dependencies": {
     "@simplewebauthn/server": "13.3.2",

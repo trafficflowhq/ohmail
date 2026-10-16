@@ -4,16 +4,66 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./admin": "./src/admin.ts",
-    "./cloud": "./src/cloud.ts",
-    "./journal": "./src/journal.ts",
-    "./ledger-source": "./src/ledger-source.ts",
-    "./mail": "./src/schema-mail.ts",
-    "./testing": "./src/testing.ts",
-    "./dialect": "./src/dialect/index.ts",
-    "./mail-sqlite": "./src/schema-mail-sqlite.ts",
-    "./sqlite-migrate": "./src/sqlite-migrate.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./admin": {
+      "types": "./src/admin.ts",
+      "ohmail-source": "./src/admin.ts",
+      "node": "./dist/admin.js",
+      "default": "./src/admin.ts"
+    },
+    "./cloud": {
+      "types": "./src/cloud.ts",
+      "ohmail-source": "./src/cloud.ts",
+      "node": "./dist/cloud.js",
+      "default": "./src/cloud.ts"
+    },
+    "./journal": {
+      "types": "./src/journal.ts",
+      "ohmail-source": "./src/journal.ts",
+      "node": "./dist/journal.js",
+      "default": "./src/journal.ts"
+    },
+    "./ledger-source": {
+      "types": "./src/ledger-source.ts",
+      "ohmail-source": "./src/ledger-source.ts",
+      "node": "./dist/ledger-source.js",
+      "default": "./src/ledger-source.ts"
+    },
+    "./mail": {
+      "types": "./src/schema-mail.ts",
+      "ohmail-source": "./src/schema-mail.ts",
+      "node": "./dist/schema-mail.js",
+      "default": "./src/schema-mail.ts"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "ohmail-source": "./src/testing.ts",
+      "node": "./dist/testing.js",
+      "default": "./src/testing.ts"
+    },
+    "./dialect": {
+      "types": "./src/dialect/index.ts",
+      "ohmail-source": "./src/dialect/index.ts",
+      "node": "./dist/dialect/index.js",
+      "default": "./src/dialect/index.ts"
+    },
+    "./mail-sqlite": {
+      "types": "./src/schema-mail-sqlite.ts",
+      "ohmail-source": "./src/schema-mail-sqlite.ts",
+      "node": "./dist/schema-mail-sqlite.js",
+      "default": "./src/schema-mail-sqlite.ts"
+    },
+    "./sqlite-migrate": {
+      "types": "./src/sqlite-migrate.ts",
+      "ohmail-source": "./src/sqlite-migrate.ts",
+      "node": "./dist/sqlite-migrate.js",
+      "default": "./src/sqlite-migrate.ts"
+    }
   },
   "dependencies": {
     "@electric-sql/pglite": "0.2.17",

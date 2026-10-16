@@ -77,6 +77,10 @@ export function buildOptionsFor(root = ROOT) {
     entryPoints: [join(root, "apps", "sidecar", "src", "main.ts")],
     bundle: true,
     platform: "node",
+    // The workspace's own packages from SOURCE, as `scripts/bundle-host.mjs` takes them: a
+    // node-platform bundle would otherwise match the `node` condition, which names the compiled
+    // twin. `module` is esbuild's default condition, kept because naming any condition drops it.
+    conditions: ["ohmail-source", "module"],
     format: "esm",
     target: "node20",
     /* PINNED TO THE WORKSPACE ROOT, so the artifact does not depend on where the build was STARTED —

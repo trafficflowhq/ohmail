@@ -4,8 +4,18 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./long-text": "./src/format/long-text.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./long-text": {
+      "types": "./src/format/long-text.ts",
+      "ohmail-source": "./src/format/long-text.ts",
+      "node": "./dist/format/long-text.js",
+      "default": "./src/format/long-text.ts"
+    }
   },
   "dependencies": {
     "react": "19.2.3",

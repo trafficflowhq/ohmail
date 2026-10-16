@@ -61,7 +61,7 @@ KIT_DIR="${OHMAIL_KIT_DIR:-$SELF_ROOT/docs/handoff}"
 if [ "${1:-}" = --sweep ]; then
   shift
   [ -f "$SELF_ROOT/scripts/lane-db-sweep.mjs" ] || { echo "lane-db: --sweep REFUSED — scripts/lane-db-sweep.mjs is not in this tree: the sweep is the shared box's, kept with the landing kit" >&2; exit 2; }
-  SWEEP=("$SELF_ROOT/node_modules/.bin/tsx" "$SELF_ROOT/scripts/lane-db-sweep.mjs")
+  SWEEP=("$SELF_ROOT/node_modules/.bin/tsx" --conditions=ohmail-source "$SELF_ROOT/scripts/lane-db-sweep.mjs")
   LANE=""; ACT=0; prev=""
   for a in "$@"; do
     case "$a" in --apply|--selftest-admit) ACT=1 ;; esac
@@ -117,7 +117,7 @@ done
 # A READ OF THE SERVER, or of the env files on this host, needs no worktree; lane-db.mjs refuses
 # either beside anything else.
 if { [ "$LIST" -eq 1 ] || [ "$LEGACY" -eq 1 ]; } && [ -z "$WT" ]; then
-  exec "$SELF_ROOT/node_modules/.bin/tsx" "$SELF_ROOT/scripts/lane-db.mjs" "${FLAGS[@]}"
+  exec "$SELF_ROOT/node_modules/.bin/tsx" --conditions=ohmail-source "$SELF_ROOT/scripts/lane-db.mjs" "${FLAGS[@]}"
 fi
 
 if [ -n "$NAME" ] && [ -z "$WT" ]; then
@@ -125,7 +125,7 @@ if [ -n "$NAME" ] && [ -z "$WT" ]; then
   # No worktree is needed or read: the name IS the scope, and lane-db.mjs fences it to
   # trafficflow_l_<12 hex> before it opens a connection.
   echo "lane-db: dropping by name from $SELF_ROOT" >&2
-  exec "$SELF_ROOT/node_modules/.bin/tsx" "$SELF_ROOT/scripts/lane-db.mjs" "${FLAGS[@]}"
+  exec "$SELF_ROOT/node_modules/.bin/tsx" --conditions=ohmail-source "$SELF_ROOT/scripts/lane-db.mjs" "${FLAGS[@]}"
 fi
 
 if [ -z "$WT" ]; then
@@ -166,6 +166,8 @@ if [ "$DROP" -eq 1 ] || [ "$CHECK" -eq 1 ]; then
   done
 fi
 
+# Every tsx run here names `--conditions=ohmail-source`: the workspace packages' exports name their
+# compiled `dist/` under `node`, and this tool runs before anything is built, so it reads the source.
 TSX="$ROOT/node_modules/.bin/tsx"
 MJS="$ROOT/scripts/lane-db.mjs"
 for needed in "$TSX" "$MJS"; do
@@ -181,13 +183,13 @@ done
 # The worktree's own copy of the tool, so the migrator and the journals are that tree's — except
 # for a drop of a worktree that is gone, where this checkout's copy answers and says so above.
 if [ "$DROP" -eq 0 ]; then box_shm || exit 2; fi
-[ "$CHECK" -eq 1 ] && exec "$TSX" "$MJS" ${FLAGS[@]+"${FLAGS[@]}"} "$WT"
+[ "$CHECK" -eq 1 ] && exec "$TSX" --conditions=ohmail-source "$MJS" ${FLAGS[@]+"${FLAGS[@]}"} "$WT"
 # A CREATE OR REUSE mints the lane role's password, ALTERs the role and renames the env, and a DROP
 # takes the database and the env: two at once over one worktree could leave the role and the env
 # disagreeing, or an env naming a database the drop took. One per worktree, the drop included; a
 # second is refused rc 75 and reported, never waited for.
 LOCK="/tmp/ohmail-lane-db-$(printf '%s' "$WT" | sha256sum | cut -c1-16).lock"
 rc=0
-flock -n -E 75 "$LOCK" "$TSX" "$MJS" ${FLAGS[@]+"${FLAGS[@]}"} "$WT" || rc=$?   # set -e: capture, never exit here
+flock -n -E 75 "$LOCK" "$TSX" --conditions=ohmail-source "$MJS" ${FLAGS[@]+"${FLAGS[@]}"} "$WT" || rc=$?   # set -e: capture, never exit here
 [ "$rc" -eq 75 ] && echo "lane-db: REFUSED rc 75 — another lane-db.sh is creating, re-keying or dropping $WT ($LOCK); report it, never wait" >&2
 exit "$rc"

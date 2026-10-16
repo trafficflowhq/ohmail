@@ -733,6 +733,9 @@ const nextConfig = {
   webpack: (config) => {
     // NodeNext TS packages use .js import specifiers on TS sources — map them for webpack.
     config.resolve.extensionAlias = { ".js": [".ts", ".tsx", ".js"], ".jsx": [".tsx", ".jsx"] };
+    // The workspace packages from SOURCE on every compiler: their exports name the compiled twin
+    // under `node`, which the server compiler matches, and no build of this app runs `tsc` first.
+    config.resolve.conditionNames = ["ohmail-source", ...(config.resolve.conditionNames ?? ["..."])];
     return config;
   },
 };

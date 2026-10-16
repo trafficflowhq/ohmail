@@ -2,6 +2,13 @@
 # packaged artifacts all land here.
 build/
 
+# What `npm run build` (tsc -b) writes beside each workspace package: the compiled files a plain
+# Node program loads (each package's exports name them under `node`) and the build's bookkeeping.
+apps/*/dist/
+packages/*/dist/
+packages/*/test/contract/dist/
+*.tsbuildinfo
+
 # KEPT AFTER THE SWIFT CLIENT WAS RETIRED, DELIBERATELY. Nothing in this tree produces these
 # any more — they were SwiftPM's build directory and the old client's screenshot output — but
 # a checkout that ever built it still has them on disk, and un-ignoring a directory is how a

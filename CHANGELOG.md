@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Self-built servers and workers start from the built files
+<!-- changes: one-oh-node-resolves-dist.md -->
+
+After `npm run build`, starting the server or the worker with Node (`node apps/worker/dist/index.js`) stopped at once
+with a TypeScript syntax error, because Node loaded the shared packages' source instead of their built files. They
+load the built files now. The published images were not affected: each runs one bundled file.
+
 ### The Screener answers in a fraction of the time on a large mailbox
 <!-- changes: one-oh-screener-reads-fast.md -->
 

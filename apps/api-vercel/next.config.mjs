@@ -234,6 +234,9 @@ const nextConfig = {
     // The workspace packages are NodeNext TypeScript and their emitted JS carries explicit
     // `.js` specifiers; the app's own `src/*` does too. Same mapping as apps/webapp.
     config.resolve.extensionAlias = { ".js": [".ts", ".js"] };
+    // The workspace packages from SOURCE: their exports name the compiled twin under `node`, which
+    // the server compiler matches, and the deployment's build runs no `tsc` first. Same as apps/webapp.
+    config.resolve.conditionNames = ["ohmail-source", ...(config.resolve.conditionNames ?? ["..."])];
     return config;
   },
 };

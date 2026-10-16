@@ -62,6 +62,10 @@ const result = await build({
   entryPoints: [join(ROOT, HOSTS[name].entry)],
   bundle: true,
   platform: "node",
+  // The workspace's own packages from SOURCE: their exports name the compiled twin under `node`
+  // (for a plain Node program), which a node-platform bundle would match too, and this recipe runs
+  // no compiler. `module` is esbuild's default condition, kept because naming any condition drops it.
+  conditions: ["ohmail-source", "module"],
   format: "esm",
   target: "node22",
   // Paths in the output are a function of the tree alone, not of where the build started —

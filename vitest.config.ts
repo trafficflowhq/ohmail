@@ -11,6 +11,10 @@ const nextIntl = [r("./apps/webapp/node_modules/next-intl"), r("./node_modules/n
 
 export default defineConfig({
   resolve: {
+    // A workspace subpath the table below does not name resolves through its package's exports,
+    // where `node` (which vite matches for a test) names the compiled twin; this condition, listed
+    // ahead of it in every map, keeps that subpath on the source as well.
+    conditions: ["ohmail-source"],
     // Map workspace package names (and core's subpath exports) to their TS sources
     // so tests run against src without a prior `tsc` build. Order matters: the more
     // specific subpaths must precede the bare "@trafficflow/core".

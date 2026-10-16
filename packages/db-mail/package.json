@@ -4,8 +4,18 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./sqlite-journal": "./src/sqlite-journal.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./sqlite-journal": {
+      "types": "./src/sqlite-journal.ts",
+      "ohmail-source": "./src/sqlite-journal.ts",
+      "node": "./dist/sqlite-journal.js",
+      "default": "./src/sqlite-journal.ts"
+    }
   },
   "dependencies": {}
 }

@@ -300,7 +300,7 @@ function launch(env: NodeJS.ProcessEnv): ChildProcessWithoutNullStreams {
   // ERR_REQUIRE_CYCLE_MODULE on it under this Node; the `tsx` loader resolves the interop. It also
   // avoids the tsx CLI's IPC socket, which needs a writable TMPDIR sandboxed CI does not grant —
   // the same reason `apps/worker/test/cli.smoke.test.ts` spawns the loader rather than the CLI.
-  const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts"], {
+  const child = spawn(process.execPath, ["--conditions=ohmail-source", "--import", "tsx", "src/main.ts"], {
     cwd: SIDECAR_DIR,
     env,
     stdio: ["pipe", "pipe", "pipe"],

@@ -63,7 +63,7 @@ async function launch(
     OHMAIL_POLL_MS: "3600000",
   };
   for (const k of Object.keys(env)) if (k.startsWith("OHMAIL_IMAP_") || k.startsWith("OHMAIL_CLOUD_ACCESS") || k.startsWith("OHMAIL_CLOUD_REFRESH")) delete env[k];
-  const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts"], {
+  const child = spawn(process.execPath, ["--conditions=ohmail-source", "--import", "tsx", "src/main.ts"], {
     cwd: SIDECAR_DIR,
     env,
     stdio: ["pipe", "pipe", "pipe"],

@@ -4,25 +4,120 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    "./sync": "./src/sync.ts",
-    "./lease": "./src/lease.ts",
-    "./profile": "./src/profile.ts",
-    "./entry": "./src/entry.ts",
-    "./classifier-fault": "./src/classifier-fault.ts",
-    "./bubble-up": "./src/bubble-up-pass.ts",
-    "./screener-auto-suggest": "./src/screener-auto-suggest.ts",
-    "./screener-auto-act": "./src/screener-auto-act.ts",
-    "./sender-name-backfill": "./src/sender-name-backfill.ts",
-    "./thread-join-heal": "./src/thread-join-heal.ts",
-    "./inbound-quiet": "./src/inbound-quiet.ts",
-    "./request-drain": "./src/request-drain.ts",
-    "./known-set": "./src/known-set.ts",
-    "./rule-retro": "./src/rule-retro.ts",
-    "./gap-catchup": "./src/gap-catchup.ts",
-    "./screener-correspondent-retro": "./src/screener-correspondent-retro.ts",
-    "./dead-letter": "./src/dead-letter.ts",
-    "./sender-check-backfill": "./src/sender-check-backfill.ts",
-    "./list-address-backfill": "./src/list-address-backfill.ts"
+    "./sync": {
+      "types": "./src/sync.ts",
+      "ohmail-source": "./src/sync.ts",
+      "node": "./dist/sync.js",
+      "default": "./src/sync.ts"
+    },
+    "./lease": {
+      "types": "./src/lease.ts",
+      "ohmail-source": "./src/lease.ts",
+      "node": "./dist/lease.js",
+      "default": "./src/lease.ts"
+    },
+    "./profile": {
+      "types": "./src/profile.ts",
+      "ohmail-source": "./src/profile.ts",
+      "node": "./dist/profile.js",
+      "default": "./src/profile.ts"
+    },
+    "./entry": {
+      "types": "./src/entry.ts",
+      "ohmail-source": "./src/entry.ts",
+      "node": "./dist/entry.js",
+      "default": "./src/entry.ts"
+    },
+    "./classifier-fault": {
+      "types": "./src/classifier-fault.ts",
+      "ohmail-source": "./src/classifier-fault.ts",
+      "node": "./dist/classifier-fault.js",
+      "default": "./src/classifier-fault.ts"
+    },
+    "./bubble-up": {
+      "types": "./src/bubble-up-pass.ts",
+      "ohmail-source": "./src/bubble-up-pass.ts",
+      "node": "./dist/bubble-up-pass.js",
+      "default": "./src/bubble-up-pass.ts"
+    },
+    "./screener-auto-suggest": {
+      "types": "./src/screener-auto-suggest.ts",
+      "ohmail-source": "./src/screener-auto-suggest.ts",
+      "node": "./dist/screener-auto-suggest.js",
+      "default": "./src/screener-auto-suggest.ts"
+    },
+    "./screener-auto-act": {
+      "types": "./src/screener-auto-act.ts",
+      "ohmail-source": "./src/screener-auto-act.ts",
+      "node": "./dist/screener-auto-act.js",
+      "default": "./src/screener-auto-act.ts"
+    },
+    "./sender-name-backfill": {
+      "types": "./src/sender-name-backfill.ts",
+      "ohmail-source": "./src/sender-name-backfill.ts",
+      "node": "./dist/sender-name-backfill.js",
+      "default": "./src/sender-name-backfill.ts"
+    },
+    "./thread-join-heal": {
+      "types": "./src/thread-join-heal.ts",
+      "ohmail-source": "./src/thread-join-heal.ts",
+      "node": "./dist/thread-join-heal.js",
+      "default": "./src/thread-join-heal.ts"
+    },
+    "./inbound-quiet": {
+      "types": "./src/inbound-quiet.ts",
+      "ohmail-source": "./src/inbound-quiet.ts",
+      "node": "./dist/inbound-quiet.js",
+      "default": "./src/inbound-quiet.ts"
+    },
+    "./request-drain": {
+      "types": "./src/request-drain.ts",
+      "ohmail-source": "./src/request-drain.ts",
+      "node": "./dist/request-drain.js",
+      "default": "./src/request-drain.ts"
+    },
+    "./known-set": {
+      "types": "./src/known-set.ts",
+      "ohmail-source": "./src/known-set.ts",
+      "node": "./dist/known-set.js",
+      "default": "./src/known-set.ts"
+    },
+    "./rule-retro": {
+      "types": "./src/rule-retro.ts",
+      "ohmail-source": "./src/rule-retro.ts",
+      "node": "./dist/rule-retro.js",
+      "default": "./src/rule-retro.ts"
+    },
+    "./gap-catchup": {
+      "types": "./src/gap-catchup.ts",
+      "ohmail-source": "./src/gap-catchup.ts",
+      "node": "./dist/gap-catchup.js",
+      "default": "./src/gap-catchup.ts"
+    },
+    "./screener-correspondent-retro": {
+      "types": "./src/screener-correspondent-retro.ts",
+      "ohmail-source": "./src/screener-correspondent-retro.ts",
+      "node": "./dist/screener-correspondent-retro.js",
+      "default": "./src/screener-correspondent-retro.ts"
+    },
+    "./dead-letter": {
+      "types": "./src/dead-letter.ts",
+      "ohmail-source": "./src/dead-letter.ts",
+      "node": "./dist/dead-letter.js",
+      "default": "./src/dead-letter.ts"
+    },
+    "./sender-check-backfill": {
+      "types": "./src/sender-check-backfill.ts",
+      "ohmail-source": "./src/sender-check-backfill.ts",
+      "node": "./dist/sender-check-backfill.js",
+      "default": "./src/sender-check-backfill.ts"
+    },
+    "./list-address-backfill": {
+      "types": "./src/list-address-backfill.ts",
+      "ohmail-source": "./src/list-address-backfill.ts",
+      "node": "./dist/list-address-backfill.js",
+      "default": "./src/list-address-backfill.ts"
+    }
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

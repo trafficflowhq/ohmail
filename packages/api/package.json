@@ -4,13 +4,48 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./health-cloud": "./src/routes/health-cloud.ts",
-    "./local": "./src/local.ts",
-    "./self-host": "./src/routes/self-host.ts",
-    "./desktop-host": "./src/routes/desktop-host.ts",
-    "./relay-allowlist": "./src/relay-allowlist.ts",
-    "./match-path": "./src/match-path.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./health-cloud": {
+      "types": "./src/routes/health-cloud.ts",
+      "ohmail-source": "./src/routes/health-cloud.ts",
+      "node": "./dist/routes/health-cloud.js",
+      "default": "./src/routes/health-cloud.ts"
+    },
+    "./local": {
+      "types": "./src/local.ts",
+      "ohmail-source": "./src/local.ts",
+      "node": "./dist/local.js",
+      "default": "./src/local.ts"
+    },
+    "./self-host": {
+      "types": "./src/routes/self-host.ts",
+      "ohmail-source": "./src/routes/self-host.ts",
+      "node": "./dist/routes/self-host.js",
+      "default": "./src/routes/self-host.ts"
+    },
+    "./desktop-host": {
+      "types": "./src/routes/desktop-host.ts",
+      "ohmail-source": "./src/routes/desktop-host.ts",
+      "node": "./dist/routes/desktop-host.js",
+      "default": "./src/routes/desktop-host.ts"
+    },
+    "./relay-allowlist": {
+      "types": "./src/relay-allowlist.ts",
+      "ohmail-source": "./src/relay-allowlist.ts",
+      "node": "./dist/relay-allowlist.js",
+      "default": "./src/relay-allowlist.ts"
+    },
+    "./match-path": {
+      "types": "./src/match-path.ts",
+      "ohmail-source": "./src/match-path.ts",
+      "node": "./dist/match-path.js",
+      "default": "./src/match-path.ts"
+    }
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

@@ -7,7 +7,7 @@
     "test": "vitest run",
     "test:sqlite": "vitest run --config vitest.sqlite.config.ts",
     "build": "tsc -b",
-    "db:setup:prod": "tsx packages/db/src/setup-prod-cli.ts"
+    "db:setup:prod": "tsx --conditions=ohmail-source packages/db/src/setup-prod-cli.ts"
   },
   "workspaces": [
     "apps/api-vercel",

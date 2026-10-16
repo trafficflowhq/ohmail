@@ -4,10 +4,30 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./durable": "./src/durable.ts",
-    "./send-fingerprint": "./src/send-fingerprint.ts",
-    "./html-tree-budget": "./src/html-tree-budget.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./durable": {
+      "types": "./src/durable.ts",
+      "ohmail-source": "./src/durable.ts",
+      "node": "./dist/durable.js",
+      "default": "./src/durable.ts"
+    },
+    "./send-fingerprint": {
+      "types": "./src/send-fingerprint.ts",
+      "ohmail-source": "./src/send-fingerprint.ts",
+      "node": "./dist/send-fingerprint.js",
+      "default": "./src/send-fingerprint.ts"
+    },
+    "./html-tree-budget": {
+      "types": "./src/html-tree-budget.ts",
+      "ohmail-source": "./src/html-tree-budget.ts",
+      "node": "./dist/html-tree-budget.js",
+      "default": "./src/html-tree-budget.ts"
+    }
   },
   "dependencies": {
     "parse5": "7.3.0",

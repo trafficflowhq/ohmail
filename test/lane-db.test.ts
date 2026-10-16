@@ -254,7 +254,7 @@ describe("what the tool refuses before it opens a connection", () => {
     const dir = mkdtempSync(join(tmpdir(), "lane-db-"));
     try {
       const r = spawnSync(join(REPO, "node_modules/.bin/tsx"),
-        [join(REPO, "scripts", "lane-db.mjs"), dir], { cwd: REPO, encoding: "utf8" });
+        ["--conditions=ohmail-source", join(REPO, "scripts", "lane-db.mjs"), dir], { cwd: REPO, encoding: "utf8" });
       // Name a missing tsx rather than reporting it as the refusal not firing.
       expect(r.error, "tsx did not run — is this tree installed?").toBeUndefined();
       expect(r.status).toBe(2);
@@ -287,7 +287,7 @@ describe("the worker databases a drop takes with it", () => {
       ` pathKey: m.checkoutKeyOf("trafficflow_test", ${JSON.stringify(root)}),` +
       ` names: ${JSON.stringify(logicals)}.map((l) => m.isolatedDbName(l, key)) }));` +
       `})`;
-    const r = spawnSync(TSX, ["-e", script], { cwd: REPO, encoding: "utf8" });
+    const r = spawnSync(TSX, ["--conditions=ohmail-source", "-e", script], { cwd: REPO, encoding: "utf8" });
     expect(r.error, "tsx did not run — is this tree installed?").toBeUndefined();
     expect(r.status, String(r.stderr).slice(-300)).toBe(0);
     return JSON.parse(r.stdout) as { key: string; pathKey: string; names: string[] };

@@ -25,7 +25,7 @@ function claimFromAnotherRun(logical: string): string {
   const script = `import(${JSON.stringify(door)}).then(async (m) => {` +
     `console.log(await m.claimRunSlot(${JSON.stringify(logical)}, m.checkoutKey())); process.exit(0);` +
     `}).catch((e) => { console.error(String(e)); process.exit(3); })`;
-  const r = spawnSync(join(checkoutRoot(), "node_modules/.bin/tsx"), ["-e", script],
+  const r = spawnSync(join(checkoutRoot(), "node_modules/.bin/tsx"), ["--conditions=ohmail-source", "-e", script],
     { cwd: checkoutRoot(), encoding: "utf8", timeout: 60_000 });
   expect(r.status, String(r.stderr).slice(-400)).toBe(0);
   return r.stdout.trim().split("\n").pop()!;

@@ -4,36 +4,186 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./mail": "./src/mail.ts",
-    "./ics": "./src/ics.ts",
-    "./away-scope": "./src/away-scope.ts",
-    "./net": "./src/net/index.ts",
-    "./adapters/http-host": "./src/adapters/http-host.ts",
-    "./adapters/imap": "./src/adapters/imap.ts",
-    "./adapters/imap-types": "./src/adapters/imap-types.ts",
-    "./adapters/organizer-lease": "./src/adapters/organizer-lease.ts",
-    "./adapters/organizer-profile": "./src/adapters/organizer-profile.ts",
-    "./adapters/organizer-profile-store": "./src/adapters/organizer-profile-store.ts",
-    "./adapters/drizzle-repo": "./src/adapters/drizzle-repo.ts",
-    "./organizer-install": "./src/organizer-install.ts",
-    "./folder-name": "./src/folder-name.ts",
-    "./destinations": "./src/destinations.ts",
-    "./drain-policy": "./src/drain-policy.ts",
-    "./reply-subject": "./src/reply-subject.ts",
-    "./search-rank": "./src/search-rank.ts",
-    "./pair-link": "./src/pair-link.ts",
-    "./mailto": "./src/mailto.ts",
-    "./sender-headers": "./src/sender-headers.ts",
-    "./rule-order": "./src/rule-order.ts",
-    "./conversation-fold": "./src/conversation-fold.ts",
-    "./reader-refusal": "./src/reader-refusal.ts",
-    "./outbound-text": "./src/outbound-text.ts",
-    "./model-name": "./src/model-name.ts",
-    "./transport-frame": "./src/transport-frame.ts",
-    "./url-escapes": "./src/url-escapes.ts",
-    "./image-dimensions": "./src/image-dimensions.ts",
-    "./diagnostics": "./src/diagnostics/index.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./mail": {
+      "types": "./src/mail.ts",
+      "ohmail-source": "./src/mail.ts",
+      "node": "./dist/mail.js",
+      "default": "./src/mail.ts"
+    },
+    "./ics": {
+      "types": "./src/ics.ts",
+      "ohmail-source": "./src/ics.ts",
+      "node": "./dist/ics.js",
+      "default": "./src/ics.ts"
+    },
+    "./away-scope": {
+      "types": "./src/away-scope.ts",
+      "ohmail-source": "./src/away-scope.ts",
+      "node": "./dist/away-scope.js",
+      "default": "./src/away-scope.ts"
+    },
+    "./net": {
+      "types": "./src/net/index.ts",
+      "ohmail-source": "./src/net/index.ts",
+      "node": "./dist/net/index.js",
+      "default": "./src/net/index.ts"
+    },
+    "./adapters/http-host": {
+      "types": "./src/adapters/http-host.ts",
+      "ohmail-source": "./src/adapters/http-host.ts",
+      "node": "./dist/adapters/http-host.js",
+      "default": "./src/adapters/http-host.ts"
+    },
+    "./adapters/imap": {
+      "types": "./src/adapters/imap.ts",
+      "ohmail-source": "./src/adapters/imap.ts",
+      "node": "./dist/adapters/imap.js",
+      "default": "./src/adapters/imap.ts"
+    },
+    "./adapters/imap-types": {
+      "types": "./src/adapters/imap-types.ts",
+      "ohmail-source": "./src/adapters/imap-types.ts",
+      "node": "./dist/adapters/imap-types.js",
+      "default": "./src/adapters/imap-types.ts"
+    },
+    "./adapters/organizer-lease": {
+      "types": "./src/adapters/organizer-lease.ts",
+      "ohmail-source": "./src/adapters/organizer-lease.ts",
+      "node": "./dist/adapters/organizer-lease.js",
+      "default": "./src/adapters/organizer-lease.ts"
+    },
+    "./adapters/organizer-profile": {
+      "types": "./src/adapters/organizer-profile.ts",
+      "ohmail-source": "./src/adapters/organizer-profile.ts",
+      "node": "./dist/adapters/organizer-profile.js",
+      "default": "./src/adapters/organizer-profile.ts"
+    },
+    "./adapters/organizer-profile-store": {
+      "types": "./src/adapters/organizer-profile-store.ts",
+      "ohmail-source": "./src/adapters/organizer-profile-store.ts",
+      "node": "./dist/adapters/organizer-profile-store.js",
+      "default": "./src/adapters/organizer-profile-store.ts"
+    },
+    "./adapters/drizzle-repo": {
+      "types": "./src/adapters/drizzle-repo.ts",
+      "ohmail-source": "./src/adapters/drizzle-repo.ts",
+      "node": "./dist/adapters/drizzle-repo.js",
+      "default": "./src/adapters/drizzle-repo.ts"
+    },
+    "./organizer-install": {
+      "types": "./src/organizer-install.ts",
+      "ohmail-source": "./src/organizer-install.ts",
+      "node": "./dist/organizer-install.js",
+      "default": "./src/organizer-install.ts"
+    },
+    "./folder-name": {
+      "types": "./src/folder-name.ts",
+      "ohmail-source": "./src/folder-name.ts",
+      "node": "./dist/folder-name.js",
+      "default": "./src/folder-name.ts"
+    },
+    "./destinations": {
+      "types": "./src/destinations.ts",
+      "ohmail-source": "./src/destinations.ts",
+      "node": "./dist/destinations.js",
+      "default": "./src/destinations.ts"
+    },
+    "./drain-policy": {
+      "types": "./src/drain-policy.ts",
+      "ohmail-source": "./src/drain-policy.ts",
+      "node": "./dist/drain-policy.js",
+      "default": "./src/drain-policy.ts"
+    },
+    "./reply-subject": {
+      "types": "./src/reply-subject.ts",
+      "ohmail-source": "./src/reply-subject.ts",
+      "node": "./dist/reply-subject.js",
+      "default": "./src/reply-subject.ts"
+    },
+    "./search-rank": {
+      "types": "./src/search-rank.ts",
+      "ohmail-source": "./src/search-rank.ts",
+      "node": "./dist/search-rank.js",
+      "default": "./src/search-rank.ts"
+    },
+    "./pair-link": {
+      "types": "./src/pair-link.ts",
+      "ohmail-source": "./src/pair-link.ts",
+      "node": "./dist/pair-link.js",
+      "default": "./src/pair-link.ts"
+    },
+    "./mailto": {
+      "types": "./src/mailto.ts",
+      "ohmail-source": "./src/mailto.ts",
+      "node": "./dist/mailto.js",
+      "default": "./src/mailto.ts"
+    },
+    "./sender-headers": {
+      "types": "./src/sender-headers.ts",
+      "ohmail-source": "./src/sender-headers.ts",
+      "node": "./dist/sender-headers.js",
+      "default": "./src/sender-headers.ts"
+    },
+    "./rule-order": {
+      "types": "./src/rule-order.ts",
+      "ohmail-source": "./src/rule-order.ts",
+      "node": "./dist/rule-order.js",
+      "default": "./src/rule-order.ts"
+    },
+    "./conversation-fold": {
+      "types": "./src/conversation-fold.ts",
+      "ohmail-source": "./src/conversation-fold.ts",
+      "node": "./dist/conversation-fold.js",
+      "default": "./src/conversation-fold.ts"
+    },
+    "./reader-refusal": {
+      "types": "./src/reader-refusal.ts",
+      "ohmail-source": "./src/reader-refusal.ts",
+      "node": "./dist/reader-refusal.js",
+      "default": "./src/reader-refusal.ts"
+    },
+    "./outbound-text": {
+      "types": "./src/outbound-text.ts",
+      "ohmail-source": "./src/outbound-text.ts",
+      "node": "./dist/outbound-text.js",
+      "default": "./src/outbound-text.ts"
+    },
+    "./model-name": {
+      "types": "./src/model-name.ts",
+      "ohmail-source": "./src/model-name.ts",
+      "node": "./dist/model-name.js",
+      "default": "./src/model-name.ts"
+    },
+    "./transport-frame": {
+      "types": "./src/transport-frame.ts",
+      "ohmail-source": "./src/transport-frame.ts",
+      "node": "./dist/transport-frame.js",
+      "default": "./src/transport-frame.ts"
+    },
+    "./url-escapes": {
+      "types": "./src/url-escapes.ts",
+      "ohmail-source": "./src/url-escapes.ts",
+      "node": "./dist/url-escapes.js",
+      "default": "./src/url-escapes.ts"
+    },
+    "./image-dimensions": {
+      "types": "./src/image-dimensions.ts",
+      "ohmail-source": "./src/image-dimensions.ts",
+      "node": "./dist/image-dimensions.js",
+      "default": "./src/image-dimensions.ts"
+    },
+    "./diagnostics": {
+      "types": "./src/diagnostics/index.ts",
+      "ohmail-source": "./src/diagnostics/index.ts",
+      "node": "./dist/diagnostics/index.js",
+      "default": "./src/diagnostics/index.ts"
+    }
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

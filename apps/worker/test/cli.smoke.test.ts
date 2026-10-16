@@ -53,7 +53,7 @@ describe("the DEPLOYABLE CLI entry point", () => {
    * it, and it must not appear anywhere in what the process printed.
    */
   it("a malformed environment produces a STRUCTURED worker_start_failed, carrying no secret", async () => {
-    child = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
+    child = spawn(process.execPath, ["--conditions=ohmail-source", "--import", "tsx/esm", "src/index.ts"], {
       cwd: WORKER_DIR,
       env: {
         ...process.env,
@@ -116,7 +116,7 @@ describe("the DEPLOYABLE CLI entry point", () => {
     // TMPDIR that sandboxed CI does not always grant). What matters is that a SEPARATE
     // process executes `src/index.ts` as its main module — the exact thing the CLI guard
     // decides, and the exact thing Railway does.
-    child = spawn(process.execPath, ["--import", "tsx/esm", "src/index.ts"], {
+    child = spawn(process.execPath, ["--conditions=ohmail-source", "--import", "tsx/esm", "src/index.ts"], {
       cwd: WORKER_DIR,
       env: {
         ...process.env,
