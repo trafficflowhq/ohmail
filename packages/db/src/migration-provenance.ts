@@ -180,6 +180,7 @@ export function classifyDrift(
   try {
     history = reader.history(dir, m.tag);
   } catch (err: unknown) {
+    // Held, not dropped: the record below may still identify the version; only if it cannot is `unreadable` the verdict.
     const why = err instanceof Error ? err.message.split("\n")[0] : String(err);
     unreadable = why ?? "git could not be run";
   }
