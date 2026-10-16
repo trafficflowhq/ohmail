@@ -92,7 +92,7 @@ const PASSWORD = `smoke-${randomUUID()}`;
  * is not this repository's compose. Defaults are the CI overlay's GreenMail. SMOKE_MAIL_PORT is
  * the IMAP port the API dials from INSIDE the compose network, not the host-published one. */
 const MAIL_HOST = process.env.SMOKE_MAIL_HOST ?? "greenmail";
-const MAIL_PORT = Number(process.env.SMOKE_MAIL_PORT ?? 3143);
+const MAIL_PORT = Number(process.env.SMOKE_MAIL_PORT ?? 143);
 const MAIL_DOMAIN = process.env.SMOKE_MAIL_DOMAIN ?? "greenmail.test";
 const MAIL_PASS = process.env.SMOKE_MAIL_PASS ?? "smoke";
 const MAILBOX_ONE = `smoke-owner@${MAIL_DOMAIN}`;

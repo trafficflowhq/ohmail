@@ -177,7 +177,7 @@ describe.skipIf(!RUSTFS_UP)("the presigned round trip, against real RustFS", () 
  * ═══ THE SELF-HOST BROWSER PATH: PUBLIC ENDPOINT + HOST-PRESERVING PROXY + PRIVATE BUCKET ═══
  *
  * The compose's browser uploads presign against the PUBLIC origin and ride a Caddy route
- * (`/<bucket>/*` → rustfs, Host PRESERVED) — `deploy/selfhost/Caddyfile`. This block is that
+ * (`/<bucket>/*` → rustfs, Host PRESERVED) — `deploy/selfhost/proxy/Caddyfile`. This block is that
  * route in miniature, against real RustFS: a ~20-line Node proxy that forwards everything and
  * KEEPS the incoming Host header, which is the one property the signature depends on.
  * The boot smoke proves the same wire through the real Caddy on the real compose; this proves

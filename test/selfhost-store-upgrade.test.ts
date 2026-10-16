@@ -172,11 +172,12 @@ describe("the boot smoke and the upgrade note", () => {
  * the api read from the new one: measured on a stack updated from the MinIO release, the boot
  * smoke's upload went through and the download answered 404. The store's address therefore lives
  * in the proxy's environment, which routes.caddy reads, so a change of store recreates the proxy.
+ * Any other edit to deploy/selfhost/proxy does as well: test/selfhost-proxy-reload.test.ts.
  */
 describe("the proxy's route to the store", () => {
   type Full = { image?: string; environment?: Record<string, string> };
   const all = (parse(rd(COMPOSE)) as { services: Record<string, Full> }).services;
-  const routes = rd("deploy/selfhost/routes.caddy");
+  const routes = rd("deploy/selfhost/proxy/routes.caddy");
   const store = Object.entries(all).find(([, s]) => /\/mirror-rustfs:/.test(s.image ?? ""))?.[0];
 
   it("is named in the proxy service's own definition, as the store service's address", () => {

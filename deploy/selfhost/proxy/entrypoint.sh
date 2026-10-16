@@ -3,8 +3,10 @@
 # terminator is this container's network gateway, read from the IPv4 default route, because a
 # terminator on the same box reaches the proxy from there. One line says what is trusted, then the
 # image's own command runs: compose's `entrypoint:` clears it, so it is repeated below and pinned
-# against the image by a test. No default route and nothing set: exit 78, naming both
-# remedies. `--resolve` prints and exits; OHMAIL_PROC_NET_ROUTE names a route file for tests.
+# against the image by a test, with `--config` naming the door. `:+` as compose spells it, so
+# OHMAIL_EXTERNAL_TLS chooses a file and never names one. No default route and nothing set: exit
+# 78, naming both remedies. `--resolve` prints and exits; OHMAIL_PROC_NET_ROUTE names a route file
+# for tests.
 set -eu
 
 route_file=${OHMAIL_PROC_NET_ROUTE:-/proc/net/route}
@@ -39,4 +41,4 @@ if [ -n "${OHMAIL_EXTERNAL_TLS:-}" ]; then
 fi
 
 if [ "${1:-}" = "--resolve" ]; then exit 0; fi
-exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+exec caddy run --config "/etc/caddy/Caddyfile${OHMAIL_EXTERNAL_TLS:+.external-tls}" --adapter caddyfile

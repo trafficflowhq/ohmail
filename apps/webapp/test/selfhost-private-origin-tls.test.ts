@@ -21,8 +21,8 @@ import { join } from "node:path";
  *
  * ── AND THERE ARE TWO FRONT DOORS NOW ───────────────────────────────────────────────────
  *
- * A stack behind a TLS terminator it does not own mounts `Caddyfile.external-tls` instead,
- * chosen by compose composing the mount's SOURCE PATH out of `OHMAIL_EXTERNAL_TLS`. That makes
+ * A stack behind a TLS terminator it does not own runs `Caddyfile.external-tls` instead, chosen
+ * by the proxy's entrypoint composing the `--config` path out of `OHMAIL_EXTERNAL_TLS`. That makes
  * the containment property two-layered — neither the directive nor the FILE may come from
  * `.env` — and gives the ACME rule a second subject. Cookies stay `Secure` on both doors; that
  * half is proved at the mint, in
@@ -40,8 +40,9 @@ import { join } from "node:path";
 const ROOT = join(__dirname, "..", "..", "..");
 const read = (p: string): string => readFileSync(join(ROOT, "deploy", "selfhost", p), "utf8");
 
-const CADDYFILE = read("Caddyfile");
-const EXTERNAL = read("Caddyfile.external-tls");
+const CADDYFILE = read("proxy/Caddyfile");
+const EXTERNAL = read("proxy/Caddyfile.external-tls");
+const ENTRYPOINT = read("proxy/entrypoint.sh");
 const COMPOSE = read("docker-compose.yml");
 const ENV_EXAMPLE = read(".env.example");
 
@@ -62,17 +63,18 @@ const proxyBlock = (): string => {
 };
 
 /**
- * The source path of the mount that hands the proxy its front door. COMPOSED, not a literal:
- * compose selects the FILE rather than switching configuration inside Caddy. Captured so the
- * cases below can resolve both arms out of it instead of restating either.
+ * The `--config` path the entrypoint hands Caddy. COMPOSED, not a literal: the entrypoint selects
+ * the FILE rather than switching configuration inside Caddy. Captured so the cases below can
+ * resolve both arms out of it instead of restating either.
  */
-const caddyfileMountSource = (): string => {
-  const m = /^\s*-\s*(\S*Caddyfile\S*):\/etc\/caddy\/Caddyfile:ro$/m.exec(proxyBlock());
-  expect(m, "the proxy mounts nothing at /etc/caddy/Caddyfile — it holds no front door").not.toBeNull();
+const doorConfigPath = (): string => {
+  expect(proxyBlock(), "the proxy does not mount ./proxy at /etc/caddy").toContain("- ./proxy:/etc/caddy:ro");
+  const m = /^exec caddy run --config "(\/etc\/caddy\/Caddyfile[^"]*)" --adapter caddyfile$/m.exec(ENTRYPOINT);
+  expect(m, "the entrypoint runs no Caddyfile under /etc/caddy — the proxy holds no front door").not.toBeNull();
   return m![1]!;
 };
 
-/** Resolve one state of a `${VAR:+literal}` the way compose does: the literal, or nothing. */
+/** Resolve one state of a `${VAR:+literal}` the way compose and sh do: the literal, or nothing. */
 const resolvePlusArms = (raw: string, set: boolean): string =>
   raw.replace(/\$\{[A-Z0-9_]+:\+([^}]*)\}/g, (_all, literal: string) => (set ? literal : ""));
 
@@ -124,19 +126,19 @@ describe("the operator's switch is a boolean, never Caddy configuration", () => 
 
   it("it is passed to the proxy, which is the container that mounts the front door", () => {
     expect(proxyBlock()).toContain("OHMAIL_TLS_DIRECTIVE:");
-    expect(caddyfileMountSource(), "the mount's source is not a Caddyfile in this directory")
-      .toMatch(/^\.\/Caddyfile/);
+    expect(doorConfigPath(), "the door is not a Caddyfile in the mounted directory")
+      .toMatch(/^\/etc\/caddy\/Caddyfile/);
   });
 
-  it("the mount's SOURCE PATH is a `:+` literal too, so `.env` cannot name a file", () => {
-    // THE SAME CONTAINMENT PROPERTY, one layer out. Whatever file compose mounts at
-    // /etc/caddy/Caddyfile, Caddy executes — so a source path the operator's VALUE reaches is a
+  it("the door's PATH is a `:+` literal too, so `.env` cannot name a file", () => {
+    // THE SAME CONTAINMENT PROPERTY, one layer out. Whatever file the entrypoint hands Caddy,
+    // Caddy executes — so a path the operator's VALUE reaches is a
     // write into the proxy's configuration exactly as a directive would be. `${VAR:+.suffix}`
     // appends a literal on presence; `${VAR}`, `${VAR:-x}` and `${VAR:?x}` all forward the
     // value, and any of them here would let `.env` point the door at a file the operator wrote.
-    const raw = caddyfileMountSource();
+    const raw = doorConfigPath();
     const interpolations = raw.match(/\$\{[^}]*\}/g) ?? [];
-    expect(interpolations, "the mount's source path does not carry exactly one variable")
+    expect(interpolations, "the door's path does not carry exactly one variable")
       .toHaveLength(1);
     expect(interpolations[0]).toMatch(/^\$\{OHMAIL_EXTERNAL_TLS:\+[A-Za-z0-9._-]+\}$/);
     for (const set of [false, true]) {
@@ -146,15 +148,14 @@ describe("the operator's switch is a boolean, never Caddy configuration", () => 
   });
 
   it("and it resolves to one of exactly two files this repository ships", () => {
-    // Presence chooses a door; it never supplies one. Both arms must EXIST here, because a bind
-    // mount whose source is missing on the host is a DIRECTORY Docker creates — Caddy then comes
-    // up on an empty config path rather than refusing, and the stack answers nothing.
-    const raw = caddyfileMountSource();
-    expect(resolvePlusArms(raw, false)).toBe("./Caddyfile");
-    expect(resolvePlusArms(raw, true)).toBe("./Caddyfile.external-tls");
+    // Presence chooses a door; it never supplies one. Both arms must EXIST in ./proxy, which
+    // compose mounts at /etc/caddy, or Caddy refuses to start on that door.
+    const raw = doorConfigPath();
+    expect(resolvePlusArms(raw, false)).toBe("/etc/caddy/Caddyfile");
+    expect(resolvePlusArms(raw, true)).toBe("/etc/caddy/Caddyfile.external-tls");
     for (const set of [false, true]) {
-      const file = resolvePlusArms(raw, set).replace(/^\.\//, "");
-      expect(existsSync(join(ROOT, "deploy", "selfhost", file)), `${file} is not in the tree`)
+      const file = resolvePlusArms(raw, set).replace(/^\/etc\/caddy\//, "");
+      expect(existsSync(join(ROOT, "deploy", "selfhost", "proxy", file)), `${file} is not in the tree`)
         .toBe(true);
     }
   });
@@ -163,7 +164,7 @@ describe("the operator's switch is a boolean, never Caddy configuration", () => 
     // The route table moved out of the Caddyfile when the second door arrived, so "the proxy
     // holds the front door" stopped being the whole requirement: it holds the front door AND
     // whatever that door imports. Read off the doors rather than restated here.
-    const proxy = proxyBlock();
+    expect(proxyBlock()).toContain("- ./proxy:/etc/caddy:ro");
     const imports = new Set<string>();
     for (const door of [CADDYFILE, EXTERNAL]) {
       for (const m of door.matchAll(/^\s*import\s+(\S+)\s*$/gm)) imports.add(m[1]!);
@@ -171,8 +172,10 @@ describe("the operator's switch is a boolean, never Caddy configuration", () => 
     expect(imports.size, "neither door imports anything — has the shared table been inlined?")
       .toBeGreaterThan(0);
     for (const target of imports) {
-      expect(proxy, `${target} is imported by a door and mounted by nothing`)
-        .toContain(`:${target}:ro`);
+      expect(target, `${target} is imported from outside the mounted /etc/caddy`).toMatch(/^\/etc\/caddy\/[^/]+$/);
+      const file = target.replace(/^\/etc\/caddy\//, "");
+      expect(existsSync(join(ROOT, "deploy", "selfhost", "proxy", file)), `${target} is imported by a door and mounted by nothing`)
+        .toBe(true);
     }
   });
 });

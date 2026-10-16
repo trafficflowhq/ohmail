@@ -47,10 +47,15 @@ services:
       # (TLS-ALPN) arrives over the same forwarded connection. 4443 because umbrelOS
       # itself owns 80 and 443.
       - "4443:443"
+    # proxy.env carries a checksum of the rendered Caddyfile, so a start whose render changed
+    # recreates this container; a running Caddy never re-reads its file.
+    env_file:
+      - ${APP_DATA_DIR}/data/env/proxy.env
     volumes:
       # Rendered by hooks/pre-start on every start from settings.env, so the app updates
       # with the package and reacts to configuration without a shell inside the container.
-      - ${APP_DATA_DIR}/data/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # A directory, not the file: a single-file mount keeps the inode it started with.
+      - ${APP_DATA_DIR}/data/caddy/etc:/etc/caddy:ro
       - ${APP_DATA_DIR}/data/caddy/state:/data
       - ${APP_DATA_DIR}/data/caddy/config:/config
 

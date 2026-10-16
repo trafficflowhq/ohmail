@@ -28,7 +28,7 @@ ohmail/
   umbrel-app.yml            the app manifest (id: ohmail, official-store shape)
   docker-compose.yml        the stack, Umbrel-shaped, every image digest-pinned
   hooks/pre-start           generates secrets, seeds settings.env, renders the Caddyfile
-  data/caddy/Caddyfile      committed placeholder; the hook renders the real one
+  data/caddy/etc/Caddyfile  committed placeholder; the hook renders the real one
   data/{postgres,rustfs,caddy/state,caddy/config}/.gitkeep
                             the bind-mount source directories, committed empty
 ```
@@ -70,8 +70,9 @@ container names in the compose and the hook to match
   templates, `exports.sh` and `hooks/` on app UPDATES — but not files under `data/` —
   so a committed front door would go stale on the first update that changes it. Second,
   rendering from `settings.env` is what lets the unconfigured launcher serve
-  instructions instead of a dead redirect. The committed `data/caddy/Caddyfile` is a
-  placeholder so the bind mount always has a file source; the hook overwrites it. The
+  instructions instead of a dead redirect. The committed `data/caddy/etc/Caddyfile` is a
+  placeholder so the mounted directory always holds a door; the hook overwrites it, and
+  writes its checksum to `data/env/proxy.env` so a changed render recreates the proxy. The
   origin read from `settings.env` is validated before it is baked into config: https,
   a hostname, and NO port. The port is not a matter of taste — a Caddyfile site
   address's port is the port Caddy LISTENS on inside the container, and only container

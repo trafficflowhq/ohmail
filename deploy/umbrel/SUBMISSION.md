@@ -77,7 +77,7 @@ APP="$(mktemp -d)/ohmail"; mkdir -p "$APP"
 cp -R deploy/umbrel/ohmail/. "$APP/"
 cd "$APP"
 export APP_DATA_DIR="$APP"
-validate() { docker run --rm -v "$APP/data/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+validate() { docker run --rm -v "$APP/data/caddy/etc:/etc/caddy:ro" \
   "$CADDY" caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile; }
 
 bash hooks/pre-start                                     # secrets, env files, Caddyfile

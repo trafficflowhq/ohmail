@@ -47,6 +47,7 @@ PROXY_HOST="ohmail_proxy_1"
 mkdir -p "${ENV_DIR}" \
          "${DATA_DIR}/postgres" \
          "${DATA_DIR}/rustfs" \
+         "${DATA_DIR}/caddy/etc" \
          "${DATA_DIR}/caddy/state" \
          "${DATA_DIR}/caddy/config"
 
@@ -268,13 +269,15 @@ if ! [[ "${BUCKET}" =~ ^[a-z0-9][a-z0-9.-]{2,62}$ ]]; then
   BUCKET="ohmail-staging"
 fi
 
-CADDYFILE="${DATA_DIR}/caddy/Caddyfile"
+# data/caddy/etc is the proxy's /etc/caddy, mounted as a directory. Installs made before that
+# kept the file at data/caddy/Caddyfile, which nothing reads any more.
+CADDYFILE="${DATA_DIR}/caddy/etc/Caddyfile"
 
 if [[ -n "${ORIGIN}" ]]; then
   cat > "${CADDYFILE}" <<EOF
 # Rendered by hooks/pre-start — do not edit; change data/env/settings.env instead.
 #
-# Same origin split as deploy/selfhost/Caddyfile — the API's path surface to the api
+# Same origin split as deploy/selfhost/proxy/Caddyfile — the API's path surface to the api
 # container, everything else to the web container. Only host port 4443 is published on
 # the device (umbrelOS owns 80 and 443), so the certificate is obtained over the
 # TLS-ALPN challenge — automatic, as long as the router forwards outside port 443 here
@@ -282,7 +285,7 @@ if [[ -n "${ORIGIN}" ]]; then
 #
 # The path list must stay matched EXACTLY as the API mounts it, with no stripping —
 # the API canonicalizes one leading /api off itself, and a strip here would
-# double-strip /api/api/… shapes. See deploy/selfhost/Caddyfile for the full argument.
+# double-strip /api/api/… shapes. See deploy/selfhost/proxy/Caddyfile for the full argument.
 
 ${ORIGIN} {
 	# HTTPS from here on. Unconditional, unlike the sibling stack's switch: this origin is
@@ -297,7 +300,7 @@ ${ORIGIN} {
 		reverse_proxy ohmail_api_1:8080
 	}
 
-	# The staging bucket's browser door — deploy/selfhost/Caddyfile's staging route with
+	# The staging bucket's browser door — deploy/selfhost/proxy/Caddyfile's staging route with
 	# the Umbrel container name. Browser attachment uploads are presigned against THIS
 	# origin and the Host is PRESERVED on the hop (Caddy's default; SigV4 signs the Host).
 	# Exposing the path is safe only because the bucket is PRIVATE: unsigned requests 403.
@@ -370,3 +373,8 @@ else
 }
 EOF
 fi
+
+# The proxy's environment names what it was rendered, so a start whose Caddyfile changed changes
+# the proxy's definition and `docker compose up` recreates it. A running Caddy never re-reads its
+# file. cksum is POSIX and this detects a change; it secures nothing.
+printf 'OHMAIL_PROXY_CONFIG_CKSUM=%s\n' "$(cksum < "${CADDYFILE}" | cut -d' ' -f1,2 | tr ' ' '-')" > "${ENV_DIR}/proxy.env"

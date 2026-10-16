@@ -1,6 +1,6 @@
 # The front door for a stack behind a TLS terminator it does not own — `tailscale serve`, a reverse
-# proxy you already run, a corporate load balancer. Mounted at /etc/caddy/Caddyfile in place of the
-# sibling Caddyfile when OHMAIL_EXTERNAL_TLS is set; compose composes the mount path from it.
+# proxy you already run, a corporate load balancer. entrypoint.sh runs it in place of the sibling
+# Caddyfile when OHMAIL_EXTERNAL_TLS is set.
 #
 # Plain HTTP on port 80, no certificate of its own and no ACME order. OHMAIL_ORIGIN keeps naming the
 # https address the terminator presents — the cookie host, the passkey identity and every link the

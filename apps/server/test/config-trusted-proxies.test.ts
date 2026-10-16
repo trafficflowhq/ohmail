@@ -108,7 +108,7 @@ describe("OHMAIL_TLS_TERMINATOR on the external door", () => {
   });
 
   it("the header this server reads the proxy's peer from is the one the bundled proxy writes", () => {
-    const routes = readFileSync(fileURLToPath(new URL("../../../deploy/selfhost/routes.caddy", import.meta.url)), "utf8");
+    const routes = readFileSync(fileURLToPath(new URL("../../../deploy/selfhost/proxy/routes.caddy", import.meta.url)), "utf8");
     const written = [...routes.matchAll(/header_up (\S+) \{http\.request\.remote\.host\}/g)].map((m) => m[1]!.toLowerCase());
     expect(written).toEqual([PROXY_PEER_HEADER, PROXY_PEER_HEADER]);
   });

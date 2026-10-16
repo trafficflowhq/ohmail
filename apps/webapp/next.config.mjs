@@ -75,7 +75,7 @@ export const API_ORIGIN_VAR = "TF_API_ORIGIN";
  * On the managed deployment THIS APP owns the origin split: `rewrites()` proxies `/api/*` and
  * `/auth/refresh` to the API host, and `TF_API_ORIGIN` is the one variable that arms it. On a
  * self-hosted install the split belongs to the REVERSE PROXY in front of both containers
- * (`deploy/selfhost/Caddyfile` routes `/api/*`, `/auth/*`, `/events`, `/health`, `/hello` and
+ * (`deploy/selfhost/proxy/Caddyfile` routes `/api/*`, `/auth/*`, `/events`, `/health`, `/hello` and
  * `/pair*` to the API container and everything else here), so this build must emit NO rewrite at
  * all — two owners of the same split is a request served twice or, worse, served differently.
  *

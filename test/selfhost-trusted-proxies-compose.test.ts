@@ -14,10 +14,10 @@ import { parseTlsTerminatorList } from "@trafficflow/core/adapters/http-host";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const r = (p: string): string => readFileSync(join(ROOT, p), "utf8");
 const COMPOSE = r("deploy/selfhost/docker-compose.yml");
-const EXTERNAL_DOOR = r("deploy/selfhost/Caddyfile.external-tls");
-const TLS_DOOR = r("deploy/selfhost/Caddyfile");
-const ROUTES = r("deploy/selfhost/routes.caddy");
-const ENTRYPOINT = "deploy/selfhost/proxy-entrypoint.sh";
+const EXTERNAL_DOOR = r("deploy/selfhost/proxy/Caddyfile.external-tls");
+const TLS_DOOR = r("deploy/selfhost/proxy/Caddyfile");
+const ROUTES = r("deploy/selfhost/proxy/routes.caddy");
+const ENTRYPOINT = "deploy/selfhost/proxy/entrypoint.sh";
 const FIXTURES = "test/fixtures/selfhost";
 
 /** A top-level service's block, up to the next service at the same indent. */
@@ -77,15 +77,17 @@ describe("the proxy entrypoint", () => {
     image: string; imageEntrypoint: string[] | null; imageCmd: string[];
   };
 
-  it("compose runs it, mounted read-only, and it ends in the image's own command", () => {
+  it("compose runs it, mounted read-only, and it ends in the image's own command on the chosen door", () => {
     expect(block("proxy")).toMatch(/^ {4}entrypoint: \["\/bin\/sh", "\/etc\/caddy\/entrypoint\.sh"\]$/m);
-    expect(block("proxy")).toContain("- ./proxy-entrypoint.sh:/etc/caddy/entrypoint.sh:ro");
+    expect(block("proxy")).toContain("- ./proxy:/etc/caddy:ro");
     expect(fixture.imageEntrypoint).toBeNull();
+    // The image's command, its --config path given the door suffix the entrypoint composes.
+    const cmd = fixture.imageCmd.map((a, i, all) => (all[i - 1] === "--config" ? `"${a}\${OHMAIL_EXTERNAL_TLS:+.external-tls}"` : a));
     const exec = r(ENTRYPOINT).split("\n").filter((l) => l.startsWith("exec "));
-    expect(exec).toEqual([`exec ${fixture.imageCmd.join(" ")}`]);
+    expect(exec).toEqual([`exec ${cmd.join(" ")}`]);
   });
 
-  /** `sh proxy-entrypoint.sh --resolve` on this host, over a route file recorded in the real image. */
+  /** `sh proxy/entrypoint.sh --resolve` on this host, over a route file recorded in the real image. */
   const resolve = (env: Record<string, string>): { out: string; err: string; rc: number | null } => {
     const p = spawnSync("sh", [join(ROOT, ENTRYPOINT), "--resolve"], { env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" });
     return { out: p.stdout.trim(), err: p.stderr.trim(), rc: p.status };

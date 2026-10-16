@@ -10,7 +10,7 @@
  *
  *  1. **THE DEFECT, REPRODUCED.** A real pairing seam against a loopback stack wearing the shipped
  *     self-host route split (`helpers/selfhost-split.ts`, whose route list is read off
- *     `deploy/selfhost/Caddyfile`). `/hello`, `/pair/redeem` and `/auth/session` answer at the bare
+ *     `deploy/selfhost/proxy/Caddyfile`). `/hello`, `/pair/redeem` and `/auth/session` answer at the bare
  *     path; `/sync` answers `404 text/html` from the web container. The pairing therefore SUCCEEDS
  *     and the drain must still work — which it only does because the base was measured.
  *  2. **THE DERIVATION.** `resolveApiBase` picks the bare origin where the API is there (the two

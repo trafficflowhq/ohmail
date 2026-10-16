@@ -348,7 +348,7 @@ function loadTrustedProxies(env: NodeJS.ProcessEnv): string[] {
   return entries;
 }
 
-/** The header the bundled proxy writes its own socket peer into (`deploy/selfhost/routes.caddy`). */
+/** The header the bundled proxy writes its own socket peer into (`deploy/selfhost/proxy/routes.caddy`). */
 export const PROXY_PEER_HEADER = "x-ohmail-proxy-peer";
 
 /** `forwarded_address_collapsed`: true for an untrusted peer, a terminator that sent no header, and 0.0.0.0/32. */
@@ -416,7 +416,7 @@ const S3_STORAGE_VARS = ["S3_ENDPOINT", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SEC
 
 /**
  * Bucket names the staging bucket may NOT take: the reverse proxy's API prefixes
- * (`deploy/selfhost/Caddyfile`'s `@api` matcher, exactly). Browser uploads ride
+ * (`deploy/selfhost/proxy/Caddyfile`'s `@api` matcher, exactly). Browser uploads ride
  * `/<bucket>/*` on the ONE origin, and the proxy matches these segments FIRST — a bucket
  * named `api` would send every presigned PUT to the API server instead of the store: the
  * grant mints fine (presigning is local), and the upload fails one hop later with a status

@@ -10,7 +10,7 @@ import { rewritesFor } from "../routes.mjs";
  *   managed   — THIS APP owns the origin split: `rewrites()` proxies `/api/*` and
  *               `/auth/refresh` to the allow-listed API origin, `TF_API_ORIGIN` arms it.
  *   selfhost  — the REVERSE PROXY in front of both containers owns the split
- *               (`deploy/selfhost/Caddyfile`), so this build emits NO rewrite at all while the
+ *               (`deploy/selfhost/proxy/Caddyfile`), so this build emits NO rewrite at all while the
  *               client bundle still calls `/api` on its own origin.
  *
  * Two owners of one split is a request routed twice; zero owners is a silently dead client.

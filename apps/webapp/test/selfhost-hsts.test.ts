@@ -63,9 +63,9 @@ const terminatesPublicTls = (address: string): boolean =>
 const directiveLines = (body: string): string[] =>
   body.split("\n").filter((l) => !/^\s*#/.test(l) && l.trim() !== "");
 
-const CADDYFILE = rd("deploy/selfhost/Caddyfile");
-const EXTERNAL = rd("deploy/selfhost/Caddyfile.external-tls");
-const ROUTES = rd("deploy/selfhost/routes.caddy");
+const CADDYFILE = rd("deploy/selfhost/proxy/Caddyfile");
+const EXTERNAL = rd("deploy/selfhost/proxy/Caddyfile.external-tls");
+const ROUTES = rd("deploy/selfhost/proxy/routes.caddy");
 const COMPOSE = rd("deploy/selfhost/docker-compose.yml");
 const ENV_EXAMPLE = rd("deploy/selfhost/.env.example");
 
@@ -124,8 +124,8 @@ describe("the door that owns TLS sends HSTS", () => {
 
 describe("and no door that is not terminating public TLS sends it", () => {
   for (const [name, text] of [
-    ["deploy/selfhost/Caddyfile", CADDYFILE],
-    ["deploy/selfhost/Caddyfile.external-tls", EXTERNAL],
+    ["deploy/selfhost/proxy/Caddyfile", CADDYFILE],
+    ["deploy/selfhost/proxy/Caddyfile.external-tls", EXTERNAL],
   ] as const) {
     it(`${name} — every plain-HTTP block is clean`, () => {
       const blocks = siteBlocks(text);
@@ -200,7 +200,7 @@ function renderUmbrel(arm: string, origin: string): string {
     env: { ...process.env, APP_DATA_DIR: app },
     stdio: ["ignore", "ignore", "pipe"],
   });
-  const out = readFileSync(join(app, "data", "caddy", "Caddyfile"), "utf8");
+  const out = readFileSync(join(app, "data", "caddy", "etc", "Caddyfile"), "utf8");
   rendered.set(arm, out);
   return out;
 }
@@ -230,6 +230,6 @@ describe("the umbrelOS front door the pre-start hook renders", () => {
   });
 
   it("nor the placeholder committed for a start before the hook has run", () => {
-    expect(rd("deploy/umbrel/ohmail/data/caddy/Caddyfile")).not.toMatch(/Strict-Transport-Security/);
+    expect(rd("deploy/umbrel/ohmail/data/caddy/etc/Caddyfile")).not.toMatch(/Strict-Transport-Security/);
   });
 });

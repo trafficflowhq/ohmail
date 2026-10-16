@@ -1,7 +1,7 @@
 # The ohmail SELF-HOST stack: everything a family install needs, on one box, from one file.
 #
 #   proxy      Caddy — the single origin. Routes the API's paths to `api` and everything
-#              else to `web` (see ./Caddyfile). Automatic TLS when OHMAIL_ORIGIN is a domain.
+#              else to `web` (see ./proxy). Automatic TLS when OHMAIL_ORIGIN is a domain.
 #   web        the Next application, built with OHMAIL_FLAVOR=selfhost (no rewrite of its
 #              own — the proxy owns the split).
 #   api        the standalone server (apps/server). Runs BOTH migration journals at boot,
@@ -51,7 +51,7 @@ services:
   proxy:
     image: ghcr.io/trafficflowhq/mirror-caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
     restart: unless-stopped
-    # proxy-entrypoint.sh: on the external-TLS door with OHMAIL_TLS_TERMINATOR unset it trusts this
+    # proxy/entrypoint.sh: on the external-TLS door with OHMAIL_TLS_TERMINATOR unset it trusts this
     # network's gateway and says so in one line; on either door it then runs the image's own command.
     entrypoint: ["/bin/sh", "/etc/caddy/entrypoint.sh"]
     depends_on:
@@ -100,14 +100,18 @@ services:
       # answering — and so does certificate renewal, which needs port 80 reachable.
       - "${OHMAIL_BIND:-127.0.0.1}:80:80"
       - "${OHMAIL_BIND:-127.0.0.1}:443:443"
+    labels:
+      # The proxy's whole configuration, ./proxy, mounted as a directory: a file git replaces is a
+      # new inode, which a single-file mount never shows. Caddy reads it once, at start, and
+      # `docker compose up -d` recreates a service only when its definition changes, so this
+      # digest of ./proxy is what makes an update that edits the directory restart the proxy.
+      # test/selfhost-proxy-reload.test.ts fails on a stale value and prints the new one.
+      ohmail.proxy-config: sha256:b28b12d5343500a845ad7051583004d800b01d5e8df4c155887723d34505a3ba
     volumes:
-      # WHICH FRONT DOOR, chosen by one variable. Unset: `Caddyfile`, which owns TLS. Set:
-      # `Caddyfile.external-tls`, plain HTTP behind a terminator that owns the certificate. The
-      # SOURCE PATH is composed rather than switching config inside Caddy, so `.env` expresses
-      # this decision and nothing else about Caddy. Both doors import routes.caddy.
-      - ./Caddyfile${OHMAIL_EXTERNAL_TLS:+.external-tls}:/etc/caddy/Caddyfile:ro
-      - ./routes.caddy:/etc/caddy/routes.caddy:ro
-      - ./proxy-entrypoint.sh:/etc/caddy/entrypoint.sh:ro
+      # Both front doors, the route table they import and the entrypoint. The entrypoint picks the
+      # door: proxy/Caddyfile, which owns TLS, or proxy/Caddyfile.external-tls when
+      # OHMAIL_EXTERNAL_TLS is set.
+      - ./proxy:/etc/caddy:ro
       - caddy_data:/data
       - caddy_config:/config
 

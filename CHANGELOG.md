@@ -31,6 +31,16 @@ so a message whose attachment was uploaded before the update needs that file att
 container and volume can then be removed, as "Updates" in `docs/self-host/VPS.md` shows. Contributed by sysrex
 in #43.
 
+### A self-hosted update reaches the proxy
+<!-- changes: selfhost-proxy-reload.md -->
+
+An update that changed only the proxy's routes never reached a running self-host proxy: `docker compose up -d`
+left it running on the configuration it started with. The proxy's configuration now lives in
+`deploy/selfhost/proxy/`, mounted as one directory, and the compose file carries a digest of it, so the documented
+update restarts the proxy whenever that directory changes. The Umbrel app does the same for the Caddyfile its
+start hook renders. If you keep your own compose file, "Updates" in `docs/self-host/VPS.md` has the one line to
+change.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

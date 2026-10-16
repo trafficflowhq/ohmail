@@ -368,6 +368,18 @@ docker volume rm ohmail_minio_data
 The volume is named after the project, `ohmail` unless `OHMAIL_PROJECT` in
 `.env` says otherwise; `docker volume ls` shows it.
 
+**One-time, if you keep your own compose file:** the proxy's configuration
+moved into `proxy/` beside the compose file, and the proxy mounts that
+directory. Replace its `Caddyfile`, `routes.caddy` and `proxy-entrypoint.sh`
+mounts with the one line below, or the update leaves the proxy without a
+configuration. Take the `ohmail.proxy-config` label from the bundled file too,
+with each update: it changes whenever `proxy/` does, and that is what makes
+`docker compose up -d` restart the proxy on the new configuration.
+
+```yaml
+      - ./proxy:/etc/caddy:ro
+```
+
 **One-time, if you keep your own compose file or run another proxy in front
 of the api:** the api takes a visitor's address only from the proxies named
 in `TF_TRUSTED_PROXIES`. The bundled compose file sets it to its own proxy
@@ -388,7 +400,7 @@ address.
 
 **One-time, if you keep your own compose file and run behind your own
 terminator (`OHMAIL_EXTERNAL_TLS`):** take the proxy's `entrypoint:` line and
-its `proxy-entrypoint.sh` mount from the bundled file, give both the `proxy`
+its `./proxy` mount from the bundled file, give both the `proxy`
 and the `api` service these two lines, and leave nothing after the `:-`, since
 a default there is a range the proxy trusts for every visitor:
 

@@ -1,6 +1,6 @@
 # The front door that owns TLS. The site address IS the configuration: OHMAIL_ORIGIN, from
 # docker-compose.yml. Routes are in routes.caddy, which both doors import. For a stack behind a
-# terminator that owns the certificate, set OHMAIL_EXTERNAL_TLS=1 and compose mounts
+# terminator that owns the certificate, set OHMAIL_EXTERNAL_TLS=1 and entrypoint.sh runs
 # Caddyfile.external-tls instead. Origin forms and the private-name recipe: docs/self-host/VPS.md.
 {$OHMAIL_ORIGIN} {
 	# `tls internal` or nothing — compose maps the operator's boolean to exactly one of those, so

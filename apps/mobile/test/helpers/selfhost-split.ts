@@ -2,7 +2,7 @@
  * ═══ A LOOPBACK STACK WEARING THE SHIPPED SELF-HOST ROUTE SPLIT ════════════════════════════════
  *
  * A self-hosted ohmail is ONE origin with two containers behind it, and the split between them is
- * the whole reason the phone had to learn where a server's mail API is. `deploy/selfhost/Caddyfile`
+ * the whole reason the phone had to learn where a server's mail API is. `deploy/selfhost/proxy/Caddyfile`
  * routes a named set of paths to the API and EVERYTHING ELSE to the Next web app — and `/sync` is
  * not in that set, so `https://<origin>/sync` reaches Next and answers a 404 HTML error page while
  * `https://<origin>/hello`, `/pair/*` and `/auth/*` all answer from the API at the bare path.
@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 
 /** The shipped deployment's own front door, read rather than remembered. */
 export const SELFHOST_DIR = fileURLToPath(
-  new URL("../../../../deploy/selfhost/", import.meta.url),
+  new URL("../../../../deploy/selfhost/proxy/", import.meta.url),
 );
 
 /**

@@ -125,7 +125,7 @@ export type TlsTerminatorRefusal = "comma" | "line" | "whitespace" | "mapped" | 
 
 /**
  * An unset `OHMAIL_TLS_TERMINATOR`, here and in the proxy's entrypoint alike: nothing but space, tab,
- * line feed, carriage return, vertical tab, form feed and U+00A0 (proxy-entrypoint.sh tests the same
+ * line feed, carriage return, vertical tab, form feed and U+00A0 (proxy/entrypoint.sh tests the same
  * bytes). The proxy then takes its network's gateway; any other value is read as written, untrimmed.
  */
 export const UNSET_TLS_TERMINATOR = /^[ \t\n\r\v\f\u00a0]*$/;
