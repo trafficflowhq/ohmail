@@ -153,11 +153,12 @@ const LOOP_TURN_CEILING_MS = 1_000;
 /** The window over which both the loaded and the quiet cycle are sampled, identically. */
 const LOAD_WINDOW_MS = 1_500;
 /**
- * How long ONE handler is held so that its response is the last to arrive.
+ * How long ONE handler is held so that its response arrives after others issued later.
  *
- * Comfortably above the measured ~150 ms a point read takes under a cycle, so the inversion is
- * deterministic rather than a race. Excluded from the p95 for the obvious reason: it is this
- * file's own latency, not the engine's.
+ * Comfortably above the measured ~150 ms a point read takes under a cycle, so on an ordinary
+ * machine it is the last to arrive; the precondition below asks only that it is not the first,
+ * which is all the correlation claim needs and holds however slow one point read is. Excluded
+ * from the p95 for the obvious reason: it is this file's own latency, not the engine's.
  */
 const HOLD_MS = 400;
 /**
@@ -616,14 +617,18 @@ describe("the bridge stays live while the sync loop holds the single PGlite conn
        *
        * If every response arrived in issue order, a client that ignored frame ids entirely would
        * pass every assertion above — and one did: mutating `client.ts` to resolve the OLDEST
-       * waiter left the earlier version of this test green. The held read is issued first and
-       * must come back last, or this file has not exercised correlation and must say so rather
-       * than report a green it has not earned.
+       * waiter left the earlier version of this test green. The held read is issued first, so it
+       * is the oldest waiter for as long as it waits: if ANY response arrives before its own, a
+       * client handing responses to the oldest waiter gives it that response and the held-read
+       * assertions above go red. So "not the first to arrive" is exactly what this file needs
+       * to have exercised correlation. It used to demand "the last of all", which is more than
+       * the claim needs and was a race: on a loaded CI runner one point read outlasted
+       * HOLD_MS and the held read arrived 24th of 25, red with correlation fully exercised.
        */
       expect(
         heldResult.arrival,
         "every response arrived in issue order, so nothing here distinguishes correlation from luck",
-      ).toBe(arrivals - 1);
+      ).toBeGreaterThan(0);
 
       // The ONLY latency assertion, and it is a liveness one. See HANG_CEILING_MS.
       expect(max, "a request issued during a sync cycle took longer than the hang ceiling").toBeLessThan(HANG_CEILING_MS);
