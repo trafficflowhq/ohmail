@@ -147,7 +147,7 @@ describe("the suite workflow", () => {
   });
 
   it("refuses a service image or port that is not docker-compose.yml's", () => {
-    const tag = workflowText.replace("image: postgres:16\n", "image: postgres:17\n");
+    const tag = workflowText.replace(/image: ghcr\.io\/trafficflowhq\/mirror-postgres:\S+\n/, "image: postgres:17\n");
     expect(tag).not.toBe(workflowText);
     expect(workflowProblems(tag, composeText)).toEqual([expect.stringMatching(/^IMAGE suite\.postgres is postgres:17/)]);
     const port = workflowText.replace('ports: ["3143:3143", "3025:3025"]', 'ports: ["3144:3143", "3025:3025"]');

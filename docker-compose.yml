@@ -15,7 +15,9 @@
 
 services:
   db:
-    image: postgres:16
+    # Every image here is named by its digest, and .github/workflows/ci.yml runs the same ones
+    # (test/ci-shards.test.ts ties the two). Postgres is our mirrored copy (deploy/selfhost/images.lock).
+    image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
     shm_size: "1g"
     environment:
       POSTGRES_USER: tf
@@ -30,7 +32,7 @@ services:
       retries: 30
 
   greenmail:
-    image: greenmail/standalone:2.1.3
+    image: greenmail/standalone:2.1.3@sha256:d6db42a4fc258fec0948b1ae7b579fd06947cc92087c162ec0597972a6c36850
     environment:
       GREENMAIL_OPTS: "-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled -Dgreenmail.users.login=email"
     ports:
@@ -55,7 +57,7 @@ services:
       retries: 30
 
   dovecot:
-    image: dovecot/dovecot:2.3.21
+    image: dovecot/dovecot:2.3.21@sha256:1c18c756f20d03867077a1b509a6e2e3008ab1eafa56377b6f2eca12dc1ba581
     volumes:
       - ./test/dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro
     ports:

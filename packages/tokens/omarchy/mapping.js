@@ -54,7 +54,7 @@
     return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
   }
 
-  /* Walk `c` toward `target` in 5% steps until it clears `floor` against
+  /* Walk `c` toward `target` in small steps until it clears `floor` against
      `against` — one ground, or a list of grounds that must ALL clear.
      Bounded (20 steps → target itself), monotonic, mechanical.
      Returns { value, walked } so a validator can report which themes needed it. */

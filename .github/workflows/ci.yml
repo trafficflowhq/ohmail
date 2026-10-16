@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 22.23.3
 
       - name: The shards, and the files that run alone
         id: plan
@@ -66,9 +66,11 @@ jobs:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    # Every image by digest, the same ones docker-compose.yml runs: Postgres from our mirror
+    # (deploy/selfhost/images.lock), GreenMail and Dovecot as Docker Hub serves them.
     services:
       postgres:
-        image: postgres:16
+        image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
           POSTGRES_USER: tf
           POSTGRES_PASSWORD: tf
@@ -81,7 +83,7 @@ jobs:
           --health-timeout 3s
           --health-retries 30
       greenmail:
-        image: greenmail/standalone:2.1.3
+        image: greenmail/standalone:2.1.3@sha256:d6db42a4fc258fec0948b1ae7b579fd06947cc92087c162ec0597972a6c36850
         env:
           GREENMAIL_OPTS: "-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled -Dgreenmail.users.login=email"
         ports: ["3143:3143", "3025:3025"]
@@ -96,8 +98,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.3
 
       - name: Install the locked dependency tree
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -148,7 +149,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name dovecot -v "$GITHUB_WORKSPACE/test/dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro" \
-            -p 127.0.0.1:3144:143 dovecot/dovecot:2.3.21
+            -p 127.0.0.1:3144:143 dovecot/dovecot:2.3.21@sha256:1c18c756f20d03867077a1b509a6e2e3008ab1eafa56377b6f2eca12dc1ba581
           for i in $(seq 1 60); do
             if (exec 3<>/dev/tcp/127.0.0.1/3144) 2>/dev/null; then echo "dovecot up after ${i}s"; exit 0; fi
             sleep 1
@@ -204,7 +205,7 @@ jobs:
         file: ${{ fromJSON(needs.plan.outputs.alone) }}
     services:
       postgres:
-        image: postgres:16
+        image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
           POSTGRES_USER: tf
           POSTGRES_PASSWORD: tf
@@ -217,7 +218,7 @@ jobs:
           --health-timeout 3s
           --health-retries 30
       greenmail:
-        image: greenmail/standalone:2.1.3
+        image: greenmail/standalone:2.1.3@sha256:d6db42a4fc258fec0948b1ae7b579fd06947cc92087c162ec0597972a6c36850
         env:
           GREENMAIL_OPTS: "-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled -Dgreenmail.users.login=email"
         ports: ["3143:3143", "3025:3025"]
@@ -232,8 +233,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.3
 
       - name: Install the locked dependency tree
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -272,7 +272,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
           POSTGRES_USER: tf
           POSTGRES_PASSWORD: tf
@@ -285,7 +285,7 @@ jobs:
           --health-timeout 3s
           --health-retries 30
       greenmail:
-        image: greenmail/standalone:2.1.3
+        image: greenmail/standalone:2.1.3@sha256:d6db42a4fc258fec0948b1ae7b579fd06947cc92087c162ec0597972a6c36850
         env:
           GREENMAIL_OPTS: "-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled -Dgreenmail.users.login=email"
         ports: ["3143:3143", "3025:3025"]
@@ -299,8 +299,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.3
 
       - name: Install the locked dependency tree
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -334,7 +333,7 @@ jobs:
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:16
+        image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
           POSTGRES_USER: tf
           POSTGRES_PASSWORD: tf
@@ -355,8 +354,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.3
 
       - name: Install the locked dependency tree
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -398,8 +396,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.3
 
       - name: Install the locked dependency tree
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -439,8 +436,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.3
 
       - name: Install the locked dependency tree
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -469,8 +465,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.3
 
       - name: Install the locked dependency tree
         run: npm ci --ignore-scripts --no-audit --no-fund

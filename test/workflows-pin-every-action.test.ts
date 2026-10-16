@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -539,6 +539,13 @@ describe("no step runs bytes it downloaded before a committed SHA-256 refuses a 
  * a run builds and stages, and the third-party ones mirrored there by digest from images.lock.
  */
 const OWN = /^ghcr\.io\/trafficflowhq\//;
+/** The mirrored third-party images as images.lock names them: ghcr.io/trafficflowhq/<name>:<upstream tag>@<digest>. */
+const LOCK = [`${HERE}../public/ohmail/deploy/selfhost/images.lock`, `${HERE}../deploy/selfhost/images.lock`].find((p) => existsSync(p))!;
+const MIRRORED = new Set(readFileSync(LOCK, "utf8").split("\n").filter((l) => /^mirror-/.test(l)).map((l) => {
+  const [name, upstream, digest] = l.split(/\s+/);
+  return `ghcr.io/trafficflowhq/${name}:${upstream.slice(upstream.lastIndexOf(":") + 1)}@${digest}`;
+}));
+const MIRROR = /^ghcr\.io\/trafficflowhq\/mirror-/;
 const BY_DIGEST = /^[^\s$@]+@sha256:[0-9a-f]{64}$/;
 /** The docker run/create/pull options that take a value; the image is the first word after the options. */
 const DOCKER_VALUE = new Set(["-a", "--attach", "--add-host", "--cap-add", "--cap-drop", "--cidfile", "--cpus", "-c", "--cpu-shares",
@@ -593,13 +600,19 @@ describe("every container image a workflow runs is named by its digest, unless t
     expect(images(`scripts/${f}`, scriptUnits(`scripts/${f}`, readFileSync(`${SCRIPTS}/${f}`, "utf8"))).findings).toEqual([]);
   });
 
-  it("reads the two third-party images by digest, the staged images as its own, and every allowed read in use", () => {
+  it("reads the third-party images by digest, the mirrored and staged images as its own, and every allowed read in use", () => {
     const all = FILES.map(workflowImages);
-    const pinned = all.flatMap((r) => r.pinned).join("\n");
-    expect(pinned.split("\n"), "the positive control: Dovecot and Fedora").toHaveLength(2);
-    expect(pinned).toMatch(/dovecot\/dovecot:2\.3\.21@sha256:[0-9a-f]{64}$/m);
-    expect(pinned).toMatch(/registry\.fedoraproject\.org\/fedora:42@sha256:[0-9a-f]{64}$/m);
-    expect(all.flatMap((r) => r.own).length, "the prune check's three reads of the staged image").toBe(3);
+    const imageOf = (entry: string) => entry.slice(entry.lastIndexOf(" — ") + 3);
+    const pinned = [...new Set(all.flatMap((r) => r.pinned).map(imageOf))].sort();
+    expect(pinned.map((i) => i.replace(/@sha256:[0-9a-f]{64}$/, "")), "the positive control: Dovecot, GreenMail and Fedora").toEqual([
+      "dovecot/dovecot:2.3.21", "greenmail/standalone:2.1.3", "registry.fedoraproject.org/fedora:42",
+    ]);
+    const own = all.flatMap((r) => r.own).map(imageOf);
+    const mirrors = own.filter((i) => MIRROR.test(i));
+    expect(mirrors.length, "the mirrored Postgres and MinIO the suite runs").toBeGreaterThan(0);
+    expect(mirrors.filter((i) => !MIRRORED.has(i)), "a mirrored image images.lock does not name at that digest").toEqual([]);
+    expect(MIRRORED.has(mirrors[0].replace(/[0-9a-f]{64}$/, "0".repeat(64))), "the control: another digest is not the locked one").toBe(false);
+    expect(own.length - mirrors.length, "the prune check's three reads of the staged image").toBe(3);
     expect(all.flatMap((r) => r.allowed), "an allowed read no workflow makes is stale").toEqual(Object.keys(IMAGE_ALLOWED));
   });
 
