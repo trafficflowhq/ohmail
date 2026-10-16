@@ -33,6 +33,7 @@ jobs:
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
       alone: ${{ steps.plan.outputs.alone }}
+      sqlite: ${{ steps.plan.outputs.sqlite }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -46,6 +47,7 @@ jobs:
           set -euo pipefail
           node test/support/ci-shards.mjs --check
           echo "shards=$(node test/support/ci-shards.mjs --indexes)" >> "$GITHUB_OUTPUT"
+          echo "sqlite=$(node test/support/ci-shards.mjs --sqlite-indexes)" >> "$GITHUB_OUTPUT"
           # The glob form: a bare 'apps/*/test' pathspec matches no file under it, and an empty list
           # here would skip these files everywhere. The shard map's own walk must agree with it.
           rc=0
@@ -271,11 +273,17 @@ jobs:
           npx vitest run --reporter=default --reporter=json --outputFile=build/ci-alone.json "$FILE"
           node -e 'const n=require("./build/ci-alone.json").testResults.length;if(n!==1){console.error("expected the one file, the report holds "+n);process.exit(1)}'
 
+  # The second store's run, in measured shards of its own (test/support/ci-shards-sqlite.json): as one
+  # job it was 1828 s of serial file time and outran this bound; the longest shard is one 529 s file.
   sqlite:
-    name: suite · sqlite
+    name: suite · sqlite (${{ matrix.shard }})
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.sqlite) }}
     services:
       postgres:
         image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
@@ -300,6 +308,7 @@ jobs:
       IMAP_HOST: 127.0.0.1
       IMAP_PORT: "3143"
       TF_REQUIRE_PG: "1"
+      SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -329,8 +338,32 @@ jobs:
       - name: This checkout's own database
         run: bash scripts/lane-db.sh "$GITHUB_WORKSPACE"
 
-      - name: Test on SQLite, the second store the schema runs on
-        run: npx vitest run --config vitest.sqlite.config.ts
+      # The sqlite project's own file set, as vitest reads its include list; the map splits that set.
+      - name: The files the SQLite run holds
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          npx vitest list --config vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json
+
+      - name: Test on SQLite, the second store the schema runs on, shard ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          list=$(node test/support/ci-shards.mjs --sqlite-shard "$SHARD" build/sqlite-files.json)
+          mapfile -t files <<< "$list"
+          echo "sqlite shard $SHARD runs ${#files[@]} file(s)"
+          npx vitest run --config vitest.sqlite.config.ts --reporter=default --reporter=json --outputFile="build/ci-sqlite-$SHARD.json" "${files[@]}"
+
+      - name: Every file of the SQLite shard ran
+        if: always()
+        run: node test/support/ci-shards.mjs --verify-sqlite-report "$SHARD" build/sqlite-files.json "build/ci-sqlite-$SHARD.json"
+
+      - name: Keep the per-file durations for the next pack
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: sqlite-durations-${{ matrix.shard }}
+          path: build/ci-sqlite-${{ matrix.shard }}.json
+          if-no-files-found: warn
 
   proxy-e2e:
     name: suite · proxy e2e

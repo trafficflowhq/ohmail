@@ -22,3 +22,14 @@ export function checkMap(root?: string, map?: ShardMap): string[];
 export function measuredCosts(root: string, reports: VitestReport[]): Map<string, number>;
 export function pack(root: string, cost: Map<string, number>, measuredAt: string): { map: ShardMap; seconds: number[] };
 export function verifyReport(n: number | "desktop", report: VitestReport, root?: string, map?: ShardMap): { missing: string[]; extra: string[] };
+
+export const SQLITE_MAP: string;
+export const SQLITE_SHARDS: number;
+export interface SqliteShardMap { measuredAt: string; shards: string[][] }
+export interface VitestListRow { file: string; projectName?: string }
+export function readSqliteMap(root?: string): SqliteShardMap;
+export function listedFiles(root: string, list: VitestListRow[]): string[];
+export function sqliteShardFiles(n: number, listed: string[], map: SqliteShardMap): string[];
+export function checkSqliteMap(root?: string, map?: SqliteShardMap): string[];
+export function verifySqliteReport(n: number, listed: string[], report: VitestReport, root?: string, map?: SqliteShardMap): { missing: string[]; extra: string[] };
+export function packSqlite(cost: Map<string, number>, measuredAt: string): { map: SqliteShardMap; seconds: number[] };

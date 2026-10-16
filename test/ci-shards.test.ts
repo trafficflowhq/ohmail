@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  ALONE_MARKER, SHARDS, aloneFiles, checkMap, dovecotPinned, hashShard, readMap, shardFiles, testFiles, verifyReport,
-  type ShardMap,
+  ALONE_MARKER, SHARDS, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, dovecotPinned, hashShard, readMap, readSqliteMap,
+  shardFiles, sqliteShardFiles, testFiles, verifyReport, verifySqliteReport,
+  type ShardMap, type SqliteShardMap,
 } from "./support/ci-shards.mjs";
 import { publicRel } from "./support/public-root.mjs";
 
@@ -161,7 +162,7 @@ describe("the suite workflow", () => {
     const write = workflowText.replace("permissions:\n  contents: read\n", "permissions:\n  contents: write\n");
     expect(write).not.toBe(workflowText);
     expect(workflowProblems(write, composeText)).toEqual([expect.stringMatching(/^PERMISSIONS the workflow grants/)]);
-    const widened = workflowText.replace("    name: suite · sqlite\n", "    name: suite · sqlite\n    permissions:\n      contents: write\n");
+    const widened = workflowText.replace("    name: suite · sqlite (${{ matrix.shard }})\n", "    name: suite · sqlite (${{ matrix.shard }})\n    permissions:\n      contents: write\n");
     expect(widened).not.toBe(workflowText);
     expect(workflowProblems(widened, composeText)).toEqual(["PERMISSIONS sqlite sets its own permissions"]);
     const tag = workflowText.replace(/actions\/setup-node@[0-9a-f]{40} # v7/, "actions/setup-node@v7");
@@ -227,6 +228,17 @@ describe("the suite workflow", () => {
     expect(run).toContain("node test/support/ci-shards.mjs --shard \"$SHARD\"");
     expect(run).toContain("node test/support/ci-shards.mjs --verify-report \"$SHARD\"");
     expect(run).toContain("node test/support/ci-shards.mjs --needs-dovecot \"$SHARD\"");
+  });
+
+  it("splits the SQLite run by its own map, over the file set vitest lists for it, and reads each report back", () => {
+    expect(wf.jobs.sqlite.name).toBe("suite · sqlite (${{ matrix.shard }})");
+    const run = wf.jobs.sqlite.steps.map((s) => s.run ?? "").join("\n");
+    expect(run).toContain("npx vitest list --config vitest.sqlite.config.ts --filesOnly --json=build/sqlite-files.json");
+    expect(run).toContain("node test/support/ci-shards.mjs --sqlite-shard \"$SHARD\" build/sqlite-files.json");
+    expect(run).toMatch(/npx vitest run --config vitest\.sqlite\.config\.ts [^\n]*"\$\{files\[@\]\}"/);
+    expect(run).toContain("node test/support/ci-shards.mjs --verify-sqlite-report \"$SHARD\" build/sqlite-files.json");
+    const plan = wf.jobs.plan.steps.map((s) => s.run ?? "").join("\n");
+    expect(plan).toContain("node test/support/ci-shards.mjs --sqlite-indexes");
   });
 
   it("plans the alone jobs from the marker and refuses a list the shard map's own walk disagrees with", () => {
@@ -324,5 +336,52 @@ describe("the map's two rules, on a planted tree", () => {
     expect(verifyReport(2, { testResults: [] }, scratch, map).missing).toEqual(want);
     expect(verifyReport(2, { testResults: [...want, "packages/p/test/f0.test.ts"].map(row) }, scratch, map).extra)
       .toEqual(want.includes("packages/p/test/f0.test.ts") ? [] : ["packages/p/test/f0.test.ts"]);
+  });
+});
+
+describe("the SQLite shard map of this tree", () => {
+  const map = readSqliteMap(ROOT);
+
+  it("holds SQLITE_SHARDS shards, nothing stale and nothing twice, and was measured", () => {
+    expect(map.shards).toHaveLength(SQLITE_SHARDS);
+    expect(checkSqliteMap(ROOT, map)).toEqual([]);
+    expect(map.measuredAt).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("runs every file of the sqlite project exactly once, and names no file outside it", async () => {
+    const config = (await import("../vitest.sqlite.config.ts")).default as { test: { include: string[] } };
+    const listed = [...config.test.include].sort();
+    expect(listed.length).toBeGreaterThan(100);
+    const seen = new Map<string, number>();
+    for (let n = 0; n < SQLITE_SHARDS; n++) for (const f of sqliteShardFiles(n, listed, map)) seen.set(f, (seen.get(f) ?? 0) + 1);
+    expect([...seen].filter(([, c]) => c > 1)).toEqual([]);
+    expect(listed.filter((f) => !seen.has(f))).toEqual([]);
+    expect(map.shards.flat().filter((f) => !listed.includes(f))).toEqual([]);
+  });
+});
+
+describe("the SQLite map's rules, on a planted list", () => {
+  const listed = Array.from({ length: SQLITE_SHARDS + 3 }, (_, i) => `packages/p/test/s${i}.test.ts`);
+  const map: SqliteShardMap = {
+    measuredAt: "0".repeat(40),
+    shards: Array.from({ length: SQLITE_SHARDS }, (_, i) => [`packages/p/test/s${i}.test.ts`]),
+  };
+
+  it("runs a listed file no shard names in the shard its path hashes to, and a mapped file only while listed", () => {
+    for (const f of listed.slice(SQLITE_SHARDS)) {
+      const holders = [...Array(SQLITE_SHARDS).keys()].filter((n) => sqliteShardFiles(n, listed, map).includes(f));
+      expect(holders, f).toEqual([hashShard(f, SQLITE_SHARDS)]);
+    }
+    const without0 = listed.filter((f) => f !== "packages/p/test/s0.test.ts");
+    expect(sqliteShardFiles(0, without0, map)).not.toContain("packages/p/test/s0.test.ts");
+  });
+
+  it("reads a shard's report back: a file that did not run and a file nobody asked for both refuse", () => {
+    const want = sqliteShardFiles(1, listed, map);
+    const row = (f: string) => ({ name: join(ROOT, f), startTime: 0, endTime: 1 });
+    expect(verifySqliteReport(1, listed, { testResults: want.map(row) }, ROOT, map)).toEqual({ missing: [], extra: [] });
+    expect(verifySqliteReport(1, listed, { testResults: [] }, ROOT, map).missing).toEqual(want);
+    expect(verifySqliteReport(1, listed, { testResults: [...want, "packages/p/test/s0.test.ts"].map(row) }, ROOT, map).extra)
+      .toEqual(["packages/p/test/s0.test.ts"]);
   });
 });

@@ -8,6 +8,8 @@
  * re-pack. The `@postpush: alone` files run in their own job on a database made from empty; the files
  * that dial Dovecot travel together, and only the shard holding them starts it. A desktop test that
  * imports the desktop's own vite config runs in the desktop job (--desktop), on the desktop's own install.
+ * The SQLite run has its own map, ci-shards-sqlite.json (--pack-sqlite, --sqlite-indexes, --sqlite-shard N
+ * <list>, --verify-sqlite-report N <list> <json>; see SQLITE_MAP below).
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -121,6 +123,74 @@ export function verifyReport(n, report, root = ROOT, map = readMap(root)) {
   return { missing: [...want].filter((f) => !ran.has(f)), extra: [...ran].filter((f) => !want.has(f)) };
 }
 
+/* ── THE SQLITE RUN'S SHARDS ─────────────────────────────────────────────────────────────────────
+ * The second store's run (`vitest.sqlite.config.ts`) is one serial job of its own, and it outgrew its
+ * 20-minute bound: measured at 1828 s of serial file time over 170 files, 529 s of it one file
+ * (apps/sidecar/test/phone-claim-own.imap.test.ts, whose renew windows are real time by design) and
+ * 1100 s more in eleven other sidecar IMAP files. Four shards, packed the way the main map is, hold
+ * the longest at that one file and the rest near 430 s each. Its own map, because its file set is the
+ * sqlite project's include list, not the default walk: a job reads that set with `vitest list` and
+ * hands it here. A listed file the map does not name runs in the shard its path hashes to. */
+export const SQLITE_MAP = "test/support/ci-shards-sqlite.json";
+export const SQLITE_SHARDS = 4;
+
+export function readSqliteMap(root = ROOT) {
+  return JSON.parse(readFileSync(join(root, SQLITE_MAP), "utf8"));
+}
+
+/** The repository-relative paths in a `vitest list --filesOnly --json` report (absolute `file` rows). */
+export function listedFiles(root, list) {
+  return list.map((row) => relative(root, row.file).split("\\").join("/")).sort();
+}
+
+/** SQLite shard N's files out of the listed set: the ones the map names, and every unmapped one hashing to N. */
+export function sqliteShardFiles(n, listed, map) {
+  const present = new Set(listed);
+  const mapped = new Set(map.shards.flat());
+  const own = map.shards[n].filter((f) => present.has(f));
+  const unmapped = listed.filter((f) => !mapped.has(f) && hashShard(f, map.shards.length) === n);
+  return [...own, ...unmapped];
+}
+
+/** What --check refuses in the SQLite map: a shard count that is not SQLITE_SHARDS, a mapped file that is
+ *  no test file here, and a file named twice. Whether a file is in the sqlite project is the job's to read. */
+export function checkSqliteMap(root = ROOT, map = readSqliteMap(root)) {
+  const present = new Set(testFiles(root));
+  const problems = [];
+  if (map.shards.length !== SQLITE_SHARDS) problems.push(`SQLITE_SHARDS the sqlite map holds ${map.shards.length} shards, not ${SQLITE_SHARDS}`);
+  const seen = new Set();
+  for (const [i, shard] of map.shards.entries()) {
+    for (const f of shard) {
+      if (!present.has(f)) problems.push(`STALE ${f} (sqlite shard ${i}) is not a test file in this tree`);
+      if (seen.has(f)) problems.push(`TWICE ${f} is named by two sqlite shards`);
+      seen.add(f);
+    }
+  }
+  return problems;
+}
+
+/** A SQLite shard's report against the files it was handed. */
+export function verifySqliteReport(n, listed, report, root = ROOT, map = readSqliteMap(root)) {
+  const want = new Set(sqliteShardFiles(n, listed, map));
+  const ran = new Set(report.testResults.map((r) => relative(root, r.name).split("\\").join("/")));
+  return { missing: [...want].filter((f) => !ran.has(f)), extra: [...ran].filter((f) => !want.has(f)) };
+}
+
+/** Longest-first greedy of a SQLite run's measured files into SQLITE_SHARDS bins. */
+export function packSqlite(cost, measuredAt) {
+  const items = [...cost].map(([f, ms]) => ({ f, ms })).sort((a, b) => b.ms - a.ms || a.f.localeCompare(b.f));
+  const bins = Array.from({ length: SQLITE_SHARDS }, () => ({ files: [], ms: 0 }));
+  for (const it of items) {
+    const bin = bins.reduce((lo, b) => (b.ms < lo.ms ? b : lo), bins[0]);
+    bin.files.push(it.f);
+    bin.ms += it.ms;
+  }
+  return {
+    map: { measuredAt, shards: bins.map((b) => b.files.sort()) },
+    seconds: bins.map((b) => Math.round(b.ms / 1000)),
+  };
+}
+
 /** Per-file cost from vitest JSON reports: the file's own span plus the gap before it in a serial run
  *  (collection and environment). A later report replaces an earlier reading of the same file, so a
  *  re-measurement of some files lays over a whole run. */
@@ -172,6 +242,41 @@ function main(argv) {
     process.stdout.write(`PACKED ${map.shards.flat().length} file(s) into ${SHARDS} shards; seconds ${seconds.join(" ")}; dovecot ${map.pins.dovecot.length}\n`);
     return 0;
   }
+  if (cmd === "--pack-sqlite") {
+    const at = rest.indexOf("--measured-at");
+    const measuredAt = at >= 0 ? rest[at + 1] : "unknown";
+    const inputs = rest.filter((a, i) => i !== at && i !== at + 1);
+    if (!inputs.length) throw new Error("--pack-sqlite takes one or more vitest JSON reports of the sqlite run");
+    const { map, seconds } = packSqlite(measuredCosts(ROOT, inputs.map((p) => JSON.parse(readFileSync(p, "utf8")))), measuredAt);
+    writeFileSync(join(ROOT, SQLITE_MAP), `${JSON.stringify(map, null, 2)}\n`);
+    process.stdout.write(`PACKED ${map.shards.flat().length} sqlite file(s) into ${SQLITE_SHARDS} shards; seconds ${seconds.join(" ")}\n`);
+    return 0;
+  }
+  if (cmd === "--sqlite-indexes") {
+    process.stdout.write(`${JSON.stringify(readSqliteMap().shards.map((_, i) => i))}\n`);
+    return 0;
+  }
+  if (cmd === "--sqlite-shard") {
+    const n = Number(rest[0]);
+    const map = readSqliteMap();
+    if (!Number.isInteger(n) || n < 0 || n >= map.shards.length) throw new Error(`--sqlite-shard takes a shard index 0..${map.shards.length - 1}`);
+    if (!rest[1]) throw new Error("--sqlite-shard takes the `vitest list --filesOnly --json` report of the sqlite run");
+    const files = sqliteShardFiles(n, listedFiles(ROOT, JSON.parse(readFileSync(rest[1], "utf8"))), map);
+    if (!files.length) throw new Error(`sqlite shard ${n} has no file to run`);
+    process.stdout.write(`${files.join("\n")}\n`);
+    return 0;
+  }
+  if (cmd === "--verify-sqlite-report") {
+    const n = Number(rest[0]);
+    if (!rest[1] || !rest[2]) throw new Error("--verify-sqlite-report takes N, the list report and the run's JSON report");
+    const listed = listedFiles(ROOT, JSON.parse(readFileSync(rest[1], "utf8")));
+    const report = JSON.parse(readFileSync(rest[2], "utf8"));
+    const { missing, extra } = verifySqliteReport(n, listed, report);
+    for (const f of missing) process.stderr.write(`ci-shards: MISSING ${f} was handed to sqlite shard ${n} and did not run\n`);
+    for (const f of extra) process.stderr.write(`ci-shards: EXTRA ${f} ran in sqlite shard ${n} without being handed to it\n`);
+    process.stdout.write(`REPORT sqlite shard=${n} results=${report.testResults.length} missing=${missing.length} extra=${extra.length}\n`);
+    return missing.length || extra.length ? 1 : 0;
+  }
   if (cmd === "--shard" || cmd === "--needs-dovecot") {
     const n = Number(rest[0]);
     const map = readMap();
@@ -209,12 +314,12 @@ function main(argv) {
     return 0;
   }
   if (cmd === "--check") {
-    const problems = checkMap();
+    const problems = [...checkMap(), ...checkSqliteMap()];
     for (const p of problems) process.stderr.write(`ci-shards: ${p}\n`);
     process.stdout.write(`CHECK stale=${problems.filter((p) => p.startsWith("STALE")).length} problems=${problems.length}\n`);
     return problems.length ? 1 : 0;
   }
-  process.stderr.write("ci-shards: --pack <json>... [--measured-at <sha>] | --shard N | --needs-dovecot N | --indexes | --alone | --desktop | --check | --verify-report N|desktop <json>\n");
+  process.stderr.write("ci-shards: --pack <json>... [--measured-at <sha>] | --pack-sqlite <json>... [--measured-at <sha>] | --sqlite-indexes | --sqlite-shard N <list-json> | --verify-sqlite-report N <list-json> <json> | --shard N | --needs-dovecot N | --indexes | --alone | --desktop | --check | --verify-report N|desktop <json>\n");
   return 2;
 }
 
