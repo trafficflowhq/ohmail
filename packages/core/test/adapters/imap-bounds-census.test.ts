@@ -175,9 +175,9 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
     how: "bounded_by_input",
     why: "four sites, all over `wanted` / `take` / `withheld` / `bare` — UID arrays the CALLER names, bounded by the API door that produced them",
   },
-  "fetchPart|download": {
+  "streamPart|download": {
     how: "bounded_bytes",
-    why: "counts as it goes inside the stream loop and abandons past `opts.maxBytes` — the pre-existing ceiling this row did not need to change",
+    why: "counts as it goes inside the stream loop and abandons past `opts.maxBytes` — the pre-existing ceiling this row did not need to change; `fetchPart` and `fetchPartTo` both read through it",
   },
   "fetchRaw|download": {
     how: "bounded_bytes",
@@ -257,7 +257,7 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
   },
   "destinationLook|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "fetchByUid|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
-  "fetchPart|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
+  "streamPart|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "fetchStructure|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "fetchRaw|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "listFolderPage|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },

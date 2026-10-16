@@ -1576,7 +1576,20 @@ describe("the Rust side", () => {
        and to check the file is still the one judged before removing it — on the plan's lock path
        only. The start time: one inside the witness's `start_ticks_of`, the kernel's own
        `/proc/<pid>/stat` for a pid and nothing else, which backs a free witness on Linux. */
-    expect(engine.match(/\bFile::open\(/g)).toHaveLength(3);
+    expect(engine.match(/\bFile::open\(/g)).toHaveLength(4);
+    /* THE FOURTH IS THE SAVE'S STAGING FILE: the engine streams a part into a path this module
+       minted under `attachment_root` (`staging_path`), and it is opened once, to be copied into
+       Downloads, and removed once whatever happened. No window value names either path. */
+    expect(engine).toMatch(/fn copy_staged\(staged: &Path, bytes: u64, file: &mut File\) -> io::Result<\(\)> \{\s*let copied = io::copy\(&mut File::open\(staged\)\?, file\)\?;/);
+    expect(engine).toMatch(/let staged = staging_path\(&root\)[\s\S]{0,700}?copy_staged\(&staged, bytes, file\)/);
+    expect(engine).toMatch(/let _ = fs::remove_file\(&staged\);/);
+    /* THE THIRD REMOVAL IS A DOWNLOAD'S OWN FAILED COPY: the file `create_new` made a moment before
+       in the same arm, removed when its fill or flush failed, never any other name. */
+    expect(engine).toMatch(/match options\.open\(&path\) \{\s*Ok\(mut file\) => \{\s*let written = fill\(&mut file\)[\s\S]{0,900}?drop\(file\);\s*let _ = fs::remove_file\(&path\);/);
+    /* THE WINDOW CANNOT NAME A FILE FOR THE ENGINE TO WRITE: the save's target header is dropped
+       from every window request at the one command that forwards them. */
+    expect(engine).toMatch(/fn engine_request\([\s\S]*?\{\s*let body = window_request_body\(body, body_text, body64\)\?;\s*let headers = window_headers\(headers\);[\s\S]{0,600}?shell\.engine\(\)\.request\(EngineRequest \{ method, url, headers, body \}\)/);
+    expect(engine).toMatch(/let root = attachment_root\(shell\.paths\.app_data\.as_deref\(\)\)\.map_err\(serde_json::Value::String\)\?;\s*sweep_attachments\(&root, ATTACHMENT_KEEP\);\s*let staged = staging_path\(&root\)/);
     expect(engine).toMatch(/pub\(super\) fn start_ticks_of\(pid: u32\) -> Option<u64> \{[\s\S]{0,140}?File::open\(format!\("\/proc\/\{pid\}\/stat"\)\)/);
     expect(engine).toMatch(/fn tail_lines\(path: &Path, max_bytes: u64\) -> Vec<String> \{[\s\S]{0,120}?File::open\(path\)/);
     expect(engine).toMatch(/fn read_lock\(lock: &Path\) -> io::Result<Option<HeldLock>> \{\s*let mut file = match File::open\(lock\)/);
@@ -1626,7 +1639,7 @@ describe("the Rust side", () => {
      * copy's engine, still running. So a running pid keeps its lock, and the file is read again
      * and compared before it goes. Each fact is asserted below beside the count. */
     expect(engine.match(/fs::read_dir/g)).toHaveLength(1);
-    expect(engine.match(/fs::remove_file/g)).toHaveLength(2);
+    expect(engine.match(/fs::remove_file/g)).toHaveLength(4);
     expect(engine.match(/fs::remove_dir_all/g)).toHaveLength(2);
     expect(engine).toMatch(
       /let lock = dir\.join\("sidecar\.lock"\);\s*let witness = witness::read\(&dir\);\s*remove_unheld_lock\(&lock, process_is_running, &witness\)/,
@@ -1666,7 +1679,9 @@ describe("the Rust side", () => {
     );
     expect(engine).toMatch(/fn sweep_attachments\(root: &Path, keep: Duration\)/);
     expect(engine).toMatch(/let Ok\(entries\) = fs::read_dir\(root\)/);
-    expect(engine.match(/sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(1);
+    // Two callers, the open and the save's staging, each on `attachment_root(...)` just composed.
+    expect(engine.match(/sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(2);
+    expect(engine.match(/let root = attachment_root\([^;]*;\s*(?:\/\/[^\n]*\n\s*)*sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(2);
     expect(engine).toMatch(/const ATTACHMENT_DIR: &str = "opened"/);
     expect(engine).toMatch(/let root = dir\.join\(ATTACHMENT_DIR\)/);
 

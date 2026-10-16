@@ -239,6 +239,8 @@ const SIDECAR_SUBSTITUTES = {
   /* The pairing check dials another computer over a pinned TLS handshake (`node:tls`); the phone
      pairs through its own flow, so its engine refuses the route and carries none of that code. */
   "./cloud-probe.js": path.join(PHONE, "cloud-probe.ts"),
+  /* The desktop's streamed save writes a file the shell named; a phone names none. */
+  "./attachment-file.js": path.join(PHONE, "attachment-file.ts"),
 };
 
 /**

@@ -57,6 +57,7 @@ import { createHostFetch } from "./host-pin-probe.js";
 import { createAdoptedDoor, DoorFileError, serialTail } from "./adopted-door.js";
 import { operatorCaFiles } from "./operator-ca-fetch.js";
 import { answerCloudProbe, CLOUD_PROBE_ROUTE } from "./cloud-probe.js";
+import { ATTACHMENT_FILE_ROUTE, relayAttachmentToFile } from "./attachment-file.js";
 /* Re-exported so the probe's existing importers keep one address for it. */
 export { describeProbeFailure, probeCloudDoor, probeCloudServer, PROBE_DEADLINE_MS } from "./cloud-probe.js";
 import type { Diagnostic } from "./log.js";
@@ -81,6 +82,8 @@ import { approvalAt, approvalPending, type ApprovalVerdict } from "./approval-ve
 export interface CloudSidecarConfig {
   /** Where the local mirror lives. Created if absent; locked while open. */
   dataDir: string;
+  /** The shell's staging folder for a save (`OHMAIL_ATTACHMENT_STAGING_DIR`); absent, a save is refused. */
+  attachmentStagingDir?: string;
   /** The hosted API base — the managed service's public default origin. */
   cloudUrl: string;
   /**
@@ -1943,6 +1946,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // here and the window PUTs to this door, which carries the bytes to it.
       if (req.method === "PUT" && path.startsWith(STAGED_UPLOAD_PATH_PREFIX)) return staged.upload(req);
       if (req.method === "POST" && path === "/attachments/staging") return staged.rewriteMint(await proxy.forward(req));
+      // The desktop's streamed save: the account's bytes relayed into the file the shell named.
+      const saveTo = req.method === "POST" ? ATTACHMENT_FILE_ROUTE.exec(path) : null;
+      if (saveTo) {
+        if (!isUuid(saveTo[1]!)) return json({ error: { code: "validation_failed", message: "id must be an id" } }, 400);
+        return relayAttachmentToFile(req, saveTo[1]!, proxy.forward, config.attachmentStagingDir);
+      }
 
       if (req.method === "GET" && path === "/sync") {
         const since = url.searchParams.get("since") ?? undefined;

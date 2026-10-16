@@ -1,4 +1,6 @@
-import { type AttachmentAdapter, type DownloadAllInput, type OpenAdapter } from "@trafficflow/services/mail";
+import {
+  type AttachmentAdapter, type AttachmentSink, type DownloadAllInput, type OpenAdapter,
+} from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import { makeOpenAdapter } from "../attachments-adapter.js";
@@ -231,3 +233,39 @@ export const attachmentRoutes: Route[] = [
     },
   },
 ];
+
+/** A file the save writes through: the sink, then `done` on success or `discard` on any refusal. */
+export interface AttachmentFileSink extends AttachmentSink {
+  done(): Promise<void>;
+  discard(): Promise<void>;
+}
+
+/**
+ * `POST /attachments/:id/file` — the desktop's save, streamed from IMAP into a file the shell named,
+ * so neither the engine nor the window holds the part. Not in any shared table: only the engine's
+ * stdio door mounts it, and `openSink` reads the target from the request and refuses any the shell
+ * would not have minted (`apps/sidecar/src/attachment-file.ts`). Answers the saved part's size and
+ * sha256; a refusal is the byte routes' envelope.
+ */
+export function attachmentFileRoute(openSink: (req: Request) => Promise<AttachmentFileSink>): Route {
+  return {
+    method: "POST",
+    pattern: "/attachments/:id/file",
+    relay: false,
+    cost: "connection",
+    options: { raw: true, middleware: BYTE_ROUTE_MIDDLEWARE },
+    handler: async (req, deps, params) => {
+      const sink = await openSink(req);
+      try {
+        const saved = await attachments(deps).fetchToSink(
+          serviceContext(deps, req), params.id!, { openAdapter: makeOpenAdapter(deps) }, sink,
+        );
+        await sink.done();
+        return jsonResponse(saved);
+      } catch (err) {
+        await sink.discard();
+        throw mailServerRefusal(err) ?? err;
+      }
+    },
+  };
+}

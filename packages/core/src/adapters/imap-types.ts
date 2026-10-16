@@ -978,6 +978,9 @@ export type SendResult = {
 /** One attachment BLOB fetched on-demand from IMAP — bytes are NEVER persisted (§13.2/§14). */
 export interface FetchedPart { contentType: string; filename: string | null; body: Uint8Array; }
 
+/** A part handed to a sink chunk by chunk instead of buffered: its size and the sha256 of the bytes written. */
+export interface StreamedPart { contentType: string; filename: string | null; bytes: number; sha256: string }
+
 /**
  * What a TARGETED re-read of named UIDs found — see {@link MailboxAdapter.fetchByUid}.
  *

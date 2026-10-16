@@ -44,8 +44,21 @@ export interface FileDTO extends AttachmentDTO {
   message: { subject: string; from: EmailAddress; date: string | null };
 }
 
-/** One BLOB fetched on-demand from IMAP — bytes are NEVER persisted. */
-export interface FetchedBytes { contentType: string; filename: string | null; body: Uint8Array; }
+/**
+ * One BLOB fetched on-demand from IMAP — bytes are NEVER persisted. A part streamed into a sink
+ * ({@link AttachmentsService.fetchToSink}) carries an empty `body` and the `sha256`/`bytes` of
+ * what the sink was given; the gate reads `sha256` when it is there.
+ */
+export interface FetchedBytes { contentType: string; filename: string | null; body: Uint8Array; sha256?: string; bytes?: number }
+
+/** Where a streamed part goes. `reset` empties it before each read, so a repair's retry starts clean. */
+export interface AttachmentSink {
+  write(chunk: Uint8Array): Promise<void>;
+  reset(): Promise<void>;
+}
+
+/** What a part streamed into a sink was: its type and name, and the size and sha256 written. */
+export interface SavedPart { contentType: string; filename: string; bytes: number; sha256: string }
 
 /**
  * A connected, per-mailbox adapter handle. `fetchPart` pulls one part's bytes;
@@ -64,6 +77,13 @@ export interface AttachmentAdapter {
    * third parameter so every existing fake/GreenMail adapter keeps compiling.
    */
   fetchPart(locator: NativeLocator, partId: string | null, opts?: { maxBytes?: number }): Promise<FetchedBytes>;
+  /**
+   * {@link fetchPart} chunk by chunk into `sink`, under the same ceiling and with the same poisoning
+   * on a breach. Optional: without it {@link AttachmentsService.fetchToSink} buffers and writes once.
+   */
+  fetchPartTo?(
+    locator: NativeLocator, partId: string | null, sink: (chunk: Uint8Array) => Promise<void>, opts?: { maxBytes?: number },
+  ): Promise<{ contentType: string; filename: string | null; bytes: number; sha256: string }>;
   /**
    * The whole message as the server holds it, refused past `maxBytes` (the connection survives).
    * Optional: a forward whose stored words were let go reads them here, and an adapter without it
@@ -105,7 +125,7 @@ export function verifiedPart(row: PartRow, fetched: FetchedBytes, log: Logger = 
     log.info("attachment_part_unverified", { partRowId: row.id, partId: row.partId });
     return fetched;
   }
-  const served = createHash("sha256").update(fetched.body).digest("hex");
+  const served = shaOf(fetched);
   if (served === row.contentSha256) return fetched;
   const fields = { partRowId: row.id, partId: row.partId, storedSha: row.contentSha256.slice(0, 8), servedSha: served.slice(0, 8) };
   log.warn("attachment_part_mismatch", fields);
@@ -143,7 +163,32 @@ export function readerFor(adapter: AttachmentAdapter, locator: NativeLocator, op
   };
 }
 
+/**
+ * {@link readerFor}, but every download goes into `sink` and the answer carries no body. The sink is
+ * reset before each read, so after a repair it holds exactly the section that was served.
+ */
+function sinkReaderFor(
+  adapter: AttachmentAdapter, locator: NativeLocator, sink: AttachmentSink, opts: { maxBytes?: number },
+): PartReader {
+  const empty = new Uint8Array();
+  return {
+    fetchPart: async (partId) => {
+      await sink.reset();
+      if (adapter.fetchPartTo) {
+        const got = await adapter.fetchPartTo(locator, partId, (c) => sink.write(c), opts);
+        return { contentType: got.contentType, filename: got.filename, body: empty, sha256: got.sha256, bytes: got.bytes };
+      }
+      const got = await adapter.fetchPart(locator, partId, opts);
+      await sink.write(got.body);
+      return { contentType: got.contentType, filename: got.filename, body: empty, sha256: shaHex(got.body), bytes: got.body.byteLength };
+    },
+    ...(adapter.fetchStructure ? { fetchStructure: () => adapter.fetchStructure!(locator) } : {}),
+  };
+}
+
 const shaHex = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+/** The fetched bytes' sha256: the streamed read's own, or taken from the buffer. */
+function shaOf(f: FetchedBytes): string { return f.sha256 ?? shaHex(f.body); }
 
 /**
  * THE GATE, WITH ONE BOUNDED REPAIR FOR AN OLDER ROW. The stored section is fetched; equal bytes
@@ -168,7 +213,7 @@ export async function repairedPart(
     if (known === null) throw err;
     fetched = { contentType: "application/octet-stream", filename: null, body: new Uint8Array() };
   }
-  if (row.contentSha256 === null || shaHex(fetched.body) === row.contentSha256) return verifiedPart(row, fetched, log);
+  if (row.contentSha256 === null || shaOf(fetched) === row.contentSha256) return verifiedPart(row, fetched, log);
   return (await repairFrom(row, read, ctx, known, opts.budget, log)) ?? verifiedPart(row, fetched, log);
 }
 
@@ -190,7 +235,7 @@ async function repairFrom(
   for (const section of candidates.slice(0, REPAIR_DOWNLOADS_PER_ROW)) {
     tried += 1;
     const got = await read.fetchPart(section);
-    if (shaHex(got.body) !== row.contentSha256) continue;
+    if (shaOf(got) !== row.contentSha256) continue;
     const healed = await writeSection(ctx, row, section);
     log.info("attachment_part_repaired", { partRowId: row.id, partId: row.partId, section, tried, healed });
     return got;
@@ -266,14 +311,15 @@ export const DOWNLOAD_ALL_MAX_BYTES = 64 * 1024 * 1024;   // 64 MiB of attachmen
 /**
  * Ceiling on ONE on-demand fetch (`GET /attachments/:id`). Without it `fetchPart` buffered
  * whatever the server sent under a held mailbox lock, so one oversized part could stall all later
- * mail for that mailbox — the fix must fire DURING the read. 32 MiB: ~4x the largest attachment
- * in the live corpus (7.8 MB measured); above what mainstream providers accept (~25 MB); half
- * {@link DOWNLOAD_ALL_MAX_BYTES} and equal to core's `DEFAULT_SYNC_BATCH_MAX_BYTES`. Peak memory
- * is ~3x the payload. Enforced TWICE, and the second is the one that counts: a pre-flight against
+ * mail for that mailbox — the fix must fire DURING the read. 40 MiB: the largest file this app
+ * sends (`SEND_STAGED_OBJECT_MAX_BYTES`, the desktop's per-send ceiling), so nothing ohmail sent
+ * comes back unopenable; `attachment-open-ceiling.test.ts` holds it at or above every send
+ * ceiling. A buffered read peaks at ~3x the payload; {@link AttachmentsService.fetchToSink}
+ * holds one chunk. Enforced TWICE, and the second is the one that counts: a pre-flight against
  * STORED metadata (costs no connection), then a real byte count inside the stream — the metadata
  * is the sender's claim and can be wrong.
  */
-export const ATTACHMENT_MAX_FETCH_BYTES = 32 * 1024 * 1024;
+export const ATTACHMENT_MAX_FETCH_BYTES = 40 * 1024 * 1024;
 
 /**
  * An attachment id's shape, checked before it reaches a `uuid` column.
@@ -407,6 +453,23 @@ export class AttachmentsService {
    * are returned to the caller and NEVER persisted server-side.
    */
   async fetchBytes(ctx: ServiceContext, attachmentId: string, deps: FetchDeps): Promise<FetchedBytes> {
+    return this.fetchVia(ctx, attachmentId, deps, (adapter, locator, opts) => readerFor(adapter, locator, opts));
+  }
+
+  /**
+   * {@link fetchBytes} into `sink` instead of memory: the same pre-flight, ceiling, part gate and
+   * refusals, and nothing of the part is held past one chunk. The desktop's save writes a file
+   * this way. A refusal leaves whatever the sink holds unserved; the caller discards it.
+   */
+  async fetchToSink(ctx: ServiceContext, attachmentId: string, deps: FetchDeps, sink: AttachmentSink): Promise<SavedPart> {
+    const got = await this.fetchVia(ctx, attachmentId, deps, (adapter, locator, opts) => sinkReaderFor(adapter, locator, sink, opts));
+    return { contentType: got.contentType, filename: got.filename ?? "attachment", bytes: got.bytes ?? 0, sha256: got.sha256 ?? "" };
+  }
+
+  private async fetchVia(
+    ctx: ServiceContext, attachmentId: string, deps: FetchDeps,
+    reader: (adapter: AttachmentAdapter, locator: NativeLocator, opts: { maxBytes: number }) => PartReader,
+  ): Promise<FetchedBytes> {
     const part = await this.resolvePart(ctx, attachmentId);
 
     // PRE-FLIGHT, before any socket is opened. The stored size is the sender's claim, so this is
@@ -427,7 +490,7 @@ export class AttachmentsService {
       // and the `finally` below closes it, so the poisoned-connection cost of a mid-stream abort is
       // a connection we were about to discard anyway.
       const fetched = await repairedPart(
-        part, readerFor(adapter, part.locator, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES }), ctx, { ...(deps.log ? { log: deps.log } : {}) },
+        part, reader(adapter, part.locator, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES }), ctx, { ...(deps.log ? { log: deps.log } : {}) },
       );
       // Prefer the DB filename (stable), then what IMAP reported; a part nameless in BOTH
       // places downloads under the type-aware fallback (invite.ics for a calendar part) rather

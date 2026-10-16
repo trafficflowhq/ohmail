@@ -236,6 +236,8 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
       // the number. The pre-flight would still fire on honest metadata, which is precisely what
       // makes the omission invisible in a test that uses honest metadata.
       fetchPart: (locator, partId, o) => guarded(() => opened.adapter.fetchPart(locator, partId, o)),
+      // The streamed read (the desktop's save): the same clock, ceiling and teardown.
+      fetchPartTo: (locator, partId, sink, o) => guarded(() => opened.adapter.fetchPartTo(locator, partId, sink, o)),
       // The same clock and the same teardown; `o` carries the service's ceiling to the stream.
       fetchRaw: (locator, o) => guarded(() => opened.adapter.fetchRaw(locator, o)),
       // The repair's one tree read: the same clock, and a breach destroys the socket the same way.

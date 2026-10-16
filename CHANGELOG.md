@@ -41,6 +41,14 @@ update restarts the proxy whenever that directory changes. The Umbrel app does t
 start hook renders. If you keep your own compose file, "Updates" in `docs/self-host/VPS.md` has the one line to
 change.
 
+### An attachment up to 40 MiB opens and saves on the desktop
+<!-- changes: desktop-attachment-open-ceiling.md -->
+
+The desktop sends files up to 40 MiB, but opened or saved one only up to 32 MiB, so a file you sent could not be
+saved when it came back. One attachment can now be opened or saved up to 40 MiB, the most ohmail sends. On the
+desktop, Download writes the file to your Downloads folder as it arrives from the mail server, so a large
+attachment no longer passes through the app's window.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

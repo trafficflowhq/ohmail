@@ -168,6 +168,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
   const pass = env.OHMAIL_IMAP_PASS;
   return {
     dataDir: env.OHMAIL_DATA_DIR ?? required("OHMAIL_DATA_DIR"),
+    ...(env.OHMAIL_ATTACHMENT_STAGING_DIR ? { attachmentStagingDir: env.OHMAIL_ATTACHMENT_STAGING_DIR } : {}),
     imap: {
       host: env.OHMAIL_IMAP_HOST ?? required("OHMAIL_IMAP_HOST"),
       port: Number(env.OHMAIL_IMAP_PORT ?? 993),
@@ -315,6 +316,7 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
   }
   return {
     dataDir: env.OHMAIL_DATA_DIR ?? required("OHMAIL_DATA_DIR"),
+    ...(env.OHMAIL_ATTACHMENT_STAGING_DIR ? { attachmentStagingDir: env.OHMAIL_ATTACHMENT_STAGING_DIR } : {}),
     cloudUrl: env.OHMAIL_CLOUD_URL ?? required("OHMAIL_CLOUD_URL"),
     /* `null` AND NEVER `""`. An empty string is an address that was configured and is blank, which
        `sameOwner` matches against nothing — a mirror recorded that way is discarded on every

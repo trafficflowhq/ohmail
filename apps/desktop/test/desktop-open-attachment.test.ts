@@ -26,8 +26,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *
  * ── WHAT THIS FILE HOLDS DOWN ───────────────────────────────────────────────────────────────
  *
- *  1. armed, a press hands the shell the BYTES and the display name, and never an anchor — to
- *     the SAVE command, once per file, "Download all" included;
+ *  1. armed, a press hands the shell the attachment's ID and the display name, and never an
+ *     anchor or the bytes — to the SAVE command, once per file, "Download all" included; the
+ *     engine streams the part to disk, so a 40 MiB file never enters this window;
  *  2. the window sends no path and no directory — the payload has exactly two fields, so there is
  *     no value a message could shape into a place on the disk;
  *  3. the WEB app is untouched: no command, and the anchor keeps the browser's own semantics;
@@ -49,7 +50,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *  · make `deliverFile` take the desktop arm regardless of          → the web-app case goes red;
  *    `desktopAttachmentsEnabled()`
  *  · have `saveAttachmentToDownloads` send a third field            → the payload-shape case goes
- *    (a path, a directory)                                            red;
+ *    (a path, a directory, the bytes)                                 red;
  *  · make `opensInSystemViewer` answer true without arming          → the web-app preview case
  *                                                                     goes red;
  *  · make `opensInSystemViewer` answer false for `application/pdf`  → the desktop preview case
@@ -150,14 +151,24 @@ async function freshSeam() {
    THE DESKTOP WINDOW, ARMED — the bytes go to the shell and no anchor is clicked.
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
+/** The engine's half of a desktop save: run the delivery, as `OhmailEngine.deliverAttachment` does. */
+const fakeEngine = {
+  deliverAttachment: <T,>(_m: string, _a: string, deliver: () => Promise<T>) => deliver(),
+};
+
+const ID1 = "0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d21";
+const ID2 = "0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d22";
+const ID3 = "0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d23";
+
 describe("the desktop window hands the file to the operating system", () => {
-  it("a press sends the bytes and the display name, and clicks no anchor", async () => {
+  it("a press sends the attachment's id and the display name, and clicks no anchor", async () => {
     const mod = await freshModule();
     mod.enableDesktopAttachments();
     const { deliverFile } = await freshSeam();
 
-    const blob = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])], { type: "application/pdf" });
-    deliverFile(blob, "blob:tauri://localhost/abc", "Quarterly report.pdf", document);
+    void deliverFile(fakeEngine, {
+      messageId: "m1", attachmentId: ID1, filename: "Quarterly report.pdf", url: "blob:tauri://localhost/abc",
+    }, document);
     await settled();
 
     expect(anchors, "the desktop arm clicked a download anchor, which this window cancels").toEqual([]);
@@ -166,48 +177,45 @@ describe("the desktop window hands the file to the operating system", () => {
     // viewer and left nothing in the person's Downloads folder is the defect above this one.
     expect(invoked[0]!.command).toBe(mod.SAVE_ATTACHMENT_COMMAND);
     expect(invoked[0]!.command).not.toBe(mod.OPEN_ATTACHMENT_COMMAND);
-    expect(invoked[0]!.payload).toEqual({
-      filename: "Quarterly report.pdf",
-      // `%PDF` — the same four bytes the Blob was built from, unaltered on the way.
-      bytes: [0x25, 0x50, 0x44, 0x46],
-    });
+    // The id and the name: the engine streams the part, so no byte of it crosses this bridge.
+    expect(invoked[0]!.payload).toEqual({ attachmentId: ID1, filename: "Quarterly report.pdf" });
   });
 
   /**
    * THE STRUCTURAL CASE: the window cannot name a place on the disk.
    *
-   * Every part of the path is the shell's — the directory is the app's own, the unique component
-   * is minted from the system's random source, and the name is sanitised there before it is
-   * joined to anything (`engine.rs#attachment_file_name`, proven in `engine_tests.rs`). What is
-   * asserted here is the half this side owns: the payload carries a name and bytes, and nothing
-   * else, so there is no field a hostile name could arrive in as a path.
+   * Every part of the path is the shell's — the directory is the app's own, the staging file is
+   * minted from the system's random source, and the name is sanitised there before it is joined to
+   * anything (`engine.rs#attachment_file_name`, proven in `engine_tests.rs`). What is asserted here
+   * is the half this side owns: the payload carries an id and a name, and nothing else.
    */
-  it("the payload names bytes and a display name — never a path, a directory or a root", async () => {
+  it("the payload names an id and a display name — never a path, a directory, a root or the bytes", async () => {
     const mod = await freshModule();
     mod.enableDesktopAttachments();
     const { deliverFile } = await freshSeam();
 
-    deliverFile(new Blob(["x"]), "blob:tauri://localhost/abc", "../../.ssh/authorized_keys", document);
+    void deliverFile(fakeEngine, { messageId: "m1", attachmentId: ID1, filename: "../../.ssh/authorized_keys" }, document);
     await settled();
 
     const payload = invoked[0]!.payload!;
-    expect(Object.keys(payload).sort()).toEqual(["bytes", "filename"]);
+    expect(Object.keys(payload).sort()).toEqual(["attachmentId", "filename"]);
     // Sent AS THE MESSAGE WROTE IT. Repairing it here would put a second, quieter sanitiser in
     // front of the one that owns the decision, and the two would drift — the shell's is the one
     // that composes the path, so the shell's is the one that must be total.
     expect(payload.filename).toBe("../../.ssh/authorized_keys");
   });
 
-  it("without bytes there is nothing to hand a viewer, so the anchor is still used", async () => {
+  it("the engine's refusal of the part is thrown for the tile, a shell refusal is said", async () => {
     const mod = await freshModule();
     mod.enableDesktopAttachments();
-    const { deliverFile } = await freshSeam();
-
-    deliverFile(undefined, "blob:tauri://localhost/abc", "report.pdf", document);
-    await settled();
-
-    expect(invoked, "a command was called with no bytes to send").toEqual([]);
-    expect(anchors).toEqual([{ href: "blob:tauri://localhost/abc", download: "report.pdf" }]);
+    host.__TAURI_INTERNALS__ = {
+      invoke: () => Promise.reject({ status: 413, code: "payload_too_large", message: "over the limit", retryable: false }),
+    };
+    await expect(mod.saveAttachmentToDownloads(ID1, "big.mp4")).rejects.toMatchObject({
+      code: "payload_too_large", status: 413, retryable: false,
+    });
+    host.__TAURI_INTERNALS__ = { invoke: () => Promise.reject("ohmail: this computer named no Downloads folder") };
+    await expect(mod.saveAttachmentToDownloads(ID1, "big.mp4")).resolves.toBe("no-downloads-folder");
   });
 
   /**
@@ -225,14 +233,11 @@ describe("the desktop window hands the file to the operating system", () => {
     mod.enableDesktopAttachments();
     const { deliverAll } = await freshSeam();
 
-    const saved = await deliverAll(
-      [
-        { blob: new Blob(["a"]), url: "blob:tauri://localhost/1", filename: "Invoice.pdf" },
-        { blob: new Blob(["bb"]), url: "blob:tauri://localhost/2", filename: "Photo.jpg" },
-        { blob: new Blob(["ccc"]), url: "blob:tauri://localhost/3", filename: "Notes.txt" },
-      ],
-      document,
-    );
+    const saved = await deliverAll(fakeEngine, [
+      { messageId: "m1", attachmentId: ID1, filename: "Invoice.pdf" },
+      { messageId: "m1", attachmentId: ID2, filename: "Photo.jpg" },
+      { messageId: "m1", attachmentId: ID3, filename: "Notes.txt" },
+    ], document);
 
     expect(saved, "the seam claimed a different number of files than it saved").toBe(3);
     expect(anchors, "Download all clicked an anchor in the window that cancels them").toEqual([]);
@@ -242,6 +247,7 @@ describe("the desktop window hands the file to the operating system", () => {
       mod.SAVE_ATTACHMENT_COMMAND,
     ]);
     expect(invoked.map((i) => i.payload!.filename)).toEqual(["Invoice.pdf", "Photo.jpg", "Notes.txt"]);
+    expect(invoked.map((i) => i.payload!.attachmentId)).toEqual([ID1, ID2, ID3]);
   });
 });
 
@@ -255,7 +261,7 @@ describe("the web app is not touched", () => {
     expect(mod.desktopAttachmentsEnabled()).toBe(false);
     const { deliverFile } = await freshSeam();
 
-    deliverFile(new Blob(["x"]), "blob:http://localhost/abc", "report.pdf", document);
+    void deliverFile(fakeEngine, { messageId: "m1", attachmentId: ID1, filename: "report.pdf", url: "blob:http://localhost/abc" }, document);
     await settled();
 
     expect(invoked, "the web app called a desktop shell command").toEqual([]);
@@ -270,13 +276,10 @@ describe("the web app is not touched", () => {
     expect(mod.desktopAttachmentsEnabled()).toBe(false);
     const { deliverAll } = await freshSeam();
 
-    const saved = await deliverAll(
-      [
-        { blob: new Blob(["a"]), url: "blob:http://localhost/1", filename: "Invoice.pdf" },
-        { blob: new Blob(["bb"]), url: "blob:http://localhost/2", filename: "Photo.jpg" },
-      ],
-      document,
-    );
+    const saved = await deliverAll(fakeEngine, [
+      { messageId: "m1", attachmentId: ID1, filename: "Invoice.pdf", url: "blob:http://localhost/1" },
+      { messageId: "m1", attachmentId: ID2, filename: "Photo.jpg", url: "blob:http://localhost/2" },
+    ], document);
 
     expect(saved, "the web arm claimed files reached a Downloads folder").toBe(0);
     expect(invoked, "the web app called a desktop shell command").toEqual([]);
@@ -397,8 +400,8 @@ describe("the window is granted the command it calls", () => {
    * has to hold here too: the shell picks the folder (`app.path().download_dir()`), sanitises the
    * name and numbers a collision, and the window names none of it.
    */
-  it("the save command names a file and bytes, and no place on the disk", () => {
-    expect(engine).toMatch(/fn save_attachment\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*filename: String,\s*bytes: Vec<u8>,\s*\)/);
+  it("the save command names an attachment and a file name, and no place on the disk", () => {
+    expect(engine).toMatch(/fn save_attachment\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*attachment_id: String,\s*filename: String,\s*\)/);
     expect(engine, "the Downloads folder is not the framework's").toMatch(/download_dir\(\)/);
   });
 

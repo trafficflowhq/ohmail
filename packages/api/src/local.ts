@@ -14,6 +14,8 @@ export type {
 export { DEFAULT_SSE } from "./deps.js";
 export { createApp, type App } from "./app.js";
 export { localRoutes } from "./routes/local.js";
+// The desktop's streamed save, mounted on the engine's stdio door alone (`apps/sidecar`).
+export { attachmentFileRoute, type AttachmentFileSink } from "./routes/attachments.js";
 // The add-time probe's SSRF/port gate. The local engine wires ALLOW_ANY (a LAN mail server on a
 // non-standard port is legitimate on a desktop install); the hosted deployment wires the enforcing
 // `makeProbeHostGuard`. See `imap-probe.ts`.

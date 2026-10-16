@@ -254,6 +254,34 @@ function treeServing(structure: MimeStructure | null | "no-method", bodies: Reco
 const partIdOf = async (db: Awaited<ReturnType<typeof makeCtx>>["db"], id: string): Promise<string | null> =>
   (await db.select({ p: attachmentsTbl.partId }).from(attachmentsTbl).where(eq(attachmentsTbl.id, id)))[0]!.p;
 
+describe("the streamed save holds only the section it serves", () => {
+  /* `fetchToSink` streams each read into the sink; a repair reads a second section after the
+     first. Without the reset between reads the file would hold both, with the right size and sha
+     reported. Driven with and without a streaming adapter, through the same repair. */
+  it.each([false, true])("streaming adapter: %s — the sink holds the repaired section alone", async (streams) => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId);
+    const id = await seedRow(db, accountId, messageId, "2.2.1", sha(RIGHT));
+    const { openAdapter } = treeServing(SIBLINGS, { "2.2.1": WRONG, "2.1": RIGHT });
+    const streaming: OpenAdapter = async (mailboxId) => {
+      const a = await openAdapter(mailboxId);
+      if (!streams) return a;
+      return { ...a, fetchPartTo: async (l, partId, sink, o) => {
+        const got = await a.fetchPart(l, partId, o);
+        for (let at = 0; at < got.body.byteLength; at += 5) await sink(got.body.subarray(at, at + 5));
+        return { contentType: got.contentType, filename: got.filename, bytes: got.body.byteLength, sha256: sha(got.body) };
+      } };
+    };
+    let held: number[] = [];
+    const sink = { write: async (c: Uint8Array) => { held.push(...c); }, reset: async () => { held = []; } };
+
+    const saved = await svc.fetchToSink(ctx, id, { openAdapter: streaming, log: capturingLog().log }, sink);
+
+    expect(Buffer.from(held).equals(Buffer.from(RIGHT))).toBe(true);
+    expect([saved.bytes, saved.sha256]).toEqual([RIGHT.byteLength, sha(RIGHT)]);
+  });
+});
+
 describe("the door repairs an older row's section at first use", () => {
   it.each([
     ["3.9.18", SIBLINGS, "2.2.1", "2.1"],

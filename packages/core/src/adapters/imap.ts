@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   ImapFlow, type FetchMessageObject, type ImapFlowOptions, type ListResponse, type MailboxObject,
   type StatusObject,
@@ -75,7 +75,7 @@ import {
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
   type BudgetStop, type MessageSite,
   type KnownEntry,
-  type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
+  type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions, type StreamedPart,
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
   type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
   FILING_BATCH_MAX, type MoveManyResult,
@@ -4991,6 +4991,34 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * content-transfer-encoding, so the bytes are the real file.
    */
   async fetchPart(locator: NativeLocator, partId: string | null, opts: FetchPartOptions = {}): Promise<FetchedPart> {
+    const chunks: Buffer[] = [];
+    const meta = await this.streamPart(locator, partId, opts, (buf) => { chunks.push(buf); });
+    return { ...meta, body: new Uint8Array(Buffer.concat(chunks)) };
+  }
+
+  /**
+   * {@link fetchPart} without the buffer: each decoded chunk goes to `sink` as it arrives, awaited,
+   * so a slow sink holds the stream back and memory stays one chunk deep. The same lock, epoch
+   * guard and in-loop ceiling; the answer carries the size and sha256 of what the sink was given.
+   */
+  async fetchPartTo(
+    locator: NativeLocator, partId: string | null, sink: (chunk: Uint8Array) => Promise<void> | void,
+    opts: FetchPartOptions = {},
+  ): Promise<StreamedPart> {
+    const hash = createHash("sha256");
+    let bytes = 0;
+    const meta = await this.streamPart(locator, partId, opts, async (buf) => {
+      hash.update(buf);
+      bytes += buf.length;
+      await sink(buf);
+    });
+    return { ...meta, bytes, sha256: hash.digest("hex") };
+  }
+
+  private async streamPart(
+    locator: NativeLocator, partId: string | null, opts: FetchPartOptions,
+    onChunk: (buf: Buffer) => Promise<void> | void,
+  ): Promise<{ contentType: string; filename: string | null }> {
     const { uid } = parseRef(locator.ref);
     const serverPath = this.toServerPath(locator.folder);
     const part = partId ?? "1";
@@ -5004,7 +5032,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       this.assertLocatorEpoch(locator);
       const dl = await this.bounded(this.client.download(String(uid), part, { uid: true }));
       if (!dl || !dl.content) throw new MessageGoneError(locator);
-      const chunks: Buffer[] = [];
       // COUNT AS WE GO, and stop the moment the ceiling is crossed.
       //
       // The check has to be INSIDE the loop. Buffering the whole part and measuring afterwards
@@ -5023,13 +5050,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // caller closes it; that is cheaper than draining bytes we have already refused.
           throw new AttachmentTooLargeError(locator, opts.maxBytes, total);
         }
-        chunks.push(buf);
+        await onChunk(buf);
       }
-      const body = Buffer.concat(chunks);
       return {
         contentType: dl.meta?.contentType ?? "application/octet-stream",
         filename: dl.meta?.filename ?? null,
-        body: new Uint8Array(body),
       };
     } finally {
       lock.release();

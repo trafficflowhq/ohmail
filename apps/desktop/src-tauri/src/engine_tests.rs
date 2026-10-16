@@ -4694,13 +4694,103 @@ fn the_sweep_reads_its_window_in_both_directions() {
 
 /// THE CEILING IS THE SHELL'S OWN, and not a number it inherits by agreement with the window.
 ///
-/// 32 MiB is `ATTACHMENT_MAX_FETCH_BYTES` in `packages/services` — the point at which the mail
-/// service refuses to fetch a single part at all. Written down twice on purpose: the client refuses
-/// first (such a part is a tile that is deliberately not a button), and the process that does the
-/// WRITING carries its own bound rather than trusting the caller to have one.
+/// 40 MiB is `ATTACHMENT_MAX_FETCH_BYTES` in `packages/services` — the point at which the mail
+/// service refuses to fetch a single part at all, and the largest file this app sends. Written down
+/// twice on purpose: the process that does the WRITING carries its own bound rather than trusting
+/// the caller to have one. `attachment-open-ceiling.test.ts` reads this file to hold the two equal.
 #[test]
 fn the_write_ceiling_is_the_services_single_fetch_ceiling() {
-    assert_eq!(ATTACHMENT_MAX_BYTES, 32 * 1024 * 1024);
+    assert_eq!(ATTACHMENT_MAX_BYTES, 40 * 1024 * 1024);
+}
+
+/// A STREAMED SAVE IS COPIED IN, NUMBERED LIKE ANY OTHER, AND A FAILED COPY IS A REFUSAL.
+#[test]
+fn a_streamed_save_copies_the_staged_file_and_a_failed_fill_is_refused() {
+    let fixture = Fixture::new("save-streamed");
+    let staged = fixture.dir.join("staged.part");
+    let bytes: Vec<u8> = (0..300_000u32).map(|i| (i * 31) as u8).collect();
+    fs::write(&staged, &bytes).expect("stage");
+    let root = downloads_root(Some(&fixture.dir.join("Downloads"))).expect("root");
+    let mut copy = |file: &mut std::fs::File| std::io::copy(&mut std::fs::File::open(&staged)?, file).map(|_| ());
+    let first = save_into_downloads_with(&root, "clip.mp4", &mut copy).expect("first");
+    let second = save_into_downloads_with(&root, "clip.mp4", &mut copy).expect("second");
+    assert_eq!(fs::read(&first).expect("read"), bytes);
+    assert_eq!(second.file_name().and_then(|n| n.to_str()), Some("clip (2).mp4"));
+    let failed = save_into_downloads_with(&root, "broken.bin", &mut |_file: &mut std::fs::File| {
+        Err(std::io::Error::other("the disk is full"))
+    });
+    assert!(failed.is_err(), "a fill that failed was reported as saved");
+    assert!(!root.join("broken.bin").exists(), "a failed fill left a partial file in Downloads");
+}
+
+/// A STAGING NAME IS THE ONE SHAPE THE ENGINE WILL CREATE: `<32 hex>.part`, directly under the root.
+#[test]
+fn a_staging_path_is_fresh_and_of_the_engines_shape() {
+    let root = Path::new("/data/opened");
+    let a = staging_path(root).expect("a");
+    let b = staging_path(root).expect("b");
+    assert_ne!(a, b);
+    assert_eq!(a.parent(), Some(root));
+    let name = a.file_name().and_then(|n| n.to_str()).expect("name");
+    assert!(name.len() == 37 && name.ends_with(".part") && name[..32].chars().all(|c| c.is_ascii_hexdigit()), "{name}");
+}
+
+/// THE ID IS A UUID OR NOTHING: it is composed into the engine's URL, so no path text may ride it.
+#[test]
+fn only_a_uuid_names_an_attachment_to_save() {
+    assert!(is_attachment_id("0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d2e"));
+    for bad in ["", "../../etc/passwd", "0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d2", "0b5e8d3c/1f2a-4c3b-9d8e-7f6a5b4c3d2e", "0b5e8d3c-1f2a-4c3b-9d8e-7f6a5b4c3d2e?x"] {
+        assert!(!is_attachment_id(bad), "{bad:?} was taken for an attachment id");
+    }
+}
+
+/// THE WINDOW CANNOT NAME A FILE FOR THE ENGINE TO WRITE: the save's target header is dropped from
+/// every window request, in any case, and nothing else is.
+#[test]
+fn a_window_request_cannot_carry_the_save_target() {
+    let kept = window_headers(vec![
+        ("X-Ohmail-File-Target".to_string(), "/home/someone/.bashrc".to_string()),
+        (ATTACHMENT_FILE_TARGET_HEADER.to_string(), "/tmp/opened/x.part".to_string()),
+        ("content-type".to_string(), "application/json".to_string()),
+    ]);
+    assert_eq!(kept, vec![("content-type".to_string(), "application/json".to_string())]);
+}
+
+/// THE TARGET CROSSES THE HEADER IN ANY SCRIPT: a header value is Latin-1 on the engine's side, so
+/// a profile folder named in Cyrillic would fail the save; base64 of the UTF-8 carries it whole.
+#[test]
+fn the_staging_path_crosses_the_header_as_ascii_and_comes_back_whole() {
+    use base64::Engine as _;
+    let path = "C:\\Users\\Дмитрий\\AppData\\Roaming\\io.ohmail.desktop\\opened\\0123456789abcdef0123456789abcdef.part";
+    let value = file_target_value(path);
+    assert!(value.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b)), "{value}");
+    let back = base64::engine::general_purpose::STANDARD.decode(value).expect("base64");
+    assert_eq!(String::from_utf8(back).expect("utf-8"), path);
+}
+
+/// THE COPY IS THE SIZE THE ENGINE SAID, OR IT IS NOT SAVED — and a refused copy leaves no file.
+#[test]
+fn a_staged_file_of_another_size_is_refused_and_leaves_nothing_in_downloads() {
+    let fixture = Fixture::new("staged-size");
+    let staged = fixture.dir.join("staged.part");
+    fs::write(&staged, vec![7u8; 4096]).expect("stage");
+    let root = downloads_root(Some(&fixture.dir.join("Downloads"))).expect("root");
+    let ok = save_into_downloads_with(&root, "a.bin", &mut |file| copy_staged(&staged, 4096, file)).expect("same size");
+    assert_eq!(fs::read(&ok).expect("read").len(), 4096);
+    let short = save_into_downloads_with(&root, "b.bin", &mut |file| copy_staged(&staged, 4097, file));
+    assert!(short.is_err(), "a file of another size was saved");
+    assert!(!root.join("b.bin").exists(), "a refused copy left its file in Downloads");
+}
+
+/// THE ENGINE'S REFUSAL REACHES THE WINDOW AS ITS FACTS, so a too-large part becomes the tile's state.
+#[test]
+fn an_engine_refusal_keeps_its_status_code_and_retry() {
+    let body = br#"{"error":{"code":"payload_too_large","message":"this attachment is 90 MiB","retryable":false}}"#;
+    let v = engine_refusal(413, body);
+    assert_eq!(v["status"], 413);
+    assert_eq!(v["code"], "payload_too_large");
+    assert_eq!(v["retryable"], false);
+    assert_eq!(engine_refusal(502, b"not json")["code"], serde_json::Value::Null);
 }
 
 /* ═══ THE OPENER: WHAT IT RUNS, IN WHOSE ENVIRONMENT, AND WHAT IT DOES WHEN IT CANNOT ═══════ */
@@ -5008,6 +5098,19 @@ fn given_up_with_lock(name: &str, record: &str) -> (Shell, PathBuf, PathBuf) {
     let lock = dir.join("sidecar.lock");
     fs::write(&lock, record).expect("lock");
     (shell, root, lock)
+}
+
+/// THE SPAWN NAMES THE ENGINE'S ONE PLACE TO WRITE A SAVE: `<app_data>/opened`, the folder the
+/// shell stages into, so the engine can refuse every other folder by real path.
+#[cfg(unix)]
+#[test]
+fn the_spawn_hands_the_engine_the_shells_staging_folder() {
+    let (shell, root, _lock) = given_up_with_lock("staging-dir", "");
+    let Plan::Spawn(launch) = shell.planned(None) else { panic!("the fixture composes an inert plan") };
+    let named: Vec<_> = launch.env.iter().filter(|(k, _)| k == ATTACHMENT_STAGING_DIR_VAR).collect();
+    assert_eq!(named.len(), 1, "the spawn named the staging folder {} times", named.len());
+    assert_eq!(PathBuf::from(&named[0].1), root.join(ATTACHMENT_DIR));
+    let _ = fs::remove_dir_all(&root);
 }
 
 /// A pid that named a process this test started and reaped: gone by construction. Asserted gone

@@ -20,6 +20,8 @@
  * literal removes the call, and `scripts/scan-artifact.mjs` reads the emitted bytes both ways).
  */
 
+import { MutationRejectedError } from "@ohmail/client-engine";
+
 /** The shell command that writes one attachment and opens it. `engine.rs` owns the path. */
 export const OPEN_ATTACHMENT_COMMAND = "open_attachment";
 
@@ -110,21 +112,32 @@ export function saveRefusalOf(err: unknown): SaveRefusal {
   return text.includes("named no Downloads folder") ? "no-downloads-folder" : "not-saved";
 }
 
+/** The engine's refusal of the part itself, as the shell relays it: `{ status, code, message, retryable }`. */
+function engineRefusalOf(err: unknown): MutationRejectedError | null {
+  const e = err as { status?: unknown; code?: unknown; message?: unknown; retryable?: unknown } | null;
+  if (typeof e !== "object" || e === null || typeof e.status !== "number") return null;
+  return new MutationRejectedError(typeof e.message === "string" ? e.message : "this attachment could not be fetched", {
+    status: e.status, code: typeof e.code === "string" ? e.code : null, retryable: e.retryable === true,
+  });
+}
+
 /**
- * Ask the shell to save one attachment into the user's Downloads folder. Answers `true` when it
- * landed, `false` when there is no shell here, and the refusal when the shell would not save —
- * which the press says (`AttachmentsChrome`), because a press that saves nothing and says nothing
- * is the defect this seam exists to end. The shell's own reason goes to the console.
+ * Ask the shell to save one attachment into the user's Downloads folder, BY ITS ID: the shell has
+ * the engine stream the part into a file and moves it there, so its bytes never enter this window.
+ * Answers `true` when it landed, `false` when there is no shell here, and the refusal when the shell
+ * would not save — which the press says (`AttachmentsChrome`). A refusal of the part itself (too
+ * large, gone, the mail server's answer) is THROWN, for the engine to put on the tile.
  */
-export async function saveAttachmentToDownloads(blob: Blob, filename: string): Promise<true | false | SaveRefusal> {
+export async function saveAttachmentToDownloads(attachmentId: string, filename: string): Promise<true | false | SaveRefusal> {
   const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
   const internals = host.__TAURI_INTERNALS__;
   if (typeof internals?.invoke !== "function") return false;
   try {
-    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
-    await (internals as TauriInternals).invoke(SAVE_ATTACHMENT_COMMAND, { filename, bytes });
+    await (internals as TauriInternals).invoke(SAVE_ATTACHMENT_COMMAND, { attachmentId, filename });
     return true;
   } catch (err) {
+    const refused = engineRefusalOf(err);
+    if (refused) throw refused;
     console.error(`ohmail: the shell would not save ${filename}`, err);
     return saveRefusalOf(err);
   }

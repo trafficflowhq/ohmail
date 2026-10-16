@@ -249,7 +249,7 @@ export {
   DOWNLOAD_ALL_MAX_PARTS, DOWNLOAD_ALL_MAX_BYTES, ATTACHMENT_MAX_FETCH_BYTES,
   type AttachmentDTO, type FileDTO, type FetchedBytes, type AttachmentAdapter,
   type OpenAdapter, type FetchDeps, type FilesFilter, type ListFilesOptions,
-  type DownloadAllInput, type DownloadAllResult,
+  type DownloadAllInput, type DownloadAllResult, type AttachmentSink, type SavedPart,
 } from "./attachments-service.js";
 export {
   KbService, kbService, KB_MAX_TAGS,

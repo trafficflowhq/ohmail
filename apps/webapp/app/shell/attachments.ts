@@ -132,31 +132,44 @@ export function saveObjectUrl(url: string, filename: string, doc: Document): voi
 
 /**
  * How one file reached the person: into their Downloads folder, into the browser's, or not at all —
- * `refused` when there was no shell to ask, a {@link SaveRefusal} when the shell would not save.
+ * `refused` when there was no shell to ask, `failed` when the part itself was refused (its tile
+ * carries why), a {@link SaveRefusal} when the shell would not save.
  */
-export type Delivery = "saved" | "downloaded" | "refused" | SaveRefusal;
+export type Delivery = "saved" | "downloaded" | "refused" | "failed" | SaveRefusal;
+
+/** One file to deliver: the desktop saves it by id, a browser tab from the object URL it fetched. */
+export interface DeliverableFile {
+  messageId: string;
+  attachmentId: string;
+  filename: string;
+  url?: string;
+  /** A press over a failed tile, which may ask again (`OhmailEngine.deliverAttachment`). */
+  retry?: boolean;
+}
 
 /**
  * Deliver one file, by whichever route this window actually has — and the same act on both.
  *
  * A browser tab uses {@link saveObjectUrl}. In the desktop window the `download` attribute is
- * cancelled silently by a webview with no download handler, so every press did nothing; handing
- * the bytes to the platform VIEWER fixed the silence and answered the wrong question, opening an
- * image in Preview and leaving nothing in Downloads. So the desktop arm asks the shell to SAVE,
- * what both buttons have always said, and never falls back to the anchor — there it is nothing at
- * all. `blob` is minted with the object URL so the two cannot diverge.
+ * cancelled silently by a webview with no download handler, so the desktop arm asks the shell to
+ * SAVE, and never falls back to the anchor — there it is nothing at all. It names the part, not its
+ * bytes: the engine streams it to disk, so a 40 MiB file costs this window nothing, and the tile
+ * reads `loading` meanwhile.
  */
 export async function deliverFile(
-  blob: Blob | undefined,
-  url: string,
-  filename: string,
+  engine: Pick<OhmailEngine, "deliverAttachment">,
+  file: DeliverableFile,
   doc: Document,
 ): Promise<Delivery> {
-  if (desktopAttachmentsEnabled() && blob) {
-    const answer = await saveAttachmentToDownloads(blob, filename);
-    return answer === true ? "saved" : answer === false ? "refused" : answer;
+  if (desktopAttachmentsEnabled()) {
+    const answer = await engine.deliverAttachment(
+      file.messageId, file.attachmentId, () => saveAttachmentToDownloads(file.attachmentId, file.filename),
+      file.retry ? { retry: true } : {},
+    );
+    return answer === undefined ? "failed" : answer === true ? "saved" : answer === false ? "refused" : answer;
   }
-  saveObjectUrl(url, filename, doc);
+  if (file.url === undefined) return "failed";
+  saveObjectUrl(file.url, file.filename, doc);
   return "downloaded";
 }
 
@@ -171,18 +184,19 @@ export async function deliverFile(
  * be in flight together. The count is what the notice may claim: files the shell said it wrote.
  */
 export async function deliverAll(
-  files: ReadonlyArray<{ blob: Blob | undefined; url: string; filename: string }>,
+  engine: Pick<OhmailEngine, "deliverAttachment">,
+  files: ReadonlyArray<DeliverableFile>,
   doc: Document,
   /** Each file the shell would not save, with why — the press says it (see {@link deliverFile}). */
   onRefused?: (why: SaveRefusal) => void,
 ): Promise<number> {
   if (!desktopAttachmentsEnabled()) {
-    for (const file of files) saveObjectUrl(file.url, file.filename, doc);
+    for (const file of files) if (file.url !== undefined) saveObjectUrl(file.url, file.filename, doc);
     return 0;
   }
   let saved = 0;
   for (const file of files) {
-    const how = await deliverFile(file.blob, file.url, file.filename, doc);
+    const how = await deliverFile(engine, file, doc);
     if (how === "saved") saved += 1;
     else if (how === "no-downloads-folder" || how === "not-saved") onRefused?.(how);
   }
@@ -672,6 +686,16 @@ export function useMessageAttachments(
         if (!before || before.state === "too_large") return;
         if (before.state === "failed" && !fileRetryIsOffered(before)) return;
 
+        // THE DESKTOP SAVES BY ID: no fetch into this window first, the engine streams the part.
+        if (desktopAttachmentsEnabled()) {
+          const how = await deliverFile(engine, {
+            messageId: id, attachmentId, filename: before.filename, retry: before.state === "failed",
+          }, document);
+          if (how === "saved") onSaved.current?.(1);
+          else if (how === "no-downloads-folder" || how === "not-saved") onRefused.current?.(how, 1);
+          return;
+        }
+
         if (before.state !== "ready" || !before.objectUrl) {
           // `retry` ONLY on a press over a failed tile. The engine deliberately refuses an
           // automatic re-ask (a React effect whose identity changes per render would loop
@@ -683,20 +707,10 @@ export function useMessageAttachments(
 
         const after = itemOf(engine, id, attachmentId);
         // Nothing to save on `failed` or `too_large`: the tile carries the server's own
-        // sentence and a silent no-op here is what lets it be read. `too_large` is also the
-        // reason nothing over the fetch ceiling can reach the desktop's file write — such a part
-        // never has bytes in the window, and the early return above refuses the press outright.
+        // sentence and a silent no-op here is what lets it be read. A browser download is
+        // announced by the browser, so nothing is said here.
         if (after?.state === "ready" && after.objectUrl) {
-          const how = await deliverFile(
-            engine.attachmentBlobOf(id, attachmentId),
-            after.objectUrl,
-            after.filename,
-            document,
-          );
-          // Only the desktop route has anything to announce: a browser download is announced by
-          // the browser. A shell that would not save is said at the press, in the product's words.
-          if (how === "saved") onSaved.current?.(1);
-          else if (how === "no-downloads-folder" || how === "not-saved") onRefused.current?.(how, 1);
+          await deliverFile(engine, { messageId: id, attachmentId, filename: after.filename, url: after.objectUrl }, document);
         }
       })();
     },
@@ -772,8 +786,19 @@ export function useMessageAttachments(
           // re-asked: a press of the group verb is a human act, which is the only thing that may
           // re-drive a `cost:"connection"` fetch the server already refused.
           const wanted = held.items.filter((i) => i.state !== "too_large" && (i.state !== "failed" || fileRetryIsOffered(i)));
-          for (const item of wanted) {
-            await engine.openAttachment(id, item.id, item.state === "failed" ? { retry: true } : {});
+          // ── the delivery half, and the two routes want opposite things ──
+          //
+          // `deliverAll` owns that split and its header states it: the browser arm stays ONE
+          // synchronous run of anchor clicks (spacing them across tasks drops the later
+          // downloads), and the desktop arm is sequential and awaited, because each file is a
+          // write into a folder shared with everything else this person has downloaded and the
+          // collision numbering is settled by the filesystem at the moment of the write. The
+          // desktop saves by id, so it fetches nothing into this window first.
+          const desktop = desktopAttachmentsEnabled();
+          if (!desktop) {
+            for (const item of wanted) {
+              await engine.openAttachment(id, item.id, item.state === "failed" ? { retry: true } : {});
+            }
           }
 
           // RE-READ, never the pre-fetch snapshot: `wanted` holds the states as they were before
@@ -781,27 +806,13 @@ export function useMessageAttachments(
           // Same `opts` as the enumerate above: a re-read that widened the list would save a file
           // this press never fetched, and one that narrowed it would drop one it did.
           const after = engine.attachmentsOf(id, opts);
-          const saved = after.state === "ready"
-            ? after.items.filter((i) => i.state === "ready" && i.objectUrl)
-            : [];
+          const files: DeliverableFile[] = desktop
+            ? wanted.map((item) => ({ messageId: id, attachmentId: item.id, filename: item.filename, retry: item.state === "failed" }))
+            : (after.state === "ready" ? after.items.filter((i) => i.state === "ready" && i.objectUrl) : [])
+              .map((item) => ({ messageId: id, attachmentId: item.id, filename: item.filename, url: item.objectUrl! }));
 
-          // ── the delivery half, and the two routes want opposite things ──
-          //
-          // `deliverAll` owns that split and its header states it: the browser arm stays ONE
-          // synchronous run of anchor clicks (spacing them across tasks drops the later
-          // downloads), and the desktop arm is sequential and awaited, because each file is a
-          // write into a folder shared with everything else this person has downloaded and the
-          // collision numbering is settled by the filesystem at the moment of the write.
           const refusals: SaveRefusal[] = [];
-          const intoDownloads = await deliverAll(
-            saved.map((item) => ({
-              blob: engine.attachmentBlobOf(id, item.id),
-              url: item.objectUrl!,
-              filename: item.filename,
-            })),
-            document,
-            (why) => refusals.push(why),
-          );
+          const intoDownloads = await deliverAll(engine, files, document, (why) => refusals.push(why));
           if (intoDownloads > 0) onSaved.current?.(intoDownloads);
           // A file the shell would not save has no tile to carry it, so the press says it.
           if (refusals.length > 0) {
@@ -811,7 +822,7 @@ export function useMessageAttachments(
           // Reported only when NOTHING could be saved. A partial result needs no toast: every
           // file that could not be fetched is a `failed` tile carrying the server's own sentence,
           // which is more than a toast could say and is attached to the file it is about.
-          if (saved.length === 0) onFailed.current();
+          if (desktop ? intoDownloads === 0 && refusals.length === 0 : files.length === 0) onFailed.current();
         } finally {
           // Remove THIS id alone: another panel's download-all may still be in flight, and its
           // membership — its spinner — is its own.

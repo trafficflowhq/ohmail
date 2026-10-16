@@ -1701,7 +1701,7 @@ const INLINE_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/gif", "imag
  * just the fetch: the image lands in the frame as base64 (+33%), ~5.6 MB
  * at this ceiling. A part over it stays a blanked box — what every message
  * showed before this existed — and remains reachable through the strip's
- * explicit-press fetch, which allows the server's 32 MiB.
+ * explicit-press fetch, which allows the server's 40 MiB.
  */
 export const INLINE_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 
@@ -2921,6 +2921,8 @@ export class OhmailEngine {
   private readonly attachmentListRequests = new Map<string, Promise<AttachmentsOutcome>>();
   /** In-flight byte fetches by `messageId:attachmentId` — see {@link OhmailEngine.openAttachment}. */
   private readonly attachmentRequests = new Map<string, Promise<void>>();
+  /** The flights above that are desktop saves ({@link OhmailEngine.deliverAttachment}), not fetches. */
+  private readonly attachmentDeliveries = new Set<string>();
   /**
    * Every `blob:` URL this engine has minted and not yet revoked, owned by the message it was
    * minted for. The debt is recorded at the MINT, not in the attachment entry a release is
@@ -10342,30 +10344,65 @@ export class OhmailEngine {
           this.healInlineImages(messageId, false);
         }
       })
-      .catch((err: unknown) => {
-        const code = (err as { code?: unknown } | null)?.code;
-        const message = err instanceof Error ? err.message : String(err);
-        if (code === "payload_too_large") {
-          this.patchAttachment(messageId, attachmentId, { state: "too_large", error: message });
-          return;
-        }
-        // The adapter's classification, kept as the list keeps it: a throw nobody classified never
-        // established a refusal, so asking again is honest.
-        const rejected = err instanceof MutationRejectedError ? err : null;
-        this.patchAttachment(messageId, attachmentId, {
-          state: "failed",
-          error: message,
-          code: rejected ? rejected.code : null,
-          retryable: rejected ? rejected.retryable : true,
-          status: rejected ? rejected.status : null,
-        });
-      })
+      .catch((err: unknown) => this.refuseAttachment(messageId, attachmentId, err))
       .finally(() => {
         this.attachmentRequests.delete(flightKey);
       });
 
     this.attachmentRequests.set(flightKey, request);
     return request;
+  }
+
+  /** A fetch's refusal onto its item: `too_large` at the ceiling, else `failed` with the adapter's facts. */
+  private refuseAttachment(messageId: string, attachmentId: string, err: unknown): void {
+    const code = (err as { code?: unknown } | null)?.code;
+    const message = err instanceof Error ? err.message : String(err);
+    if (code === "payload_too_large") {
+      this.patchAttachment(messageId, attachmentId, { state: "too_large", error: message });
+      return;
+    }
+    // The adapter's classification, kept as the list keeps it: a throw nobody classified never
+    // established a refusal, so asking again is honest.
+    const rejected = err instanceof MutationRejectedError ? err : null;
+    this.patchAttachment(messageId, attachmentId, {
+      state: "failed",
+      error: message,
+      code: rejected ? rejected.code : null,
+      retryable: rejected ? rejected.retryable : true,
+      status: rejected ? rejected.status : null,
+    });
+  }
+
+  /**
+   * A SAVE THAT NEVER HOLDS THE BYTES: the desktop's, where the shell has the engine stream the part
+   * to disk. Same guards and single flight as {@link openAttachment}; the item reads `loading` while
+   * `deliver` runs and goes back to where it was, and a throw lands on it as a fetch refusal would.
+   * Answers `deliver`'s value, or `undefined` when nothing was asked or it threw.
+   */
+  async deliverAttachment<T>(
+    messageId: string, attachmentId: string, deliver: () => Promise<T>, opts: { retry?: boolean } = {},
+  ): Promise<T | undefined> {
+    const flightKey = `${messageId}:${attachmentId}`;
+    // A second press during a save is not a second save; a press during a preview's fetch waits for it.
+    if (this.attachmentDeliveries.has(flightKey)) return undefined;
+    await this.attachmentRequests.get(flightKey);
+    if (this.attachmentRequests.has(flightKey)) return undefined;
+    const current = this.itemOf(messageId, attachmentId);
+    if (!current || current.state === "too_large") return undefined;
+    if (current.state === "failed" && !opts.retry) return undefined;
+    const settled: Partial<AttachmentItem> = current.state === "ready" ? { state: "ready" } : { state: "idle" };
+    this.patchAttachment(messageId, attachmentId, {
+      state: "loading", error: undefined, code: undefined, retryable: undefined, status: undefined,
+    });
+    let answer: T | undefined;
+    const request = deliver().then(
+      (got) => { answer = got; this.patchAttachment(messageId, attachmentId, settled); },
+      (err: unknown) => this.refuseAttachment(messageId, attachmentId, err),
+    ).finally(() => { this.attachmentRequests.delete(flightKey); this.attachmentDeliveries.delete(flightKey); });
+    this.attachmentRequests.set(flightKey, request);
+    this.attachmentDeliveries.add(flightKey);
+    await request;
+    return answer;
   }
 
   /**

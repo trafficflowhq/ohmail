@@ -1391,6 +1391,7 @@ impl ShellPaths {
                         // `plan_with` decided WHETHER and WHERE; the environment is composed here,
                         // whole, replacing the single data-directory pair it put there.
                         launch.env = env;
+                        launch.env.push(staging_dir_pair(root));
                         launch.unset = config::unset_for(config);
                         Plan::Spawn(launch)
                     }
@@ -1413,6 +1414,9 @@ impl ShellPaths {
                         // `Launch`'s `Debug` prints the NAMES of its environment and never the
                         // values — written before there was a value worth hiding, for this line.
                         launch.env.push((OsString::from(KEK_VAR), OsString::from(key)));
+                        if let Some(root) = self.app_data.as_deref() {
+                            launch.env.push(staging_dir_pair(root));
+                        }
                         Plan::Spawn(launch)
                     }
                     inert => inert,
@@ -5614,6 +5618,7 @@ fn engine_request(
     body64: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
     let body = window_request_body(body, body_text, body64)?;
+    let headers = window_headers(headers);
     // Read ONCE, into an `Arc` this request holds for its whole life. A reconfigure can replace the
     // engine while this is in flight, and the answer must come from the engine the question went to
     // — re-reading the slot for the reply would deliver it against a different child's bookkeeping.
@@ -5629,6 +5634,16 @@ fn engine_request(
     out.extend_from_slice(&meta);
     out.extend_from_slice(&answer.body);
     Ok(tauri::ipc::Response::new(out))
+}
+
+/// The window's request headers, less the one only this process may set: the window may not name
+/// a file for the engine to write ([`ATTACHMENT_FILE_TARGET_HEADER`]); only `save_attachment` does.
+#[cfg(feature = "local-engine")]
+pub(crate) fn window_headers(headers: Vec<(String, String)>) -> Vec<(String, String)> {
+    headers
+        .into_iter()
+        .filter(|(name, _)| !name.trim().eq_ignore_ascii_case(ATTACHMENT_FILE_TARGET_HEADER))
+        .collect()
 }
 
 /// One notice in the operating system's own notification centre.
@@ -6489,19 +6504,28 @@ fn open_external(url: String) -> Result<(), String> {
 // directory below — which matters more here than for a link, because the argument came out of a
 // message somebody else wrote.
 
-/// The most bytes this shell will write to disk to open.
+/// The most bytes this shell will write to disk to open or save.
 ///
-/// The same number the mail service refuses a single attachment fetch at, so this is the second
-/// ring rather than a new rule: a part over it never becomes bytes in the window at all — the
-/// client renders it as a tile that is deliberately not a button, and the seam that would call this
-/// returns before asking. It is repeated here because the process that does the WRITING should
-/// carry its own bound rather than inherit one by agreement.
+/// The same number the mail service refuses a single attachment fetch at (`ATTACHMENT_MAX_FETCH_BYTES`,
+/// 40 MiB: the largest file this app sends), so this is the second ring rather than a new rule. It
+/// is repeated here because the process that does the WRITING should carry its own bound rather
+/// than inherit one by agreement; `attachment-open-ceiling.test.ts` holds the two equal.
 #[cfg(feature = "local-engine")]
-const ATTACHMENT_MAX_BYTES: usize = 32 * 1024 * 1024;
+const ATTACHMENT_MAX_BYTES: usize = 40 * 1024 * 1024;
+
+/// The header the engine reads a streamed save's target file from (`apps/sidecar/src/attachment-file.ts`).
+/// Only this shell sets it, on its own request; [`engine_request`] drops it from every window request.
+#[cfg(feature = "local-engine")]
+pub(crate) const ATTACHMENT_FILE_TARGET_HEADER: &str = "x-ohmail-file-target";
 
 /// The directory, under this app's own data directory, that opened attachments are written into.
 #[cfg(feature = "local-engine")]
 const ATTACHMENT_DIR: &str = "opened";
+
+/// The engine's one place to write a save: `<app_data>/opened`, handed over at spawn. The engine
+/// creates a save's file only directly in it, compared by real path (`attachment-file.ts`).
+#[cfg(feature = "local-engine")]
+pub(crate) const ATTACHMENT_STAGING_DIR_VAR: &str = "OHMAIL_ATTACHMENT_STAGING_DIR";
 
 /// How long an opened file is left on disk before a later open sweeps it away — 24 hours.
 ///
@@ -6797,6 +6821,17 @@ const DOWNLOAD_NAME_TRIES: u32 = 1000;
 /// loser of that race silently truncates somebody's file.
 #[cfg(feature = "local-engine")]
 fn save_into_downloads(root: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    save_into_downloads_with(root, name, &mut |file| file.write_all(bytes))
+}
+
+/// [`save_into_downloads`] with the content written by `fill`, so a file the engine streamed to disk
+/// is copied in without being read into memory. A failed fill removes the file it created.
+#[cfg(feature = "local-engine")]
+fn save_into_downloads_with(
+    root: &Path,
+    name: &str,
+    fill: &mut dyn FnMut(&mut File) -> io::Result<()>,
+) -> Result<PathBuf, String> {
     for n in 1..=DOWNLOAD_NAME_TRIES {
         let candidate = if n == 1 { name.to_string() } else { numbered_attachment_name(name, n) };
         let path = root.join(&candidate);
@@ -6819,10 +6854,19 @@ fn save_into_downloads(root: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf,
         }
         match options.open(&path) {
             Ok(mut file) => {
-                file.write_all(bytes)
-                    .map_err(|err| format!("ohmail: this file could not be saved ({err})"))?;
-                file.sync_all()
-                    .map_err(|err| format!("ohmail: this file could not be flushed to disk ({err})"))?;
+                let written = fill(&mut file)
+                    .map_err(|err| format!("ohmail: this file could not be saved ({err})"))
+                    .and_then(|()| {
+                        file.sync_all()
+                            .map_err(|err| format!("ohmail: this file could not be flushed to disk ({err})"))
+                    });
+                if let Err(err) = written {
+                    // The file this call just created and nobody else has had: a press that says
+                    // "not saved" leaves no half file behind it.
+                    drop(file);
+                    let _ = fs::remove_file(&path);
+                    return Err(err);
+                }
                 return Ok(path);
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -6850,34 +6894,112 @@ fn downloads_root(downloads: Option<&Path>) -> Result<PathBuf, String> {
 /// Save one attachment into the user's Downloads folder, and answer where it landed.
 ///
 /// The web client answers a press with `<a download>`; a Tauri webview registers no download
-/// handler and CANCELS that navigation, which is why the desktop hands the bytes to the shell at
-/// all. Until now the shell's only answer was to write the file under the app's own directory and
-/// open it in the platform viewer — so on a Mac an image opened in Preview, nothing landed in
-/// `~/Downloads`, and "Download all" had no desktop meaning. This is the DOWNLOAD, and
-/// [`open_attachment`] stays what it always was: the OPEN.
+/// handler and CANCELS that navigation, which is why the desktop asks the shell at all. This is the
+/// DOWNLOAD, and [`open_attachment`] stays what it always was: the OPEN.
 ///
-/// Same bounds, same sanitiser, same rejected-promise-rather-than-silence rule as its neighbour.
+/// The window names the part by its ID and never sends its bytes: this process asks the engine to
+/// stream it into a staging file under its own directory ([`stage_attachment`]) and copies that
+/// into Downloads, so neither the window nor the engine holds the file. A refusal of the part
+/// itself comes back as the engine's `{status, code, message, retryable}`; one of this process's
+/// own is a string, as it always was.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
 fn save_attachment(
     shell: tauri::State<'_, Arc<Shell>>,
+    attachment_id: String,
     filename: String,
-    bytes: Vec<u8>,
-) -> Result<String, String> {
-    if bytes.is_empty() {
-        return Err("ohmail: there are no bytes in this file to save".to_string());
-    }
-    if bytes.len() > ATTACHMENT_MAX_BYTES {
-        return Err(format!(
-            "ohmail: this file is {} MiB, over the {} MiB limit for saving one",
-            bytes.len() / (1024 * 1024),
-            ATTACHMENT_MAX_BYTES / (1024 * 1024),
-        ));
-    }
+) -> Result<String, serde_json::Value> {
+    let root = attachment_root(shell.paths.app_data.as_deref()).map_err(serde_json::Value::String)?;
+    sweep_attachments(&root, ATTACHMENT_KEEP);
+    let staged = staging_path(&root).map_err(serde_json::Value::String)?;
+    let saved = stage_attachment(&shell.engine(), &staged, &attachment_id).and_then(|bytes| {
+        downloads_root(shell.paths.downloads.as_deref())
+            .and_then(|dir| {
+                save_into_downloads_with(&dir, &attachment_file_name(&filename), &mut |file| {
+                    copy_staged(&staged, bytes, file)
+                })
+            })
+            .map_err(serde_json::Value::String)
+    });
+    // The staging file goes whatever happened; one the engine left mid-write is swept within a day.
+    let _ = fs::remove_file(&staged);
+    saved.map(|path| path.to_string_lossy().into_owned())
+}
 
-    let root = downloads_root(shell.paths.downloads.as_deref())?;
-    let path = save_into_downloads(&root, &attachment_file_name(&filename), &bytes)?;
-    Ok(path.to_string_lossy().into_owned())
+/// Copy the staged file into `file`, refusing one that is not the size the engine said it wrote.
+#[cfg(feature = "local-engine")]
+fn copy_staged(staged: &Path, bytes: u64, file: &mut File) -> io::Result<()> {
+    let copied = io::copy(&mut File::open(staged)?, file)?;
+    if copied == bytes { Ok(()) } else { Err(io::Error::other("the engine's file is not the size it said")) }
+}
+
+/// The staging path as the header carries it: base64 of its UTF-8, because a header value is
+/// Latin-1 on the engine's side and a profile folder may be named in any script.
+#[cfg(feature = "local-engine")]
+pub(crate) fn file_target_value(target: &str) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(target.as_bytes())
+}
+
+/// The spawn's `OHMAIL_ATTACHMENT_STAGING_DIR`: [`attachment_root`]'s folder under `root`.
+#[cfg(feature = "local-engine")]
+fn staging_dir_pair(root: &Path) -> (OsString, OsString) {
+    (OsString::from(ATTACHMENT_STAGING_DIR_VAR), root.join(ATTACHMENT_DIR).into_os_string())
+}
+
+/// A new staging path under `root`: `<32 hex>.part`, the only shape the engine will create.
+#[cfg(feature = "local-engine")]
+fn staging_path(root: &Path) -> Result<PathBuf, String> {
+    let mut unique = [0u8; 16];
+    getrandom::fill(&mut unique)
+        .map_err(|err| format!("ohmail: this computer would not supply random bytes ({err})"))?;
+    let name: String = unique.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(root.join(format!("{name}.part")))
+}
+
+/// Have the engine stream one attachment into `staged`, and answer the size it says it wrote.
+#[cfg(feature = "local-engine")]
+fn stage_attachment(engine: &Engine, staged: &Path, attachment_id: &str) -> Result<u64, serde_json::Value> {
+    let refuse = |text: String| serde_json::Value::String(format!("ohmail: {text}"));
+    if !is_attachment_id(attachment_id) {
+        return Err(refuse("this is not an attachment this app can save".to_string()));
+    }
+    let target = staged.to_str().ok_or_else(|| refuse("the app's own folder has a name this save cannot pass on".to_string()))?;
+    let res = engine
+        .request(EngineRequest {
+            method: "POST".to_string(),
+            url: format!("/attachments/{attachment_id}/file"),
+            headers: vec![(ATTACHMENT_FILE_TARGET_HEADER.to_string(), file_target_value(target))],
+            body: Vec::new(),
+        })
+        .map_err(|err| refuse(format!("the engine did not save this file ({err})")))?;
+    if !(200..300).contains(&res.status) {
+        return Err(engine_refusal(res.status, &res.body));
+    }
+    match serde_json::from_slice::<serde_json::Value>(&res.body).ok().and_then(|v| v["bytes"].as_u64()) {
+        Some(n) if n > 0 && n <= ATTACHMENT_MAX_BYTES as u64 => Ok(n),
+        _ => Err(refuse("the engine's answer does not say what it wrote".to_string())),
+    }
+}
+
+/// An attachment id as the API mints it: a UUID, so it composes into the engine's URL as itself.
+#[cfg(feature = "local-engine")]
+pub(crate) fn is_attachment_id(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() })
+}
+
+/// The engine's refusal envelope `{error:{code,message,retryable}}`, as the window reads it.
+#[cfg(feature = "local-engine")]
+pub(crate) fn engine_refusal(status: u16, body: &[u8]) -> serde_json::Value {
+    let parsed = serde_json::from_slice::<serde_json::Value>(body).unwrap_or(serde_json::Value::Null);
+    let error = &parsed["error"];
+    serde_json::json!({
+        "status": status,
+        "code": error["code"].as_str(),
+        "message": error["message"].as_str().unwrap_or("the engine would not fetch this attachment"),
+        "retryable": error["retryable"].as_bool(),
+    })
 }
 
 /// Open one attachment in whatever program this computer opens that kind of file with.
@@ -7279,7 +7401,7 @@ fn deliver_popup<R: tauri::Runtime>(app: &tauri::AppHandle<R>, route: PopupRoute
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), press its Try again (the shell starts an engine it has given up on again and removes nothing, refused unless it has given up), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, read the platform's name and the newest lines of the log (no argument), hand back one diagnostic file of the app's own JSON shape for the shell to write beside that log under a name the shell chooses (the shell refuses any other text, and nothing is sent), open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. It may set its own TEXT SIZE as one of five percentages, which the shell makes the main window's zoom and keeps for the next launch in one more file it names itself; any other number is refused. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), press its Try again (the shell starts an engine it has given up on again and removes nothing, refused unless it has given up), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, read the platform's name and the newest lines of the log (no argument), hand back one diagnostic file of the app's own JSON shape for the shell to write beside that log under a name the shell chooses (the shell refuses any other text, and nothing is sent), open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or name one attachment by its id for the shell to have the engine stream into this computer's Downloads folder (the shell picks the folder and the staging file and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. It may set its own TEXT SIZE as one of five percentages, which the shell makes the main window's zoom and keeps for the next launch in one more file it names itself; any other number is refused. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
   "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-engine-start-over", "allow-engine-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-diagnostic-facts", "allow-diagnostic-save", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-window-ready", "allow-set-text-size", "core:event:allow-listen"]
 }"#;
