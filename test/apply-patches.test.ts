@@ -269,8 +269,9 @@ describe("verify-tree: the installed tree is the locked one, read off the disk",
     expect(r.err).toContain("MISSING node_modules/tool-native (tool-native@1.0.0) — optional, and its platform admits this host");
   });
 
-  it("refuses an installed optional package's absent required peer, and a fallback only platform builds name", () => {
-    // Two shapes an admission by "who needs it" let through: requiring `host` fails on the absent peer.
+  it("refuses an installed optional package's absent required peer, and admits a fallback only platform builds name", () => {
+    // An admission by "who needs it" must count peers: requiring `host` fails on the absent peer. The fallback
+    // only platform-excluded builds list is the shape Vercel's npm leaves out (the 0.26.0 Cloud deploy).
     const root = tree([NODEMAILER]);
     add(root, "node_modules/host", { name: "host", version: "1.0.0", peerDependencies: { plugin: "^1.0.0" } });
     relock(root, {
@@ -282,8 +283,99 @@ describe("verify-tree: the installed tree is the locked one, read off the disk",
     const r = run(["verify-tree", "--root", root]);
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("MISSING node_modules/plugin (plugin@1.0.0) — optional, and its platform admits this host");
-    expect(r.err).toContain("MISSING node_modules/fallback (fallback@1.0.0)");
+    expect(r.err).toContain("needed by node_modules/host");
+    expect(r.err).not.toContain("fallback");
     expect(r.err).not.toContain("build-other");
+  });
+
+  describe("an optional entry no installed package needs may be absent (Vercel's npm)", () => {
+    // The tag's lock: sharp's wasm32 build and @emnapi/runtime under it, optional with no os/cpu, listed only by
+    // two platform builds this host skips. npm 10.9.8 installs both; the Vercel build image's npm does not.
+    const vercelShape = (root: string, over: Record<string, Record<string, unknown>> = {}) =>
+      relock(root, {
+        "node_modules/@img/sharp-freebsd-wasm32": { version: "0.35.5", optional: true, os: [other], dependencies: { "@img/sharp-wasm32": "0.35.5" } },
+        "node_modules/@img/sharp-webcontainers-wasm32": { version: "0.35.5", optional: true, cpu: ["wasm32"], dependencies: { "@img/sharp-wasm32": "0.35.5" } },
+        "node_modules/@img/sharp-wasm32": { version: "0.35.5", optional: true, dependencies: { "@emnapi/runtime": "1.11.3" } },
+        "node_modules/@emnapi/runtime": { version: "1.11.3", optional: true, dependencies: { tslib: "2.8.1" } },
+        ...over,
+      });
+
+    it("admits the two orphans Vercel's install leaves out, names them, and apply patches", () => {
+      const root = tree([NODEMAILER]);
+      vercelShape(root);
+      const r = run(["verify-tree", "--root", root]);
+      expect(r.code, r.err).toBe(0);
+      expect(r.out).toMatch(/^ORPHAN_OPTIONAL_ADMITTED n=2 @img\/sharp-wasm32@0\.35\.5 @emnapi\/runtime@1\.11\.3 tree=\. /m);
+      expect(r.out).toMatch(/^TREE_AS_LOCKED locked=5 present=1 skipped-optional=2 extra=\[\] tree=\.$/m);
+      const a = run(["apply", "--root", root]);
+      expect(a.code, a.err).toBe(0);
+      expect(a.out).toContain("ORPHAN_OPTIONAL_ADMITTED n=2");
+      expect(a.out).toContain("PATCHES_APPLIED 1/1");
+    });
+
+    it("refuses an orphan an installed package lists, by dependency or by peer", () => {
+      for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+        const root = tree([NODEMAILER]);
+        add(root, "node_modules/user", { name: "user", version: "1.0.0" });
+        vercelShape(root, { "node_modules/user": { version: "1.0.0", [field]: { "@img/sharp-wasm32": "0.35.5" } } });
+        const r = run(["apply", "--root", root]);
+        expect(r.code, field).not.toBe(0);
+        expect(r.err).toContain("MISSING node_modules/@img/sharp-wasm32 (@img/sharp-wasm32@0.35.5) — optional, and its platform admits this host; needed by node_modules/user");
+        expect(r.out).not.toContain("PATCHES_APPLIED");
+      }
+    });
+
+    it("refuses an orphan the root lists, and one a present platform build lists", () => {
+      const root = tree([NODEMAILER]);
+      vercelShape(root, { "": { name: "fixture", workspaces: ["apps/mobile"], devDependencies: { "@emnapi/runtime": "1.11.3" } } });
+      const r = run(["verify-tree", "--root", root]);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("MISSING node_modules/@emnapi/runtime (@emnapi/runtime@1.11.3) — optional, and its platform admits this host; needed by the root");
+      const built = tree([NODEMAILER]);
+      add(built, "node_modules/@img/sharp-webcontainers-wasm32", { name: "@img/sharp-webcontainers-wasm32", version: "0.35.5" });
+      vercelShape(built);
+      const b = run(["verify-tree", "--root", built]);
+      expect(b.code).not.toBe(0);
+      expect(b.err).toContain("MISSING node_modules/@img/sharp-wasm32 (@img/sharp-wasm32@0.35.5) — optional, and its platform admits this host; needed by node_modules/@img/sharp-webcontainers-wasm32");
+    });
+
+    it("refuses a missing entry that is not optional, though only skipped builds list it", () => {
+      const root = tree([NODEMAILER]);
+      vercelShape(root, { "node_modules/@emnapi/runtime": { version: "1.11.3", dependencies: { tslib: "2.8.1" } } });
+      const r = run(["apply", "--root", root]);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("TREE_NOT_AS_LOCKED .: 1 difference(s)");
+      expect(r.err).toContain("MISSING node_modules/@emnapi/runtime (@emnapi/runtime@1.11.3)\n");
+      expect(r.out).not.toContain("ORPHAN_OPTIONAL_ADMITTED");
+    });
+
+    it("never admits a patched package absent, even optional and listed only by skipped builds", () => {
+      const root = tree([NODEMAILER]);
+      rmSync(join(root, "node_modules", "nodemailer"), { recursive: true });
+      add(root, "node_modules/filler", { name: "filler", version: "1.0.0" });
+      vercelShape(root, {
+        "node_modules/nodemailer": { version: "8.0.11", optional: true },
+        "node_modules/filler": { version: "1.0.0" },
+        "node_modules/@img/sharp-wasm32": { version: "0.35.5", optional: true, dependencies: { "@emnapi/runtime": "1.11.3", nodemailer: "8.0.11" } },
+      });
+      const r = run(["apply", "--root", root]);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("MISSING node_modules/nodemailer (nodemailer@8.0.11) — optional, and its platform admits this host; a patched package");
+      expect(r.out).not.toContain("PATCHES_APPLIED");
+    });
+
+    it("still refuses a version mismatch and an extra package beside admitted orphans", () => {
+      const root = tree([NODEMAILER]);
+      vercelShape(root);
+      add(root, "node_modules/nodemailer", { name: "nodemailer", version: "8.0.19" });
+      add(root, "node_modules/stray", { name: "stray", version: "1.0.0" });
+      const r = run(["apply", "--root", root]);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("TREE_NOT_AS_LOCKED .: 2 difference(s)");
+      expect(r.err).toContain("MOVED node_modules/nodemailer");
+      expect(r.err).toContain("EXTRA node_modules/stray: on disk and not in the lock");
+      expect(r.out).not.toContain("PATCHES_APPLIED");
+    });
   });
 
   it("refuses a package directory the lock does not name, unless --extra names it, and reads no package's inner files", () => {

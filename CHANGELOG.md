@@ -13,6 +13,10 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The Cloud deploy installs with the build host's npm
+
+The Cloud deploy installs with the build host's npm: an optional package no installed package needs may be absent.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

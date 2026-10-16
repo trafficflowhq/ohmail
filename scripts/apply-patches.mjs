@@ -240,20 +240,39 @@ function packagePositions(dir, rel, out) {
 /* THE INSTALLED TREE IS THE LOCKED ONE, read off the DISK: npm's own record of what it did says nothing about
  * a later `--no-save` step or a package something rewrote. Each lock entry is on disk at its path with its
  * name and version, or is optional with a platform that excludes this host; a package directory the lock
- * does not name is EXTRA unless `--extra` names it (with everything inside it). An empty read refuses. */
-function verifyTree(treeRoot, { extra = [], tree = "." } = {}) {
+ * does not name is EXTRA unless `--extra` names it (with everything inside it). An empty read refuses.
+ * ORPHAN: an optional entry no installed package needs may be absent. npm 10.9.8 installs one whose only
+ * dependents are platform-excluded (sharp's wasm32 build and @emnapi/runtime under it); Vercel's npm leaves
+ * it out. It is admitted only when the lock names at least one dependent (dependencies, optional, peer or
+ * dev) and every one is absent from the disk; the root, a workspace and any present package always need
+ * it, and a patched package is never admitted absent. */
+function verifyTree(treeRoot, { extra = [], tree = ".", patched = [] } = {}) {
   const lock = readJson(join(treeRoot, "package-lock.json"));
   if (!lock?.packages) refuse(`TREE_NOT_AS_LOCKED ${tree}: no package-lock.json to read the tree against`);
   const entries = Object.entries(lock.packages).filter(([k, e]) => k.includes("node_modules/") && !e.link && e.version);
+  const onDisk = new Map(entries.map(([k]) => [k, readJson(join(treeRoot, k, "package.json"))]));
+  const presentAt = (k) => !k.includes("node_modules/") || Boolean(onDisk.has(k) ? onDisk.get(k) : readJson(join(treeRoot, k, "package.json")));
+  /* Who lists each name, by name alone: wider than node's resolution, so it can only refuse more. */
+  const listers = new Map();
+  for (const [k, e] of Object.entries(lock.packages)) {
+    for (const d of Object.keys({ ...e.dependencies, ...e.optionalDependencies, ...e.peerDependencies, ...e.devDependencies })) {
+      listers.set(d, [...(listers.get(d) ?? []), k]);
+    }
+  }
   const problems = [];
+  const orphans = [];
   let present = 0;
   let skipped = 0;
   for (const [k, e] of entries) {
     const name = k.slice(k.lastIndexOf("node_modules/") + "node_modules/".length);
-    const disk = readJson(join(treeRoot, k, "package.json"));
+    const disk = onDisk.get(k);
     if (!disk) {
       if (e.optional && platformExcludes(e)) { skipped += 1; continue; }
-      problems.push(`MISSING ${k} (${name}@${e.version})${e.optional ? " — optional, and its platform admits this host" : ""}`);
+      const by = listers.get(name) ?? [];
+      if (e.optional && !patched.includes(name) && by.length > 0 && !by.some(presentAt)) { orphans.push(`${name}@${e.version}`); continue; }
+      const needers = by.filter(presentAt);
+      problems.push(`MISSING ${k} (${name}@${e.version})${e.optional ? " — optional, and its platform admits this host" : ""}` +
+        `${e.optional && patched.includes(name) ? "; a patched package" : ""}${e.optional && needers.length ? `; needed by ${needers.slice(0, 3).map((n) => n || "the root").join(", ")}` : ""}`);
     } else if (disk.name !== name || disk.version !== e.version) {
       problems.push(`MOVED ${k}: the lock says ${name}@${e.version}, the disk holds ${disk.name}@${disk.version}`);
     } else present += 1;
@@ -272,14 +291,17 @@ function verifyTree(treeRoot, { extra = [], tree = "." } = {}) {
     refuse(`TREE_NOT_AS_LOCKED ${tree}: ${problems.length} difference(s) from package-lock.json\n  ${problems.slice(0, 40).join("\n  ")}` +
       `${problems.length > 40 ? `\n  … ${problems.length - 40} more` : ""}`);
   }
+  if (orphans.length) console.log(`ORPHAN_OPTIONAL_ADMITTED n=${orphans.length} ${orphans.join(" ")} tree=${tree} (optional, absent, and every package that lists it is absent)`);
   console.log(`TREE_AS_LOCKED locked=${entries.length} present=${present} skipped-optional=${skipped} extra=[${[...new Set(extras.map((x) => x.split("/node_modules/").pop().replace(/^node_modules\//, "")))].join(",")}] tree=${tree}`);
 }
 
 /* The root tree, and the desktop app's own when it is installed beside it. */
 function verifyTrees(root, opts) {
-  verifyTree(root, { ...opts, tree: "." });
+  const dir = join(root, "patches");
+  const patched = isDir(dir) ? readdirSync(dir).filter((f) => f.endsWith(".patch")).map((f) => keyOf(f).name) : [];
+  verifyTree(root, { ...opts, patched, tree: "." });
   if (existsSync(join(root, "apps", "desktop", "package-lock.json")) && isDir(join(root, "apps", "desktop", "node_modules"))) {
-    verifyTree(join(root, "apps", "desktop"), { ...opts, tree: "apps/desktop" });
+    verifyTree(join(root, "apps", "desktop"), { ...opts, patched, tree: "apps/desktop" });
   }
 }
 
