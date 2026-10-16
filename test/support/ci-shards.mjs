@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * THE SUITE'S SHARD MAP for the public CI, written from measurements. Verbs: --pack <vitest-json>...
  * [--measured-at <sha>] writes ci-shards.json; --shard N prints shard N's files; --needs-dovecot N says
@@ -7,7 +6,8 @@
  * unasked. A file no shard names runs in shard sha256(path) % SHARDS, so a new test never waits for a
  * re-pack. The `@postpush: alone` files run in their own job on a database made from empty; the files
  * that dial Dovecot travel together, and only the shard holding them starts it. A desktop test that
- * imports the desktop's own vite config runs in the desktop job (--desktop), on the desktop's own install.
+ * imports the desktop's own vite config, or carries the desktop-install marker, runs in the desktop job
+ * (--desktop), on the desktop's own install.
  * The SQLite run has its own map, ci-shards-sqlite.json (--pack-sqlite, --sqlite-indexes, --sqlite-shard N
  * <list>, --verify-sqlite-report N <list> <json>; see SQLITE_MAP below).
  */
@@ -34,6 +34,9 @@ const TEST_FILE = /\.test\.tsx?$/;
 /** The desktop's vite config imports @vitejs/plugin-react, which only apps/desktop's own lock installs:
  *  a test importing that config, or building with it as its `configFile`, runs where that tree is installed. */
 export const DESKTOP_CONFIG_IMPORT = /\bfrom\s+["']\.\.\/vite\.config(?:\.js|\.ts)?["']|\bconfigFile:[^\n]*["']vite\.config\.ts["']/;
+/** …and the marker a desktop test writes when what it checks is the two trees installed side by side
+ *  (apps/desktop/test/one-react.test.tsx): in a shard, where the root is installed alone, it proves nothing. */
+export const DESKTOP_INSTALL_MARKER = "@ci: desktop install";
 
 /** Every test file the default vitest project selects, as the include globs in vitest.config.ts. */
 export function testFiles(root = ROOT) {
@@ -66,9 +69,15 @@ export function aloneFiles(root = ROOT, files = testFiles(root)) {
   return files.filter((f) => /^(apps|packages)\/[^/]+\/test\//.test(f) && textOf(root, f).includes(ALONE_MARKER));
 }
 
-/** The files that run in the desktop job: a desktop test that imports the desktop's own vite config. */
-export function desktopFiles(root = ROOT, files = testFiles(root)) {
-  return files.filter((f) => f.startsWith("apps/desktop/test/") && DESKTOP_CONFIG_IMPORT.test(textOf(root, f)));
+/** The files that run in the desktop job: a desktop test that imports the desktop's own vite config or
+ *  carries the desktop-install marker. With `configOnly`, the first kind alone: the files that cannot be
+ *  collected without apps/desktop's tree (the root vitest config leaves them out when it is absent). */
+export function desktopFiles(root = ROOT, files = testFiles(root), { configOnly = false } = {}) {
+  return files.filter((f) => {
+    if (!f.startsWith("apps/desktop/test/")) return false;
+    const text = textOf(root, f);
+    return DESKTOP_CONFIG_IMPORT.test(text) || (!configOnly && text.includes(DESKTOP_INSTALL_MARKER));
+  });
 }
 
 export function dovecotPinned(root, rel) {
@@ -107,7 +116,7 @@ export function checkMap(root = ROOT, map = readMap(root)) {
     for (const f of shard) {
       if (!present.has(f)) problems.push(`STALE ${f} (shard ${i}) is not a test file in this tree`);
       else if (alone.has(f)) problems.push(`ALONE ${f} (shard ${i}) carries ${ALONE_MARKER} and runs in its own job`);
-      else if (desktop.has(f)) problems.push(`DESKTOP ${f} (shard ${i}) imports the desktop's vite config and runs in the desktop job`);
+      else if (desktop.has(f)) problems.push(`DESKTOP ${f} (shard ${i}) runs in the desktop job`);
       if (seen.has(f)) problems.push(`TWICE ${f} is named by two shards`);
       seen.add(f);
     }
@@ -301,7 +310,7 @@ function main(argv) {
   }
   if (cmd === "--desktop") {
     const files = desktopFiles();
-    if (!files.length) throw new Error("--desktop: no desktop test imports the desktop's vite config");
+    if (!files.length) throw new Error("--desktop: no desktop test imports the desktop's vite config or carries the desktop-install marker");
     process.stdout.write(`${files.join("\n")}\n`);
     return 0;
   }

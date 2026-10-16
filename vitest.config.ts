@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
+import { desktopFiles } from "./test/support/ci-shards.mjs";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 /* The webapp's own next-intl where the workspace installs it per package (pnpm), the hoisted root copy
@@ -9,7 +11,57 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const nextIntl = [r("./apps/webapp/node_modules/next-intl"), r("./node_modules/next-intl")].find((p) => existsSync(p))
   ?? r("./apps/webapp/node_modules/next-intl");
 
+/* ONE DEPENDENCY TREE FOR THE WHOLE SUITE: the root's.
+ *
+ * `apps/desktop` is installed from its own lockfile, and the documented setup installs it beside the
+ * root (`npm ci`, then `npm ci` in `apps/desktop`). Node resolves a bare specifier from the nearest
+ * `node_modules`, so with that tree present every desktop source and test reached `react`, `react-dom`,
+ * `@tiptap/react` and `use-intl` from `apps/desktop/node_modules`, while `@testing-library/react`,
+ * `next-intl` and every shared view under `apps/webapp` and `packages/ui` reached the root's: two
+ * Reacts, and every desktop test that renders failed on "Invalid hook call". CI installs the root alone
+ * for the suite, so it never saw this. A `dedupe` of React alone is not enough: a package loaded from
+ * the desktop tree (`@tiptap/react`, `use-intl`) is loaded by Node, which resolves its own `react`
+ * beside it.
+ *
+ * So a bare import made by a file under `apps/desktop` (its own `node_modules` excepted) resolves as the
+ * root resolves it, and falls back to the desktop tree only for a package the root does not install
+ * (`@vitejs/plugin-react`, which the desktop's vite config imports). Both install shapes then load the
+ * same modules. `apps/desktop/test/one-react.test.tsx` holds it. */
+const slashed = (p: string) => p.replace(/\\/g, "/");
+const DESKTOP_DIR = `${slashed(r("./apps/desktop"))}/`;
+const ROOT_IMPORTER = r("./package.json");
+const BARE = /^(?![./\\#]|[a-z]+:|\0)/i;
+const oneDependencyTree: Plugin = {
+  name: "ohmail:one-dependency-tree",
+  enforce: "pre",
+  async resolveId(source, importer, options) {
+    if (!importer || !BARE.test(source)) return null;
+    const from = slashed(importer);
+    if (!from.startsWith(DESKTOP_DIR) || from.includes("/node_modules/")) return null;
+    return (await this.resolve(source, ROOT_IMPORTER, { ...options, skipSelf: true })) ?? null;
+  },
+};
+
+/* …AND WITH THE ROOT INSTALLED ALONE, the desktop tests that load the desktop's vite config are left out:
+ * its `@vitejs/plugin-react` is installed only by `apps/desktop`'s lockfile, so on this install they cannot
+ * even be collected. CI's shards install the root alone and never hand them over (they run in its desktop
+ * job); this says so to a person who runs `npm test` on the same install, instead of failing those files
+ * on a missing package. */
+const desktopTreeInstalled = existsSync(r("./apps/desktop/node_modules/@vitejs/plugin-react/package.json"));
+const needsDesktopTree: string[] = desktopTreeInstalled ? [] : desktopFiles(r("."), undefined, { configOnly: true });
+/* Once per process: vitest loads this file more than once in one run. */
+const NOTICE = Symbol.for("ohmail.vitest.desktop-tree-notice");
+const said = globalThis as { [NOTICE]?: true };
+if (needsDesktopTree.length > 0 && !said[NOTICE]) {
+  said[NOTICE] = true;
+  process.stderr.write(
+    `vitest.config.ts: apps/desktop is not installed; the ${needsDesktopTree.length} tests that load its vite config ` +
+      "are left out (cd apps/desktop && npm ci, then node scripts/apply-patches.mjs apply, runs them too).\n",
+  );
+}
+
 export default defineConfig({
+  plugins: [oneDependencyTree],
   resolve: {
     // A workspace subpath the table below does not name resolves through its package's exports,
     // where `node` (which vite matches for a test) names the compiled twin; this condition, listed
@@ -210,6 +262,7 @@ export default defineConfig({
     // describe the same workspace") — filing those under an arbitrary package
     // is how they end up unowned and unread.
     include: ["packages/*/test/**/*.test.{ts,tsx}", "apps/*/test/**/*.test.{ts,tsx}", "test/**/*.test.{ts,tsx}"],
+    exclude: [...configDefaults.exclude, ...needsDesktopTree],
     environment: "node",
     // THE DEFAULT RUN SAYS WHICH STORE IT IS, so that "no expectation" is never a state a run can
     // be in. The dialect guard used to return early when this was absent, which meant one deleted

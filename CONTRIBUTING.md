@@ -72,16 +72,73 @@ happened, what you expected. If it is visual, a screenshot beats a description.
 
 ## Running the tests
 
-The root is an npm workspace with one lockfile. After `npm ci`, apply the
-patches this repository carries to its dependencies (it is idempotent):
+Node 22 (CI runs 22.23.3), and stable Rust for the desktop app's native half.
+Every command runs from the repository root unless it says otherwise; these
+are the steps CI runs.
+
+The root is an npm workspace with one lockfile; `apps/desktop` has its own and
+is installed beside it. Then apply the patches this repository carries to its
+dependencies (it is idempotent, and patches every installed copy, so it comes
+after both installs), and build what the tests read:
 
 ```bash
 npm ci
+(cd apps/desktop && npm ci)
 node scripts/apply-patches.mjs apply
+npm run build                          # the workspace's TypeScript projects (tsc -b)
+node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+node apps/mobile/scripts/bundle-engine.mjs
+node scripts/bundle-host.mjs server
+node scripts/bundle-host.mjs worker
+npx playwright install chromium        # the layout tests render in it
 ```
 
-- `npm test` runs the whole suite (vitest).
-- `npm run build` compiles the workspace's TypeScript projects (`tsc -b`).
+- `npm test` runs the whole suite (vitest over `apps/*/test`, `packages/*/test`
+  and `test/`). The `*.pg.test.ts` files and the mail tests need the test
+  services in `docker-compose.yml` (Postgres, GreenMail, RustFS, Dovecot, all on
+  loopback) and a database of this checkout's own; without them the suite
+  skips what needs them and runs the rest:
+
+  ```bash
+  docker compose up -d
+  bash scripts/lane-db.sh "$PWD"   # creates this checkout's database, writes .lane-db.env
+  TF_REQUIRE_PG=1 npm test         # as CI: a database that cannot be reached fails, it does not skip
+  ```
+
+- The whole suite on one database leaves rows behind, and the files marked
+  `@postpush: alone` (`node test/support/ci-shards.mjs --alone` lists them)
+  fail over state they did not write. CI runs the rest in sixteen shards, each
+  on a database of its own, and each of those files on a database made from
+  empty. One shard, or one such file, as CI runs it:
+
+  ```bash
+  bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"   # a fresh database
+  TF_REQUIRE_PG=1 npx vitest run $(node test/support/ci-shards.mjs --shard 3)   # 0 to 15
+  TF_REQUIRE_PG=1 npx vitest run packages/db/test/migration-replay-idempotence.pg.test.ts
+  ```
+
+- `npm run test:sqlite` runs the files that also run on SQLite, the phone's and
+  the desktop's store.
+- **The desktop app's** tests live in `apps/desktop/test` and run in `npm test`.
+  The few that load the desktop's own vite config need `apps/desktop` installed
+  (without it, `npm test` leaves them out and says so); CI runs them in a job of
+  their own. The app itself is checked on its own install:
+
+  ```bash
+  npx vitest run $(node test/support/ci-shards.mjs --desktop)
+  cd apps/desktop
+  npm run ui:typecheck      # tsc over the shell, the views and the shim
+  npm run ui:build:engine   # the bundle the app embeds, into dist/
+  npm run smoke             # renders the built bundle and audits it offline
+  cd src-tauri
+  cargo test --locked
+  cargo test --locked --features local-engine
+  ```
+
+  With `apps/desktop` installed or not, the suite loads one copy of each
+  dependency (the root's; `vitest.config.ts` says why), so both give the same
+  result. If a test you did not touch fails on "Invalid hook call", say so in
+  an issue rather than mocking around it: that is the suite's bug, not yours.
 - **The phone app** (`apps/mobile`, Android and iOS from one tree) has its own
   two commands:
   - `npm run typecheck:mobile` typechecks the app as the phone runs it
@@ -93,8 +150,8 @@ node scripts/apply-patches.mjs apply
     store's own project. The tests that read the phone's mail engine bundle it
     themselves; to bundle it by hand, `node apps/mobile/scripts/bundle-engine.mjs`.
     The bundle is the same whether or not you ran `npm run build` first.
-- The desktop app installs and checks on its own; see `CLAUDE.md` and
-  "Build the desktop app yourself" in the README.
+- The whole desktop build, with the engine in it, is "Build the desktop app
+  yourself" in the README.
 
 ## Sign your commits (DCO) — and no CLA
 
