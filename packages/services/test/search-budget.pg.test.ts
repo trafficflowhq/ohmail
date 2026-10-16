@@ -1,6 +1,5 @@
 // @postpush: alone
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomUUID } from "node:crypto";
 import { loadavg } from "node:os";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -28,9 +27,33 @@ const client = postgres(PG_URL, { max: 1 });
 const base = brandDialect(drizzle(client, { schema }), "pg");
 const BUDGET_MS = 100;
 const N = 74_000;
-const A = randomUUID();
-const D = randomUUID();
-const NOISE = randomUUID();
+/* THE SAME MAILBOXES EVERY RUN. They were drawn with random() and random ids, so each run measured
+   the budget over a different mailbox: one common-class page read 12,657 shared buffers on one
+   seed and 31,669 on the next, and on the slowest CI runners a heavy draw read 129-134 ms where the
+   rest of that run's figures matched every green run. Ids, account ids and every word are now
+   derived from md5 of a salt, the message's index and the word's position, so a run measures what
+   the last one did whatever order Postgres evaluates the rows in. */
+const A = "5eed0000-0000-4000-8000-00000000000a";
+const D = "5eed0000-0000-4000-8000-00000000000d";
+const NOISE = "5eed0000-0000-4000-8000-00000000000e";
+/**
+ * D's salt: the HEAVIEST of the seeds sampled, by the shared buffers its common-class pages read
+ * (the class's p95 over seven queries is its heaviest one), so the budget is held over a heavy
+ * mailbox rather than a lucky draw. Sampled on 2026-10-17 over twelve salts budget-d-s01..s12, each
+ * on a database made from empty, reading each common query's page with EXPLAIN (ANALYZE, BUFFERS):
+ * the heaviest query read 25,348 to 32,069 shared buffers by salt, and s04 is the 32,069 (gijubadale;
+ * fehora 25,385, gileledatu 22,112, letumitu 19,589, sovejuso 17,120, portal 7,642, axa 3,855).
+ * If this mailbox reads over the budget on a runner, that is search over budget on a heavy mailbox:
+ * a product row with the plan, never a looser bound.
+ */
+const D_SALT = "budget-d-s04";
+const A_SALT = "budget-a";
+const NOISE_SALT = "budget-noise";
+/** A uniform draw in [0, 1) from md5 of (salt, message index, position): deterministic and order-free. */
+const draw = (salt: string, g: SQL, i: SQL): SQL =>
+  sql`((('x' || substr(md5(${salt} || ':' || ${g} || ':' || ${i}), 1, 8))::bit(32)::bigint)::float8 / 4294967296.0)`;
+/** A message id from md5 of its account and index. */
+const idOf = (acct: string, g: SQL): SQL => sql`md5('budget-id:' || ${acct} || ':' || ${g})::uuid`;
 
 /**
  * Every statement the service sends — on the handle and inside any transaction it opens, where the
@@ -79,24 +102,25 @@ const isExplain = (st: SQL): boolean => /^\s*explain\b/i.test(textOf(st));
 
 // A skewed vocabulary — word k = floor(5000 · u⁴) — so `w1` is in almost every body and `w3000`
 // in a rare few; subjects of 3–6 words, bodies of 100–227.
-const word = sql`('w' || floor(5000 * power(random(), 4))::int)`;
+/** `count` words of A's vocabulary for message `g`, the `part` of it (subject or body) named apart. */
+const aWords = (g: SQL, part: string, count: SQL): SQL =>
+  sql`(select string_agg('w' || floor(5000 * power(${draw(A_SALT, g, sql`${part} || i`)}, 4))::int, ' ' order by i) from generate_series(1, ${count}) i)`;
 
 async function seed(acct: string, n: number): Promise<void> {
   const [mb] = await base.insert(mailboxes).values({ accountId: acct, provider: "imap", address: `${acct.slice(0, 8)}@tf.example` }).returning();
-  await base.execute(sql`select setseed(0.23)`);
   await base.execute(sql`
-    insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator)
-    select ${acct}::uuid, ${mb!.id}::uuid, 'h', 'budget:' || ${acct} || ':' || g,
+    insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator)
+    select ${idOf(acct, sql`g`)}, ${acct}::uuid, ${mb!.id}::uuid, 'h', 'budget:' || ${acct} || ':' || g,
       case when g % 200 = 0 then 'myAXA Portal ' || (g % 97)
-           else (select string_agg(${word}, ' ') from generate_series(1, 3 + (g % 4)) i where g > 0) end,
+           else ${aWords(sql`g`, "s", sql`3 + (g % 4)`)} end,
       case when g % 333 = 0 then 'news@axa.example' else 'sender' || (g % 2000) || '@dom' || (g % 300) || '.example' end,
       timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g * 97), g % 3 = 0, g % 10 = 0,
       jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g)
     from generate_series(1, ${n}) g`);
   await base.execute(sql`
     insert into message_bodies (message_id, text)
-    select m.id, (select string_agg(${word}, ' ') from generate_series(1, 100 + (hashtext(m.id::text) & 127)) i where m.id is not null)
-    from messages m where m.account_id = ${acct}::uuid`);
+    select m.id, ${aWords(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
+    from messages m cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x where m.account_id = ${acct}::uuid`);
   await base.execute(sql`
     insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
     select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
@@ -108,19 +132,18 @@ async function seed(acct: string, n: number): Promise<void> {
  * skewed k = floor(5000 · u⁴); planted rare words; each message's search document as
  * `searchDocumentOf` writes it for a sender and no recipients; the backfill marker written.
  */
-async function seedDocumented(acct: string, n: number): Promise<void> {
+async function seedDocumented(acct: string, n: number, salt: string): Promise<void> {
   const [mb] = await base.insert(mailboxes).values({ accountId: acct, provider: "imap", address: `${acct.slice(0, 8)}@tf.example` }).returning();
   await base.execute(sql`create temp table if not exists vocab as
     select k, (select string_agg((array['ba','ke','ri','so','tu','na','le','mi','po','da','fe','gi','ho','ju','ra','ve'])[(get_byte(decode(md5('v' || k), 'hex'), i) % 16) + 1], '' order by i)
                from generate_series(0, 2 + k % 3) i) as w
     from generate_series(0, 4999) k`);
-  await base.execute(sql`select setseed(0.25)`);
-  const words = (count: SQL) => sql`(select string_agg(v.w, ' ') from (select floor(5000 * power(random(), 4))::int as k from generate_series(1, ${count}) i) r join vocab v using (k))`;
+  const words = (g: SQL, part: string, count: SQL) => sql`(select string_agg(v.w, ' ' order by r.i) from (select i, floor(5000 * power(${draw(salt, g, sql`${part} || i`)}, 4))::int as k from generate_series(1, ${count}) i) r join vocab v using (k))`;
   await base.execute(sql`
-    insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator)
-    select ${acct}::uuid, ${mb!.id}::uuid, 'h', 'budget:' || ${acct} || ':' || g,
+    insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator)
+    select ${idOf(acct, sql`g`)}, ${acct}::uuid, ${mb!.id}::uuid, 'h', 'budget:' || ${acct} || ':' || g,
       case when g % 200 = 0 then 'myAXA Portal ' || (g % 97) when g % 4933 = 3 then 'heron sighting ' || g
-           else ${words(sql`3 + (g % 4)`)} end,
+           else ${words(sql`g`, "s", sql`3 + (g % 4)`)} end,
       case when g % 8222 = 1 then 'news@dunlin.example' when g % 333 = 0 then 'news@axa.example'
            else 'sender' || (g % 2000) || '@dom' || (g % 300) || '.example' end,
       timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g * 97), g % 3 = 0, g % 10 = 0,
@@ -129,7 +152,7 @@ async function seedDocumented(acct: string, n: number): Promise<void> {
   // Planted: kestrel 1, osprey 4, plover 12, egret 24, avocet 37 bodies.
   await base.execute(sql`
     insert into message_bodies (message_id, text)
-    select m.id, ${words(sql`100 + (hashtext(m.id::text) & 127)`)}
+    select m.id, ${words(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
       || case when x.g = 31337 then ' kestrel' else '' end || case when x.g % 18500 = 17 then ' osprey' else '' end
       || case when x.g % 6166 = 11 then ' plover' else '' end || case when x.g % 3083 = 7 then ' egret' else '' end
       || case when x.g % 2000 = 13 then ' avocet' else '' end
@@ -145,6 +168,18 @@ async function seedDocumented(acct: string, n: number): Promise<void> {
       to_tsvector('english', b.text), left(lower(trim(coalesce(m.subject, '') || ' ' || m.from_address)), 2048), 'text'
     from messages m join message_bodies b on b.message_id = m.id where m.account_id = ${acct}::uuid`);
   await base.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${acct}::uuid, now())`);
+}
+
+/** Every row the seeds wrote, by the fixed account ids. */
+async function removeSeeded(): Promise<void> {
+  for (const acct of [A, D, NOISE]) {
+    await base.execute(sql`delete from message_search where account_id = ${acct}::uuid`);
+    await base.execute(sql`delete from account_settings where account_id = ${acct}::uuid`);
+    await base.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${acct}::uuid)`);
+    await base.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${acct}::uuid)`);
+    await base.execute(sql`delete from messages where account_id = ${acct}::uuid`);
+    await base.execute(sql`delete from mailboxes where account_id = ${acct}::uuid`);
+  }
 }
 
 function ctx(accountId: string = A): ServiceContext {
@@ -287,13 +322,29 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     await base.execute(sql`set max_parallel_workers_per_gather = 0`);
     // The seed's statements write tens of thousands of rows each; the box's 55 s statement ceiling is for tests.
     await base.execute(sql`set statement_timeout = '600s'`);
+    // Fixed account ids: a run that died before its afterAll left these rows, so they go first.
+    await removeSeeded();
     await seed(A, N);
-    await seedDocumented(D, N);
-    await seedDocumented(NOISE, 20_000);
+    await seedDocumented(D, N, D_SALT);
+    await seedDocumented(NOISE, 20_000, NOISE_SALT);
     // Settled as production's are: a vacuumed `messages` lets the History index answer without the
     // heap (fresh rows have no visibility map). The bodies are only analyzed: the page never scans
     // them, and their vacuum is a minute of disk here.
-    for (const t of ["messages", "message_search", "folder_state"]) await base.execute(sql.raw(`vacuum (parallel 0, analyze) ${t}`));
+    // MESSAGE_SEARCH'S STATISTICS ARE THE WHOLE TABLE, so the harness's plans are the same every
+    // run. ANALYZE reads a random sample of 300 x the target rows; at the default 100 that is
+    // 30,000 of message_search's ~94,000, and on the same mailbox the same common query's page read
+    // 32,069 shared buffers in one run and 11,986 in another, a different plan from a different
+    // sample. At 1000 the sample is every row: over four runs of the pinned mailbox, each on a
+    // database made from empty, every query read the same buffers to within ten, and the heaviest
+    // kept its heavy plan (32,069), so the worst case is what is held. ONLY this table: whole-table
+    // statistics on `messages` as well moved A's own pages onto slower plans (w1 p50 19 to 28 ms
+    // here, w3000 at 8 ms a statement to 102-107 ms on CI's slowest runners), which measures a
+    // planner state production does not have rather than the search.
+    for (const t of ["messages", "message_search", "folder_state"]) {
+      await base.execute(t === "message_search" ? sql`set default_statistics_target = 1000` : sql`reset default_statistics_target`);
+      await base.execute(sql.raw(`vacuum (parallel 0, analyze) ${t}`));
+    }
+    await base.execute(sql`reset default_statistics_target`);
     await base.execute(sql`analyze message_bodies`);
     for (const h of HARNESS) h.q = h.q ?? (await vocabWord(h.k!));
     await base.execute(sql`reset statement_timeout`);
@@ -302,14 +353,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
 
   afterAll(async () => {
     await base.execute(sql`set statement_timeout = '600s'`);
-    for (const acct of [A, D, NOISE]) {
-      await base.execute(sql`delete from message_search where account_id = ${acct}::uuid`);
-      await base.execute(sql`delete from account_settings where account_id = ${acct}::uuid`);
-      await base.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${acct}::uuid)`);
-      await base.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${acct}::uuid)`);
-      await base.execute(sql`delete from messages where account_id = ${acct}::uuid`);
-      await base.execute(sql`delete from mailboxes where account_id = ${acct}::uuid`);
-    }
+    await removeSeeded();
     await client.end({ timeout: 5 });
   }, 900_000);
 

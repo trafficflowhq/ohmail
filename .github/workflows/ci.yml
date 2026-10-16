@@ -495,6 +495,10 @@ jobs:
       - name: The web app and its tests
         run: ./node_modules/.bin/tsc --noEmit -p apps/webapp/tsconfig.json
 
+      # The phone app's program and its tests' program, the script apps/mobile is checked with.
+      - name: The phone app and its tests
+        run: npm run typecheck:mobile
+
   # The desktop tests that import the desktop's own vite config, on the desktop's own install: that
   # config needs @vitejs/plugin-react, which only apps/desktop's lock carries.
   desktop:

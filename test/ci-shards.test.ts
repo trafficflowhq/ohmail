@@ -241,6 +241,47 @@ describe("the suite workflow", () => {
     expect(plan).toContain("node test/support/ci-shards.mjs --sqlite-indexes");
   });
 
+  it("stops a SQLite shard that has no file by name, before vitest could be handed an empty path", () => {
+    /* The job reads the list with `list=$(…)` under `set -euo pipefail` and splits it with mapfile:
+       an empty list would become one empty argument, which vitest reads as "every file". So the
+       planner refuses an empty shard itself, and the step's errexit stops on that refusal. */
+    const scratch = mkdtempSync(join(tmpdir(), "ohmail-sqlite-empty-"));
+    try {
+      const listPath = join(scratch, "files.json");
+      writeFileSync(listPath, "[]\n");
+      const step = join(scratch, "step.sh");
+      const runText = wf.jobs.sqlite.steps.map((s) => s.run ?? "").find((r) => r.includes("--sqlite-shard"))!;
+      const shardLine = runText.split("\n").find((l) => l.includes("--sqlite-shard"))!.trim();
+      writeFileSync(step, [
+        "set -euo pipefail",
+        `cd ${JSON.stringify(ROOT)}`,
+        shardLine.replace("build/sqlite-files.json", JSON.stringify(listPath)),
+        'mapfile -t files <<< "$list"',
+        'echo "REACHED ${#files[@]}"',
+      ].join("\n"));
+      let out = "";
+      let rc = 0;
+      try {
+        out = execFileSync("bash", [step], { env: { ...process.env, SHARD: "1" }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      } catch (e) {
+        const err = e as { status: number; stdout: string; stderr: string };
+        rc = err.status;
+        out = `${err.stdout}${err.stderr}`;
+      }
+      expect(out).not.toContain("REACHED");
+      expect(rc).not.toBe(0);
+      expect(out).toContain("sqlite shard 1 has no file to run");
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("typechecks the phone app and its tests in the typecheck job", () => {
+    const runs = wf.jobs.typecheck.steps.map((s) => s.run ?? "");
+    expect(runs).toContain("npm run typecheck:mobile");
+    expect(runs.indexOf("npm run build")).toBeLessThan(runs.indexOf("npm run typecheck:mobile"));
+  });
+
   it("plans the alone jobs from the marker and refuses a list the shard map's own walk disagrees with", () => {
     const plan = wf.jobs.plan.steps.map((s) => s.run ?? "").join("\n");
     expect(plan).toContain(`git grep -l '${ALONE_MARKER}' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'`);

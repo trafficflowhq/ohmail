@@ -19,21 +19,45 @@ const realSetTimeout = globalThis.setTimeout.bind(globalThis);
    fallback. Read from each root's live tree: the container holds the root fiber it was made with,
    whose stateNode (the FiberRoot) names the current one. */
 const SUSPENSE = 13;
+const HOST_ROOT = 3;
 type Fiber = { tag: number; memoizedState: unknown; child: Fiber | null; sibling: Fiber | null };
 
+/* THESE ARE REACT'S INTERNALS, so the walk refuses to guess when they stop looking like this. It
+   was measured on React 19 (the container key, HostRoot = 3, SuspenseComponent = 13); another major
+   must be measured again before it is trusted. And a page with content but no root this walk can
+   find, or a root whose live fiber is not a HostRoot, is a walk that would see no boundary and wait
+   for nothing, which turns the cold-start race it exists for back into a quiet flake. All three
+   fail here, by name. */
+const MEASURED_ON_REACT = "19.";
+
 function boundariesOnFallback(): number {
+  if (!React.version.startsWith(MEASURED_ON_REACT)) {
+    throw new Error(`the first-paint settle reads React ${MEASURED_ON_REACT}x internals and this is React ${React.version}: measure the container key and the fiber tags again in _first-paint.ts`);
+  }
   let pending = 0;
+  let keys = 0;
   for (const el of [document.body, ...document.body.querySelectorAll("*")]) {
     const key = Object.keys(el).find((k) => k.startsWith("__reactContainer$"));
     if (!key) continue;
-    const made = (el as unknown as Record<string, { stateNode?: { current?: Fiber } } | undefined>)[key];
-    const stack: Fiber[] = made?.stateNode?.current ? [made.stateNode.current] : [];
+    keys += 1;
+    const made = (el as unknown as Record<string, { stateNode?: { current?: Fiber } } | null | undefined>)[key];
+    // An unmounted root: React leaves the key on its container and sets it to null.
+    if (made == null) continue;
+    const live = made.stateNode?.current;
+    if (!live || live.tag !== HOST_ROOT) {
+      throw new Error(`the first-paint settle found a React container whose live root is not a HostRoot (tag ${String(live?.tag)}): React's root shape changed, see _first-paint.ts`);
+    }
+    const stack: Fiber[] = [live];
     while (stack.length > 0) {
       const f = stack.pop()!;
       if (f.tag === SUSPENSE && f.memoizedState !== null) pending += 1;
       if (f.child) stack.push(f.child);
       if (f.sibling) stack.push(f.sibling);
     }
+  }
+  // The key itself, live or cleared: a rename is what this catches, and an unmounted root still carries it.
+  if (keys === 0 && document.body.childElementCount > 0) {
+    throw new Error("the first-paint settle found a rendered page but no React container on it: the __reactContainer$ key it reads is gone, so it can no longer see a Suspense boundary; see _first-paint.ts");
   }
   return pending;
 }
