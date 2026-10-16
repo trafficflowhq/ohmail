@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { FRONTEND_REF, NODE_BASE, NODE_BASE_REF, PUBLISHED_DOCKERFILES, externalBases, unpinnedFroms } from "./support/published-base.js";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * EVERY BASE A PUBLISHED IMAGE IS BUILT FROM IS NAMED BY ITS DIGEST, AND SO IS THE FRONTEND THAT READS IT.
@@ -18,7 +19,7 @@ const read = (rel: string) => readFileSync(`${ROOT}${rel}`, "utf8");
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
 
 type Matrix = { jobs?: Record<string, { strategy?: { matrix?: { include?: Array<{ dockerfile?: unknown }> } } }> };
-const RECIPES_BUILT = ((yaml.load(read("public/ohmail/github/workflows/ghcr-images.yml")) as Matrix)
+const RECIPES_BUILT = ((yaml.load(read(publicRel("github/workflows/ghcr-images.yml"))) as Matrix)
   .jobs?.["build-push"]?.strategy?.matrix?.include ?? [])
   .map((row) => row.dockerfile)
   .filter((d): d is string => typeof d === "string")

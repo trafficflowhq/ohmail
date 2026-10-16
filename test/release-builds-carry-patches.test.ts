@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * EVERY BUILD MADE FROM THE PUBLISHED TREE APPLIES OUR PATCHES, AND READS THEM IN WHAT IT MADE.
@@ -14,7 +15,7 @@ import { afterAll, describe, expect, it } from "vitest";
  */
 const ROOT = resolve(__dirname, "..");
 const read = (f: string): string => readFileSync(join(ROOT, f), "utf8");
-const WF = "public/ohmail/github/workflows";
+const WF = publicRel("github/workflows");
 const WORKFLOWS = [`${WF}/android.yml`, `${WF}/build.yml`];
 const DOCKERFILES = ["apps/server/Dockerfile", "apps/worker/Dockerfile.selfhost", "apps/webapp/Dockerfile"];
 const FLATPAK = "apps/desktop/flatpak/app.ohmail.Desktop.yml";
@@ -335,14 +336,6 @@ describe("the patches and what derives from them", () => {
   };
   const appleOnly = (paths: string[]) => paths.every((p) => /^(ios|apple)\//.test(p));
   const unmarked = (t: Table) => Object.entries(t).filter(([, e]) => !appleOnly(e.paths) && (e.markers.length === 0 || !e.control)).map(([f]) => f);
-
-  it("patches/ holds exactly what pnpm-workspace.yaml applies, both ways", () => {
-    const yaml = read("pnpm-workspace.yaml");
-    const block = /^patchedDependencies:\n((?: {2}\S.*\n)+)/m.exec(yaml)?.[1] ?? "";
-    const named = [...block.matchAll(/^ {2}\S+:\s*patches\/(\S+)\s*$/gm)].map((m) => m[1]!).sort();
-    expect(named.length, "no patchedDependencies read").toBeGreaterThan(0);
-    expect(files).toEqual(named);
-  });
 
   const table = markers();
   it.each(Object.entries(table).map(([f, e]) => [f, appleOnly(e.paths) ? "Apple sources only, which no build here compiles" : "has literals to read and a control"]))(

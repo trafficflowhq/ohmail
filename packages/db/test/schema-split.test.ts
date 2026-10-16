@@ -261,8 +261,12 @@ describe("the schema split matches the journal split", () => {
    */
   it("the mail subpath is exported by the package", () => {
     const pkg = JSON.parse(read(join(HERE, "..", "package.json"))) as {
-      exports: Record<string, string>;
+      exports: Record<string, string | Record<string, string>>;
     };
-    expect(pkg.exports["./mail"]).toBe("./dist/schema-mail.js");
+    // The mail half alone under every condition, as source or as its built twin; never the barrel.
+    const mail = pkg.exports["./mail"];
+    const targets = typeof mail === "string" ? [mail] : Object.values(mail ?? {});
+    expect(targets.length, "no ./mail subpath").toBeGreaterThan(0);
+    for (const t of targets) expect(t).toMatch(/^\.\/(?:src\/schema-mail\.ts|dist\/schema-mail\.js)$/);
   });
 });

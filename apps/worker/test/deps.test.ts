@@ -188,13 +188,13 @@ describe("worker dependency boundary", () => {
 
   it("declares only core, db and its two runtime libraries as dependencies", () => {
     const pkg = JSON.parse(readFileSync(PKG, "utf8")) as {
-      dependencies: Record<string, string>; devDependencies: Record<string, string>;
+      dependencies: Record<string, string>; devDependencies?: Record<string, string>;
     };
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
-      "@trafficflow/core", "@trafficflow/db", "drizzle-orm", "imapflow", "postgres",
+      "@trafficflow/core", "@trafficflow/db", "drizzle-orm", "postgres",
     ]);
-    // Documented, intentional, and TEST-ONLY: never a runtime dependency.
-    expect(pkg.devDependencies["@trafficflow/services"]).toBeDefined();
+    // TEST-ONLY: never a runtime dependency. The tests reach it through the workspace (this manifest
+    // declares no devDependencies; the root's carry the test tooling).
     expect(pkg.dependencies["@trafficflow/services"]).toBeUndefined();
   });
 

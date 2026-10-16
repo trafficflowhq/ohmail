@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * A CHECK THAT ONLY RUNS WHEN AN EARLIER CHECK PASSED IS NOT A CHECK.
@@ -29,7 +30,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WORKFLOW = `${HERE}../public/ohmail/github/workflows/build.yml`;
+const WORKFLOW = publicPath("github/workflows/build.yml");
 const wf = readFileSync(WORKFLOW, "utf8");
 
 /** How the smoke is spelled, in its two invocations. Both literal — a job that reaches the

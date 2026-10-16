@@ -1,12 +1,13 @@
-/* @reads: apps/mobile/src/mail/frame-budget.ts packages/client-engine/node_modules/parse5/dist/parser/index.js
-   The phone frame's step figures, and the parse5 build whose in-table-text flush the counter takes over. */
+/* @reads: apps/mobile/src/mail/frame-budget.ts node_modules/parse5/dist/parser/index.js
+   The phone frame's step figures, and the parse5 build whose in-table-text flush the counter takes over
+   (the copy this package resolves: its own node_modules first, then each parent's). */
 /**
  * NO COUNT STEP DOES MORE THAN ITS WORK SHARE PLUS ONE TOKEN, AND EVERY READING IS treeWithin's. Text placed
  * directly inside a `<table>` is held by parse5 and processed whole inside the tag that ends it; the counter
  * takes that flush over and stops it where a step must. The meter is private, so its work is re-read here from
  * the three places it charges, and the tap is proved to be the meter by summing to the reading's own `work`.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -294,8 +295,15 @@ describe("500 documents biased to table text: the stepped reading is treeWithin'
  * the five places it is called; a parse5 that moves either reads differently here before a reading drifts.
  */
 describe("parse5's in-table-text internals are the ones the counter takes over", () => {
-  // The parse5 this package resolves: its own node_modules entry, the one the counter imports.
-  const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "parse5");
+  // The parse5 this package resolves, the one the counter imports: its own node_modules entry where it
+  // has one, else the nearest parent's (npm hoists it to the workspace root).
+  const dir = (() => {
+    for (let d = join(dirname(fileURLToPath(import.meta.url)), ".."); ; d = dirname(d)) {
+      const p = join(d, "node_modules", "parse5");
+      if (existsSync(join(p, "package.json"))) return p;
+      if (dirname(d) === d) throw new Error("no parse5 resolvable from packages/client-engine");
+    }
+  })();
   const pkgPath = join(dir, "package.json");
   const PARSER = join(dir, "dist", "parser", "index.js");
   const src = readFileSync(PARSER, "utf8");

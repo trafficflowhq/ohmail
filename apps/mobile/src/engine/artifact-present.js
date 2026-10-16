@@ -25,10 +25,9 @@ function assertPhoneEngineArtifact(projectRoot, exists = existsSync) {
   throw new Error(
     "the phone's mail engine is missing, so this build would have no fourth door.\n" +
     `  Expected: apps/mobile/${ARTIFACT}\n` +
-    "  It is generated — build it first, and before every phone build:\n\n" +
-    "    pnpm -C apps/mobile run build:engine\n\n" +
-    "  (that runs apps/mobile/scripts/bundle-engine.mjs; CI runs the same script, and the\n" +
-    "  Mac's iOS build runs it through the same package script before `expo prebuild`.)\n",
+    "  It is generated — build it first, from the repository root, and before every phone build:\n\n" +
+    "    node apps/mobile/scripts/bundle-engine.mjs\n\n" +
+    "  (CI runs the same script before `expo prebuild`, and so does the Mac's iOS build.)\n",
   );
 }
 

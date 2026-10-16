@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath, publicRel } from "./support/public-root.mjs";
 
 /**
  * THE SELF-HOST IMAGES RUN ON arm64, AND THAT IS A CLAIM, SO IT IS TESTED.
@@ -45,12 +46,12 @@ import { describe, expect, it } from "vitest";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = `${HERE}..`;
 
-const workflow = readFileSync(`${ROOT}/public/ohmail/github/workflows/ghcr-images.yml`, "utf8");
+const workflow = readFileSync(publicPath("github/workflows/ghcr-images.yml"), "utf8");
 const compose = readFileSync(`${ROOT}/deploy/selfhost/docker-compose.yml`, "utf8");
 const selfhostReadme = readFileSync(`${ROOT}/docs/self-host/README.md`, "utf8");
 const vps = readFileSync(`${ROOT}/docs/self-host/VPS.md`, "utf8");
 const umbrel = readFileSync(`${ROOT}/docs/self-host/UMBREL.md`, "utf8");
-const projectReadme = readFileSync(`${ROOT}/public/ohmail/README.md`, "utf8");
+const projectReadme = readFileSync(publicPath("README.md"), "utf8");
 
 /** The three published recipes, and the images they become. */
 const RECIPES = [
@@ -282,7 +283,7 @@ describe("the published images are multi-arch, and stay that way", () => {
       ["docs/self-host/README.md", selfhostReadme, /only ever booted on amd64/],
       ["docs/self-host/VPS.md", vps, /earlier ones were only built/],
       ["docs/self-host/UMBREL.md", umbrel, /booted only the amd64 stack/],
-      ["public/ohmail/README.md", projectReadme, /only ever booted on amd64/],
+      [publicRel("README.md"), projectReadme, /only ever booted on amd64/],
     ] as const) {
       const t = flow(text);
       expect(t, `${name} claims the double boot without dating it`)

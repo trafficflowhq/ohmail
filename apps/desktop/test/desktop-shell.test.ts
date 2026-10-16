@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 /* The namespace lists themselves, so the marker contract below reads the build config
    rather than a copy of it — the drift this file exists to catch. */
 import { WINDOW_ONLY_NAMESPACES } from "../vite.config";
+import { publicPath } from "../../../test/support/public-root.mjs";
 
 /**
  * The Tauri shell's security posture, asserted.
@@ -198,7 +199,7 @@ describe("tauri.conf.json", () => {
     const cargo = fs.readFileSync(path.resolve(APP, "src-tauri/Cargo.toml"), "utf8");
     const lock = fs.readFileSync(path.resolve(APP, "src-tauri/Cargo.lock"), "utf8");
     const plist = fs.readFileSync(
-      path.resolve(APP, "../../public/ohmail/Resources/Info.plist"),
+      publicPath("Resources/Info.plist"),
       "utf8",
     );
     const shortVersion = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(
@@ -243,8 +244,8 @@ describe("tauri.conf.json", () => {
     const v = conf.version;
     const read = (rel: string) => fs.readFileSync(path.resolve(APP, rel), "utf8");
     const appReadme = read("README.md");
-    const pubReadme = read("../../public/ohmail/README.md");
-    const changelog = read("../../public/ohmail/CHANGELOG.md");
+    const pubReadme = fs.readFileSync(publicPath("README.md"), "utf8");
+    const changelog = fs.readFileSync(publicPath("CHANGELOG.md"), "utf8");
 
     /* The desktop README states the number twice, and ONLY these two sentences are statements —
      * a bare `x.y.z` anywhere else in that file is illustration, not a claim about this build
@@ -380,7 +381,7 @@ describe("tauri.conf.json", () => {
    */
   it("keeps the previous client's bundle identifier, because it is the same install", () => {
     const plist = fs.readFileSync(
-      path.resolve(APP, "../../public/ohmail/Resources/Info.plist"),
+      publicPath("Resources/Info.plist"),
       "utf8",
     );
     const macOsId = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];

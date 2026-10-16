@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { renderedUiFont, skipUnlessMeasuredFont } from "./_measured-font.js";
 import { Button, SegmentedControl, SettingsRow, Switch, TagDot, TextField } from "@ohmail/ui";
 
 /**
@@ -63,7 +64,9 @@ const pane = (width: number, inner: string, cls = ""): string =>
 type Rect = { left: number; right: number; top: number; bottom: number; width: number; height: number };
 
 let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
-beforeAll(async () => { browser = await chromium.launch(); }, 120_000);
+/** The face paper's text renders in here; the arms measured in Inter read it (`_measured-font.ts`). */
+let uiFont = "";
+beforeAll(async () => { browser = await chromium.launch(); uiFont = await renderedUiFont(browser); }, 120_000);
 afterAll(async () => { await browser?.close(); });
 
 /** Lay `html` out at a phone viewport (the 640px phone rules apply) and run `read` in the page. */
@@ -255,7 +258,8 @@ describe("Sync now, Edit and Remove stand on one row", () => {
      the stamp is squeezed hardest at the width where the column has only just come up beside the box */
   for (const width of Array.from({ length: 45 }, (_, i) => 540 + 5 * i)) {
     for (const withBox of [true, false]) {
-      it(`a ${width}px card${withBox ? " with the Organizing box" : ""}: status and verbs on one line, the verbs whole`, async () => {
+      it(`a ${width}px card${withBox ? " with the Organizing box" : ""}: status and verbs on one line, the verbs whole`, async (ctx) => {
+        skipUnlessMeasuredFont(uiFont, ctx);
         const m = await measure(page_(pane(width, mbxRow(withBox))), readMbx, 1100);
         expect(oneLine([m.status, ...m.verbs]), "the state column wrapped").toBe(true);
         expect(m.status.width, "the sync stamp was squeezed out of sight").toBeGreaterThanOrEqual(60);

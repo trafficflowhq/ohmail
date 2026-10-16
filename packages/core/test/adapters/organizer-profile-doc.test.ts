@@ -12,6 +12,7 @@ import {
   readOrganizerProfile,
   type OrganizerProfilePayload,
 } from "../../src/adapters/organizer-profile.js";
+import { publicPath } from "../../../../test/support/public-root.mjs";
 
 /**
  * THE PUBLIC FORMAT DOC'S WORKED EXAMPLE IS THE WRITER'S OWN OUTPUT — never a hand-typed
@@ -29,7 +30,7 @@ import {
  * expression below and paste the output — never edit the fence by hand.
  */
 
-const DOC = fileURLToPath(new URL("../../../../public/ohmail/docs/organizer-profile.md", import.meta.url));
+const DOC = publicPath("docs/organizer-profile.md");
 
 /** The payload behind the doc's example. Invented people, `.example` domains throughout. */
 const EXAMPLE_PAYLOAD: OrganizerProfilePayload = {

@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { jobText, secretsRead } from "./support/workflow-jobs.js";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE macOS JOB SIGNS AND NOTARIZES WHEN THE APPLE SECRETS EXIST, AND SAYS SO BY NAME
@@ -22,7 +23,7 @@ import { jobText, secretsRead } from "./support/workflow-jobs.js";
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const WORKFLOW = "public/ohmail/github/workflows/build.yml";
+const WORKFLOW = publicRel("github/workflows/build.yml");
 
 /** The one admitted spelling of a secret read: on a release tag, and empty on every other ref. */
 const TAG_GATED = /^\$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) && secrets\.([A-Z0-9_]+) \|\| '' \}\}$/;

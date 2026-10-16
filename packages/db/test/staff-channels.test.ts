@@ -9,6 +9,7 @@ import {
   MAILBOX_ERROR_CODES, MAILBOX_ERROR_DETAIL_TOKENS,
 } from "../src/index.js";
 import { DbAcquireTimeoutError } from "../src/client.js";
+import { presentRoots } from "../../../test/support/public-root.mjs";
 
 const REPO = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
 
@@ -155,8 +156,8 @@ describe("the staff-visible free-text channels are closed sets", () => {
        set derived from this tree's INSERTs alone rendered `admin.account.suspend` as `other`,
        which `staff-role.pg.test.ts` caught against a real database. */
     const named = new Set<string>();
-    for (const root of ["apps/admin/data", "apps/admin/app", "packages/services/src",
-      "packages/api/src", "packages/db/src"]) {
+    for (const root of presentRoots(["apps/admin/data", "apps/admin/app", "packages/services/src",
+      "packages/api/src", "packages/db/src"], REPO)) {
       for (const file of sources(root)) {
         for (const line of readFileSync(file, "utf8").split("\n")) {
           // Per LINE, and only where the line is about an action — the console's data layer's

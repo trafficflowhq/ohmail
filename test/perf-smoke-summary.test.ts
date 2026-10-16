@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * A STEP'S CONCLUSION IS NOT THE CHECKER'S VERDICT.
@@ -16,7 +17,7 @@ import { describe, expect, it } from "vitest";
  * the job is green and nothing was measured, and the log carries a workflow warning.
  */
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
-const WF = readFileSync(resolve(ROOT, "public/ohmail/github/workflows/build.yml"), "utf8");
+const WF = readFileSync(resolve(ROOT, publicRel("github/workflows/build.yml")), "utf8");
 
 /** The perf-smoke step, from its env pin to the end of its exit-code table. */
 const step = (() => {

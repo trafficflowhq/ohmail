@@ -425,15 +425,18 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
   const TOKEN = "wtodazjkkdrmkvkkbogsbndzgxedvjdcrzrfabmtjhc-fixture-token";
   const withSession = { headers: { cookie: `tf_session=${TOKEN}` } };
 
-  it("ANONYMOUS `/` is the LANDING, and asks the API nothing", async () => {
+  /* This repository carries the app and not the website: an anonymous `/` with no landing zone armed
+     is Next's 404 (the zone, when armed, sends it to the website's deployment). Whatever answers, it is
+     never the app, and it asks the API nothing. The website's own cases are process rows of the
+     landing repository. */
+  it("ANONYMOUS `/` is not the app — the 404 of a tree without the website — and asks the API nothing", async () => {
     seen = [];
     const res = await fetch(app("/"));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
     const html = await res.text();
-    expect(html).toContain("l-hero");            // the marketing hero
     expect(html).not.toContain("demo-ribbon");
-    expect(html).not.toContain("app-body");      // …and not the product root layout
-    expect(seen, "the landing page hit the API").toHaveLength(0);
+    expect(html).not.toContain("app-body");      // not the product root layout
+    expect(seen, "the anonymous page hit the API").toHaveLength(0);
   });
 
   it("a VALID full session turns the SAME URL into the app, with no redirect", async () => {
@@ -453,21 +456,21 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     expect(res.headers.get("cache-control")).toContain("no-store");
   });
 
-  it("an EXPIRED / REVOKED cookie renders the LANDING, not a broken app shell", async () => {
+  it("an EXPIRED / REVOKED cookie gets the anonymous answer, not a broken app shell", async () => {
     sessionUpstream(401, { error: { code: "unauthorized" } });
     seen = [];
-    const html = await fetch(app("/"), { ...withSession }).then((r) => r.text());
-    expect(html).toContain("l-hero");
-    expect(html).not.toContain("app-body");
+    const res = await fetch(app("/"), { ...withSession });
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("app-body");
     expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
   });
 
   it("an ENROLLMENT-scoped session does NOT get the app", async () => {
     sessionUpstream(200, { user: { userId: "u-1" }, scope: "enrollment" });
     seen = [];
-    const html = await fetch(app("/"), { ...withSession }).then((r) => r.text());
-    expect(html).toContain("l-hero");
-    expect(html).not.toContain("app-body");
+    const res = await fetch(app("/"), { ...withSession });
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("app-body");
   });
 
   it("`?demo=1` is the demo for a SIGNED-IN browser too, and still asks the API nothing", async () => {
@@ -488,23 +491,15 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     expect(seen, "the guard should not need the API").toHaveLength(0);
   });
 
-  it("every marketing path still resolves, and still carries the marketing layout", async () => {
+  it("the app's manifest and public assets resolve, and ask the API nothing", async () => {
     seen = [];
-    for (const path of ["/privacy", "/imprint", "/subprocessors"]) {
-      const res = await fetch(app(path));
-      expect(res.status, path).toBe(200);
-      expect(await res.text(), path).toContain("l-body");
-    }
     const manifest = await fetch(app("/manifest.webmanifest"));
     expect(manifest.status).toBe(200);
     expect((await manifest.json()).start_url).toBe("/");
-    // Static assets from public/ survived the move out of apps/landing. (The demo is no
-    // longer a static file — it is the real client in demo mode at the `/demo` route,
-    // exercised in its own block below.)
     for (const asset of ["/og.png", "/favicon.ico"]) {
       expect((await fetch(app(asset))).status, asset).toBe(200);
     }
-    expect(seen, "a marketing path reached the API").toHaveLength(0);
+    expect(seen, "a static path reached the API").toHaveLength(0);
   });
 
   // ── REPAIR ────────────────────────────────────────────────────────────────────────
@@ -553,7 +548,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     for (const junk of ["x", "../../etc/passwd", "<script>", "a".repeat(400)]) {
       seen = [];
       const html = await fetch(app("/"), { headers: { cookie: `tf_session=${junk}` } }).then((r) => r.text());
-      expect(html, junk.slice(0, 16)).toContain("l-hero");
+      expect(html, junk.slice(0, 16)).not.toContain("app-body");
       expect(seen, `a malformed cookie reached the API: ${junk.slice(0, 16)}`).toHaveLength(0);
     }
   });
@@ -584,8 +579,9 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
   it("the canonical host is LEFT ALONE — no redirect loop", async () => {
     // A default-deny host rule is how a production apex ends up redirecting to itself the
     // first time an alias moves. These are hosts this deployment really answers on.
+    // `/login` is a page this tree serves to anyone, so a 200 is the page and not a redirect.
     for (const host of ["ohmail.app", "ohmail-landing-abc.vercel" + ".app", `127.0.0.1:${appPort}`]) {
-      const res = await withHost("/", host);
+      const res = await withHost("/login", host);
       expect(res.status, host).toBe(200);
     }
   });
@@ -658,15 +654,6 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     expect(again.headers.get("content-security-policy")).not.toBe(csp);
   });
 
-  it("the ANONYMOUS landing keeps the baseline policy — and therefore its cache", async () => {
-    const res = await fetch(app("/"));
-    const csp = res.headers.get("content-security-policy")!;
-    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
-    expect(csp).not.toContain("nonce-");
-    // The property the whole gate design protects: no cookie ⇒ nothing per-request.
-    expect(res.headers.get("cache-control") ?? "").not.toContain("no-store");
-  });
-
   it("the credential screens get the strict policy AND a page that satisfies it", async () => {
     // Asserting the header alone would be worse than asserting nothing: a strict
     // `script-src` over a page whose scripts are not nonced is a BLANK SIGN-IN SCREEN,
@@ -689,24 +676,6 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
       // one Next cannot nonce for us.
       expect(html, `${path} lost the theme boot`).toContain("ohmail.theme");
     }
-  });
-
-  it("`/api/waitlist` is answered HERE, not proxied — the one deliberate shadow", async () => {
-    // A `rewrites()` array is afterFiles, so the filesystem route wins. Asserted rather
-    // than assumed: if the ordering ever flipped, the browser's cookie jar would start
-    // riding along to a public unauthenticated endpoint.
-    seen = [];
-    const res = await fetch(app("/api/waitlist"), {
-      method: "POST",
-      headers: { "content-type": "application/json", cookie: "tf_session=live-token" },
-      body: JSON.stringify({ email: "a@b.example", tier: "solo" }),
-    });
-    // Whatever it answers, the request must not have arrived at the upstream as
-    // `/waitlist` carrying the cookie.
-    const proxied = seen.filter((r) => r.path === "/waitlist" && r.headers.cookie);
-    expect(proxied, "the waitlist POST was proxied with the session cookie").toHaveLength(0);
-    expect(res.status).not.toBe(404);
-    expect(res.status, "the page-body refusal caught a route handler").not.toBe(405);
   });
 
   it("a request body never reaches a PAGE — every page answers a Server Action request with 405", async () => {

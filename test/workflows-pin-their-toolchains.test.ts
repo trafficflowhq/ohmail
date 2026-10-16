@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { NODE_BASE } from "./support/published-base.js";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * EVERY TOOLCHAIN A PUBLIC WORKFLOW INSTALLS IS AN EXACT RELEASE.
@@ -13,7 +14,7 @@ import { NODE_BASE } from "./support/published-base.js";
  * one is ever added where cargo runs, must name the same release.
  */
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const DIR = `${ROOT}public/ohmail/github/workflows`;
+const DIR = publicPath("github/workflows");
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
 type Step = { name?: unknown; uses?: unknown; run?: unknown; with?: Record<string, unknown> };
 type Workflow = { env?: Record<string, unknown>; jobs?: Record<string, { steps?: Step[] }> };

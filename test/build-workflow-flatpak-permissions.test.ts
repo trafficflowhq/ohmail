@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE FLATPAK PERMISSION STEP, RUN FROM THE WORKFLOW'S OWN TEXT. It compares the manifest's
@@ -13,7 +14,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const WF = readFileSync(resolve(ROOT, "public/ohmail/github/workflows/build.yml"), "utf8");
+const WF = readFileSync(resolve(ROOT, publicRel("github/workflows/build.yml")), "utf8");
 const MANIFEST_PATH = "apps/desktop/flatpak/app.ohmail.Desktop.yml";
 const MANIFEST = readFileSync(resolve(ROOT, MANIFEST_PATH), "utf8");
 const STEP = "The app ships the permissions it says it does";

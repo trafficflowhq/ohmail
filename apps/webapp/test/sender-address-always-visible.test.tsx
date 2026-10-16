@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { renderedUiFont, skipUnlessMeasuredFont } from "./_measured-font.js";
 import { AddressText, MessageRow } from "@ohmail/ui";
 
 /**
@@ -36,7 +37,9 @@ const ADDR = "lena@atelier-eichspan.invalid";
 const LONG = "giulia.ferrari.accounts.payable.and.invoicing.department@terracotta-studio.invalid";
 
 let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
-beforeAll(async () => { browser = await chromium.launch(); }, 120_000);
+/** The face paper's text renders in here; the arm measured in Inter reads it (`_measured-font.ts`). */
+let uiFont = "";
+beforeAll(async () => { browser = await chromium.launch(); uiFont = await renderedUiFont(browser); }, 120_000);
 afterAll(async () => { await browser?.close(); });
 
 const doc = (body: string, extra = ""): string =>
@@ -278,7 +281,8 @@ describe("the open message's header draws the address whatever the name says", (
     whole(await onPage(doc(header(360, NAME, LONG)), readAddress, ".msg-from-line"), "360px header");
   }, 60_000);
 
-  it("RED CONTROL: the candidate's header cuts the domain away at 572px", async () => {
+  it("RED CONTROL: the candidate's header cuts the domain away at 572px", async (ctx) => {
+    skipUnlessMeasuredFont(uiFont, ctx);
     const r = await onPage(doc(header(572, NAME, LONG), PRE_HEADER), readAddress, ".msg-from small");
     expect(r.domainVisibleW, "the replaced header no longer cuts the domain — this arm measures nothing").toBeLessThan(r.domainW - 0.5);
   }, 60_000);

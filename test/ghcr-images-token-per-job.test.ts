@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE IMAGE WORKFLOW'S TOKEN CAN PUSH ONLY IN THE JOBS THAT PUSH.
@@ -12,7 +13,7 @@ import { describe, expect, it } from "vitest";
  * exactly where a step pushes. A checkout in a job that can push keeps no credential on disk.
  */
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const FILE = "public/ohmail/github/workflows/ghcr-images.yml";
+const FILE = publicRel("github/workflows/ghcr-images.yml");
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
 type Perms = string | Record<string, string> | undefined;
 type Step = { uses?: unknown; run?: unknown; with?: Record<string, unknown> };

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import {
   ALONE_MARKER, SHARDS, aloneFiles, checkMap, dovecotPinned, hashShard, readMap, shardFiles, testFiles, verifyReport,
   type ShardMap,
 } from "./support/ci-shards.mjs";
+import { publicRel } from "./support/public-root.mjs";
 
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
 
@@ -20,8 +21,8 @@ const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): 
  * named. Each refusal below is also driven against a mutated copy, so none is green for want of a subject.
  */
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-/** Authored under public/ohmail in the development tree, published to .github. */
-const WORKFLOW = ["public/ohmail/github/workflows/ci.yml", ".github/workflows/ci.yml"].find((p) => existsSync(join(ROOT, p)))!;
+/** The suite workflow, where this checkout keeps it (test/support/public-root.mjs). */
+const WORKFLOW = publicRel("github/workflows/ci.yml", ROOT);
 const workflowText = readFileSync(join(ROOT, WORKFLOW), "utf8");
 const composeText = readFileSync(join(ROOT, "docker-compose.yml"), "utf8");
 const dockerignoreText = readFileSync(join(ROOT, "apps/webapp/Dockerfile.dockerignore"), "utf8");

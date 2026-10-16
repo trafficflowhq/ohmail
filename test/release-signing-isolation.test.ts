@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE UPDATE KEYS TOUCH ONE STEP OF ONE JOB, AND THAT JOB RUNS NOTHING ELSE.
@@ -19,7 +20,7 @@ import { describe, expect, it } from "vitest";
  * asserted over the file.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const PATH = "public/ohmail/github/workflows/release-feeds.yml";
+const PATH = publicRel("github/workflows/release-feeds.yml");
 const wf = readFileSync(`${HERE}../${PATH}`, "utf8");
 const signers = readFileSync(`${HERE}../scripts/fetch-pinned-signers.mjs`, "utf8");
 

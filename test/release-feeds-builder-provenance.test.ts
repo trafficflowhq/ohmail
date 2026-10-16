@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * WHAT IS SIGNED IS WHAT WAS BUILT.
@@ -18,7 +19,7 @@ import { describe, expect, it } from "vitest";
  * own artifact digest read from the Actions API.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WF = `${HERE}../public/ohmail/github/workflows/release-feeds.yml`;
+const WF = publicPath("github/workflows/release-feeds.yml");
 const wfText = readFileSync(WF, "utf8");
 
 /**
@@ -547,7 +548,7 @@ describe("the builder check", () => {
 });
 
 describe("the table of installers is derived from the build workflow, not kept beside it", () => {
-  const buildText = readFileSync(`${HERE}../public/ohmail/github/workflows/build.yml`, "utf8").split("\n");
+  const buildText = readFileSync(publicPath("github/workflows/build.yml"), "utf8").split("\n");
 
   /** Every upload step whose path is a file at the root of `build/` — one installer, one artifact. */
   function uploadedInstallers(): Record<string, string> {
@@ -574,7 +575,7 @@ describe("the table of installers is derived from the build workflow, not kept b
 });
 
 describe("the Android table and the release key are read from android.yml, not kept beside it", () => {
-  const ANDROID_YML = `${HERE}../public/ohmail/github/workflows/android.yml`;
+  const ANDROID_YML = publicPath("github/workflows/android.yml");
   const androidText = readFileSync(ANDROID_YML, "utf8");
 
   /** The tag build's uploads: artifact name → the basename of the file it carries. */
@@ -713,19 +714,5 @@ describe("the workflow asks the builder before it stages anything to be signed",
       expect(at, `${job} is gone`).toBeGreaterThan(-1);
       expect(wfText.slice(at, at + 600)).toContain("if: inputs.verify_only != true");
     }
-  });
-
-  it("publishes to the mirror at the path the call names, or the release dies at that step", () => {
-    /* The mirror is where this actually runs, and it is a different tree: the workflow lands as
-     * `.github/workflows/`, the tools checkout is the PUBLISHED repository, and the release-tag
-     * checkout beside it is not. A signer step once read the monorepo's `pnpm-lock.yaml`, which
-     * the mirror does not publish, and died ENOENT on a tag that could not be moved. So the two
-     * halves of publishing this script are asserted together: without the PAYLOAD entry the file
-     * is not over there, and without the deny-list's own name it is not either. */
-    const publisher = readFileSync(`${HERE}../scripts/publish-desktop.mjs`, "utf8");
-    const basename = "verify-assets-against-builder.mjs";
-    expect(wfText).toContain(`node .tools/scripts/${basename}`);
-    expect(publisher).toContain(`{ from: "scripts/${basename}", to: "scripts/${basename}" }`);
-    expect(publisher).toContain(`|verify-assets-against-builder\\.mjs$`);
   });
 });

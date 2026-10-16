@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * ═══ A PLACEHOLDER MAY WAIT IN [Unreleased]. IT MAY NOT SHIP IN A DATED BLOCK ════════════════
@@ -23,7 +24,7 @@ import { describe, expect, it } from "vitest";
  * silence and this guard would pass by reading nothing.
  */
 
-const CHANGELOG = join(import.meta.dirname, "..", "public", "ohmail", "CHANGELOG.md");
+const CHANGELOG = publicPath("CHANGELOG.md");
 
 /**
  * THE PLACEHOLDER WORDS, A NAMED SET — not "any angle-bracketed lowercase word".

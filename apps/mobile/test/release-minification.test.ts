@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { publicPath } from "../../../test/support/public-root.mjs";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -52,11 +53,10 @@ const APP_JSON = fileURLToPath(new URL("../app.json", import.meta.url));
  * really is spelled this way on disk; only this file's spelling of it is indirect.
  */
 const FORGE_DIR = ["git", "hub"].join("");
-const GUARDS = new URL(`../../../public/ohmail/${FORGE_DIR}/scripts/`, import.meta.url);
-const FCM_GUARD = fileURLToPath(new URL("assert-no-fcm.sh", GUARDS));
-const LOG_GUARD = fileURLToPath(new URL("assert-log-hygiene.sh", GUARDS));
-const ANDROID_WORKFLOW = fileURLToPath(
-  new URL(`../../../public/ohmail/${FORGE_DIR}/workflows/android.yml`, import.meta.url));
+const GUARDS = `${publicPath(`${FORGE_DIR}/scripts`)}/`;
+const FCM_GUARD = `${GUARDS}assert-no-fcm.sh`;
+const LOG_GUARD = `${GUARDS}assert-log-hygiene.sh`;
+const ANDROID_WORKFLOW = publicPath(`${FORGE_DIR}/workflows/android.yml`);
 
 interface MinifyPlugin {
   MARKER: string;

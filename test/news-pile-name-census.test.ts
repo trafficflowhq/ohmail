@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE READS PILE IS CALLED NEWS (owner, 2026-09-19), AND SINCE 0.22 SO IS ITS FOLDER: the rename
@@ -80,7 +81,7 @@ describe("the pile is News in every user-facing catalogue", () => {
   });
 
   it("public/ohmail/README.md: the word is gone — the tree names the folder the product makes", () => {
-    const raw = fs.readFileSync(path.join(ROOT, "public/ohmail/README.md"), "utf8");
+    const raw = fs.readFileSync(path.join(ROOT, publicRel("README.md")), "utf8");
     const strays = raw
       .split("\n")
       .map((line, i) => [i + 1, line] as const)

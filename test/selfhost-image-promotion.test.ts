@@ -4,9 +4,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { publicRel } from "./support/public-root.mjs";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const WF = "public/ohmail/github/workflows/ghcr-images.yml";
+const WF = publicRel("github/workflows/ghcr-images.yml");
 const wf = readFileSync(join(ROOT, WF), "utf8");
 
 /**
@@ -181,7 +182,7 @@ describe("latest moves last, and only over a version tag that is whole", () => {
  * driven — the candidate refuses to promote, and the ordinary release still does.
  */
 describe("a candidate run builds rc-<sha> and promotes nothing", () => {
-  const TAGS = join(ROOT, "public/ohmail/github/scripts/ghcr-image-tags.sh");
+  const TAGS = join(ROOT, publicRel("github/scripts/ghcr-image-tags.sh"));
   const decide = (env: Record<string, string>): { out: string; rc: number } => {
     try {
       const out = execFileSync("bash", [TAGS],

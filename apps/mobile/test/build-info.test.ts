@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildCommit, buildLabel, DEV_COMMIT } from "../src/build-info";
+import { publicPath } from "../../../test/support/public-root.mjs";
 
 const at = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const appJson = JSON.parse(readFileSync(at("../app.json"), "utf8")) as {
@@ -122,7 +123,7 @@ describe("the number on screen is the number in the package manifest", () => {
     /* The forge's name is composed, never written out: `privacy.test.ts` bans that term across
        this app's sources and exempts one file, and a test is not it. */
     const forge = ["git", "hub"].join("");
-    const wf = readFileSync(at(`../../../public/ohmail/${forge}/workflows/android.yml`), "utf8");
+    const wf = readFileSync(publicPath(`${forge}/workflows/android.yml`), "utf8");
     const baked = wf.match(new RegExp(`EXPO_PUBLIC_COMMIT: \\$\\{\\{ ${forge}\\.sha \\}\\}`, "g")) ?? [];
     expect(baked.length, "a packaging job builds the bundle without naming its commit").toBe(2);
     const asked = wf.match(/assert-baked-commit\.sh /g) ?? [];

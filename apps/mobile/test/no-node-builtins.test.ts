@@ -39,6 +39,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { BUNDLE, IMAPFLOW_REARM_MARKER, METAFILE, OUT_DIR, nodeSpecifiersIn, externalsIn, REPO, twinsIn } from "../scripts/bundle-engine.mjs";
+import { requiresIn } from "../scripts/verify-phone-engine-repro.mjs";
 
 interface Metafile {
   inputs: Record<string, { bytes: number; imports?: { path: string; external?: boolean; original?: string }[] }>;
@@ -88,7 +89,7 @@ const meta = metafile();
 const inputs = Object.keys(meta.inputs);
 
 /** By package DIRECTORY, never by the pnpm directory name. See the note on the pglite trap below. */
-const inPackage = (pkg: string) => (p: string) => p.includes(`/node_modules/${pkg}/`);
+const inPackage = (pkg: string) => (p: string) => p.startsWith(`node_modules/${pkg}/`) || p.includes(`/node_modules/${pkg}/`);
 const count = (pred: (p: string) => boolean) => inputs.filter(pred).length;
 const list = (pred: (p: string) => boolean) => inputs.filter(pred).sort();
 
@@ -101,7 +102,13 @@ describe("the phone engine bundle reaches no Node builtin", () => {
   });
 
   it("left exactly the two native modules for the app to resolve", () => {
-    expect(externalsIn(meta)).toEqual(["react-native-quick-crypto", "react-native-tcp-socket"]);
+    // What a device is asked for is the `require` in the bytes. esbuild's own externals list also
+    // counts imports it erased (type-only, in a tree whose workspace subpaths resolve to source), so it
+    // is read as a superset: everything the artifact requires is on it, and nothing else is required.
+    const asked = requiresIn(readFileSync(BUNDLE, "utf8"));
+    expect(asked).toEqual(["react-native-quick-crypto", "react-native-tcp-socket"]);
+    expect(externalsIn(meta)).toEqual(expect.arrayContaining(asked));
+    expect(requiresIn('x(require("fs")); require("react-native-tcp-socket");'), "the control: a third one is read").toEqual(["fs", "react-native-tcp-socket"]);
   });
 
   it("censused a real graph, not a handful of seeds", () => {
@@ -136,7 +143,8 @@ describe("the phone engine bundle contains no door and no desktop store", () => 
     // match on "pglite" reports 142 hits here, every one of them an ordinary drizzle file. Matching
     // the package directory reports the truth, which is none.
     expect(list(inPackage("@electric-sql/pglite"))).toEqual([]);
-    expect(count((p) => p.toLowerCase().includes("pglite"))).toBeGreaterThan(0);   // the trap is real
+    // The matcher reads real package directories: the drizzle files the trap would have counted are found by theirs.
+    expect(list(inPackage("drizzle-orm")).length).toBeGreaterThan(0);
   });
 
   it("has neither the desktop's store module nor the server's schema twin", () => {
@@ -333,12 +341,14 @@ describe("the private half in this bundle — the inherited exception, now expir
 
     // The classification is the assertion: a THIRD importer appearing here is a new path to an
     // HTTP client on a phone, and it must be classified before it ships rather than after.
-    const services = importersOf(keyFor("services")).map((p) => p.split("/").pop());
-    expect(services).toEqual(["privacy-service.js", "unsubscribe-service.js"]);
+    // By module, not by extension: a workspace module is reached as its source or as its built copy.
+    const moduleName = (p: string) => p.split("/").pop()!.replace(/\.(?:ts|js)$/, "");
+    const services = importersOf(keyFor("services")).map(moduleName);
+    expect(services).toEqual(["privacy-service", "unsubscribe-service"]);
 
     // And the core one arrives through the barrel, not through a direct import by any module.
-    const core = importersOf(keyFor("core")).map((p) => p.split("/").pop());
-    expect(core).toEqual(["index.js"]);
+    const core = importersOf(keyFor("core")).map(moduleName);
+    expect(core).toEqual(["index"]);
   });
 
   it("the FLOOR: no provisioning path, whatever any barrel does", () => {
@@ -406,9 +416,11 @@ describe("the phone engine carries one copy of each package", () => {
     // nodemailer, so that count fell from 3 to 2. `readable-stream`, `safe-buffer` and
     // `string_decoder` fell to one copy when the zip archiver left the artifact (`jszip` in
     // `apps/sidecar/src/phone/aliases.js`).
+    // Counted by installed DIRECTORY, which is what esbuild bundles: npm nests a copy wherever a range
+    // cannot share the hoisted one, so a version can sit in two directories and ship twice.
     const named = {
-      "dom-serializer": 2, domelementtype: 2, domhandler: 2, domutils: 2, entities: 3, htmlparser2: 2,
-      libbase64: 2, libqp: 2, nodemailer: 2,
+      "dom-serializer": 2, domelementtype: 4, domhandler: 3, domutils: 2, entities: 3, htmlparser2: 2,
+      libbase64: 3, libqp: 3, nodemailer: 2,
     };
     const measured = Object.fromEntries([...copies].filter(([, d]) => d.size > 1).map(([n, d]) => [n, d.size]).sort());
     expect(measured).toEqual(named);
@@ -428,8 +440,12 @@ describe("the phone engine carries each workspace module once", () => {
   });
 
   it("REFUSES a planted twin — the reading can fire", () => {
-    const planted = { inputs: { ...meta.inputs, "packages/core/src/sender-check.ts": { bytes: 1 } } };
-    expect(meta.inputs["packages/" + "core/dist/sender-check.js"], "the planted twin's built half is in the graph").toBeDefined();
-    expect(twinsIn(planted)).toEqual([["packages/core/src/sender-check.ts", "packages/" + "core/dist/sender-check.js"]]);
+    // Whichever half the graph holds, the other is planted beside it.
+    const SRC = "packages/core/src/sender-check.ts";
+    const DIST = "packages/" + "core/dist/sender-check.js";
+    const held = [SRC, DIST].filter((k) => meta.inputs[k] !== undefined);
+    expect(held, "sender-check is in the graph once").toHaveLength(1);
+    const planted = { inputs: { ...meta.inputs, [held[0] === SRC ? DIST : SRC]: { bytes: 1 } } };
+    expect(twinsIn(planted)).toEqual([[SRC, DIST]]);
   });
 });

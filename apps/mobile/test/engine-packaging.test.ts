@@ -38,8 +38,11 @@ import {
   stripBuildPaths,
 } from "../scripts/bundle-engine.mjs";
 import { ARTIFACT, assertPhoneEngineArtifact } from "../src/engine/artifact-present.js";
+import { publicPath } from "../../../test/support/public-root.mjs";
 
 const APP = join(REPO, "apps", "mobile");
+/** The generator, as the refusal names it and the phone workflow runs it: by its file, from the root. */
+const GENERATE = "node apps/mobile/scripts/bundle-engine.mjs";
 
 /** The published tree's resolution (every workspace subpath to source): the engine people install. */
 let published = "";
@@ -277,8 +280,7 @@ describe("a build without the artifact stops, by name", () => {
       message = (err as Error).message;
     }
     expect(message).toContain("no fourth door");
-    expect(message).toContain("build:engine");
-    expect(message).toContain("apps/mobile/scripts/bundle-engine.mjs");
+    expect(message).toContain(GENERATE);
     expect(message).toContain(`apps/mobile/${ARTIFACT}`);
   });
 
@@ -296,13 +298,13 @@ describe("a build without the artifact stops, by name", () => {
     expect(call).toBeLessThan(configure);
   });
 
-  it("the generator is a package script, so every build path spells it the same way", () => {
-    // The sentence tells somebody to run `pnpm -C apps/mobile run build:engine`; this is the half
-    // that makes that true. CI and the Mac's iOS build run the same script.
-    const pkg = JSON.parse(readFileSync(join(APP, "package.json"), "utf8")) as {
-      scripts: Record<string, string>;
-    };
-    expect(pkg.scripts["build:engine"]).toBe("node scripts/bundle-engine.mjs");
+  it("every build path spells the generator the same way: the command the sentence names", () => {
+    // The sentence tells somebody to run the generator by its file from the repository root; the
+    // phone workflow's bundle step runs exactly that, so the advice is the build's own command.
+    const wf = readFileSync(publicPath(`${["git", "hub"].join("")}/workflows/android.yml`), "utf8");
+    const runs = wf.split("\n").filter((l) => l.trim() === GENERATE);
+    expect(runs.length, "the phone workflow no longer runs the generator the sentence names").toBeGreaterThan(0);
+    expect(wf.split("\n").filter((l) => /bundle-engine\.mjs\s*$/.test(l) && l.trim() !== GENERATE), "another spelling").toEqual([]);
   });
 
   it("the generator runs as a command, not only as an import", () => {

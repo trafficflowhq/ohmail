@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * A RELEASED SELF-HOST IMAGE MUST BE ABLE TO NAME THE COMMIT IT WAS BUILT FROM.
@@ -112,7 +113,7 @@ describe("the released self-host images carry a build identity", () => {
 });
 
 describe("the release workflow hands every image the tagged commit", () => {
-  const workflow = read("public/ohmail/github/workflows/ghcr-images.yml");
+  const workflow = read(publicRel("github/workflows/ghcr-images.yml"));
 
   it("passes the argument to the build step", () => {
     expect(workflow, "the workflow builds the images without a build argument")

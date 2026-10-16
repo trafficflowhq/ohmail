@@ -9,6 +9,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { settleEditor } from "./_first-paint.js";
 import { SIG_FOLLOWING, type SignatureState } from "../app/shell/signature";
+import { publicPath } from "../../../test/support/public-root.mjs";
 
 /**
  * ═══ A SIGNATURE WITH FORMATTING IN IT — the pane that writes it, the block that shows it ════
@@ -309,7 +310,7 @@ describe("the copy does not claim a signature is plain text", () => {
    * than silently making a released note untrue.
    */
   it("the released note's what-you-see-is-what-ships sentence is still backed by the block", () => {
-    const changelog = read("public/ohmail/CHANGELOG.md");
+    const changelog = readFileSync(publicPath("CHANGELOG.md"), "utf8");
     expect(changelog, "the claim this guard exists for is gone — re-read it before deleting me")
       .toContain("What you see is what ships");
     const block = read("apps/webapp/app/shell/SignatureBlock.tsx");

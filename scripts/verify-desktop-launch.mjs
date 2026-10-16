@@ -205,7 +205,9 @@ if (RUN_AS_SCRIPT) {
   };
   let route = waylandSession ? "grim" : "xwd";
   let routeWhy = ROUTES[route].why;
-  if (RUN_AS_SCRIPT && !ROUTES[route].tools.every(has)) {
+  /* A verdict on an existing capture (`--frame`) launches nothing and captures nothing, so it asks
+     for no capture tool: a host without xwd or grim can still read a frame. */
+  if (RUN_AS_SCRIPT && !opt("frame", null) && !ROUTES[route].tools.every(has)) {
     const other = route === "grim" ? "xwd" : "grim";
     if (ROUTES[other].tools.every(has)) {
       routeWhy = `${ROUTES[route].tools.filter((t) => !has(t)).join(", ")} is not on PATH, so the other route is taken`;

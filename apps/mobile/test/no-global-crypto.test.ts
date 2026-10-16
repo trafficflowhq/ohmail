@@ -97,7 +97,7 @@ describe("the phone's engine asks the runtime for no global crypto", () => {
     // The two modules the defect was in are still in the graph — otherwise a green here would
     // only mean the code moved.
     expect(owner).toContain("apps/sidecar/src/identity.ts");
-    expect(owner.some((o) => o.endsWith("organizer-lease.js"))).toBe(true);
+    expect(owner.some((o) => /organizer-lease\.(?:js|ts)$/.test(o))).toBe(true);
   });
 
   it("holds ZERO free reads", () => {

@@ -507,7 +507,8 @@ describe("the person's own engines never carry the managed dial decision", () =>
   for (const engine of ["desktop", "phone"] as const) {
     it(`the ${engine} engine's graph holds the module and its output holds none of the decision`, () => {
       const { text, meta } = built[engine];
-      expect(Object.keys(meta.inputs).some((k) => k.endsWith("net/mail-dial.js")),
+      // As its built copy or its source, whichever the workspace's exports resolve the engine to.
+      expect(Object.keys(meta.inputs).some((k) => /net\/mail-dial\.(?:js|ts)$/.test(k)),
         "the module is not in the graph, so the absence below would prove nothing").toBe(true);
       expect(DECISION.filter((needle) => text.includes(needle)),
         `the ${engine} engine now carries the managed dial decision`).toEqual([]);

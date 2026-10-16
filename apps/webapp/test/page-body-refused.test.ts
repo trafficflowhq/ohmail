@@ -59,7 +59,8 @@ describe("a request body never reaches a page", () => {
     expect(pages.length, "the walk found no pages").toBeGreaterThan(10);
     expect(pages).toContain("/no-such-page");
     expect(pages).toContain("/demo");
-    expect(handlers.sort()).toEqual(["/account/manage", "/api/waitlist", "/flathub-verification", "/manifest.webmanifest", "/version"]);
+    // This repository carries the app alone: the waitlist and the Flathub verification route left with the website.
+    expect(handlers.sort()).toEqual(["/account/manage", "/manifest.webmanifest", "/version"]);
   });
 
   it("a POST carrying Next-Action to any page is a bare 405, and its body is never read", async () => {

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 // @ts-expect-error — a .mjs script with no declarations; the exports are the verdict under test.
 import * as check from "../scripts/perf-smoke-check.mjs";
+import { publicPath, publicRel } from "./support/public-root.mjs";
 
 /**
  * THE PERF SMOKE'S OWN GUARD.
@@ -538,7 +539,7 @@ describe("it reads the recorded run, which is what makes it a control", () => {
 });
 
 describe("the workflow runs it on the artifact it just built", () => {
-  const wf = readFileSync(`${HERE}../public/ohmail/github/workflows/build.yml`, "utf8");
+  const wf = readFileSync(publicPath("github/workflows/build.yml"), "utf8");
 
   it("serves a mailbox and measures the app against it, once", () => {
     // The CALLS, counted through the invocation and not through the bare path: the comment above
@@ -699,7 +700,7 @@ describe("the workflow runs it on the artifact it just built", () => {
  */
 describe("the workflow step admits the checker's codes by name", () => {
   const WORKFLOW = resolve(dirname(fileURLToPath(import.meta.url)), "..",
-    "public/ohmail/github/workflows/build.yml");
+    publicRel("github/workflows/build.yml"));
 
   /** The step's decision block, dedented out of the YAML: from the admitted-codes comment to its `exit 0`. */
   function decisionBlock(): string {
@@ -1023,14 +1024,14 @@ describe("the shipped store is read from the engine beside the app", () => {
   });
 
   it("is handed that --bundle by the workflow, so the engine sits where the check looks", () => {
-    const wf = readFileSync(`${HERE}../public/ohmail/github/workflows/build.yml`, "utf8");
+    const wf = readFileSync(publicPath("github/workflows/build.yml"), "utf8");
     expect(wf).toContain("--bundle perf-smoke/squashfs-root/usr/bin/ohmail \\");
   });
 
   it("extracts the whole AppImage beside that binary and reads the store there, so the store-open arm is never blind", () => {
     /* 0.25.13's first CI run extracted usr/bin/ohmail alone: the engine dir the arm derives did not exist, the
      * arm read "the shipped store is unread", the Linux job went red and its installers were not uploaded. */
-    const wf = readFileSync(`${HERE}../public/ohmail/github/workflows/build.yml`, "utf8");
+    const wf = readFileSync(publicPath("github/workflows/build.yml"), "utf8");
     const step = wf.slice(wf.indexOf("name: The packaged app's start and memory on that mailbox"));
     const before = step.slice(0, step.indexOf("--bundle perf-smoke/squashfs-root/usr/bin/ohmail"));
     expect(before).toContain("../build/ohmail-linux-x86_64.AppImage --appimage-extract > /dev/null)");
@@ -1085,7 +1086,7 @@ describe("the boot alone, on the jobs that start the engine without the app", ()
 });
 
 describe("the workflow takes the runner's reading where the ceilings were measured", () => {
-  const wf = readFileSync(`${HERE}../public/ohmail/github/workflows/build.yml`, "utf8");
+  const wf = readFileSync(publicPath("github/workflows/build.yml"), "utf8");
   const START = 'run: echo "OHMAIL_BUILD_STEP_T0=$(date +%s)" >> "$GITHUB_ENV"';
 
   it("notes the build step's seconds around each measured platform's build", () => {

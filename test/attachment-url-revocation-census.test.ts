@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { withoutComments } from "../scripts/lib/source-scan.mjs";
+import { presentRoots } from "./support/public-root.mjs";
 
 /**
  * EVERY READER THAT MATERIALISES AN ATTACHMENT URL, AND WHAT REVOKES IT.
@@ -12,7 +13,7 @@ import { withoutComments } from "../scripts/lib/source-scan.mjs";
  * rather than measured in somebody's tab.
  */
 
-const READER_ROOTS = ["apps/webapp/app", "apps/mobile/src", "apps/desktop/src", "apps/admin/app"];
+const READER_ROOTS = presentRoots(["apps/webapp/app", "apps/mobile/src", "apps/desktop/src", "apps/admin/app"]);
 const SKIP = new Set(["node_modules", "dist", "build", ".next", "test", "__tests__"]);
 
 /** Every `.ts`/`.tsx` source under `root`, tests and build outputs excluded. */

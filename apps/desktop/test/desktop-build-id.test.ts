@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BUILD_LABEL, BUILD_SHA, buildLabelOf } from "../src/build-id.js";
+import { publicPath } from "../../../test/support/public-root.mjs";
 
 const read = (rel: string): string =>
   fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), rel), "utf8");
@@ -66,7 +67,7 @@ describe("the build identity", () => {
     /* Workflow-level rather than per-step, because the UI is bundled twice on the macOS job
        (`ui:build:engine`, then again inside `app:build:engine`) and once per job on the other
        three — a per-step env is four places to forget. */
-    const wf = read("../../../public/ohmail/github/workflows/build.yml");
+    const wf = fs.readFileSync(publicPath("github/workflows/build.yml"), "utf8");
     expect(wf, "the build workflow no longer passes its commit to the artifact")
       .toMatch(/^env:\n  OHMAIL_BUILD_SHA: \$\{\{ github\.sha \}\}$/m);
   });

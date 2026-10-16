@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE GUARD CHECK: THE WORKFLOWS, THEIR TOOLS AND THE GATE CHANGE ONLY ON A MAINTAINER BRANCH OF THIS REPOSITORY.
@@ -16,8 +17,8 @@ import { afterAll, describe, expect, it } from "vitest";
  * safe under `pull_request_target`: the base's checker, read-only permissions, no pull-request text in `run:`.
  */
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
-const SCRIPT = resolve(ROOT, "public/ohmail/github/scripts/assert-pr-guard.sh");
-const WORKFLOW = resolve(ROOT, "public/ohmail/github/workflows/guard.yml");
+const SCRIPT = resolve(ROOT, publicRel("github/scripts/assert-pr-guard.sh"));
+const WORKFLOW = resolve(ROOT, publicRel("github/workflows/guard.yml"));
 /** The job name, which becomes a required context of the main ruleset once it has run green. */
 export const GUARD_CONTEXT = "the workflows, their tools and the gate change only on a maintainer branch of this repository";
 const SLUG = "trafficflowhq/ohmail";

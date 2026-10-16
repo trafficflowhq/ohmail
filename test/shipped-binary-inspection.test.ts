@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * EVERY PLATFORM'S SHIPPED BINARY IS READ, AND macOS WAS NOT BEING READ AT ALL.
@@ -20,7 +21,7 @@ import { describe, expect, it } from "vitest";
  * pass while the shipped bytes fail.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WF = readFileSync(`${HERE}../public/ohmail/github/workflows/build.yml`, "utf8").split("\n");
+const WF = readFileSync(publicPath("github/workflows/build.yml"), "utf8").split("\n");
 
 const CSP = "default-src 'self'; connect-src 'none'; object-src 'none'";
 const FEED = "https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json";

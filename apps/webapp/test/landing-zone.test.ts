@@ -362,6 +362,8 @@ describe("assertLandingZone: the build's refusal matrix", () => {
     expect(() => assertLandingZone(LISTED, LISTED, { ...prod, LANDING_ZONE_BYPASS: "b" }, tree)).not.toThrow();
     expect(() => assertLandingZone("", null, prod, managed)).not.toThrow();
     expect(() => assertLandingZone("", null, { VERCEL_ENV: "preview" }, tree)).not.toThrow();
+    // A self-host build serves the app at `/` and has no zone to arm, production-shaped env or not.
+    expect(() => assertLandingZone("", null, prod, { ...tree, selfhost: true })).not.toThrow();
   });
 
   it("a loopback zone is refused for production and admitted for tests and previews", async () => {

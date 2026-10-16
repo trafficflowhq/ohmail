@@ -39,10 +39,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENGINE_RS = join(ROOT, "apps/desktop/src-tauri/src/engine.rs");
-const WORKFLOW = join(ROOT, "public/ohmail/github/workflows/build.yml");
+const WORKFLOW = join(ROOT, publicRel("github/workflows/build.yml"));
 const README = join(ROOT, "apps/desktop/README.md");
 
 /** The one host the three lists are keyed on. See `engineTableUrls` for why that is asserted. */

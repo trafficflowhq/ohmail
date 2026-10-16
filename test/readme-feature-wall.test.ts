@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * ══ THE PUBLIC README'S RECORDINGS EXIST, AND THEY ARE THE ONES IT NAMES ══════════════════════
  *
- * The README template in `public/ohmail/` is published to the open repository verbatim; its
+ * The README is published to the open repository verbatim (at the root; `public/ohmail/` where it was authored); its
  * feature wall is a column of `<img>` tags pointing at GIFs under `docs/assets/feature-wall/`.
  *
  * AN `<img>` WHOSE FILE IS MISSING FAILS NOTHING. GitHub renders the alt text, the publish gate
@@ -18,11 +18,11 @@ import { fileURLToPath } from "node:url";
  * references is dead weight in a repository people clone, and is far more likely to be a renamed
  * reference than a deliberate spare.
  */
-const at = (rel: string): string => fileURLToPath(new URL(rel, import.meta.url));
-const TEMPLATE = "../public/ohmail";
+/** A path in the published tree: the README and the recordings it names. */
+const at = (rel: string): string => publicPath(rel);
 
 describe("the public README's feature wall", () => {
-  const readme = readFileSync(at(`${TEMPLATE}/README.md`), "utf8");
+  const readme = readFileSync(at("README.md"), "utf8");
   const referenced = [...readme.matchAll(/src="(docs\/assets\/feature-wall\/[^"]+)"/g)]
     .map((m) => m[1]!);
 
@@ -34,7 +34,7 @@ describe("the public README's feature wall", () => {
 
   it("every referenced recording exists, is a real GIF, and is not a stub", () => {
     for (const rel of referenced) {
-      const file = at(`${TEMPLATE}/${rel}`);
+      const file = at(rel);
       const size = statSync(file).size;
       expect(size, `${rel} is a stub`).toBeGreaterThan(50_000);
       // …and is not so large that the README becomes a download. The shipped set targets 5 MB.
@@ -45,7 +45,7 @@ describe("the public README's feature wall", () => {
   });
 
   it("every recording in the directory is referenced — no orphans", () => {
-    const dir = at(`${TEMPLATE}/docs/assets/feature-wall`);
+    const dir = at("docs/assets/feature-wall");
     const files = readdirSync(dir).filter((f) => f.endsWith(".gif"));
     expect(files.length).toBe(referenced.length);
     for (const f of files) {

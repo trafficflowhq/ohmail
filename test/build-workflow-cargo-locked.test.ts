@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE TAG BUILD'S CARGO STEPS RUN `--locked`.
@@ -22,7 +23,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const WORKFLOW = "public/ohmail/github/workflows/build.yml";
+const WORKFLOW = publicRel("github/workflows/build.yml");
 
 /** Every cargo invocation line in a run block (never comments), kept whole for the refusal. */
 export function cargoInvocations(text: string): string[] {

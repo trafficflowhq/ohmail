@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE TWO STANDING REDS OF THE PUBLISHED BUILD, AS SETTINGS THE FILE ASSERTS.
@@ -17,7 +18,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const WORKFLOW = "public/ohmail/github/workflows/build.yml";
+const WORKFLOW = publicRel("github/workflows/build.yml");
 const WF = readFileSync(resolve(ROOT, WORKFLOW), "utf8");
 
 /** One step's lines, from its `- name:` to the next step, by exact name. */

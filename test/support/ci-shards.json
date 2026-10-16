@@ -1678,7 +1678,6 @@
     [
       "apps/api-vercel/test/entitlements-refresh-behind.test.ts",
       "apps/desktop/test/desktop-doors.test.ts",
-      "apps/desktop/test/host-client-no-engine-door.test.ts",
       "apps/desktop/test/network-return.test.ts",
       "apps/desktop/test/screener-reads-the-store.test.ts",
       "apps/mobile/test/drain.test.ts",

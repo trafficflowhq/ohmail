@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * "LATEST" IS A STATE THE FEEDS JOB GRANTS, AND IT GRANTS IT LAST.
@@ -25,7 +26,7 @@ import { describe, expect, it } from "vitest";
  * that changes under an editor's hand is measured here rather than on a release.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WF = `${HERE}../public/ohmail/github/workflows/release-feeds.yml`;
+const WF = publicPath("github/workflows/release-feeds.yml");
 const wfText = readFileSync(WF, "utf8");
 const wf = wfText.split("\n");
 

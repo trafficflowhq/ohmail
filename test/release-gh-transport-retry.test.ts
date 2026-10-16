@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * A RELEASE TRANSFER SURVIVES A DROPPED STREAM, AND NOTHING ELSE IS RETRIED.
@@ -16,7 +17,7 @@ import { describe, expect, it } from "vitest";
  * is pulled out of the workflow and run AS THE SHELL IT IS against a `gh` stub.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WF_DIR = `${HERE}../public/ohmail/github/workflows`;
+const WF_DIR = publicPath("github/workflows");
 const FILES = readdirSync(WF_DIR).filter((f) => f.endsWith(".yml")).sort();
 const TEXT: Record<string, string> = Object.fromEntries(FILES.map((f) => [f, readFileSync(join(WF_DIR, f), "utf8")]));
 

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { renderedUiFont, skipUnlessMeasuredFont } from "./_measured-font.js";
 import { AddressText, Chip, MessageRow, StreamCard } from "@ohmail/ui";
 
 /**
@@ -47,8 +48,11 @@ const NAME = "Greta Lindqvist";
 const ADDR = "greta@lindqvist-textile.invalid";
 
 let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
+/** The face paper's text renders in here; the arms measured in Inter read it (`_measured-font.ts`). */
+let uiFont = "";
 beforeAll(async () => {
   browser = await chromium.launch();
+  uiFont = await renderedUiFont(browser);
 }, 120_000);
 afterAll(async () => {
   await browser?.close();
@@ -235,7 +239,8 @@ describe("one sacrifice order: the time whole, the name whole on one line, the a
     expect(pre.addrCut, "the pad no longer cuts the address — this arm measures nothing").toBe(true);
   }, 60_000);
 
-  it("a list row's short name is not padded, and the address keeps the width it had", async () => {
+  it("a list row's short name is not padded, and the address keeps the width it had", async (ctx) => {
+    skipUnlessMeasuredFont(uiFont, ctx);
     const read = () => {
       const b = document.querySelector(".who") as HTMLElement;
       const range = document.createRange();
@@ -606,7 +611,8 @@ describe("hand back 1: the keyboard, the accessibility tree, the Screener at 360
     }
   }, 60_000);
 
-  it("the Screener at a 344px column: the suggestion's cut shows an ellipsis and the time stays on its line (LOW 4)", async () => {
+  it("the Screener at a 344px column: the suggestion's cut shows an ellipsis and the time stays on its line (LOW 4)", async (ctx) => {
+    skipUnlessMeasuredFont(uiFont, ctx);
     const row = renderToStaticMarkup(
       <MessageRow id="s2" from="JackpotJodel Promo" time="Mo. 06:58" subject="Sie haben 3 Freispiele gewonnen" preview="x"
         avatarInitial="J" avatarHue={20} aiSuggestion={{ destLabel: "Aussortiert und noch etwas länger", confidence: 0.97 }}

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   PROFILE_VERSION,
   PROFILE_VERSION_MIN_READ,
@@ -16,6 +15,7 @@ import {
   type OrganizerProfilePayload,
   type RawProfileMessage,
 } from "../../src/adapters/organizer-profile.js";
+import { publicPath } from "../../../../test/support/public-root.mjs";
 
 /**
  * ═══ THE CANONICAL ORDER IS TOTAL, AND IT IS VERSIONED ══════════════════════════════════════
@@ -388,7 +388,7 @@ describe("the version field is admitted at all three homes", () => {
   it("the published spec documents the version this build writes and the ones it reads", () => {
     // The third home. A spec that still says "this page documents version 1" while the writer
     // stamps 2 is a published lie a reader would implement.
-    const spec = fileURLToPath(new URL("../../../../public/ohmail/docs/organizer-profile.md", import.meta.url));
+    const spec = publicPath("docs/organizer-profile.md");
     const text = readFileSync(spec, "utf8");
     expect(text).toContain(`"v": ${PROFILE_VERSION}`);
     expect(text).toMatch(/## The JSON document, version 2/);

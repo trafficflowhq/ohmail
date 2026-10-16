@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * AN OPT-IN TEST NOBODY OPTS INTO IS NOT A TEST.
@@ -22,8 +23,8 @@ import { describe, expect, it } from "vitest";
  */
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-/** The suite workflow: authored under public/ohmail in the development tree, published to .github. */
-const WORKFLOW = ["public/ohmail/github/workflows/ci.yml", ".github/workflows/ci.yml"].find((p) => existsSync(`${HERE}../${p}`))!;
+/** The suite workflow, where this checkout keeps it (test/support/public-root.mjs). */
+const WORKFLOW = publicRel("github/workflows/ci.yml");
 const ci = readFileSync(`${HERE}../${WORKFLOW}`, "utf8");
 
 /** One job's text, from its key to the next job key at the same indent. */

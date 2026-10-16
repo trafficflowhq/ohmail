@@ -30,8 +30,8 @@ export const DOVECOT_PATH = /^packages\/core\/test\/adapters\/imap\.|\.wprobe\./
 
 const TEST_FILE = /\.test\.tsx?$/;
 /** The desktop's vite config imports @vitejs/plugin-react, which only apps/desktop's own lock installs:
- *  a test importing that config runs where that tree is installed. */
-export const DESKTOP_CONFIG_IMPORT = /\bfrom\s+["']\.\.\/vite\.config(?:\.js|\.ts)?["']/;
+ *  a test importing that config, or building with it as its `configFile`, runs where that tree is installed. */
+export const DESKTOP_CONFIG_IMPORT = /\bfrom\s+["']\.\.\/vite\.config(?:\.js|\.ts)?["']|\bconfigFile:[^\n]*["']vite\.config\.ts["']/;
 
 /** Every test file the default vitest project selects, as the include globs in vitest.config.ts. */
 export function testFiles(root = ROOT) {

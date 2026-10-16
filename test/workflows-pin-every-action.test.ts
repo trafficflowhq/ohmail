@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * EVERY ACTION A PUBLIC WORKFLOW RUNS IS PINNED TO A COMMIT, AND THE SET IS WRITTEN DOWN HERE.
@@ -11,8 +12,8 @@ import { describe, expect, it } from "vitest";
  * is the whole action set by file, so adding an action or moving a pin changes this file too.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const DIR = `${HERE}../public/ohmail/github/workflows`;
-const SCRIPTS = `${HERE}../public/ohmail/github/scripts`;
+const DIR = publicPath("github/workflows");
+const SCRIPTS = publicPath("github/scripts");
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
 
 /** Each workflow's distinct `uses:`, as written: the commit its version tag named when it was pinned. */
@@ -540,7 +541,7 @@ describe("no step runs bytes it downloaded before a committed SHA-256 refuses a 
  */
 const OWN = /^ghcr\.io\/trafficflowhq\//;
 /** The mirrored third-party images as images.lock names them: ghcr.io/trafficflowhq/<name>:<upstream tag>@<digest>. */
-const LOCK = [`${HERE}../public/ohmail/deploy/selfhost/images.lock`, `${HERE}../deploy/selfhost/images.lock`].find((p) => existsSync(p))!;
+const LOCK = `${HERE}../deploy/selfhost/images.lock`;
 const MIRRORED = new Set(readFileSync(LOCK, "utf8").split("\n").filter((l) => /^mirror-/.test(l)).map((l) => {
   const [name, upstream, digest] = l.split(/\s+/);
   return `ghcr.io/trafficflowhq/${name}:${upstream.slice(upstream.lastIndexOf(":") + 1)}@${digest}`;

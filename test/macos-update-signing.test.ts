@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isValidSparklePublicKey } from "../scripts/lib/sparkle-key.mjs";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE macOS UPDATER'S TRUST ANCHOR HAS TO BE REAL, AND THAT NEEDS A TEST.
@@ -27,7 +28,7 @@ import { isValidSparklePublicKey } from "../scripts/lib/sparkle-key.mjs";
  * predicate over it, which is the whole of what is left to be true.
  */
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const INFO_PLIST = join(ROOT, "public/ohmail/Resources/Info.plist");
+const INFO_PLIST = join(ROOT, publicRel("Resources/Info.plist"));
 
 function plistString(xml: string, key: string): string | null {
   // Match `<key>KEY</key>` then the next `<string>…</string>`.
@@ -87,7 +88,7 @@ describe("the missing-key refusal (negative control)", () => {
  */
 describe("the handover feed that key verifies", () => {
   it("is produced on every release and signed with the matching private key", () => {
-    const wf = readFileSync(join(ROOT, "public/ohmail/github/workflows/release-feeds.yml"), "utf8");
+    const wf = readFileSync(join(ROOT, publicRel("github/workflows/release-feeds.yml")), "utf8");
     expect(wf).toContain("appcast-macos.xml");
     expect(wf).toContain("OHMAIL_SPARKLE_ED_PRIVATE_KEY");
     // Both feeds are uploaded to the release; the appcast is not optional.

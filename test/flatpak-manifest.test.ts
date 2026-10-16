@@ -12,6 +12,7 @@ import {
   render,
   MANIFEST,
 } from "../scripts/flathub-manifest.mjs";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE FLATPAK BUILD'S IDENTITY, PERMISSIONS AND SHIPPED LAYOUT.
@@ -336,7 +337,7 @@ describe("the offline sources are the lockfiles', not a copy that was once true"
  * arms — so the build runs the host binary and the sandbox keeps the Flathub review tools.
  */
 describe("the job that builds the Flatpak gives the builder a session bus", () => {
-  const wf = read("public/ohmail/github/workflows/build.yml");
+  const wf = read(publicRel("github/workflows/build.yml"));
   const job = wf.slice(wf.indexOf("  linux-flatpak:"));
   const lines = job.split("\n");
 
@@ -473,7 +474,7 @@ describe("the job that builds the Flatpak gives the builder a session bus", () =
     /* The README publishes this build to anyone with the repository, and its install has no
      * `--user` — the system installation, which is flatpak's default and the one that works. A
      * job and a README that install into different places cannot both be describing what builds. */
-    const readme = read("public/ohmail/README.md");
+    const readme = read(publicRel("README.md"));
     const recipe = readme.slice(readme.indexOf("#### Flatpak"));
     const install = recipe.split("\n").find((l) => l.includes("flatpak install"));
     expect(install, "the README no longer shows how to install the runtimes").toBeDefined();

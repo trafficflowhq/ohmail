@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * THE RELEASE SIGNS A NAMED SET OF ASSETS, AND REFUSES ANY OTHER.
@@ -19,7 +20,7 @@ import { describe, expect, it } from "vitest";
  * that could pass while the shipped bytes fail.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WF = `${HERE}../public/ohmail/github/workflows/release-feeds.yml`;
+const WF = publicPath("github/workflows/release-feeds.yml");
 const wf = readFileSync(WF, "utf8").split("\n");
 
 /* The named picks and the count check, lifted verbatim. Bounded by their own first and last

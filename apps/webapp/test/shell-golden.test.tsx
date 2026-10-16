@@ -11,6 +11,8 @@
  * Watched fail: one character of a `className` in `AppShell.tsx`'s JSX → red on every route that
  * renders it. `-u` is refused by name in an extraction lane: a snapshot that moved is the finding.
  */
+// The snapshots were taken in Europe/Zurich: pin the zone before anything reads a clock.
+import "./_tz-zurich.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";

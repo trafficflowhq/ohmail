@@ -219,7 +219,8 @@ describe("no operator file states the old pool default", () => {
   const files = [...walk("deploy/selfhost"), ...walk("docs/self-host")];
 
   it("reads zero over every file of deploy/selfhost and docs/self-host", () => {
-    expect(files.length).toBeGreaterThanOrEqual(14);
+    // The thirteen this repository carries (the CI stack's env file stays with the maintainers).
+    expect(files.length).toBeGreaterThanOrEqual(13);
     const hits = files.flatMap((f) => [...r(f).matchAll(POOL)].map((m) => `${f}: ${m[0]}`));
     expect(hits).toEqual([]);
   });

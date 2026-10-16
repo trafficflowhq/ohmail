@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — a .mjs script with no declarations; the exports are what is under test.
 import { frameVerdict, readXwd, readPpm, readFrame } from "../scripts/verify-desktop-launch.mjs";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * "ALIVE" IS NOT THE QUESTION THE LAUNCH CHECK ASKS.
@@ -254,7 +255,7 @@ describe("the capture route the session decides", () => {
 });
 
 describe("the workflow calls it on the artifact it just built", () => {
-  const wf = readFileSync(`${HERE}../public/ohmail/github/workflows/build.yml`, "utf8");
+  const wf = readFileSync(publicPath("github/workflows/build.yml"), "utf8");
 
   it("launches both Linux artifacts under a display of its own", () => {
     for (const app of ["build/ohmail-linux-x86_64.AppImage", "build/ohmail-linux-aarch64.AppImage"]) {

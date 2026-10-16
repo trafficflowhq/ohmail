@@ -109,16 +109,22 @@ jobs:
       - name: Install Chromium for the layout tests
         run: npx playwright install --with-deps chromium
 
+      # Paper's UI face names Inter, and the geometry arms that sit near a threshold were measured in it
+      # (apps/webapp/test/_measured-font.ts); without it they skip by name instead of measuring.
+      - name: The font the layout tests were measured in
+        run: sudo apt-get install -y --no-install-recommends fonts-inter
+
       # tsc -b over the project graph: the tests that load a package's built output read this.
       - name: The project build
         run: npm run build
 
-      # The engine and the self-host bundles, built as the release and the images build them; the
-      # tests that read a bundle read these.
+      # The engine, the phone's engine and the self-host bundles, built as the release, the phone
+      # build and the images build them; the tests that read a bundle read these.
       - name: Build the engine and the host bundles
         run: |
           set -euo pipefail
           node scripts/engine-bundle.mjs
+          node apps/mobile/scripts/bundle-engine.mjs
           node scripts/bundle-host.mjs server
           node scripts/bundle-host.mjs worker
 

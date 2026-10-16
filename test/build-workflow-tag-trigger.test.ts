@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * THE RELEASE BUILD RUNS AT THE VERSION TAG, AND NOTHING IN IT KEYS ON THE REF.
@@ -12,7 +13,7 @@ import { describe, expect, it } from "vitest";
  * and the commit the binaries name must be the run's own — on a tag push, the tagged commit.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WORKFLOW = `${HERE}../public/ohmail/github/workflows/build.yml`;
+const WORKFLOW = publicPath("github/workflows/build.yml");
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
 type Workflow = {
   on?: { push?: { branches?: string[]; tags?: string[] } };

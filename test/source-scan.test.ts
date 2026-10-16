@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 // The shared scanner, imported the way packages/db's censuses import one.
 import { withoutComments, withoutCommentsAndLiterals, withoutHashComments, bracketSpan, lineOf }
   from "../scripts/lib/source-scan.mjs";
+import { presentRoots } from "./support/public-root.mjs";
 
 /**
  * THE COMMENT SCANNER, AND THE LINE THAT BROKE THE TWO-REGEX PAIR.
@@ -256,7 +257,7 @@ describe("the block-first spellings, and why the guards left them", () => {
  * names `file:line`, so a new one is a sentence rather than a hunt.
  */
 describe("0 block-first traps in the sources the guards read", () => {
-  const ROOTS = ["apps/desktop/src", "apps/mobile/src", "apps/sidecar/src", "apps/webapp/app", "apps/admin/app"];
+  const ROOTS = presentRoots(["apps/desktop/src", "apps/mobile/src", "apps/sidecar/src", "apps/webapp/app", "apps/admin/app"]);
 
   /** A LINE comment — decided by the scanner, not by a regex — holding an unpaired opener. */
   const trapsIn = (src: string): number[] => {

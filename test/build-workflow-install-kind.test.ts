@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * THE APPIMAGE JOB ASSERTS THE INSTALL KIND IT SHIPS.
@@ -15,7 +16,7 @@ import { describe, expect, it } from "vitest";
  * so each Linux job runs it MOUNTED; here the step runs as the shell it is against stubs.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const wfText = readFileSync(`${HERE}../public/ohmail/github/workflows/build.yml`, "utf8");
+const wfText = readFileSync(publicPath("github/workflows/build.yml"), "utf8");
 const wf = wfText.split("\n");
 const STEP = "The mounted AppImage says it is an AppImage";
 

@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutCommentsAndLiterals, lineOf } from "../scripts/lib/source-scan.mjs";
+import { presentRoots } from "./support/public-root.mjs";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -24,10 +25,10 @@ import { withoutCommentsAndLiterals, lineOf } from "../scripts/lib/source-scan.m
  */
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
-const ROOTS = [
+const ROOTS = presentRoots([
   "packages/api/src", "packages/services/src", "packages/db/src", "packages/db-mail/src",
   "packages/core/src", "apps/worker/src", "apps/sidecar/src", "apps/admin/app", "apps/admin/lib",
-];
+], REPO);
 
 /**
  * A body containing any of these is not a swallow. The words are the review classifier's, and

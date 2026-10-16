@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * THE TAG STATES THE INTENT, AND A HAND PROMOTION IS READ AFTER THE FACT.
@@ -15,7 +16,7 @@ import { describe, expect, it } from "vitest";
  * `curl` stub that refuses a read with no cache-buster; both refusals are watched firing below.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const WF = `${HERE}../public/ohmail/github/workflows/release-feeds.yml`;
+const WF = publicPath("github/workflows/release-feeds.yml");
 const wfText = readFileSync(WF, "utf8");
 const wf = wfText.split("\n");
 

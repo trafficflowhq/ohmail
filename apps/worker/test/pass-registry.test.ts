@@ -639,11 +639,12 @@ describe("the worker pass registry", () => {
 
   it("every sidecar-drain row is backed by a real subpath export — the dual-mode rule, cross-checked", () => {
     const pkg = JSON.parse(readFileSync(join(SRC, "../package.json"), "utf8")) as {
-      exports: Record<string, { default?: string }>;
+      exports: Record<string, string | { default?: string }>;
     };
     const exported = new Set(
       Object.values(pkg.exports)
-        .map((e) => e.default ?? "")
+        // A subpath is a path, or a conditions object whose `default` is the path.
+        .map((e) => (typeof e === "string" ? e : e.default ?? ""))
         .filter((p) => p.startsWith("./src/"))
         .map((p) => p.slice("./src/".length)),
     );

@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * ═══ THE SELF-HOST STACK BOOTS ONLY IMAGES WE SERVE ════════════════════════════════════════
@@ -35,7 +36,7 @@ import { fileURLToPath } from "node:url";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = join(HERE, "..");
 const LOCK_PATH = "deploy/selfhost/images.lock";
-const SCRIPT_PATH = "public/ohmail/github/scripts/mirror-images.sh";
+const SCRIPT_PATH = publicRel("github/scripts/mirror-images.sh");
 const rd = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
 /** The registry every shipped image must come from. */
@@ -218,7 +219,7 @@ describe("the registry that deleted these images is named nowhere", () => {
 });
 
 describe("the release workflow mirrors before it boots", () => {
-  const wf = rd("public/ohmail/github/workflows/ghcr-images.yml");
+  const wf = rd(publicRel("github/workflows/ghcr-images.yml"));
 
   it("there is a mirror-images job, and it runs the script", () => {
     expect(wf).toMatch(/^ {2}mirror-images:$/m);

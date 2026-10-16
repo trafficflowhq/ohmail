@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { changelogIn, plainText, releasesFrom, renderReleases, withReleases, LIMIT }
   from "../scripts/appstream-releases.mjs";
+import { publicRel } from "./support/public-root.mjs";
 
 /**
  * THE SOFTWARE CENTRE'S COPY OF THIS APP.
@@ -27,7 +28,7 @@ const read = (rel: string) => readFileSync(join(HERE, "..", rel), "utf8");
 const APP_ID = "app.ohmail.Desktop";
 const metainfo = read(`apps/desktop/flatpak/${APP_ID}.metainfo.xml`);
 const entry = read(`apps/desktop/flatpak/${APP_ID}.desktop`);
-const changelog = read("public/ohmail/CHANGELOG.md");
+const changelog = read(publicRel("CHANGELOG.md"));
 
 describe("the metainfo names this app and launches it", () => {
   it("carries the app id, and the launchable is the exported entry", () => {

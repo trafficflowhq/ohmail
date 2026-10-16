@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from "vitest";
  * No release build from the published tree carried `patches/` (measured on every Android release
  * APK from 0.17.0 to 0.25.3: the transport patch's literals absent from the dex, and a phone's 587
  * send refused). Each fixture here is upstream's own code, recovered by applying the real patch in
- * reverse to the copy pnpm installed, so every arm runs the patches that ship.
+ * reverse to the copy this checkout installed and patched, so every arm runs the patches that ship.
  */
 const ROOT = resolve(__dirname, "..");
 const SCRIPT = join(ROOT, "scripts", "apply-patches.mjs");
@@ -23,16 +23,13 @@ function run(args: string[], env: Record<string, string> = {}): Ran {
   return { code: r.status ?? -1, out: r.stdout ?? "", err: r.stderr ?? "" };
 }
 
-/** The copy carrying the CURRENT patch, by the hash pnpm-lock.yaml records for it: the store keeps an
- *  older patch's copy beside the current one after a patch changes, and the first found can be it. */
+/** The copy carrying the CURRENT patch: this checkout's own npm tree, which `node scripts/apply-patches.mjs
+ *  apply` patched in place after `npm ci` (the suite applies before it runs). A copy that is not patched
+ *  fails the fixture's reverse apply below, by name. */
 function installedPatched(name: string): string {
-  const block = /^patchedDependencies:\n((?: {2}\S.*\n)+)/m.exec(readFileSync(join(ROOT, "pnpm-lock.yaml"), "utf8"))?.[1] ?? "";
-  const hash = [...block.matchAll(/^ {2}(\S+?):\s*([0-9a-f]{64})\s*$/gm)].find(([, key]) => key === name || key.startsWith(`${name}@`))?.[2];
-  expect(hash, `pnpm-lock.yaml records no patch hash for ${name}`).toBeDefined();
-  const store = join(ROOT, "node_modules", ".pnpm");
-  const dir = readdirSync(store).find((d) => d.startsWith(`${name}@`) && hash!.startsWith(/_patch_hash=([0-9a-f]+)/.exec(d)?.[1] ?? "-"));
-  expect(dir, `no store copy of ${name} carries the lockfile's patch hash`).toBeDefined();
-  return join(store, dir!, "node_modules", name);
+  const copy = join(ROOT, "node_modules", name);
+  expect(existsSync(join(copy, "package.json")), `this checkout has no installed copy of ${name}: run npm ci, then apply-patches apply`).toBe(true);
+  return copy;
 }
 
 function patchPaths(file: string): string[] {

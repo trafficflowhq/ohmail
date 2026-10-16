@@ -22,6 +22,7 @@ describe("the desktop job's files in this tree", () => {
       "apps/desktop/test/desktop-messages.test.ts",
       "apps/desktop/test/desktop-shell.test.ts",
       "apps/desktop/test/host-client-arm.test.ts",
+      "apps/desktop/test/host-client-no-engine-door.test.ts",
     ]);
     expect(readMap(ROOT).shards.flat().filter((f) => files.includes(f))).toEqual([]);
   });
@@ -46,12 +47,13 @@ describe("the desktop class, on a planted tree", () => {
   for (let i = 0; i < SHARDS; i++) plant(`packages/p/test/f${i}.test.ts`);
   plant("apps/desktop/test/imports-config.test.ts", 'import { X } from "../vite.config.js";\n');
   plant("apps/desktop/test/imports-config-bare.test.ts", "import { X } from '../vite.config';\n");
+  plant("apps/desktop/test/builds-with-config.test.ts", 'await build({ configFile: path.join(APP, "vite.config.ts") });\n');
   plant("apps/desktop/test/reads-config-as-text.test.ts", 'const t = read("vite.config.ts");\n');
   plant("packages/p/test/imports-another-config.test.ts", 'import { X } from "../vite.config.js";\n');
   const map: ShardMap = { measuredAt: "0".repeat(40), shards: Array.from({ length: SHARDS }, (_, i) => [`packages/p/test/f${i}.test.ts`]), pins: { dovecot: [] } };
-  const desktop = ["apps/desktop/test/imports-config-bare.test.ts", "apps/desktop/test/imports-config.test.ts"];
+  const desktop = ["apps/desktop/test/builds-with-config.test.ts", "apps/desktop/test/imports-config-bare.test.ts", "apps/desktop/test/imports-config.test.ts"];
 
-  it("takes a desktop test by its import of the config, never by a mention, and nothing outside apps/desktop", () => {
+  it("takes a desktop test by its import of the config or its build with it, never by a mention, and nothing outside apps/desktop", () => {
     expect(desktopFiles(scratch)).toEqual(desktop);
     expect(testFiles(scratch)).toEqual(expect.arrayContaining([...desktop, "apps/desktop/test/reads-config-as-text.test.ts"]));
   });
@@ -67,6 +69,6 @@ describe("the desktop class, on a planted tree", () => {
     const row = (f: string) => ({ name: join(scratch, f), startTime: 0, endTime: 1 });
     expect(verifyReport("desktop", { testResults: desktop.map(row) }, scratch, map)).toEqual({ missing: [], extra: [] });
     expect(verifyReport("desktop", { testResults: [row(desktop[0]!), row("packages/p/test/f0.test.ts")] }, scratch, map))
-      .toEqual({ missing: [desktop[1]], extra: ["packages/p/test/f0.test.ts"] });
+      .toEqual({ missing: desktop.slice(1), extra: ["packages/p/test/f0.test.ts"] });
   });
 });

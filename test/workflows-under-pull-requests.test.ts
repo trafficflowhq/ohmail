@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { publicPath } from "./support/public-root.mjs";
 
 /**
  * THE PUBLIC MAIN TAKES PULL REQUESTS, AND THE WORKFLOWS FOLLOW.
@@ -13,7 +14,7 @@ import { describe, expect, it } from "vitest";
  * here runs GitHub Actions, so the rules are read off the files, the tools ref evaluated as written.
  */
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
-const WF = (n: string) => readFileSync(resolve(ROOT, `public/ohmail/github/workflows/${n}.yml`), "utf8");
+const WF = (n: string) => readFileSync(publicPath(`github/workflows/${n}.yml`, ROOT), "utf8");
 const exec = (t: string) => t.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
 
 /** The trigger keys of the `on:` block. */
