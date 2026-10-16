@@ -6543,22 +6543,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           // What the memo above is held against next time — see the note at `markAtStart`.
           knownSetMark = markAtStart;
-          /* PUT THE IDLE BACK ON INBOX. The cycles above re-SELECT other folders, after which an
-             INBOX arrival emits nothing — a dead push channel that looks exactly like a slow one
-             (the worker measured p50 194 s that way, which is why `rearmWatch` exists). It also
-             rings the bell itself for growth that landed in the blind window. A belt, so a failure
-             is logged and never turned into a failed drain; the next poll still comes. */
-          if (restMayBeTaken && typeof conn.rearmWatch === "function") {
-            try {
-              await conn.rearmWatch();
-            } catch (err) {
-              log("local_wake_rearm_failed", {
-                err,
-                reason: "the INBOX watch could not be re-armed after this drain, so arrivals may " +
-                  "wait for the poll until the connection is re-dialled",
-              });
-            }
-          }
         } finally {
           // The timer goes before the drain line whatever happened, including a throw — a tail
           // that died would otherwise keep saying it was running until the process ended.
@@ -6611,6 +6595,30 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         };
       };
 
+      /* PUT THE IDLE BACK ON INBOX — the LAST act of a pass, as in the worker, on both of its exits
+         (completed, and failed after the request channel ran). The cycles, the request channel and
+         the publish all re-SELECT (the last two `ohmail/_meta`), and imapflow idles on whatever is
+         selected: re-armed inside `drain()`, the IDLE rested on `_meta` and arrivals waited for the
+         ladder (56-120 s on 0.26.1). Never over a replaced or failed connection, never after a
+         hand-back (nothing listens there; `resume()` drains and re-arms). Logged, never thrown. */
+      const restOnInbox = async (gen: number, conn: MailboxAdapter, failure: unknown): Promise<void> => {
+        if (!restMayBeTaken || stopped || handedBack || typeof conn.rearmWatch !== "function") return;
+        if (failure !== null && !drainFailureKeepsTheLogin(failure)) return;
+        try {
+          assertSameConnection(gen, conn);
+        } catch {
+          return;                       // replaced: the new connection's dial arms its own watch
+        }
+        try {
+          await conn.rearmWatch();
+        } catch (err) {
+          log("local_wake_rearm_failed", {
+            err,
+            reason: "the INBOX watch could not be re-armed after this drain, so arrivals may " +
+              "wait for the poll until the connection is re-dialled",
+          });
+        }
+      };
       const drainPass = async (maxCycles = 100): Promise<number> =>
         serialize(async () => {
           // The gate, immediately before `runSyncCycle`, once per DRAIN not per inner cycle:
@@ -6810,7 +6818,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
 
           // The mail pass's own failure, now that the channel has had its turn. Everything below
           // is the tail of a pass that COMPLETED and must not run for one that did not.
-          if (cycleError !== null) throw cycleError;
+          if (cycleError !== null) {
+            await restOnInbox(gen, conn, cycleError);
+            throw cycleError;
+          }
           /* NOTHING MORE AFTER A HAND-BACK: the profile publish below writes `ohmail/_meta` too. */
           if (handedBack) return cycles;
 
@@ -6832,6 +6843,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              `cycleError` null, so the line above lets this run. `organizing` is the gate's answer
              from before the drain and says nothing about what happened during it. */
           if (organizing && !permitStoodDown) await profileSync.onOrganize(conn);
+          await restOnInbox(gen, conn, null);
           return cycles;
         });
 

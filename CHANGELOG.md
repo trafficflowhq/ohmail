@@ -13,6 +13,12 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### New mail shows up on the desktop within seconds again
+
+When the desktop app talked to the mail server itself, a new message often waited up to two minutes before it
+appeared, because the app stopped listening for new mail after its first check and only found it on the next one.
+It now listens again after every check, so a new message shows up within a few seconds.
+
 ### The phone keeps a saved change through a power cut
 <!-- changes: one-oh-phone-engine-store-durable.md -->
 
