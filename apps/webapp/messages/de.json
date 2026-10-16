@@ -2970,7 +2970,7 @@
     "aiYesSelfhost": "Ja",
     "aiYesSelfhostWhy": "Läuft auf diesem Server mit dem Anthropic-Schlüssel des Betreibers.",
     "providerCloudTitle": "KI in der ohmail Cloud",
-    "providerCloudBody": "Vorschläge und Entwürfe laufen auf ohmails Servern über die Claude-API, innerhalb der KI-Guthabenpunkte deines Tarifs. Gesendet werden nur Absender, Betreff und ein kurzer Auszug. Trägt eine Nachricht einen Code oder einen Anmeldelink, wird dieser entfernt, bevor die Anfrage gebaut wird.",
+    "providerCloudBody": "Vorschläge und Entwürfe laufen auf ohmails Servern über die Claude-API, innerhalb der KI-Guthabenpunkte deines Tarifs. Ein Vorschlag schickt Absender, Betreff und einen kurzen Auszug. Ein Entwurf schickt dasselbe für die Nachricht, auf die du antwortest, dazu Absender und einen kurzen Auszug von bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank. Trägt eine Nachricht einen Code oder einen Anmeldelink, wird dieser entfernt, bevor die Anfrage gebaut wird.",
     "providerSelfhostTitle": "KI auf diesem Server",
     "providerSelfhostOn": "Der Betreiber hat auf diesem Server einen Anthropic-Schlüssel hinterlegt. Vorschläge und Entwürfe laufen darüber.",
     "providerSelfhostOff": "Dieser Server hat keinen KI-Schlüssel. Die Regeln sortieren allein; der Betreiber kann später einen hinterlegen.",
