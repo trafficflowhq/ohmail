@@ -6,11 +6,18 @@
  * historical blob whose hash IS the recorded one and compares the two on executable SQL; no blob
  * carries it, or the SQL differs without a named allowance, and it refuses. Fail-closed: a path
  * that cannot answer refuses by name, because "the check could not run" is not "it passed".
+ *
+ * One more source of known versions, asked only when history does not identify the hash: the
+ * pre-publication versions `migration-provenance-record.ts` names by exact (journal, tag,
+ * recorded hash). It identifies a version and nothing more; the comparison stays the one below.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join, relative, sep } from "node:path";
 import { allowanceFor, type MigrationAllowance } from "./migration-allowances.js";
+import {
+  PRE_PUBLICATION_VERSIONS, prePublicationVersionFor, type PrePublicationVersion,
+} from "./migration-provenance-record.js";
 import { normalizeSql } from "./sql-normalize.js";
 
 /** One version this file has held, as the repository records it. */
@@ -51,7 +58,12 @@ export interface MigrationDrift {
   recorded: string | null;
   rowsAtWhen: number;
   kind: DriftKind;
-  provenance: { commit: string; at: string } | null;
+  /**
+   * Where the version that ran was identified: `history`, a blob in the deploying checkout's git
+   * history (`at` is its committer date); `record`, a pre-publication version the provenance
+   * record names (`at` is that record's label).
+   */
+  provenance: { commit: string; at: string; source: "history" | "record" } | null;
   /** The allowance's reason, or the reason history could not be read. */
   note: string | null;
 }
@@ -141,7 +153,8 @@ export interface ByteMismatch {
 
 /**
  * Resolve one byte-level mismatch to a verdict. `shippedSql` is the file this tree ships, passed
- * in rather than re-read so the caller's reading and this one cannot diverge.
+ * in rather than re-read so the caller's reading and this one cannot diverge. `record` is the
+ * provenance record, a parameter so a test can hand it a planted one.
  */
 export function classifyDrift(
   journal: string,
@@ -149,6 +162,7 @@ export function classifyDrift(
   m: ByteMismatch,
   shippedSql: string,
   reader: ProvenanceReader,
+  record: readonly PrePublicationVersion[] = PRE_PUBLICATION_VERSIONS,
 ): MigrationDrift {
   const base = {
     journal, tag: m.tag, when: m.when, expected: m.expected,
@@ -158,21 +172,37 @@ export function classifyDrift(
 
   if (m.recorded === null || m.rowsAtWhen > 1) return { ...base, kind: "rows-collide" };
 
-  let history: HistoricalSql[];
+  // History first, so every version git identifies reads exactly as it always has. A history that
+  // cannot be read is HELD, not returned: the record can still identify the version without git —
+  // it can answer yes, never no — and only when it does not is the entry refused as unreadable.
+  let history: HistoricalSql[] = [];
+  let unreadable: string | null = null;
   try {
     history = reader.history(dir, m.tag);
   } catch (err: unknown) {
     const why = err instanceof Error ? err.message.split("\n")[0] : String(err);
-    return { ...base, kind: "unreadable", note: why ?? "git could not be run" };
+    unreadable = why ?? "git could not be run";
   }
 
+  let provenance: NonNullable<MigrationDrift["provenance"]>;
+  let sameProgram: boolean;
   const applied = history.find((h) => sha256Utf8(h.sql) === m.recorded);
-  if (!applied) return { ...base, kind: "unknown-provenance" };
-
-  const provenance = { commit: applied.commit, at: applied.at };
-  if (normalizeSql(applied.sql) === normalizeSql(shippedSql)) {
-    return { ...base, kind: "comment-only", provenance };
+  const known = applied ? null : prePublicationVersionFor(journal, m.tag, m.recorded, record);
+  if (applied) {
+    provenance = { commit: applied.commit, at: applied.at, source: "history" };
+    sameProgram = normalizeSql(applied.sql) === normalizeSql(shippedSql);
+  } else if (known) {
+    // The record holds the version's executable SQL as a hash, so the comparison is still made
+    // here, against the file this tree ships: the record identifies, it never decides.
+    provenance = { commit: known.introducedBy, at: known.label, source: "record" };
+    sameProgram = known.executable === sha256Utf8(normalizeSql(shippedSql));
+  } else if (unreadable !== null) {
+    return { ...base, kind: "unreadable", note: unreadable };
+  } else {
+    return { ...base, kind: "unknown-provenance" };
   }
+
+  if (sameProgram) return { ...base, kind: "comment-only", provenance };
   const allowance: MigrationAllowance | null = allowanceFor(journal, m.tag, m.recorded, m.expected);
   if (allowance) return { ...base, kind: "allowed", provenance, note: allowance.reason };
   return { ...base, kind: "executable", provenance };
@@ -180,7 +210,11 @@ export function classifyDrift(
 
 /** The one-line record of an admitted drift, per tag, for the operator's log. */
 export function driftSentence(d: MigrationDrift): string {
-  const where = d.provenance ? `applied blob from ${d.provenance.commit} (${d.provenance.at})` : "no applied blob";
+  const where = !d.provenance
+    ? "no applied blob"
+    : d.provenance.source === "record"
+      ? `applied version ${d.provenance.commit}, a ${d.provenance.at} the provenance record names`
+      : `applied blob from ${d.provenance.commit} (${d.provenance.at})`;
   if (d.kind === "comment-only") {
     return `${d.journal} ${d.tag}: comment-only drift, ${where} — executable SQL identical to the shipped file`;
   }

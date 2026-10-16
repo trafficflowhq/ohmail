@@ -415,12 +415,13 @@ export async function journalStatuses(
 function driftRefusal(d: MigrationDrift): string {
   if (d.kind === "rows-collide") return "";
   if (d.kind === "unreadable") {
-    return ` The repository's history could not be read (${d.note ?? "no reason given"}), so ` +
-      `what ran could not be identified — run this from a full git clone at the deployed tip.`;
+    return ` The repository's history could not be read (${d.note ?? "no reason given"}) and the ` +
+      `provenance record names no version for this hash, so what ran could not be identified — ` +
+      `run this from a full git clone at the deployed tip.`;
   }
   if (d.kind === "unknown-provenance") {
     return ` No version this file has ever held in the repository's history hashes to the ` +
-      `recorded value, so what ran cannot be identified.`;
+      `recorded value, nor does the provenance record name one, so what ran cannot be identified.`;
   }
   return ` The version that ran (${d.provenance?.commit ?? "?"}, ${d.provenance?.at ?? "?"}) ` +
     `differs from the shipped file in EXECUTABLE SQL, and no allowance names this pair.`;
