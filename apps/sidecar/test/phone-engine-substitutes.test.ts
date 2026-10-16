@@ -45,9 +45,7 @@ import {
    transports, so importing them for their strings would put `fetch`-carrying modules for Anthropic,
    OpenAI and a local model server back into a build whose claim is that they are not in it. A test
    may import them; the shipped closure may not. */
-import { DEFAULT_ANTHROPIC_MODELS } from "../src/ai-anthropic.js";
-import { DEFAULT_OPENAI_MODELS } from "../src/ai-openai.js";
-import { DEFAULT_OLLAMA } from "../src/ai-ollama.js";
+import { DEFAULT_ANTHROPIC_MODELS, DEFAULT_OLLAMA, DEFAULT_OPENAI_MODELS } from "@trafficflow/core/ai-transports";
 import { ServiceError } from "@trafficflow/services/mail";
 
 const SIDECAR_SRC = join(aliases.REPO, "apps", "sidecar", "src");
@@ -396,7 +394,7 @@ describe("the AI provider a phone gets", () => {
     const inputs = Object.keys(
       (JSON.parse(readFileSync(metaPath, "utf8")) as { inputs: Record<string, unknown> }).inputs,
     );
-    for (const gone of ["ai-anthropic", "ai-openai", "ai-ollama", "ai-transport"]) {
+    for (const gone of ["ai-anthropic", "ai-openai", "ai-ollama", "ai-opencode-go", "ai-transport"]) {
       expect(inputs.filter((p) => p.includes(gone)), gone).toEqual([]);
     }
     expect(inputs.filter((p) => /apps\/sidecar\/(src|dist)\/ai-provider\.(ts|js)$/.test(p))).toEqual([]);

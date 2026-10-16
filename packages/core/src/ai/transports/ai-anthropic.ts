@@ -3,10 +3,10 @@ import {
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
   declineOf, draftUserPayload, knownRequestRules,
-} from "@trafficflow/core/mail";
+} from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult, ThinkingOff,
-} from "@trafficflow/core/mail";
+} from "../../mail.js";
 import {
   fetchWithDeadline, probeKeyedCatalogue,
   type AiKeyTransportOptions, type AiTransport, type ProbeOutcome,

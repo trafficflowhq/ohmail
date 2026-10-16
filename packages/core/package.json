@@ -160,6 +160,12 @@
       "node": "./dist/model-name.js",
       "default": "./src/model-name.ts"
     },
+    "./ai-transports": {
+      "types": "./src/ai/transports/index.ts",
+      "ohmail-source": "./src/ai/transports/index.ts",
+      "node": "./dist/ai/transports/index.js",
+      "default": "./src/ai/transports/index.ts"
+    },
     "./transport-frame": {
       "types": "./src/transport-frame.ts",
       "ohmail-source": "./src/transport-frame.ts",

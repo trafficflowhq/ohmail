@@ -36,7 +36,7 @@ import {
 
 import { installedModelName } from "@trafficflow/core/model-name";
 
-import { opencodeGoModelTier } from "../../sidecar/src/ai-opencode-go-models.js";
+import { opencodeGoModelTier } from "../../../packages/core/src/ai/transports/ai-opencode-go-models.js";
 
 import { agoStamp } from "../../webapp/app/shell/format.js";
 import {

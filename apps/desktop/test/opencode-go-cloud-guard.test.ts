@@ -9,13 +9,16 @@ import { describe, expect, it } from "vitest";
  * The served host client is checked from its bytes (scan:host, marker "opencode"). This is the
  * source half for the Cloud: no file of the server, worker, API, shared packages or the web app's
  * code names OpenCode, and no web source reads the Go copy's namespaces. The copy itself sits in
- * the shared catalogue as data, beside the desktop's Ollama and OpenAI lines.
+ * the shared catalogue as data, beside the desktop's Ollama and OpenAI lines. The one exception is
+ * the transports' own directory in core, which is not a tree the Cloud web client shares: the
+ * transport may live there and nowhere else — never in `client-engine` or another shared package.
  *
  * @reads: apps/server apps/worker apps/api-vercel packages apps/webapp/app apps/webapp/i18n
  */
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const CLOUD = ["apps/server", "apps/worker", "apps/api-vercel", "packages", "apps/webapp/app", "apps/webapp/i18n"];
 const SKIP = new Set(["node_modules", "dist", ".next", ".turbo", "coverage"]);
+const TRANSPORTS = "packages/core/src/ai/transports/";
 
 function sources(dir: string): string[] {
   const out: string[] = [];
@@ -37,8 +40,11 @@ describe("OpenCode Go stays out of the Cloud", () => {
     expect(files.some((f) => rel(f) === "apps/webapp/app/shell/AppShell.tsx")).toBe(true);
   });
 
-  it("no Cloud source names OpenCode", () => {
-    expect(files.filter((f) => /opencode/i.test(readFileSync(f, "utf8"))).map(rel)).toEqual([]);
+  it("no Cloud source names OpenCode, outside the transports' own directory", () => {
+    const naming = files.filter((f) => /opencode/i.test(readFileSync(f, "utf8"))).map(rel);
+    expect(naming.filter((f) => !f.startsWith(TRANSPORTS))).toEqual([]);
+    // The exception is a real one: the Go transport lives there, so the filter above removed something.
+    expect(naming.some((f) => f.startsWith(TRANSPORTS))).toBe(true);
   });
 
   it("no web source reads the namespaces the Go copy lives in", () => {

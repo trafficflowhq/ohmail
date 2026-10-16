@@ -186,7 +186,7 @@ describe("the phone engine bundle contains no door and no desktop store", () => 
   it("has the phone's AI provider and none of the vendor transports", () => {
     expect(list((p) => /apps\/sidecar\/(src|dist)\/ai-provider\.(ts|js)$/.test(p))).toEqual([]);
     expect(list((p) => p.includes("apps/sidecar/src/phone/ai-provider"))).toHaveLength(1);
-    for (const transport of ["ai-anthropic", "ai-openai", "ai-ollama", "ai-transport"]) {
+    for (const transport of ["ai-anthropic", "ai-openai", "ai-ollama", "ai-opencode-go", "ai-transport"]) {
       expect(list((p) => p.includes(transport)), transport).toEqual([]);
     }
   });

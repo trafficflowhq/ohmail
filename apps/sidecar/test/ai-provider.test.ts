@@ -10,7 +10,7 @@ import {
 } from "@trafficflow/core/mail";
 import type { ClassifierInput, DraftInput } from "@trafficflow/core/mail";
 import { ClassifierFaultError } from "@trafficflow/worker/classifier-fault";
-import { ANTHROPIC_BASE } from "../src/ai-anthropic.js";
+import { ANTHROPIC_BASE } from "@trafficflow/core/ai-transports";
 import { hasInstalledModel } from "@trafficflow/core/model-name";
 import {
   AI_STORE_FILE, createLocalAi, type AiStatus, type LocalAi, type LocalAiOptions,
@@ -773,9 +773,11 @@ describe("the source census — outbound requests live at the seam and nowhere e
    * {@link PROVIDERS} is the census's whole point and is written out by hand on purpose: it is the
    * list a new provider has to be ADDED to, deliberately, by somebody who has read the two rules
    * above. Deriving it from the directory (every `ai-*.ts`, say) would make it match whatever is
-   * there — and a census that cannot disagree with the tree is not a census.
+   * there — and a census that cannot disagree with the tree is not a census. The providers live in
+   * `packages/core/src/ai/transports` beside the seam, so both rules read that directory too.
    */
   const SRC = fileURLToPath(new URL("../src/", import.meta.url));
+  const TRANSPORTS = fileURLToPath(new URL("../../../packages/core/src/ai/transports/", import.meta.url));
   const PROVIDERS = new Set([
     "ai-anthropic.ts", "ai-ollama.ts", "ai-openai.ts", "ai-opencode-go.ts", "ai-opencode-go-chat.ts",
   ]);
@@ -785,15 +787,20 @@ describe("the source census — outbound requests live at the seam and nowhere e
    * the local engine defines one for its image proxy, and a definition is not egress.
    */
   const CALLS_GLOBAL_FETCH = /(?<![\w$.])(?<!async\s{1,4})fetch\s*\(/;
-  const files = (): string[] => readdirSync(SRC).filter((f) => f.endsWith(".ts"));
+  const filesIn = (dir: string): string[] => readdirSync(dir).filter((f) => f.endsWith(".ts"));
+  const files = (): string[] => filesIn(SRC);
   const read = (f: string): string => readFileSync(join(SRC, f), "utf8");
+  const transports = (): string[] => filesIn(TRANSPORTS);
+  const readTransport = (f: string): string => readFileSync(join(TRANSPORTS, f), "utf8");
 
   it("scans the package at all", () => {
     expect(files().length).toBeGreaterThanOrEqual(10);
+    expect(transports().filter((f) => PROVIDERS.has(f)).sort()).toEqual([...PROVIDERS].sort());
   });
 
   it("no module calls the global fetch — every request goes through an injected transport", () => {
     expect(files().filter((f) => CALLS_GLOBAL_FETCH.test(read(f)))).toEqual([]);
+    expect(transports().filter((f) => CALLS_GLOBAL_FETCH.test(readTransport(f)))).toEqual([]);
   });
 
   /** A CALL of the deadline wrapper — its own `export async function` line is not one. */
@@ -809,7 +816,8 @@ describe("the source census — outbound requests live at the seam and nowhere e
   const SEAM = "ai-transport.ts";
 
   it("only the providers and the seam that declares it reach the deadline wrapper", () => {
-    const callers = files().filter((f) => CALLS_WRAPPER.test(read(f)));
+    expect(files().filter((f) => CALLS_WRAPPER.test(read(f)))).toEqual([]);
+    const callers = transports().filter((f) => CALLS_WRAPPER.test(readTransport(f)));
     expect(callers.sort()).toEqual([...PROVIDERS, SEAM].sort());
   });
 
@@ -824,7 +832,7 @@ describe("the source census — outbound requests live at the seam and nowhere e
     // while its own declaration is correctly not counted as a call.
     expect(CALLS_WRAPPER.test("await fetchWithDeadline(doFetch, url, {}, 1)")).toBe(true);
     expect(CALLS_WRAPPER.test("export async function fetchWithDeadline(")).toBe(false);
-    expect(files().filter((f) => CALLS_WRAPPER.test(read(f))).length).toBeGreaterThan(0);
+    expect(transports().filter((f) => CALLS_WRAPPER.test(readTransport(f))).length).toBeGreaterThan(0);
   });
 });
 

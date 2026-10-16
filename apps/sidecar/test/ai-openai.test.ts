@@ -8,8 +8,7 @@ import {
   ModelDeclinedError, StaticKeyProvider, TAXONOMY_PREFIX,
 } from "@trafficflow/core/mail";
 import type { ClassifierInput, DraftInput } from "@trafficflow/core/mail";
-import { ANTHROPIC_BASE } from "../src/ai-anthropic.js";
-import { NOT_CHAT_MODELS, OPENAI_BASE } from "../src/ai-openai.js";
+import { ANTHROPIC_BASE, NOT_CHAT_MODELS, OPENAI_BASE } from "@trafficflow/core/ai-transports";
 import { AI_STORE_FILE, createLocalAi, type LocalAi, type LocalAiOptions } from "../src/ai-provider.js";
 import { createSidecarLog } from "../src/log.js";
 

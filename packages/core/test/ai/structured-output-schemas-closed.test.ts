@@ -8,7 +8,7 @@ import { buildProposeParams, PROPOSE_RESULT_SCHEMA } from "../../src/ai/workflow
 import { CLASSIFY_RESULT_SCHEMA, SCREENING_RESULT_SCHEMA } from "../../src/classify-prompt.js";
 import { DRAFT_RESULT_SCHEMA } from "../../src/draft-prompt.js";
 
-/* @reads: apps/sidecar/src/ai-anthropic.ts apps/sidecar/src/ai-openai.ts apps/sidecar/src/ai-ollama.ts */
+/* @reads: packages/core/src/ai/transports/ai-anthropic.ts packages/core/src/ai/transports/ai-openai.ts packages/core/src/ai/transports/ai-ollama.ts */
 
 /**
  * EVERY STRUCTURED-OUTPUT SCHEMA IS CLOSED. The API answers `additionalProperties: true` with a 400,
@@ -80,10 +80,9 @@ describe("every structured-output schema this repo sends is closed", () => {
 
   it("the census: every *_RESULT_SCHEMA named in the model-calling source is walked above", () => {
     const named = new Set<string>();
-    const files = [
-      ...tsFiles(join(ROOT, "packages/core/src")),
-      ...["ai-anthropic.ts", "ai-openai.ts", "ai-ollama.ts"].map((f) => join(ROOT, "apps/sidecar/src", f)),
-    ];
+    // The desktop's transports are under packages/core/src/ai/transports, so the walk reads them.
+    const files = tsFiles(join(ROOT, "packages/core/src"));
+    expect(files.some((f) => f.endsWith("ai/transports/ai-openai.ts")), "the transports left the walk").toBe(true);
     for (const f of files) for (const m of readFileSync(f, "utf8").matchAll(/\b([A-Z][A-Z0-9_]*_RESULT_SCHEMA)\b/g)) named.add(m[1]!);
     expect(named.size, "the census read nothing").toBeGreaterThan(0);
     expect([...named].sort()).toEqual(Object.keys(BUILT).sort());

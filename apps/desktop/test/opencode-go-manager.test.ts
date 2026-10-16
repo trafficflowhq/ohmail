@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createLocalAi, AI_STORE_FILE, type LocalAiSettingsInput } from "../../sidecar/src/ai-provider.js";
-import { OPENCODE_GO_MODEL_IDS } from "../../sidecar/src/ai-opencode-go-models.js";
+import { OPENCODE_GO_MODEL_IDS } from "../../../packages/core/src/ai/transports/ai-opencode-go-models.js";
 import type { KeyProvider } from "../../../packages/core/src/crypto.js";
 import {
   CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, ModelDeclinedError,

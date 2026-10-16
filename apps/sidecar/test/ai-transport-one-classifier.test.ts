@@ -17,11 +17,13 @@ import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs
  */
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
-const SRC = join(HERE, "../src");
+// The providers and their seam moved into core together; the census reads there and here, so a
+// second copy planted back in the engine's own source is still a second copy.
+const DIRS = [join(HERE, "../../../packages/core/src/ai/transports"), join(HERE, "../src")];
 
-const FILES = readdirSync(SRC)
+const FILES = DIRS.flatMap((dir) => readdirSync(dir)
   .filter((f) => f.endsWith(".ts"))
-  .map((f) => ({ name: f, code: withoutCommentsAndLiterals(readFileSync(join(SRC, f), "utf8")) }));
+  .map((f) => ({ name: f, code: withoutCommentsAndLiterals(readFileSync(join(dir, f), "utf8")) })));
 
 const DECL = /\bfunction\s+statusFailure\s*\(/g;
 const SHAPE = /\bapiKey\s*:\s*string\s*;\s*classifyModel\s*:\s*string\s*;/g;

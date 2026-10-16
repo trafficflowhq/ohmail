@@ -8,7 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
    either. The question this file asks is whether the two SURFACES agree, so each side is
    reached the way the product reaches it: the transport through `probe()`, the form through a
    render of `AiProviderForm`. */
-import { ollamaTransport } from "../../sidecar/src/ai-ollama.js";
+import { ollamaTransport } from "../../../packages/core/src/ai/transports/ai-ollama.js";
 import { AiProviderForm } from "../src/AiProviderForm.js";
 import type { LocalAiStatus } from "../src/local-ai.js";
 import en from "../../webapp/messages/en.json";

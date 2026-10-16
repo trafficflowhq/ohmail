@@ -6,7 +6,7 @@ import { FIXTURE_SHAPES, anthropicKey } from "../../../test/support/fixture-cred
 import { freshDataDir } from "./_datadir.js";
 import { CLASSIFY_DESTINATIONS, SCREEN_DESTINATIONS, StaticKeyProvider } from "@trafficflow/core/mail";
 import type { ClassifierInput } from "@trafficflow/core/mail";
-import { ANTHROPIC_BASE, DEFAULT_ANTHROPIC_MODELS } from "../src/ai-anthropic.js";
+import { ANTHROPIC_BASE, DEFAULT_ANTHROPIC_MODELS } from "@trafficflow/core/ai-transports";
 import { AI_STORE_FILE, createLocalAi, type LocalAi } from "../src/ai-provider.js";
 import { createSidecarLog } from "../src/log.js";
 

@@ -1,6 +1,6 @@
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
-} from "@trafficflow/core/mail";
+} from "../../mail.js";
 
 /**
  * What a provider has to be able to do, and nothing else. Four methods: the two features (routing is

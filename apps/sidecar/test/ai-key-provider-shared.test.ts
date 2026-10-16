@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ANTHROPIC_BASE, DEFAULT_ANTHROPIC_MODELS, anthropicTransport } from "../src/ai-anthropic.js";
-import { DEFAULT_OPENAI_MODELS, OPENAI_BASE, openaiTransport } from "../src/ai-openai.js";
-import type { AiTransport, ProbeOutcome } from "../src/ai-transport.js";
+import {
+  ANTHROPIC_BASE, DEFAULT_ANTHROPIC_MODELS, anthropicTransport,
+  DEFAULT_OPENAI_MODELS, OPENAI_BASE, openaiTransport,
+} from "@trafficflow/core/ai-transports";
+import type { AiTransport, ProbeOutcome } from "@trafficflow/core/ai-transports";
 import { FIXTURE_SHAPES, anthropicKey, openAiKey } from "../../../test/support/fixture-credentials.js";
 
 /**

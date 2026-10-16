@@ -12,7 +12,9 @@ import { withoutComments } from "../scripts/lib/source-scan.mjs";
 const ROOT = join(import.meta.dirname, "..");
 const LEAF = "@trafficflow/core/model-name";
 const FORM = "apps/desktop/src/AiProviderForm.tsx";
-const PROBE = "apps/sidecar/src/ai-ollama.ts";
+const PROBE = "packages/core/src/ai/transports/ai-ollama.ts";
+/** The probe lives in core, so it names the leaf by its relative path rather than the subpath. */
+const LEAF_FROM_CORE = 'from "../../model-name.js"';
 
 /** Source, comments blanked — this file's own prose names the predicate it refuses. */
 const src = (rel: string): string => withoutComments(readFileSync(join(ROOT, rel), "utf8"));
@@ -32,7 +34,7 @@ function walk(dir: string): string[] {
 describe("there is one definition of the match, and both surfaces import it", () => {
   it("the form and the engine's probe both import the leaf", () => {
     expect(src(FORM)).toContain(LEAF);
-    expect(src(PROBE)).toContain(LEAF);
+    expect(src(PROBE)).toContain(LEAF_FROM_CORE);
   });
 
   it("neither consumer decides presence itself", () => {

@@ -7,13 +7,12 @@ import type {
 } from "@trafficflow/core/mail";
 import { ServiceError } from "@trafficflow/services/mail";
 import { ClassifierFaultError } from "@trafficflow/worker/classifier-fault";
-import { anthropicTransport, DEFAULT_ANTHROPIC_MODELS } from "./ai-anthropic.js";
-import { ollamaTransport, DEFAULT_OLLAMA } from "./ai-ollama.js";
-import { openaiTransport, DEFAULT_OPENAI_MODELS } from "./ai-openai.js";
-import { opencodeGoTransport } from "./ai-opencode-go-chat.js";
-import { OPENCODE_GO_MODEL_IDS } from "./ai-opencode-go-models.js";
+import {
+  anthropicTransport, DEFAULT_ANTHROPIC_MODELS, ollamaTransport, DEFAULT_OLLAMA,
+  openaiTransport, DEFAULT_OPENAI_MODELS, opencodeGoTransport, OPENCODE_GO_MODEL_IDS,
+} from "@trafficflow/core/ai-transports";
+import type { AiTransport, ProbeFailure, ProbeOutcome } from "@trafficflow/core/ai-transports";
 import { writeAtomicFile } from "./fs-atomic.js";
-import type { AiTransport, ProbeFailure, ProbeOutcome } from "./ai-transport.js";
 import type { Diagnostic } from "./log.js";
 import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
 

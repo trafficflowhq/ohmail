@@ -3,17 +3,17 @@ import {
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
   draftUserPayload,
-} from "@trafficflow/core/mail";
+} from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
-} from "@trafficflow/core/mail";
+} from "../../mail.js";
 import {
   fetchWithDeadline, failureOf, shortDetail,
   type AiTransport, type ProbeOutcome,
 } from "./ai-transport.js";
 // The ONE matcher this question has. The desktop's provider form imports the same module to
 // decide which name its picker shows; a copy here is how the picker and the verdict disagree.
-import { hasInstalledModel } from "@trafficflow/core/model-name";
+import { hasInstalledModel } from "../../model-name.js";
 
 /**
  * A model running on this machine — the second way a standalone install gets AI. Ollama serves

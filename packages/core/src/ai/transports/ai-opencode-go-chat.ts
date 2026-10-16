@@ -4,10 +4,10 @@ import {
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
   draftUserPayload,
-} from "@trafficflow/core/mail";
+} from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
-} from "@trafficflow/core/mail";
+} from "../../mail.js";
 import { probeOpenCodeGo } from "./ai-opencode-go.js";
 import {
   fetchWithDeadline, type AiKeyTransportOptions, type AiTransport, type ProbeOutcome,

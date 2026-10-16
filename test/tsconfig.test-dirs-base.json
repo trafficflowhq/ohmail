@@ -34,6 +34,7 @@
       "@trafficflow/core/reader-refusal": ["../packages/core/src/reader-refusal.ts"],
       "@trafficflow/core/outbound-text": ["../packages/core/src/outbound-text.ts"],
       "@trafficflow/core/model-name": ["../packages/core/src/model-name.ts"],
+      "@trafficflow/core/ai-transports": ["../packages/core/src/ai/transports/index.ts"],
       "@trafficflow/core/transport-frame": ["../packages/core/src/transport-frame.ts"],
       "@trafficflow/core/diagnostics": ["../packages/core/src/diagnostics/index.ts"],
       "@trafficflow/core/net": ["../packages/core/src/net/index.ts"],
