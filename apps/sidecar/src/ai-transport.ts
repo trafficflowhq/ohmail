@@ -25,6 +25,8 @@ export type ProbeFailure =
   | "model_absent"
   /** The endpoint answered with something this app cannot read. */
   | "bad_response"
+  /** Go returned HTTP 402/429; the response alone does not establish why the request was rejected. */
+  | "request_rejected"
   /** The credential could not be produced at all — see the provider's own states. */
   | "credential"
   /** A fault on this side. Reported rather than swallowed, so it is never read as "unreachable". */

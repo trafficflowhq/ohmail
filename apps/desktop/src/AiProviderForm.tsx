@@ -36,6 +36,8 @@ import {
 
 import { installedModelName } from "@trafficflow/core/model-name";
 
+import { opencodeGoModelTier } from "../../sidecar/src/ai-opencode-go-models.js";
+
 import { agoStamp } from "../../webapp/app/shell/format.js";
 import {
   clearAiProvider,
@@ -43,20 +45,22 @@ import {
   saveAiSettings,
   verifyAiProvider,
   type AiProviderKind,
+  type LocalAiSettings,
   type LocalAiStatus,
   type LocalAiWrite,
 } from "./local-ai.js";
 
-/** The four choices, including the one that is not a provider. */
+/** The five choices, including the one that is not a provider. */
 export type AiChoice = "none" | AiProviderKind;
 
-/** The two that take a key of your own. */
-type KeyedKind = "anthropic" | "openai";
+/** Providers that take a key of your own. */
+type KeyedKind = "anthropic" | "openai" | "opencode-go";
 
 const VENDOR: Record<AiProviderKind, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   ollama: "Ollama",
+  "opencode-go": "OpenCode Go",
 };
 
 /**
@@ -70,12 +74,33 @@ const VENDOR: Record<AiProviderKind, string> = {
 const VENDOR_HOST: Record<KeyedKind, string> = {
   anthropic: "api.anthropic.com",
   openai: "api.openai.com",
+  "opencode-go": "opencode.ai",
 };
 
 type Copy = ReturnType<typeof useTranslations<"aiProvider">>;
 
 function isKeyed(choice: AiChoice): choice is KeyedKind {
-  return choice === "anthropic" || choice === "openai";
+  return choice === "anthropic" || choice === "openai" || choice === "opencode-go";
+}
+
+/** A Go model's picker label: free and preview tiers stay offered, and say so (goFreePreviewNote). */
+function goModelLabel(id: string, t: Copy): string {
+  const tier = opencodeGoModelTier(id);
+  const tags = [tier.free ? t("goModelFree") : null, tier.preview ? t("goModelPreview") : null]
+    .filter((tag): tag is string => tag !== null);
+  return tags.length === 0 ? id : `${id} (${tags.join(", ")})`;
+}
+
+/** An engine that predates the Go block omits it; read that as nothing stored. */
+const NO_GO_SETTINGS = { classifyModel: "", draftModel: "", hasKey: false } as const;
+
+function settingsForProvider(settings: LocalAiSettings, provider: AiProviderKind) {
+  switch (provider) {
+    case "anthropic": return settings.anthropic;
+    case "openai": return settings.openai;
+    case "opencode-go": return settings.opencodeGo ?? NO_GO_SETTINGS;
+    case "ollama": return settings.ollama;
+  }
 }
 
 /** The host part of the engine's stored Ollama origin, or the raw value when it will not parse. */
@@ -124,6 +149,7 @@ export function verdictOf(
   pending: AiChoice | null,
 ): { state: SettingsVerdictState; headline: string; detail?: string; hint?: string; when?: string } {
   if (pending !== null) {
+    if (pending === "opencode-go") return { state: "wait", headline: t("goVerifyingConfig") };
     const vendor = pending === "none" ? "" : VENDOR[pending];
     return { state: "wait", headline: t("testing", { vendor }) };
   }
@@ -136,8 +162,17 @@ export function verdictOf(
   const when = status.probe ? t("checked", { when: agoStamp(status.probe.at, now).rel }) : undefined;
   const stamped = when === undefined ? {} : { when };
 
+  if (p === "opencode-go" && status.available && status.probe?.ok) {
+    return {
+      state: "ok",
+      headline: t("goConfigVerified"),
+      detail: t("goInferenceNotTested"),
+      ...stamped,
+    };
+  }
+
   if (status.available && status.probe) {
-    const set = status.settings[p];
+    const set = settingsForProvider(status.settings, p);
     return {
       state: "ok",
       headline: t("verdictReady", { classify: set.classifyModel, draft: set.draftModel }),
@@ -147,11 +182,15 @@ export function verdictOf(
 
   switch (status.unavailableReason) {
     case "key_absent":
-      return { state: "off", headline: t("verdictNoKey"), detail: t("verdictNoKeyDetail") };
+      return p === "opencode-go"
+        ? { state: "off", headline: t("verdictNoGoKey"), detail: t("verdictNoGoKeyDetail") }
+        : { state: "off", headline: t("verdictNoKey"), detail: t("verdictNoKeyDetail") };
     case "key_unreadable":
       return { state: "bad", headline: t("verdictCredential") };
     case "unverified":
-      return { state: "off", headline: t("verdictUntested"), detail: t("verdictUntestedDetail") };
+      return p === "opencode-go"
+        ? { state: "off", headline: t("verdictGoUntested"), detail: t("verdictGoUntestedDetail") }
+        : { state: "off", headline: t("verdictUntested"), detail: t("verdictUntestedDetail") };
     case "unreachable": {
       const reason = status.probe?.reason ?? null;
       const count = status.probe?.models.length ?? 0;
@@ -191,6 +230,9 @@ export function verdictOf(
          */
         case "model_absent":
           if (count === 0) {
+            if (p === "opencode-go") {
+              return { state: "bad", headline: t("verdictGoNoModels"), ...stamped };
+            }
             return p === "ollama"
               ? {
                 state: "off",
@@ -225,6 +267,10 @@ export function verdictOf(
           };
         case "bad_response":
           return { state: "bad", headline: t("verdictBadResponse", { vendor }), ...stamped };
+        case "request_rejected":
+          return p === "opencode-go"
+            ? { state: "bad", headline: t("verdictRequestRejected"), ...stamped }
+            : { state: "bad", headline: t("verdictBadResponse", { vendor }), ...stamped };
         case "credential":
           return { state: "bad", headline: t("verdictCredential"), ...stamped };
         case "internal":
@@ -248,6 +294,7 @@ export function verdictOf(
 /** The one word the summary row carries on the right. */
 export function summaryWord(status: LocalAiStatus, t: Copy): string {
   if (!status.provider) return t("summaryOff");
+  if (status.provider === "opencode-go" && status.available && status.probe?.ok) return t("summaryGoVerified");
   if (status.available) return t("summaryOn");
   if (status.unavailableReason === "key_absent") return t("summaryKey");
   if (status.unavailableReason === "unverified") return t("summaryUntested");
@@ -270,6 +317,8 @@ export function liveConsequence(status: LocalAiStatus, t: Copy): string | null {
       return t("choiceAnthropicWhy");
     case "openai":
       return t("choiceOpenaiWhy");
+    case "opencode-go":
+      return t("choiceOpenCodeGoWhy");
     case "this_machine":
       return t("choiceOllamaWhy", { host: ollamaHost(status.settings.ollama.baseUrl) });
     case null:
@@ -306,12 +355,15 @@ function modelWrite(kind: AiProviderKind, classifyModel: string, draftModel: str
   const models = { classifyModel, draftModel };
   if (kind === "anthropic") return { provider: kind, anthropic: models };
   if (kind === "openai") return { provider: kind, openai: models };
+  if (kind === "opencode-go") return { provider: kind, opencodeGo: models };
   return { provider: kind, ollama: models };
 }
 
 /** A key write, for the vendor whose field was on screen when it was typed. Same argument. */
 function keyWrite(kind: KeyedKind, apiKey: string): LocalAiWrite {
-  return kind === "anthropic" ? { provider: kind, anthropic: { apiKey } } : { provider: kind, openai: { apiKey } };
+  if (kind === "anthropic") return { provider: kind, anthropic: { apiKey } };
+  if (kind === "openai") return { provider: kind, openai: { apiKey } };
+  return { provider: kind, opencodeGo: { apiKey } };
 }
 
 export interface AiProviderFormProps {
@@ -354,8 +406,9 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
     // secret sitting in the window's memory for as long as the form is open.
     setApiKey("");
     if (next?.provider) {
-      setClassify(next.settings[next.provider].classifyModel);
-      setDraft(next.settings[next.provider].draftModel);
+      const settings = settingsForProvider(next.settings, next.provider);
+      setClassify(settings.classifyModel);
+      setDraft(settings.draftModel);
     }
     echo.current?.(next);
   }, []);
@@ -396,7 +449,9 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
 
   const choice: AiChoice = status.provider ?? "none";
   const keyed = isKeyed(choice);
-  const hasKey = keyed && status.settings[choice].hasKey;
+  const hasKey = keyed && (choice === "opencode-go"
+    ? status.settings.opencodeGo?.hasKey === true
+    : status.settings[choice].hasKey);
   /**
    * THE ENDPOINT'S LIST IS THE ENDPOINT'S LIST, WHETHER OR NOT THE VERIFICATION PASSED. This
    * was `probe.ok ? probe.models : []`, which reads as caution and is a dead end: the one
@@ -419,7 +474,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
   const classifyOn = installedModelName(models, classify);
   const draftOn = installedModelName(models, draft);
   const listed = models.length > 0 && choice !== "none";
-  const stored = choice === "none" ? null : status.settings[choice];
+  const stored = choice === "none" ? null : settingsForProvider(status.settings, choice);
   const dirty =
     stored !== null && (classify !== stored.classifyModel || draft !== stored.draftModel);
   const working = busy !== null;
@@ -484,6 +539,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           { id: "none", label: t("choiceNone"), description: t("choiceNoneWhy") },
           { id: "anthropic", label: t("choiceAnthropic"), description: t("choiceAnthropicWhy") },
           { id: "openai", label: t("choiceOpenai"), description: t("choiceOpenaiWhy") },
+          { id: "opencode-go", label: t("choiceOpenCodeGo"), description: t("choiceOpenCodeGoWhy") },
           { id: "ollama", label: t("choiceOllama"), description: ollamaConsequence(status, t) },
         ]}
       />
@@ -521,13 +577,17 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
                   disabled={working}
                 />
                 <Button variant="primary" type="submit" disabled={working || (!apiKey.trim() && !hasKey)}>
-                  {apiKey.trim() || !hasKey ? t("testKey") : t("testStoredKey")}
+                  {choice === "opencode-go"
+                    ? apiKey.trim() ? t("goSaveKey") : t("goVerifyStoredKey")
+                    : apiKey.trim() || !hasKey ? t("testKey") : t("testStoredKey")}
                 </Button>
               </div>
             </SettingsField>
           </form>
         ) : (
-          <p className="set-note-inline">{t("keyCannotStore")}</p>
+          <p className="set-note-inline">
+            {choice === "opencode-go" ? t("goKeyCannotStore") : t("keyCannotStore")}
+          </p>
         )
       ) : null}
 
@@ -581,7 +641,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
                 </option>
                 {models.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {choice === "opencode-go" ? goModelLabel(m, t) : m}
                   </option>
                 ))}
               </select>
@@ -601,7 +661,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
                 </option>
                 {models.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {choice === "opencode-go" ? goModelLabel(m, t) : m}
                   </option>
                 ))}
               </select>
@@ -644,7 +704,8 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           credential). That makes this row the only path to the deletion, so it names both keys —
           while it named Anthropic's alone, a stored OpenAI key with no provider selected had no
           way to be removed at all. It is also what restores a non-default Ollama origin. */}
-      {status.provider || status.settings.anthropic.hasKey || status.settings.openai.hasKey ? (
+      {status.provider || status.settings.anthropic.hasKey || status.settings.openai.hasKey
+        || status.settings.opencodeGo?.hasKey ? (
         <SettingsRow
           label={t("remove")}
           description={t("removeWhy")}
@@ -667,6 +728,8 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           where each one GOES: the mailbox password only ever reaches the mail engine on this
           computer, and an API key reaches a third party, which is what the sentence below is
           about. */}
+      {choice === "opencode-go" ? <SettingsNote>{t("goPrivacyBilling")}</SettingsNote> : null}
+      {choice === "opencode-go" ? <SettingsNote>{t("goFreePreviewNote")}</SettingsNote> : null}
       <SettingsNote>{t("note")}</SettingsNote>
     </>
   );

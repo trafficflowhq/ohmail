@@ -159,6 +159,16 @@ describe("lanes — bounded concurrency, and one lane where lanes buy nothing", 
     expect(r.peak, "the default must not have become a burst").toBe(1);
   });
 
+  it("OpenCode Go Screener work stays in one lane while hosted peers keep their policy", async () => {
+    const go = rig({ latencyMs: 10 });
+    const goLanes = lanesFor("opencode-go");
+    await runSuggest({ senders: many(40), limit: 40, lanes: goLanes, absorb: () => {} });
+    expect(goLanes).toBe(1);
+    expect(go.peak).toBe(1);
+    expect(lanesFor("anthropic")).toBe(HOSTED_LANES);
+    expect(lanesFor("openai")).toBe(HOSTED_LANES);
+  });
+
   it("`lanes: 4` opens exactly four at once and never a fifth", async () => {
     const r = rig({ latencyMs: 25 });
     await runSuggest({ senders: many(40), limit: 40, lanes: 4, absorb: () => {} });

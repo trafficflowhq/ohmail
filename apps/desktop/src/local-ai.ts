@@ -1,9 +1,10 @@
 /**
  * THE MODEL THIS INSTALL USES, IF IT USES ONE — the window's half of the engine's AI surface.
  * A standalone install has nothing metered: the routing suggestion and the reply draft run
- * against a model its owner supplies — an Anthropic key, an OpenAI key, or a model server on
- * this machine — and "nothing configured" is not an error: rules-only routing is the product's
- * floor. An API key is a credential: it travels as the BODY of a request over
+ * against a model its owner supplies — an Anthropic, OpenAI or OpenCode Go key, or a model server
+ * on this machine — and "nothing configured" is not an error: rules-only routing is the product's
+ * floor. OpenCode Go verification reads config only; it does not test inference or quota. An API
+ * key is a credential: it travels as the BODY of a request over
  * {@link bridgeFetch}, never as a native-command argument, never in the shell's memory or
  * settings file; the engine seals it under the OS keystore and only `hasKey` comes back.
  * Usability, destinations and model lists come from the engine — never from a provider name.
@@ -14,7 +15,7 @@ import { bridgeFetch } from "./bridge-fetch.js";
 /** Where the engine serves this install's own AI settings. Root-relative, like every path here. */
 const AI_PATH = "/local/ai";
 
-export type AiProviderKind = "anthropic" | "openai" | "ollama";
+export type AiProviderKind = "anthropic" | "openai" | "ollama" | "opencode-go";
 
 /** Why the chosen provider cannot answer right now. The engine's word; the pane renders it. */
 export type AiUnavailableReason =
@@ -31,6 +32,7 @@ export type AiProbeFailure =
   | "unauthorized"
   | "model_absent"
   | "bad_response"
+  | "request_rejected"
   | "credential"
   | "internal";
 
@@ -56,6 +58,8 @@ export interface LocalAiSettings {
   provider: AiProviderKind | null;
   anthropic: HostedAiSettings;
   openai: HostedAiSettings;
+  /** Optional, as the engine declares it: an engine without the Go block omits it. */
+  opencodeGo?: HostedAiSettings;
   ollama: { baseUrl: string; classifyModel: string; draftModel: string };
 }
 
@@ -73,7 +77,7 @@ export interface LocalAiStatus {
    * on the engine's authority where there is none. Absent is NOT "unknown until it loads": a
    * status that has not arrived is `null` at the call site, never a status with a missing member.
    */
-  contentGoesTo?: "anthropic" | "openai" | "this_machine" | null;
+  contentGoesTo?: "anthropic" | "openai" | "opencode-go" | "this_machine" | null;
   settings: LocalAiSettings;
   probe: AiProbeReport | null;
   /**
@@ -88,6 +92,7 @@ export interface LocalAiWrite {
   provider?: AiProviderKind | null;
   anthropic?: { classifyModel?: string; draftModel?: string; apiKey?: string };
   openai?: { classifyModel?: string; draftModel?: string; apiKey?: string };
+  opencodeGo?: { classifyModel?: string; draftModel?: string; apiKey?: string };
   ollama?: { baseUrl?: string; classifyModel?: string; draftModel?: string };
 }
 
@@ -142,12 +147,10 @@ export async function readAiStatus(): Promise<LocalAiStatus | null> {
 }
 
 /**
- * Replace the settings, and learn in the same round trip whether what was just saved works.
- * The engine DISCARDS the previous verification on every write and runs a fresh one before it
- * answers, so the status that comes back is about the configuration now in force — an
- * unreachable model is a mistake to correct while somebody is looking at the settings, not a
- * failure to discover the next time they try to answer an email. Omitted fields keep their
- * stored value, `apiKey` included, so changing a model does not require re-typing a key.
+ * Replace the settings, discard the old verification, and verify the configuration now in force.
+ * Existing providers perform their current provider-specific check; OpenCode Go reads only its
+ * authenticated Console config and does not run inference. Omitted fields keep their stored value,
+ * `apiKey` included, so changing a model does not require re-typing a key.
  */
 export async function saveAiSettings(write: LocalAiWrite): Promise<LocalAiStatus> {
   return readStatus(
@@ -161,11 +164,8 @@ export async function clearAiProvider(): Promise<LocalAiStatus> {
 }
 
 /**
- * Ask the endpoint whether it is really there, now.
- *
- * One cheap call and no completion: the engine authenticates by listing models and asking for one
- * by name, both free. A test-connection button that ran a completion would charge somebody for
- * pressing it.
+ * Explicitly verify the currently selected provider. OpenCode Go uses only an authenticated
+ * Console config read; it does not send inference or establish quota/runtime availability.
  */
 export async function verifyAiProvider(): Promise<LocalAiStatus> {
   return readStatus(await bridgeFetch(`${AI_PATH}/verify`, { method: "POST" }));
@@ -183,6 +183,7 @@ function vendorName(provider: AiProviderKind | null): string {
   switch (provider) {
     case "anthropic": return "Anthropic";
     case "openai": return "OpenAI";
+    case "opencode-go": return "OpenCode Go";
     default: return "The chosen provider";
   }
 }
@@ -221,6 +222,7 @@ export function probeLine(probe: AiProbeReport | null): string | null {
     unauthorized: "The key was rejected.",
     model_absent: "It answered, and does not have one of the models you named.",
     bad_response: "It answered with something this app could not read.",
+    request_rejected: "The endpoint rejected the request; its response does not identify why.",
     credential: "No key could be produced for it.",
     internal: "Something on this side went wrong.",
   };

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { jsonResponse, type Route } from "@trafficflow/api/local";
 import { accountSettings } from "@trafficflow/db";
 import { ServiceError, setAutoSuggest, type ServiceContext } from "@trafficflow/services/mail";
-import type { LocalAi } from "./ai-provider.js";
+import type { AiProviderKind, LocalAi } from "./ai-provider.js";
 import type { LocalDb } from "./db.js";
 
 /**
@@ -36,13 +36,21 @@ export interface LocalAutoSuggestState {
    * for all of them and `/local/ai` is where the difference is named and fixed.
    */
   modelReady: boolean;
+  /** The active provider, from the same local status snapshot as `modelReady`. */
+  provider: AiProviderKind | null;
 }
 
 async function readState(db: LocalDb, accountId: string, ai: LocalAi): Promise<LocalAutoSuggestState> {
   const [row] = await db.select({ autoSuggestAt: accountSettings.autoSuggestAt })
     .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
   const at = row?.autoSuggestAt ?? null;
-  return { on: at !== null, since: at ? at.toISOString() : null, modelReady: ai.status().available };
+  const status = ai.status();
+  return {
+    on: at !== null,
+    since: at ? at.toISOString() : null,
+    modelReady: status.available,
+    provider: status.provider,
+  };
 }
 
 /**

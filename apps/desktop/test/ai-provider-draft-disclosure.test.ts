@@ -31,8 +31,10 @@ function constant(name: string): number {
 const THREAD = constant("MAX_THREAD_MESSAGES");
 const NOTES = constant("DEFAULT_KB_K");
 
-/** The four destination lines: each is shown on its own, as the option's line and as the summary's. */
-const WHY = ["choiceAnthropicWhy", "choiceOpenaiWhy", "choiceOllamaWhy", "choiceOllamaWhyElsewhere"] as const;
+/** The five destination lines: each is shown on its own, as the option's line and as the summary's. */
+const WHY = [
+  "choiceAnthropicWhy", "choiceOpenaiWhy", "choiceOpenCodeGoWhy", "choiceOllamaWhy", "choiceOllamaWhyElsewhere",
+] as const;
 
 describe("the provider form says what a draft sends", () => {
   it("the service still grounds a draft in the thread and the knowledge base", () => {
@@ -45,6 +47,13 @@ describe("the provider form says what a draft sends", () => {
     expect(en.aiProvider.note).toContain(`up to ${NOTES} matching knowledge-base notes`);
     expect(de.aiProvider.note).toContain(`bis zu ${THREAD} weiteren Nachrichten im Thread`);
     expect(de.aiProvider.note).toContain(`bis zu ${NOTES} passende Notizen aus der Wissensdatenbank`);
+  });
+
+  it("names every destination line the catalogue has (None sends nothing)", () => {
+    for (const cat of [en, de]) {
+      const lines = Object.keys(cat.aiProvider).filter((k) => /^choice\w*Why/.test(k) && k !== "choiceNoneWhy");
+      expect(lines.sort()).toEqual([...WHY].sort());
+    }
   });
 
   it("every destination line says a draft sends more, in English and German", () => {

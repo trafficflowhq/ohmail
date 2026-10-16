@@ -10,33 +10,36 @@ import { ClassifierFaultError } from "@trafficflow/worker/classifier-fault";
 import { anthropicTransport, DEFAULT_ANTHROPIC_MODELS } from "./ai-anthropic.js";
 import { ollamaTransport, DEFAULT_OLLAMA } from "./ai-ollama.js";
 import { openaiTransport, DEFAULT_OPENAI_MODELS } from "./ai-openai.js";
+import { opencodeGoTransport } from "./ai-opencode-go-chat.js";
+import { OPENCODE_GO_MODEL_IDS } from "./ai-opencode-go-models.js";
 import { writeAtomicFile } from "./fs-atomic.js";
 import type { AiTransport, ProbeFailure, ProbeOutcome } from "./ai-transport.js";
 import type { Diagnostic } from "./log.js";
 import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
 
 /**
- * Where this install's AI comes from, and what happens when it comes from nowhere. A standalone
- * install has no metered allowance, so its two AI features (a routing suggestion and a reply draft)
- * run against a model the person supplies — an Anthropic key, an OpenAI key, or a model on this
- * machine — plus one honest fourth state, NOTHING CONFIGURED, which is not an error (rules-only is
- * the floor). Each key is sealed under the OS keystore key the shell hands over, never in the clear,
+ * Where this install's AI comes from, and what happens when it comes from nowhere. The standalone
+ * install provides no model allowance of its own. Existing inference providers are an Anthropic
+ * key, an OpenAI key, a model on this machine, or the user's OpenCode Go key; Go account-managed usage
+ * is outside Ohmail. Its config probe does not test inference or quota. NOTHING CONFIGURED is not an error (rules-only
+ * is the floor). Each key is sealed
+ * under the OS keystore key the shell hands over, never in the clear,
  * in separate envelopes per vendor, sent nowhere but its own vendor: no durable key ⇒ not stored
  * ({@link AiStatus.canStoreKey}), never read back, logged, from the environment, and removed with the
  * data directory. The config is an install-scoped FILE, and a capability is not claimed until PROBED.
  */
 
-export type AiProviderKind = "anthropic" | "openai" | "ollama";
+export type AiProviderKind = "anthropic" | "openai" | "ollama" | "opencode-go";
 
 /**
- * The two providers that carry a stored API key.
+ * The providers that carry a stored API key.
  *
  * Named as a set rather than written out at each site, because every rule that matters here is a
- * rule about THIS set: a key is required, the destination is a literal, and the `key_absent` and
- * `key_unreadable` states are reachable. A fourth provider joins the set or it does not, and the
- * branches below follow from that rather than from a list somebody remembered to extend.
+ * rule about THIS set: a key is required, the destination is fixed, and the `key_absent` and
+ * `key_unreadable` states are reachable. Adding a provider means the branches below follow from
+ * this set rather than from a list somebody remembered to extend.
  */
-const KEYED_PROVIDERS = ["anthropic", "openai"] as const;
+const KEYED_PROVIDERS = ["anthropic", "openai", "opencode-go"] as const;
 export type KeyedProviderKind = (typeof KEYED_PROVIDERS)[number];
 
 export function isKeyedProvider(p: AiProviderKind | null): p is KeyedProviderKind {
@@ -67,6 +70,8 @@ export interface LocalAiSettings {
   provider: AiProviderKind | null;
   anthropic: HostedSettings & { hasKey: boolean };
   openai: HostedSettings & { hasKey: boolean };
+  /** Desktop-only provider settings; the phone's offline stub intentionally omits this block. */
+  opencodeGo?: HostedSettings & { hasKey: boolean };
   ollama: OllamaSettings;
 }
 
@@ -75,6 +80,7 @@ export interface LocalAiSettingsInput {
   provider?: unknown;
   anthropic?: { classifyModel?: unknown; draftModel?: unknown; apiKey?: unknown };
   openai?: { classifyModel?: unknown; draftModel?: unknown; apiKey?: unknown };
+  opencodeGo?: { classifyModel?: unknown; draftModel?: unknown; apiKey?: unknown };
   ollama?: { baseUrl?: unknown; classifyModel?: unknown; draftModel?: unknown };
 }
 
@@ -117,7 +123,7 @@ export interface AiStatus {
    * sentence of it — the answer for a model server that is not this machine, where there is no
    * value for "a machine you named" and `this_machine` would be false.
    */
-  contentGoesTo?: "anthropic" | "openai" | "this_machine" | null;
+  contentGoesTo?: "anthropic" | "openai" | "opencode-go" | "this_machine" | null;
   settings: LocalAiSettings;
   probe: AiProbeReport | null;
   /**
@@ -138,19 +144,20 @@ interface StoredHosted {
 }
 
 /**
- * The file. `version` STAYS 1 though the shape grew, the honest reading: the `openai` block is
- * purely ADDITIVE and the reader substitutes defaults for members it does not find, so a file
- * written before this provider existed loads with no migration. The reverse is safe too — an older
- * build ignores the block it does not know, and `provider: "openai"` falls through its guard to
- * `null`, landing on "nothing configured", the state that is explicitly not an error. Bumping the
- * number would claim a migration; there is none, and a version that moves without one teaches the
- * next reader to distrust the ones that do.
+ * The file. `version` STAYS 1 though the shape grew: the OpenAI and OpenCode Go blocks are
+ * additive, and the reader substitutes defaults for missing members, so older files load with no
+ * migration. An older build ignores a block it does not know; an unknown provider selection falls
+ * through its guard to `null`, landing on "nothing configured", the state that is explicitly not
+ * an error. Bumping the number would claim a migration; there is none, and a version that moves
+ * without one teaches the next reader to distrust the ones that do.
  */
 interface StoredAi {
   version: 1;
   provider: AiProviderKind | null;
   anthropic: StoredHosted;
   openai: StoredHosted;
+  /** Additive, including a blank model pair on files written before Go was introduced. */
+  opencodeGo: StoredHosted;
   ollama: OllamaSettings;
   probe: AiProbeReport | null;
 }
@@ -173,6 +180,7 @@ function emptyStore(): StoredAi {
       keyEnc: null,
       keyVersion: null,
     },
+    opencodeGo: { classifyModel: "", draftModel: "", keyEnc: null, keyVersion: null },
     ollama: { ...DEFAULT_OLLAMA },
     probe: null,
   };
@@ -187,6 +195,14 @@ function readModel(value: unknown, fallback: string, field: string): string {
     throw new ServiceError("invalid_request", 400, `${field} is not a model name`);
   }
   return value.trim();
+}
+
+function readOpenCodeGoModel(value: unknown, fallback: string, field: string): string {
+  const model = readModel(value, fallback, field);
+  if (model !== "" && !(OPENCODE_GO_MODEL_IDS as readonly string[]).includes(model)) {
+    throw new ServiceError("invalid_request", 400, `${field} is not a supported OpenCode Go Chat Completions model`);
+  }
+  return model;
 }
 
 /**
@@ -230,7 +246,7 @@ export function originIsThisMachine(baseUrl: string): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
-const PROVIDER_KINDS: readonly AiProviderKind[] = ["anthropic", "openai", "ollama"];
+const PROVIDER_KINDS: readonly AiProviderKind[] = ["anthropic", "openai", "ollama", "opencode-go"];
 
 function isProviderKind(value: unknown): value is AiProviderKind {
   return typeof value === "string" && (PROVIDER_KINDS as readonly string[]).includes(value);
@@ -331,6 +347,7 @@ const MAX_COOLDOWN_MS = 15 * 60_000;
 const VENDOR_LABEL: Record<KeyedProviderKind, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
+  "opencode-go": "OpenCode Go",
 };
 
 /**
@@ -403,6 +420,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
       provider: isProviderKind(parsed.provider) ? parsed.provider : null,
       anthropic: hosted(parsed.anthropic, base.anthropic),
       openai: hosted(parsed.openai, base.openai),
+      opencodeGo: hosted(parsed.opencodeGo, base.opencodeGo),
       ollama: {
         baseUrl: typeof parsed.ollama?.baseUrl === "string" ? parsed.ollama.baseUrl : base.ollama.baseUrl,
         classifyModel: typeof parsed.ollama?.classifyModel === "string"
@@ -438,9 +456,9 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   /**
    * The plaintext key for ONE hosted provider, or a typed refusal naming which state it is in.
    *
-   * Takes the block rather than reading a fixed one off the store: the two hosted providers hold
-   * separate credentials, and a helper that always reached for `s.anthropic` would send one
-   * vendor's key to the other the moment a second provider existed.
+   * Takes the block rather than reading a fixed one off the store: hosted providers hold separate
+   * credentials, and a helper that always reached for `s.anthropic` would send one vendor's key to
+   * another as soon as the provider set grew.
    */
   const apiKey = async (block: StoredHosted, which: KeyedProviderKind): Promise<string> => {
     if (!block.keyEnc || block.keyVersion === null) throw unavailable("key_absent", which);
@@ -455,8 +473,11 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   };
 
   /** The credential block for a keyed provider. One place, so the pairing cannot be mismatched. */
-  const blockFor = (s: StoredAi, kind: KeyedProviderKind): StoredHosted =>
-    kind === "anthropic" ? s.anthropic : s.openai;
+  const blockFor = (s: StoredAi, kind: KeyedProviderKind): StoredHosted => {
+    if (kind === "anthropic") return s.anthropic;
+    if (kind === "openai") return s.openai;
+    return s.opencodeGo;
+  };
 
   const transportFor = async (s: StoredAi): Promise<AiTransport> => {
     switch (s.provider) {
@@ -478,6 +499,14 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
           fetchImpl: doFetch,
           timeoutMs,
         });
+      case "opencode-go":
+        return opencodeGoTransport({
+          apiKey: await apiKey(s.opencodeGo, "opencode-go"),
+          classifyModel: s.opencodeGo.classifyModel,
+          draftModel: s.opencodeGo.draftModel,
+          fetchImpl: doFetch,
+          timeoutMs,
+        });
       default:
         throw unavailable("not_configured");
     }
@@ -489,6 +518,12 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
     if (isKeyedProvider(s.provider) && !blockFor(s, s.provider).keyEnc) return "key_absent";
     if (!s.probe) return "unverified";
     if (!s.probe.ok) return "unreachable";
+    if (s.provider === "opencode-go" && (
+      !s.opencodeGo.classifyModel
+      || !s.opencodeGo.draftModel
+      || !s.probe.models.includes(s.opencodeGo.classifyModel)
+      || !s.probe.models.includes(s.opencodeGo.draftModel)
+    )) return "unverified";
     return null;
   };
 
@@ -506,7 +541,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
    *
    * Of the provider NAME it would be a lie in one case of four: the address beside `ollama` takes
    * any http(s) origin, so the name says "a model of your own" while the origin can be a server
-   * on the internet. A `switch` with no default, so a fourth provider is a compile error here
+   * on the internet. A `switch` with no default, so a fifth provider is a compile error here
    * rather than a silent `null` rendering as "nothing is sent anywhere". It returns the MEMBER
    * and not a value, because leaving the key off is one of the four answers.
    */
@@ -514,6 +549,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
     switch (s.provider) {
       case "anthropic": return { contentGoesTo: "anthropic" };
       case "openai": return { contentGoesTo: "openai" };
+      case "opencode-go": return { contentGoesTo: "opencode-go" };
       case "ollama": return originIsThisMachine(s.ollama.baseUrl) ? { contentGoesTo: "this_machine" } : {};
       case null: return { contentGoesTo: null };
     }
@@ -535,6 +571,11 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
         classifyModel: s.openai.classifyModel,
         draftModel: s.openai.draftModel,
         hasKey: s.openai.keyEnc !== null,
+      },
+      opencodeGo: {
+        classifyModel: s.opencodeGo.classifyModel,
+        draftModel: s.opencodeGo.draftModel,
+        hasKey: s.opencodeGo.keyEnc !== null,
       },
       ollama: { ...s.ollama },
     },
@@ -686,7 +727,9 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
       state: probe.reason ?? "verified",
       count: probe.models.length,
       reason: probe.ok
-        ? "the configured provider answered and carries the configured models"
+        ? store.provider === "opencode-go"
+          ? "OpenCode Go accepted the key for its configuration read and listed workspace models; inference was not tested"
+          : "the configured provider answered and carries the configured models"
         : "the configured provider did not answer as required; the AI features stay unavailable",
     });
     const next = { ...store, probe };
@@ -707,8 +750,9 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
       const keys = {
         anthropic: readApiKey(input.anthropic?.apiKey),
         openai: readApiKey(input.openai?.apiKey),
+        opencodeGo: readApiKey(input.opencodeGo?.apiKey),
       };
-      const key = keys.anthropic ?? keys.openai;
+      const key = keys.anthropic ?? keys.openai ?? keys.opencodeGo;
       if (key !== null && !opts.canStoreKey) {
         // Refused at the moment of the write, while the field is still on screen — the same rule
         // the mailbox password follows. A key sealed under a launch-scoped key would be garbage
@@ -731,11 +775,12 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
         supplied: string | null,
         held: StoredHosted,
         got: { classifyModel?: unknown; draftModel?: unknown } | undefined,
+        parseModel: typeof readModel = readModel,
       ): Promise<StoredHosted> => {
         const sealed = supplied === null ? null : await opts.keyProvider.encrypt(supplied);
         return {
-          classifyModel: readModel(got?.classifyModel, held.classifyModel, "classifyModel"),
-          draftModel: readModel(got?.draftModel, held.draftModel, "draftModel"),
+          classifyModel: parseModel(got?.classifyModel, held.classifyModel, "classifyModel"),
+          draftModel: parseModel(got?.draftModel, held.draftModel, "draftModel"),
           keyEnc: sealed ? sealed.ciphertext : held.keyEnc,
           keyVersion: sealed ? sealed.keyVersion : held.keyVersion,
         };
@@ -745,6 +790,9 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
         provider,
         anthropic: await sealHosted(keys.anthropic, store.anthropic, input.anthropic),
         openai: await sealHosted(keys.openai, store.openai, input.openai),
+        opencodeGo: await sealHosted(
+          keys.opencodeGo, store.opencodeGo, input.opencodeGo, readOpenCodeGoModel,
+        ),
         ollama: {
           baseUrl: readBaseUrl(input.ollama?.baseUrl, store.ollama.baseUrl),
           classifyModel: readModel(input.ollama?.classifyModel, store.ollama.classifyModel, "classifyModel"),

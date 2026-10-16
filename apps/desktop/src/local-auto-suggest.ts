@@ -10,6 +10,7 @@
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
+import type { AiProviderKind } from "./local-ai.js";
 
 /** Where the engine serves it. Root-relative, like every path in this window. */
 const AUTO_SUGGEST_PATH = "/local/auto-suggest";
@@ -25,6 +26,8 @@ export interface AutoSuggestState {
   since: string | null;
   /** Whether this install has a verified model right now. The ENGINE's answer, never inferred. */
   modelReady: boolean;
+  /** The active provider, as reported by the engine rather than inferred by this UI. */
+  provider: AiProviderKind | null;
 }
 
 /** What a read found. Two outcomes, because a surface that conflates them tells a lie. */

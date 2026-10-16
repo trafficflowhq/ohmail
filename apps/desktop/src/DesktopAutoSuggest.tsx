@@ -131,6 +131,9 @@ export function DesktopAutoSuggest({
           />
         }
       />
+      {value.provider === "opencode-go" ? (
+        <SettingsNote>{t("autoSuggestGoAllowance")}</SettingsNote>
+      ) : null}
       {/* WHERE THE MAIL GOES, said once and only when it is actually going somewhere. The engine
           knows which provider is configured; what this row is responsible for is not letting an
           automatic path be armed without the sentence being on screen at the same moment. */}

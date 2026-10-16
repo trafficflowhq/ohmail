@@ -776,7 +776,9 @@ describe("the source census — outbound requests live at the seam and nowhere e
    * there — and a census that cannot disagree with the tree is not a census.
    */
   const SRC = fileURLToPath(new URL("../src/", import.meta.url));
-  const PROVIDERS = new Set(["ai-anthropic.ts", "ai-ollama.ts", "ai-openai.ts"]);
+  const PROVIDERS = new Set([
+    "ai-anthropic.ts", "ai-ollama.ts", "ai-openai.ts", "ai-opencode-go.ts", "ai-opencode-go-chat.ts",
+  ]);
   /**
    * A CALL of the global `fetch`. The two lookbehinds are both load-bearing: `[\w$.]` keeps
    * `doFetch(` and `opts.fetchImpl(` out, and `async\s+` keeps a METHOD NAMED `fetch` out —

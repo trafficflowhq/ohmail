@@ -254,6 +254,18 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
     expect(v.hint).toContain("2");
   });
 
+  it("request_rejected: Go's generic 402/429 response makes no quota or reset claim", () => {
+    const enVerdict = verdictOf(failing("request_rejected", { provider: "opencode-go" }), t, NOW, null);
+    expect(enVerdict.state).toBe("bad");
+    expect(enVerdict.headline).toBe("OpenCode Go could not verify this request. Check your OpenCode account or try again.");
+    expect(enVerdict.headline).not.toMatch(/allowance|quota|exhaust|reset|subscription/i);
+
+    const deVerdict = verdictOf(failing("request_rejected", { provider: "opencode-go" }), tDe, NOW, null);
+    expect(deVerdict.state).toBe("bad");
+    expect(deVerdict.headline).toBe("OpenCode Go konnte diese Anfrage nicht verifizieren. Prüfe dein OpenCode-Konto oder versuche es erneut.");
+    expect(deVerdict.headline).not.toMatch(/Kontingent|Guthaben|erschöpft|zurückgesetzt|Abonnement/i);
+  });
+
   it("bad_response: the endpoint answered, and ohmail could not read it", () => {
     const v = verdictOf(failing("bad_response"), t, NOW, null);
     expect(v.state).toBe("bad");

@@ -14,6 +14,7 @@ import { AI_STORE_FILE } from "../src/ai-provider.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { serveOverStdio, type StdioHost } from "../src/host.js";
+import { draftReplyVia } from "../../desktop/src/draft-reply-wire.js";
 
 /**
  * A STANDALONE INSTALL GETS AI OF ITS OWN — the acceptance, through the real assembly.
@@ -107,6 +108,17 @@ function model(): {
             : JSON.stringify({ destination: "ohmail/News", confidence: 0.92, rationale: "a newsletter", spam: false }),
         }],
       });
+    }
+    if (url === "https://opencode.ai/console/api/v2/config") {
+      return json({ providers: { "opencode-go": { models: { "kimi-k3": {}, "glm-5.3-flash": {} } } } });
+    }
+    if (url === "https://opencode.ai/inference/go/v1/chat/completions") {
+      if (broken.value) return new Response("upstream is unwell", { status: 500 });
+      const isDraft = String(init?.body ?? "").includes("kbEntries");
+      const answer = isDraft
+        ? { subject: "Re: hello", body: "Thursday works.", rationale: "grounded in the thread" }
+        : { destination: "ohmail/News", confidence: 0.92, rationale: "a newsletter", spam: false };
+      return json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(answer) } }] });
     }
     return new Response("unexpected", { status: 599 });
   }) as unknown as typeof fetch;
@@ -385,5 +397,43 @@ describe("a model that stops answering does not stop the mail", () => {
     const onDisk = readFileSync(join(dir, AI_STORE_FILE), "utf8");
     expect(onDisk).not.toContain(KEY);
     expect(JSON.parse(onDisk)).toMatchObject({ provider: null, anthropic: { keyEnc: null } });
+  }, 60_000);
+});
+
+describe("OpenCode Go drafts through the desktop's draft wire", () => {
+  /* The window's "Draft reply" is draftReplyVia (#39) over the bridge: one wire for every provider.
+     Here it runs against the engine with Go configured, so the draft comes from Go's chat endpoint. */
+  it("creates and reads a draft written by the Go model", async () => {
+    const cfg = greenmail();
+    const m = model();
+    const l = await launch(cfg, freshDir(), m.fetchImpl);
+    const goKey = "fixture-go-key-ai-local";
+    const saved = await l.client.fetch("/local/ai", {
+      method: "PUT", headers: auth(l),
+      body: JSON.stringify({
+        provider: "opencode-go", opencodeGo: { apiKey: goKey, classifyModel: "glm-5.3-flash", draftModel: "kimi-k3" },
+      }),
+    });
+    expect((await saved.json() as { available: boolean }).available).toBe(true);
+
+    await l.sidecar.start();
+    await deliver(cfg, "Are you free on Thursday?", "Could we move the review to Thursday morning?");
+    await l.sidecar.syncUntilQuiet();
+    const [row] = await l.sidecar.db.select({ id: messages.id }).from(messages);
+    expect(row, "the mail did not arrive at all").toBeDefined();
+
+    const wire = draftReplyVia(
+      (path, init) => l.client.fetch(path, { ...init, headers: { ...auth(l), ...(init?.headers as Record<string, string>) } }),
+      () => true,
+      "noModelHere",
+    );
+    const { draftId } = await wire.create(row!.id, randomUUID());
+    expect(await wire.read(draftId)).toMatchObject({ body: expect.stringContaining("Thursday works.") });
+
+    const drafts = m.calls.filter((c) => c.url === "https://opencode.ai/inference/go/v1/chat/completions"
+      && c.body.includes("kbEntries"));
+    expect(drafts).toHaveLength(1);
+    expect(JSON.parse(drafts[0]!.body)).toMatchObject({ model: "kimi-k3" });
+    expect(drafts[0]!.headers.authorization).toBe(`Bearer ${goKey}`);
   }, 60_000);
 });

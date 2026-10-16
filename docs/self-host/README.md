@@ -186,10 +186,10 @@ broken.
 choices today.** They are listed apart rather than together because a single
 sentence covering both would be wrong about one of them:
 
-| Surface | Anthropic | OpenAI | Local (Ollama) |
-| --- | --- | --- | --- |
-| **Desktop app**, opening your mail server directly | yes | yes | yes |
-| **This server stack** (`docker compose`) | yes | not yet | not yet |
+| Surface | Anthropic | OpenAI | OpenCode Go | Local (Ollama) |
+| --- | --- | --- | --- | --- |
+| **Desktop app**, opening your mail server directly | yes | yes | yes | yes |
+| **This server stack** (`docker compose`) | yes | not yet | not yet | not yet |
 
 ### On this server stack
 
@@ -200,16 +200,21 @@ ANTHROPIC_API_KEY=sk-ant-…
 ```
 
 Requests go to Anthropic under your own key, billed to your account. Leave it
-unset and the AI surfaces answer as unconfigured. **OpenAI and a local Ollama
-are not wired into this stack yet** — the desktop app has them, this one does
-not, and setting an `OPENAI_API_KEY` here does nothing.
+unset and the AI surfaces answer as unconfigured. **OpenAI, OpenCode Go and a
+local Ollama are not wired into this stack yet** — the desktop app has them,
+this one does not, and setting an `OPENAI_API_KEY` here does nothing.
 
 ### In the desktop app
 
-Settings → Suggestions and drafts, where you pick one of three:
+Settings → Suggestions and drafts, where you pick one of four:
 
 - **Your Anthropic key.** Requests go to `api.anthropic.com`, billed to you.
 - **Your OpenAI key.** Requests go to `api.openai.com`, billed to you.
+- **Your OpenCode Go key.** Requests go to `opencode.ai` and on to the provider
+  behind the model you choose, billed through your OpenCode account. Settings
+  lists the models your Go workspace has that this app can drive, and marks the
+  free and preview ones. Saving reads the workspace's Go configuration and runs
+  no model, so it does not prove the model will answer.
 - **A model on this machine**, served by [Ollama](https://ollama.com). The
   address defaults to `http://127.0.0.1:11434` and is yours to change; nothing
   leaves the machine if the server is on it.

@@ -90,18 +90,23 @@ function shellAnswering(read: { status: number; body: string }, write?: { status
   return asked;
 }
 
-const state = (o: { on: boolean; since: string | null; modelReady: boolean }): string =>
-  JSON.stringify(o);
+const state = (o: {
+  on: boolean;
+  since: string | null;
+  modelReady: boolean;
+  provider: "anthropic" | "openai" | "ollama" | "opencode-go" | null;
+}): string => JSON.stringify(o);
 
-const ON = state({ on: true, since: "2026-08-14T00:00:00.000Z", modelReady: true });
-const OFF = state({ on: false, since: null, modelReady: true });
-const NO_MODEL = state({ on: false, since: null, modelReady: false });
+const ON = state({ on: true, since: "2026-08-14T00:00:00.000Z", modelReady: true, provider: "openai" });
+const OFF = state({ on: false, since: null, modelReady: true, provider: "openai" });
+const GO_OFF = state({ on: false, since: null, modelReady: true, provider: "opencode-go" });
+const NO_MODEL = state({ on: false, since: null, modelReady: false, provider: null });
 const NOT_SERVED = JSON.stringify({ error: { code: "not_found", message: "no such route" } });
 
 let hostEl: HTMLDivElement;
 let root: Root;
 
-async function mount(): Promise<void> {
+async function mount(locale: "en" | "de" = "en"): Promise<void> {
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
@@ -112,7 +117,7 @@ async function mount(): Promise<void> {
   await act(async () => {
     root.render(h(
       NextIntlClientProvider,
-      { locale: "en", messages: messages as never, timeZone: "UTC" },
+      { locale, messages: (locale === "en" ? messages : de) as never, timeZone: "UTC" },
       h(DesktopAutoSuggest),
     ));
   });
@@ -147,6 +152,29 @@ describe("the automatic-suggestion row on the standalone door", () => {
     expect(asked.map((a) => `${a.method} ${a.url}`)).toEqual(["GET /consent", "GET /local/auto-suggest"]);
   });
 
+  it("shows the allowance disclosure before enabling Go background suggestions, but not for another provider", async () => {
+    shellAnswering({ status: 200, body: GO_OFF });
+    await mount();
+    expect(theSwitch()?.getAttribute("aria-checked")).toBe("false");
+    expect(text()).toContain(messages.desktopScreener.autoSuggestGoAllowance);
+
+    await act(() => root.unmount());
+    hostEl.remove();
+    const otherProvider = shellAnswering({ status: 200, body: OFF });
+    await mount();
+    expect(text()).not.toContain(messages.desktopScreener.autoSuggestGoAllowance);
+    expect(otherProvider.map((a) => `${a.method} ${a.url}`)).toEqual([
+      "GET /consent", "GET /local/auto-suggest",
+    ]);
+  });
+
+  it("renders the Go allowance disclosure in German", async () => {
+    shellAnswering({ status: 200, body: GO_OFF });
+    await mount("de");
+    expect(text()).toContain(de.desktopScreener.autoSuggestGoAllowance);
+    expect(de.desktopScreener.autoSuggestGoAllowance).not.toBe(messages.desktopScreener.autoSuggestGoAllowance);
+  });
+
   it("promises nothing while it is off", async () => {
     shellAnswering({ status: 200, body: OFF });
     await mount();
@@ -167,7 +195,7 @@ describe("the automatic-suggestion row on the standalone door", () => {
   it("says there is no model to run it with, and still lets the setting be armed", async () => {
     const asked = shellAnswering(
       { status: 200, body: NO_MODEL },
-      { status: 200, body: state({ on: true, since: "2026-08-14T00:00:00.000Z", modelReady: false }) },
+      { status: 200, body: state({ on: true, since: "2026-08-14T00:00:00.000Z", modelReady: false, provider: null }) },
     );
     await mount();
 
@@ -204,7 +232,7 @@ describe("the automatic-suggestion row on the standalone door", () => {
        text until the copy moved into `messages/*.json`, which is what kept this row in English
        on a German install. Both halves are still pinned — the arm, and the words it selects —
        and the words are read out of the shipped catalogue rather than restated here. */
-    const key = autoSuggestCopyKey({ on: false, since: null, modelReady: false });
+    const key = autoSuggestCopyKey({ on: false, since: null, modelReady: false, provider: null });
     expect(key).toBe("autoSuggestNoModel");
     const said = messages.desktopScreener[key];
     expect(said).toContain(`under ${desktopPaneLabel()}`);
@@ -217,9 +245,9 @@ describe("the automatic-suggestion row on the standalone door", () => {
        in the pane — the failure `desktop-messages.test.ts` catches for a whole namespace and
        nothing catches for one key. */
     const keys = [
-      autoSuggestCopyKey({ on: false, since: null, modelReady: false }),
-      autoSuggestCopyKey({ on: false, since: null, modelReady: true }),
-      autoSuggestCopyKey({ on: true, since: "2026-09-02T09:00:00.000Z", modelReady: true }),
+      autoSuggestCopyKey({ on: false, since: null, modelReady: false, provider: null }),
+      autoSuggestCopyKey({ on: false, since: null, modelReady: true, provider: "openai" }),
+      autoSuggestCopyKey({ on: true, since: "2026-09-02T09:00:00.000Z", modelReady: true, provider: "openai" }),
     ];
     expect(keys).toEqual(["autoSuggestNoModel", "autoSuggestOff", "autoSuggestOn"]);
     expect(new Set(keys).size, "two arms select the same sentence").toBe(3);

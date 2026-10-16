@@ -95,7 +95,7 @@ const hasBridge = text.includes("engine_request");
  * shell without the gate and must not carry it.
  */
 const MARKERS = [
-  "local/ai", "anthropic", "ollama", "Set up a model",
+  "local/ai", "anthropic", "ollama", "opencode", "Set up a model",
   /* The Ohbox-bar editor's own sentence — it has to be THIS string: the route path and the shared
    * editor's copy are compiled into every artifact that carries `AppShell`, so a marker taken from
    * either would be present everywhere and prove nothing. This sentence exists only in
