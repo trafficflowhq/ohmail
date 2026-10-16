@@ -281,6 +281,40 @@ describe("two hosted vendors, two keys, and they never cross", () => {
     expect(openaiCalls.some((c) => c.headers.authorization === `Bearer ${OPENAI_KEY}`)).toBe(true);
   });
 
+  /** The same go-back crossing with OpenCode Go as the third keyed vendor, both ways. */
+  it("NEVER sends the Go key to OpenAI, nor OpenAI's key to opencode.ai", async () => {
+    const GO_KEY = "fixture-go-key-ai-openai";
+    const goChat = (): Response => json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(A_VERDICT) } }],
+    });
+    const { calls, fetchImpl } = recorder([
+      [/^https:\/\/opencode\.ai\/console\/api\/v2\/config$/, () =>
+        json({ providers: { "opencode-go": { models: { "kimi-k3": {}, "glm-5.3-flash": {} } } } })],
+      [/^https:\/\/opencode\.ai\/inference\/go\/v1\/chat\/completions$/, goChat],
+      ...openaiOk(),
+    ]);
+    const ai = await make({ dataDir: dataDir(), fetchImpl });
+
+    await ai.save({
+      provider: "opencode-go",
+      opencodeGo: { apiKey: GO_KEY, classifyModel: "glm-5.3-flash", draftModel: "kimi-k3" },
+    } as Parameters<LocalAi["save"]>[0]);
+    await ai.classifier()!.classify(anInput("one"));
+    await ai.save({ provider: "openai", openai: { apiKey: OPENAI_KEY } });
+    await ai.classifier()!.classify(anInput("two"));
+    await ai.save({ provider: "opencode-go" } as Parameters<LocalAi["save"]>[0]);
+    await ai.classifier()!.classify(anInput("three"));
+
+    const goCalls = calls.filter((c) => c.url.startsWith("https://opencode.ai/"));
+    const openaiCalls = calls.filter((c) => c.url.includes("api.openai.com"));
+    expect(goCalls.filter((c) => c.url.endsWith("/chat/completions"))).toHaveLength(2);
+    expect(openaiCalls.length).toBeGreaterThan(0);
+    for (const c of goCalls) expect(JSON.stringify(c)).not.toContain(OPENAI_KEY);
+    for (const c of openaiCalls) expect(JSON.stringify(c)).not.toContain(GO_KEY);
+    expect(goCalls.every((c) => c.headers.authorization === `Bearer ${GO_KEY}`)).toBe(true);
+    expect(openaiCalls.some((c) => c.headers.authorization === `Bearer ${OPENAI_KEY}`)).toBe(true);
+  });
+
   /**
    * The same crossing, observed at rest rather than on the wire.
    *

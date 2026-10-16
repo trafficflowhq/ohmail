@@ -289,11 +289,27 @@ describe("OpenCode Go in the shared onboarding/settings provider form", () => {
     } as LocalAiStatus;
     const { element } = await render("en", status);
 
-    expect(element.textContent).toContain(en.aiProvider.verdictGoUntested);
+    // The key check passed and listed models: the next step is choosing them, not verifying again.
+    expect(element.textContent).toContain(en.aiProvider.goChooseModels);
+    expect(element.textContent).not.toContain(en.aiProvider.verdictGoUntested);
     expect(element.textContent).not.toContain(en.aiProvider.goConfigVerified);
+    expect(element.querySelector("#ai-classify")).toBeTruthy();
     const summary = rowLabelled(element, en.aiProvider.summaryLabel);
-    expect(summary?.textContent).toContain(en.aiProvider.summaryUntested);
+    expect(summary?.textContent).toContain(en.aiProvider.summaryGoChoose);
+    expect(summary?.textContent).not.toContain(en.aiProvider.summaryUntested);
     expect(summary?.textContent).not.toContain(en.aiProvider.summaryGoVerified);
+  });
+
+  it("still says not verified when no key check has run", async () => {
+    const status = {
+      ...goVerifiedStatus(),
+      available: false,
+      unavailableReason: "unverified",
+      probe: null,
+    } as LocalAiStatus;
+    const { element } = await render("de", status);
+    expect(element.textContent).toContain(de.aiProvider.verdictGoUntested);
+    expect(element.textContent).not.toContain(de.aiProvider.goChooseModels);
   });
 
   it("shows the German recipient and account-control disclosure and keeps Forget for an inactive Go key", async () => {
@@ -318,7 +334,7 @@ describe("OpenCode Go in the shared onboarding/settings provider form", () => {
   it.each([["en", en], ["de", de]] as const)(
     "keeps free and preview models on offer and labels them (%s)",
     async (locale, cat) => {
-      const models = ["kimi-k3", "hy4-preview", "step-5-preview-free", "cat-jam-free"];
+      const models = ["kimi-k3", "hy4-preview", "longcat-2.5-preview-free"];
       const { element } = await render(locale, goVerifiedStatus({ models }));
       const offered = (id: string) =>
         [...element.querySelectorAll<HTMLOptionElement>("#ai-classify option")].find((o) => o.value === id);
@@ -327,9 +343,9 @@ describe("OpenCode Go in the shared onboarding/settings provider form", () => {
 
       expect(offered("kimi-k3")?.textContent).toBe("kimi-k3");
       expect(offered("hy4-preview")?.textContent).toBe(`hy4-preview (${preview})`);
-      expect(offered("step-5-preview-free")?.textContent).toBe(`step-5-preview-free (${free}, ${preview})`);
-      expect(offered("cat-jam-free")?.textContent).toBe(`cat-jam-free (${free})`);
-      expect(offered("cat-jam-free")?.disabled).toBe(false);
+      expect(offered("longcat-2.5-preview-free")?.textContent)
+        .toBe(`longcat-2.5-preview-free (${free}, ${preview})`);
+      expect(offered("longcat-2.5-preview-free")?.disabled).toBe(false);
       // The tier note sits beside the account note, and says what the labels mean.
       expect(element.textContent).toContain(cat.aiProvider.goPrivacyBilling);
       expect(element.textContent).toContain(cat.aiProvider.goFreePreviewNote);

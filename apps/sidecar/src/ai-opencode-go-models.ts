@@ -24,8 +24,7 @@ export const OPENCODE_GO_MODEL_IDS = [
   "mimo-v2.6-flash",
   "mimo-v2.6-pro",
   "longcat-2.5-preview-free",
-  "step-5-preview-free",
-  "cat-jam-free",
+  // Never add a *-contributor model: OpenCode trains on what those are sent.
 ] as const;
 
 /** Free and preview tiers, read off the ID the way OpenCode names them. The user's choice; labelled. */

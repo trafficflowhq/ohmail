@@ -91,6 +91,12 @@ function goModelLabel(id: string, t: Copy): string {
   return tags.length === 0 ? id : `${id} (${tags.join(", ")})`;
 }
 
+/** Go's key check passed and listed models, and the two to use are not chosen yet. */
+function goAwaitsModels(status: LocalAiStatus): boolean {
+  return status.provider === "opencode-go" && status.unavailableReason === "unverified"
+    && status.probe?.ok === true && status.probe.models.length > 0;
+}
+
 /** An engine that predates the Go block omits it; read that as nothing stored. */
 const NO_GO_SETTINGS = { classifyModel: "", draftModel: "", hasKey: false } as const;
 
@@ -188,6 +194,7 @@ export function verdictOf(
     case "key_unreadable":
       return { state: "bad", headline: t("verdictCredential") };
     case "unverified":
+      if (goAwaitsModels(status)) return { state: "off", headline: t("goChooseModels"), ...stamped };
       return p === "opencode-go"
         ? { state: "off", headline: t("verdictGoUntested"), detail: t("verdictGoUntestedDetail") }
         : { state: "off", headline: t("verdictUntested"), detail: t("verdictUntestedDetail") };
@@ -297,6 +304,7 @@ export function summaryWord(status: LocalAiStatus, t: Copy): string {
   if (status.provider === "opencode-go" && status.available && status.probe?.ok) return t("summaryGoVerified");
   if (status.available) return t("summaryOn");
   if (status.unavailableReason === "key_absent") return t("summaryKey");
+  if (goAwaitsModels(status)) return t("summaryGoChoose");
   if (status.unavailableReason === "unverified") return t("summaryUntested");
   return t("summaryDown");
 }

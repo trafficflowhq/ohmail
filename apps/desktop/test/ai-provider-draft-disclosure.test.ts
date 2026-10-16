@@ -28,6 +28,12 @@ function constant(name: string): number {
   return Number(found);
 }
 
+/* @reads: apps/webapp/app/shell/InlineReply.tsx README.md README.ohmarchy.md */
+const INLINE_REPLY = readFileSync(
+  fileURLToPath(new URL("../../webapp/app/shell/InlineReply.tsx", import.meta.url)),
+  "utf8",
+);
+
 const THREAD = constant("MAX_THREAD_MESSAGES");
 const NOTES = constant("DEFAULT_KB_K");
 
@@ -63,5 +69,29 @@ describe("the provider form says what a draft sends", () => {
         "Ein Entwurf schickt zusätzlich Auszüge aus dem Thread und passende Notizen aus der Wissensdatenbank.",
       );
     }
+  });
+
+  /* The card under "Draft reply" is the one sentence on screen at the press. On an unmetered door
+     (the desktop, a self-hosted server) it is offerBodyUnmetered, and it must say what goes to the
+     model, and that no email is sent, rather than "nothing is sent". */
+  it("the draft card says what the press sends to the model, and that no email is sent", () => {
+    expect(INLINE_REPLY).toContain('t("offerBodyUnmetered")');
+    expect(en.draftReply.offerBodyUnmetered).toBe(
+      "Drafting sends this message, extracts from its thread and matching knowledge-base notes to the configured AI model. The draft lands in the editor; no email is sent.",
+    );
+    expect(de.draftReply.offerBodyUnmetered).toBe(
+      "Für den Entwurf gehen diese Nachricht, Auszüge aus ihrem Thread und passende Notizen aus der Wissensdatenbank an das eingerichtete KI-Modell. Der Entwurf landet im Editor; es wird keine E-Mail gesendet.",
+    );
+  });
+
+  it("both README faces list the same providers, OpenCode Go included", () => {
+    const section = (file: string): string => {
+      const text = readFileSync(fileURLToPath(new URL(`../../../${file}`, import.meta.url)), "utf8");
+      const start = text.indexOf("### Model providers and keys");
+      expect(start, file).toBeGreaterThanOrEqual(0);
+      return text.slice(start, text.indexOf("\n### ", start + 1));
+    };
+    expect(section("README.ohmarchy.md")).toBe(section("README.md"));
+    expect(section("README.md")).toContain("**Your OpenCode Go key**");
   });
 });
