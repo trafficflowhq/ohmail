@@ -163,13 +163,15 @@ registered.
 ## Screener suggestions and reply drafts (optional)
 
 Both are off until you configure a model, and nothing needs one: the Screener
-still holds first contact, rules still file mail, and search still works. On
-this stack the only provider wired today is Anthropic, under your own key —
-set `ANTHROPIC_API_KEY` in the app's environment and requests go to Anthropic
-billed to your account. `OPENAI_API_KEY` does nothing here; OpenAI and a local
-Ollama are options in the desktop app, not in this server stack.
-[README.md](./README.md#screener-suggestions-and-reply-drafts) has the full
-comparison.
+still holds first contact, rules still file mail, and search still works. Set
+`ANTHROPIC_API_KEY` in `settings.env` for Anthropic under your own key,
+or name another provider with `TF_AI_PROVIDER` — `openai`, `opencode-go` or
+`ollama` — beside its own variable: `OPENAI_API_KEY`, `OPENCODE_GO_API_KEY` or
+`OLLAMA_BASE_URL`. The file reaches the containers as written, so here these are
+the plain names, not the `OHMAIL_` ones the compose stack's `.env` uses. A model
+server on your network also needs `TF_AI_ALLOW_PRIVATE=1`. Requests go to the
+provider you name, billed to your account.
+[README.md](./README.md#screener-suggestions-and-reply-drafts) has the details.
 
 ## Your household
 

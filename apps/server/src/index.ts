@@ -2,6 +2,7 @@ import { setNoticeSink, noticeSinkFor, type Tx } from "@trafficflow/db";
 import { setupProdDatabase } from "@trafficflow/db/admin";
 import { makeOwnedDb, makeChangeWakeHub } from "@trafficflow/db/cloud";
 import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
+import { aiBootFields } from "@trafficflow/core/ai-provider-env";
 import { makeSendAdapter, sendConnections } from "@trafficflow/api";
 import {
   runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
@@ -59,6 +60,9 @@ async function main(): Promise<void> {
   // Postgres notices route through the hardened logger for the life of the process; without a
   // sink `@trafficflow/db` drops them, and a notice's prose can carry row values.
   setNoticeSink(noticeSinkFor(logger));
+  // Which model this server answers suggestions and drafts with, and whether its address is the
+  // default or one set in .env — the organizer logs the same line. Never the address.
+  logger.info("ai_provider_configured", aiBootFields(cfg.ai));
 
   logger.info("boot_migrating");
   const report = await setupProdDatabase(cfg.databaseUrl, {

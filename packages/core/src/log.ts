@@ -601,6 +601,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // CIDRs only, or the fixed "unset" sentence; `proxyPeerFrom` is a compile-time header NAME. Named
   // so because a generic `value` stays refused by design and `header` is a secret-name fragment.
   "effective", "proxyPeerFrom",
+  // THE SELF-HOST AI CHOICE (`ai_provider_configured`, server and organizer), added WITH its call
+  // sites. `endpoint` is the fixed word `default` or `custom` for the model's address, never the
+  // address; `metered` is the organizer's boolean, ENTITLEMENTS_URL set. `kind` is admitted above.
+  "endpoint", "metered",
 ] as const;
 
 /**

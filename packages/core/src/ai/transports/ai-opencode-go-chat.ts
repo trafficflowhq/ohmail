@@ -10,7 +10,7 @@ import type {
 } from "../../mail.js";
 import { probeOpenCodeGo } from "./ai-opencode-go.js";
 import {
-  fetchWithDeadline, type AiKeyTransportOptions, type AiTransport, type ProbeOutcome,
+  fetchWithDeadline, usageMeter, type AiKeyTransportOptions, type AiTransport, type ProbeOutcome,
 } from "./ai-transport.js";
 
 /** Fixed OpenCode Go Chat Completions destination; no user-configurable URL or provider fallback. */
@@ -107,25 +107,34 @@ export function opencodeGoTransport(opts: AiKeyTransportOptions): AiTransport {
     /* Each call is a self-contained prompt with its full context; no follow-up turn reuses it.
        Give that one-shot conversation an opaque Go session, never a mail/thread ID or content. */
     const session = `ohmail-${randomUUID()}`;
-    const response = await fetchWithDeadline(opts.fetchImpl, OPENCODE_GO_CHAT_URL, {
-      method: "POST",
-      headers: { ...headers, "x-opencode-session": session },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        temperature: 0,
-        messages: turns(system, payload),
-        response_format: responseFormat(name, schema),
-      }),
-      redirect: "error",
-    }, opts.timeoutMs);
-    if (!response.ok) throw new Error(`${what}: OpenCode Go answered ${response.status}`);
-
+    const meter = usageMeter(opts.onUsage, model);
     let envelope: unknown;
     try {
-      envelope = await response.json();
-    } catch {
-      throw new Error(`${what}: OpenCode Go returned an unreadable response`);
+      meter.attempt();
+      const response = await fetchWithDeadline(opts.fetchImpl, OPENCODE_GO_CHAT_URL, {
+        method: "POST",
+        headers: { ...headers, "x-opencode-session": session },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          temperature: 0,
+          messages: turns(system, payload),
+          response_format: responseFormat(name, schema),
+        }),
+        redirect: "error",
+      }, opts.timeoutMs);
+      meter.answered(response);
+      if (!response.ok) throw new Error(`${what}: OpenCode Go answered ${response.status}`);
+
+      try {
+        envelope = await response.json();
+      } catch {
+        throw new Error(`${what}: OpenCode Go returned an unreadable response`);
+      }
+      const used = isRecord(envelope) && isRecord(envelope.usage) ? envelope.usage : {};
+      meter.read({ model: isRecord(envelope) ? envelope.model : undefined, input: used.prompt_tokens, output: used.completion_tokens });
+    } finally {
+      meter.end();
     }
     const text = finalText(envelope, what);
     let parsed: unknown;

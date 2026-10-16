@@ -1,11 +1,14 @@
 import { hostname } from "node:os";
 import {
   keyProviderFromEnvOptional, kekFingerprintFromEnv, kekEnvIdentity,
-  makeAnthropicClient, assertAnthropicKey, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
+  makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
   callCeilingMs, msDeviceEnv, organizerEnvironment, resolveCloudInstallId,
   type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
   type KekEnvIdentity, type Logger, type AnthropicCallReport,
 } from "@trafficflow/core";
+import {
+  aiBootFields, aiProviderEnv, AiProviderEnvError, portsOf, transportFor, type AiProvider, type AiProviderEnv,
+} from "@trafficflow/core/ai-provider-env";
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
 import { pgTransportReason } from "@trafficflow/db/cloud";
 import { DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, type PostJson } from "@trafficflow/db/cloud";
@@ -366,6 +369,10 @@ export interface WorkerConfig {
    * body arms it beside a real entitlements port. Absent on a rules-only deployment.
    */
   aiUsage?: AiUsageRelay;
+  /** Which provider `loadConfig` armed the ports above with, or `null`; the boot line names it. */
+  aiProvider?: AiProvider | null;
+  /** Whether that provider's address is its default or one the operator set; never the address. */
+  aiEndpoint?: "default" | "custom" | null;
 
   // ── Observability ───────────────────────────────────────────────────────────────────
   /**
@@ -508,10 +515,13 @@ export class WorkerConfigError extends Error {
   readonly code = "TF_CONFIG_INVALID";
   /** The offending environment variable, e.g. `TF_SHARD_INDEX`. Never its value. */
   readonly configVar: string;
-  constructor(configVar: string, message: string) {
+  /** A fixed sentence naming the variable that fixes it, logged beside `configVar`; never a value. */
+  readonly remedy: string | null;
+  constructor(configVar: string, message: string, remedy: string | null = null) {
     super(message);
     this.name = "WorkerConfigError";
     this.configVar = configVar;
+    this.remedy = remedy;
   }
 }
 
@@ -837,6 +847,29 @@ function loadEntitlements(env: NodeJS.ProcessEnv): { url: string; secret: string
   return { url: url.origin, secret };
 }
 
+/** The AI block through the server's own reader, its refusals as this process's config errors. */
+function workerAiEnv(env: NodeJS.ProcessEnv): AiProviderEnv | null {
+  try {
+    return aiProviderEnv(env);
+  } catch (e) {
+    if (e instanceof AiProviderEnvError) throw new WorkerConfigError(e.configVar, e.message, e.remedy);
+    throw e;
+  }
+}
+
+/**
+ * THE MANAGED LOCK. A worker beside an entitlements program charges credits priced against the
+ * shipped Anthropic models, so it runs those or no AI at all: another provider, or another
+ * model, is a self-host choice and is refused here by name rather than run behind a credit gate.
+ */
+function assertMeteredAi(entitlements: { url: string } | null, ai: AiProviderEnv | null): void {
+  if (entitlements === null || ai === null) return;
+  const why = "ENTITLEMENTS_URL is set, so this worker meters AI and runs the shipped Anthropic models only";
+  if (ai.provider !== "anthropic") throw new WorkerConfigError("TF_AI_PROVIDER", `${why}: unset TF_AI_PROVIDER`);
+  if (ai.classifyModel !== null) throw new WorkerConfigError("TF_AI_CLASSIFY_MODEL", `${why}: unset TF_AI_CLASSIFY_MODEL`);
+  if (ai.draftModel !== null) throw new WorkerConfigError("TF_AI_DRAFT_MODEL", `${why}: unset TF_AI_DRAFT_MODEL`);
+}
+
 /**
  * `opts.log` is READ, not held: the composition roots rebuild their logger after this returns,
  * so the model client's `ai_call` lines go through whichever logger is current at the call.
@@ -880,9 +913,12 @@ export function loadConfig(
   const syncBlockGraceMs = syncBlockGraceMsFrom(env);
   const leaseUnavailableDetachMs = leaseUnavailableDetachMsFrom(env);
   assertGraceCoversItsRemedy({ syncBlockGraceMs, leaseUnavailableDetachMs, pollIntervalMs, rosterIntervalMs });
+  const entitlements = loadEntitlements(env);
+  const ai = workerAiEnv(env);
+  assertMeteredAi(entitlements, ai);
   return {
     databaseUrl: url,
-    entitlements: loadEntitlements(env),
+    entitlements,
     // BOOTSTRAP-ONLY. It pairs with TF_MAILBOX_ID for the one-shot env-creds seed and
     // scopes the single-mailbox reconcile backstop; it can NOT shrink the worker's roster.
     accountId: env.TF_ACCOUNT_ID,
@@ -973,7 +1009,24 @@ export function loadConfig(
     apiCron: apiCronFrom(env),
     healthDetailSecret: healthDetailSecretFrom(env),
     ...loadAttachmentStagingConfig(env),
-    ...loadAiPorts(env, opts.log),
+    aiProvider: ai?.provider ?? null,
+    aiEndpoint: aiBootFields(ai).endpoint ?? null,
+    ...loadAiPorts(ai, env, opts.log),
+  };
+}
+
+/**
+ * The organizer's `ai_provider_configured` line: the provider, whether its address is the default,
+ * and whether this worker meters. A managed worker without ENTITLEMENTS_URL boots unmetered with
+ * nothing else to say so, so the line states it either way, and a deploy reads it first.
+ */
+export function aiProviderLine(
+  config: Pick<WorkerConfig, "aiProvider" | "aiEndpoint" | "entitlements">,
+): { kind: AiProvider | "none"; endpoint?: "default" | "custom"; metered: boolean } {
+  return {
+    kind: config.aiProvider ?? "none",
+    ...(config.aiEndpoint ? { endpoint: config.aiEndpoint } : {}),
+    metered: config.entitlements != null,
   };
 }
 
@@ -1065,14 +1118,14 @@ function loadAttachmentStagingConfig(
 }
 
 /**
- * The AI block — all three ports, or none, from one variable. The three model calls are not
+ * The AI block — the ports, or none, from one choice (`aiProviderEnv`). The model calls are not
  * independently useful (classify without draft is a router that cannot answer, draft without classify
  * an assistant on a mailbox nobody sorted), the plan card sells "AI actions" as one allowance, and the
- * ledger meters them through one gate — so "which of the three is on" was never a deployment decision
+ * ledger meters them through one gate — so "which of them is on" was never a deployment decision
  * anybody should make by accident. A bad key is a REFUSAL TO BOOT, not a degradation: ABSENT is a
  * legitimate deployment (a preview, the desktop engine) and yields `{}`, while PRESENT BUT MALFORMED is
  * invisible — every classify would throw, the breaker would degrade to rules-only, and the deployment
- * would look healthy while selling an AI product that never runs. `assertAnthropicKey` names the variable.
+ * would look healthy while selling an AI product that never runs. The reader names the variable.
  */
 /**
  * The classifier's per-ATTEMPT deadline. Read here rather than inlined at the client so the claim
@@ -1134,31 +1187,38 @@ function makeAiUsageRelay(log?: () => Logger): AiUsageRelay {
 }
 
 function loadAiPorts(
+  ai: AiProviderEnv | null,
   env: NodeJS.ProcessEnv,
   log?: () => Logger,
 ): Pick<WorkerConfig, "classifier" | "drafter" | "proposer" | "aiUsage"> {
-  const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
-  if (raw === "") return {};
+  if (ai === null) return {};
   const aiUsage = makeAiUsageRelay(log);
+  // A hung model call blocks the worker's SERIAL cycle queue, and therefore every other
+  // mailbox in this process — so the per-attempt deadline here is a liveness property of the
+  // whole worker, not a per-request nicety. Two retries at 30 s bounds one classify at ~90 s
+  // plus backoff, and the circuit opens after two of those.
+  const timeoutMs = optInt(env, "TF_AI_TIMEOUT_MS", AI_CLASSIFY_TIMEOUT_MS_DEFAULT);
+  if (ai.provider !== "anthropic") {
+    // A self-hosted operator's model: its desktop transport as two ports, and no proposer —
+    // `unconfiguredProposer` runs the cron cleanly, as on the desktop. One call, no retry.
+    const { classifier, drafter } = portsOf(transportFor(ai, { fetchImpl: fetch, timeoutMs, onUsage: aiUsage.onUsage }));
+    return { classifier, drafter, aiUsage };
+  }
   const client = makeAnthropicClient({
-    apiKey: assertAnthropicKey(raw),
-    baseUrl: env.ANTHROPIC_BASE_URL?.trim() || undefined,
+    apiKey: ai.apiKey,
     // The base URL decides where the API key and the reader's mail go, so it is gated by the
-    // repository's address rules inside `makeAnthropicClient` — a wrong value fails this boot.
-    // `=== "1"` exactly, like `TF_PUSH_ALLOW_PRIVATE`: "true"/"yes" must not arm a relaxation.
-    allowPrivateBaseUrl: env.TF_AI_ALLOW_PRIVATE?.trim() === "1",
-    // A hung model call blocks the worker's SERIAL cycle queue, and therefore every other
-    // mailbox in this process — so the per-attempt deadline here is a liveness property of the
-    // whole worker, not a per-request nicety. Two retries at 30 s bounds one classify at ~90 s
-    // plus backoff, and the circuit opens after two of those.
-    timeoutMs: optInt(env, "TF_AI_TIMEOUT_MS", AI_CLASSIFY_TIMEOUT_MS_DEFAULT),
+    // repository's address rules — in the reader and again inside `makeAnthropicClient`; a wrong
+    // value fails this boot. `TF_AI_ALLOW_PRIVATE` is `=== "1"` exactly, like the push switch.
+    baseUrl: ai.baseUrl ?? undefined,
+    allowPrivateBaseUrl: ai.allowPrivate,
+    timeoutMs,
     // `onUsage`, NOT `log`: the relay writes the `ai_call` line and says which calls no per-call
     // hook attributed. Usage itself leaves by those hooks, on a release or through the buffer.
     onUsage: aiUsage.onUsage,
   });
   return {
-    classifier: makeHaikuClassifier({ client }),
-    drafter: makeSonnetDrafter(client),
+    classifier: makeHaikuClassifier({ client, ...(ai.classifyModel ? { model: ai.classifyModel } : {}) }),
+    drafter: makeSonnetDrafter(client, ai.draftModel ? { model: ai.draftModel } : {}),
     proposer: makeOpusProposer(client),
     aiUsage,
   };

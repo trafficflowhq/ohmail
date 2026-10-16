@@ -805,6 +805,21 @@ export function publicSignupCap(env: NodeJS.ProcessEnv): number | null {
 }
 
 /**
+ * THE PROVIDER CHOICE IS A SELF-HOST SETTING, AND THIS HOST NEVER TAKES IT. Managed AI runs on
+ * Anthropic within the plan's credits; `TF_AI_PROVIDER` here, whatever it says, is a self-host
+ * variable deployed to the wrong place — refused like a leftover STRIPE_* variable rather than
+ * ignored. This host never reads the self-host resolver. The message names the variable only.
+ */
+export function assertNoAiProviderChoice(env: NodeJS.ProcessEnv): void {
+  if (env.TF_AI_PROVIDER !== undefined) {
+    throw new Error(
+      "TF_AI_PROVIDER is set on this host, which runs managed AI on Anthropic within the plan's " +
+        "credits. Remove it — the provider choice belongs to a self-hosted server",
+    );
+  }
+}
+
+/**
  * Build the host configuration from an environment.
  *
  * A broken KEK is captured (poisoned provider + `kekError`) rather than thrown, so the
@@ -866,8 +881,9 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
   const staff = loadStaffDbConfig(env);
 
   // A leftover STRIPE_* variable is a cold-start throw rather than decoration: there is no
-  // payments code here to read it (see assertNoStaleStripeEnv).
+  // payments code here to read it (see assertNoStaleStripeEnv). TF_AI_PROVIDER likewise.
   assertNoStaleStripeEnv(env);
+  assertNoAiProviderChoice(env);
   const entitlements = loadEntitlementsConfig(env);
   return {
     databaseUrlPooled,

@@ -8,8 +8,8 @@ import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
 } from "../../mail.js";
 import {
-  fetchWithDeadline, failureOf, shortDetail,
-  type AiTransport, type ProbeOutcome,
+  fetchWithDeadline, failureOf, shortDetail, usageMeter,
+  type AiTransport, type ProbeOutcome, type TransportUsage,
 } from "./ai-transport.js";
 // The ONE matcher this question has. The desktop's provider form imports the same module to
 // decide which name its picker shows; a copy here is how the picker and the verdict disagree.
@@ -54,6 +54,8 @@ export interface OllamaTransportOptions {
   draftModel: string;
   fetchImpl: typeof fetch;
   timeoutMs: number;
+  /** Each call's report, for a host that logs model calls (`usageMeter`). */
+  onUsage?: TransportUsage;
 }
 
 export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
@@ -65,33 +67,51 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
     what: string,
     maxTokens: number,
   ): Promise<unknown> => {
-    const res = await fetchWithDeadline(opts.fetchImpl, `${opts.baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        // The same schema the hosted path constrains its answer to.
-        format: schema,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: JSON.stringify(payload) },
-        ],
-        options: {
-          // Deterministic on purpose: routing the same message twice must not produce two
-          // different folders, and a draft is reviewed before it is sent, so novelty buys nothing.
-          temperature: 0,
-          // The ceiling. See OLLAMA_MAX_TOKENS — without it a model that never stops is bounded
-          // only by the client deadline, which is a hang rather than a refusal.
-          num_predict: maxTokens,
-        },
-      }),
-      redirect: "error",
-    }, opts.timeoutMs);
-    if (!res.ok) {
-      throw new Error(`${what}: the local model server answered ${res.status}`);
+    const meter = usageMeter(opts.onUsage, model);
+    try {
+      meter.attempt();
+      const res = await fetchWithDeadline(opts.fetchImpl, `${opts.baseUrl}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          stream: false,
+          // The same schema the hosted path constrains its answer to.
+          format: schema,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: JSON.stringify(payload) },
+          ],
+          options: {
+            // Deterministic on purpose: routing the same message twice must not produce two
+            // different folders, and a draft is reviewed before it is sent, so novelty buys nothing.
+            temperature: 0,
+            // The ceiling. See OLLAMA_MAX_TOKENS — without it a model that never stops is bounded
+            // only by the client deadline, which is a hang rather than a refusal.
+            num_predict: maxTokens,
+          },
+        }),
+        redirect: "error",
+      }, opts.timeoutMs);
+      meter.answered(res);
+      if (!res.ok) {
+        throw new Error(`${what}: the local model server answered ${res.status}`);
+      }
+      const body = (await res.json()) as {
+        message?: { content?: unknown }; done_reason?: unknown; model?: unknown;
+        prompt_eval_count?: unknown; eval_count?: unknown;
+      };
+      meter.read({ model: body.model, input: body.prompt_eval_count, output: body.eval_count });
+      return parsedAnswer(body, what, maxTokens);
+    } finally {
+      meter.end();
     }
-    const body = (await res.json()) as { message?: { content?: unknown }; done_reason?: unknown };
+  };
+
+  /** The model's JSON, or the failure `done_reason` names — see the comments inside. */
+  const parsedAnswer = (
+    body: { message?: { content?: unknown }; done_reason?: unknown }, what: string, maxTokens: number,
+  ): unknown => {
     const text = body.message?.content;
     if (typeof text !== "string") {
       throw new Error(`${what}: the local model server returned no message content`);

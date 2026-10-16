@@ -425,9 +425,10 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
  * customer's mail. An explicit port is admitted: an ordinary shape, not an address rule.
  *
  * `assertPublicHttpUrlShape` is the shared gate's synchronous half, not a second copy. It
- * resolves nothing, so a NAME's addresses are unchecked here and it returns no pin.
+ * resolves nothing, so a NAME's addresses are unchecked here and it returns no pin. `variable` is
+ * the name the refusal gives: a self-hosted model server's address takes the same gate.
  */
-export function assertModelBaseUrl(baseUrl: string, allowPrivate: boolean): string {
+export function assertModelBaseUrl(baseUrl: string, allowPrivate: boolean, variable = "ANTHROPIC_BASE_URL"): string {
   try {
     assertPublicHttpUrlShape(baseUrl, {
       httpsOnly: !allowPrivate, allowExplicitPort: true, allowPrivateAddress: allowPrivate,
@@ -435,7 +436,7 @@ export function assertModelBaseUrl(baseUrl: string, allowPrivate: boolean): stri
   } catch (e) {
     // Re-thrown naming the variable an operator can act on; the gate's own message says nothing
     // about where the value came from, and "not a permitted url" alone is unactionable at boot.
-    throw new Error(`ANTHROPIC_BASE_URL is ${(e as Error).message}`);
+    throw new Error(`${variable} is ${(e as Error).message}`);
   }
   return baseUrl;
 }

@@ -125,6 +125,7 @@ export default defineConfig({
       { find: "@trafficflow/core/outbound-text", replacement: r("./packages/core/src/outbound-text.ts") },
       { find: "@trafficflow/core/model-name", replacement: r("./packages/core/src/model-name.ts") },
       { find: "@trafficflow/core/ai-transports", replacement: r("./packages/core/src/ai/transports/index.ts") },
+      { find: "@trafficflow/core/ai-provider-env", replacement: r("./packages/core/src/ai/transports/host.ts") },
       { find: "@trafficflow/core/transport-frame", replacement: r("./packages/core/src/transport-frame.ts") },
       { find: "@trafficflow/core/diagnostics", replacement: r("./packages/core/src/diagnostics/index.ts") },
       // The SSRF gate + its pin. Node-only (node:http), on its own subpath so nothing that lacks

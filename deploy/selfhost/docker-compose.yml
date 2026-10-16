@@ -183,7 +183,22 @@ services:
       MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
       # Optional. Empty means: AI features answer as unconfigured, the add-mailbox probe
       # refuses private-network targets, no alert webhook is armed, no Microsoft 365 OAuth.
+      # The AI block is the organizer's too, variable for variable: the api answers a pressed
+      # suggestion and a draft, the organizer screens and drafts on its own, and one model
+      # choice on one service only is a stack whose halves disagree. .env.example explains each.
+      # Compose fills these from the shell before .env, and the four vendor names are the ones
+      # SDKs and gateways read: a shell exporting one would send the mail where it points. So
+      # .env sets those four as OHMAIL_*; ANTHROPIC_API_KEY keeps the name it always had.
+      TF_AI_PROVIDER: ${TF_AI_PROVIDER:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${OHMAIL_ANTHROPIC_BASE_URL:-}
+      OPENAI_API_KEY: ${OHMAIL_OPENAI_API_KEY:-}
+      OPENCODE_GO_API_KEY: ${OHMAIL_OPENCODE_GO_API_KEY:-}
+      OLLAMA_BASE_URL: ${OHMAIL_OLLAMA_BASE_URL:-}
+      TF_AI_CLASSIFY_MODEL: ${TF_AI_CLASSIFY_MODEL:-}
+      TF_AI_DRAFT_MODEL: ${TF_AI_DRAFT_MODEL:-}
+      TF_AI_ALLOW_PRIVATE: ${TF_AI_ALLOW_PRIVATE:-}
+      TF_AI_TIMEOUT_MS: ${TF_AI_TIMEOUT_MS:-}
       TF_PROBE_ALLOW_PRIVATE: ${TF_PROBE_ALLOW_PRIVATE:-}
       # A UnifiedPush distributor on your own LAN (an `ntfy` beside this server). Empty means
       # the endpoint a phone registers must be https and must resolve to a public address —
@@ -309,7 +324,17 @@ services:
       S3_ACCESS_KEY_ID: ${RUSTFS_ROOT_USER:-${MINIO_ROOT_USER:-ohmail-staging}}
       S3_SECRET_ACCESS_KEY: ${RUSTFS_ROOT_PASSWORD:-${MINIO_ROOT_PASSWORD:-}}
       S3_BUCKET: ${S3_BUCKET:-ohmail-staging}
+      # THE SAME AI BLOCK AS THE api, variable for variable and from the same names — see there.
+      TF_AI_PROVIDER: ${TF_AI_PROVIDER:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${OHMAIL_ANTHROPIC_BASE_URL:-}
+      OPENAI_API_KEY: ${OHMAIL_OPENAI_API_KEY:-}
+      OPENCODE_GO_API_KEY: ${OHMAIL_OPENCODE_GO_API_KEY:-}
+      OLLAMA_BASE_URL: ${OHMAIL_OLLAMA_BASE_URL:-}
+      TF_AI_CLASSIFY_MODEL: ${TF_AI_CLASSIFY_MODEL:-}
+      TF_AI_DRAFT_MODEL: ${TF_AI_DRAFT_MODEL:-}
+      TF_AI_ALLOW_PRIVATE: ${TF_AI_ALLOW_PRIVATE:-}
+      TF_AI_TIMEOUT_MS: ${TF_AI_TIMEOUT_MS:-}
       # A mail server on your own network. THE SAME VALUE THE api GETS, and for the same reason the
       # push allowance below is set on both: the api checks this host when you ADD the mailbox and
       # the organizer checks it again every time it DIALS, so a value on only one of them is a

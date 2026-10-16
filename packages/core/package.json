@@ -166,6 +166,12 @@
       "node": "./dist/ai/transports/index.js",
       "default": "./src/ai/transports/index.ts"
     },
+    "./ai-provider-env": {
+      "types": "./src/ai/transports/host.ts",
+      "ohmail-source": "./src/ai/transports/host.ts",
+      "node": "./dist/ai/transports/host.js",
+      "default": "./src/ai/transports/host.ts"
+    },
     "./transport-frame": {
       "types": "./src/transport-frame.ts",
       "ohmail-source": "./src/transport-frame.ts",

@@ -182,27 +182,60 @@ search still works. That is the floor, not a degraded mode — what changes is
 that the suggestion and the draft are plainly unavailable rather than quietly
 broken.
 
-**There are two run-it-yourself surfaces and they do not offer the same
-choices today.** They are listed apart rather than together because a single
-sentence covering both would be wrong about one of them:
+Both run-it-yourself surfaces offer the same four providers. The desktop app
+asks in Settings; the server stack reads `.env`:
 
 | Surface | Anthropic | OpenAI | OpenCode Go | Local (Ollama) |
 | --- | --- | --- | --- | --- |
 | **Desktop app**, opening your mail server directly | yes | yes | yes | yes |
-| **This server stack** (`docker compose`) | yes | not yet | not yet | not yet |
+| **This server stack** (`docker compose`) | yes | yes | yes | yes |
 
 ### On this server stack
 
-One value in `.env`:
+`TF_AI_PROVIDER` in `.env` picks the provider, and each takes its own variable:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-…
+TF_AI_PROVIDER=anthropic     # with ANTHROPIC_API_KEY=sk-ant-…
+TF_AI_PROVIDER=openai        # with OHMAIL_OPENAI_API_KEY
+TF_AI_PROVIDER=opencode-go   # with OHMAIL_OPENCODE_GO_API_KEY, TF_AI_CLASSIFY_MODEL and TF_AI_DRAFT_MODEL
+TF_AI_PROVIDER=ollama        # with OHMAIL_OLLAMA_BASE_URL and TF_AI_ALLOW_PRIVATE=1
 ```
 
-Requests go to Anthropic under your own key, billed to your account. Leave it
-unset and the AI surfaces answer as unconfigured. **OpenAI, OpenCode Go and a
-local Ollama are not wired into this stack yet** — the desktop app has them,
-this one does not, and setting an `OPENAI_API_KEY` here does nothing.
+An install that sets only `ANTHROPIC_API_KEY` runs on Anthropic, as before.
+Requests go to the provider you name under your own key, billed to your
+account; for Ollama they go to the address you give, and a model tag Ollama
+forwards itself (its `:cloud` models) goes on to ollama.com. Leave it all unset
+and the AI surfaces answer as unconfigured.
+
+- **The `OHMAIL_` names.** Compose reads a variable from the shell you run it in
+  before `.env`, and `OPENAI_API_KEY`, `OLLAMA_BASE_URL` and their like are what
+  other tools on the same machine read. So `.env` sets those four as
+  `OHMAIL_OPENAI_API_KEY`, `OHMAIL_OPENCODE_GO_API_KEY`, `OHMAIL_OLLAMA_BASE_URL`
+  and `OHMAIL_ANTHROPIC_BASE_URL`, and the containers see the plain names: a
+  shell that exports one for another tool changes nothing here.
+  `ANTHROPIC_API_KEY` keeps its name, and a shell value of it reaches the stack
+  as it always has.
+- **The models.** `TF_AI_CLASSIFY_MODEL` answers suggestions and
+  `TF_AI_DRAFT_MODEL` writes drafts. Unset, each provider takes this app's
+  defaults; OpenCode Go has none and needs both, from the model ids the app can
+  drive (the server names them if a value is not one). Free and preview models
+  are yours to choose; their upstream data terms can differ from the paid
+  models', and ohmail cannot check them.
+- **Ollama** has no default address: inside a container `127.0.0.1` is the
+  container itself. Give the address the `api` and `organizer` services reach it
+  at — a service on this stack's network, or an IP address — and set
+  `TF_AI_ALLOW_PRIVATE=1`. Without it a model address must be `https` and not
+  written as a private or loopback IP; names are not looked up, so the address
+  you write is what decides where your mail goes. `localhost` and names under
+  `.local` or `.internal` are refused. A slow model holds the organizer's mail
+  cycle while it answers; `TF_AI_TIMEOUT_MS` bounds one call.
+- **Workflow proposals** need Anthropic, as in the desktop app: with another
+  provider there are none.
+
+Every one of these variables reaches both the `api` and the `organizer`
+service; the compose file passes them and `.env.example` explains each. Both
+log `ai_provider_configured` at boot: the provider, and whether its address is
+the default or one you set, never the address.
 
 ### In the desktop app
 

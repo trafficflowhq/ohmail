@@ -1,5 +1,5 @@
 import type {
-  ClassifierInput, ClassifierResult, DraftInput, DraftResult,
+  AnthropicCallReport, ClassifierInput, ClassifierResult, DraftInput, DraftResult,
 } from "../../mail.js";
 
 /**
@@ -76,6 +76,47 @@ export interface AiKeyTransportOptions {
   draftModel: string;
   fetchImpl: typeof fetch;
   timeoutMs: number;
+  /** Each call's report, for a host that logs model calls ({@link usageMeter}). */
+  onUsage?: TransportUsage;
+}
+
+/** Where a host hears about each model call: the hosted client's report shape, one `ai_call` line. */
+export type TransportUsage = (report: AnthropicCallReport) => void;
+
+/**
+ * ONE CALL'S USAGE, counted while it runs and reported once at the end, success or failure, in
+ * the hosted client's shape so a host's `ai_call` line reads the same off any provider. The
+ * request id and the cost stay null: only Anthropic's own client knows either. A reporter that
+ * throws is not allowed to become the call's outcome.
+ */
+export function usageMeter(onUsage: TransportUsage | undefined, requested: string) {
+  const startedAt = Date.now();
+  let attempts = 0;
+  let status: number | null = null;
+  let ok = false;
+  let model = requested;
+  let inputTokens: number | null = null;
+  let outputTokens: number | null = null;
+  const count = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    attempt(): void { attempts++; },
+    answered(res: Response): void { status = res.status; ok = res.ok; },
+    read(o: { model?: unknown; input?: unknown; output?: unknown }): void {
+      if (typeof o.model === "string" && o.model !== "") model = o.model;
+      inputTokens = count(o.input);
+      outputTokens = count(o.output);
+    },
+    end(): void {
+      if (!onUsage) return;
+      try {
+        onUsage({
+          model, ok, status, latencyMs: Date.now() - startedAt, attempts: Math.max(attempts, 1),
+          requestId: null, inputTokens, outputTokens, cacheReadTokens: null, cacheWriteTokens: null,
+          thinkingTokens: null, stopReason: null, costMicroUsd: null,
+        });
+      } catch { /* the call's outcome is the call's */ }
+    },
+  };
 }
 
 /**

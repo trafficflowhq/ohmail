@@ -8,7 +8,7 @@ import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult, ThinkingOff,
 } from "../../mail.js";
 import {
-  fetchWithDeadline, probeKeyedCatalogue,
+  fetchWithDeadline, probeKeyedCatalogue, usageMeter,
   type AiKeyTransportOptions, type AiTransport, type ProbeOutcome,
 } from "./ai-transport.js";
 
@@ -100,39 +100,52 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
    * its refusal — an unrelated 400 stays a 400 and is not retried.
    */
   const call = async (body: Record<string, unknown>, what: string): Promise<unknown> => {
-    const send = async (payload: Record<string, unknown>): Promise<Response> =>
-      fetchWithDeadline(opts.fetchImpl, `${ANTHROPIC_BASE}/v1/messages`, {
+    const meter = usageMeter(opts.onUsage, String(body.model));
+    const send = async (payload: Record<string, unknown>): Promise<Response> => {
+      meter.attempt();
+      const res = await fetchWithDeadline(opts.fetchImpl, `${ANTHROPIC_BASE}/v1/messages`, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
         redirect: "error",
       }, opts.timeoutMs);
+      meter.answered(res);
+      return res;
+    };
 
-    let res = await send(body);
-    if (res.status === 400 && "thinking" in body) {
-      const refusal = await res.text();
-      if (!refusal.includes("thinking")) {
-        throw new Error(`${what}: the model refused the request (400)`);
-      }
-      const { thinking: _dropped, ...withoutThinking } = body;
-      res = await send(withoutThinking);
-    }
-    if (!res.ok) {
-      // The status only. An error body from this endpoint quotes the request that produced it,
-      // and this request carries an API key header — so it is read for the settings surface at
-      // verification time and never on this path.
-      throw new Error(`${what}: the model endpoint answered ${res.status}`);
-    }
-    const json = (await res.json()) as { content?: unknown; stop_reason?: unknown; stop_details?: unknown };
-    // A refusal or a cut-off answer is the model ANSWERING for this one message, read before the
-    // content: thrown as `ModelDeclinedError`, never as the malformed reply a fault would be.
-    const declined = declineOf(json.stop_reason, json.stop_details);
-    if (declined) throw declined;
-    const text = extractJsonText(json.content, what);
     try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      throw new Error(`${what}: the model's response was not valid JSON`);
+      let res = await send(body);
+      if (res.status === 400 && "thinking" in body) {
+        const refusal = await res.text();
+        if (!refusal.includes("thinking")) {
+          throw new Error(`${what}: the model refused the request (400)`);
+        }
+        const { thinking: _dropped, ...withoutThinking } = body;
+        res = await send(withoutThinking);
+      }
+      if (!res.ok) {
+        // The status only. An error body from this endpoint quotes the request that produced it,
+        // and this request carries an API key header — so it is read for the settings surface at
+        // verification time and never on this path.
+        throw new Error(`${what}: the model endpoint answered ${res.status}`);
+      }
+      const json = (await res.json()) as {
+        content?: unknown; stop_reason?: unknown; stop_details?: unknown; model?: unknown;
+        usage?: { input_tokens?: unknown; output_tokens?: unknown };
+      };
+      meter.read({ model: json.model, input: json.usage?.input_tokens, output: json.usage?.output_tokens });
+      // A refusal or a cut-off answer is the model ANSWERING for this one message, read before the
+      // content: thrown as `ModelDeclinedError`, never as the malformed reply a fault would be.
+      const declined = declineOf(json.stop_reason, json.stop_details);
+      if (declined) throw declined;
+      const text = extractJsonText(json.content, what);
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        throw new Error(`${what}: the model's response was not valid JSON`);
+      }
+    } finally {
+      meter.end();
     }
   };
 

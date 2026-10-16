@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import {
-  keyProviderFromEnv, kekEnvIdentity, assertAnthropicKey, msDeviceEnv,
+  keyProviderFromEnv, kekEnvIdentity, msDeviceEnv,
   type KeyProvider, type KekEnvIdentity, type MicrosoftDeviceClient,
 } from "@trafficflow/core";
+import { aiProviderEnv, type AiProviderEnv } from "@trafficflow/core/ai-provider-env";
 import { transactionPoolerReason, providerFamily } from "@trafficflow/db";
 import { pgTransportReason } from "@trafficflow/db/cloud";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
@@ -179,7 +180,10 @@ export interface ServerConfig {
   sse: SseConfig;
   smtp: SmtpConfig | null;
   storage: StorageConfig | null;
-  anthropicApiKey: string | null;
+  /** The operator's model (`aiProviderEnv`), or `null` for rules alone. */
+  ai: AiProviderEnv | null;
+  /** `TF_AI_TIMEOUT_MS`, or `null` for the per-call defaults in `deps.ts`. */
+  aiTimeoutMs: number | null;
   alerts: { secret: string; webhookUrl: string | null } | null;
   msOAuth: MsOAuthBootstrap;
   /**
@@ -562,7 +566,12 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     kek = null;
   }
 
-  const anthropicRaw = trimmed(env, "ANTHROPIC_API_KEY");
+  // The worker's rule for the same variable (`optInt`): a non-negative integer, never echoed.
+  const aiTimeoutRaw = trimmed(env, "TF_AI_TIMEOUT_MS");
+  const aiTimeoutMs = aiTimeoutRaw === "" ? null : Number(aiTimeoutRaw);
+  if (aiTimeoutMs !== null && (!Number.isInteger(aiTimeoutMs) || aiTimeoutMs < 0)) {
+    throw new Error("TF_AI_TIMEOUT_MS must be a non-negative integer of milliseconds");
+  }
 
   const alertSecret = trimmed(env, "TF_ALERT_SECRET");
 
@@ -585,9 +594,12 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     sse: SELF_HOST_SSE,
     smtp: loadSmtpConfig(env),
     storage: loadStorageConfig(env, origin),
-    // Present ⇒ shaped like an Anthropic key or the boot refuses (the mistyped key would
-    // otherwise present as a healthy host whose every draft says "try again later").
-    anthropicApiKey: anthropicRaw === "" ? null : assertAnthropicKey(anthropicRaw),
+    // The worker's own reader, so the two processes take one spelling of one choice. A key that
+    // is not shaped like its vendor's, or a model server it may not reach, refuses the boot here,
+    // naming the variables (the mistyped key would otherwise present as a healthy host whose
+    // every draft says "try again later"). Only ANTHROPIC_API_KEY is the Anthropic branch as before.
+    ai: aiProviderEnv(env),
+    aiTimeoutMs,
     // The managed host's exact grammar: a short secret arms NOTHING (an endpoint whose
     // authentication is four characters is worse than no endpoint), and absence means the two
     // /internal/alerts routes answer 404.

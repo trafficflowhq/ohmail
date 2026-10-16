@@ -48,7 +48,7 @@ import {
   type MailboxAdapter,
 } from "@trafficflow/core/adapters/imap";
 import {
-  loadConfig, keyProviderFromKekEnv, selectionOf, instanceIdFrom, WorkerConfigError,
+  aiProviderLine, loadConfig, keyProviderFromKekEnv, selectionOf, instanceIdFrom, WorkerConfigError,
   DEFAULT_MAX_MAILBOXES, DEFAULT_SHARDS, DEFAULT_ROSTER_INTERVAL_MS,
   DEFAULT_LOCK_HEARTBEAT_MS, DEFAULT_MAILBOX_RETRY_MS, DEFAULT_MAX_SYNC_FAILURES,
   DEFAULT_ALERT_INTERVAL_MS, DEFAULT_SYNC_BLOCK_GRACE_MS,
@@ -6250,6 +6250,9 @@ export async function runWorkerCli(): Promise<void> {
         service: "worker",
         fields: { instanceId: config.instanceId ?? instanceIdFrom(), environment: config.environment },
       });
+      // Which model this organizer runs on, and whether it meters — the line an operator, and a
+      // managed deploy, reads first.
+      cliLog.info("ai_provider_configured", aiProviderLine(config));
 
       // Light the notice channel, once, and lazily. `packages/db` drops notices until a host installs
       // a sink, so without this line the drain is silent rather than structured — safer than the
@@ -6287,7 +6290,9 @@ export async function runWorkerCli(): Promise<void> {
       // a key we chose rather than a string a driver composed.
       cliLog.error("worker_start_failed", {
         err,
-        ...(err instanceof WorkerConfigError ? { configVar: err.configVar } : {}),
+        ...(err instanceof WorkerConfigError
+          ? { configVar: err.configVar, ...(err.remedy ? { reason: err.remedy } : {}) }
+          : {}),
       });
       flushExit(1);
     }

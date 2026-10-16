@@ -8,7 +8,7 @@ import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
 } from "../../mail.js";
 import {
-  fetchWithDeadline, probeKeyedCatalogue,
+  fetchWithDeadline, probeKeyedCatalogue, usageMeter,
   type AiKeyTransportOptions, type AiTransport, type ProbeOutcome,
 } from "./ai-transport.js";
 
@@ -116,36 +116,47 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
    * the other, and two conditional retries would be three billable requests for one answer.
    */
   const call = async (body: Record<string, unknown>, what: string): Promise<unknown> => {
-    const send = async (payload: Record<string, unknown>): Promise<Response> =>
-      fetchWithDeadline(opts.fetchImpl, `${OPENAI_BASE}/v1/chat/completions`, {
+    const meter = usageMeter(opts.onUsage, String(body.model));
+    const send = async (payload: Record<string, unknown>): Promise<Response> => {
+      meter.attempt();
+      const res = await fetchWithDeadline(opts.fetchImpl, `${OPENAI_BASE}/v1/chat/completions`, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
         redirect: "error",
       }, opts.timeoutMs);
+      meter.answered(res);
+      return res;
+    };
 
-    let res = await send(body);
-    if (res.status === 400) {
-      const refusal = await res.text();
-      const budgets = refusal.includes("max_tokens") || refusal.includes("max_completion_tokens");
-      const temp = refusal.includes("temperature");
-      if (!budgets && !temp) {
-        throw new Error(`${what}: the model refused the request (400)`);
-      }
-      const { max_tokens: budget, temperature: _dropped, ...rest } = body;
-      res = await send({ ...rest, max_completion_tokens: budget });
-    }
-    if (!res.ok) {
-      // The status only. An error body from this endpoint quotes the request that produced it,
-      // and this request carries an Authorization header — so it is read for the settings surface
-      // at verification time and never on this path.
-      throw new Error(`${what}: the model endpoint answered ${res.status}`);
-    }
-    const text = extractJsonText(await res.json(), what);
     try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      throw new Error(`${what}: the model's response was not valid JSON`);
+      let res = await send(body);
+      if (res.status === 400) {
+        const refusal = await res.text();
+        const budgets = refusal.includes("max_tokens") || refusal.includes("max_completion_tokens");
+        const temp = refusal.includes("temperature");
+        if (!budgets && !temp) {
+          throw new Error(`${what}: the model refused the request (400)`);
+        }
+        const { max_tokens: budget, temperature: _dropped, ...rest } = body;
+        res = await send({ ...rest, max_completion_tokens: budget });
+      }
+      if (!res.ok) {
+        // The status only. An error body from this endpoint quotes the request that produced it,
+        // and this request carries an Authorization header — so it is read for the settings surface
+        // at verification time and never on this path.
+        throw new Error(`${what}: the model endpoint answered ${res.status}`);
+      }
+      const json = (await res.json()) as { model?: unknown; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } };
+      meter.read({ model: json.model, input: json.usage?.prompt_tokens, output: json.usage?.completion_tokens });
+      const text = extractJsonText(json, what);
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        throw new Error(`${what}: the model's response was not valid JSON`);
+      }
+    } finally {
+      meter.end();
     }
   };
 

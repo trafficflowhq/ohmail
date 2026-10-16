@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A self-hosted server can use OpenAI, OpenCode Go or Ollama
+
+The self-host server stack took an Anthropic key and nothing else. It now offers the four providers the desktop app
+does: `TF_AI_PROVIDER` in `.env` names `anthropic`, `openai`, `opencode-go` or `ollama`, each with its own key or
+address, and `TF_AI_CLASSIFY_MODEL` and `TF_AI_DRAFT_MODEL` choose the models. An install that sets only
+`ANTHROPIC_API_KEY` runs as before. A model server has no default address and needs `TF_AI_ALLOW_PRIVATE=1` to be
+reached on the stack's own network. Workflow proposals need Anthropic, as on the desktop, and ohmail Cloud is unchanged.
+
 ### New mail shows up on the desktop within seconds again
 
 When the desktop app talked to the mail server itself, a new message often waited up to two minutes before it

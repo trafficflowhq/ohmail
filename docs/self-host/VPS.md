@@ -269,19 +269,22 @@ Plain facts about providers:
 
 Both are off until you configure a model, and the install works without one:
 the Screener still holds first contact, rules still file mail, and search
-still works. On **this** stack the only provider wired today is Anthropic,
-under your own key — one line in `.env`:
+still works. `TF_AI_PROVIDER` in `.env` picks the provider — `anthropic`,
+`openai`, `opencode-go` or `ollama` — each with its own variable beside it
+(`OHMAIL_OPENAI_API_KEY` and its like; `.env.example` says why the prefix).
+For Anthropic one line is enough, as before:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-…
 ```
 
-Requests go to Anthropic billed to your account; leave it unset and the AI
-surfaces say they are unconfigured rather than failing oddly. Setting an
-`OPENAI_API_KEY` here does nothing — OpenAI and a local Ollama are wired into
-the desktop app, not into this server stack.
-[README.md](./README.md#screener-suggestions-and-reply-drafts) has the full
-comparison and the desktop app's options.
+Requests go to the provider you name, under your own key and billed to your
+account; leave it all unset and the AI surfaces say they are unconfigured
+rather than failing oddly. A model server you run yourself (Ollama) has no
+default address and needs `TF_AI_ALLOW_PRIVATE=1` to be reached on a private
+address or over plain http. `.env.example` lists every variable, and
+[README.md](./README.md#screener-suggestions-and-reply-drafts) has the details
+and the desktop app's options.
 
 ## 8. Your household
 

@@ -14,8 +14,10 @@ import {
   resolveCloudInstallId,
   makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
   MicrosoftTokenProvider, UNMETERED_STORAGE_CAP,
-  type AnthropicCallReport, type FetchLike, type Logger, type UpdateSecretPort,
+  type AnthropicCallReport, type ClassifierPort, type DraftPort, type FetchLike, type Logger,
+  type UpdateSecretPort,
 } from "@trafficflow/core";
+import { portsOf, transportFor } from "@trafficflow/core/ai-provider-env";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import { makePushEndpointGuard } from "@trafficflow/core/net";
 import {
@@ -344,38 +346,52 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     }),
   };
 
-  // The screener: classifier only when the operator supplied a model key; NO credit gate and no
+  // The screener: classifier only when the operator configured a model; NO credit gate and no
   // `remaining` reader — this tier is unmetered by design (the operator's key, the operator's
   // model bill), which is the sidecar's grammar exactly. A screen-out arms auto-unsubscribe
   // through the same instance the bag holds, so the two paths cannot diverge in configuration.
+  const ai = serverAiPorts(cfg, onUsage);
   bag.screener = makeScreenerService({
-    ...(cfg.anthropicApiKey
-      ? {
-        classifier: makeHaikuClassifier({
-          client: makeAnthropicClient({
-            apiKey: cfg.anthropicApiKey,
-            timeoutMs: 10_000,
-            maxRetries: 1,
-            onUsage,
-          }),
-        }),
-      }
-      : {}),
+    ...(ai.classifier ? { classifier: ai.classifier } : {}),
     unsubscribe: bag.unsubscribe as ReturnType<typeof makeUnsubscribeService>,
   });
 
-  // THE LIVE DRAFTER, armed by the same key the descriptor reads. Absent, the draft route
-  // answers 503 drafter_unconfigured — the state an unkeyed install is honestly in.
-  if (cfg.anthropicApiKey) {
-    bag.drafter = makeSonnetDrafter(makeAnthropicClient({
-      apiKey: cfg.anthropicApiKey,
-      timeoutMs: 25_000,
-      maxRetries: 1,
-      onUsage,
-    }));
-  }
+  // THE LIVE DRAFTER, armed by the same choice the descriptor reads. Absent, the draft route
+  // answers 503 drafter_unconfigured — the state an install with no model is honestly in.
+  if (ai.drafter) bag.drafter = ai.drafter;
 
   return bag as unknown as ApiServices;
+}
+
+/**
+ * THE TWO PORTS THE OPERATOR'S MODEL BECOMES, or none. Anthropic is the hosted client exactly as
+ * before — two clients, 10 s for a suggestion and 25 s for a draft, one retry — with the
+ * operator's model names when set. Any other provider is its desktop transport through
+ * `portsOf`, with no proposer anywhere on this server. `TF_AI_TIMEOUT_MS` replaces both defaults.
+ */
+export function serverAiPorts(
+  cfg: Pick<ServerConfig, "ai" | "aiTimeoutMs">,
+  onUsage: (r: AnthropicCallReport) => void,
+  fetchImpl: typeof fetch = fetch,
+): { classifier?: ClassifierPort; drafter?: DraftPort } {
+  const ai = cfg.ai;
+  if (ai === null) return {};
+  const suggestMs = cfg.aiTimeoutMs ?? 10_000;
+  const draftMs = cfg.aiTimeoutMs ?? 25_000;
+  if (ai.provider === "anthropic") {
+    const client = (timeoutMs: number) => makeAnthropicClient({
+      apiKey: ai.apiKey, timeoutMs, maxRetries: 1, onUsage, fetchImpl,
+      ...(ai.baseUrl ? { baseUrl: ai.baseUrl, allowPrivateBaseUrl: ai.allowPrivate } : {}),
+    });
+    return {
+      classifier: makeHaikuClassifier({ client: client(suggestMs), ...(ai.classifyModel ? { model: ai.classifyModel } : {}) }),
+      drafter: makeSonnetDrafter(client(draftMs), ai.draftModel ? { model: ai.draftModel } : {}),
+    };
+  }
+  return {
+    classifier: portsOf(transportFor(ai, { fetchImpl, timeoutMs: suggestMs, onUsage })).classifier,
+    drafter: portsOf(transportFor(ai, { fetchImpl, timeoutMs: draftMs, onUsage })).drafter,
+  };
 }
 
 /**
@@ -572,7 +588,8 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         // (the mint route answers 503 while the port is absent), not what the environment hopes.
         // `cfg.storage` arms the bag member through the env-kind factory; this reads the member.
         staging: rt.services.attachmentStaging !== undefined,
-        ai: cfg.anthropicApiKey !== null,
+        // That a model is configured, never which: the provider is the operator's business.
+        ai: cfg.ai !== null,
         // OBLIGATION 2: the pairing routes are mounted on this table and this table only, so
         // this descriptor is the one that says true.
         pairing: true,

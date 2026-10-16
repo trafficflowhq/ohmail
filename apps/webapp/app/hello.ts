@@ -37,9 +37,9 @@ export interface ServerHello {
   flavor: "managed" | "selfhost" | "local" | "desktop-host";
   needsSetup: boolean;
   /**
-   * `ai` is the OPERATOR's key, not the account's switch: the server answers
-   * `anthropicApiKey !== null`, so on a self-host deployment it is the difference between "the
-   * operator has set a key and suggestions run" and "rules do all the filing". The first-run
+   * `ai` is the OPERATOR's model, not the account's switch: the server answers whether a model is
+   * configured, never which, so on a self-host deployment it is the difference between "the
+   * operator has configured a model and suggestions run" and "rules do all the filing". The first-run
    * flow's provider step reads it to pick which sentence is true; without it the step would guess,
    * and both guesses are a claim about somebody else's server. The key has always been on the wire
    * (`routes/hello.ts` freezes the set as `{ sse, staging, ai, pairing }`); this interface simply

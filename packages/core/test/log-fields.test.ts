@@ -18,6 +18,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createLogger } from "../src/log.js";
+import { aiBootFields } from "../src/ai/transports/host.js";
 
 /**
  * Capture the emitted LINE via the logger's own injected sink.
@@ -595,5 +596,19 @@ describe("the external door's lines reach the drain whole", () => {
     expect(parse(capture((log) => { log.info("field_census", { value: "kept-off-value" }); })).droppedFields).toEqual(["value"]);
     expect(parse(capture((log) => { log.info("field_census", { proxyPeerHeader: "x-ohmail-proxy-peer" }); })).proxyPeerHeader)
       .toBe("[redacted]");
+  });
+});
+
+describe("the AI choice's boot line reaches the drain whole", () => {
+  const parse = (out: string): Record<string, unknown> => JSON.parse(out) as Record<string, unknown>;
+
+  it("ai_provider_configured carries the provider, the address kind and the meter, and drops nothing", () => {
+    const server = parse(capture((log) => { log.info("ai_provider_configured", aiBootFields(null)); }));
+    const organizer = parse(capture((log) => {
+      log.info("ai_provider_configured", { ...aiBootFields({ provider: "ollama", baseUrl: "http://ollama:11434", classifyModel: "llama3.2", draftModel: "llama3.2" }), metered: false });
+    }));
+    for (const out of [server, organizer]) expect(out.droppedFields, JSON.stringify(out)).toBeUndefined();
+    expect(server.kind).toBe("none");
+    expect([organizer.kind, organizer.endpoint, organizer.metered]).toEqual(["ollama", "custom", false]);
   });
 });
