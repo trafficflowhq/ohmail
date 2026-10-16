@@ -38,7 +38,7 @@ import { HostOutboxNotice } from "./HostOutboxNotice.js";
 import { discardHostOutbox, type HostOutboxDiscard } from "./outbox-store.js";
 import { PairScreen } from "./PairScreen.js";
 import {
-  consentOverBearer, gapLettersOverBearer, junkOverBearer, mailboxFactsOverBearer, olderBodyOverBearer,
+  consentOverBearer, draftReplyOverBearer, gapLettersOverBearer, junkOverBearer, mailboxFactsOverBearer, olderBodyOverBearer,
   profileImportOverBearer, trashOverBearer,
 } from "./transports.js";
 
@@ -186,6 +186,8 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
   const consent = useMemo(() => consentOverBearer(bearer), [bearer]);
   /* The gap offer's answer, memoised for the reason above: the shell draws the offer only with it. */
   const gapLetters = useMemo(() => gapLettersOverBearer(bearer), [bearer]);
+  /* The draft reply's two calls, memoised: the shared control reads the wire as a dependency. */
+  const draftReply = useMemo(() => draftReplyOverBearer(bearer), [bearer]);
 
   /**
    * WHOSE `localStorage` PARTITION THE SHARED SHELL USES ON THIS DOOR — established in
@@ -264,6 +266,8 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
       consentTransport={consent}
       /* THE GAP OFFER (mail 0151): the host counts it and serves its answer; drawn here too. */
       gapLettersTransport={gapLetters}
+      /* DRAFT REPLY, answered by the host's own model over the bearer (`draftReplyOverBearer`). */
+      draftReplyWire={draftReply}
       /* THIS BROWSER WILL NOT KEEP A CHANGE MADE WHILE THE HOST IS AWAY — it refused the
          database. The shell's strip above the app, said once for the pairing. */
       accountNotice={unkept !== null && unkept.scope === scope && !unkept.dismissed

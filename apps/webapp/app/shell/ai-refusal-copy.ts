@@ -20,9 +20,9 @@ const BY_CODE: Readonly<Record<string, "insufficientCredits" | "aiDisabled" | "a
  * The `aiRefusal` key for this refusal, or `null` when this client has nothing better to say than
  * the server did.
  *
- * It reads `code` off the value rather than narrowing to one error class, because the two
- * transports throw two classes for the same wire — `ApiError` in the browser, `SuggestRefused`
- * over the desktop bridge — and both carry the code verbatim out of the same envelope. Anything
+ * It reads `code` off the value rather than narrowing to one error class, because Cloud and
+ * Desktop transports use different error classes — `ApiError`, `SuggestRefused` and
+ * `DraftReplyRefused` — and all carry the code verbatim out of the same envelope. Anything
  * without a string `code`, or with one that is not mapped above, is `null`.
  */
 export function aiRefusalKey(err: unknown): string | null {

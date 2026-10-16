@@ -47,6 +47,55 @@ export interface DraftReplyControl {
 /** One draft, in the shape the editor holds. */
 export type DraftedReply = RichValue;
 
+/** What `GET /drafts/:id` answers, in the members this flow reads. */
+export interface DraftReplyRead {
+  body?: string;
+  html?: string | null;
+}
+
+/**
+ * The two calls a draft makes, gathered into something a host can hand in, the way
+ * `SuggestWire` gathers the Screener's. What varies between the doors is only how the bytes
+ * travel: the browser asks the API, the desktop its engine over the private pipe, a paired
+ * browser the host computer over its bearer. When to spend, the press's key and what lands in the
+ * editor stay here and cannot be forked.
+ *
+ * Two named calls rather than a generic `request(path)`: a host's transport then addresses
+ * exactly these two routes (`draft-reply-wire.ts` writes them once for both engine doors), and
+ * shared code cannot send anything else down the pipe through this seam.
+ */
+export interface DraftReplyWire {
+  /** Is there anything to ask at all? False shows the unavailable notice and spends nothing. */
+  configured: () => boolean;
+  /**
+   * `POST /messages/:id/draft`, the purchase. The key is the caller's, minted once per press and
+   * reused on a retry of that press, so a lost answer is replayed instead of bought twice.
+   */
+  create: (messageId: string, idempotencyKey: string) => Promise<{ draftId: string }>;
+  /** `GET /drafts/:id`, the draft that purchase wrote. A read; it spends nothing. */
+  read: (draftId: string) => Promise<DraftReplyRead>;
+  /**
+   * The `draftReply` sentence for 503 `drafter_unconfigured` on a door where the person can fix
+   * it: a desktop install's model is chosen in its own settings. Absent (the web, a desktop on an
+   * account): the server's sentence, since only its operator can connect a drafter.
+   */
+  noModel?: "noModelHere" | "noModelHost";
+}
+
+/**
+ * The hosted transport, and the default, so the web is unchanged. Each member reaches `api` only
+ * when called: a module that merely imports this one (every test that mocks `api-client` without
+ * `api`) touches nothing at load, as before the wire existed.
+ */
+const CLOUD_WIRE: DraftReplyWire = {
+  configured: () => apiConfigured(),
+  create: (id, idempotencyKey) => api<{ draftId: string }>(`/messages/${id}/draft`, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+  }),
+  read: (draftId) => api<DraftReplyRead>(`/drafts/${draftId}`),
+};
+
 /**
  * What one draft costs: 15 credits. The plan is sold in CREDITS and an action has its own price
  * (a draft 15 against a classification's 1, on the metering service's card). A literal, not an
@@ -63,11 +112,14 @@ export function useDraftReply(opts: {
    * only the caller can see the editor.
    */
   onDraft: (draft: DraftedReply, messageId: string) => void;
+  /** Absent on the web: keep using its Cloud API client. Desktop supplies the private engine wire. */
+  wire?: DraftReplyWire;
 }): DraftReplyControl {
   const t = useTranslations("draftReply");
   /** The three AI refusals both surfaces share — see `ai-refusal-copy.ts`. */
   const tAi = useTranslations("aiRefusal");
   const { onDraft } = opts;
+  const wire = opts.wire ?? CLOUD_WIRE;
 
   const [phase, setPhase] = useState<DraftReplyPhase>("closed");
   const [messageId, setMessageId] = useState<string | null>(null);
@@ -102,8 +154,8 @@ export function useDraftReply(opts: {
   const confirm = useCallback(() => {
     const id = messageId;
     if (!id || phase === "running") return;
-    if (!apiConfigured()) {
-      // The demo world has no API. Saying so beats a spinner that never resolves.
+    if (!wire.configured()) {
+      // No route is available. Saying so beats a spinner that never resolves.
       setNotice(t("unavailable"));
       return;
     }
@@ -126,14 +178,11 @@ export function useDraftReply(opts: {
        */
       let bought = false;
       try {
-        const { draftId } = await api<{ draftId: string }>(`/messages/${id}/draft`, {
-          method: "POST",
-          headers: { "Idempotency-Key": key },
-        });
+        const { draftId } = await wire.create(id, key);
         bought = true;
         // `GET /drafts/:id` rather than the mirror — see the header. `cost: read`, spends
         // nothing, and the row was written inside the request that answered above.
-        const draft = await api<{ body?: string; html?: string | null }>(`/drafts/${draftId}`);
+        const draft = await wire.read(draftId);
         if (io.current.run !== run) return;
         io.current.key = null;
         setPhase("closed");
@@ -157,15 +206,19 @@ export function useDraftReply(opts: {
         // the person's money. An unmodelled fault does not (a killed request answers with no
         // envelope at all), so `failedOpaqueEarly` says only what the kept key makes true.
         const paid = draftFailureKey(err);
+        const noModel = wire.noModel !== undefined
+          && (err as { code?: unknown } | null)?.code === "drafter_unconfigured" ? wire.noModel : null;
         const key = aiRefusalKey(err);
         setNotice(paid !== null
           ? t(paid)
-          : key === null
-            ? messageFor(err, t("failed"), bought ? t("failedOpaque") : t("failedOpaqueEarly"))
-            : tAi(key));
+          : noModel !== null
+            ? t(noModel)
+            : key === null
+              ? messageFor(err, t("failed"), bought ? t("failedOpaque") : t("failedOpaqueEarly"))
+              : tAi(key));
       }
     })();
-  }, [messageId, phase, onDraft, t, tAi]);
+  }, [messageId, phase, onDraft, t, tAi, wire]);
 
   return {
     phase,
@@ -200,8 +253,22 @@ export function useDraftReply(opts: {
  * left alone.
  */
 export function messageFor(err: unknown, fallback: string, opaque: string): string {
-  if (!(err instanceof ApiError)) return fallback;
+  if (!isRefusal(err)) return fallback;
   return err.code === "internal" || err.message.trim() === "" ? opaque : err.message;
+}
+
+/**
+ * A refusal that came off a wire with its envelope: the browser's `ApiError`, or a host
+ * transport's own class (the desktop's `DraftReplyRefused`) carrying the same status, code and
+ * sentence. Read by shape, as `ai-refusal-copy.ts` reads `code`; a bare `Error` (a transport that
+ * never reached a server) has no status and keeps the fallback. So does a host refusal with an
+ * empty code: its body was no envelope (an HTML 502 from a relay), and its message is only the
+ * transport's English "answered 502".
+ */
+function isRefusal(err: unknown): err is Error & { status: number; code: string } {
+  if (err instanceof ApiError) return true;
+  const e = err as { status?: unknown; code?: unknown } | null;
+  return err instanceof Error && typeof e?.status === "number" && typeof e.code === "string" && e.code !== "";
 }
 
 /** A fresh idempotency key — see `screener-suggest.ts` for why the fallback exists. */

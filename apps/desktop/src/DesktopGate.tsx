@@ -83,6 +83,7 @@ import { olderBodyOverBridge } from "./local-older-body.js";
 import { junkOverBridge } from "./local-junk.js";
 import { trashOverBridge } from "./local-trash.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
+import { draftReplyOverBridgeFor } from "./local-draft-reply.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { AiProviderForm } from "./AiProviderForm.js";
 import { useLocalFirstRun } from "./local-first-run.js";
@@ -1476,6 +1477,7 @@ export function DesktopGate() {
            is the door's and the rendering is the shared shell's. */
         imageWire={localImageWire}
         imagesFromComputer={imagesFromComputer(status)}
+        draftReplyWire={draftReplyOverBridgeFor(status)}
         {...(accountDoor ? { suggestWire: cloudSuggestWire } : {})}
         /* THE REACH-PAST BODY WIRE — BOTH doors, `consentTransport`'s transport-not-a-control
            rule: the door, its states and its sentences are the shared shell's

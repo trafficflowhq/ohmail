@@ -515,7 +515,8 @@ describe("the destination sentence is the engine's, and absent when the engine s
 
     const row = summaryRow(await mount(here));
     expect(described(row)).toBe(
-      "Sender, subject and a short extract go to Ollama at 127.0.0.1:11434. Nothing leaves this computer.",
+      "Sender, subject and a short extract go to Ollama at 127.0.0.1:11434. A draft also sends extracts "
+        + "from the thread and matching knowledge-base notes. Nothing leaves this computer.",
     );
   });
 

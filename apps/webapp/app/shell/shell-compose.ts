@@ -73,7 +73,7 @@ import {
   type ReplyEnvelopeEdit,
 } from "./compose-from";
 import type { ConsentState } from "./consent-state";
-import { useDraftReply, type DraftedReply } from "./draft-reply";
+import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
 import { useReplyAutosave, type ReplyDraftForm } from "./reply-autosave";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
@@ -158,6 +158,8 @@ export interface ShellComposeInput {
   reader: EntityReader;
   t: ReturnType<typeof useTranslations>;
   toast: ToastFn;
+  /** The host's draft request path; absent on web, where the Cloud client remains the default. */
+  draftReplyWire?: DraftReplyWire;
   /** Only `view`, and only so the autosave knows whether the compose form is on screen. */
   route: Pick<Route, "view">;
   /** The three signature members, gated together by `signaturesKnown` — see `consent-state.ts`. */
@@ -199,7 +201,7 @@ export interface ShellComposeInput {
 export type ShellCompose = ReturnType<typeof useShellCompose>;
 
 export function useShellCompose({
-  engine, reader, t, toast, route, consent, facts, mailboxes, drafts, ownAddresses,
+  engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
   fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
   setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo,
 }: ShellComposeInput) {
@@ -718,7 +720,7 @@ export function useShellCompose({
     setPendingDraft({ draft, messageId });
   });
 
-  const draftReply = useDraftReply({ onDraft });
+  const draftReply = useDraftReply({ onDraft, wire: draftReplyWire });
 
   const resolveDraft = useStableCallback((mode: "replace" | "append") => {
     if (!pendingDraft) return;

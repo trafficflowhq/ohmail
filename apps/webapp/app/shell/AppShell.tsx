@@ -149,7 +149,7 @@ import {
   SIG_FOLLOWING, effectiveSignature, effectiveSignatureHtml, withSignature,
   type SignatureState,
 } from "./signature";
-import { useDraftReply, type DraftedReply } from "./draft-reply";
+import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
 import { RichEditor, preloadRichEditor } from "./RichEditorLazy";
 import { TagPicker, placePicker } from "./TagPicker";
 /**
@@ -590,6 +590,7 @@ export function AppShell({
   junkWire,
   trashWire,
   suggestWire,
+  draftReplyWire,
   firstRun,
   mailtoDraft,
   onMailtoDraftSeeded,
@@ -909,6 +910,8 @@ export function AppShell({
    * hosted client; `false` on standalone: no account, no ledger, no spend.
    */
   suggestWire?: SuggestWire;
+  /** The draft reply's request path — absent on web, where the Cloud client remains the default. */
+  draftReplyWire?: DraftReplyWire;
   /**
    * THE FIRST-RUN STAGE'S DOOR — the calls setup makes, from the surface that can make them.
    *
@@ -993,6 +996,7 @@ export function AppShell({
             junkWire={junkWire}
             trashWire={trashWire}
             suggestWire={suggestWire}
+            draftReplyWire={draftReplyWire}
             firstRun={firstRun}
             mailtoDraft={mailtoDraft}
             onMailtoDraftSeeded={onMailtoDraftSeeded}
@@ -1046,7 +1050,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1104,6 +1108,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   /** The live Trash window's wire — see the outer prop of the same name. */
   trashWire?: TrashWire;
   suggestWire?: SuggestWire;
+  /** The draft reply wire — see the outer prop of the same name. */
+  draftReplyWire?: DraftReplyWire;
   /** The first-run stage's door — see the outer prop of the same name. */
   firstRun?: FirstRunHost;
   mailtoDraft?: ComposePrefill | null;
@@ -1883,7 +1889,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply,
     composeElsewhere, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
   } = useShellCompose({
-    engine, reader, t, toast, route, consent, facts, mailboxes, drafts, ownAddresses,
+    engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
     setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo,
   });

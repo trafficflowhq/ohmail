@@ -20,8 +20,10 @@ import type { ProfileImportTransport } from "../../../webapp/app/shell/ProfileIm
 import type { ConsentTransport } from "../../../webapp/app/shell/consent-state";
 import type { OlderBodyWire } from "../../../webapp/app/shell/older-body";
 import type { TrashWire } from "../../../webapp/app/shell/trash-window";
+import type { DraftReplyWire } from "../../../webapp/app/shell/draft-reply";
 import { olderBodyVia } from "@ohmail/client-engine";
 import { consentVia } from "../consent-wire.js";
+import { draftReplyVia } from "../draft-reply-wire.js";
 import { gapLettersVia } from "../gap-letters-wire.js";
 import { junkVia } from "../junk-wire.js";
 import { readMailboxFactsVia } from "../mailbox-facts-wire.js";
@@ -100,4 +102,14 @@ export function trashOverBearer(bearer: BearerManager): TrashWire {
  */
 export function consentOverBearer(bearer: BearerManager): ConsentTransport {
   return { ...consentVia(bearer.fetch), foldersStorable: false };
+}
+
+/**
+ * DRAFT REPLY OVER THE BEARER. The host serves both routes (`messageRoutes` and `draftsRoutes`
+ * ride `localRoutes`) with its own model. Without this wire the shared control fell back to the
+ * refusing Cloud stub and said "Drafting needs a connected account." A missing model is the host
+ * computer's to choose, so the door's sentence says where.
+ */
+export function draftReplyOverBearer(bearer: BearerManager): DraftReplyWire {
+  return draftReplyVia(bearer.fetch, () => true, "noModelHost");
 }
