@@ -26,11 +26,24 @@ import { opensTheWall } from "../../access-verdict";
  * It lifts itself only on the service's fresh `access: "open"` (`useWallLift`), via `onLifted`.
  */
 
+/**
+ * AN ACCOUNT THAT NEVER STARTED its trial: closed with no reason, no closing date, no erasure clock
+ * and nothing ever paid — the service's answer for an account that signed up and has not chosen a
+ * plan yet. A closure the service could not attribute still carries its erasure date (nothing to
+ * erase is the never-started half). Nothing stopped, so this screen offers the trial and says
+ * nothing about stopping or erasure.
+ */
+export function neverStarted(lifecycle: AccountLifecycle | undefined): boolean {
+  return lifecycle !== undefined && lifecycle.state === "closed" && lifecycle.closedReason === null
+    && !lifecycle.closedAt && !lifecycle.erasureAt && lifecycle.formerlyPaid !== true;
+}
+
 /** What the headline says, and the date it carries. `null` = the undated sentence. */
 function headlineOf(
   lifecycle: AccountLifecycle | undefined,
   suspended: boolean,
-): { key: "title" | "suspendedTitle" | "trialEnded" | "canceled" | "unpaid"; date?: string } {
+): { key: "title" | "suspendedTitle" | "trialEnded" | "canceled" | "unpaid" | "neverStartedTitle"; date?: string } {
+  if (!suspended && neverStarted(lifecycle)) return { key: "neverStartedTitle" };
   // ERASED IS NOT A SCREEN: erasure deletes the users, the sessions and the credentials, so
   // nobody signs in to read an "erased on" sentence. If the word ever reaches this client it
   // falls to the undated title rather than to a date about a deletion.
@@ -143,6 +156,8 @@ export function AccessLock(
 
   const lifecycle = facts.lifecycle;
   const headline = headlineOf(lifecycle, facts.reason === "suspended");
+  /* An account that has not started its trial: the trial is the screen, nothing else is said. */
+  const fresh = headline.key === "neverStartedTitle";
   const erasureAt = lifecycle?.erasureAt ?? null;
   /* An operator hold is not a departure, so it has no erasure clock (ruling §1(a)). The sentence
      says who holds it and where to ask, rather than leaving a date-shaped hole. */
@@ -172,7 +187,9 @@ export function AccessLock(
             ? t(headline.key, { date: dayStamp(headline.date) })
             : t(headline.key)}
         </h1>
-        {lifecycle !== undefined
+        {fresh
+          ? <p className="wall-lead">{t("neverStartedLead")}</p>
+          : lifecycle !== undefined
           ? (
             <>
               {/* THE HALF A REFUSAL SCREEN GETS WRONG. Said as two short sentences and not one
@@ -255,7 +272,7 @@ export function AccessLock(
                             the neutral door the desktop window already uses. */}
                         {lifecycle === undefined
                           ? t("manage")
-                          : held ? t("openAccount") : t("subscribe")}
+                          : held ? t("openAccount") : fresh ? t("startTrial") : t("subscribe")}
                       </Button>
                       {mintRefusal !== null
                         ? (
@@ -264,14 +281,17 @@ export function AccessLock(
                           </p>
                         )
                         : null}
-                      {lifecycle !== undefined && !held ? <p className="wall-hint">{t("subscribeHint")}</p> : null}
+                      {lifecycle !== undefined && !held
+                        ? <p className="wall-hint">{t(fresh ? "startTrialHint" : "subscribeHint")}</p>
+                        : null}
                     </>
                   )
                   : null}
                 {/* The export door, only where this server serves one. It downloads the rules,
                     the Screener's decisions and the settings — the document a self-hosted
                     install reads when it joins the mailbox. No mail: the mailbox has it. */}
-                {facts.exportPath
+                {/* An account that never started has no rules or decisions to take along. */}
+                {facts.exportPath && !fresh
                   ? (
                     <>
                       <Button
@@ -294,7 +314,9 @@ export function AccessLock(
                 <Button variant="ghost" className="wall-act" onClick={() => setDeleting(true)}>
                   {t("deleteNow")}
                 </Button>
-                <p className="wall-hint">{t(datedErasure ? "deleteHint" : "deleteHintUndated")}</p>
+                <p className="wall-hint">
+                  {t(fresh ? "deleteHintNeverStarted" : datedErasure ? "deleteHint" : "deleteHintUndated")}
+                </p>
               </div>
               <div className="gate-actions">
                 <Button onClick={doSignOut} disabled={signingOut}>

@@ -1034,10 +1034,14 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
               `planLoading` while the link is still being minted: a button that goes nowhere is
               the one control a person on this screen will press. */}
           {manageUrl ? (
-            <div className="join-actions">
-              <a className="btn primary" href={manageUrl}>{t("planContinue")}</a>
-              <Link className="join-alt" href="/">{t("later")}</Link>
-            </div>
+            <>
+              <div className="join-actions">
+                <a className="btn primary" href={manageUrl}>{t("planContinue")}</a>
+                {/* The app's front door offers the trial again (the wall's never-started state). */}
+                <Link className="join-alt" href="/">{t("planLater")}</Link>
+              </div>
+              <p className="join-hint">{t("planLaterHint")}</p>
+            </>
           ) : planLinkFailed ? (
             /* NOWHERE TO SEND THEM, and two different deployments arrive here: one that operates
                no entitlements program at all, and one whose program is reachable but has no

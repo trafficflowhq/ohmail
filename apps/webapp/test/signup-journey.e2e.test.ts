@@ -11,6 +11,7 @@ import { createHmac } from "node:crypto";
 import { dirname, join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { createApp, apiRoutes, makeProbeHostGuard, type ApiDeps } from "@trafficflow/api";
+import type { AccessLifecycle, AccessVerdict, EntitlementsPort } from "@trafficflow/db";
 import { makeDeps } from "../../../packages/api/test/helpers.js";
 
 type SpyMailer = Awaited<ReturnType<typeof makeDeps>>["mailer"];
@@ -145,19 +146,82 @@ const person = { email: "mila@family.example", password: "a-long-signup-password
 let ctx: BrowserContext | null = null;
 let page: Page;
 
+/** A fresh world on the same API server: the server reads `world` per request. */
+async function newWorld(entitlementsPort?: EntitlementsPort): Promise<void> {
+  const made = await makeDeps(new Date(), { origin: [`http://localhost:${webPort}`], publicSignup: true });
+  // CLOUD'S HOST GUARD, over a resolver this test answers for: the mailbox step meets the same refusal a
+  // mail server on someone's own network meets on ohmail.app. The dial itself is stubbed by `makeDeps`.
+  made.deps.services!.probeHostGuard = makeProbeHostGuard({
+    async resolve(hostname: string) { return RESOLVES[hostname] ?? []; },
+  });
+  if (entitlementsPort) made.deps.services!.entitlementsPort = entitlementsPort;
+  world = { deps: made.deps, mailer: made.mailer, clock: made.clock };
+}
+
+/** The account, the mailed link, an authenticator and the codes: everything before the plan step. */
+async function signUp(p: Page, who: { email: string; password: string; totpSecret: string }): Promise<void> {
+  await p.goto(`http://localhost:${webPort}/join`);
+  await p.locator("#join-email").waitFor({ timeout: 30_000 });
+  await p.fill("#join-email", who.email);
+  await p.fill("#join-name", "Mila Reyes");
+  await p.fill("#join-pw", who.password);
+  await p.getByRole("button", { name: "Create account" }).click();
+  await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
+
+  const mail = world.mailer.sent.find((m) => m.to === who.email && m.template === "email_verification");
+  expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
+  const token = new URL((mail!.data as { verifyUrl: string }).verifyUrl).searchParams.get("token");
+  await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
+  await p.fill("#verify-pw", who.password);
+  await p.getByRole("button", { name: "Confirm my email" }).click();
+  await p.getByRole("heading", { name: "Add your second factor" }).waitFor({ timeout: 30_000 });
+
+  await p.getByRole("button", { name: "Use an authenticator app instead" }).click();
+  who.totpSecret = ((await p.locator(".join-secret code").textContent()) ?? "").trim();
+  await p.fill("#join-totp", totpAt(who.totpSecret, world.clock.now()));
+  await p.getByRole("button", { name: "Activate" }).click();
+  await p.locator(".join-codes li").first().waitFor({ timeout: 30_000 });
+  await p.locator(".join-check input[type=checkbox]").check();
+  await p.getByRole("button", { name: "Continue" }).click();
+}
+
+/**
+ * THE PLANE, AS A NEVER-STARTED ACCOUNT MEETS IT: refused for payment, closed with no reason, no closing
+ * date, no erasure clock and nothing ever paid — the state an account is in between signing up and
+ * starting the trial. The mint answers a page address and records what it was asked.
+ */
+function neverStartedPlane(): { port: EntitlementsPort; mints: Array<{ lang?: string }> } {
+  const mints: Array<{ lang?: string }> = [];
+  const lifecycle: AccessLifecycle = {
+    state: "closed", closedReason: null, trialEndsAt: null, graceUntil: null, closedAt: null,
+    erasureAt: null, erasedAt: null, formerlyPaid: false,
+  };
+  // `manageUrl` as the program's refusal carries it: the fact that it serves an account page.
+  const verdict: AccessVerdict = { ok: false, reason: "payment_required", manageUrl: "https://plane.example/manage", lifecycle };
+  const access = async (): Promise<AccessVerdict> => verdict;
+  return {
+    mints,
+    port: {
+      access,
+      accessOrFault: access,
+      spend: async (_a, _b, key) => ({ verdict: "ok", charged: true, attempt: key }),
+      release: async () => "settled" as const,
+      manageLink: async (_accountId, lang) => {
+        mints.push({ ...(lang ? { lang } : {}) });
+        return { url: "https://plane.example/manage?token=t" };
+      },
+      releaseAccount: async () => "none",
+    },
+  };
+}
+
 describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a production build over the real routes", () => {
   beforeAll(async () => {
     expect(existsSync(NEXT_CLI), `next's CLI missing at ${NEXT_CLI}`).toBe(true);
     apiPort = await freePort();
     webPort = await freePort();
-    // Open signup, and the browser's Origin admitted by the cross-site guard.
-    const made = await makeDeps(new Date(), { origin: [`http://localhost:${webPort}`], publicSignup: true });
-    // CLOUD'S HOST GUARD, over a resolver this test answers for: the mailbox step meets the same refusal a
-    // mail server on someone's own network meets on ohmail.app. The dial itself is stubbed by `makeDeps`.
-    made.deps.services!.probeHostGuard = makeProbeHostGuard({
-      async resolve(hostname: string) { return RESOLVES[hostname] ?? []; },
-    });
-    world = { deps: made.deps, mailer: made.mailer, clock: made.clock };
+    // Open signup, and the browser's Origin admitted by the cross-site guard; no entitlements program.
+    await newWorld();
     api = createServer((req, res) => { void serve(req, res).catch((e) => { res.statusCode = 500; res.end(String(e)); }); });
     api.listen(apiPort, "127.0.0.1");
     await once(api, "listening");
@@ -184,29 +248,7 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
   });
 
   it("the account, the mailed link, an authenticator and the codes bring a stranger to the mailbox step", async () => {
-    await page.goto(`http://localhost:${webPort}/join`);
-    await page.locator("#join-email").waitFor({ timeout: 30_000 });
-    await page.fill("#join-email", person.email);
-    await page.fill("#join-name", "Mila Reyes");
-    await page.fill("#join-pw", person.password);
-    await page.getByRole("button", { name: "Create account" }).click();
-    await page.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
-
-    const mail = world.mailer.sent.find((m) => m.to === person.email && m.template === "email_verification");
-    expect(mail, `no verification mail: ${await said(page)}`).toBeTruthy();
-    const token = new URL((mail!.data as { verifyUrl: string }).verifyUrl).searchParams.get("token");
-    await page.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
-    await page.fill("#verify-pw", person.password);
-    await page.getByRole("button", { name: "Confirm my email" }).click();
-    await page.getByRole("heading", { name: "Add your second factor" }).waitFor({ timeout: 30_000 });
-
-    await page.getByRole("button", { name: "Use an authenticator app instead" }).click();
-    person.totpSecret = ((await page.locator(".join-secret code").textContent()) ?? "").trim();
-    await page.fill("#join-totp", totpAt(person.totpSecret, world.clock.now()));
-    await page.getByRole("button", { name: "Activate" }).click();
-    await page.locator(".join-codes li").first().waitFor({ timeout: 30_000 });
-    await page.locator(".join-check input[type=checkbox]").check();
-    await page.getByRole("button", { name: "Continue" }).click();
+    await signUp(page, person);
     // This host operates no entitlements program, so the plan step answers "entitled" and moves on.
     await page.getByRole("heading", { name: "Connect a mailbox" }).waitFor({ timeout: 30_000 });
   }, 120_000);
@@ -251,4 +293,31 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
     expect(creates.map((c) => c.status), "one refusal for the window, then the same connect once").toEqual([403, 201]);
     expect(creates[1]!.body).toEqual(creates[0]!.body);
   }, 60_000);
+
+  it("on Cloud, Not now on the plan step leads to a front door that offers the trial, not a closed account", async () => {
+    const plane = neverStartedPlane();
+    await newWorld(plane.port);
+    const fresh = await browser!.newContext();
+    try {
+      const p = await fresh.newPage();
+      const who = { email: "noor@family.example", password: "another-long-signup-password", totpSecret: "" };
+      await signUp(p, who);
+      await p.getByRole("heading", { name: "Choose your plan" }).waitFor({ timeout: 30_000 });
+      const out = p.locator('a.join-alt[href="/"]');
+      await out.waitFor({ timeout: 30_000 });
+      const label = ((await out.textContent()) ?? "").trim();
+      await out.click();
+      await p.getByRole("heading", { name: "Start your free trial" }).waitFor({ timeout: 30_000 }).catch(() => {});
+      const wall = await p.evaluate(() => document.body?.innerText ?? "");
+      expect(wall, `the front door: ${await said(p)}`).toContain("Start your free trial");
+      expect(wall).toContain("14 days free, no card.");
+      expect(await p.getByRole("button", { name: "Start your trial" }).count()).toBe(1);
+      expect(await p.getByRole("button", { name: "Sign out" }).count()).toBe(1);
+      // Nothing a closed account is told: not inactive, not stopped, no erasure clock, no move to self-hosting.
+      expect(wall).not.toMatch(/not active|stopped organizing|will be (erased|deleted)|self-host/i);
+      expect(label, "the plan step's way out says what it does").toBe("Not now");
+    } finally {
+      await fresh.close();
+    }
+  }, 120_000);
 });

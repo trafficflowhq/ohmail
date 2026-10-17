@@ -39,6 +39,13 @@ longer than the few minutes the mailbox step allowed, and then signup ended on a
 empty inbox. Each of these is now said on the step it happened on, with everything you typed kept, and when a few
 minutes have passed, ohmail asks for your passkey or authenticator code right there and connects the mailbox.
 
+### A new ohmail Cloud account that has not started its trial is offered the trial
+
+Someone who signed up and chose "Do this later" on the plan step, or came back before starting the trial, saw the
+screen for a closed account: "This account is not active", "ohmail has stopped organizing this account", and a move
+to self-hosting. They now see "Start your free trial" with the 14 free days, no card, a button that opens the account
+page, and Sign out. The plan step's "Do this later" is now "Not now" and says the account is kept.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
