@@ -61,11 +61,12 @@ const canonical = (rows: readonly PrePublicationVersion[]): string[] =>
 /**
  * THE CLOSED SET. Changing it is never a routine edit: there is no history left that a new row
  * could come from. A removal (a migration file deleted, a row git now identifies) is a decision a
- * reviewer makes with this pin in front of them.
+ * reviewer makes with this pin in front of them. Twenty rows at #41; mail 0006-0027 (eleven) were
+ * added once the deploy log printed the whole refusal, each proven by the store arm below.
  */
 const CLOSED_SET = {
-  rows: 20,
-  sha256: "ada3d8cb6bd507420d00af5de8ca3b859f62f47e6bb344a0e4d36fddc516435f",
+  rows: 31,
+  sha256: "5f2cb33679415930adee3b7fa113ba86f8321c18d414dc1f9ba80bfda18b14d6",
 } as const;
 
 describe("the provenance record holds exactly what it says it holds", () => {
@@ -146,7 +147,7 @@ describe("the provenance record holds exactly what it says it holds", () => {
       .toEqual([]);
   });
 
-  it("(e) the set is closed: twenty rows, pinned", () => {
+  it("(e) the set is closed: thirty-one rows, pinned", () => {
     const lines = canonical(ROWS);
     expect(
       { rows: lines.length, sha256: sha256Utf8(lines.join("\n")) },

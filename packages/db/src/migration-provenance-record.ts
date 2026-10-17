@@ -5,9 +5,9 @@
  * `classifyDrift` identifies what an applied migration row ran by finding, in the deploying
  * checkout's git history, the version of that file whose sha256 is the one the row records. A
  * database migrated from the project's development history before this repository was published
- * records the versions that history held then, and twenty of those files were edited before
- * their first published version — nineteen in comments and layout only, mail 0037 also by the
- * idempotency guard its allowance names. No clone of this repository carries those versions, so
+ * records the versions that history held then, and thirty-one of those files were edited before
+ * their first published version — twenty-eight in comments and layout only, mail 0021, 0022 and
+ * 0037 also by the replay guards their allowances name. No clone of this repository carries those versions, so
  * the lookup finds nothing and the setup refuses the entry as `unknown-provenance` although
  * nothing drifted.
  *
@@ -21,7 +21,9 @@
  * Consulted only for a hash git did not identify, and only by exact (journal, tag, recorded):
  * never by tag alone, by prefix or by pattern. The set is CLOSED — that history is frozen, and
  * every version written since is in this repository's history, which the classifier reads
- * directly — so a new row is by construction one nothing can back.
+ * directly — so a new row is by construction one nothing can back. The eleven mail rows 0006-0027
+ * came later only because the refusal that named them was cut off by a 20-line deploy log; each
+ * is proven against the frozen history like the rest (the test's store arm).
  * `migration-provenance-record.test.ts` pins the rows, their shape and the set.
  */
 
@@ -43,6 +45,94 @@ export interface PrePublicationVersion {
 
 /** Every row derived from the frozen history, read-only; each version at exactly one commit. */
 export const PRE_PUBLICATION_VERSIONS: readonly PrePublicationVersion[] = [
+  {
+    journal: "mail",
+    tag: "0006_idempotency_keys",
+    recorded: "90fd292bc0820b9e7abf8b7c063d30ea59e5b371943ecda271cda0bd76abf448",
+    executable: "e9fb2d3f1bab981de7ef8a111b1bfb715ee601c4912365bf6491aae6c3d292f2",
+    introducedBy: "fc882c5fd10ed77f05fb963141e4182b22ad6c9b",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0015_workflow_step_dedup",
+    recorded: "fccf1e354500b9c0d55a3b0c5c0ede3305927c4eac12897fe948c7d652b3cd9f",
+    executable: "3526b819e47e25181ceed0a214e1093cf6029d36f4590baf99fb8dacfb68db01",
+    introducedBy: "fc882c5fd10ed77f05fb963141e4182b22ad6c9b",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0016_workflow_proposals",
+    recorded: "4f0f2c39fcdbde2a67529eac6e5ce262458ced19cc3cefb2fbf4cd7d9bde4622",
+    executable: "72f2508816bf11ff8fe4d799ffde5a860462f52333b6993edae1412449751cbf",
+    introducedBy: "fc882c5fd10ed77f05fb963141e4182b22ad6c9b",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0017_enrollment",
+    recorded: "4aca9b1f59c90975cb0ae34eab683743e223ceb7758a8e93c123c6a17dfdc89b",
+    executable: "07259c123f4fcdb548aa24563c121ab2056a562ebde5e578ee968c8f8dafeeb5",
+    introducedBy: "fc882c5fd10ed77f05fb963141e4182b22ad6c9b",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0021_mailbox_address_unique",
+    recorded: "7201608975888466d3fdc2b95ec472a50e272c30b322ad3071100e909aeb2c57",
+    executable: "a5cde314acf8cb5cf8b651fa0d60c0c176541d55d69bdd3a9ad401f9c1692c92",
+    introducedBy: "156cbda64ccea2c366c2556dbc9dc1363afa5b36",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0022_message_body_html_cap",
+    recorded: "6c8d15b02a2fbaeece3b5aacab167566ae4aa43f43f41468bc278ccb61905d34",
+    executable: "8dadb1da38d0ac8f17483219b302fe07ac59170209dcc4aa4adea7b6bc622656",
+    introducedBy: "a1b69cdb62f986c0b4cb25a5f300741747e0902c",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0023_mailbox_failure_reason",
+    recorded: "dbc15fae438882a2c8005f6605d66bd576db513a2eb657fea196f0a454e444ee",
+    executable: "62a1d71819763e5ae25dfd1a8e966d31062983890ed88935f68472d2e910beb9",
+    introducedBy: "00aadba9728e36b2e3792676bdfebad4047383ac",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0024_flag_state",
+    recorded: "28372bb0cb85a434480cfbc9901a378eb59f495798279475139c8955bb1403a5",
+    executable: "bdea492301b5d1376b373c7e73051fea8752e825d7bf5023f01b911ec464fe5a",
+    introducedBy: "5956682af99c372001ad9d8b6145fcd0041ab377",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0025_mailbox_kickstart",
+    recorded: "c1fcd9dd449648bcde5894cb775733f3ca784b2b3130f2af18114735cf41844e",
+    executable: "05334688d345a898098edf11f2a3188856ef44310e4360b2d7a4430f89f45d53",
+    introducedBy: "35133eadfd42b263107e0e3b18bc86ca2fa7b639",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0026_thread_resolution",
+    recorded: "20572b3b6ba1d5a872756ea0378387126138f373c7c42b13077f311f484b9c83",
+    executable: "308f51035814a30351d9cda95a15749ee9c3022c48c42643adc58a8032a417c4",
+    introducedBy: "583cb9e8263635d1d417ff5c7b3497603043c501",
+    label: PRE_PUBLICATION,
+  },
+  {
+    journal: "mail",
+    tag: "0027_organizer_lease",
+    recorded: "559044c0f5a4622043321f5a1fe890b3d13817f3ea5fd6ff81b1ed125b246aef",
+    executable: "81735de3372475ad14745698137a836e341a60275545ae3410a2b06c0b1c215a",
+    introducedBy: "627dc031b6f92dfdceb07c61131046101ad98d3b",
+    label: PRE_PUBLICATION,
+  },
   {
     journal: "mail",
     tag: "0028_message_instances",

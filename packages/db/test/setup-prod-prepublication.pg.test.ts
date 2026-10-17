@@ -10,7 +10,7 @@ import { brandDialect } from "../src/dialect/index.js";
 import { readJournalOf, type JournalEntry, type JournalSpec } from "../src/baseline.js";
 import { admittedDriftLines, journalProblems, journalStatuses } from "../src/setup-prod.js";
 import { classifyDrift, gitProvenanceReader, type ProvenanceReader } from "../src/migration-provenance.js";
-import type { PrePublicationVersion } from "../src/migration-provenance-record.js";
+import { prePublicationVersionFor, type PrePublicationVersion } from "../src/migration-provenance-record.js";
 import { normalizeSql } from "../src/sql-normalize.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 
@@ -23,7 +23,9 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
  * history, which a clone of this repository does not carry. Nothing had drifted — from that older
  * history the same database reads nineteen comment-only drifts and mail 0037's allowance. The
  * provenance record names those versions; these arms prove it identifies them, refuses everything
- * else it did before, and decides nothing on its own.
+ * else it did before, and decides nothing on its own. Eleven more (mail 0006-0027: nine
+ * comment-only, 0021 and 0022 by their allowances) sat above the 20-line log; the 0.27.0 GO-DB
+ * refusal printed them, and they are held here the same way: thirty-one in all.
  *
  * {@link PRODUCTION} is the independent side: the hashes production's tables record, copied from
  * the refusal's own lines. The record under test was derived from history; these were read off the
@@ -36,6 +38,18 @@ type Journal = keyof typeof DIRS;
 const PRODUCTION: ReadonlyArray<{
   journal: Journal; tag: string; recorded: string; verdict: "comment-only" | "allowed";
 }> = [
+  // The eleven the 20-line deploy log hid at 0.26.0 (the 0.27.0 GO-DB refusal printed them whole).
+  { journal: "mail", tag: "0006_idempotency_keys", recorded: "90fd292bc0820b9e7abf8b7c063d30ea59e5b371943ecda271cda0bd76abf448", verdict: "comment-only" },
+  { journal: "mail", tag: "0015_workflow_step_dedup", recorded: "fccf1e354500b9c0d55a3b0c5c0ede3305927c4eac12897fe948c7d652b3cd9f", verdict: "comment-only" },
+  { journal: "mail", tag: "0016_workflow_proposals", recorded: "4f0f2c39fcdbde2a67529eac6e5ce262458ced19cc3cefb2fbf4cd7d9bde4622", verdict: "comment-only" },
+  { journal: "mail", tag: "0017_enrollment", recorded: "4aca9b1f59c90975cb0ae34eab683743e223ceb7758a8e93c123c6a17dfdc89b", verdict: "comment-only" },
+  { journal: "mail", tag: "0021_mailbox_address_unique", recorded: "7201608975888466d3fdc2b95ec472a50e272c30b322ad3071100e909aeb2c57", verdict: "allowed" },
+  { journal: "mail", tag: "0022_message_body_html_cap", recorded: "6c8d15b02a2fbaeece3b5aacab167566ae4aa43f43f41468bc278ccb61905d34", verdict: "allowed" },
+  { journal: "mail", tag: "0023_mailbox_failure_reason", recorded: "dbc15fae438882a2c8005f6605d66bd576db513a2eb657fea196f0a454e444ee", verdict: "comment-only" },
+  { journal: "mail", tag: "0024_flag_state", recorded: "28372bb0cb85a434480cfbc9901a378eb59f495798279475139c8955bb1403a5", verdict: "comment-only" },
+  { journal: "mail", tag: "0025_mailbox_kickstart", recorded: "c1fcd9dd449648bcde5894cb775733f3ca784b2b3130f2af18114735cf41844e", verdict: "comment-only" },
+  { journal: "mail", tag: "0026_thread_resolution", recorded: "20572b3b6ba1d5a872756ea0378387126138f373c7c42b13077f311f484b9c83", verdict: "comment-only" },
+  { journal: "mail", tag: "0027_organizer_lease", recorded: "559044c0f5a4622043321f5a1fe890b3d13817f3ea5fd6ff81b1ed125b246aef", verdict: "comment-only" },
   { journal: "mail", tag: "0028_message_instances", recorded: "82b0e2c9ce4d758f665caade9c68b757c2b23ed9d3c8790e8bde1b3c56f4dc05", verdict: "comment-only" },
   { journal: "mail", tag: "0029_mailbox_sync_block", recorded: "38a14344f094e951662f736a316b1732544619bde158dcfd5be777af258710c3", verdict: "comment-only" },
   { journal: "mail", tag: "0030_sensitive_rescreen", recorded: "f938b6eaa871b83976817e50f2bc242a8d9c85c0bbf2b21b3f2b8c542087d0dd", verdict: "comment-only" },
@@ -83,7 +97,16 @@ const planted = (over: Partial<PrePublicationVersion> & Pick<PrePublicationVersi
   journal: "mail", executable: "f".repeat(64), introducedBy: "a".repeat(40), label: "pre-publication version", ...over,
 }];
 
-describe("production's twenty, classified from a clone of this repository", () => {
+describe("production's thirty-one, classified from a clone of this repository", () => {
+  it.each(PRODUCTION.map((p) => [`${p.journal} ${p.tag}`, p] as const))(
+    "%s: the record names exactly this version, and it reads its verdict via the record",
+    (_name, p) => {
+      expect(prePublicationVersionFor(p.journal, p.tag, p.recorded), "the record does not name production's hash").not.toBeNull();
+      const d = classifyDrift(p.journal, DIRS[p.journal], mismatch(p.journal, p.tag, p.recorded), shippedOf(p.journal, p.tag), READER);
+      expect(`${d.kind} via ${d.provenance?.source ?? "nothing"}`).toBe(`${p.verdict} via record`);
+    },
+  );
+
   it("none of them is a version this checkout's history carries — which is the whole gap", () => {
     for (const p of PRODUCTION) {
       const carried = READER.history(DIRS[p.journal], p.tag).some((h) => sha256Utf8(h.sql) === p.recorded);
@@ -115,7 +138,7 @@ describe("the record identifies exactly what it names, and nothing else", () => 
   });
 
   it("a hash the record names, asked for under ANOTHER tag, stays unknown provenance", () => {
-    const tag = "0006_idempotency_keys";
+    const tag = "0005_warm_black_bird";
     expect(PRODUCTION.some((p) => p.tag === tag), "pick a tag the record does not name").toBe(false);
     const d = classifyDrift("mail", DIRS.mail, mismatch("mail", tag, first.recorded), shippedOf("mail", tag), READER);
     expect(d.kind).toBe("unknown-provenance");
@@ -187,7 +210,7 @@ describe.skipIf(!PG_UP)("the setup's verification over production's rows, on a l
     await client?.end({ timeout: 5 }).catch(() => {});
   }, 60_000);
 
-  /** Every entry applied honestly, then production's twenty rows written over theirs. */
+  /** Every entry applied honestly, then production's thirty-one rows written over theirs. */
   const seed = async (rows: ReadonlyArray<{ journal: Journal; tag: string; recorded: string }>): Promise<void> => {
     for (const j of ["mail", "cloud"] as const) {
       await client.unsafe(`truncate ${table(j)}`);
@@ -208,7 +231,7 @@ describe.skipIf(!PG_UP)("the setup's verification over production's rows, on a l
 
   beforeEach(async () => { await seed(PRODUCTION); });
 
-  it("passes, and names every one of the twenty it admits", async () => {
+  it("passes, and names every one of the thirty-one it admits", async () => {
     const s = await statuses();
     expect(s.map((x) => `${x.name} ${x.applied}/${x.expected} missing ${x.missing.length}`))
       .toEqual([`mail ${ENTRIES.mail.length}/${ENTRIES.mail.length} missing 0`, `cloud ${ENTRIES.cloud.length}/${ENTRIES.cloud.length} missing 0`]);
