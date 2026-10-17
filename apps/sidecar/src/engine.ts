@@ -121,7 +121,7 @@ import { HOST_SEND_MAX_TOTAL_BYTES, resolveHostConfig, type HostState } from "./
 import { resolveLanBind, serveLanFallback, type LanState } from "./host-lan.js";
 import { ensureLanIdentity, type LanIdentity } from "./host-lan-tls.js";
 import { localLanRoutes } from "./lan-routes.js";
-import { attachmentFileRoutes } from "./attachment-file.js";
+import { attachmentFileRoutes } from "./attachment-file-route.js";
 /* The pairing check both engines serve; the phone's artifact takes `phone/cloud-probe.ts`. */
 import { answerCloudProbe, CLOUD_PROBE_ROUTE } from "./cloud-probe.js";
 // ── THE ONE PIPELINE ────────────────────────────────────────────────────────────────────────
@@ -2180,7 +2180,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // on the host/LAN doors; see `lan-routes.ts`.
       ...localLanRoutes(() => lanIdentity?.fingerprint ?? null),
       // The desktop's streamed save, into the shell's staging folder. This door only; never the
-      // host's, and not on a phone (no staging folder, and `phone/attachment-file.ts`).
+      // host's, and not on a phone (no staging folder, and `phone/attachment-file-route.ts`).
       ...attachmentFileRoutes(config.attachmentStagingDir),
       // The window-only pairing mint (mint/list/revoke), on this door alone and only when host
       // mode is armed. The machine's own login is the step-up; see `host-pair-routes.ts`.

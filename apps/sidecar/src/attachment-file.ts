@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { open, realpath, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { attachmentFileRoute, type Route } from "@trafficflow/api/local";
 import { ATTACHMENT_MAX_FETCH_BYTES, ServiceError } from "@trafficflow/services/mail";
 
 /**
@@ -86,11 +85,6 @@ export async function openAttachmentFile(req: Request, stagingDir: string | unde
       await unlink(path).catch(() => undefined);
     },
   };
-}
-
-/** The save's route for the engine's stdio door, or none when the shell named no staging directory. */
-export function attachmentFileRoutes(stagingDir: string | undefined): Route[] {
-  return stagingDir ? [attachmentFileRoute((req) => openAttachmentFile(req, stagingDir))] : [];
 }
 
 const json = (body: unknown, status = 200): Response =>

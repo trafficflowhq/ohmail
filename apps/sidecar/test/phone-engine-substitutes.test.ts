@@ -295,7 +295,7 @@ describe("the substitutes reach no Node builtin and open no socket", () => {
 
   it("is not vacuous — it read fifteen real files with content in them", () => {
     // A path list that stopped resolving would make both cases above pass over nothing. FIFTEEN
-    // since the desktop's streamed save (`attachment-file.ts`), fourteen since the three workspace
+    // since the desktop's streamed save (`attachment-file-route.ts`), fourteen since the three workspace
     // twins. The count moves with the table on purpose, so a row that disappears is a red and not
     // a silence.
     expect(files).toHaveLength(15);
