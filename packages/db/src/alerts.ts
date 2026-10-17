@@ -1,4 +1,4 @@
-import { and, eq, exists, gt, isNotNull, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, exists, gt, gte, isNotNull, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   alertDriverGaps, alertPassRuns, alertState, authEvents,
@@ -2666,6 +2666,28 @@ export function selectDigestRows(db: Tx, since: Date) {
 }
 
 /**
+ * THE LATEST EPISODE PER KEY, ONCE RESOLVED: rows resolved inside `[from, to)`, newest first,
+ * policy rows excluded by kind. `alert_key` is the primary key, so an earlier episode of a key is
+ * gone and a key that fired again is open (read through {@link selectOpenAlerts}). The fourth
+ * select of the table; the title and detail are blank here by the resolution's own write.
+ */
+export function selectLatestResolvedAlerts(db: Tx, from: Date, to: Date, limit: number) {
+  return db.select({
+    key: alertState.alertKey, kind: alertState.kind, severity: alertState.severity, cls: alertState.cls,
+    openedAt: alertState.openedAt, resolvedAt: alertState.resolvedAt, lastSeenAt: alertState.lastSeenAt,
+    notifiedAt: alertState.notifiedAt, count: alertState.count,
+  }).from(alertState)
+    .where(and(
+      isNotNull(alertState.resolvedAt),
+      ne(alertState.kind, MAIL_POLICY_ROW_KIND),
+      gte(alertState.resolvedAt, from),
+      lt(alertState.resolvedAt, to),
+    ))
+    .orderBy(desc(alertState.resolvedAt), alertState.alertKey)
+    .limit(limit);
+}
+
+/**
  * There is no prune, and that is the fix. The tombstone is what the observation write's INSERT
  * branch fences against: without the row, an older pass finds an empty table, inserts, and
  * re-opens a resolved incident. Two attempts to bound the tombstones both put that back — a
@@ -3904,5 +3926,19 @@ export async function listOpenAlerts(db: Tx): Promise<Array<{
     fixHref: r.fixHref,
     title: r.title,
     count: r.count === null ? null : Number(r.count),
+  }));
+}
+
+/** The resolved rows of {@link selectLatestResolvedAlerts}, timestamps normalised for both drivers. */
+export async function listLatestResolvedAlerts(db: Tx, window: { from: Date; to: Date }, limit: number): Promise<Array<{
+  key: string; kind: string; severity: string; cls: AlertClass; openedAt: Date; resolvedAt: Date;
+  lastSeenAt: Date; notifiedAt: Date | null; count: number | null;
+}>> {
+  const rows = await selectLatestResolvedAlerts(db, window.from, window.to, limit);
+  const at = (v: unknown): Date => new Date(v as string);
+  return rows.map((r) => ({
+    key: r.key, kind: r.kind, severity: r.severity, cls: r.cls === "signal" ? "signal" : "incident",
+    openedAt: at(r.openedAt), resolvedAt: at(r.resolvedAt), lastSeenAt: at(r.lastSeenAt),
+    notifiedAt: r.notifiedAt ? at(r.notifiedAt) : null, count: r.count === null ? null : Number(r.count),
   }));
 }

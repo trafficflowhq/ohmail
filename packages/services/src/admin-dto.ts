@@ -374,6 +374,30 @@ export interface FunnelSnapshot {
   stages: FunnelStage[];
   /** Signups per ISO week, oldest first — the top-of-funnel trend. `weekStart` is a Monday. */
   signupsByWeek: Array<{ weekStart: string; count: number }>;
+  /** The same stages for the accounts created inside `?from&to`; null when no window was asked. */
+  window: FunnelWindow | null;
+}
+
+/** One week of a {@link FunnelWindow}: its signups, and of those the verified and connected now. */
+export interface FunnelWeek {
+  weekStart: string;
+  signedUp: number;
+  verified: number;
+  connected: number;
+}
+
+/**
+ * The accounts created in `[from, to)` (at most 400 days, clamped by the route), and of those the
+ * ones with a verified login and with a mailbox NOW. Weeks are ISO weeks (Monday, UTC), oldest
+ * first; a week with no signup is absent.
+ */
+export interface FunnelWindow {
+  from: string;
+  to: string;
+  signedUp: number;
+  verified: number;
+  connected: number;
+  byWeek: FunnelWeek[];
 }
 
 /* ── worker ────────────────────────────────────────────────────────────────────────────── */
@@ -482,6 +506,7 @@ export type StaffRole = "support" | "billing" | "ops" | "owner";
 export type StaffAuditAction =
   | "read.overview" | "read.roster" | "read.search" | "read.account" | "read.account.activity"
   | "read.sync_roster" | "read.funnel" | "read.worker" | "read.actions"
+  | "read.engagement" | "read.storage" | "read.staff_activity" | "read.staff_list" | "read.alerts_history"
   | "read.oauth_provider" | "assert.external" | "write.mailbox.resync" | "write.oauth_provider"
   | "staff.signin" | "staff.signin_failed" | "staff.stepup" | "staff.stepup_failed"
   | "staff.signout" | "staff.role_grant" | "staff.role_revoke" | "staff.totp_reset";
@@ -572,6 +597,11 @@ export interface OpenSyncFacts {
   lastClosedNoticeAnchor: string | null;
   lastReopenedNoticeAnchor: string | null;
   erasedAt: string | null;
+  createdAt: string;
+  /** When the account first had a verified login (the earliest over its users), or null. */
+  emailVerifiedAt: string | null;
+  /** When its oldest mailbox row was created, or null with none. */
+  firstMailboxAt: string | null;
 }
 
 /** `GET /admin/sync-roster?cursor=&limit=` — keyset by account id; `nextCursor` null at the end. */
@@ -580,6 +610,99 @@ export interface SyncRosterPage {
   rows: OpenSyncFacts[];
   nextCursor: string | null;
   workerRosterIntervalSeconds: number;
+}
+
+/* ── the console's cross-account reads ────────────────────────────────────────────────── */
+
+/**
+ * `GET /admin/engagement` — accounts with a full session last used within 1, 7 and 30 days,
+ * revoked since or not (a sign-out after use was still use). Counts only.
+ */
+export interface EngagementSnapshot {
+  now: string;
+  activeAccounts: { d1: number; d7: number; d30: number };
+}
+
+/** One measured account: stored message bytes and when the counter last moved. */
+export interface StorageRow {
+  accountId: string;
+  bytes: number;
+  updatedAt: string;
+}
+
+/** `GET /admin/storage?cursor=&limit=` — keyset by account id; the two totals cover every row. */
+export interface StoragePage {
+  now: string;
+  totalBytes: number;
+  measuredAccounts: number;
+  rows: StorageRow[];
+  nextCursor: string | null;
+}
+
+/** The filters a {@link StaffFeedPage} was read with, after validation; null is "not filtered". */
+export interface StaffFeedApplied {
+  actor: string | null;
+  action: StaffAuditAction | null;
+  account: string | null;
+  outcome: StaffAuditOutcome | null;
+  from: string | null;
+  to: string | null;
+  reads: boolean;
+}
+
+/**
+ * `GET /admin/staff-activity` — the staff audit across accounts, newest first, 50 a page. `all`
+ * for an owner; `own` for any other role, which reads its own rows only. Reads and assertion
+ * mints are left out unless `reads=1` or a read action is named.
+ */
+export interface StaffFeedPage {
+  now: string;
+  scope: "all" | "own";
+  rows: StaffEvent[];
+  nextCursor: string | null;
+  applied: StaffFeedApplied;
+}
+
+/** One staff login: its live roles, its newest session, and whether an authenticator is enrolled. */
+export interface StaffMember {
+  staffId: string;
+  email: string;
+  roles: StaffRole[];
+  lastSignInAt: string | null;
+  authenticator: boolean;
+}
+
+/** `POST /admin/staff/list` — an owner's list of staff logins, by address. */
+export interface StaffList {
+  now: string;
+  staff: StaffMember[];
+  truncated: boolean;
+}
+
+/**
+ * One alert key's LATEST episode, resolved. `alert_state` keeps one row per key, so this is not
+ * a history of episodes: an earlier episode of the key is gone, and a key that fired again is
+ * open and on the live board instead. Resolution blanks the title and the detail.
+ */
+export interface LatestResolvedAlert {
+  key: string;
+  kind: string;
+  severity: AdminSeverity;
+  cls: AdminAlertClass;
+  openedAt: string;
+  resolvedAt: string;
+  lastConfirmedAt: string;
+  notifiedAt: string | null;
+  count: number | null;
+}
+
+/** `GET /admin/alerts/history?from=&to=` — keys whose latest episode resolved in the window. */
+export interface AlertResolvedPage {
+  now: string;
+  window: { from: string; to: string };
+  latestResolved: LatestResolvedAlert[];
+  /** More keys resolved inside the window than one answer carries. */
+  truncated: boolean;
 }
 
 /* ── the account page, v2 ──────────────────────────────────────────────────────────────── */
@@ -701,6 +824,8 @@ export interface StaffAssertionAnswer {
 /** `POST /admin/staff/whoami`'s identity, with the roles read live for this request. */
 export interface StaffWhoami {
   ok: true;
+  /** The id the staff audit records this person under. */
+  staffId: string;
   email: string;
   roles: StaffRole[];
   stepUpWindowSeconds: number;

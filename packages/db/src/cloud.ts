@@ -109,8 +109,8 @@ export {
 export {
   evaluateAlerts, runAlertPass, deliver, webhookAlertSink, nodePostJson, renderAlertText,
   writeHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
-  listStuckSends, listOpenAlerts,
-  selectOpenAlerts,
+  listStuckSends, listOpenAlerts, listLatestResolvedAlerts,
+  selectOpenAlerts, selectLatestResolvedAlerts,
   newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
   alertSignature, firingToLog, alertClass, incidentsOf, signalsOf,
   alertDriverStatuses, platformSignalWindow, CLOUD_JOURNAL_HEAD_WHEN,

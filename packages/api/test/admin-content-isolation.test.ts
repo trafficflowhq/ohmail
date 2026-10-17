@@ -1698,6 +1698,13 @@ async function seedInfrastructure(db: Db): Promise<void> {
     openedAt: FIXED_NOW, lastSeenAt: FIXED_NOW, notifyCount: 0,
     detail: "1 outbound_sends row(s) have been 'pending' longer than 10m",
   });
+  // A resolved key, so the latest-resolved read has a row the sweep taints (its signature).
+  await db.insert(alertState).values({
+    alertKey: "worker_down:0", kind: "worker_down", severity: "critical",
+    openedAt: new Date(FIXED_NOW.getTime() - 7_200_000), lastSeenAt: new Date(FIXED_NOW.getTime() - 3_600_000),
+    resolvedAt: new Date(FIXED_NOW.getTime() - 1_800_000), notifiedAt: new Date(FIXED_NOW.getTime() - 3_600_000),
+    notifyCount: 1, notifiedSignature: "critical:1",
+  });
 }
 
 /** Every staff-reachable response, as raw text. */
@@ -1706,14 +1713,24 @@ async function staffResponses(
 ): Promise<Array<{ path: string; text: string }>> {
   const d = { ...deps, admin: ADMIN, alerts: ALERTS };
   const out: Array<{ path: string; text: string }> = [];
+  // The funnel's window is around the wall clock: the seeded accounts take the database's own
+  // `now()` as their creation time.
+  const day = 86_400_000;
+  const window = `from=${new Date(Date.now() - 30 * day).toISOString()}&to=${new Date(Date.now() + day).toISOString()}`;
   for (const path of [
     ...ADMIN_READS, `/admin/accounts/${accountId}`, `/admin/accounts/${accountId}/staff-activity`,
     `/admin/accounts?ids=${accountId}`, "/admin/search?q=account", "/admin/sync-roster",
+    `/admin/funnel?${window}`, "/admin/engagement", "/admin/storage", "/admin/staff-activity?reads=1",
+    "/admin/alerts/history",
   ]) {
     const res = await H(req("GET", path, asStaff), d);
     expect(res.status, path).toBe(200);
     out.push({ path, text: await res.text() });
   }
+  // The staff list (owner only): a POST read whose session rides in the same header.
+  const list = await H(req("POST", "/admin/staff/list", { ...asStaff, body: "{}" }), d);
+  expect(list.status).toBe(200);
+  out.push({ path: "POST /admin/staff/list", text: await list.text() });
   // The OTHER staff credential: the alert observer. `GET /internal/alerts` is the runbook's
   // documented curl and it whole-row-selects `alert_state`.
   const open = await H(req("GET", "/internal/alerts", { bearer: ALERT_SECRET }), d);
@@ -1852,6 +1869,19 @@ describe("no staff surface carries a marker from ANY column of the schema", () =
     expect(worker.staleSends).toHaveLength(1);
     expect(worker.staleSends[0]!.id).toBeTruthy();
     expect(worker.staleSends[0]!.status).toBe("pending");
+
+    // The added reads answer from the same tainted rows, so their "no marker" is not an empty page.
+    const resolved = await get("/admin/alerts/history") as unknown as { latestResolved: Array<{ key: string }> };
+    expect(resolved.latestResolved.map((r) => r.key)).toEqual(["worker_down:0"]);
+    const syncRoster = await get("/admin/sync-roster") as unknown as { rows: Array<{ accountId: string; firstMailboxAt: string | null }> };
+    expect(syncRoster.rows.find((r) => r.accountId === world.accountId)?.firstMailboxAt).toBeTruthy();
+    const day = 86_400_000;
+    const funnel = await get(`/admin/funnel?from=${new Date(Date.now() - 30 * day).toISOString()}&to=${new Date(Date.now() + day).toISOString()}`) as unknown as {
+      window: { signedUp: number; connected: number } | null;
+    };
+    expect(funnel.window).toMatchObject({ signedUp: 1, connected: 1 });
+    const list = await (await H(req("POST", "/admin/staff/list", { ...asStaff, body: "{}" }), d)).json() as { staff: unknown[] };
+    expect(list.staff).toHaveLength(1);
   });
 });
 

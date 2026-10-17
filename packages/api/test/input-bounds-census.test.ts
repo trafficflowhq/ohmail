@@ -29,6 +29,7 @@ import { IMAP_UINT32_MAX } from "@trafficflow/services/mail";
 import { PUSH_ENDPOINT_MAX_LEN } from "../../core/src/net/push-endpoint.js";
 import {
   ADMIN_BATCH_MAX, ADMIN_MAX_PAGE_SIZE, ADMIN_SEARCH_LIMIT, ADMIN_STAFF_ACTIVITY_PAGE, ADMIN_SYNC_ROSTER_MAX,
+  ADMIN_FUNNEL_WINDOW_MAX_DAYS, ADMIN_STORAGE_MAX, ADMIN_RESOLVED_ALERTS_MAX, ADMIN_RESOLVED_ALERTS_MAX_DAYS,
 } from "../../services/src/admin-service.js";
 import { STAFF_ASSERTION_MAX_REQUESTS } from "../src/staff-assertion.js";
 import { BODIES_BYTE_BUDGET, BODIES_MAX_LIMIT } from "../../services/src/message-service.js";
@@ -407,9 +408,16 @@ const INPUT_VIA_HELPER: Readonly<Record<string, HelperRead>> = {
   "GET /admin/sync-roster": { via: "adminRoute (a factory) → syncRosterQueryOf", reader: "syncRosterQueryOf" },
   "GET /admin/accounts": { via: "adminRead (a factory) → accountQueryOf", reader: "accountQueryOf" },
   "GET /admin/accounts/:id": { via: "adminRead (a factory) → accountQueryOf", reader: "accountQueryOf" },
-  "GET /admin/funnel": { via: "adminRead (a factory) → accountQueryOf", reader: "accountQueryOf" },
+  // The funnel's window and the resolved alerts' window go through one bounds reader.
+  "GET /admin/funnel": { via: "adminRoute (a factory) → funnelWindowOf → windowBoundsOf", reader: "windowBoundsOf" },
   "GET /admin/worker": { via: "adminRead (a factory) → accountQueryOf", reader: "accountQueryOf" },
   "GET /admin/actions": { via: "adminRead (a factory) → accountQueryOf", reader: "accountQueryOf" },
+  "GET /admin/engagement": { via: "adminRoute (a factory); reads no query string", reader: null },
+  "GET /admin/storage": { via: "adminRoute (a factory) → storageQueryOf", reader: "storageQueryOf" },
+  "GET /admin/staff-activity": { via: "adminRoute (a factory) → staffFeedQueryOf", reader: "staffFeedQueryOf" },
+  "GET /admin/alerts/history": { via: "adminRoute (a factory) → resolvedWindowOf → windowBoundsOf", reader: "windowBoundsOf" },
+  // A POST read: no body is read, the session rides in the header like every adminRoute read.
+  "POST /admin/staff/list": { via: "adminRoute (a factory); reads no body and no query string", reader: null },
   // `qp(req)` — the contacts module's own query reader, shared by the contact list and both note
   // lists. Found by the DERIVATION above rather than by hand: the two note routes were parked in
   // `PATH_PARAMS_ONLY` because their handlers name no reader, which is exactly the blind spot.
@@ -825,9 +833,17 @@ const HELPER_CENSUS: Readonly<Record<string, Disposition>> = {
   "GET /admin/search": { bounds: [ADMIN_SEARCH_LIMIT], door: "`?q` is sliced to 320 characters before any read" },
   "GET /admin/sync-roster": { bounds: [ADMIN_SYNC_ROSTER_MAX] },
   "GET /admin/accounts/:id": { scalarsOnly: true },
-  "GET /admin/funnel": { scalarsOnly: true },
+  // `?from&to` are each sliced to 64 characters and parsed as an instant or dropped; the window
+  // is clamped to ADMIN_FUNNEL_WINDOW_MAX_DAYS and reaches one grouped statement.
+  "GET /admin/funnel": { bounds: [ADMIN_FUNNEL_WINDOW_MAX_DAYS] },
   "GET /admin/worker": { scalarsOnly: true },
   "GET /admin/actions": { bounds: [ADMIN_MAX_PAGE_SIZE] },
+  "GET /admin/engagement": { scalarsOnly: true },
+  "GET /admin/storage": { bounds: [ADMIN_STORAGE_MAX] },
+  // A fixed page; every filter is a uuid, a closed-set word or an instant, dropped otherwise.
+  "GET /admin/staff-activity": { bounds: [ADMIN_STAFF_ACTIVITY_PAGE] },
+  "GET /admin/alerts/history": { bounds: [ADMIN_RESOLVED_ALERTS_MAX, ADMIN_RESOLVED_ALERTS_MAX_DAYS] },
+  "POST /admin/staff/list": { scalarsOnly: true },
   "GET /contacts": { bounds: [CONTACTS_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT] },
   // The note lists share `qp` and so read `?q=` too; the notes services ignore it, so only the
   // page limit reaches a query.
@@ -1113,8 +1129,11 @@ const QUERY_PARAM_READS: Readonly<Record<string, number>> = {
   "routes/screener.ts#cursor": 2,
   // The Junk body's mailbox and the organize decision's: two routes, each one identifier.
   "routes/screener.ts#mailboxId": 2,
-  // Cloud 0047: the sync roster's keyset cursor and an account's activity cursor, two readers.
-  "routes/admin.ts#cursor": 2,
+  // Cloud 0047: the sync roster's keyset cursor and an account's activity cursor, two readers;
+  // then the storage read's keyset cursor and the staff feed's `<iso>,<uuid>`, four.
+  "routes/admin.ts#cursor": 4,
+  // The sync roster's and the storage read's, each through `pagingNumber`.
+  "routes/admin.ts#limit": 2,
   // The rest are TWO ROUTES in one file sharing a parameter name. They used to be something
   // else as well — the same value read twice by one handler, a presence test and a conversion —
   // and the paging seam removed that second read: `pagingNumber` takes the raw read and decides
@@ -1261,6 +1280,16 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/admin.ts#ids": "clamped",
   "routes/admin.ts#cursor": "identifier",
   "routes/admin.ts#limit": "clamped",
+  // The console's cross-account reads: a window's two instants, sliced to 64 characters and
+  // parsed or dropped; the staff feed's actor and account (a uuid or dropped), its action and
+  // outcome (closed sets, dropped otherwise) and `reads` (`=== "1"`, nothing else widens).
+  "routes/admin.ts#from": "length-capped",
+  "routes/admin.ts#to": "length-capped",
+  "routes/admin.ts#actor": "identifier",
+  "routes/admin.ts#account": "identifier",
+  "routes/admin.ts#action": "closed-set",
+  "routes/admin.ts#outcome": "closed-set",
+  "routes/admin.ts#reads": "closed-set",
   // The credit drill-down's day key. `closed-set` in the sense this census means it: the value is
   // refused outright unless it matches `^\d{4}-\d{2}-\d{2}$` and parses, so the set of values
   // that can reach a query is the set of calendar days and nothing else. NOT "length-capped" — a
@@ -1532,7 +1561,10 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   "admin-service.ts :: accountIds": { origin: { bounded: "one admin page, bounded by ADMIN_MAX_PAGE_SIZE" }, count: 2 },
   "admin-service.ts :: ids": { origin: { bounded: "one admin page, bounded by ADMIN_MAX_PAGE_SIZE" }, count: 1 },
   "admin-service.ts :: hits": { origin: { bounded: "a search's ranked matches, cut at ADMIN_SEARCH_LIMIT + 1 before the read" }, count: 1 },
-  "admin-service.ts :: pageIds": { origin: { bounded: "one sync-roster page, bounded by ADMIN_SYNC_ROSTER_MAX" }, count: 2 },
+  "admin-service.ts :: pageIds": { origin: { bounded: "one sync-roster page, bounded by ADMIN_SYNC_ROSTER_MAX" }, count: 3 },
+  // The batch's and the account page's roster: the asked ids, cut at ADMIN_BATCH_MAX by the
+  // route, uuid-checked and deduped; one id for the account page. Accounts, logins, mailboxes.
+  "admin-service.ts :: [...ids]": { origin: { bounded: "the asked ids, cut at ADMIN_BATCH_MAX by the route and uuid-checked" }, count: 3 },
   "admin-service.ts :: unique": { origin: { bounded: "one admin page, bounded by ADMIN_MAX_PAGE_SIZE" }, count: 1 },
   // `loadLedger`'s STATEMENT predicate (cloud 0028) — `reason IN (…)` over
   // `credit_ledger_events_idx`'s partial predicate exactly. A CONSTANT in the strongest sense

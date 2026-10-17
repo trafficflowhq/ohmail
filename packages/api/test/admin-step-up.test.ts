@@ -219,6 +219,13 @@ const ADMIN_ROUTE_CLASS: Readonly<Record<string, "identity" | "read" | "write">>
   "GET /admin/accounts/:id/staff-activity": "read",
   "GET /admin/search": "read",
   "GET /admin/sync-roster": "read",
+  // The console's cross-account reads: counts, bytes, the staff audit and resolved alerts. The
+  // staff list is a POST read under `/admin/staff/` that changes nothing, so it is a read too.
+  "GET /admin/engagement": "read",
+  "GET /admin/storage": "read",
+  "GET /admin/staff-activity": "read",
+  "GET /admin/alerts/history": "read",
+  "POST /admin/staff/list": "read",
   // Cloud 0047. The mint judges the session's step-up stamp itself for a write scope (or a TOTP
   // in its body); the roles change consumes a TOTP in its own body. Neither can carry the
   // middleware, which would refuse the very call that proves the factor.

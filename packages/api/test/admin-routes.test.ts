@@ -114,7 +114,7 @@ describe("admin reads — registration and shape", () => {
     const admin = apiRoutes.filter(
       (r) => r.pattern.startsWith("/admin") && r.method === "GET",
     );
-    expect(admin).toHaveLength(9);
+    expect(admin).toHaveLength(13);
     for (const route of admin) {
       expect(route.method, route.pattern).toBe("GET");
       expect(route.options, route.pattern).toEqual({ public: true, anonymous: true, raw: true });
@@ -124,9 +124,12 @@ describe("admin reads — registration and shape", () => {
     // same options triple, which is what this list is here to say: a read that resolved a
     // session, or that was not `raw`, would be a different animal wearing the same path prefix.
     // 6 → 9 (cloud 0047): search, the sync roster and an account's staff activity.
+    // 9 → 13: active-account counts, stored bytes per account, the staff audit across accounts
+    // and the alert keys whose latest episode resolved.
     expect(admin.map((r) => r.pattern).sort()).toEqual([
       "/admin/accounts", "/admin/accounts/:id", "/admin/accounts/:id/staff-activity", "/admin/actions",
-      "/admin/funnel", "/admin/overview", "/admin/search", "/admin/sync-roster", "/admin/worker",
+      "/admin/alerts/history", "/admin/engagement", "/admin/funnel", "/admin/overview", "/admin/search",
+      "/admin/staff-activity", "/admin/storage", "/admin/sync-roster", "/admin/worker",
     ]);
   });
 
@@ -145,15 +148,18 @@ describe("admin reads — registration and shape", () => {
    */
   it("the staff identity routes are POST and carry exactly { public, anonymous, raw }", () => {
     const staffRoutes = apiRoutes.filter((r) => r.pattern.startsWith("/admin/staff/"));
-    expect(staffRoutes).toHaveLength(9);
+    expect(staffRoutes).toHaveLength(10);
     for (const route of staffRoutes) {
       expect(route.method, route.pattern).toBe("POST");
       expect(route.options, route.pattern).toEqual({ public: true, anonymous: true, raw: true });
       expect(route.cost, route.pattern).toBe("unauthenticated");
     }
     // 7 → 9 (cloud 0047): the assertion mint and the roles change verify their own factor.
+    // 9 → 10: the staff list, an owner's read through `adminRoute` (its session in the header,
+    // like every read) on the runtime connection, because the blind role holds no grant on the
+    // staff tables. It changes nothing, so it carries no step-up.
     expect(staffRoutes.map((r) => r.pattern).sort()).toEqual([
-      "/admin/staff/assertion", "/admin/staff/roles",
+      "/admin/staff/assertion", "/admin/staff/list", "/admin/staff/roles",
       "/admin/staff/session", "/admin/staff/sign-out", "/admin/staff/step-up",
       "/admin/staff/totp/begin", "/admin/staff/totp/confirm", "/admin/staff/totp/reset",
       "/admin/staff/whoami",

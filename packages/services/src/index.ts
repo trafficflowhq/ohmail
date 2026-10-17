@@ -376,6 +376,11 @@ export {
   ADMIN_SYNC_ROSTER_MAX, WORKER_ROSTER_INTERVAL_SECONDS, type AdminReader,
   adminFunnel, adminWorker, adminWorkerInstances,
   adminAlerts, adminAlertReading, adminAlertDrivers, adminPlatformSignals, adminActions, adminAttentionRank,
+  // The console's cross-account reads (engagement, storage, the staff feed, resolved alerts).
+  adminEngagement, adminStorage, adminStaffFeed, adminLatestResolvedAlerts,
+  ADMIN_FUNNEL_WINDOW_MAX_DAYS, ADMIN_STORAGE_MAX, ADMIN_RESOLVED_ALERTS_MAX,
+  ADMIN_RESOLVED_ALERTS_DEFAULT_DAYS, ADMIN_RESOLVED_ALERTS_MAX_DAYS,
+  type AdminViewer, type StaffFeedQuery,
   ADMIN_LIST_LIMIT, ADMIN_DEFAULT_PAGE_SIZE, ADMIN_MAX_PAGE_SIZE, ADMIN_OPTIONS_LIMIT,
   ADMIN_ROSTER_LIMIT,
   ADMIN_WRITES_UNAVAILABLE, ADMIN_ACTIONS_PRECONDITION, STAFF_STEP_UP_WINDOW_SECONDS,

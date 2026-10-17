@@ -28,11 +28,13 @@ async function world(roles: readonly StaffRole[] = ["support"]): Promise<{ deps:
     { id: B, name: "Beta", createdAt: at(-90), erasedAt: at(-5) },
     { id: C, name: "Gamma", createdAt: at(-80) },
   ]);
-  const [user] = await deps.db.insert(users).values({ accountId: A, email: "owner@acme.example", createdAt: at(-100) }).returning();
+  const [user] = await deps.db.insert(users).values({
+    accountId: A, email: "owner@acme.example", createdAt: at(-100), emailVerifiedAt: at(-70),
+  }).returning();
   await deps.db.insert(users).values({ accountId: A, email: "second@acme.example", createdAt: at(-50) });
   await deps.db.insert(mailboxes).values([
     { accountId: A, provider: "imap", address: "a1@acme.example", status: "connected", lastSyncAt: at(-3),
-      syncBlockedReason: "account_closed", syncBlockedSince: at(-40) },
+      syncBlockedReason: "account_closed", syncBlockedSince: at(-40), createdAt: at(-95) },
     { accountId: A, provider: "imap", address: "a2@acme.example", status: "connected", lastSyncAt: at(-1),
       organizerRole: "reader", organizerReleasedAt: at(-30), organizeConsentedAt: at(-60) },
     // Held by somebody: released once, but a holder is renewing — not a mailbox with no holder.
@@ -82,8 +84,21 @@ describe("GET /admin/sync-roster", () => {
       accountId: A, mailboxes: 4, disabled: 1, blockedAccountClosed: 1, oldestBlockedSince: at(-40).toISOString(),
       releasedNoHolder: 1, oldestReleasedAt: at(-30).toISOString(), lastSyncMax: at(-1).toISOString(),
       lastClosedNoticeAnchor: at(-45).toISOString(), lastReopenedNoticeAnchor: at(-10).toISOString(), erasedAt: null,
+      createdAt: at(-100).toISOString(), emailVerifiedAt: at(-70).toISOString(), firstMailboxAt: at(-95).toISOString(),
     });
-    expect(page.rows[1]).toMatchObject({ accountId: B, mailboxes: 0, releasedNoHolder: 0, erasedAt: at(-5).toISOString() });
+    expect(page.rows[1]).toMatchObject({
+      accountId: B, mailboxes: 0, releasedNoHolder: 0, erasedAt: at(-5).toISOString(),
+      createdAt: at(-90).toISOString(), emailVerifiedAt: null, firstMailboxAt: null,
+    });
+  });
+
+  it("names when the account first had a verified login and its oldest mailbox, not the newest", async () => {
+    const w = await world();
+    // A third login verified later moves nothing: the earliest verification is the account's.
+    await w.deps.db.insert(users).values({ accountId: A, email: "third@acme.example", createdAt: at(-40), emailVerifiedAt: at(-30) });
+    const page = await read<SyncRosterPage>(w, "/admin/sync-roster");
+    expect(page.rows[0]).toMatchObject({ emailVerifiedAt: at(-70).toISOString(), firstMailboxAt: at(-95).toISOString() });
+    expect(page.rows[2]).toMatchObject({ accountId: C, emailVerifiedAt: null, firstMailboxAt: null });
   });
 
   it("pages by cursor and ends on a short page", async () => {

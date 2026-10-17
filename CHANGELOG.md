@@ -36,6 +36,19 @@ next step (on ohmail Cloud the next step is the confirmation mail), and the conf
 - The payment provider's session id no longer stays in the address bar after returning from the account page.
 - Small text buttons on the signup screens are at least 24 pixels tall.
 
+### The staff console can see more of how the service is used, and still none of anyone's mail
+
+The admin API answers new questions for the people who run an ohmail server: how many accounts signed up inside
+a chosen window, and of those how many verified their address and connected a mailbox, week by week; how many
+accounts were in use over the last day, week and month; how much stored mail each account holds; the staff audit
+across all accounts, where an owner sees every staff member's actions and every other role only its own; for
+an owner, the list of staff logins with their roles, last sign-in and whether a second factor is set up; and each
+alert's latest resolved episode (one entry per alert, not a full history). Each answer is recorded in the staff
+audit before it is given, and none of them can carry a message, a subject or a sender.
+
+Looking up accounts by id, and opening one account in the console, now read only the accounts asked for instead
+of every account on the server.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

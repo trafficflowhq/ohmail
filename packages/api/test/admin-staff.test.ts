@@ -120,7 +120,7 @@ describe("staff sign-in — the happy path, and what it hands back", () => {
 
   it("signs in with a valid code and returns a token that whoami recognises", async () => {
     const deps = await deps0();
-    const { totpSecret } = await seedStaff(deps, { activated: true });
+    const { id, totpSecret } = await seedStaff(deps, { activated: true });
 
     const res = await H(post("/admin/staff/session",
       { email: EMAIL, password: PASSWORD, code: totpNow(totpSecret, FIXED_NOW) },
@@ -137,8 +137,10 @@ describe("staff sign-in — the happy path, and what it hands back", () => {
     // minutes" in its own copy) and with nothing else. A field appearing here is a field the
     // browser gets.
     // Cloud 0047 adds `roles`, read live; this fixture holds none, and says so.
+    // `staffId` is the id the staff audit records the caller under, so the console can name its
+    // own rows; an id, never a credential.
     expect(await who.json()).toEqual({
-      ok: true, email: EMAIL, roles: [], stepUpWindowSeconds: 300, stepUpFresh: true,
+      ok: true, staffId: id, email: EMAIL, roles: [], stepUpWindowSeconds: 300, stepUpFresh: true,
     });
   });
 
@@ -201,7 +203,7 @@ describe("staff enrolment — the first sign-in sets up the authenticator", () =
 
   it("shows the secret once, then activates only on a code from it", async () => {
     const deps = await deps0();
-    await seedStaff(deps);
+    const { id } = await seedStaff(deps);
     const start = await H(post("/admin/staff/session",
       { email: EMAIL, password: PASSWORD }, { bearer: SECRET }), deps);
     const { enrollToken } = await start.json() as { enrollToken: string };
@@ -234,7 +236,7 @@ describe("staff enrolment — the first sign-in sets up the authenticator", () =
     // browser gets.
     // Cloud 0047 adds `roles`, read live; this fixture holds none, and says so.
     expect(await who.json()).toEqual({
-      ok: true, email: EMAIL, roles: [], stepUpWindowSeconds: 300, stepUpFresh: true,
+      ok: true, staffId: id, email: EMAIL, roles: [], stepUpWindowSeconds: 300, stepUpFresh: true,
     });
   });
 

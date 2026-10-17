@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { accounts, auditLog, mailboxes } from "@trafficflow/db";
-import { staffAuditEvents } from "@trafficflow/db/cloud";
+import { staffAuditEvents, STAFF_ROLES } from "@trafficflow/db/cloud";
 import { checkedDetail, StaffAuditDetailError, type AdminDb, type StaffActivityPage } from "@trafficflow/services";
 import type { ApiDeps } from "@trafficflow/api";
+import { STAFF_SESSION_HEADER } from "../src/routes/admin.js";
 import { FIXED_NOW } from "./helpers.js";
 import {
   H, get, post, seedStaff, staffDeps, auditRows, auditRowsFor, failingInsertInto,
@@ -27,8 +28,13 @@ const READS: ReadonlyArray<readonly [string, string]> = [
   ["/admin/search?q=acme", "read.search"],
   ["/admin/sync-roster", "read.sync_roster"],
   ["/admin/funnel", "read.funnel"],
+  ["/admin/funnel?from=2026-07-01&to=2026-07-15", "read.funnel"],
   ["/admin/worker", "read.worker"],
   ["/admin/actions", "read.actions"],
+  ["/admin/engagement", "read.engagement"],
+  ["/admin/storage", "read.storage"],
+  ["/admin/staff-activity", "read.staff_activity"],
+  ["/admin/alerts/history", "read.alerts_history"],
 ];
 
 async function world(): Promise<{ deps: ApiDeps; staff: Awaited<ReturnType<typeof seedStaff>> }> {
@@ -110,6 +116,62 @@ describe("every staff read is recorded before it is served", () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: { code: "audit_failed" } });
     expect(broken.faults.count).toBe(1);
+  });
+});
+
+describe("the staff list (owner only) and the feed's own-rows rule are recorded before they answer", () => {
+  const list = (token: string): Request => post("/admin/staff/list", {}, { [STAFF_SESSION_HEADER]: token });
+
+  it("an owner's list writes one read.staff_list row, and the response names its request id", async () => {
+    const deps = await staffDeps();
+    const owner = await seedStaff(deps, { roles: ["owner"] });
+    const res = await H(list(owner.token), deps);
+    expect(res.status).toBe(200);
+    const [row, ...rest] = await auditRowsFor(deps, owner.staffId);
+    expect(rest).toEqual([]);
+    expect(row).toMatchObject({ action: "read.staff_list", outcome: "ok", staffSessionId: owner.sessionId });
+    expect(res.headers.get("x-request-id")).toBe(row!.requestId);
+  });
+
+  it.each(STAFF_ROLES.filter((r) => r !== "owner").map((r) => [r] as const))("%s is refused the list, and the refusal is recorded", async (role) => {
+    const deps = await staffDeps();
+    const s = await seedStaff(deps, { roles: [role] });
+    const res = await H(list(s.token), deps);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: { code: "role_required" } });
+    expect((await auditRowsFor(deps, s.staffId)).map((r) => [r.action, r.outcome, r.refusalCode]))
+      .toEqual([["read.staff_list", "refused", "role_required"]]);
+  });
+
+  it("the list answers 503 audit_failed and is never read when its row cannot be written", async () => {
+    const deps = await staffDeps();
+    const owner = await seedStaff(deps, { roles: ["owner"] });
+    const broken = failingInsertInto(deps.db, staffAuditEvents);
+    let reads = 0;
+    const d = {
+      ...deps, db: broken.db,
+      adminDb: () => { reads += 1; return Promise.resolve(deps.db as unknown as AdminDb); },
+    } as ApiDeps;
+    const res = await H(list(owner.token), d);
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe(JSON.stringify({ error: { code: "audit_failed" } }));
+    expect(broken.faults.count).toBe(1);
+    expect(reads, "the list ran although nothing recorded it").toBe(0);
+  });
+
+  it("support naming another staff member on the feed is refused, recorded, and fails closed", async () => {
+    const deps = await staffDeps();
+    const support = await seedStaff(deps, { roles: ["support"] });
+    const other = await seedStaff(deps, { roles: ["support"] });
+    const res = await H(get(`/admin/staff-activity?actor=${other.staffId}`, support.token), deps);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: { code: "role_required" } });
+    expect((await auditRowsFor(deps, support.staffId)).map((r) => [r.action, r.outcome, r.refusalCode]))
+      .toEqual([["read.staff_activity", "refused", "role_required"]]);
+    const broken = failingInsertInto(deps.db, staffAuditEvents);
+    const blind = await H(get(`/admin/staff-activity?actor=${other.staffId}`, support.token), { ...deps, db: broken.db } as ApiDeps);
+    expect(blind.status).toBe(503);
+    expect(await blind.json()).toEqual({ error: { code: "audit_failed" } });
   });
 });
 

@@ -201,22 +201,23 @@ describe("no other package reaches the table directly", () => {
 });
 
 describe("every reader of open alerts goes through one accessor", () => {
-  it("no select of alert_state exists outside its three accessors", () => {
+  it("no select of alert_state exists outside its four accessors", () => {
     // The tombstone gave every reader a shared way to be wrong: a select that forgets
     // `resolved_at IS NULL` renders fixed history as live incidents, which is worse than the
-    // resurrection the column was added to prevent. Three accessors, each with its predicate
-    // asserted below, are the only selects, and this census keeps a fourth from appearing quietly.
+    // resurrection the column was added to prevent. Four accessors, each with its predicate
+    // asserted below, are the only selects, and this census keeps a fifth from appearing quietly.
+    // The fourth reads the other side on purpose: each key's latest episode, once resolved.
     const selects: number[] = [];
     const re = /\.from\(alertState\)/g;
     for (let m = re.exec(SRC); m !== null; m = re.exec(SRC)) selects.push(m.index);
-    expect(selects, "exactly three `.from(alertState)` in the file").toHaveLength(3);
+    expect(selects, "exactly four `.from(alertState)` in the file").toHaveLength(4);
     const inside = (name: string, at: number): boolean => {
       const start = SRC.indexOf(`export function ${name}`);
       return start >= 0 && at > start && at < SRC.indexOf("\n}", start);
     };
     for (const at of selects) {
-      expect(["selectOpenAlerts", "selectMailPolicyRow", "selectDigestRows"].some((n) => inside(n, at)),
-        "every select is inside an accessor").toBe(true);
+      expect(["selectOpenAlerts", "selectMailPolicyRow", "selectDigestRows", "selectLatestResolvedAlerts"]
+        .some((n) => inside(n, at)), "every select is inside an accessor").toBe(true);
     }
   });
 
@@ -240,5 +241,13 @@ describe("every reader of open alerts goes through one accessor", () => {
     const text = body("selectDigestRows");
     expect(text).toContain(`eq(alertState.cls, "incident")`);
     expect(text).toContain("${touched} > ${since.toISOString()}::timestamptz");
+  });
+
+  it("the latest-resolved accessor reads resolved rows inside its window, never a policy row", () => {
+    const text = body("selectLatestResolvedAlerts");
+    expect(text).toContain("isNotNull(alertState.resolvedAt)");
+    expect(text).toContain("ne(alertState.kind, MAIL_POLICY_ROW_KIND)");
+    expect(text).toContain("gte(alertState.resolvedAt, from)");
+    expect(text).toContain("lt(alertState.resolvedAt, to)");
   });
 });

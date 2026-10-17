@@ -12,6 +12,7 @@ import type { StaffAuditAction, StaffReasonCode } from "./admin-dto.js";
 export const STAFF_AUDIT_ACTIONS = [
   "read.overview", "read.roster", "read.search", "read.account", "read.account.activity",
   "read.sync_roster", "read.funnel", "read.worker", "read.actions",
+  "read.engagement", "read.storage", "read.staff_activity", "read.staff_list", "read.alerts_history",
   "read.oauth_provider", "assert.external", "write.mailbox.resync", "write.oauth_provider",
   "staff.signin", "staff.signin_failed", "staff.stepup", "staff.stepup_failed",
   "staff.signout", "staff.role_grant", "staff.role_revoke", "staff.totp_reset",
@@ -46,9 +47,14 @@ const DETAIL: Record<StaffAuditAction, Readonly<Record<string, Check>>> = {
   "read.account": {},
   "read.account.activity": { views: flag },
   "read.sync_roster": { limit: count },
-  "read.funnel": {},
+  "read.funnel": { windowDays: count },
   "read.worker": {},
   "read.actions": {},
+  "read.engagement": {},
+  "read.storage": { limit: count },
+  "read.staff_activity": { reads: flag },
+  "read.staff_list": {},
+  "read.alerts_history": {},
   "assert.external": {
     method: oneOf("GET", "POST", "PUT", "PATCH", "DELETE"), path, scope: oneOf("read", "write"),
     tier: (v) => v === 0 || v === 1 || v === 2, index: count,

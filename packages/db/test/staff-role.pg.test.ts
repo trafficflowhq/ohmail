@@ -18,7 +18,8 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
 import {
-  adminAccountDetail, adminAccounts, adminActions, adminAlerts, adminFunnel, adminWorker,
+  adminAccountDetail, adminAccounts, adminAccountsByIds, adminActions, adminAlerts, adminEngagement,
+  adminFunnel, adminLatestResolvedAlerts, adminStaffFeed, adminStorage, adminSyncRoster, adminWorker,
   type AdminDb,
 } from "@trafficflow/services";
 import {
@@ -569,6 +570,47 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
     expect(typeof funnel.invites.outstanding).toBe("number");
     expect(typeof funnel.waitlist.waiting).toBe("number");
     expect(JSON.stringify(funnel)).not.toContain("@");
+  });
+
+  /**
+   * THE CONSOLE'S CROSS-ACCOUNT READS, AS THE BLIND ROLE, WITH NO GRANT ADDED FOR THEM. Each one
+   * names only columns the shipped script already grants; a column outside the allowlist raises
+   * 42501 out of the call, and the census below stays an equality. The rows the reads need beyond
+   * the seeded world are written through the database-owner connection, under keys no alert rule reads.
+   */
+  it("serves the batch, the sync roster, the funnel window, engagement, storage, the staff trail and resolved alerts", async () => {
+    const now = new Date();
+    const batch = await adminAccountsByIds(staff, now, [seeded.accountId], { roles: ["owner"] });
+    expect(batch.rows.map((r) => r.id)).toEqual([seeded.accountId]);
+
+    const roster = await adminSyncRoster(staff, now, null, 500);
+    const mine = roster.rows.find((r) => r.accountId === seeded.accountId)!;
+    expect(mine.createdAt).toBeTruthy();
+    expect(mine.firstMailboxAt).toBeTruthy();
+    expect(mine.emailVerifiedAt).toBeNull();
+
+    const funnel = await adminFunnel(staff, now, { from: new Date(now.getTime() - 86_400_000), to: new Date(now.getTime() + 60_000) });
+    expect(funnel.window).toMatchObject({ signedUp: 1, verified: 0, connected: 1 });
+
+    expect((await adminEngagement(staff, now)).activeAccounts.d1).toBe(1);
+
+    await ownerClient.unsafe(`insert into account_storage (account_id, bytes) values ('${seeded.accountId}', 2048)`);
+    expect(await adminStorage(staff, now, null, 500)).toMatchObject({ totalBytes: 2048, measuredAccounts: 1 });
+
+    const staffId = randomUUID();
+    await ownerClient.unsafe(`insert into staff_users (id, email, password_hash) values ('${staffId}', 'role-test@example.test', 'x')`);
+    await ownerClient.unsafe(`insert into staff_audit_events (request_id, staff_user_id, actor_label, roles, action, outcome, target_account_id)
+      values (gen_random_uuid(), '${staffId}', 'role-test@example.test', '{owner}', 'write.mailbox.resync', 'ok', '${seeded.accountId}')`);
+    const feed = await adminStaffFeed(staff, now, { staffId, roles: ["owner"] }, {
+      cursor: null, actor: null, action: null, account: seeded.accountId, outcome: null, from: null, to: null, reads: false,
+    });
+    expect(feed.rows.map((r) => r.action)).toEqual(["write.mailbox.resync"]);
+
+    await ownerClient.unsafe(`insert into alert_state (alert_key, kind, severity, opened_at, last_seen_at, resolved_at, notify_count)
+      values ('api_fault_rate:api:/staff-role-test', 'api_fault_rate', 'warning', now() - interval '3 hours',
+              now() - interval '2 hours', now() - interval '1 hour', 0)`);
+    const resolved = await adminLatestResolvedAlerts(staff, now, { from: new Date(now.getTime() - 86_400_000), to: now });
+    expect(resolved.latestResolved.map((r) => r.key)).toContain("api_fault_rate:api:/staff-role-test");
   });
 
   it("runs the ALERT PASS as the blind role — the one table it writes", async () => {

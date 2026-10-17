@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import {
   accounts, accountStorage, auditLog, devices, mailboxCredentials, mailboxes, sessions, users,
   isMailboxSyncBlockReason, staffChannelWord,
@@ -12,6 +12,7 @@ import {
   alertKindArms,
   alertClass,
   listOpenAlerts,
+  listLatestResolvedAlerts,
   alertDriverStatuses,
   platformSignalWindow,
   SIGNAL_BUCKET_MS,
@@ -32,8 +33,9 @@ import type {
   AdminSearchResult, OpenSyncFacts, StaffActivityPage, StaffEvent, StaffRole, SyncRosterPage,
   AccountPage, AccountQuery, AccountSummary, ActionCatalog, ActionSpec,
   AdminAlertDriver, AdminAlertUnread, AdminPlatformSignal, AlertSummary, AuditEntry,
-  FunnelSnapshot, FunnelStage, MailboxHealth, SecurityEvent,
+  FunnelSnapshot, FunnelStage, FunnelWindow, MailboxHealth, SecurityEvent,
   StaleSend, WorkerInstanceHealth, WorkerSnapshot,
+  AlertResolvedPage, EngagementSnapshot, StaffAuditAction, StaffAuditOutcome, StaffFeedPage, StoragePage,
 } from "./admin-dto.js";
 
 /**
@@ -150,10 +152,17 @@ export function adminAttentionRank(account: AccountSummary): number {
    The roster
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
-async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
+/**
+ * Every account's summary, or only the accounts `ids` names (uuid-checked by the caller). The
+ * bounded form reads `accounts`, `users` and `mailboxes` by those ids alone: the batch and the
+ * account page answer for at most a hundred accounts and must not cost a scan of all of them.
+ */
+async function loadRoster(db: AdminDb, now: Date, ids: readonly string[] | null = null): Promise<AccountSummary[]> {
+  if (ids !== null && ids.length === 0) return [];
   const accountRows = await db
     .select({ id: accounts.id, name: accounts.name, createdAt: accounts.createdAt })
-    .from(accounts);
+    .from(accounts)
+    .where(ids === null ? undefined : inArray(accounts.id, [...ids]));
   if (accountRows.length === 0) return [];
 
   // The OWNER's login address — `users.email`, the account's own identity, never a sender.
@@ -161,7 +170,8 @@ async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
   // the earliest row is the account's owner.
   const userRows = await db
     .select({ accountId: users.accountId, email: users.email, createdAt: users.createdAt })
-    .from(users);
+    .from(users)
+    .where(ids === null ? undefined : inArray(users.accountId, [...ids]));
   const ownerEmail = new Map<string, { email: string; createdAt: Date | string }>();
   for (const row of userRows) {
     const held = ownerEmail.get(row.accountId);
@@ -193,6 +203,7 @@ async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
           filter (where ${mailboxes.status} <> 'disabled')`,
     })
     .from(mailboxes)
+    .where(ids === null ? undefined : inArray(mailboxes.accountId, [...ids]))
     .groupBy(mailboxes.accountId);
   const mailboxByAccount = new Map(mailboxRows.map((r) => [r.accountId, r]));
 
@@ -470,6 +481,11 @@ export interface AdminReader {
   roles: readonly StaffRole[];
 }
 
+/** A reader with its staff id, for a read whose rows depend on who is asking (the staff feed). */
+export interface AdminViewer extends AdminReader {
+  staffId: string;
+}
+
 /** `ops` reads the platform, not the people: login addresses are masked to their domain. */
 export const readerMasksAddresses = (reader: AdminReader): boolean =>
   !reader.roles.includes("owner") && reader.roles.includes("ops")
@@ -638,8 +654,7 @@ export async function adminAccountDetail(
   // A malformed id must be a 404, not a Postgres `invalid input syntax for type uuid` 500 —
   // the path segment is whatever the caller typed.
   if (!UUID_RE.test(id)) return null;
-  const roster = await loadRoster(db, now);
-  const summary = roster.find((a) => a.id === id);
+  const [summary] = await loadRoster(db, now, [id.toLowerCase()]);
   if (!summary) return null;
   const mask = readerMasksAddresses(reader);
 
@@ -845,7 +860,7 @@ export async function adminAccountsByIds(
   db: AdminDb, now: Date, ids: readonly string[], reader: AdminReader,
 ): Promise<AccountBatch> {
   const wanted = ids.map((x) => x.trim().toLowerCase());
-  const roster = await loadRoster(db, now);
+  const roster = await loadRoster(db, now, [...new Set(wanted.filter((id) => UUID_RE.test(id)))]);
   const byId = new Map(roster.map((a) => [a.id, a]));
   const mask = readerMasksAddresses(reader);
   const rows: AccountSummary[] = [];
@@ -873,15 +888,20 @@ export async function adminSyncRoster(
   const size = Math.min(ADMIN_SYNC_ROSTER_MAX, Math.max(1, Math.trunc(limit) || ADMIN_SYNC_ROSTER_MAX));
   const after = cursor && UUID_RE.test(cursor) ? cursor.toLowerCase() : null;
   const accountRows = await db
-    .select({ id: accounts.id, erasedAt: accounts.erasedAt })
+    .select({ id: accounts.id, erasedAt: accounts.erasedAt, createdAt: accounts.createdAt })
     .from(accounts)
     .where(after ? sql`${accounts.id} > ${after}::uuid` : undefined)
     .orderBy(accounts.id)
     .limit(size);
   const pageIds = accountRows.map((r) => r.id);
+  // The earliest verification over the account's logins: when it first had a verified one.
+  const verifiedRows = pageIds.length === 0 ? [] : await db
+    .select({ accountId: users.accountId, at: sql<string | null>`min(${users.emailVerifiedAt})` })
+    .from(users).where(inArray(users.accountId, pageIds)).groupBy(users.accountId);
   const facts = pageIds.length === 0 ? [] : await db
     .select({
       accountId: mailboxes.accountId,
+      firstMailboxAt: sql<string | null>`min(${mailboxes.createdAt})`,
       mailboxes: sql<number>`count(*)::int`,
       disabled: sql<number>`count(*) filter (where ${mailboxes.status} = 'disabled')::int`,
       blockedAccountClosed: sql<number>`count(*) filter (where ${mailboxes.syncBlockedReason} = 'account_closed')::int`,
@@ -901,6 +921,7 @@ export async function adminSyncRoster(
     .groupBy(accountLifecycleNotices.accountId);
   const factBy = new Map(facts.map((f) => [f.accountId, f]));
   const noticeBy = new Map(notices.map((n) => [n.accountId, n]));
+  const verifiedBy = new Map(verifiedRows.map((v) => [v.accountId, v.at]));
   return {
     now: now.toISOString(),
     rows: accountRows.map((a): OpenSyncFacts => {
@@ -918,6 +939,9 @@ export async function adminSyncRoster(
         lastClosedNoticeAnchor: iso(n?.closed ?? null),
         lastReopenedNoticeAnchor: iso(n?.reopened ?? null),
         erasedAt: iso(a.erasedAt),
+        createdAt: asDate(a.createdAt).toISOString(),
+        emailVerifiedAt: iso(verifiedBy.get(a.id) ?? null),
+        firstMailboxAt: iso(f?.firstMailboxAt ?? null),
       };
     }),
     nextCursor: accountRows.length === size ? accountRows[accountRows.length - 1]!.id : null,
@@ -935,7 +959,9 @@ export async function adminSyncRoster(
  * once and a drop-off is a true conversion. Sequential reads on the `max: 1` blind pool, like
  * every other admin read group.
  */
-export async function adminFunnel(db: AdminDb, now: Date): Promise<FunnelSnapshot> {
+export async function adminFunnel(
+  db: AdminDb, now: Date, window: { from: Date; to: Date } | null = null,
+): Promise<FunnelSnapshot> {
   const [inviteRow] = await db
     .select({
       issued: sql<number>`count(*)::int`,
@@ -1004,6 +1030,187 @@ export async function adminFunnel(db: AdminDb, now: Date): Promise<FunnelSnapsho
     waitlist: { waiting: int(waitRow?.waiting), invited: int(waitRow?.invited) },
     stages,
     signupsByWeek: weekRows.map((r) => ({ weekStart: r.weekStart, count: int(r.count) })),
+    window: window === null ? null : await funnelWindow(db, window),
+  };
+}
+
+/** The longest window the funnel counts, in days; the route clamps a longer one to its end. */
+export const ADMIN_FUNNEL_WINDOW_MAX_DAYS = 400;
+
+/**
+ * The accounts created in `[from, to)`, by ISO week, and of those the ones with a verified login
+ * and with a mailbox NOW. One statement; the two EXISTS are separate fragments so their columns
+ * stay qualified (a single-table select strips the table name only from top-level columns).
+ */
+async function funnelWindow(db: AdminDb, w: { from: Date; to: Date }): Promise<FunnelWindow> {
+  const week = sql`date_trunc('week', ${accounts.createdAt})`;
+  const verified = sql`exists (select 1 from ${users} where ${users.accountId} = ${accounts.id} and ${users.emailVerifiedAt} is not null)`;
+  const connected = sql`exists (select 1 from ${mailboxes} where ${mailboxes.accountId} = ${accounts.id})`;
+  const rows = await db
+    .select({
+      weekStart: sql<string>`to_char(${week}, 'YYYY-MM-DD')`,
+      signedUp: sql<number>`count(*)::int`,
+      verified: sql<number>`count(*) filter (where ${verified})::int`,
+      connected: sql<number>`count(*) filter (where ${connected})::int`,
+    })
+    .from(accounts)
+    .where(and(gte(accounts.createdAt, w.from), lt(accounts.createdAt, w.to)))
+    .groupBy(week)
+    .orderBy(week);
+  const byWeek = rows.map((r) => ({
+    weekStart: r.weekStart, signedUp: int(r.signedUp), verified: int(r.verified), connected: int(r.connected),
+  }));
+  const total = (k: "signedUp" | "verified" | "connected"): number => byWeek.reduce((n, r) => n + r[k], 0);
+  return {
+    from: w.from.toISOString(), to: w.to.toISOString(),
+    signedUp: total("signedUp"), verified: total("verified"), connected: total("connected"), byWeek,
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════════════
+   The console's cross-account reads: engagement, storage, the staff feed, resolved alerts
+   ════════════════════════════════════════════════════════════════════════════════════════ */
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `GET /admin/engagement` — distinct accounts whose full sessions were last used within 1, 7 and
+ * 30 days. Revoked since or not: a sign-out after use was still use. An enrolment session is a
+ * sign-up's ceremony, not use, so `scope = 'full'` only. One statement, counts only.
+ */
+export async function adminEngagement(db: AdminDb, now: Date): Promise<EngagementSnapshot> {
+  const since = (days: number): string => new Date(now.getTime() - days * DAY_MS).toISOString();
+  const [row] = await db
+    .select({
+      d1: sql<number>`count(distinct ${sessions.accountId}) filter (where ${sessions.lastSeenAt} > ${since(1)}::timestamptz)::int`,
+      d7: sql<number>`count(distinct ${sessions.accountId}) filter (where ${sessions.lastSeenAt} > ${since(7)}::timestamptz)::int`,
+      d30: sql<number>`count(distinct ${sessions.accountId})::int`,
+    })
+    .from(sessions)
+    .where(and(eq(sessions.scope, "full"), sql`${sessions.lastSeenAt} > ${since(30)}::timestamptz`));
+  return { now: now.toISOString(), activeAccounts: { d1: int(row?.d1), d7: int(row?.d7), d30: int(row?.d30) } };
+}
+
+export const ADMIN_STORAGE_MAX = 500;
+
+/**
+ * `GET /admin/storage?cursor=&limit=` — stored message bytes per measured account, keyset by
+ * account id. The total and the count are over every row, so each page carries the whole figure.
+ */
+export async function adminStorage(
+  db: AdminDb, now: Date, cursor: string | null, limit: number,
+): Promise<StoragePage> {
+  const size = Math.min(ADMIN_STORAGE_MAX, Math.max(1, Math.trunc(limit) || ADMIN_STORAGE_MAX));
+  const after = cursor && UUID_RE.test(cursor) ? cursor.toLowerCase() : null;
+  const [total] = await db
+    .select({ bytes: sql<string | null>`sum(${accountStorage.bytes})`, accounts: sql<number>`count(*)::int` })
+    .from(accountStorage);
+  const rows = await db
+    .select({ accountId: accountStorage.accountId, bytes: accountStorage.bytes, updatedAt: accountStorage.updatedAt })
+    .from(accountStorage)
+    .where(after ? sql`${accountStorage.accountId} > ${after}::uuid` : undefined)
+    .orderBy(accountStorage.accountId)
+    .limit(size);
+  return {
+    now: now.toISOString(),
+    totalBytes: int(total?.bytes),
+    measuredAccounts: int(total?.accounts),
+    rows: rows.map((r) => ({ accountId: r.accountId, bytes: int(r.bytes), updatedAt: asDate(r.updatedAt).toISOString() })),
+    nextCursor: rows.length === size ? rows[rows.length - 1]!.accountId : null,
+  };
+}
+
+/** What the staff feed is asked for, validated by the route; null is "not filtered". */
+export interface StaffFeedQuery {
+  cursor: string | null;
+  actor: string | null;
+  action: StaffAuditAction | null;
+  account: string | null;
+  outcome: StaffAuditOutcome | null;
+  from: Date | null;
+  to: Date | null;
+  reads: boolean;
+}
+
+/** Reads and assertion mints: the rows that would bury the actions, left out unless asked for. */
+const READ_LIKE = sql`(${staffAuditEvents.action} like 'read.%' or ${staffAuditEvents.action} = 'assert.external')`;
+const isReadLike = (action: string): boolean => action.startsWith("read.") || action === "assert.external";
+
+/**
+ * `GET /admin/staff-activity` — the staff audit across accounts, newest first, keyset (at, id).
+ * An owner reads every row; any other role its own rows only, whatever it asked (the route has
+ * already refused one naming another actor). The cursor is the last row READ, so a row this build
+ * cannot name, dropped from the page, never ends the paging early.
+ */
+export async function adminStaffFeed(
+  db: AdminDb, now: Date, viewer: AdminViewer, q: StaffFeedQuery,
+): Promise<StaffFeedPage> {
+  const owner = viewer.roles.includes("owner");
+  const actor = owner ? q.actor : viewer.staffId;
+  const reads = q.reads || (q.action !== null && isReadLike(q.action));
+  const before = staffActivityCursorOf(q.cursor);
+  const where = [
+    actor === null ? undefined : eq(staffAuditEvents.staffUserId, actor),
+    q.action === null ? undefined : eq(staffAuditEvents.action, q.action),
+    q.account === null ? undefined : eq(staffAuditEvents.targetAccountId, q.account),
+    q.outcome === null ? undefined : eq(staffAuditEvents.outcome, q.outcome),
+    q.from === null ? undefined : gte(staffAuditEvents.at, q.from),
+    q.to === null ? undefined : lt(staffAuditEvents.at, q.to),
+    reads ? undefined : sql`not ${READ_LIKE}`,
+    before
+      ? sql`(${staffAuditEvents.at}, ${staffAuditEvents.id}) < (${before.at}::timestamptz, ${before.id}::uuid)`
+      : undefined,
+  ].filter((x): x is NonNullable<typeof x> => x !== undefined);
+  const rows = await db
+    .select(STAFF_EVENT_COLUMNS)
+    .from(staffAuditEvents)
+    .where(and(...where))
+    .orderBy(desc(staffAuditEvents.at), desc(staffAuditEvents.id))
+    .limit(ADMIN_STAFF_ACTIVITY_PAGE);
+  const last = rows.length === ADMIN_STAFF_ACTIVITY_PAGE ? rows[rows.length - 1]! : null;
+  return {
+    now: now.toISOString(),
+    scope: owner ? "all" : "own",
+    rows: rows
+      .filter((r) => (STAFF_AUDIT_ACTIONS as readonly string[]).includes(r.action))
+      .map((r) => staffEventOf({ ...r, roles: r.roles ?? [] })),
+    nextCursor: last ? `${asDate(last.at).toISOString()},${last.id}` : null,
+    applied: {
+      actor, action: q.action, account: q.account, outcome: q.outcome,
+      from: q.from?.toISOString() ?? null, to: q.to?.toISOString() ?? null, reads,
+    },
+  };
+}
+
+export const ADMIN_RESOLVED_ALERTS_MAX = 500;
+/** The default window of the resolved read, and the longest it counts, in days. */
+export const ADMIN_RESOLVED_ALERTS_DEFAULT_DAYS = 30;
+export const ADMIN_RESOLVED_ALERTS_MAX_DAYS = 90;
+
+/**
+ * `GET /admin/alerts/history?from=&to=` — each alert key whose LATEST episode resolved inside the
+ * window, newest first, through the db package's own accessor (this module never selects the
+ * table). One row per key: an earlier episode is gone, and a key that fired again is open.
+ */
+export async function adminLatestResolvedAlerts(
+  db: AdminDb, now: Date, window: { from: Date; to: Date },
+): Promise<AlertResolvedPage> {
+  const rows = await listLatestResolvedAlerts(db, window, ADMIN_RESOLVED_ALERTS_MAX + 1);
+  return {
+    now: now.toISOString(),
+    window: { from: window.from.toISOString(), to: window.to.toISOString() },
+    latestResolved: rows.slice(0, ADMIN_RESOLVED_ALERTS_MAX).map((r) => ({
+      key: r.key,
+      kind: r.kind,
+      severity: r.severity === "critical" ? "bad" : "warn",
+      cls: r.cls,
+      openedAt: r.openedAt.toISOString(),
+      resolvedAt: r.resolvedAt.toISOString(),
+      lastConfirmedAt: r.lastSeenAt.toISOString(),
+      notifiedAt: r.notifiedAt ? r.notifiedAt.toISOString() : null,
+      count: r.count,
+    })),
+    truncated: rows.length > ADMIN_RESOLVED_ALERTS_MAX,
   };
 }
 

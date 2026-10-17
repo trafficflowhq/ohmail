@@ -8,7 +8,7 @@ import {
   scryptHasher, generateToken, hashToken, throttleKeysFor,
   newTotpSecret, totpUri, verifyTotp, isUuid, AUDIT_PATH_RE,
   STAFF_STEP_UP_WINDOW_SECONDS,
-  type StaffAssertionAnswer, type StaffAuditAction, type StaffRole,
+  type StaffAssertionAnswer, type StaffAuditAction, type StaffMember, type StaffRole,
 } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import {
@@ -334,6 +334,41 @@ export async function liveRolesOf(db: Pick<Tx, "select">, staffId: string): Prom
     .where(and(eq(staffRoleGrants.staffUserId, staffId), isNull(staffRoleGrants.revokedAt)));
   const held = new Set(rows.map((r) => r.role));
   return STAFF_ROLES.filter((r) => held.has(r));
+}
+
+/** How many staff logins one list answers; the staff are a handful, so reaching it says so. */
+export const STAFF_LIST_MAX = 200;
+
+/**
+ * Every staff login with its live roles, its newest session and whether an authenticator is
+ * enrolled — on the runtime connection, because the blind role holds no grant on these tables.
+ * Each column is named: never a hash, a sealed secret or a pending enrolment.
+ */
+export async function listStaffMembers(db: ApiDeps["db"]): Promise<{ staff: StaffMember[]; truncated: boolean }> {
+  // Nested fragments, so their columns stay qualified: a single-table select strips the table
+  // name from a field's top-level columns, and `"staff_user_id" = "id"` would bind inside.
+  const liveRoles = sql`array(select ${staffRoleGrants.role} from ${staffRoleGrants}
+    where ${staffRoleGrants.staffUserId} = ${staffUsers.id} and ${staffRoleGrants.revokedAt} is null)`;
+  const newestSession = sql`(select max(${staffSessions.createdAt}) from ${staffSessions}
+    where ${staffSessions.staffUserId} = ${staffUsers.id})`;
+  const rows = await db
+    .select({
+      id: staffUsers.id, email: staffUsers.email, authenticator: staffUsers.totpActivated,
+      roles: sql<string[] | null>`${liveRoles}`,
+      lastSignInAt: sql<string | null>`${newestSession}`,
+    })
+    .from(staffUsers)
+    .orderBy(staffUsers.email)
+    .limit(STAFF_LIST_MAX + 1);
+  const staff = rows.slice(0, STAFF_LIST_MAX).map((r): StaffMember => {
+    const held = new Set(r.roles ?? []);
+    return {
+      staffId: r.id, email: r.email, roles: STAFF_ROLES.filter((x) => held.has(x)),
+      lastSignInAt: r.lastSignInAt === null ? null : new Date(r.lastSignInAt).toISOString(),
+      authenticator: r.authenticator === true,
+    };
+  });
+  return { staff, truncated: rows.length > STAFF_LIST_MAX };
 }
 
 /** The staff member a resolved session names, as the audit records them. */
@@ -753,6 +788,7 @@ async function whoami(
       status: 200,
       body: {
         ok: true,
+        staffId: who.staffId,
         email: who.email,
         roles: who.roles,
         stepUpWindowSeconds: STAFF_STEP_UP_WINDOW_SECONDS,

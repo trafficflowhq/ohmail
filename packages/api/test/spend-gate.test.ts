@@ -77,6 +77,11 @@ const UNAUTHENTICATED = [
   // customer session, so `withSpendGate` has no account to judge and the shared secret plus a
   // live staff session is the authority.
   "GET /admin/actions",
+  // The console's cross-account reads (resolved alerts, active-account counts, the staff audit,
+  // stored bytes), on their siblings' exact terms: ANONYMOUS_PIPELINE, no customer session, the
+  // shared secret plus a live staff session.
+  "GET /admin/alerts/history",
+  "GET /admin/engagement",
   // The COST BOARD (cloud 0029), on the eight `/admin/*` reads' exact terms: the whole table
   // selects ANONYMOUS_PIPELINE and resolves no customer session, so `withSpendGate` has no
   // account whose verification state it could judge, and the authority is a shared secret plus a
@@ -89,6 +94,8 @@ const UNAUTHENTICATED = [
   "GET /admin/funnel",
   "GET /admin/overview",
   "GET /admin/search",
+  "GET /admin/staff-activity",
+  "GET /admin/storage",
   "GET /admin/sync-roster",
   "GET /admin/worker",
   "GET /health",
@@ -266,6 +273,8 @@ const UNAUTHENTICATED = [
   // Cloud 0047: the assertion mint and the roles change, on the staff routes' terms; both verify
   // their own factor inside the handler.
   "POST /admin/staff/assertion",
+  // The staff list (owner only), a read on the staff routes' terms: the session rides in the header.
+  "POST /admin/staff/list",
   "POST /admin/staff/roles",
   "POST /admin/staff/session",
   "POST /admin/staff/sign-out",
@@ -903,7 +912,10 @@ describe("the route table declares what every handler causes", () => {
     // no exempt list moves.
     // 240 -> 241: `GET /screener/unscreened/count`, what agreeing will screen, a `read`, so it joins
     // the exempt list above and this total together.
-    expect(apiRoutes).toHaveLength(241);
+    // 241 -> 246: the console's five reads (four GETs and the staff list), each
+    // `unauthenticated` on the `/admin/*` table's terms, so they join the exempt list and this
+    // total together and the gated remainder is unchanged.
+    expect(apiRoutes).toHaveLength(246);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1124,7 +1136,9 @@ describe("the route table declares what every handler causes", () => {
     // 239 -> 240 with the gap offer's answer, and the remainder MOVES: `work`, gated.
     // 240 -> 241 with what agreeing will screen, a `read`: the total and `READ` grow by one each, the
     // remainder does not move.
-    expect(gated.length).toBe(241 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 241 -> 246 with the console's five reads, `unauthenticated`: the total and `UNAUTHENTICATED`
+    // grow by five each, the remainder does not move.
+    expect(gated.length).toBe(246 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });
