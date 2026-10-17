@@ -23,7 +23,7 @@ function fakeAdapter(chunks: Buffer[]) {
   const adapter = new ImapAdapter({
     host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
   });
-  // Stand in for the connected imapflow client. `fetchPart` uses exactly these two.
+  // Stand in for the connected imapflow client: what `fetchPart` uses.
   (adapter as unknown as { delimiter: string }).delimiter = "/"; // what connect() learns on a flat server
   (adapter as unknown as { client: unknown }).client = {
     getMailboxLock: async () => ({ release: () => { state.released += 1; } }),
@@ -32,6 +32,8 @@ function fakeAdapter(chunks: Buffer[]) {
     // absent. A stand-in without it models a server that does not exist.
     mailbox: { path: "INBOX", uidValidity: 1n },
     download: async () => ({ content, meta: { contentType: "application/pdf", filename: "x.pdf" } }),
+    // The post-read witness (`streamPart`): the UID is still there, so the read was not cut.
+    fetchOne: async () => ({ uid: 42 }),
   };
   return { adapter, state };
 }

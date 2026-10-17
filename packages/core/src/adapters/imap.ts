@@ -822,6 +822,15 @@ export class EpochUnknownError extends Error {
   }
 }
 
+/** The raw bytes one partial FETCH of a part asks for: imapflow's default, stated so the floor below holds. */
+const PART_CHUNK_BYTES = 64 * 1024;
+/**
+ * The fewest decoded bytes a CUT part read can have delivered. A read is cut only after a full
+ * {@link PART_CHUNK_BYTES} chunk, and no decoding on this path (quoted-printable at 3:1 under a UTF-32
+ * charset at 4:1) shrinks one below 5461 bytes, so a shorter read ended on its own short chunk.
+ */
+const CUT_PART_READ_FLOOR = 4 * 1024;
+
 /**
  * A part exceeded the byte ceiling {@link ImapAdapter.fetchPart} was given, and the download was
  * abandoned mid-stream. `bytesSoFar` is what had accumulated when the ceiling tripped —
@@ -5035,7 +5044,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // the requester as their own attachment. `move` and `setFlags` corrupt the mailbox; this
       // one hands one person's file to another.
       this.assertLocatorEpoch(locator);
-      const dl = await this.bounded(this.client.download(String(uid), part, { uid: true }));
+      const dl = await this.bounded(this.client.download(String(uid), part, { uid: true, chunkSize: PART_CHUNK_BYTES }));
       if (!dl || !dl.content) throw new MessageGoneError(locator);
       // COUNT AS WE GO, and stop the moment the ceiling is crossed.
       //
@@ -5056,6 +5065,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           throw new AttachmentTooLargeError(locator, opts.maxBytes, total);
         }
         await onChunk(buf);
+      }
+      // A CUT READ ENDS LIKE A WHOLE ONE: imapflow stops without an error when a chunk FETCH comes
+      // back empty, which is what GreenMail and Dovecot answer once another session has moved or
+      // expunged the UID. The witness is the UID itself, asked once more: a session never shows an
+      // expunged UID again, so a UID still here was here for every chunk, and one gone may have
+      // cut this read. Gone is the door's re-resolved retry, never a short part handed on as whole.
+      if (total >= CUT_PART_READ_FLOOR) {
+        const still = await this.bounded(this.client.fetchOne(String(uid), { uid: true }, { uid: true }));
+        if (!still) throw new MessageGoneError(locator, true);
       }
       return {
         contentType: dl.meta?.contentType ?? "application/octet-stream",

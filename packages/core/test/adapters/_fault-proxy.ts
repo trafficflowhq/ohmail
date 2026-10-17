@@ -8,15 +8,25 @@ import type { ImapFlow } from "imapflow";
  * without forwarding, `drop` closes both sockets without forwarding, `drop-after` forwards and
  * closes before the server's answer reaches the client (the server expunged, the client cannot
  * know). `hide` strips capabilities from every list, so a server with MOVE can be made to take
- * the COPY + EXPUNGE path. Both directions are parsed literal-aware; bytes are otherwise verbatim.
+ * the COPY + EXPUNGE path. `hold` parks the first client command it matches, and everything after
+ * it, until its `run` settles (another session acting between two commands of this one). Both
+ * directions are parsed literal-aware; bytes are otherwise verbatim.
  */
 export type ExpungeFault = "pass" | "no" | "drop" | "drop-after";
+
+/** A one-shot park: the first command `when` matches waits, with the bytes behind it, for `run`. */
+export interface CommandHold {
+  when: (command: string, args: string) => boolean;
+  run: () => Promise<void>;
+}
 
 export interface FaultProxy {
   readonly port: number;
   fault: ExpungeFault;
   /** Only an EXPUNGE issued while this mailbox is selected is faulted; null faults every one. */
   onlyMailbox: string | null;
+  /** Armed by a test; cleared once it has matched. */
+  hold: CommandHold | null;
   /** Commands seen, by name, with the mailbox selected when each was sent. */
   readonly log: ReadonlyArray<{ command: string; mailbox: string | null; faulted: boolean }>;
   count(command: string, mailbox?: string): number;
@@ -84,7 +94,9 @@ export async function startFaultProxy(
   const hide = (opts.hide ?? []).map((c) => c.toUpperCase());
   const log: Array<{ command: string; mailbox: string | null; faulted: boolean }> = [];
   const sockets = new Set<net.Socket>();
-  const state = { fault: opts.fault ?? "pass" as ExpungeFault, onlyMailbox: opts.onlyMailbox ?? null };
+  const state = {
+    fault: opts.fault ?? "pass" as ExpungeFault, onlyMailbox: opts.onlyMailbox ?? null, hold: null as CommandHold | null,
+  };
 
   const stripCaps = (text: string): string => {
     if (!/CAPABILITY/i.test(text)) return text;
@@ -100,10 +112,12 @@ export async function startFaultProxy(
     let pendingSelect: { tag: string; mailbox: string } | null = null;
     let swallowTag: string | null = null; // drop-after: the tag whose answer must never arrive
     const kill = (): void => { client.destroy(); upstream.destroy(); };
+    let parked: Buffer[] | null = null;
+    const toUpstream = (b: Buffer): void => { if (parked) parked.push(b); else upstream.write(b); };
     const cs: Framer = { buf: Buffer.alloc(0), literal: 0, continuing: false };
     const ss: Framer = { buf: Buffer.alloc(0), literal: 0, continuing: false };
 
-    client.on("data", (chunk: Buffer) => frame(cs, chunk, (b) => upstream.write(b), (text, atStart, raw) => {
+    client.on("data", (chunk: Buffer) => frame(cs, chunk, toUpstream, (text, atStart, raw) => {
       if (!atStart) return raw;
       const m = /^(\S+) (UID )?([A-Za-z]+)(?: (.*))?$/.exec(text);
       if (!m) return raw;
@@ -116,6 +130,13 @@ export async function startFaultProxy(
       const faulted = isExpunge && state.fault !== "pass"
         && (state.onlyMailbox === null || state.onlyMailbox === selected);
       log.push({ command, mailbox: selected, faulted });
+      const hold = state.hold;
+      if (hold && !parked && hold.when(command, m[4] ?? "")) {
+        state.hold = null;
+        parked = [raw];
+        void hold.run().finally(() => { const q = parked ?? []; parked = null; for (const b of q) upstream.write(b); });
+        return null;
+      }
       if (!faulted) return raw;
       if (state.fault === "no") {
         client.write(`${tag} NO [SERVERBUG] expunge refused by the fault proxy\r\n`);
@@ -152,6 +173,8 @@ export async function startFaultProxy(
     set fault(f: ExpungeFault) { state.fault = f; },
     get onlyMailbox() { return state.onlyMailbox; },
     set onlyMailbox(m: string | null) { state.onlyMailbox = m; },
+    get hold() { return state.hold; },
+    set hold(h: CommandHold | null) { state.hold = h; },
     log,
     count(command, mailbox) {
       return log.filter((e) => e.command === command && (mailbox === undefined || e.mailbox === mailbox)).length;

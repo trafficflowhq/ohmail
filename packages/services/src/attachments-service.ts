@@ -405,9 +405,21 @@ function partFallbackName(part: { id: string; contentType: string }): string {
   return isCalendarMime(part.contentType) ? CALENDAR_FALLBACK_FILENAME : `attachment-${part.id}.bin`;
 }
 
+/**
+ * How long one request waits, in all, for the mirror to name where a gone message went. The
+ * organizer's move expunges the source before its own write lands, and a part read in between is
+ * refused as gone; the door re-reads the row until it moves or this runs out, then retries once.
+ */
+export const MOVED_LOCATOR_SETTLE_MS = 1_500;
+const MOVED_LOCATOR_POLL_MS = 100;
+
+/** One request's settle allowance, shared by every part it reads: the wait is spent once. */
+interface Relocation { until: number | null }
+
 /** A resolved attachment carrying everything the on-demand IMAP fetch needs. */
 interface ResolvedPart {
   id: string;
+  messageId: string;
   filename: string | null;
   contentType: string;
   partId: string | null;
@@ -489,9 +501,9 @@ export class AttachmentsService {
       // THE REAL GUARD. Safe to pass here and nowhere else: this adapter serves exactly one part
       // and the `finally` below closes it, so the poisoned-connection cost of a mid-stream abort is
       // a connection we were about to discard anyway.
-      const fetched = await repairedPart(
-        part, reader(adapter, part.locator, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES }), ctx, { ...(deps.log ? { log: deps.log } : {}) },
-      );
+      const fetched = await this.followingMove(ctx, part, { until: null }, (locator) => repairedPart(
+        part, reader(adapter, locator, { maxBytes: ATTACHMENT_MAX_FETCH_BYTES }), ctx, { ...(deps.log ? { log: deps.log } : {}) },
+      ));
       // Prefer the DB filename (stable), then what IMAP reported; a part nameless in BOTH
       // places downloads under the type-aware fallback (invite.ics for a calendar part) rather
       // than the route's bare "attachment" — see {@link partFallbackName}.
@@ -561,6 +573,7 @@ export class AttachmentsService {
     const errors: string[] = [];
     let fetchedBytes = 0;
     const budget: RepairBudget = { rows: REPAIRS_PER_REQUEST };
+    const relocation: Relocation = { until: null };
 
     // Stable grouping: preserve the resolved (id-ordered) sequence within each mailbox, and
     // visit mailboxes in first-appearance order, so the archive's contents are deterministic.
@@ -612,10 +625,10 @@ export class AttachmentsService {
              * the group rather than reconnecting is deliberate — a reconnect per breach is a loop
              * whose length the hostile server chooses.
              */
-            const fetched = await repairedPart(
-              part, readerFor(adapter, part.locator, { maxBytes: DOWNLOAD_ALL_MAX_BYTES - fetchedBytes }), ctx,
+            const fetched = await this.followingMove(ctx, part, relocation, (locator) => repairedPart(
+              part, readerFor(adapter, locator, { maxBytes: DOWNLOAD_ALL_MAX_BYTES - fetchedBytes }), ctx,
               { budget, ...(deps.log ? { log: deps.log } : {}) },
-            );
+            ));
             fetchedBytes += fetched.body.byteLength;
             zip.file(name, fetched.body);
           } catch (err) {
@@ -764,6 +777,7 @@ export class AttachmentsService {
     // scoped-by: all three callers build `where` starting from eq(attachments.accountId, ctx.accountId)
     const rows = await ctx.db.select({
       id: attachments.id,
+      messageId: attachments.messageId,
       filename: attachments.filename,
       contentType: attachments.contentType,
       partId: attachments.partId,
@@ -798,15 +812,48 @@ export class AttachmentsService {
     for (const r of rows) {
       const locator = r.nativeLocator as NativeLocator | null;
       if (!locator) continue;   // a message with no native locator cannot be fetched
-      out.push({ id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, contentSha256: r.contentSha256, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes });
+      out.push({ id: r.id, messageId: r.messageId, filename: r.filename, contentType: r.contentType, partId: r.partId, contentSha256: r.contentSha256, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes });
     }
     return out;
+  }
+
+  /**
+   * ONE READ, AND ONE MORE WHERE THE MESSAGE WENT. A gone refusal re-reads the message's locator
+   * (the mover writes it after its MOVE, so it is polled within the request's settle allowance) and
+   * reads the part there once; a row that never moves, or a second gone, refuses as gone.
+   */
+  private async followingMove(
+    ctx: ServiceContext, part: ResolvedPart, relocation: Relocation, read: (locator: NativeLocator) => Promise<FetchedBytes>,
+  ): Promise<FetchedBytes> {
+    try {
+      return await read(part.locator);
+    } catch (err) {
+      if (!isMessageGone(err)) throw err;
+      const moved = await this.movedLocator(ctx, part, relocation);
+      if (moved === null) throw err;
+      return read(moved);
+    }
+  }
+
+  /** The message's locator once it differs from the one just refused, or `null` within the allowance. */
+  private async movedLocator(ctx: ServiceContext, part: ResolvedPart, relocation: Relocation): Promise<NativeLocator | null> {
+    relocation.until ??= Date.now() + MOVED_LOCATOR_SETTLE_MS;
+    for (;;) {
+      const [row] = await ctx.db.select({ locator: messages.nativeLocator }).from(messages)
+        .where(and(eq(messages.id, part.messageId), eq(messages.accountId, ctx.accountId))).limit(1);
+      const now = row?.locator as NativeLocator | null | undefined;
+      if (!now) return null;
+      if (now.folder !== part.locator.folder || now.ref !== part.locator.ref) return now;
+      if (Date.now() + MOVED_LOCATOR_POLL_MS > relocation.until) return null;
+      await new Promise((r) => setTimeout(r, MOVED_LOCATOR_POLL_MS));
+    }
   }
 
   /** Resolve one attachment + its message's mailbox/locator, account-scoped or 404. */
   private async resolvePart(ctx: ServiceContext, attachmentId: string): Promise<ResolvedPart> {
     const [r] = await ctx.db.select({
       id: attachments.id,
+      messageId: attachments.messageId,
       filename: attachments.filename,
       contentType: attachments.contentType,
       partId: attachments.partId,
@@ -825,7 +872,7 @@ export class AttachmentsService {
     if (!locator) {
       throw new ServiceError("not_found", 404, "this message was deleted from the mailbox, so its attachment can no longer be loaded");
     }
-    return { id: r.id, filename: r.filename, contentType: r.contentType, partId: r.partId, contentSha256: r.contentSha256, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes };
+    return { id: r.id, messageId: r.messageId, filename: r.filename, contentType: r.contentType, partId: r.partId, contentSha256: r.contentSha256, mailboxId: r.mailboxId, locator, sizeBytes: r.sizeBytes };
   }
 
   private async ownedRow(ctx: ServiceContext, attachmentId: string): Promise<typeof attachments.$inferSelect> {

@@ -20,6 +20,13 @@ answer, and when the server never confirmed a sign-out, every later visit to ohm
 over. A sign-out now always ends and removes the mail this browser holds; if the server could not confirm it, the
 next visit to ohmail.app finishes it first and then shows the sign-in page.
 
+### A picture or attachment opened while its message was being filed no longer shows blank
+
+Opening a message can file it (the Screener's pending move to the Inbox), and a picture or file read from the
+mail server at that moment came back cut short and was refused as "a different part of the message": the
+picture stayed blank and a download failed. A read cut by a move is now seen for what it is, and the part is
+read again where the message went.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

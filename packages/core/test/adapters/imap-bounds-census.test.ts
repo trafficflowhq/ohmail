@@ -198,6 +198,7 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
     how: "single_message",
     why: "one UID's BODYSTRUCTURE, named by the door's locator, under the operation clock the API door races it with; structureOf keeps at most MAX_STRUCTURE_NODES nodes",
   },
+  "streamPart|fetchOne": { how: "single_message", why: "one UID's UID item, the post-read witness that a part read was not cut by an expunge" },
   "move|fetchOne": { how: "single_message", why: "one UID, the move's source probe" },
   "setFlags|fetchOne": { how: "single_message", why: "one UID, the existence probe" },
   "moveMany|fetchAll": {
