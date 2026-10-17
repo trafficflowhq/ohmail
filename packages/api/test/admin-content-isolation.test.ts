@@ -2038,3 +2038,60 @@ describe("one account's context never carries another account's mail", () => {
     }
   });
 });
+
+/* ════════════════════════════════════════════════════════════════════════════════════════
+   The ops role reads the platform, not the people
+   ════════════════════════════════════════════════════════════════════════════════════════ */
+
+describe("an ops-only reader is given no address in full", () => {
+  /**
+   * The login was masked to its domain for `ops` on the roster, the batch, search and the account
+   * page; the account page's mailboxes, the worker roster and the action catalog's mailbox labels
+   * still answered full mailbox addresses. Every read, as `ops` alone: no address whole. An owner
+   * reading the same world is the control that the addresses are there to find.
+   */
+  it("no read answers ops a mailbox or login address whole, and an owner still reads them", async () => {
+    const { db, deps } = await makeDeps();
+    const world = await seedWorld(db, "alpha");
+    await seedInfrastructure(db);
+    await seedStaffSession(db, { now: FIXED_NOW, token: STAFF_TOKEN, roles: ["ops"] });
+    const OWNER_TOKEN = "content-isolation-owner-session-fixture-token";
+    await seedStaffSession(db, { now: FIXED_NOW, token: OWNER_TOKEN });
+    const login = rowsOf<{ email: string }>(await db.execute(
+      sql`select email from users where account_id = ${world.accountId}`))[0]!.email;
+    const mailbox = "ops-alpha@example.com";
+    const d = { ...deps, admin: ADMIN };
+    const as = (token: string, path: string) =>
+      H(req("GET", path, { bearer: ADMIN_SECRET, headers: { [STAFF_SESSION_HEADER]: token } }), d);
+    const paths = [
+      ...ADMIN_READS, `/admin/accounts/${world.accountId}`, `/admin/accounts/${world.accountId}/staff-activity`,
+      `/admin/accounts?ids=${world.accountId}`, "/admin/search?q=account", `/admin/search?q=${mailbox}`,
+      "/admin/sync-roster", "/admin/engagement", "/admin/storage", "/admin/staff-activity?reads=1",
+      "/admin/alerts/history",
+    ];
+    const leaks: string[] = [];
+    for (const path of paths) {
+      const res = await as(STAFF_TOKEN, path);
+      expect(res.status, path).toBe(200);
+      const text = await res.text();
+      for (const address of [mailbox, login]) if (text.includes(address)) leaks.push(`${path} <- ${address}`);
+    }
+    expect(leaks, "an ops-only read answered an address whole").toEqual([]);
+
+    // Masked, not dropped: the domain stays, on each read that carries the field.
+    const detail = await (await as(STAFF_TOKEN, `/admin/accounts/${world.accountId}`)).json() as {
+      mailboxes: Array<{ address: string }>;
+    };
+    expect(detail.mailboxes.map((m) => m.address)).toEqual(["•••@example.com"]);
+    const worker = await (await as(STAFF_TOKEN, "/admin/worker")).json() as { roster: Array<{ address: string }> };
+    expect(worker.roster.map((m) => m.address)).toEqual(["•••@example.com"]);
+    const catalog = JSON.stringify(await (await as(STAFF_TOKEN, "/admin/actions")).json());
+    expect(catalog).toContain("•••@example.com");
+
+    // CONTROL: an owner reads every one of them whole, and the login on the account page.
+    for (const path of [`/admin/accounts/${world.accountId}`, "/admin/worker", "/admin/actions"]) {
+      expect(await (await as(OWNER_TOKEN, path)).text(), path).toContain(mailbox);
+    }
+    expect(await (await as(OWNER_TOKEN, `/admin/accounts/${world.accountId}`)).text()).toContain(login);
+  });
+});

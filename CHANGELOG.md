@@ -49,6 +49,12 @@ audit before it is given, and none of them can carry a message, a subject or a s
 Looking up accounts by id, and opening one account in the console, now read only the accounts asked for instead
 of every account on the server.
 
+### Staff with only the operations role see mailbox addresses masked
+
+The admin API already showed staff whose only role is operations an account's login address masked to its domain.
+The mailboxes on an account's page, the worker's list of mailboxes and the mailboxes offered for a release are now
+masked the same way for them.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

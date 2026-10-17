@@ -515,7 +515,8 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: adminRoute("worker", "read.worker", (_req, ctx) => adminWorker(ctx.db, ctx.now()), { roles: "any" }),
+    handler: adminRoute("worker", "read.worker", (_req, ctx, _params, reader) =>
+      adminWorker(ctx.db, ctx.now(), reader), { roles: "any" }),
   },
   {
     method: "GET",
@@ -523,7 +524,8 @@ export const adminRoutes: Route[] = [
     relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
-    handler: adminRoute("actions", "read.actions", (_req, ctx) => adminActions(ctx.db, ctx.now()), { roles: "any" }),
+    handler: adminRoute("actions", "read.actions", (_req, ctx, _params, reader) =>
+      adminActions(ctx.db, ctx.now(), reader), { roles: "any" }),
   },
   {
     method: "GET",

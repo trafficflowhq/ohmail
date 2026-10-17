@@ -538,7 +538,7 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
     expect(JSON.stringify(detail)).not.toContain("ZZSUBJECTZZ");
     expect(JSON.stringify(detail)).not.toContain("ZZSENDERZZ");
 
-    const worker = await adminWorker(staff, now);
+    const worker = await adminWorker(staff, now, { roles: ["owner"] });
     expect(worker.instances).toHaveLength(1);
     expect(worker.roster).toHaveLength(1);
     // CONVERTED — Was `.toBe(1)`, from the same `folder_state ⋈ messages` join. The
@@ -549,7 +549,7 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
     expect(worker.staleSends).toHaveLength(1);
     expect(JSON.stringify(worker)).not.toContain("ZZIDEMPOTENCYZZ");
 
-    const actions = await adminActions(staff, now);
+    const actions = await adminActions(staff, now, { roles: ["owner"] });
     expect(actions.actions).toHaveLength(2);
     // The catalog the blind role reads, with no widened grant. `resync_mailbox` is the property
     // this line pins: clearing `mailboxes.retry_after` is a write the RUNTIME connection

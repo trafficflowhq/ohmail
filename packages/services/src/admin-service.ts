@@ -717,7 +717,7 @@ export async function adminAccountDetail(
     })),
     mailboxes: mailboxList.flatMap((m) => {
       const o = organizer.get(m.id);
-      return o ? [{ ...m, ...o }] : [];
+      return o ? [{ ...m, ...o, address: address(m.address) }] : [];
     }),
     lifecycleNotices: notices.map((n) => ({
       kind: n.kind as AdminLifecycleNotice["kind"], anchor: asDate(n.anchor).toISOString(), sentAt: asDate(n.sentAt).toISOString(),
@@ -1442,13 +1442,17 @@ export async function adminAlertReading(
   return { alerts: [...evaluated, ...unevaluated], unread };
 }
 
-export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapshot> {
+export async function adminWorker(
+  db: AdminDb, now: Date, reader: AdminReader,
+): Promise<WorkerSnapshot> {
   // SEQUENTIAL on purpose — see overview() in routes/admin.ts: parallel reads on the max:1
   // blind pool deadlock when one of them opens a transaction. This pair hung /admin/worker
   // for its whole life.
   const instances = await adminWorkerInstances(db, now);
   const roster = await loadMailboxes(db, now, null);
   const names = await accountNames(db, roster.map((m) => m.accountId));
+  // `ops` reads the platform, not the people: mailbox addresses masked as the login is.
+  const mask = readerMasksAddresses(reader);
 
   /**
    * The population, from SQL — the roster above is capped at `ADMIN_ROSTER_LIMIT`. The verdict
@@ -1478,7 +1482,9 @@ export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapsho
   return {
     now: now.toISOString(),
     instances,
-    roster: roster.map((m) => ({ ...m, accountName: names.get(m.accountId) ?? "" })),
+    roster: roster.map((m) => ({
+      ...m, address: mask ? maskAddress(m.address) : m.address, accountName: names.get(m.accountId) ?? "",
+    })),
     rosterCounts: {
       total: int(counts?.total),
       inError: int(counts?.inError),
@@ -1566,7 +1572,9 @@ export const ADMIN_ACTIONS_PRECONDITION =
   "audit_log row naming the operator. The stuck-send retry is designed and not wired — its target " +
   "subsystem does not exist yet — and says so on its card.";
 
-export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalog> {
+export async function adminActions(
+  db: AdminDb, now: Date, reader: AdminReader,
+): Promise<ActionCatalog> {
   const accountRows = await db.select({ id: accounts.id, name: accounts.name }).from(accounts).limit(ADMIN_OPTIONS_LIMIT);
   // Sequential — same max:1 deadlock rule as adminWorker.
   const mailboxRows = await db.select({ id: mailboxes.id, address: mailboxes.address, accountId: mailboxes.accountId })
@@ -1592,7 +1600,11 @@ export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalo
     const name = names.get(accountId) ?? "";
     return name.length > 0 ? `${head} · ${name}` : head;
   };
-  const mailboxOptions = mailboxRows.map((m) => ({ id: m.id, label: withAccount(m.address, m.accountId) }));
+  // `ops` picks a mailbox by its id; the label names the address masked as the login is.
+  const mask = readerMasksAddresses(reader);
+  const mailboxOptions = mailboxRows.map((m) => ({
+    id: m.id, label: withAccount(mask ? maskAddress(m.address) : m.address, m.accountId),
+  }));
   // The send's own id, never its idempotency key — see `staleSends` in `adminWorker` for why
   // the key does not leave the database. `id` is what `admin.send.retry` targets anyway.
   const sendOptions = stuck.map((s) => ({ id: s.id, label: withAccount(s.id, s.accountId) }));
