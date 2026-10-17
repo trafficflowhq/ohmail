@@ -519,6 +519,7 @@ const LIST_TAKES: readonly string[] = [
   "POST /auth/verify-email/resend",
   // The staff console's own routes, under `/admin/staff/`: its proxy alone presses them.
   "POST /admin/staff/sign-out", "POST /admin/staff/totp/begin", "POST /admin/staff/totp/reset", "POST /admin/staff/whoami",
+  "POST /admin/staff/list",
   // The web's cookie sign-out door, under `/auth/refresh`.
   "POST /auth/refresh/logout",
 ];
