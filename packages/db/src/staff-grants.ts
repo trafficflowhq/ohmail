@@ -13,16 +13,13 @@
 export const STAFF_ROLE = "ohmail_admin";
 
 /**
- * Is the column-restricted role LIVE in production? — and the copy this word makes false the day
- * it flips. The harden script is hand-run; nothing provisions `ohmail_admin` automatically, so
- * today the isolation is an APPLICATION property, and the FAQ and privacy policy say exactly
- * that. The day the role is provisioned, both become false-by-understatement. Claims are
- * contracts: a statement a shipping change makes false is fixed in the SAME change. Two mechanisms
- * couple the flag to the copy: `staff-role-copy-gate.test.ts` (the FAQ; the policy's half is a private
- * test) fails unless they agree, and `provision-staff-role.ts` refuses `--apply` while this is `false`.
- * Flip it in the deploy that provisions the role — never ahead, never after.
+ * Is the column-restricted role LIVE in production? It is: the hosted API reads staff data as
+ * `ohmail_admin`, and its content-blind attestation passes on `/health` (read 2026-10-17). The FAQ
+ * and the privacy policy say so. Two mechanisms couple this flag to that copy:
+ * `staff-role-copy-gate.test.ts` (the FAQ; the policy's half is a private test) fails unless they
+ * agree, and `provision-staff-role.ts` refuses `--apply` while this is `false`.
  */
-export const STAFF_ROLE_LIVE_IN_PRODUCTION = false;
+export const STAFF_ROLE_LIVE_IN_PRODUCTION = true;
 
 /**
  * The schemas the census ranges over: the application's own, plus the one the script creates
