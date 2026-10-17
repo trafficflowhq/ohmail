@@ -573,7 +573,29 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
 
     const worker = await warmShard(db, fleet, seeds, { cycleLanes: 32 });
 
-    for (const s of seeds) releases.push(parkSync(fleet, s.mailboxId));
+    /* PARKED AT A PASS BOUNDARY, so every mailbox is unserved in the pass that fills the lanes.
+       A pass gives each mailbox one turn and ends only when its lanes return. Parked mid-pass with
+       six already served, the last two parked and held the pass open, and the rotation sat at 2 of
+       3 lanes for the whole 20 s: 10 of 30 runs of this case alone, the six never started again
+       (ROSTER-ROTATION-STUCK-UNDER-PARK, a scheduler finding of its own). This case asserts the
+       clamp, so it parks where no pass is mid-way: nothing in a sync, every mailbox with as many
+       ends as starts, all at the same count. Checked and parked in one synchronous step, so no
+       turn can start between the two. */
+    const counts = (event: "sync_start" | "sync_end") => seeds.map((s) => fleet.indicesOf(s.mailboxId, event).length);
+    const boundary = (): boolean => {
+      const starts = counts("sync_start");
+      const ends = counts("sync_end");
+      return starts.every((n, i) => n === ends[i]) && new Set(ends).size === 1;
+    };
+    const boundaryBy = Date.now() + 20_000;
+    for (;;) {
+      if (boundary()) {
+        for (const s of seeds) releases.push(parkSync(fleet, s.mailboxId));
+        break;
+      }
+      if (Date.now() > boundaryBy) throw new Error(`no pass boundary in 20 s: starts ${counts("sync_start")}, ends ${counts("sync_end")}`);
+      await new Promise((r) => setTimeout(r, 2));
+    }
     // As many lanes as the clamp allows, and then it blocks. Reaching the ceiling is what makes
     // the "never above it" assertion below a bound rather than an accident of scheduling.
     await waitFor(
