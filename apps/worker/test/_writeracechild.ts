@@ -21,6 +21,7 @@ import postgres from "postgres";
 import { createLogger } from "@trafficflow/core";
 import { installCrashHandlers } from "../src/entry.js";
 import { driverWriteRaceReason } from "../src/driver-write-race.js";
+import { withPgSocket } from "../../../packages/db/src/pg-socket.js";
 
 const MODE = process.argv[2] === "bare" ? "bare" : "guarded";
 const DB_URL = process.env.TF_CHILD_DB_URL ?? "";
@@ -101,7 +102,10 @@ async function main(): Promise<void> {
   const url = new URL(DB_URL);
   url.hostname = "127.0.0.1";
   url.port = String(proxy.port);
-  const sql = postgres(url.toString(), { max: 5 });
+  // The worker's pools dial through pg-socket.ts (makeOwnedDb). Without it this measured the raw
+  // driver: a race left every connection's handshake queued behind stale bytes for ~5 min, longer
+  // than the resume budget (2 of 60 runs, CI 39012201863).
+  const sql = postgres(url.toString(), withPgSocket({ max: 5 }));
 
   let stop = false;
   let committed = 0;
