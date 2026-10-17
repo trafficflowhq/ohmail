@@ -69,8 +69,10 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  Raised 2026-10-17 (both): the plan step names the site's choice and the trial (join).
  *  Raised 2026-10-17 (de): German says Account and Mails, a few bytes longer than Konto and Post.
  *  Raised 2026-10-17 (both): the signup's refusals in the screen's words, sentences shown the
- *  moment a submit is refused (join, verify; both carried whole), and Account for Konto there. */
-const INLINE_CEILING_BYTES = { en: 36_100, de: 41_300 } as const;
+ *  moment a submit is refused (join, verify; both carried whole), and Account for Konto there.
+ *  Raised 2026-10-17 (both): the authenticator's Copy and QR label, the codes' Copy and Download,
+ *  "Did you mean" and "Wrong address?" (join, carried whole). */
+const INLINE_CEILING_BYTES = { en: 36_550, de: 41_800 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>

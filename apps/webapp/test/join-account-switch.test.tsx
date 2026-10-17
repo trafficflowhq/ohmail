@@ -299,7 +299,8 @@ describe("the ordinary first signup — the path the guard was OFF for", () => {
       expect(calls.filter((u) => u.includes("/auth/2fa/totp/enroll")),
         "the guard refused an ordinary signup — with no captured account it fails closed on the one path everybody takes")
         .toHaveLength(1);
-      expect(c.textContent, "the secret was fetched and never shown")
+      // Shown in groups of four, as authenticator apps print a setup key.
+      expect(c.textContent?.replace(/\s+/g, ""), "the secret was fetched and never shown")
         .toContain(SEED);
     } finally {
       globalThis.fetch = priorFetch;

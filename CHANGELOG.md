@@ -23,6 +23,19 @@ written in German. Two lines that were not true are gone: the password hint no l
 next step (on ohmail Cloud the next step is the confirmation mail), and the confirmation page no longer says
 "no password to leak" under a password field.
 
+### Smaller fixes to signing up
+
+- The authenticator app step shows a QR code to scan, the setup key in groups of four with a Copy button, and
+  says a wrong code under the code field.
+- A likely typo in a common mail domain (gmailcom, gmial.com) is named with the address it was probably meant to
+  be, and "Check your email" has a way back to correct the address.
+- The progress line shows Email as the second step on ohmail Cloud, marks the account done on "Check your
+  email", and tells screen readers which step is current.
+- Recovery codes can be copied or downloaded as a text file, and on a phone each code stays on one line.
+- The confirmation page has a Sign in button where it says to sign in for a fresh link.
+- The payment provider's session id no longer stays in the address bar after returning from the account page.
+- Small text buttons on the signup screens are at least 24 pixels tall.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

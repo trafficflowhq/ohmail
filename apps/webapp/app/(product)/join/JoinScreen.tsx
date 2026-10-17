@@ -33,6 +33,8 @@ import {
 import { hostsFor, providerById, type ProviderPreset } from "../../shell/providers";
 import { displayAddress } from "../../shell/idn";
 import { ProviderPicker } from "../../shell/ProviderPicker";
+import { QrCode } from "../../shell/QrCode";
+import { addressSuggestion } from "./address-hint";
 import { noPortProbeSentence, plaintextOfferOf, probeReasonOf } from "../../shell/probe-refusal";
 import { splitHostPort } from "../host-port";
 import { useRefusalAtThePress } from "../../shell/refusal-at-the-press";
@@ -73,7 +75,15 @@ const RAIL: Step[] = ["invite", "account", "factor", "codes", "verify", "plan", 
  */
 const RAIL_SELF_HOST: Step[] = RAIL.filter((s) => s !== "verify" && s !== "plan");
 const RAIL_BASE: Step[] = SELF_HOST_BUILD ? RAIL_SELF_HOST : RAIL;
-const RAIL_OPEN: Step[] = RAIL_BASE.filter((s) => s !== "invite");
+/** The wizard's own verify step (a failed mail, re-entered by sign-in) comes after the codes, in `RAIL` order. */
+const RAIL_OPEN_LATE_VERIFY: Step[] = RAIL_BASE.filter((s) => s !== "invite");
+/**
+ * THE OPEN PATH PROVES THE ADDRESS FIRST: the mail is sent from the account step and its link is
+ * opened before any factor, so Email is the second station there. Self-host has no Email station.
+ */
+const RAIL_OPEN: Step[] = SELF_HOST_BUILD
+  ? RAIL_OPEN_LATE_VERIFY
+  : ["account", "verify", "factor", "codes", "plan", "mailbox"];
 
 /**
  * How long to wait for Stripe's `checkout.session.completed` webhook after Checkout returns.
@@ -213,6 +223,18 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
     url.searchParams.delete("code");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, [initialCode]);
+
+  /**
+   * The Checkout return's `?session_id=`, the same way and at mount: whatever step the wizard lands on
+   * (an account already entitled goes straight to the mailbox step), it leaves the address bar. The
+   * query as it arrived is kept here for the confirm the plan step's poll sends.
+   */
+  const returnSearch = useRef("");
+  useEffect(() => {
+    if (billingReturn !== "success" || typeof window === "undefined") return;
+    returnSearch.current = window.location.search;
+    scrubCheckoutSession();
+  }, [billingReturn]);
 
   /**
    * WHERE AN ENTITLED ACCOUNT LANDS — one rule for the resume and for the paid return: no mailbox
@@ -359,8 +381,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
 
     // A return from Checkout asks the service to apply the payment first — once, bounded — and the
     // poll below then reads the answer rather than waiting on the program's webhook.
-    if (billingReturn === "success") void confirmAccountReturn(window.location.search).finally(() => { void tick(); });
-    else void tick();
+    if (billingReturn === "success") {
+      // The return's query as it arrived: the mount took the session id out of the address bar.
+      void confirmAccountReturn(returnSearch.current).finally(() => { void tick(); });
+    } else void tick();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, billingReturn]);
@@ -710,6 +734,31 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   const mailboxRefusal = error ? (
     <p ref={mailboxRefusalAt} className="join-error at-press" role="alert" tabIndex={-1}>{error}</p>
   ) : null;
+  const suggestedAddress = step === "account" ? addressSuggestion(email.trim()) : null;
+
+  /* The authenticator's refusal sits under the code field it is about, the same way. */
+  const totpOpen = step === "factor" && totp !== null;
+  const totpRefusalAt = useRefusalAtThePress<HTMLParagraphElement>(totpOpen ? error : null);
+  const totpRefusalLine = error && totpOpen ? (
+    <p ref={totpRefusalAt} className="join-error at-press" role="alert" tabIndex={-1}>{error}</p>
+  ) : null;
+
+  /** Copy takes the key whole (no group spaces); a clipboard that refuses says so, the key stays on screen. */
+  const [secretCopied, setSecretCopied] = useState<"copied" | "failed" | null>(null);
+  useEffect(() => { setSecretCopied(null); }, [totp]);
+  const copySecret = (): void => {
+    const secret = totp?.secret;
+    if (!secret) return;
+    const clip = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    if (!clip) { setSecretCopied("failed"); return; }
+    clip.writeText(secret).then(() => setSecretCopied("copied"), () => setSecretCopied("failed"));
+  };
+  const [codesCopied, setCodesCopied] = useState<"copied" | "failed" | null>(null);
+  const copyCodes = (codes: string[]): void => {
+    const clip = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    if (!clip) { setCodesCopied("failed"); return; }
+    clip.writeText(codes.join("\n")).then(() => setCodesCopied("copied"), () => setCodesCopied("failed"));
+  };
 
   // ── Render ────────────────────────────────────────────────────────────────────────────
 
@@ -752,8 +801,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   const decisionAhead = step === "done" && connected !== null && !connected.organizeConsentedAt;
 
   return (
-    <Shell title={t(decisionAhead ? "step_connected_title" : `step_${step}_title`)} step={step} rail={needsInvite ? RAIL_BASE : RAIL_OPEN}>
-      {error && step !== "mailbox" && <p className="join-error" role="alert">{error}</p>}
+    <Shell
+      title={t(decisionAhead ? "step_connected_title" : `step_${step}_title`)} step={step}
+      rail={needsInvite ? RAIL_BASE : step === "verify" ? RAIL_OPEN_LATE_VERIFY : RAIL_OPEN}
+    >
+      {error && step !== "mailbox" && !totpOpen && <p className="join-error" role="alert">{error}</p>}
 
       {step === "invite" && (
         <form onSubmit={submitInvite}>
@@ -788,6 +840,12 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
             id="join-email" className="join-input" type="email" autoComplete="email"
             value={email} onChange={(e) => setEmail(e.target.value)} required
           />
+          {/* A likely typo in a common mail domain is named, as a button that applies it. */}
+          {suggestedAddress ? (
+            <button type="button" className="join-alt join-suggest" onClick={() => setEmail(suggestedAddress)}>
+              {t("didYouMean", { address: suggestedAddress })}
+            </button>
+          ) : null}
           {/* "use the address your invite was sent to" is an instruction to somebody
               holding an invite. On the open path there is no invite and no such address, so
               the hint says what is actually true of the field. */}
@@ -851,6 +909,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
           <p className="sub">{t("step_sent_lead", { email: email.trim() })}</p>
           <p className="join-note">{t("sentNote")}</p>
           <div className="join-actions">
+            {/* A typo in the address is mended here: back to the form, the address kept to correct. */}
+            <button type="button" className="join-alt" onClick={() => { setError(null); setStep("account"); }}>
+              {t("wrongAddress")}
+            </button>
             <Link className="join-alt" href="/login">{t("signIn")}</Link>
           </div>
         </>
@@ -894,24 +956,28 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
           ) : (
             <form onSubmit={activateTotp}>
               <p className="join-hint">{t("totpScan")}</p>
-              {/* NO QR, and that is the fix rather than the shortcut. What used to be here was
-                  `dangerouslySetInnerHTML` over a server-rendered "QR" that was actually the
-                  `otpauth://` URI printed as 6px text in a white box — unscannable, and
-                  announced to screen readers as "TOTP QR". This is the fallback for people
-                  whose device cannot make a passkey, so it is the last place to put a control
-                  that does not do what it says. Manual entry works in every authenticator; the
-                  link below hands the enrollment straight to the app on the platform where a
-                  camera was never going to help. */}
-              <p className="join-secret"><code>{totp.secret}</code></p>
-              <p className="join-hint">
-                <a href={totp.otpauthUrl} rel="noreferrer noopener">{t("totpOpenApp")}</a>
-              </p>
+              {/* A REAL QR of the enrollment URI, from the encoder Settings' invites use (the old
+                  "QR" here was the URI printed as 6px text). The key beside it is the path for an
+                  app on this same device: in groups of four to read off, with Copy, which copies it
+                  whole; the link hands the enrollment to an installed app directly. */}
+              <div className="join-qr">
+                <QrCode value={totp.otpauthUrl} ariaLabel={t("totpQrAria")} />
+              </div>
+              <p className="join-secret"><code>{groupedSecret(totp.secret)}</code></p>
+              <div className="join-actions join-actions-tight">
+                <button type="button" className="join-alt" onClick={copySecret}>
+                  {secretCopied === "copied" ? t("totpCopied") : t("totpCopy")}
+                </button>
+                <a className="join-alt" href={totp.otpauthUrl} rel="noreferrer noopener">{t("totpOpenApp")}</a>
+              </div>
+              {secretCopied === "failed" ? <p className="join-hint" role="status">{t("totpCopyFailed")}</p> : null}
               <label className="join-label" htmlFor="join-totp">{t("totpLabel")}</label>
               <input
                 id="join-totp" className="join-input join-code" inputMode="numeric"
                 autoComplete="one-time-code" maxLength={6}
                 value={totpCode} onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
               />
+              {totpRefusalLine}
               <div className="join-actions">
                 <button type="button" className="join-alt" onClick={() => setTotp(null)}>{t("back")}</button>
                 <Button variant="primary" type="submit" disabled={busy || totpCode.length !== 6}>
@@ -931,6 +997,19 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
               <ul className="join-codes">
                 {recovery.map((c) => <li key={c}><code>{c}</code></li>)}
               </ul>
+              {/* Two ways to keep them besides writing them down; neither leaves this device. */}
+              <div className="join-actions join-actions-tight">
+                <button type="button" className="join-alt" onClick={() => copyCodes(recovery)}>
+                  {codesCopied === "copied" ? t("codesCopied") : t("codesCopy")}
+                </button>
+                <a
+                  className="join-alt" download="ohmail-recovery-codes.txt"
+                  href={`data:text/plain;charset=utf-8,${encodeURIComponent(`${t("codesFileHeader")}\n\n${recovery.join("\n")}\n`)}`}
+                >
+                  {t("codesDownload")}
+                </a>
+              </div>
+              {codesCopied === "failed" ? <p className="join-hint" role="status">{t("codesCopyFailed")}</p> : null}
               <label className="join-check">
                 <input type="checkbox" checked={codesSaved} onChange={(e) => setCodesSaved(e.target.checked)} />
                 <span>{t("codesConfirm")}</span>
@@ -1133,15 +1212,20 @@ function Shell({ title, step, rail = RAIL_BASE, children }: {
         {step && (
           <ol className="join-rail" aria-label={t("progress")}>
             {/* `done` is not IN the rail, so `indexOf` would answer -1 and paint every step
-                as "todo" on the one screen where all of them are finished. */}
+                as "todo" on the one screen where all of them are finished. `sent` is not in it
+                either: "Check your email" IS the Email station, with the account behind it. */}
             {(() => {
-              const at = step === "done" ? rail.length : rail.indexOf(step);
-              return rail.map((s) => (
-                <li key={s} data-state={rail.indexOf(s) < at ? "done" : s === step ? "now" : "todo"}>
-                  <span className="join-rail-dot" aria-hidden="true" />
-                  <span className="join-rail-label">{t(`rail_${s}`)}</span>
-                </li>
-              ));
+              const shown: Step = step === "sent" && rail.includes("verify") ? "verify" : step;
+              const at = shown === "done" ? rail.length : rail.indexOf(shown);
+              return rail.map((s) => {
+                const state = rail.indexOf(s) < at ? "done" : s === shown ? "now" : "todo";
+                return (
+                  <li key={s} data-state={state} aria-current={state === "now" ? "step" : undefined}>
+                    <span className="join-rail-dot" aria-hidden="true" />
+                    <span className="join-rail-label">{t(`rail_${s}`)}</span>
+                  </li>
+                );
+              });
             })()}
           </ol>
         )}
@@ -1160,6 +1244,24 @@ function Shell({ title, step, rail = RAIL_BASE, children }: {
  * platform, no fingerprint, no version — because this string is stored, shown to the user
  * later, and is not worth turning into an identifier.
  */
+/**
+ * `?session_id=` out of the address bar once the return has read it, as `?code` is: otherwise it sits in
+ * the visible URL, in history and in the `Referer` of the next navigation. `?billing` stays, so a reload
+ * still waits for the return.
+ */
+function scrubCheckoutSession(): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("session_id")) return;
+  url.searchParams.delete("session_id");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+/** A base32 key in groups of four, as authenticator apps print it; Copy takes it whole. */
+function groupedSecret(secret: string): string {
+  return secret.replace(/\s+/g, "").match(/.{1,4}/g)?.join(" ") ?? secret;
+}
+
 function deviceLabel(): string {
   if (typeof navigator === "undefined") return "This browser";
   const ua = navigator.userAgent;

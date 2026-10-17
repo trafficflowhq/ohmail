@@ -145,6 +145,11 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
       </form>
 
       <p className="join-hint">{t("lostLink")}</p>
+      {/* The sentence above names sign-in as the way to a fresh link; this is the control for it, and
+          the sign-in carries on into the setup. */}
+      <div className="join-actions">
+        <Link className="join-alt" href="/login?next=join">{t("signIn")}</Link>
+      </div>
     </Shell>
   );
 }

@@ -13,6 +13,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { createApp, apiRoutes, makeProbeHostGuard, type ApiDeps } from "@trafficflow/api";
 import type { AccessLifecycle, AccessVerdict, EntitlementsPort, PlanHint } from "@trafficflow/db";
 import { makeDeps } from "../../../packages/api/test/helpers.js";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 import de from "../messages/de.json";
 
 type SpyMailer = Awaited<ReturnType<typeof makeDeps>>["mailer"];
@@ -394,6 +395,63 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       expect(await p.locator(".pvp-note p").first().textContent()).toBe(de.providerPicker.note_gmx);
       const text = await p.evaluate(() => document.body?.innerText ?? "");
       expect(text, "English left on the German mailbox step").not.toMatch(/GMX ships with IMAP|enabling IMAP/);
+    } finally {
+      await fresh.close();
+    }
+  }, 120_000);
+
+  it("the finishing details: a typo caught, a way back from the mail screen, the rail, a real QR, the codes kept", async () => {
+    await newWorld();
+    const fresh = await browser!.newContext();
+    try {
+      const p = await fresh.newPage();
+      const current = async () => (await p.locator('.join-rail li[aria-current="step"]').textContent())?.trim();
+      await p.goto(`http://localhost:${webPort}/join`);
+      await p.locator("#join-email").waitFor({ timeout: 30_000 });
+      expect(await current()).toBe("Account");
+      // The provider's domain with its dot left out, as a thumb types it; the fixture helper builds both.
+      const meant = personalAt("fixture.ada", "gmail.com");
+      await p.fill("#join-email", meant.replace("gmail.com", "gmailcom"));
+      await p.getByRole("button", { name: `Did you mean ${meant}?` }).click();
+      expect(await p.inputValue("#join-email")).toBe(meant);
+      await p.fill("#join-email", "ada@family.exmaple");
+      await p.fill("#join-name", "Ada Lund");
+      await p.fill("#join-pw", "a-fourth-long-signup-password");
+      await p.getByRole("button", { name: "Create account" }).click();
+      await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
+      expect(await current(), "Check your email is the Email station").toBe("Email");
+      await p.getByRole("button", { name: "Wrong address? Change it" }).click();
+      await p.getByRole("heading", { name: "Create your account" }).waitFor({ timeout: 30_000 });
+      expect(await p.inputValue("#join-email")).toBe("ada@family.exmaple");
+      await p.fill("#join-email", "ada@family.example");
+      await p.fill("#join-pw", "a-fourth-long-signup-password");
+      await p.getByRole("button", { name: "Create account" }).click();
+      await p.getByRole("heading", { name: "Check your email" }).waitFor({ timeout: 30_000 });
+
+      const mail = world.mailer.sent.find((m) => m.to === "ada@family.example" && m.template === "email_verification");
+      expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
+      const token = new URL((mail!.data as { verifyUrl: string }).verifyUrl).searchParams.get("token");
+      await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
+      await p.fill("#verify-pw", "a-fourth-long-signup-password");
+      await p.getByRole("button", { name: "Confirm my email" }).click();
+      await p.getByRole("heading", { name: "Add your second factor" }).waitFor({ timeout: 30_000 });
+      expect(await current()).toBe("Passkey");
+
+      await p.getByRole("button", { name: "Use an authenticator app instead" }).click();
+      const qr = p.locator('.join-qr svg[role="img"]');
+      await qr.waitFor({ timeout: 30_000 });
+      expect((await qr.boundingBox())?.width ?? 0, "the QR is drawn at a scannable size").toBeGreaterThanOrEqual(120);
+      const shown = ((await p.locator(".join-secret code").textContent()) ?? "").trim();
+      expect(shown, "the key in groups of four").toMatch(/^([A-Z2-7]{4} )+[A-Z2-7]{1,4}$/);
+      const back = p.getByRole("button", { name: "Back" });
+      expect((await back.boundingBox())?.height ?? 0, "a text button is a 24px target").toBeGreaterThanOrEqual(24);
+      await p.fill("#join-totp", totpAt(shown, world.clock.now()));
+      await p.getByRole("button", { name: "Activate" }).click();
+      await p.locator(".join-codes li").first().waitFor({ timeout: 30_000 });
+      const download = p.getByRole("link", { name: "Download as a text file" });
+      expect(await download.getAttribute("download")).toBe("ohmail-recovery-codes.txt");
+      const first = ((await p.locator(".join-codes li").first().textContent()) ?? "").trim();
+      expect(decodeURIComponent((await download.getAttribute("href")) ?? "")).toContain(first);
     } finally {
       await fresh.close();
     }

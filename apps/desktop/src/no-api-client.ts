@@ -277,6 +277,7 @@ export const auth: {
         password: string;
         displayName: string;
         inviteCode?: string;
+        locale?: "de" | "en";
     }) => Promise<EnrollmentSession | RegistrationPending>;
     verifyEmail: (b: {
         token: string;
@@ -284,7 +285,7 @@ export const auth: {
     }) => Promise<EnrollmentSession | {
         status: "verified";
     }>;
-    resendVerification: () => Promise<{
+    resendVerification: (locale?: "de" | "en") => Promise<{
         ok: true;
     }>;
     login: (b: {
@@ -817,7 +818,11 @@ export type AccountAccess = {
 export const account: {
     erase: () => Promise<ErasureResult>;
     access: () => Promise<AccountAccess>;
-    manageLink: () => Promise<{
+    manageLink: (opts?: {
+        lang?: "de" | "en";
+        plan?: "solo" | "plus" | "pro";
+        interval?: "month" | "year";
+    }) => Promise<{
         url: string;
     } | null>;
 } = absent;

@@ -4116,9 +4116,27 @@ input.set-tag-input {
   font-weight: 600;
   color: var(--ink2);
   text-decoration: none;
+  /* A target at least 24px tall (WCAG 2.5.8), though it reads as a line of text. */
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
 }
 .join-alt:hover {
   color: var(--ink);
+}
+/* A row of small text controls under a block (Copy key, Open in app; Copy codes, Download). */
+.join-actions-tight {
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 6px;
+}
+.join-actions-tight + .join-check {
+  margin-top: 14px;
+}
+/* "Did you mean …?" under the address field: the one suggestion, pressable. */
+.join-suggest {
+  margin-top: 4px;
+  color: var(--accent-ink);
 }
 .join-qr {
   width: 168px;
@@ -4147,7 +4165,12 @@ input.set-tag-input {
   background: var(--canvas);
   border-radius:var(--r-card);
 }
+/* A recovery code is read and copied by hand: never broken across lines; one column where two would break it. */
+@media (max-width: 480px) {
+  .join-codes { grid-template-columns: 1fr; }
+}
 .join-codes code {
+  white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size:calc(12.5px + var(--type-up));
   letter-spacing: 0.04em;
