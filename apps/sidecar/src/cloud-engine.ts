@@ -1271,7 +1271,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // shell composes no credential). The browser handoff's first half answers the CHALLENGE and
       // keeps the verifier here, so the code the browser mints is spendable only by this process;
       // it is refused once signed in. `/cloud/probe` is a question about somebody else's machine,
-      // asked here because the window's CSP is `connect-src 'none'`; `cloud-probe.ts` holds it for
+      // asked here because the window's CSP admits no address off this machine; `cloud-probe.ts` holds it for
       // both engines, behind the launch bearer.
       if (req.method === "POST" && path === CLOUD_PROBE_ROUTE) {
         return answerCloudProbe(req, {

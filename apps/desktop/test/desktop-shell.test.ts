@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 /* The namespace lists themselves, so the marker contract below reads the build config
    rather than a copy of it — the drift this file exists to catch. */
-import { WINDOW_ONLY_NAMESPACES } from "../vite.config";
+import viteConfig, { WINDOW_ONLY_NAMESPACES } from "../vite.config";
+import { cspFor, withWindowCsp } from "../src/window-csp";
 import { publicPath } from "../../../test/support/public-root.mjs";
 
 /**
@@ -414,7 +415,7 @@ describe("tauri.conf.json", () => {
     // blob: here the webview refused the render, so a PNG preview on the desktop was the
     // overlay's header over an empty stage (owner-reported). The widening admits pixels the
     // app already holds and nothing else: a blob: URL is this document's own memory (no
-    // request leaves — connect-src stays 'none'), an <img> executes nothing (SVG script does
+    // request leaves — connect-src gains nothing), an <img> executes nothing (SVG script does
     // not run in one, and the engine types an SVG blob as octet-stream regardless), and the
     // browser client has shipped the same three sources from day one
     // (security-headers.ts: "img-src 'self' data: blob:"), as does the host door
@@ -638,7 +639,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these thirty-eight files and no others", () => {
+  it("is these thirty-nine files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -760,6 +761,9 @@ describe("the Rust side", () => {
       // ALWAYS compiled: the preview's process takes the same pressure settings.
       "webview_budget.rs",
       "webview_budget_tests.rs",
+      // THE WINDOW'S CSP PER PLATFORM, as Tauri's own config merge reads it: test-only, declared
+      // from `main.rs`, it reads the config files and compiles nothing into the binary.
+      "window_csp_tests.rs",
     ]);
   });
 
@@ -3387,5 +3391,88 @@ describe("the UI bundle's build config", () => {
     // in <meta> by spec, so it lives only there.
     expect(inDoc["frame-ancestors"]).toBeUndefined();
     expect(inApp["frame-ancestors"]).toEqual(["'none'"]);
+  });
+});
+
+/**
+ * THE WINDOW'S POLICY, ONE PER PLATFORM: the base config, the three overlays Tauri merges onto it at
+ * build time, and the document meta the build writes — all `cspFor`'s (`src/window-csp.ts`).
+ * Tauri's header and the built meta are enforced together, so they must agree.
+ * `connect-src` is the one directive that differs, and it names exactly one source: the platform's
+ * own spelling of Tauri's in-process command scheme. The spellings are typed here, not read from the
+ * code under test. Watched red: `https:` added to one overlay's `connect-src`.
+ */
+describe("the window's content policy, per platform", () => {
+  type Conf = { $schema?: string; app: { security: { csp: string } } };
+  const OWN: Record<string, { file: string; source: string }> = {
+    linux: { file: "src-tauri/tauri.linux.conf.json", source: "ipc:" },
+    darwin: { file: "src-tauri/tauri.macos.conf.json", source: "ipc:" },
+    win32: { file: "src-tauri/tauri.windows.conf.json", source: "http://ipc.localhost" },
+  };
+  const base = (readJson("src-tauri/tauri.conf.json") as never as Conf).app.security.csp;
+  const source = read("index.html");
+  const metaOf = (html: string): string => {
+    const all = [...html.matchAll(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/g)];
+    expect(all, "the document carries one CSP meta").toHaveLength(1);
+    return all[0]![1]!;
+  };
+  const withoutConnect = (csp: string) => Object.entries(directives(csp)).filter(([k]) => k !== "connect-src");
+
+  it("keeps the base closed: a build that misses its overlay takes the slow channel, never an open one", () => {
+    expect(directives(base)["connect-src"]).toEqual(["'none'"]);
+    expect(base).toBe(cspFor(null));
+    expect(metaOf(source)).toBe(cspFor(null, "meta"));
+  });
+
+  for (const [platform, own] of Object.entries(OWN)) {
+    describe(platform, () => {
+      const overlay = readJson(own.file) as never as Conf;
+      const meta = metaOf(withWindowCsp(source, platform));
+
+      it("its overlay changes the policy and nothing else", () => {
+        expect(Object.keys(overlay).sort()).toEqual(["$schema", "app"]);
+        expect(overlay.app).toEqual({ security: { csp: cspFor(platform) } });
+      });
+
+      it("connect-src names one source, this platform's spelling of the command scheme", () => {
+        expect(directives(overlay.app.security.csp)["connect-src"]).toEqual([own.source]);
+        expect(directives(meta)["connect-src"]).toEqual([own.source]);
+      });
+
+      it("every other directive is the base's, byte for byte, in the overlay and in the built meta", () => {
+        expect(overlay.app.security.csp).toBe(base.replace("connect-src 'none';", `connect-src ${own.source};`));
+        expect(withoutConnect(overlay.app.security.csp)).toEqual(withoutConnect(base));
+        expect(withoutConnect(meta)).toEqual(withoutConnect(base).filter(([k]) => k !== "frame-ancestors"));
+      });
+    });
+  }
+
+  it("the build writes the meta for the platform it runs on, from the boot-stamp plugin", async () => {
+    const plugin = [viteConfig.plugins ?? []].flat(3).find(
+      (p) => (p as { name?: string } | null)?.name === "ohmail:boot-stamp",
+    ) as { transformIndexHtml?: (html: string) => string | Promise<string> } | undefined;
+    expect(typeof plugin?.transformIndexHtml).toBe("function");
+    expect(metaOf(await plugin!.transformIndexHtml!(source))).toBe(cspFor(process.platform, "meta"));
+  });
+
+  /* THE CLAIMS SAY WHAT THE OVERLAYS SAY. The README's policy block is the Linux overlay's policy;
+     each document states the one source and names the overlay files; `'none'` is said only where it
+     is still true — the base config and the updater's own page. A new `'none'` claim fails here. */
+  it("the prose that states the window's policy says what the overlays say", () => {
+    const doc = (rel: string) => fs.readFileSync(publicPath(rel), "utf8");
+    const block = /\*\*2 · The CSP forbids[^\n]*\n\n```\n([\s\S]*?)\n```/.exec(read("README.md"))?.[1];
+    expect(block?.replace(/\n/g, " ")).toBe(cspFor("linux"));
+    const said = (text: string) => text.split("connect-src 'none'").length - 1;
+    for (const [rel, nones] of [["README.md", 0], ["README.ohmarchy.md", 0], ["SECURITY.md", 1], ["apps/desktop/README.md", 2]] as const) {
+      const text = doc(rel);
+      expect(text, rel).toMatch(/in-process command scheme/);
+      expect(text, rel).toMatch(/tauri\.(?:<os>|linux|macos|windows)\.conf\.json/);
+      expect(said(text), `${rel} says connect-src 'none'`).toBe(nones);
+    }
+  });
+
+  it("refuses a document whose policy is not the closed one, or that carries two", () => {
+    expect(() => withWindowCsp(source.replace("connect-src 'none'", "connect-src https:"), "linux")).toThrow(/window-csp/);
+    expect(() => withWindowCsp(source.replace("</head>", `${/<meta http-equiv="Content-Security-Policy"[^>]*>/.exec(source)![0]}</head>`), "linux")).toThrow(/window-csp/);
   });
 });

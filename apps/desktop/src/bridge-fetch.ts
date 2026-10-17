@@ -14,9 +14,10 @@
  * string — [4 bytes BE: metadata length][metadata JSON][body bytes], metadata
  * `{ status, statusText, h: [[name, value], …] }`. Bytes rather than JSON because a mail body
  * is not a JSON string: re-encoding costs a copy and a UTF-8 assumption attachments break.
- * The window still cannot address anything else: CSP `connect-src 'none'`, `offline-guard.ts`
- * replaces every leaving API, and the shell grants exactly two commands. A forgotten wire is
- * loud — `HttpAdapter` falls back to global `fetch`, which the guard replaced with a thrower.
+ * The window still cannot address anything else: its CSP's `connect-src` names one source, the app's
+ * in-process command scheme (`src/window-csp.ts`, the `src-tauri/tauri.<os>.conf.json` overlays),
+ * `offline-guard.ts` replaces every leaving API, and the shell grants a named list of commands. A
+ * forgotten wire is loud — `HttpAdapter` falls back to global `fetch`, which the guard replaced.
  */
 
 import {
@@ -249,17 +250,51 @@ export function bridgeAvailable(): boolean {
   return typeof host.__TAURI_INTERNALS__?.invoke === "function";
 }
 
+/**
+ * HOW RAW ANSWERS CROSSED THE COMMAND CHANNEL THIS SESSION — the window's transport self-check.
+ * `bridgeTransport` is the last answer's container, recorded from the first one at boot; `json` is
+ * the count of answers that took the slow fallback, and 0 is the healthy reading.
+ */
+export interface BridgeTransportReading {
+  bridgeTransport: "ipc" | "json" | null;
+  answers: number;
+  json: number;
+}
+
+const transport: BridgeTransportReading = { bridgeTransport: null, answers: 0, json: 0 };
+
+export function bridgeTransportReading(): BridgeTransportReading {
+  return { ...transport };
+}
+
+const JSON_FALLBACK_WARNING =
+  "ohmail Desktop: a raw answer crossed the command channel as a JSON array — the window's policy " +
+  "refused the in-process scheme, so each answer now costs the renderer tens of times its bytes. " +
+  "See apps/desktop/src/window-csp.ts.";
+
+const isArrayBuffer = (value: unknown): value is ArrayBuffer =>
+  value instanceof ArrayBuffer || Object.prototype.toString.call(value) === "[object ArrayBuffer]";
+
 /** Whatever the command channel handed back, as bytes. */
 function asBytes(answer: unknown): Uint8Array {
-  if (answer instanceof ArrayBuffer) return new Uint8Array(answer);
-  if (ArrayBuffer.isView(answer)) {
-    return new Uint8Array(answer.buffer, answer.byteOffset, answer.byteLength);
+  if (isArrayBuffer(answer) || ArrayBuffer.isView(answer)) {
+    transport.answers += 1;
+    transport.bridgeTransport = "ipc";
+    return isArrayBuffer(answer)
+      ? new Uint8Array(answer)
+      : new Uint8Array(answer.buffer, answer.byteOffset, answer.byteLength);
   }
-  /* The command channel has two transports and they hand back different things: the custom
-     protocol answers with an ArrayBuffer, and the message channel it falls back to under a strict
-     CSP answers with a plain array of byte values, because that path returns through a JSON
-     callback. Both are the same bytes; only the container differs. */
-  if (Array.isArray(answer)) return Uint8Array.from(answer as number[]);
+  /* THE SLOW BRANCH, KEPT AND MADE LOUD. Under a policy that refuses the in-process scheme the
+     runtime falls back to its message channel for the rest of the page, and a raw answer arrives as
+     a JSON array of byte values. The bytes are the same, so it still works; it is counted, warned
+     once, and read back by the self-check, so a build that lost its scheme cannot look healthy. */
+  if (Array.isArray(answer)) {
+    transport.answers += 1;
+    transport.json += 1;
+    transport.bridgeTransport = "json";
+    if (transport.json === 1) console.warn(JSON_FALLBACK_WARNING);
+    return Uint8Array.from(answer as number[]);
+  }
   throw new Error(
     `ohmail Desktop: the shell answered ${REQUEST_COMMAND} with something that is not bytes.`,
   );

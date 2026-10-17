@@ -89,7 +89,8 @@ The Vite config aliases exactly four seams, and nothing else:
 These four locks are about the **webview** and the installer — the surfaces a
 stranger downloads and runs. The auto-updater is the one deliberate exception,
 and it does not touch any of them: it runs in the Rust process, not the page, so
-`connect-src 'none'` and the sealed `fetch` still hold literally, and the webview
+the CSP's `connect-src` (one source, the app's in-process command scheme)
+and the sealed `fetch` still hold literally, and the webview
 is granted no updater permission. What changed is that the *process* makes
 requests to one pinned endpoint — one shortly after launch, one whenever the
 update menu item is picked, and one for the signed artifact when there is a newer
@@ -115,15 +116,22 @@ What is aliased OUT instead is the fixtures corpus (seam 2 above): grep either
 emitted bundle for the sample world's invented people and there is nothing to
 find, which is the no-demo rule as bytes rather than as intent.
 
-**2 · The CSP forbids connections, including to itself.**
+**2 · The CSP forbids every connection but the app's own command scheme.**
 
 ```
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob: attachment-preview: http://attachment-preview.localhost;
-font-src 'self'; connect-src 'none'; media-src 'none'; object-src 'none';
+font-src 'self'; connect-src ipc:; media-src 'none'; object-src 'none';
 frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none';
 frame-ancestors 'none'
 ```
+
+That is the policy on Linux and macOS (`src-tauri/tauri.linux.conf.json`,
+`tauri.macos.conf.json`); on Windows `connect-src` is `http://ipc.localhost`
+(`tauri.windows.conf.json`), because WebView2 serves an app's own scheme under
+that name. Every other directive is the same on all three, and the base
+`tauri.conf.json` keeps `connect-src 'none'`, so a build that missed its overlay
+is closed, not open.
 
 `attachment-preview:` (spelled `http://attachment-preview.localhost` on Windows) is the
 shell's own webview scheme for a previewed image: the shell has the engine stream
@@ -132,22 +140,33 @@ the part into its staging folder and serves it by a random token
 channel, which carries raw bytes as a JSON array. It names no file and serves only
 files the shell staged there, to the main window, as one of four raster types.
 
-`connect-src 'none'` is the load-bearing one — no `fetch`, no XHR, no WebSocket,
-no EventSource, not even same-origin. `'unsafe-inline'` is present for **styles
-only**, because the design system positions the tag picker and the tag hues with
-inline `style` attributes; scripts have no such allowance. The same policy minus
-`frame-ancestors` is repeated as a `<meta>` in `index.html` — a `<meta>` element
-is specified to ignore that one directive, and declaring it there would only
-print an error in every console. `desktop-shell.test.ts` asserts the two copies
-never drift.
+`connect-src` is the load-bearing one. Its one source is Tauri's in-process
+command scheme, which every shell command already rides: a POST this app's own
+process answers, and refuses without the runtime's per-launch invoke key. Raw
+answers cross it as bytes instead of as JSON arrays of numbers, which cost the
+renderer tens of times their size. On Windows the source is `http://ipc.localhost`,
+and a CSP also lets it match `https://ipc.localhost`: a loopback address that
+nothing in the app answers. Nothing else: no `fetch` to any other address, no
+XHR, no WebSocket, no EventSource, not even same-origin. `'unsafe-inline'` is
+present for **styles only**, because the design system positions the tag picker
+and the tag hues with inline `style` attributes; scripts have no such allowance.
+The same policy minus `frame-ancestors` is written into `index.html` as a
+`<meta>` by the build, for the platform it ships to (`src/window-csp.ts`); a
+`<meta>` element is specified to ignore that one directive. `desktop-shell.test.ts`
+asserts the base, the three overlays and the built document never drift, and the
+render check reads each platform's own `dist/index.html`.
 
 **3 · The page's own network APIs are replaced.**
 [`src/offline-guard.ts`](src/offline-guard.ts) swaps `fetch`, `XMLHttpRequest`,
 `WebSocket`, `EventSource` and `navigator.sendBeacon` for functions that throw.
-This is not belt-and-braces for its own sake — it is what makes the promise
-*testable*: `scripts/smoke.mjs` installs working versions of all five before the
-bundle loads, and fails if any of them is called or if the guard leaves one
-alone.
+The sealed `fetch` hands on exactly one address, as the runtime composes it:
+this platform's spelling of the command scheme (`ipc://localhost/<command>`, or
+`http://ipc.localhost/<command>` on Windows); the other platform's spelling
+throws like every other address. This is not belt-and-braces for its own sake —
+it is what makes the promise *testable*: `scripts/smoke.mjs` installs working
+versions of all five before the bundle loads, and fails if any of them is
+called, if the guard leaves one alone, or if it hands on anything but that one
+address.
 
 **4 · The Windows installer fetches exactly one thing, and says so.** The
 released installer is built with `tauri.engine.conf.json`, which sets
@@ -203,9 +222,9 @@ is built unfocused so it never takes the keyboard). It carries exactly one
 permission: it may LISTEN for the local
 `updater://progress` event the Rust updater emits, so it can render a byte-count.
 There is no `core:event:allow-emit`, so it cannot make the shell hear anything
-back; no command; no filesystem permission; and it inherits the app-wide
-`connect-src 'none'`, so it reaches the network no more than the main window
-does. The asymmetry is the design: the download is driven Rust-side, and the page
+back; no command; no filesystem permission; and its page declares
+`connect-src 'none'` itself (`src/updater-window.ts`), which holds over the
+app-wide policy, so it reaches the network no more than the main window does. The asymmetry is the design: the download is driven Rust-side, and the page
 that watches it is granted one direction of one event.
 
 The published binaries are built **with** `--features local-engine` — that is

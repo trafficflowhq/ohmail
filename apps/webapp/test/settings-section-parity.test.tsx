@@ -497,8 +497,8 @@ const WEB: Parameters<typeof SettingsView>[0] = {
  *
  * `remoteImagesSection` and `seedSection` are absent, and both for the SAME reason rather than
  * two: their machinery calls `app/api-client` directly and no injected wire substitutes for it.
- * Consented images load through `GET /img` on this origin, which a window under
- * `connect-src 'none'` does not have; the sent-mail review's whole ceremony is api-client calls.
+ * Consented images load through `GET /img` on this origin, which the desktop window (its CSP
+ * admits no address off the machine) does not have; the sent-mail review's whole ceremony is api-client calls.
  * Both are sub-pane rows, so neither removes a nav entry — which is why the nav sets below are
  * identical apart from the one pane the web genuinely cannot have.
  */

@@ -44,7 +44,7 @@ import {
  * phishing surface with the app's own chrome around it. Named HERE rather than in
  * `bridge-fetch.ts` on purpose — that file is asserted to contain no URL at all. Nothing in
  * this window ever dials it: the value goes shell → engine, and the engine opens the
- * connection; the page's CSP still says `connect-src 'none'`.
+ * connection; the page's CSP admits no address off this machine.
  */
 export const CLOUD_URL = "https://api.ohmail.app";
 

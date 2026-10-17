@@ -13,6 +13,15 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Long conversations take far less of the desktop window's memory
+
+Everything the desktop window asked the app's mail engine for came back as a list of numbers, one per byte,
+which takes many times the memory of the bytes themselves: on Linux, twenty long messages of a conversation
+loaded together could hold about 700 MB in the window. Those answers now cross as bytes, over the app's own
+in-process command channel, and the same load holds about 100 MB. The window's content policy admits that
+channel, in the spelling each platform's webview uses, and still no address off this computer. If a build ever
+falls back to the slow path, the diagnostic file says so.
+
 ### Away and signature edits are kept until you save or discard them
 
 On the web and the desktop, an away message typed before a save that could not reach the server stays in the

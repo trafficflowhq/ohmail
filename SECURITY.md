@@ -93,7 +93,10 @@ to, to ohmail Cloud):**
 processes around it:**
 
 - The **webview makes no network connection at all**, enforced three times over
-  and each worth attacking separately: its CSP is `connect-src 'none'`; the page
+  and each worth attacking separately: its CSP's `connect-src` names one source,
+  the app's in-process command scheme in each platform's spelling
+  (`apps/desktop/src-tauri/tauri.<os>.conf.json`), which on Windows CSP also
+  matches as `https://ipc.localhost`, a loopback address nothing serves; the page
   replaces `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and
   `navigator.sendBeacon` with functions that throw (proven on the built bundle
   by the render check's offline audit); and its whole reach is a small named
@@ -108,8 +111,8 @@ processes around it:**
   pinned signed feed. One other window has a grant — the transient one shown
   while an update downloads — and it is a single receive-only event permission
   (`core:event:allow-listen`) so that it can hear the local download-progress
-  event: no emit back, no command, no filesystem, and the same `connect-src
-  'none'` as everything else.
+  event: no emit back, no command, no filesystem, and a page whose own CSP is
+  `connect-src 'none'`.
 - Because the interface is embedded **uncompressed**, you can audit a downloaded
   binary directly: `strings -a <binary> | grep -oE 'https?://[^ ]+' | sort -u`.
 

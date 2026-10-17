@@ -3,7 +3,8 @@
 //! ── WHY THIS LIVES IN RUST AND NOT IN THE UI ──────────────────────────────────
 //!
 //! The shell's promise is that the webview reaches nothing: `capabilities/main.json`
-//! grants it no permission, its CSP is `connect-src 'none'`, and `offline-guard.ts`
+//! grants it no permission, its CSP names one source, the in-process command scheme (this module's
+//! progress page declares `connect-src 'none'`), and `offline-guard.ts`
 //! seals `fetch`/`XMLHttpRequest`/`WebSocket` inside the page. Putting a
 //! "Check for updates" button in the React UI would mean granting the webview an
 //! updater permission and breaking all of that. So the updater lives entirely

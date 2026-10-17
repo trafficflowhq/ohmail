@@ -27,9 +27,10 @@ import { baseIsForeign } from "../../sidecar/src/cloud-origin.js";
  * Two sentences on this screen are load-bearing rather than decorative, and both are checked
  * against the fact that makes them true rather than merely present:
  *
- *  · **"Nothing is sent anywhere."** on the local door. The window cannot dial at all — the CSP is
- *    `connect-src 'none'` and `offline-guard.ts` replaces every browser API that could leave the
- *    process — and the local door's engine reaches no hosted client in its import graph
+ *  · **"Nothing is sent anywhere."** on the local door. The window cannot dial at all — the CSP's
+ *    `connect-src` names one source, the app's in-process command scheme (`desktop-shell.test.ts` holds
+ *    each platform's overlay to that), and `offline-guard.ts` replaces every browser API that could
+ *    leave the process — and the local door's engine reaches no hosted client in its import graph
  *    (`cloud-engine-census.test.ts` holds that end). What this file adds is the near end: picking
  *    the local door composes a configuration that names NO server of ours, so the sentence is
  *    checked against the payload the door actually sends.

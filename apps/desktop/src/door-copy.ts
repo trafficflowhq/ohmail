@@ -43,7 +43,8 @@ const EN = {
   chooserGroupAria: "Which machine does the organizing",
   doorLocalName: (machine: string) => `On this ${machine}`,
   /* "Nothing is sent anywhere." IS BYTE-IDENTICAL AND STAYS THAT WAY — `desktop-door-chooser`
-     pins it against the fact that makes it true (`connect-src 'none'`). The third sentence is
+     pins it against the fact that makes it true (a `connect-src` naming one source, the app's
+     in-process command scheme, `src-tauri/tauri.<os>.conf.json`). The third sentence is
      new and is also a fact about the code rather than a plan: `hostDoorFor` offers the Devices
      pane on this door and nowhere else, so a person choosing it can indeed let their other
      machines in later. It is said HERE because the door beneath it now offers the other side of

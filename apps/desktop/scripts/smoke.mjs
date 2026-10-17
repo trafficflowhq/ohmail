@@ -127,10 +127,10 @@ class DistOnlyLoader extends ResourceLoader {
  *     [ 4 bytes big-endian: metadata length ][ metadata JSON ][ body bytes ]
  *
  * with the metadata `{ status, statusText, h: [[name, value], …] }`. The bytes go
- * back as a PLAIN ARRAY of byte values, which is not a shortcut: it is what the
- * runtime's message-channel transport really answers with under a strict CSP —
- * the transport this window uses, because `offline-guard.ts` refuses the
- * custom-scheme one — and `asBytes` in the bridge has a branch for exactly it.
+ * back as an ArrayBuffer, which is what the runtime's in-process command scheme
+ * answers a raw response with — the transport this window's CSP admits. The
+ * runtime's JSON fallback (a plain array of byte values) still works, and is
+ * counted and warned about by `asBytes`; section 4 asserts it never ran here.
  */
 const invoked = [];
 /** `engine_request` URLs this stub has no answer for. Asserted empty — see below. */
@@ -170,7 +170,7 @@ function frame(status, statusText, body) {
   new DataView(out.buffer).setUint32(0, meta.byteLength, false);
   out.set(meta, 4);
   out.set(payload, 4 + meta.byteLength);
-  return Array.from(out);
+  return out.buffer;
 }
 
 /**
@@ -754,6 +754,7 @@ for (const src of entryScripts) {
 }
 
 const consoleErrors = [];
+const consoleWarnings = [];
 const uncaught = [];
 /** Anything the page managed to send before the guard sealed the API. */
 const leaked = [];
@@ -838,6 +839,11 @@ const bootWindow = () => new JSDOM(classic, {
     window.console.error = (...a) => {
       consoleErrors.push(a.map(String).join(" "));
       err(...a);
+    };
+    const warn = window.console.warn.bind(window.console);
+    window.console.warn = (...a) => {
+      consoleWarnings.push(a.map(String).join(" "));
+      warn(...a);
     };
   },
 });
@@ -963,6 +969,44 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
   for (const api of ["XMLHttpRequest", "WebSocket", "EventSource"]) {
     check(`the offline guard makes ${api} throw`, refuses(`new ${api}('wss://example.invalid')`));
   }
+
+  /* THE ONE ADDRESS HANDED ON, AND THE POLICY THAT ADMITS IT, for the platform this job built on:
+     its spelling of the app's command scheme reaches the page's own fetch (the recorder above, which
+     the guard captured), the other spelling is refused, and dist/index.html carries that platform
+     overlay's policy, whose connect-src names that spelling alone. */
+  const SCHEME = { prefix: "ipc://localhost/", source: "ipc:", conf: null };
+  const WINDOWS = { prefix: "http://ipc.localhost/", source: "http://ipc.localhost", conf: "tauri.windows.conf.json" };
+  const channel = {
+    linux: { ...SCHEME, conf: "tauri.linux.conf.json" },
+    darwin: { ...SCHEME, conf: "tauri.macos.conf.json" },
+    win32: WINDOWS,
+  }[process.platform];
+  const otherPrefix = channel === WINDOWS ? SCHEME.prefix : WINDOWS.prefix;
+  if (channel) {
+    const before = leaked.length;
+    window.eval(`fetch(${JSON.stringify(`${channel.prefix}engine_status`)}, { method: "POST" })`);
+    const handed = leaked.slice(before);
+    check("the guard hands this platform's command channel to the page's own fetch",
+      handed.length === 1 && handed[0].startsWith(`fetch(${channel.prefix}engine_status`), handed.join(" | "));
+    leaked.length = before;
+  }
+  check("the guard refuses the other platform's spelling of it", refuses(`fetch(${JSON.stringify(`${otherPrefix}engine_status`)})`));
+
+  const conf = channel?.conf ?? "tauri.conf.json";
+  const header = JSON.parse(fs.readFileSync(path.join(APP, "src-tauri", conf), "utf8")).app.security.csp;
+  const metas = [...html.matchAll(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/g)].map((m) => m[1]);
+  const policy = metas[0] ?? "";
+  check("dist/index.html carries one CSP meta", metas.length === 1, `${metas.length}`);
+  check(`dist/index.html carries ${conf}'s policy`,
+    policy === header.split("; ").filter((d) => !d.startsWith("frame-ancestors ")).join("; "), policy);
+  const connect = policy.split("; ").find((d) => d.startsWith("connect-src ")) ?? "absent";
+  check("its connect-src names this platform's command scheme alone",
+    connect === `connect-src ${channel?.source ?? "'none'"}`, connect);
+
+  /* Every raw answer crossed as bytes. The stub answers as the in-process scheme does, so the
+     bridge's JSON-array branch — counted and warned once — must never have run. */
+  const fallback = consoleWarnings.filter((w) => /crossed the command channel as a JSON array/.test(w));
+  check("no raw answer took the JSON fallback", fallback.length === 0, fallback[0] ?? "");
 }
 
 /* ══ 5 · it reached the engine, and drew what it was served ══════════════ */

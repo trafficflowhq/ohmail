@@ -1,7 +1,7 @@
 /**
  * THE LIVE TRASH WINDOW IN THE DESKTOP WINDOW — the transport, and deliberately nothing else.
  * The window itself is the shared shell's (`shell/trash-window.ts`); only the wire differs:
- * this window's content policy is `connect-src 'none'` and the Cloud client is a refusing
+ * this window's content policy admits no address off this machine and the Cloud client is a refusing
  * stub, so every ask goes down the pipe to the engine on this machine. The standalone door
  * mounts `localRoutes`, which spreads `trashRoutes`, so `/trash/window*` is served here; the
  * hosted door has no mirror entry — a live read of the provider's own \Trash is the one

@@ -906,8 +906,12 @@ while host mode is off; arming host mode opens exactly the loopback door the
 host section above describes, and nothing else.
 
 **The page reaches nothing directly.** The webview's Content-Security-Policy
-is `connect-src 'none'`, so `fetch`, XHR and WebSocket are refused before they
-are attempted. In the interface-only build the main window's capability list
+names one source in `connect-src`, the app's in-process command scheme, in the
+spelling of each platform's webview (`ipc:` on Linux and macOS,
+`http://ipc.localhost` on Windows; `apps/desktop/src-tauri/tauri.<os>.conf.json`).
+On Windows a CSP also lets that source match `https://ipc.localhost`, a loopback
+address nothing in the app serves. `fetch`, XHR and WebSocket to any other
+address are refused before they are attempted. In the interface-only build the main window's capability list
 is literally empty (`"permissions": []`). In the build you download, the
 window can call thirty-five commands and nothing else, every one declared in
 `src-tauri/build.rs`: the bridge to the mail engine and its restart, a

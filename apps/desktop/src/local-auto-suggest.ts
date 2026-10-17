@@ -1,8 +1,8 @@
 /**
  * "SUGGEST FOR NEW SENDERS AS THEY ARRIVE", IN THE DESKTOP WINDOW — the transport and nothing
  * else. The engine serves `GET/PUT /local/auto-suggest` on the STANDALONE door and no other,
- * exactly as it serves `/local/ai`: `bridgeFetch` because this window's content policy is
- * `connect-src 'none'`, and `404 ⇒ not on this door` because a hosted install arms the same
+ * exactly as it serves `/local/ai`: `bridgeFetch` because this window's content policy admits
+ * no address off this machine, and `404 ⇒ not on this door` because a hosted install arms the same
  * consent on its ACCOUNT through `/consent/settings` (`local-consent.ts`). The 404 idiom is
  * `local-screening.ts`'s, copied deliberately — an error card would lie about a working
  * mailbox. No `503 offline` arm: this route is never forwarded — it is answered out of a

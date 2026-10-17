@@ -16,6 +16,7 @@ import { localStorageDoor, type StorageDoor } from "@ohmail/client-engine/durabl
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 import { invokeShell } from "./bridge-fetch.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
+import { BRIDGE_SELF_CHECK_KEY } from "./local-self-check.js";
 
 /** Where the install identity is kept between files. */
 export const DIAGNOSTIC_INSTALL_KEY = "ohmail.diagnostics.install";
@@ -48,6 +49,21 @@ function storedInstall(storage: StorageDoor): unknown {
 
 const hex = (bytes: Uint8Array): string => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
+/**
+ * THE WINDOW'S TRANSPORT SELF-CHECK AS ONE MORE LOG LINE, the newest: how many raw answers crossed
+ * the command channel and how many took the JSON fallback. Composed here from three numbers and a
+ * word, in fields the file's scrub already admits (`kind`, `total`, `count`); never from mail.
+ */
+function bridgeLine(reading: unknown, now: Date): string | null {
+  const r = reading as { bridgeTransport?: unknown; answers?: unknown; json?: unknown } | null | undefined;
+  if (typeof r?.answers !== "number" || typeof r.json !== "number") return null;
+  const kind = r.bridgeTransport === "ipc" || r.bridgeTransport === "json" ? r.bridgeTransport : "none";
+  return JSON.stringify({
+    ts: now.toISOString(), level: r.json > 0 ? "warn" : "info", service: "ui", event: "bridge_transport",
+    kind, total: r.answers, count: r.json,
+  });
+}
+
 /** Build the file and have the shell write it. Answers the path the shell wrote, or throws. */
 export async function writeDesktopDiagnostics(
   state: DesktopDiagnosticState,
@@ -58,6 +74,8 @@ export async function writeDesktopDiagnostics(
   if (rotated) deps.storage.set(DIAGNOSTIC_INSTALL_KEY, JSON.stringify(record));
   const facts = (await deps.facts()) as { os?: unknown; arch?: unknown; lines?: unknown } | null;
   const lines = Array.isArray(facts?.lines) ? facts.lines.filter((l): l is string => typeof l === "string") : [];
+  const bridge = bridgeLine(state.selfChecks?.[BRIDGE_SELF_CHECK_KEY], now);
+  if (bridge !== null) lines.push(bridge);
   const bundle = buildDiagnosticBundle({
     surface: "desktop",
     now,

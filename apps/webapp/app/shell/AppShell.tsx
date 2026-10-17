@@ -3340,7 +3340,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 /**
                  * Consented images load through `GET /img` on THIS ORIGIN — the proxy is what keeps the reader's
                  * address away from the sender, and the same-origin url is what carries the session cookie and
-                 * satisfies the frame's `img-src 'self'`. A window under `connect-src 'none'` has no such origin and
+                 * satisfies the frame's `img-src 'self'`. The desktop window (its CSP admits no address off the machine) has no such origin and
                  * `useRemoteImages` hands back nothing at all there (`remote-images.ts`), so the switch would store a
                  * preference and change no picture. `cloudClient` is exactly that build fact, and it is checked
                  * rather than `remoteImages !== undefined` only because it names WHY.

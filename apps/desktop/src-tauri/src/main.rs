@@ -131,6 +131,12 @@ mod allocator_arenas;
 // Linux. Always compiled: every build opens the same window (issue #14).
 mod text_scale;
 
+// The window's CSP per platform, read through Tauri's own config merge: each overlay names its
+// webview's one spelling of the command scheme, and the base stays closed.
+#[cfg(test)]
+#[path = "window_csp_tests.rs"]
+mod window_csp_tests;
+
 fn main() {
     // WHEN WEBKIT SHOULD GIVE MEMORY BACK. Process-global and read when the FIRST web context is
     // created, which wry does while the runtime is built — so it is set here, beside the arena

@@ -22,7 +22,7 @@ import { CONSENT_PATH, CONSENT_SETTINGS_PATH, consentOverBridge } from "../src/l
  * ── WHAT MUST BE TRUE ───────────────────────────────────────────────────────────────────────
  *
  *  1. THE REQUEST LEAVES, root-relative, as a forwarded `PATCH /consent/settings`. This window's
- *     content policy is `connect-src 'none'` and the Cloud client is aliased to a refusing stub,
+ *     content policy admits no address off this machine and the Cloud client is aliased to a refusing stub,
  *     so the requests that go down the bridge are the only evidence there is.
  *  2. ONE AXIS ONLY. The route tests presence with `in`, so a body carrying anything else would
  *     overwrite settings this control does not own — including the dormancy window and the
@@ -166,8 +166,8 @@ beforeEach(() => {
   themeFace = null;
   declineWrite = false;
   engineAnswering();
-  /* BOOBY TRAP — nothing on this path may reach the hosted client. This window has
-     `connect-src 'none'` and the packaged bundle has no API client at all, so a fallback to it
+  /* BOOBY TRAP — nothing on this path may reach the hosted client. This window's `connect-src`
+     admits no address off this machine and the packaged bundle has no API client at all, so a fallback to it
      lands here rather than passing quietly. */
   globalThis.fetch = (async () => {
     throw new Error("the desktop window opened a socket — nothing here may reach the network");

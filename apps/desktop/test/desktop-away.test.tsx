@@ -142,8 +142,8 @@ beforeEach(() => {
     audience: "screened_in", throttle: "per_day", updatedAt: null,
   };
   engineAnswering();
-  /* BOOBY TRAP. Nothing on this path may reach the hosted client: this window has
-     `connect-src 'none'` and the packaged bundle has no API client at all. A fallback to it would
+  /* BOOBY TRAP. Nothing on this path may reach the hosted client: this window's `connect-src`
+     admits no address off this machine and the packaged bundle has no API client at all. A fallback to it would
      land here rather than passing quietly. */
   globalThis.fetch = (async () => {
     throw new Error("the desktop window opened a socket — nothing here may reach the network");

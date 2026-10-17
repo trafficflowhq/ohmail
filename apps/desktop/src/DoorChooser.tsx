@@ -722,8 +722,9 @@ function approvalRefusal(code: string | null, fallback: string | null): string |
  * as the thing that organizes — this computer, a server the person runs, or ours. THE ORDER
  * IS "WHO HOLDS IT", NEAREST FIRST: a product whose claim is that you can leave
  * should not lead with the door hardest to leave from. Two load-bearing claims: "Nothing is
- * sent anywhere." on the local door is structurally true (CSP `connect-src 'none'`,
- * `offline-guard.ts`, an engine dialling only the user's own IMAP server), pinned in
+ * sent anywhere." on the local door is structurally true (a CSP whose `connect-src` names one
+ * source, the app's in-process command scheme, `offline-guard.ts`, an engine dialling only the user's own
+ * IMAP server), pinned in
  * `desktop-door-chooser.test.tsx`; the travel sentence under all three states the invariant —
  * rules and settings live on the MAILBOX (`ohmail/_meta`; `local-profile-import.ts` reads them).
  */

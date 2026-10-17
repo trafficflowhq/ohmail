@@ -760,7 +760,15 @@ jobs:
           # The shipped ELF is this job's architecture — see the `dpkg` note
           # the machine out of the ELF header, which is the artifact's own answer
           # rather than the runner's.
-          grep -aq "connect-src 'none'" "$BIN"
+          # THE WINDOW'S POLICY IS THIS PLATFORM'S: the overlay's header policy, compiled in whole.
+          # Only the config carries frame-ancestors, so the bundled <meta> cannot answer for it;
+          # and the other platform's spelling of the command scheme is not in the binary at all.
+          WINDOW_CSP="$(node -p 'require("./apps/desktop/src-tauri/tauri.macos.conf.json").app.security.csp')"
+          grep -aqF "$WINDOW_CSP" "$BIN"
+          if grep -aqF "connect-src http://ipc.localhost" "$BIN"; then
+            echo "this binary's CSP carries the Windows spelling of the command scheme" >&2
+            exit 1
+          fi
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"
@@ -1066,7 +1074,15 @@ jobs:
           # The UI is embedded uncompressed on purpose (see src-tauri/Cargo.toml),
           # so the shipped binary can be audited without being run. `grep -a`
           # rather than `strings`, which Git Bash does not ship.
-          grep -aq "connect-src 'none'" "$BIN"
+          # THE WINDOW'S POLICY IS THIS PLATFORM'S: the overlay's header policy, compiled in whole.
+          # Only the config carries frame-ancestors, so the bundled <meta> cannot answer for it;
+          # and the other platform's spelling of the command scheme is not in the binary at all.
+          WINDOW_CSP="$(node -p 'require("./apps/desktop/src-tauri/tauri.windows.conf.json").app.security.csp')"
+          grep -aqF "$WINDOW_CSP" "$BIN"
+          if grep -aqF "connect-src ipc:" "$BIN"; then
+            echo "this binary's CSP carries the Linux and macOS spelling of the command scheme" >&2
+            exit 1
+          fi
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"
@@ -1838,7 +1854,15 @@ jobs:
           ELF_MACHINE="$(readelf -h "$BIN" | sed -n 's/^ *Machine: *//p')"
           echo "ELF machine: $ELF_MACHINE"
           test "$ELF_MACHINE" = "Advanced Micro Devices X86-64"
-          grep -aq "connect-src 'none'" "$BIN"
+          # THE WINDOW'S POLICY IS THIS PLATFORM'S: the overlay's header policy, compiled in whole.
+          # Only the config carries frame-ancestors, so the bundled <meta> cannot answer for it;
+          # and the other platform's spelling of the command scheme is not in the binary at all.
+          WINDOW_CSP="$(node -p 'require("./apps/desktop/src-tauri/tauri.linux.conf.json").app.security.csp')"
+          grep -aqF "$WINDOW_CSP" "$BIN"
+          if grep -aqF "connect-src http://ipc.localhost" "$BIN"; then
+            echo "this binary's CSP carries the Windows spelling of the command scheme" >&2
+            exit 1
+          fi
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"
@@ -2923,7 +2947,15 @@ jobs:
           ELF_MACHINE="$(readelf -h "$BIN" | sed -n 's/^ *Machine: *//p')"
           echo "ELF machine: $ELF_MACHINE"
           test "$ELF_MACHINE" = "AArch64"
-          grep -aq "connect-src 'none'" "$BIN"
+          # THE WINDOW'S POLICY IS THIS PLATFORM'S: the overlay's header policy, compiled in whole.
+          # Only the config carries frame-ancestors, so the bundled <meta> cannot answer for it;
+          # and the other platform's spelling of the command scheme is not in the binary at all.
+          WINDOW_CSP="$(node -p 'require("./apps/desktop/src-tauri/tauri.linux.conf.json").app.security.csp')"
+          grep -aqF "$WINDOW_CSP" "$BIN"
+          if grep -aqF "connect-src http://ipc.localhost" "$BIN"; then
+            echo "this binary's CSP carries the Windows spelling of the command scheme" >&2
+            exit 1
+          fi
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
           printf '%s\n' "$ALL_URLS"

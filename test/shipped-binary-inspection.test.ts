@@ -18,30 +18,46 @@ import { publicPath } from "./support/public-root.mjs";
  * `desktop-first-party-urls.test.ts` keeps the four allow-lists equal to the Rust link table and
  * the README. This is the other half: that each job's check WORKS. The blocks are pulled out of
  * the workflow and run as the shell they are, against planted binaries — a retyped copy could
- * pass while the shipped bytes fail.
+ * pass while the shipped bytes fail. Each job's window policy is its platform overlay's.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const WF = readFileSync(publicPath("github/workflows/build.yml"), "utf8").split("\n");
 
-const CSP = "default-src 'self'; connect-src 'none'; object-src 'none'";
+const MARK = `grep -aqF "$WINDOW_CSP" "$BIN"`;
+const OVERLAY: Record<string, string> = {
+  macos: "tauri.macos.conf.json",
+  windows: "tauri.windows.conf.json",
+  linux: "tauri.linux.conf.json",
+  "linux-arm64": "tauri.linux.conf.json",
+};
+const policyOf = (file: string): string =>
+  (JSON.parse(readFileSync(publicPath(`apps/desktop/src-tauri/${file}`), "utf8")) as { app: { security: { csp: string } } })
+    .app.security.csp;
+const OTHER: Record<string, string> = {
+  macos: "connect-src http://ipc.localhost",
+  windows: "connect-src ipc:",
+  linux: "connect-src http://ipc.localhost",
+  "linux-arm64": "connect-src http://ipc.localhost",
+};
 const FEED = "https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json";
 const CLOUD = "https://api.ohmail.app";
 
 /**
- * Each inspecting job's URL/CSP block, keyed by job id: from the CSP grep to the closing count.
- * The job id comes from the nearest preceding top-level key, so a failure names the job.
+ * Each inspecting job's URL/CSP block, keyed by job id: from the CSP grep to the closing count,
+ * with the line before it, where the job reads its policy. The job id comes from the nearest
+ * preceding top-level key, so a failure names the job.
  */
-function blocks(): Map<string, string> {
-  const found = new Map<string, string>();
+function blocks(): Map<string, { block: string; reads: string }> {
+  const found = new Map<string, { block: string; reads: string }>();
   let job: string | null = null;
   for (let i = 0; i < WF.length; i++) {
     const key = /^ {2}([A-Za-z0-9_-]+):$/.exec(WF[i]);
     if (key) job = key[1];
-    if (!WF[i].includes(`grep -aq "connect-src 'none'"`)) continue;
+    if (!WF[i].includes(MARK)) continue;
     const end = WF.findIndex((l, k) => k > i && l.includes("unique URL strings (reconcile with the README"));
     expect(end, `${job}: the CSP grep has no closing count line after it`).toBeGreaterThan(i);
     if (job === null) throw new Error(`build.yml:${i + 1}: an inspection outside any job`);
-    found.set(job, WF.slice(i, end + 1).map((l) => l.replace(/^ {10}/, "")).join("\n"));
+    found.set(job, { block: WF.slice(i, end + 1).map((l) => l.replace(/^ {10}/, "")).join("\n"), reads: WF[i - 1] ?? "" });
   }
   return found;
 }
@@ -52,7 +68,8 @@ const BLOCKS = blocks();
 function run(job: string, contents: string): { code: number; err: string } {
   const dir = mkdtempSync(join(tmpdir(), "ohmail-inspect-"));
   writeFileSync(join(dir, "bin"), contents);
-  writeFileSync(join(dir, "check.sh"), `set -euo pipefail\nBIN=bin\n${BLOCKS.get(job)}\n`);
+  const policy = JSON.stringify(policyOf(OVERLAY[job]!));
+  writeFileSync(join(dir, "check.sh"), `set -euo pipefail\nBIN=bin\nWINDOW_CSP=${policy}\n${BLOCKS.get(job)!.block}\n`);
   try {
     execFileSync("bash", ["check.sh"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     return { code: 0, err: "" };
@@ -69,6 +86,12 @@ describe("every platform job reads its shipped binary", () => {
 
   for (const job of ["macos", "windows", "linux", "linux-arm64"]) {
     describe(job, () => {
+      const CSP = policyOf(OVERLAY[job]!);
+
+      it("reads the window policy from its own platform's overlay", () => {
+        expect(BLOCKS.get(job)!.reads).toContain(`WINDOW_CSP="$(node -p 'require("./apps/desktop/src-tauri/${OVERLAY[job]}").app.security.csp')"`);
+      });
+
       it("admits a binary carrying the CSP and only the named endpoints", () => {
         // The positive control, per job: a check that refuses every build is worse than none.
         expect(run(job, `${CSP}\n${FEED}\n${CLOUD}\nhttps://example.org/unrelated\n`).code).toBe(0);
@@ -88,6 +111,18 @@ describe("every platform job reads its shipped binary", () => {
 
       it("refuses a binary with no CSP in it", () => {
         expect(run(job, `${FEED}\n${CLOUD}\n`).code).not.toBe(0);
+      });
+
+      it("refuses a binary that compiled the closed base policy instead of its overlay's", () => {
+        // A build that missed the overlay ships `'none'` and quietly takes the slow JSON channel.
+        const base = policyOf("tauri.conf.json");
+        expect(run(job, `${base}\n${FEED}\n${CLOUD}\n`).code).not.toBe(0);
+      });
+
+      it("refuses a binary carrying the other platform's spelling of the command scheme", () => {
+        const { code, err } = run(job, `${CSP}\n${OTHER[job]}; media-src 'none'\n${FEED}\n${CLOUD}\n`);
+        expect(code).not.toBe(0);
+        expect(err).toContain("spelling of the command scheme");
       });
 
       it("refuses a binary with no update feed in it", () => {

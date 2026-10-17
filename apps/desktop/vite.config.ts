@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { build as viteBuild, defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { UPDATER_HTML, UPDATER_JS } from "./src/updater-window";
+import { withWindowCsp } from "./src/window-csp";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
@@ -532,6 +533,12 @@ function bootStamp(): Plugin {
     name: "ohmail:boot-stamp",
     async generateBundle() {
       this.emitFile({ type: "asset", fileName: BOOT_STAMP_FILE, source: await bootStampCode() });
+    },
+    /* THE DOCUMENT'S CSP, for the platform this bundle ships to — the platform it is built on, as
+       `__OHMAIL_PLATFORM__` below. Written from `cspFor` (`src/window-csp.ts`), the source of the
+       platform overlays too: Tauri's header and this meta are enforced together. */
+    transformIndexHtml(html) {
+      return withWindowCsp(html, process.platform);
     },
     /* The dev server serves the same file from the same source, so `ui:dev` renders the launch
        the installers render rather than a second arrangement nobody ships. Rebuilt per request:

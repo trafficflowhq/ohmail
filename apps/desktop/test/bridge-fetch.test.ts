@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpAdapter } from "@ohmail/client-engine";
 
 import {
-  BRIDGE_DEADLINE_MS, bridgeFetch, createEngineAdapter, engineConfigure, engineLogout, engineRetry,
+  BRIDGE_DEADLINE_MS, bridgeFetch, bridgeTransportReading, createEngineAdapter, engineConfigure, engineLogout, engineRetry,
   engineStartOver, engineStatus, engineSwitchCommit, engineSwitchRestore, engineUnlockRetry, invokeShell,
   LARGE_BODY_FROM_BYTES, WINDOW_SEARCH_PHASES_PATH,
 } from "../src/bridge-fetch.js";
-import { installOfflineGuard, isShellCommandChannel } from "../src/offline-guard.js";
+import { installOfflineGuard } from "../src/offline-guard.js";
 
 /**
  * The bridge, driven against a stand-in shell.
@@ -64,6 +64,25 @@ function shellAnswering(answer: (asked: Asked) => unknown): Asked[] {
 
 afterEach(() => {
   delete host.__TAURI_INTERNALS__;
+});
+
+/* The in-process scheme answers a raw response as an ArrayBuffer of the page's realm; one from
+   another realm (an iframe's, a test's `vm` context) is the same bytes and must read as them. */
+describe("the transport a raw answer crossed by", () => {
+  it("reads the scheme's ArrayBuffer, of this realm or another, as bytes, and counts it as ipc", async () => {
+    const { runInNewContext } = await import("node:vm");
+    const bytes = encode(200, JSON.stringify({ ok: true }));
+    const foreign = runInNewContext("new ArrayBuffer(n)", { n: bytes.byteLength }) as ArrayBuffer;
+    new Uint8Array(foreign).set(bytes);
+    expect(foreign instanceof ArrayBuffer).toBe(false);
+    for (const answer of [bytes.slice().buffer, foreign]) {
+      shellAnswering(() => answer);
+      const before = bridgeTransportReading();
+      const res = await bridgeFetch("/health");
+      expect(await res.json()).toEqual({ ok: true });
+      expect(bridgeTransportReading()).toEqual({ bridgeTransport: "ipc", answers: before.answers + 1, json: before.json });
+    }
+  });
 });
 
 describe("the bridge", () => {
@@ -271,36 +290,8 @@ describe("the offline guard", () => {
     );
   });
 
-  /**
-   * THE ONE ADDRESS REFUSED AS A REJECTION, AND WHY THAT IS STRICTER RATHER THAN LOOSER.
-   *
-   * The webview implements `invoke` as a POST to a custom scheme its OWN process answers, and it
-   * gives up on that scheme — permanently, for the life of the page — when the attempt rejects,
-   * falling back to a message channel that has no network in it at all. That recovery is a
-   * rejection handler, so a synchronous throw skips it and breaks the bridge without making
-   * anything more offline.
-   *
-   * Refusing it as a rejection means the custom-scheme request is never made and every command
-   * travels the channel that cannot address anything. Nothing is allowed out either way.
-   */
-  it("refuses the shell's own command channel in the shape the runtime recovers from", async () => {
-    const scope: Record<string, unknown> = { fetch: () => Promise.resolve("sent") };
-    installOfflineGuard(scope);
-    const guarded = scope.fetch as (url: string) => unknown;
-
-    for (const address of ["ipc://localhost/engine_request", "http://ipc.localhost/engine_request"]) {
-      expect(isShellCommandChannel(address)).toBe(true);
-      // Does not throw…
-      const answer = guarded(address);
-      // …and does not send: it is a refusal, just one the runtime can act on.
-      expect(answer).toBeInstanceOf(Promise);
-      await expect(answer as Promise<unknown>).rejects.toThrow(/refuses the webview's/);
-    }
-
-    // A host that merely CONTAINS the word is not it.
-    expect(isShellCommandChannel("https://ipc.localhost.example.invalid/x")).toBe(false);
-    expect(isShellCommandChannel("https://example.invalid/ipc://localhost")).toBe(false);
-  });
+  /* What the guard hands on — this build's own spelling of the command scheme and nothing else — is
+     `command-channel-egress.test.ts`, with the real guard on every platform's spelling. */
 
   /**
    * A FORGOTTEN BRIDGE IS LOUD.
