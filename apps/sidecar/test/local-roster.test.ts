@@ -281,8 +281,12 @@ describe("the roster read", () => {
   it("names every held-and-not-run row, with the reason that tells paused from removed", async () => {
     const db = await store();
     const world = await ensureLocalWorld(db, { address: SEED, now: NOW });
-    const paused = await addSecond(db, world.accountId, SECOND);
-    const removed = await addSecond(db, world.accountId, "gone@example.test");
+    /* Stamped a second apart. The read orders by created_at, then id; two rows inserted back to
+       back can share a created_at, and then the order is their random ids (red in CI on PR #34's
+       run, the removed row first). The order under test is the read's, so the stamps say which
+       row is older rather than the clock deciding. */
+    const paused = await addSecond(db, world.accountId, SECOND, { createdAt: new Date(NOW.getTime() + 1000) });
+    const removed = await addSecond(db, world.accountId, "gone@example.test", { createdAt: new Date(NOW.getTime() + 2000) });
     await tombstone(db, removed);
     await db.update(mailboxes)
       .set({ status: "disabled", disabledReason: "organized_elsewhere:cloud" })
