@@ -41,7 +41,6 @@ import { JOIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 import { confirmAccountReturn } from "../../account-return";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 import { gatedRefusal } from "../mailbox/gated-refusal";
-import { JOIN_ROUTE } from "../login/continuation";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
@@ -715,8 +714,9 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
             <a className="btn primary" href="/#pricing">{t("capacityCta")}</a>
           ) : (
             /* The sign-in continues HERE, on the step the server says the account is on: plain
-               `/login` forwards a live session to `/`, which has no mailbox step. */
-            <Link className="btn primary" href={`/login?next=${JOIN_ROUTE.slice(1)}`}>{t("signIn")}</Link>
+               `/login` forwards a live session to `/`, which has no mailbox step. A literal, so the
+               zone census can read it; `login-next.test` holds `join` to JOIN_ROUTE. */
+            <Link className="btn primary" href="/login?next=join">{t("signIn")}</Link>
           )}
         </div>
       </Shell>
