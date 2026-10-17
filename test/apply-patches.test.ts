@@ -86,6 +86,7 @@ function relock(root: string, extra: Record<string, Record<string, unknown>> = {
 const NODEMAILER = "nodemailer@8.0.11.patch";
 const TCP = "react-native-tcp-socket@6.4.2.patch";
 const WEBVIEW = "react-native-webview@13.16.1.patch";
+const POSTGRES = "postgres@3.4.9.patch";
 const SMTP = "node_modules/nodemailer/lib/smtp-connection/index.js";
 const REFUSAL = "the server sent more data after its STARTTLS response";
 
@@ -475,7 +476,7 @@ describe("markers", () => {
 
   it("are the literals the patch adds, which upstream lacks and our installed copy carries", () => {
     const withMarkers = Object.entries(table).filter(([, t]) => t.markers.length > 0);
-    expect(withMarkers.map(([f]) => f).sort()).toEqual([NODEMAILER, TCP, WEBVIEW]);
+    expect(withMarkers.map(([f]) => f).sort()).toEqual([NODEMAILER, POSTGRES, TCP, WEBVIEW]);
     const root = tree(withMarkers.map(([f]) => f));
     for (const [file, t] of withMarkers) {
       const read = (base: string) => t.paths.map((p) => readFileSync(join(base, p), "utf8")).join("\n");

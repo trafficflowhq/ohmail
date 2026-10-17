@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
  * bytes read do not hold the package at all, which is a different answer from "unpatched". */
 const CONTROLS = {
   nodemailer: "Connection closed unexpectedly",
+  postgres: "Only use sql.begin, sql.reserved or max: 1",
   "react-native-tcp-socket": "Attempted to write to closed socket",
   "react-native-webview": "RNCWebViewBridge",
 };

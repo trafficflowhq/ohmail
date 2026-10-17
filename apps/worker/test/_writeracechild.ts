@@ -8,10 +8,11 @@
  *
  * So this file is the deployed shape: real handlers on real `process`, a real postgres.js pool
  * against real Postgres, real transactions, and a TCP proxy that takes the transport away
- * underneath them. It runs in one of two modes, and the pair is the proof:
+ * underneath them. Two modes:
  *
- *   guarded — `survivable: driverWriteRaceReason`, i.e. what `index.ts` installs. Must SURVIVE.
- *   bare    — no `survivable`, i.e. the contract before this slice. Must DIE with exit code 1.
+ *   guarded — `survivable: driverWriteRaceReason`, i.e. what `index.ts` installs.
+ *   bare    — no `survivable`: any driver throw exits 1. With patches/postgres@3.4.9.patch there is
+ *             none, so the parent runs this one and requires exit 0.
  *
  * Protocol: NDJSON on stdout. The logger's own lines plus one `child_summary` at the end. The
  * parent reads them; nothing here asserts.
@@ -135,7 +136,7 @@ async function main(): Promise<void> {
   const warm = committed;
 
   let rounds = 0;
-  for (let r = 0; r < ROUNDS && survived === 0; r++) {
+  for (let r = 0; r < ROUNDS; r++) {
     rounds++;
     await sleep(60 + Math.floor(Math.random() * 90));
     proxy.cut();
@@ -161,12 +162,14 @@ async function main(): Promise<void> {
   const afterRestore = committed;
   const resumeMs = Date.now() - resumeStart;
 
+  // Every task must finish: a transaction that waits for ever is the phantom-rollback hang, reported
+  // here rather than as the parent's test timeout. 30 s covers the driver's 20 s backoff cap.
   stop = true;
-  await Promise.allSettled(tasks);
+  const settled = await Promise.race([Promise.allSettled(tasks).then(() => true), sleep(30_000).then(() => false)]);
   try { await sql.end({ timeout: 2 }); } catch { /* the pool may already be in pieces */ }
 
   process.stdout.write(JSON.stringify({
-    event: "child_summary", mode: MODE, rounds, warm, resumeMs,
+    event: "child_summary", mode: MODE, rounds, warm, resumeMs, settled,
     survived, committedAtRestore: atRestore, committedAfterRestore: afterRestore,
   }) + "\n");
   process.exit(0);

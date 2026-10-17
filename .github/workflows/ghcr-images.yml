@@ -293,11 +293,11 @@ jobs:
             SRC=$(docker run --rm --entrypoint sh "$IMG" -c \
               'find /app -type d \( -name src -o -name node_modules \)')
             test -z "$SRC" || { echo "src/module trees in $IMG:"; echo "$SRC"; exit 1; }
-            # The bundle this image runs carries this repository's patches (the mail sender's):
-            # copied out of the staged image and read with the literals the patch itself adds.
+            # The bundle this image runs carries this repository's patches (the mail sender's and the
+            # Postgres driver's): copied out of the staged image and read with the literals each adds.
             HOST="${{ matrix.image }}"
             docker run --rm --entrypoint cat "$IMG" "/app/bin/${HOST}.mjs" > /tmp/image-bundle.mjs
-            node scripts/apply-patches.mjs assert --in /tmp/image-bundle.mjs --require nodemailer
+            node scripts/apply-patches.mjs assert --in /tmp/image-bundle.mjs --require nodemailer --require postgres
           fi
 
   # The boot gate: what the README tells a stranger must work from the PUBLIC tree with the

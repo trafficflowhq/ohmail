@@ -60,6 +60,13 @@ They now say Mail and Mails ("deine Mails", "neue Mails"), and use the words Ger
 anyway: Account, Inbox, Credits, Button, Tracking-Pixel, Handy, Dark Mode, API-Key. "Postfach" stays where it
 means the mailbox itself.
 
+### Mail keeps syncing after the database drops a connection mid-write
+
+When the database dropped one of the server's connections while a write was on it, that connection could stop
+answering for good, and the next sync that used it waited for ever: new mail stopped arriving until the server was
+restarted, and nothing reported it as down. Now only the write that was on the connection fails, and the next one
+reconnects and carries on.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

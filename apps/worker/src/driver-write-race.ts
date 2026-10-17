@@ -7,7 +7,7 @@
  * `socket.write` unguarded after `connection.js:448` set `socket = null`) is reachable via the transaction
  * path the worker is made of. Measured behind a TCP proxy: 5 166 transactions, 15 cut/restore rounds, 4
  * escapes, every one byte-identical (`Cannot read properties of null (reading 'write')` at
- * `Immediate.nextWrite`). No upgrade exists (`dist-tags.latest` is 3.4.9, commit https://github.com/porsager/postgres/commit/de64f7ab3 already in); a `pnpm patch` was rejected (install-time mechanism across two deploy paths). The guard matches the STACK; the announcement still runs via `noteIfSharedDatabaseFault`. */
+ * `Immediate.nextWrite`). No upgrade exists (`dist-tags.latest` is 3.4.9, commit https://github.com/porsager/postgres/commit/de64f7ab3 already in); `patches/postgres@3.4.9.patch` now refuses that write, so this stays as the belt for a tree installed without it. The guard matches the STACK; the announcement still runs via `noteIfSharedDatabaseFault`. */
 
 /**
  * The reason to SURVIVE `err`, or `null` to let the crash contract do its normal work. Three conditions,

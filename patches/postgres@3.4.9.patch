@@ -1,0 +1,92 @@
+diff --git a/cjs/src/connection.js b/cjs/src/connection.js
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..cb8bde5b2ef566fb19f42d97f8490cfd9f09771d 100644
+--- a/cjs/src/connection.js
++++ b/cjs/src/connection.js
+@@ -96,6 +96,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     , serverSignature = null
+     , nextWriteTimer = null
+     , terminated = false
++    , socketClosed = false
+     , incomings = null
+     , results = null
+     , initial = null
+@@ -157,6 +158,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (terminated)
+       return queryError(q, Errors.connection('CONNECTION_DESTROYED', options))
+ 
++    if (socketClosed)
++      return (queryError(q, Object.assign(Errors.connection('CONNECTION_CLOSED', options), { reason: 'statement sent after its connection closed' })), true)
++
+     if (stream)
+       return queryError(q, Errors.generic('COPY_IN_PROGRESS', 'You cannot execute queries during copy'))
+ 
+@@ -334,6 +338,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   async function connect() {
+     terminated = false
++    socketClosed = false
+     backendParameters = {}
+     socket || (socket = await createSocket())
+ 
+@@ -446,11 +451,14 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+     socket.removeAllListeners()
+     socket = null
++    nextWriteTimer = chunk = null
++    socketClosed = true
+ 
+     if (initial)
+       return reconnect()
+ 
+-    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    ;(query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    query = null
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+diff --git a/src/connection.js b/src/connection.js
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..aeed285c6f43ad2d2396ad2f451f67175f3b3c22 100644
+--- a/src/connection.js
++++ b/src/connection.js
+@@ -96,6 +96,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     , serverSignature = null
+     , nextWriteTimer = null
+     , terminated = false
++    , socketClosed = false
+     , incomings = null
+     , results = null
+     , initial = null
+@@ -157,6 +158,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (terminated)
+       return queryError(q, Errors.connection('CONNECTION_DESTROYED', options))
+ 
++    if (socketClosed)
++      return (queryError(q, Object.assign(Errors.connection('CONNECTION_CLOSED', options), { reason: 'statement sent after its connection closed' })), true)
++
+     if (stream)
+       return queryError(q, Errors.generic('COPY_IN_PROGRESS', 'You cannot execute queries during copy'))
+ 
+@@ -334,6 +338,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   async function connect() {
+     terminated = false
++    socketClosed = false
+     backendParameters = {}
+     socket || (socket = await createSocket())
+ 
+@@ -446,11 +451,14 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+     socket.removeAllListeners()
+     socket = null
++    nextWriteTimer = chunk = null
++    socketClosed = true
+ 
+     if (initial)
+       return reconnect()
+ 
+-    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    ;(query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    query = null
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000

@@ -239,3 +239,33 @@ device yet.
 
 **What would let us drop this:** upstream reporting the document height natively, or the reader
 drawing html mail without a WebView.
+
+## `postgres@3.4.9`
+
+Unlicense. Upstream: <https://github.com/porsager/postgres>.
+
+The Postgres driver of the worker, the server and the API. `sql.begin` keeps the connection it started
+on and, when a statement in it fails because that connection closed, sends its `rollback` down the same
+connection. Upstream writes it anyway: the write either throws a `TypeError` from
+`setImmediate(nextWrite)` (no promise to catch it, so the process's crash handler sees it) or is queued
+as in flight. The queued statement survives the reconnect, its bytes never leave, and the connection then
+pairs every reply off by one: the next transaction on it waits for ever, server timeouts included
+(`packages/db/test/phantom-rollback.pg.test.ts`). The close also kept the flush timer's handle and the
+unsent bytes, which `packages/db/src/pg-socket.ts` already works around for the handshake.
+
+The patch changes `connection.js` in both builds the package ships (`src/` and `cjs/src/`), four hunks:
+
+1. a `socketClosed` flag beside `terminated`;
+2. `execute()` refuses a statement while it is set, rejecting it `CONNECTION_CLOSED` (the code the
+   driver already uses for a close) and returning `true` so a caller holding the connection does not
+   move it out of the pool's closed queue; the error's `reason` is the marker the artifact checks read;
+3. `connect()` clears the flag;
+4. `closed()` drops the flush timer and the unsent bytes, sets the flag, and, after the reconnect branch,
+   rejects whatever was in flight or queued whether or not the socket closed with an error, then forgets
+   the in-flight statement.
+
+It could not be worked around from our side: `query`, `sent`, `chunk` and the timer are private to the
+connection's closure, and the rollback is sent by the driver's own `begin`.
+
+**What would let us drop this:** an upstream release that refuses a statement on a closed connection
+and clears its write state on close.
