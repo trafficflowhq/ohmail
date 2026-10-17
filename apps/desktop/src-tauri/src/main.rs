@@ -65,6 +65,9 @@
 // disarmed column is held to today's behaviour by test; the closure at the
 // bottom of this file only maps events into it and performs what it says.
 
+// The in-app preview's staged images and the scheme that serves them by token.
+#[cfg(feature = "local-engine")]
+mod attachment_preview;
 #[cfg(feature = "local-engine")]
 mod config;
 #[cfg(feature = "local-engine")]
@@ -230,6 +233,14 @@ fn main() {
             }
             tauri::RunEvent::Exit => updater::at_exit(),
             _ => {}
+        }
+        // The preview's staged files go with the app.
+        #[cfg(feature = "local-engine")]
+        if matches!(&_event, tauri::RunEvent::Exit) {
+            use tauri::Manager;
+            if let Some(previews) = _app.try_state::<attachment_preview::Previews>() {
+                previews.release_all();
+            }
         }
         // The close/quit policy is `host::lifecycle_action` — ONE function, tested against the
         // contract that disarmed is exactly the behaviour above this feature existed: Destroyed

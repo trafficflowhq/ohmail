@@ -728,6 +728,8 @@ export {
   type ServerSearchFilters,
   type SnapshotFn,
   type StorePolicy,
+  type StagedPreview,
+  STAGED_PREVIEWS_KEPT,
   DEFAULT_STORE_POLICY,
   type WakeSignalSource,
   /* The embedded pictures' fetch budget, re-exported so the REMOTE pictures on a pipe-door can

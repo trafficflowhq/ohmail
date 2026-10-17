@@ -3768,6 +3768,7 @@
     "pdfErrorTitle": "Can't show this PDF here",
     "pdfErrorDetail": "Download it to open in another app.",
     "textTruncated": "— preview truncated. Download to read the rest.",
+    "textTooLargeDetail": "Save it instead.",
     "count": "{index} of {total}",
     "page": "{page} / {total}",
     "prevAttachment": "Previous attachment",

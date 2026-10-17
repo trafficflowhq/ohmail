@@ -15,8 +15,13 @@
          empty stage. An <img> is inert (no SVG script runs in one, and the engine
          types an SVG blob as octet-stream anyway) and a blob: URL is this
          document's own memory — no request leaves, connect-src stays 'none'. The
-         browser and host clients already carry the same three sources. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'" />
+         browser and host clients already carry the same three sources.
+
+         `attachment-preview:` (Windows: http://attachment-preview.localhost) is the shell's
+         own scheme for a previewed image it staged on disk, served by token
+         (src-tauri/src/attachment_preview.rs): the bytes never cross the command
+         channel, which carries them as a JSON array. Images only. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: attachment-preview: http://attachment-preview.localhost; font-src 'self'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'" />
     <!-- The window icon comes from the bundle; this is for the webview's own
          /favicon.ico probe, which would otherwise 404 into the console. Same
          file the installers use, emitted into the bundle by Vite. -->

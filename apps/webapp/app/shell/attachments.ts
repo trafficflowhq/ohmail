@@ -24,7 +24,9 @@ import { watchWireFailedLists, type EngineMessage, type OhmailEngine } from "@oh
 import {
   fileRetryIsOffered, isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
 } from "../components/AttachmentStrip";
-import { desktopAttachmentsEnabled, saveAttachmentToDownloads, type SaveRefusal } from "./open-attachment";
+import {
+  desktopAttachmentsEnabled, opensInSystemViewer, saveAttachmentToDownloads, stageAttachmentPreview, type SaveRefusal,
+} from "./open-attachment";
 import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
 
 /**
@@ -63,6 +65,8 @@ export interface AttachmentsChrome {
    * rather than spinning on it.
    */
   ensure(messageId: string, attachmentId: string, opts?: { retry?: boolean }): void;
+  /** The preview overlay closed: the desktop's staged preview files go ({@link ensurePreview}). */
+  releasePreviews(messageId: string): void;
   /**
    * The FETCHED BYTES of one ready item, or `undefined` — the typed Blob the engine retained.
    * The preview parses it directly (`arrayBuffer()` for a PDF, `text()` for a text part); it
@@ -171,6 +175,27 @@ export async function deliverFile(
   if (file.url === undefined) return "failed";
   saveObjectUrl(file.url, file.filename, doc);
   return "downloaded";
+}
+
+/**
+ * Bring one item to `ready` for the preview overlay. A browser fetches the bytes (`openAttachment`).
+ * The desktop asks the shell to stage the part by id instead: the command channel returns raw bytes
+ * as a JSON array through `eval`, which cost the renderer 1.3 GiB for a 40 MiB picture, so an image
+ * is loaded from the shell's preview scheme and text arrives only under the shell's cap. A type the
+ * desktop hands to the system viewer (PDF) is not fetched for a preview at all.
+ */
+export function ensurePreview(
+  engine: Pick<OhmailEngine, "openAttachment" | "stageAttachment" | "attachmentsOf">,
+  messageId: string,
+  attachmentId: string,
+  opts: { retry?: boolean } = {},
+): Promise<void> {
+  const retry = opts.retry ? { retry: true } : {};
+  if (!desktopAttachmentsEnabled()) return engine.openAttachment(messageId, attachmentId, retry);
+  const held = engine.attachmentsOf(messageId, { includeInlineParts: true });
+  const item = held.state === "ready" ? held.items.find((i) => i.id === attachmentId) : undefined;
+  if (!item || opensInSystemViewer(item.mimeType)) return Promise.resolve();
+  return engine.stageAttachment(messageId, attachmentId, () => stageAttachmentPreview(attachmentId, item.mimeType), retry);
 }
 
 /**
@@ -723,10 +748,12 @@ export function useMessageAttachments(
       // already `ready`, so calling this from the overlay's render effect cannot issue a second
       // `cost:"connection"` fetch — and it refuses to re-ask a `failed` item unless `retry` is
       // set, which the overlay passes only from a human press of its own retry.
-      void engine.openAttachment(id, attachmentId, opts.retry ? { retry: true } : {});
+      void ensurePreview(engine, id, attachmentId, opts);
     },
     [engine],
   );
+
+  const releasePreviews = useCallback((id: string): void => engine.releasePreviews(id), [engine]);
 
   const blobOf = useCallback(
     (id: string, attachmentId: string): Blob | undefined => engine.attachmentBlobOf(id, attachmentId),
@@ -876,10 +903,10 @@ export function useMessageAttachments(
    */
   const chrome = useMemo(
     (): AttachmentsChrome => ({
-      itemsOf, open, ensure, blobOf, downloadAll, downloadingAll: downloadingAllOf,
+      itemsOf, open, ensure, releasePreviews, blobOf, downloadAll, downloadingAll: downloadingAllOf,
       cidImagesOf, needCidImages, calendarTextsOf, hold,
     }),
-    [itemsOf, open, ensure, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages, calendarTextsOf, hold],
+    [itemsOf, open, ensure, releasePreviews, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages, calendarTextsOf, hold],
   );
 
   return available ? chrome : undefined;

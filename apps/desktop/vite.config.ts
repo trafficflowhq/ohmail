@@ -769,8 +769,8 @@ export default defineConfig({
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
       { find: "parse5", replacement: r("./node_modules/parse5") },
       /* pdf.js is kept OUT of the runtime bundle: the desktop window never previews a PDF inline
-         (worker-src 'none'; an attachment opens in the platform's own viewer over
-         `open_attachment`), and the real library's module-init breaks boot under the locked CSP.
+         (worker-src 'none'; a PDF is saved by id over `save_attachment`), and the real
+         library's module-init breaks boot under the locked CSP.
          The dynamic import resolves to a no-op stub. tsconfig.json still points the TYPE at the
          real package, so AttachmentPreview.tsx typechecks against pdf.js. */
       { find: "pdfjs-dist", replacement: r("./src/no-pdfjs.ts") },

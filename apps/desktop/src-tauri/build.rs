@@ -69,14 +69,14 @@ const WINDOW_COMMANDS: &[&str] = &[
     // link a person clicked inside a message, opened in the user's browser, never in the
     // webview. `engine.rs` validates the URL; this line is what makes the command reachable.
     "open_external",
-    // The bytes of one attachment and a display name, written under the shell's own
-    // directory and opened in the platform's usual viewer. Same shape: `engine.rs` owns the
-    // path discipline, this line makes the command exist at all.
-    "open_attachment",
     // One attachment, named by its id with a display name, saved into the PERSON'S Downloads
     // folder — the desktop's answer to the `<a download>` a webview cancels. The engine streams
     // the part to a file `engine.rs` names; it owns the folder, the sanitiser and the numbering.
     "save_attachment",
+    // The in-app preview by id: the shell stages the part and answers a token on its own preview
+    // scheme (an image) or the text under a cap; the release removes the staged file.
+    "stage_attachment_preview",
+    "release_attachment_preview",
     // HOST MODE — publishing the engine's loopback door to the user's OWN tailnet, driven
     // entirely through this shell's commands (`src/host.rs` carries the reasoning). The window
     // reads a typed state, probes the tailnet, arms and disarms (the serve invocation is

@@ -426,3 +426,35 @@ describe("the keyboard, through the registry's overlay scope", () => {
     expect(navCalls[navCalls.length - 1]).toBe("a3");
   });
 });
+
+describe("the desktop's staged preview, from the overlay's side", () => {
+  async function render(items: import("../app/components/AttachmentStrip.js").AttachmentItem[], onRelease: () => void, downloads: string[]) {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(h(KeymapProvider, null, h(AttachmentPreview, {
+      items, activeId: items[0]!.id, onActiveIdChange: () => {}, ensure: () => {}, blobOf: () => undefined,
+      onDownload: (id: string) => downloads.push(id), onClose: () => {}, onRelease,
+    }))));
+  }
+
+  it("a text over the shell's cap says too large and offers the save", async () => {
+    const downloads: string[] = [];
+    await render([{ id: "t1", filename: "big.log", mimeType: "text/plain", sizeBytes: 40 << 20, state: "ready", previewTooLarge: true }], () => {}, downloads);
+    const card = host!.querySelector(".ap-card");
+    expect(card?.textContent).toContain("Too large to preview");
+    expect(card?.textContent).toContain("Save it instead.");
+    await act(async () => (card!.querySelector("button") as HTMLButtonElement).click());
+    expect(downloads).toEqual(["t1"]);
+  });
+
+  it("closing the overlay releases what it staged, once", async () => {
+    const released = vi.fn();
+    await render([{ id: "a1", filename: "p.png", mimeType: "image/png", sizeBytes: 9, state: "ready", objectUrl: "attachment-preview://localhost/x" }], released, []);
+    expect(host!.querySelector("img.ap-img")?.getAttribute("src")).toBe("attachment-preview://localhost/x");
+    expect(released).not.toHaveBeenCalled();
+    await act(async () => root!.unmount());
+    root = null;
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+});

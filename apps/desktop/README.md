@@ -119,10 +119,18 @@ find, which is the no-demo rule as bytes rather than as intent.
 
 ```
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
-img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none';
-object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none';
-form-action 'none'; frame-ancestors 'none'
+img-src 'self' data: blob: attachment-preview: http://attachment-preview.localhost;
+font-src 'self'; connect-src 'none'; media-src 'none'; object-src 'none';
+frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none';
+frame-ancestors 'none'
 ```
+
+`attachment-preview:` (spelled `http://attachment-preview.localhost` on Windows) is the
+shell's own webview scheme for a previewed image: the shell has the engine stream
+the part into its staging folder and serves it by a random token
+(`src-tauri/src/attachment_preview.rs`), so the image never crosses the command
+channel, which carries raw bytes as a JSON array. It names no file and serves only
+files the shell staged there, to the main window, as one of four raster types.
 
 `connect-src 'none'` is the load-bearing one — no `fetch`, no XHR, no WebSocket,
 no EventSource, not even same-origin. `'unsafe-inline'` is present for **styles

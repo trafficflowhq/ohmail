@@ -11,6 +11,33 @@
 export class ObjectUrlLedger {
   private readonly byOwner = new Map<string, Set<string>>();
   private readonly ownerOf = new Map<string, string>();
+  /** URLs minted elsewhere (the desktop shell's staged previews), released by their own call. */
+  private readonly releases = new Map<string, () => void>();
+
+  /**
+   * Record a URL this ledger did not mint — a desktop preview the shell staged on disk — so every
+   * revoke, owner release and teardown releases it like any other: `release` runs exactly once.
+   */
+  adopt(owner: string, url: string, release: () => void): void {
+    let held = this.byOwner.get(owner);
+    if (!held) {
+      held = new Set<string>();
+      this.byOwner.set(owner, held);
+    }
+    held.add(url);
+    this.ownerOf.set(url, owner);
+    this.releases.set(url, release);
+  }
+
+  /** Whether `url` was adopted rather than minted, i.e. carries no bytes in this document. */
+  isAdopted(url: string | undefined): boolean {
+    return url !== undefined && this.releases.has(url);
+  }
+
+  /** The adopted URLs one message holds. */
+  adoptedOf(owner: string): string[] {
+    return [...(this.byOwner.get(owner) ?? [])].filter((url) => this.releases.has(url));
+  }
 
   /**
    * Create a URL for `blob` and record the debt under `owner`. `undefined` where the runtime has
@@ -89,6 +116,16 @@ export class ObjectUrlLedger {
   }
 
   private revokeNow(url: string): void {
+    const release = this.releases.get(url);
+    if (release) {
+      this.releases.delete(url);
+      try {
+        release();
+      } catch {
+        /* the shell's own sweep removes a file a failed release left */
+      }
+      return;
+    }
     const U = (globalThis as { URL?: { revokeObjectURL?: (u: string) => void } }).URL;
     U?.revokeObjectURL?.(url);
   }

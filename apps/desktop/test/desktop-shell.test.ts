@@ -419,8 +419,13 @@ describe("tauri.conf.json", () => {
     // browser client has shipped the same three sources from day one
     // (security-headers.ts: "img-src 'self' data: blob:"), as does the host door
     // (host-static.ts HOST_CLIENT_CSP). The desktop window was the one surface that lagged.
-    expect(d["img-src"]).toEqual(["'self'", "data:", "blob:"]);
-    expect(conf.app.security.csp).not.toMatch(/https?:/);
+    // The preview scheme, in its two spellings (Windows serves a webview scheme as
+    // http://<scheme>.localhost): a previewed image the shell staged on disk, served by token
+    // (`attachment_preview.rs`), so its bytes never cross the command channel as a JSON array.
+    // It is the one http origin in the policy. WebView2 answers it from the shell's handler; on
+    // Linux and macOS nothing builds that URL, and no sender data reaches an app-document image.
+    expect(d["img-src"]).toEqual(["'self'", "data:", "blob:", "attachment-preview:", "http://attachment-preview.localhost"]);
+    expect(conf.app.security.csp.replace(" http://attachment-preview.localhost;", ";")).not.toMatch(/https?:/);
     expect(conf.app.security.csp).not.toMatch(/\*/);
   });
 
@@ -433,6 +438,9 @@ describe("tauri.conf.json", () => {
     for (const [directive, sources] of Object.entries(d)) {
       if (directive === "img-src") continue;
       expect(sources, `${directive} admits blob:`).not.toContain("blob:");
+      // …and the preview scheme the same way: a staged attachment is a picture, never a
+      // document, a connection, a script or a frame.
+      expect(sources.join(" "), `${directive} admits the preview scheme`).not.toMatch(/attachment-preview/);
     }
   });
 
@@ -630,7 +638,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these thirty-six files and no others", () => {
+  it("is these thirty-eight files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -641,6 +649,12 @@ describe("the Rust side", () => {
       // race. Linux only: no other platform reads it.
       "allocator_arenas.rs",
       "allocator_arenas_tests.rs",
+      // THE IN-APP PREVIEW'S BYTES, KEPT OUT OF THE WINDOW'S SCRIPT: the staged-image table, the
+      // `attachment-preview` scheme that serves it by token (main window, GET, four raster types,
+      // real parent == the staging folder), and the two commands. Compiled only under
+      // `local-engine`; its reach is pinned in "the preview's reach" below.
+      "attachment_preview.rs",
+      "attachment_preview_tests.rs",
       // Which door this install came in by, and the environment each one composes. Compiled only
       // under `local-engine`, like `engine.rs` — asserted below, because a feature-off shell
       // configures nothing and must carry no way to.
@@ -862,6 +876,9 @@ describe("the Rust side", () => {
     // code in the published preview, and a module nothing can reach is a module that should not be
     // in the binary a stranger downloads.
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod perf_budgets;/);
+    // `attachment_preview.rs` too: a scheme that serves files the shell staged, and the preview
+    // has no engine to stage them with.
+    expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod attachment_preview;/);
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
@@ -904,6 +921,63 @@ describe("the Rust side", () => {
   });
 
   /**
+   * THE PREVIEW'S REACH, COUNTED. The scheme is a file-read door, so what it may touch is pinned:
+   * one read of a staged file and one capped open of a staged text, both on paths this module
+   * minted under `attachment_dir`; removals only of its own staged files; no write, no listing,
+   * no rename; the URL's path is a token compared with the table and never joined to a path; and
+   * the served file must sit, by real path, directly in the staging folder.
+   */
+  it("the preview's reach is its own staged files, by token", () => {
+    const rs = read("src-tauri/src/attachment_preview.rs");
+    const code = rs.replace(/^\s*\/\/.*$/gm, "");
+    expect(code.match(/fs::read\(/g)).toEqual(["fs::read("]);
+    // The read is of the CANONICAL path just checked, not the table's spelling of it.
+    expect(code).toMatch(/let body = match fs::read\(&real\) \{\s*Ok\(body\) if body\.len\(\) as u64 == size => body,/);
+    expect(code.match(/File::open\(/g)).toEqual(["File::open("]);
+    expect(code).toMatch(/fs::File::open\(staged\)\s*\.and_then\(\|f\| f\.take\(TEXT_PREVIEW_MAX_BYTES \+ 1\)/);
+    expect(code).not.toMatch(/fs::write|fs::rename|remove_dir|create_dir|OpenOptions/);
+    // One listing: the launch sweep, of the folder it is handed, taking only `<32 hex>.part` files.
+    expect(code.match(/fs::read_dir\(/g)).toEqual(["fs::read_dir("]);
+    expect(code).toMatch(/pub\(crate\) fn sweep_staged\(root: &Path\) \{\s*let Ok\(entries\) = fs::read_dir\(root\)/);
+    expect(code).toMatch(/fn sweep_at_launch\(shell: &Shell\) \{\s*if let Ok\(root\) = attachment_dir\(shell\) \{\s*sweep_staged\(&root\);/);
+    expect(read("src-tauri/src/engine.rs")).toMatch(/crate::attachment_preview::sweep_at_launch\(&shell\);\s*app\.manage\(shell\);/);
+    expect(code.match(/fs::remove_file\(/g)?.length).toBe(7);
+    expect(code).toMatch(/\(Ok\(real\), Ok\(real_root\)\) if real\.parent\(\) == Some\(real_root\.as_path\(\)\) => real,/);
+    // The served label and method are the request's own.
+    expect(code).toMatch(/let label = ctx\.webview_label\(\)\.to_string\(\);\s*let method = request\.method\(\)\.as_str\(\)\.to_string\(\);\s*let path = request\.uri\(\)\.path\(\)\.to_string\(\);/);
+    expect(code).toMatch(/answer\(&previews, &root, &label, &method, &path\)/);
+    // The token is 16 bytes from the OS source, hex; the text cap is the measured 2 MiB.
+    expect(code).toMatch(/fn token\(\) -> Result<String, String> \{\s*let mut raw = \[0u8; 16\];\s*getrandom::fill\(&mut raw\)/);
+    expect(code).toMatch(/pub\(crate\) const TEXT_PREVIEW_MAX_BYTES: u64 = 2 \* 1024 \* 1024;/);
+    // The window's eviction bound sits under the shell's backstop, so the shell never evicts a
+    // URL the window still shows.
+    const kept = Number(/const PREVIEWS_KEPT: usize = (\d+);/.exec(code)?.[1]);
+    const windowKept = Number(/export const STAGED_PREVIEWS_KEPT = (\d+);/.exec(fs.readFileSync(path.resolve(APP, "../../packages/client-engine/src/engine.ts"), "utf8"))?.[1]);
+    expect(windowKept).toBeGreaterThan(0);
+    expect(kept).toBeGreaterThan(windowKept);
+    expect(code).toMatch(/const PREVIEW_BYTES_KEPT: u64 = 512 \* 1024 \* 1024;/);
+    expect(windowKept * 40 * 1024 * 1024).toBeLessThanOrEqual(512 * 1024 * 1024);
+    // And the exit removes every staged file.
+    expect(read("src-tauri/src/main.rs")).toMatch(
+      /if matches!\(&_event, tauri::RunEvent::Exit\) \{\s*use tauri::Manager;\s*if let Some\(previews\) = _app\.try_state::<attachment_preview::Previews>\(\) \{\s*previews\.release_all\(\);/,
+    );
+    expect(code).toMatch(/token\.len\(\) != 32 \|\| !token\.bytes\(\)\.all\(/);
+    expect(code).toMatch(/let Some\(\(file, size, mime\)\) = previews\.find\(token\) else/);
+    expect(code).toMatch(/if label != "main" \{\s*return refused\(StatusCode::FORBIDDEN\);/);
+    expect(code).toMatch(/const IMAGE_TYPES: \[&str; 4\] = \["image\/png", "image\/jpeg", "image\/gif", "image\/webp"\];/);
+    // The folder is the shell's own, composed from its data directory and a constant.
+    expect(code).toMatch(/let root = attachment_dir\(&shell\)\.map_err\(serde_json::Value::String\)\?;/);
+    expect(read("src-tauri/src/engine.rs")).toMatch(
+      /pub\(crate\) fn attachment_dir\(shell: &Shell\) -> Result<PathBuf, String> \{\s*attachment_root\(shell\.paths\.app_data\.as_deref\(\)\)\s*\}/,
+    );
+    // And the scheme is registered once, with this handler.
+    expect(read("src-tauri/src/engine.rs")).toMatch(
+      /\.register_asynchronous_uri_scheme_protocol\(\s*crate::attachment_preview::PREVIEW_SCHEME,\s*crate::attachment_preview::serve::<R>,\s*\)/,
+    );
+    expect(code).toMatch(/pub\(crate\) const PREVIEW_SCHEME: &str = "attachment-preview";/);
+  });
+
+  /**
    * THE WINDOW'S GRANT IS A PROPERTY OF THE BUILD, NOT OF A PERMISSION LIST.
    *
    * The local build gives the webview four commands — that is the bridge and the door picker, and
@@ -941,6 +1015,8 @@ describe("the Rust side", () => {
     const launchModule = read("src-tauri/src/launch_window.rs");
     // …and Settings → Text size beside the GTK pin it completes.
     const textScaleModule = read("src-tauri/src/text_scale.rs");
+    // …and the preview's two beside the scheme they feed.
+    const previewModule = read("src-tauri/src/attachment_preview.rs");
     const COMMANDS = [
       "engine_status",
       "engine_request",
@@ -995,17 +1071,16 @@ describe("the Rust side", () => {
       // 0.9.7 shipped that way, so the set equality below is the guard that was missing, not a
       // hypothetical one.
       "open_external",
-      // The bytes of one attachment and a display name, written under the shell's own directory
-      // and opened in the platform's usual viewer. Nothing in the window calls it today — every
-      // attachment verb the product offers says Download — but the shell keeps the door for an
-      // explicit Open verb, and a DECLARED command with no caller is inert, while a GRANTED one
-      // that is undeclared is the launch abort this whole case exists for.
-      "open_attachment",
-      // …and the same two fields saved into the PERSON'S Downloads folder instead, which is what
-      // a button that says Download has always promised. The shell picks the folder, sanitises
-      // the name with the open command's own rule, and numbers a collision rather than
-      // overwriting anything already there.
+      // One attachment, by id, saved into the PERSON'S Downloads folder, which is what a button
+      // that says Download has always promised. The shell picks the folder, sanitises the name,
+      // and numbers a collision rather than overwriting anything already there. (`open_attachment`,
+      // which wrote bytes the window chose and launched them, is gone.)
       "save_attachment",
+      // The in-app preview by id: the shell stages the part in its own folder and answers a
+      // token on its preview scheme (an image) or the text under a cap — never a path, never
+      // an image's bytes — and the release removes the staged file (`attachment_preview.rs`).
+      "stage_attachment_preview",
+      "release_attachment_preview",
       // HOST MODE — all of it through the shell's own commands, none of it through a plugin's
       // permissions. The window reads a typed state, probes the tailnet, arms and disarms (the
       // serve invocation is composed from constants in host.rs and pinned by its tests to
@@ -1097,7 +1172,7 @@ describe("the Rust side", () => {
       // `[<(]` because several are generic over the runtime: a command taking an `AppHandle`
       // has to name the runtime it belongs to, or the handler cannot be built for one.
       expect(
-        engine + hostModule + defaultMailModule + omarchyModule + updaterModule + launchModule + textScaleModule,
+        engine + hostModule + defaultMailModule + omarchyModule + updaterModule + launchModule + textScaleModule + previewModule,
         `${command} is not defined`,
       ).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(
@@ -1521,22 +1596,12 @@ describe("the Rust side", () => {
       "fs::set_permissions", // re-tighten a file an earlier run or a backup tool widened
       "fs::Permissions", // …the mode handed to it
       "fs::read_to_string", // read the key back — the one read in this module
-      /* ── THE OPENED-ATTACHMENT DIRECTORY'S FOUR, AND THE CONSUMER THEY WERE ADDED FOR ──────
-       * An attachment could not be opened in this window at all: the web client delivers a file
-       * by clicking a hidden `<a download>`, and a webview whose host registered no download
-       * handler CANCELS that navigation — silently, which is why every attachment press did
-       * nothing. `open_attachment` is the answer, and it is the only reason this module now
-       * writes a file it did not write before: the bytes go into a directory under the app's own
-       * data directory, each in a holder of its own, and the path is handed to the platform's
-       * opener so the file lands in the program this computer already uses for that kind.
-       *
-       * Four calls, and each is bounded by an assertion further down rather than by this comment:
-       * one `create_dir` for the holder (never `create_dir_all`, so a repeated random name is an
-       * error rather than a write into somebody else's directory), one `read_dir` and two removals
-       * for the sweep that keeps the directory from growing without bound. The removals are the
-       * entries this list would have been most wrong to absorb quietly, so what they may reach is
-       * asserted below. */
-      "fs::create_dir", // the unique holder one opened attachment is written into
+      /* ── THE STAGING DIRECTORY'S THREE ───────────────────────────────────────────────────────
+       * One `read_dir` and two removals for the sweep that keeps `<app_data>/opened` from growing
+       * without bound (the save's staging files, and the holders the retired `open_attachment`
+       * left there). The removals are the entries this list would have been most wrong to absorb
+       * quietly, so what they may reach is asserted below. */
+      "fs::create_dir", // the start over's set-aside directory (`set_store_aside`), never `_all`
       "fs::read_dir", // the sweep, over that directory and nothing else
       "fs::remove_file", // …a swept file
       "fs::remove_dir_all", // …or the holder it sat in
@@ -1679,21 +1744,18 @@ describe("the Rust side", () => {
     );
     expect(engine).toMatch(/fn sweep_attachments\(root: &Path, keep: Duration\)/);
     expect(engine).toMatch(/let Ok\(entries\) = fs::read_dir\(root\)/);
-    // Two callers, the open and the save's staging, each on `attachment_root(...)` just composed.
-    expect(engine.match(/sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(2);
-    expect(engine.match(/let root = attachment_root\([^;]*;\s*(?:\/\/[^\n]*\n\s*)*sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(2);
+    // One caller here, the save's staging, on `attachment_root(...)` just composed (the preview's
+    // is `attachment_preview.rs`, on `attachment_dir`, pinned in "the preview's reach").
+    expect(engine.match(/sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(1);
+    expect(engine.match(/let root = attachment_root\([^;]*;\s*(?:\/\/[^\n]*\n\s*)*sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(1);
     expect(engine).toMatch(/const ATTACHMENT_DIR: &str = "opened"/);
     expect(engine).toMatch(/let root = dir\.join\(ATTACHMENT_DIR\)/);
 
-    /* ── AND THE HOLDER IS `create_dir`, WHICH IS THE LINE THAT CANNOT BE RELAXED ──────────
-     * The unique component is 16 random bytes, so the directory has never existed. `create_dir_all`
-     * would succeed on one that somehow did, writing this attachment's bytes into a holder another
-     * one is being read from; `create_dir` fails instead, which is the correct answer to a random
-     * source that repeated itself. */
-    expect(engine.match(/fs::create_dir\(&holder\)/g)).toHaveLength(1);
+    // The retired open's holder directory is gone with it: this module creates no directory there.
+    expect(engine).not.toMatch(/fs::create_dir\(&holder\)/);
 
-    /* The opened attachment is somebody's mail: private at creation on the file, and on the two
-     * directories above it, for the same reason the key file is. */
+    /* The staged attachment is somebody's mail: private on the directory, for the same reason the
+     * key file is. */
     expect(engine).toMatch(/Permissions::from_mode\(0o700\)/);
 
     /* ── THE KEY FILE IS PRIVATE AT CREATION, NOT PRIVATE SHORTLY AFTERWARDS ───────────────

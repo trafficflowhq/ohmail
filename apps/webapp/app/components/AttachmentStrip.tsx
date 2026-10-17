@@ -57,6 +57,8 @@ export interface AttachmentItem {
    * press, preview, save — is the same. Optional because bare harnesses predate it.
    */
   inline?: boolean;
+  /** A desktop text preview over the shell's inline cap: the overlay offers the save instead. */
+  previewTooLarge?: boolean;
 }
 
 /**

@@ -3518,6 +3518,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             if (previewItems.length === 0) return null;
             return (
               <AttachmentPreview
+                key={previewFor.messageId}
                 items={previewItems}
                 activeId={previewFor.attachmentId}
                 onActiveIdChange={(id) =>
@@ -3527,6 +3528,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 blobOf={(aid) => attachments.blobOf(previewFor.messageId, aid)}
                 onDownload={(aid) => attachments.open(previewFor.messageId, aid)}
                 onClose={() => setPreviewFor(null)}
+                onRelease={() => attachments.releasePreviews(previewFor.messageId)}
               />
             );
           })()

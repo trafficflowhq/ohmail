@@ -14,8 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * platform VIEWER, so on a Mac an image opened in Preview, nothing arrived in `~/Downloads`, and
  * "Download all" had no desktop meaning at all. A button that says Download downloads. The desktop
  * arm now asks the shell to SAVE into the person's own Downloads folder (`save_attachment`), which
- * is the same act the browser's `<a download>` performs; `open_attachment` stays what it was, for
- * an explicit Open verb, and no surface has one today.
+ * is the same act the browser's `<a download>` performs. `open_attachment` is gone: it wrote
+ * bytes the window chose and launched them, with no caller left.
  *
  * The mechanism, which is the link defect's twin rather than the same bug: the web client mints a
  * `blob:` URL and clicks a hidden `<a download>`. That attribute asks the webview to turn the
@@ -43,7 +43,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *
  *  · make `deliverFile` fall back to `saveObjectUrl` when the       → the desktop delivery case
  *    desktop arm is armed                                             goes red;
- *  · point the desktop arm back at `OPEN_ATTACHMENT_COMMAND`         → the command-name assertion
+ *  · point the desktop arm at any command but `save_attachment`      → the command-name assertion
  *                                                                     goes red;
  *  · have `deliverAll` deliver only the first file on the desktop    → the Download-all case goes
  *                                                                     red (it counts the calls);
@@ -55,7 +55,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *                                                                     goes red;
  *  · make `opensInSystemViewer` answer false for `application/pdf`  → the desktop preview case
  *                                                                     goes red;
- *  · register `open_attachment` and leave it out of the capability  → the grant case goes red;
+ *  · register `save_attachment` and leave it out of the capability  → the grant case goes red;
+ *  · bring `open_attachment` back anywhere (handler, grant, build)  → the no-open case goes red;
  *  · drop `enableDesktopAttachments()` from `main.tsx`              → the arming case goes red.
  */
 
@@ -176,7 +177,7 @@ describe("the desktop window hands the file to the operating system", () => {
     // THE SAVE, not the open. A press of a button labelled Download that opened the file in a
     // viewer and left nothing in the person's Downloads folder is the defect above this one.
     expect(invoked[0]!.command).toBe(mod.SAVE_ATTACHMENT_COMMAND);
-    expect(invoked[0]!.command).not.toBe(mod.OPEN_ATTACHMENT_COMMAND);
+    expect(invoked[0]!.command).toBe("save_attachment");
     // The id and the name: the engine streams the part, so no byte of it crosses this bridge.
     expect(invoked[0]!.payload).toEqual({ attachmentId: ID1, filename: "Quarterly report.pdf" });
   });
@@ -339,19 +340,28 @@ function sourceOf(rel: string): string {
 
 describe("the window is granted the command it calls", () => {
   const engine = sourceOf("src-tauri/src/engine.rs");
+  const read_preview = () => sourceOf("src-tauri/src/attachment_preview.rs");
 
-  it("`open_attachment` is registered AND named in the capability", () => {
-    expect(engine, "open_attachment is not in the invoke handler")
-      .toMatch(/generate_handler!\[[^\]]*\bopen_attachment\b/s);
-
+  /**
+   * NO COMMAND WRITES BYTES THE WINDOW CHOSE AND LAUNCHES THEM. `open_attachment`
+   * did — 40 MiB under a window-chosen name, handed to the platform opener (rundll32 runs an `.exe`)
+   * — with no caller left. Neither registered, granted, declared nor defined; the window names no
+   * such command either.
+   */
+  it("`open_attachment` is gone: not registered, granted, declared or named by the window", () => {
+    expect(engine, "open_attachment is in the invoke handler").not.toMatch(/generate_handler!\[[^\]]*\bopen_attachment\b/s);
+    expect(engine).not.toMatch(/fn open_attachment\(/);
+    expect(engine).not.toMatch(/fn spawn_file_opener\(/);
     const cap = engine.match(/const LOCAL_ENGINE_CAPABILITY: &str = r#"([\s\S]*?)"#;/);
     expect(cap, "LOCAL_ENGINE_CAPABILITY could not be read out of engine.rs").not.toBeNull();
     const grant = JSON.parse(cap![1]!) as { windows: string[]; permissions: string[] };
-
-    expect(grant.permissions, "the window may not call open_attachment")
-      .toContain("allow-open-attachment");
-    // The grant stays the main window's and stays one-directional. Asserted beside the addition
-    // so a widening fails here too, the way the link slice's does.
+    expect(grant.permissions).not.toContain("allow-open-attachment");
+    const build = sourceOf("src-tauri/build.rs");
+    const list = /const WINDOW_COMMANDS: &\[&str\] = &\[([^\]]*)\]/s.exec(build)?.[1] ?? "";
+    expect(list, "WINDOW_COMMANDS could not be read out of build.rs").toContain('"save_attachment"');
+    expect(list).not.toContain('"open_attachment"');
+    expect(sourceOf("../webapp/app/shell/open-attachment.ts")).not.toMatch(/open_attachment"|openAttachmentWithSystemViewer/);
+    // The grant stays the main window's and stays one-directional.
     expect(grant.windows).toEqual(["main"]);
     expect(grant.permissions).not.toContain("core:event:allow-emit");
   });
@@ -376,7 +386,7 @@ describe("the window is granted the command it calls", () => {
     const grant = JSON.parse(cap![1]!) as { permissions: string[] };
 
     const declared = [...build.matchAll(/^\s*"([a-z0-9_]+)",\s*$/gm)].map((m) => m[1]!);
-    expect(declared, "WINDOW_COMMANDS could not be read out of build.rs").toContain("open_attachment");
+    expect(declared, "WINDOW_COMMANDS could not be read out of build.rs").toContain("save_attachment");
 
     const undeclared = grant.permissions
       .filter((p) => !p.includes(":"))
@@ -406,9 +416,8 @@ describe("the window is granted the command it calls", () => {
   });
 
   it("the shell composes the path and takes no filesystem permission to do it", () => {
-    // The command takes a name and bytes. It must NEVER grow a path parameter: the whole argument
-    // for crossing `LINKS`' no-URL rule here is that the window names no place on the disk.
-    expect(engine).toMatch(/fn open_attachment\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*filename: String,\s*bytes: Vec<u8>,\s*\)/);
+    // The preview's command takes an id and a declared type and never a path.
+    expect(read_preview()).toMatch(/fn stage_attachment_preview\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*previews: tauri::State<'_, Previews>,\s*attachment_id: String,\s*mime_type: String,\s*\)/);
     // And the grant carries no filesystem plugin permission — the write is this process's own.
     const cap = engine.match(/const LOCAL_ENGINE_CAPABILITY: &str = r#"([\s\S]*?)"#;/);
     const grant = JSON.parse(cap![1]!) as { permissions: string[] };

@@ -1592,6 +1592,11 @@ export interface AttachmentItem {
    * minted its own URL from it could not reopen the document-execution hole the downgrade closes.
    */
   blob?: Blob;
+  /**
+   * A desktop text preview the shell refused to hand over inline: the file is over its preview cap
+   * ({@link StagedPreview}). The file itself is fine — the overlay offers the save instead.
+   */
+  previewTooLarge?: boolean;
   /** The server's own sentence when `state` is `failed` or `too_large`. */
   error?: string;
   /**
@@ -1643,6 +1648,23 @@ export type AttachmentsOutcome =
    * version of the reason above: nothing refused us, nothing even spoke.
    */
   | { state: "failed"; error: string; code: string | null; retryable: boolean };
+
+/**
+ * What the desktop shell answers for a preview it staged on disk ({@link OhmailEngine.stageAttachment}):
+ * a URL on its own preview scheme for an image (the bytes never enter this document; `release`
+ * removes the staged file), the text itself under the shell's cap, or that the text is over it.
+ */
+export type StagedPreview =
+  | { kind: "url"; url: string; release: () => void }
+  | { kind: "text"; text: Blob }
+  | { kind: "too_large" };
+
+/**
+ * How many staged preview images one window holds at once (at 40 MiB each, 320 MiB on disk). The
+ * shell's backstop (`attachment_preview.rs` PREVIEWS_KEPT, 16, and 512 MiB) is larger, so the
+ * shell never evicts a URL this window still shows; `desktop-shell.test.ts` holds the pair apart.
+ */
+export const STAGED_PREVIEWS_KEPT = 8;
 
 /**
  * The MIME types whose bytes may keep their real content type on a client-minted Blob. Everything else is minted
@@ -10307,8 +10329,10 @@ export class OhmailEngine {
     const current = this.itemOf(messageId, attachmentId);
     if (!current) return;
     // Already fetched — the bytes are in hand, nothing to ask for. The blob is the carrier;
-    // the URL alone also satisfies (the compose seed holds a URL wherever it holds bytes).
-    if (current.state === "ready" && (current.blob !== undefined || current.objectUrl)) return;
+    // the URL alone also satisfies (the compose seed holds a URL wherever it holds bytes) unless
+    // it is a desktop preview's staged URL, which carries no bytes into this document.
+    if (current.state === "ready"
+      && (current.blob !== undefined || (current.objectUrl && !this.objectUrls.isAdopted(current.objectUrl)))) return;
     // A refusal at the ceiling cannot become a success by asking again.
     if (current.state === "too_large") return;
     if (current.state === "failed" && !opts.retry) return;
@@ -10403,6 +10427,86 @@ export class OhmailEngine {
     this.attachmentDeliveries.add(flightKey);
     await request;
     return answer;
+  }
+
+  /**
+   * THE DESKTOP'S PREVIEW, WITH NO IMAGE BYTE IN THIS DOCUMENT: `stage` has the shell stream the part
+   * to disk and answers a {@link StagedPreview}. Same guards and single flight as
+   * {@link openAttachment}. An image item becomes `ready` with the shell's URL as its `objectUrl`
+   * (adopted by the ledger, so every release path removes the staged file); a text item with the
+   * capped text as its `blob`; an over-cap text with `previewTooLarge`. Never rejects.
+   */
+  async stageAttachment(
+    messageId: string, attachmentId: string, stage: () => Promise<StagedPreview>, opts: { retry?: boolean } = {},
+  ): Promise<void> {
+    const flightKey = `${messageId}:${attachmentId}`;
+    const inFlight = this.attachmentRequests.get(flightKey);
+    if (inFlight) return inFlight;
+    const current = this.itemOf(messageId, attachmentId);
+    if (!current || current.state === "too_large") return;
+    if (current.state === "ready" && (current.blob !== undefined || current.objectUrl || current.previewTooLarge)) return;
+    if (current.state === "failed" && !opts.retry) return;
+    this.patchAttachment(messageId, attachmentId, {
+      state: "loading", error: undefined, code: undefined, retryable: undefined, status: undefined,
+    });
+    const request = stage()
+      .then((staged) => {
+        this.revokeItem(messageId, attachmentId);
+        if (staged.kind === "url") {
+          this.objectUrls.adopt(messageId, staged.url, staged.release);
+          this.patchAttachment(messageId, attachmentId, { state: "ready", objectUrl: staged.url });
+          // Released while the shell staged it: nothing carries the URL, so let its file go now.
+          if (this.itemOf(messageId, attachmentId)?.objectUrl !== staged.url) this.revokeUrl(staged.url);
+          else this.keepStagedPreview(messageId, attachmentId, staged.url);
+        } else if (staged.kind === "text") {
+          this.patchAttachment(messageId, attachmentId, { state: "ready", blob: staged.text });
+        } else {
+          this.patchAttachment(messageId, attachmentId, { state: "ready", previewTooLarge: true });
+        }
+      })
+      .catch((err: unknown) => this.refuseAttachment(messageId, attachmentId, err))
+      .finally(() => {
+        this.attachmentRequests.delete(flightKey);
+      });
+    this.attachmentRequests.set(flightKey, request);
+    return request;
+  }
+
+  /** The staged previews this window holds, oldest first ({@link STAGED_PREVIEWS_KEPT}). */
+  private stagedPreviews: Array<{ messageId: string; attachmentId: string; url: string }> = [];
+
+  /**
+   * THE WINDOW OWNS THE EVICTION. Past {@link STAGED_PREVIEWS_KEPT} the oldest
+   * staged preview is released here and its item put back to `idle`, so a revisit stages it again;
+   * the shell's own bound is a larger backstop and never evicts what this list still holds.
+   */
+  private keepStagedPreview(messageId: string, attachmentId: string, url: string): void {
+    this.stagedPreviews = this.stagedPreviews.filter((p) => this.objectUrls.isAdopted(p.url));
+    this.stagedPreviews.push({ messageId, attachmentId, url });
+    while (this.stagedPreviews.length > STAGED_PREVIEWS_KEPT) {
+      const oldest = this.stagedPreviews.shift()!;
+      this.revokeUrl(oldest.url);
+      if (this.itemOf(oldest.messageId, oldest.attachmentId)?.objectUrl === oldest.url) {
+        this.patchAttachment(oldest.messageId, oldest.attachmentId, { state: "idle", objectUrl: undefined });
+      }
+    }
+  }
+
+  /**
+   * The preview overlay closed: release every staged preview this message holds (the shell removes
+   * its files) and put those items back to `idle`, so a re-open stages again. Bytes this document
+   * holds itself are untouched; they go with the message's release as before.
+   */
+  releasePreviews(messageId: string): void {
+    const adopted = new Set(this.objectUrls.adoptedOf(messageId));
+    const held = this.attachmentLists.get(messageId);
+    for (const url of adopted) this.revokeUrl(url);
+    if (adopted.size === 0 || held?.state !== "ready") return;
+    for (const item of held.items) {
+      if (item.objectUrl !== undefined && adopted.has(item.objectUrl)) {
+        this.patchAttachment(messageId, item.id, { state: "idle", objectUrl: undefined });
+      }
+    }
   }
 
   /**

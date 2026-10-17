@@ -3768,6 +3768,7 @@
     "pdfErrorTitle": "Dieses PDF lässt sich hier nicht anzeigen",
     "pdfErrorDetail": "Lad es herunter, um es in einer anderen App zu öffnen.",
     "textTruncated": "— Vorschau gekürzt. Zum Weiterlesen herunterladen.",
+    "textTooLargeDetail": "Speichere sie stattdessen.",
     "count": "{index} von {total}",
     "page": "{page} / {total}",
     "prevAttachment": "Vorheriger Anhang",

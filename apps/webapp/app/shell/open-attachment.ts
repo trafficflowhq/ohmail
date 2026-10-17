@@ -10,20 +10,17 @@
  */
 
 /**
- * The shape: the computer's own viewer, which is what a mail app has always done. The window sends
- * the bytes it already fetched and the name the message gave them; the shell writes the file into a
- * directory it owns and hands the PATH to the platform opener (`engine.rs#open_attachment` owns
- * every part of the path). Also the safest answer for bytes a stranger sent: they never become a
- * document inside this app's origin. Off everywhere except the one build that needs it:
- * {@link enableDesktopAttachments} is called by the desktop entry point of the engine-bearing build
- * and nothing else — the web app keeps browser semantics; the preview arms nothing (a build-time
- * literal removes the call, and `scripts/scan-artifact.mjs` reads the emitted bytes both ways).
+ * The shape: the window names a part by its id and the shell does the rest — the engine streams it
+ * into a staging file the shell names, and the shell saves it into Downloads or stages it for the
+ * in-app preview. No attachment byte crosses the command channel, and there is no command that
+ * writes bytes the window chose and opens them (the old `open_attachment`, removed). Off everywhere
+ * except the one build that needs it: {@link enableDesktopAttachments} is called by the desktop
+ * entry point of the engine-bearing build and nothing else — the web app keeps browser semantics;
+ * the preview arms nothing (a build-time literal removes the call, and `scripts/scan-artifact.mjs`
+ * reads the emitted bytes both ways).
  */
 
-import { MutationRejectedError } from "@ohmail/client-engine";
-
-/** The shell command that writes one attachment and opens it. `engine.rs` owns the path. */
-export const OPEN_ATTACHMENT_COMMAND = "open_attachment";
+import { MutationRejectedError, type StagedPreview } from "@ohmail/client-engine";
 
 /**
  * The shell command that saves one attachment into the PERSON'S Downloads folder.
@@ -36,6 +33,15 @@ export const OPEN_ATTACHMENT_COMMAND = "open_attachment";
  * of the path, including the `name (2).ext` numbering that keeps a save from overwriting.
  */
 export const SAVE_ATTACHMENT_COMMAND = "save_attachment";
+
+/**
+ * The shell commands of the in-app PREVIEW, by id. The shell stages the part on disk and answers a
+ * token on its own preview scheme for an image, or the text under its cap; the bytes of an image
+ * never cross the command channel, which returns every answer through `eval` as JSON
+ * (`src-tauri/src/attachment_preview.rs`). The release removes the staged file.
+ */
+export const STAGE_PREVIEW_COMMAND = "stage_attachment_preview";
+export const RELEASE_PREVIEW_COMMAND = "release_attachment_preview";
 
 /**
  * Whether this window hands files to the operating system instead of downloading them.
@@ -51,7 +57,7 @@ export function enableDesktopAttachments(): void {
   armed = true;
 }
 
-/** Whether {@link openAttachmentWithSystemViewer} will do anything. Read by the seam and by the suite. */
+/** Whether the desktop's shell handoffs are armed. Read by the seam and by the suite. */
 export function desktopAttachmentsEnabled(): boolean {
   return armed;
 }
@@ -76,29 +82,6 @@ interface TauriInternals {
 }
 
 /**
- * Ask the shell to write one attachment and open it, and say so if it will not.
- *
- * NO SURFACE CALLS THIS TODAY: every attachment verb says Download, and a Download that opens in a
- * viewer is the defect {@link saveAttachmentToDownloads} exists to end. The door stays because the
- * shell's half is whole — it is what an explicit Open verb would use — and until then the window
- * bundle does not name the command at all. The bytes go up as an array of numbers, the bridge's
- * own wire, bounded by the mail service's single-fetch ceiling enforced at both ends. A rejection
- * is logged, never swallowed; the answer says whether the shell was asked at all.
- */
-export async function openAttachmentWithSystemViewer(blob: Blob, filename: string): Promise<boolean> {
-  const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
-  const internals = host.__TAURI_INTERNALS__;
-  if (typeof internals?.invoke !== "function") return false;
-  try {
-    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
-    await (internals as TauriInternals).invoke(OPEN_ATTACHMENT_COMMAND, { filename, bytes });
-  } catch (err) {
-    console.error(`ohmail: the shell would not open ${filename}`, err);
-  }
-  return true;
-}
-
-/**
  * Why the shell would not save, as the one fact the press can say. The shell's own words are a
  * diagnostic (they carry an OS error), so they go to the console and a closed set reaches the
  * screen: this computer names no Downloads folder (a Linux profile with no user-dirs entry), or
@@ -119,6 +102,47 @@ function engineRefusalOf(err: unknown): MutationRejectedError | null {
   return new MutationRejectedError(typeof e.message === "string" ? e.message : "this attachment could not be fetched", {
     status: e.status, code: typeof e.code === "string" ? e.code : null, retryable: e.retryable === true,
   });
+}
+
+/** Base64 to bytes, without a binary string of the whole text. */
+function bytesOf64(text: string): Uint8Array {
+  const bin = atob(text);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * Ask the shell to stage one attachment for the preview, BY ITS ID, and answer what the engine
+ * holds for it ({@link StagedPreview}). A refusal of the part itself is THROWN as the engine's
+ * refusal, so the overlay says what a fetch refusal would; anything else is thrown as it came.
+ */
+export async function stageAttachmentPreview(attachmentId: string, mimeType: string): Promise<StagedPreview> {
+  const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
+  const internals = host.__TAURI_INTERNALS__;
+  if (typeof internals?.invoke !== "function") throw new Error("ohmail: there is no shell to stage this preview");
+  const shell = internals as TauriInternals;
+  let answer: { url?: unknown; token?: unknown; text64?: unknown; tooLarge?: unknown };
+  try {
+    answer = (await shell.invoke(STAGE_PREVIEW_COMMAND, { attachmentId, mimeType })) as typeof answer;
+  } catch (err) {
+    throw engineRefusalOf(err) ?? (err instanceof Error ? err : new Error(String(err)));
+  }
+  if (typeof answer?.url === "string" && typeof answer.token === "string") {
+    const token = answer.token;
+    return {
+      kind: "url",
+      url: answer.url,
+      release: () => {
+        void shell.invoke(RELEASE_PREVIEW_COMMAND, { token }).catch((err) => console.error("ohmail: a preview was not released", err));
+      },
+    };
+  }
+  if (typeof answer?.text64 === "string") {
+    return { kind: "text", text: new Blob([bytesOf64(answer.text64) as BlobPart], { type: "application/octet-stream" }) };
+  }
+  if (answer?.tooLarge === true) return { kind: "too_large" };
+  throw new Error("ohmail: the shell's preview answer is not one this window reads");
 }
 
 /**

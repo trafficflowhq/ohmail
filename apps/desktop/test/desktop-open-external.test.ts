@@ -484,16 +484,15 @@ describe("the window is granted the two sibling commands as well", () => {
     return JSON.parse(cap![1]!) as { windows: string[]; permissions: string[] };
   })();
 
-  it("`open_link` and `open_attachment` are registered AND named", () => {
+  it("`open_link` is registered AND named; `open_attachment` is neither", () => {
     // 0.9.7's shape, which is what makes this family fail silently: a command registered and not
     // granted is refused at the ACL with no window and no log. `open_external` has had this pair
-    // of assertions since that release; its two siblings spawn the same opener and had neither.
-    for (const command of ["open_link", "open_attachment"]) {
-      expect(engine, `${command} is not in the invoke handler`)
-        .toMatch(new RegExp(`generate_handler!\\[[^\\]]*\\b${command}\\b`, "s"));
-      expect(grant.permissions, `the window may not call ${command}`)
-        .toContain(`allow-${command.replace("_", "-")}`);
-    }
+    // of assertions since that release; `open_link` spawns the same opener. `open_attachment`, the
+    // third that did, is gone: it launched bytes the window chose.
+    expect(engine, "open_link is not in the invoke handler").toMatch(/generate_handler!\[[^\]]*\bopen_link\b/s);
+    expect(grant.permissions, "the window may not call open_link").toContain("allow-open-link");
+    expect(engine).not.toMatch(/generate_handler!\[[^\]]*\bopen_attachment\b/s);
+    expect(grant.permissions).not.toContain("allow-open-attachment");
   });
 
   it("a permission this binary cannot resolve is DROPPED AND NAMED, never dropped quietly", () => {

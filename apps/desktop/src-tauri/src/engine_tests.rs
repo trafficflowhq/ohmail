@@ -182,6 +182,35 @@ if (mode !== "serve-deaf") {
 
 // `record` notes every frame's header and body length, so a test reads what crossed the pipe
 // before the EOF: the `exit` line follows the last frame.
+// `stage` answers a streamed save as the real engine does: it writes `$FAKE_STAGE_BYTES` bytes
+// (byte i is i*31 mod 256) into the file the base64 target header names, with `wx`, and says so.
+// `$FAKE_STAGE_STATUS` answers that status with the engine's refusal envelope instead.
+if (mode === "stage") {
+  let buf = Buffer.alloc(0);
+  process.stdin.on("data", (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      if (buf.length < 8) return;
+      const hl = buf.readUInt32BE(0);
+      const bl = buf.readUInt32BE(4);
+      if (buf.length < 8 + hl + bl) return;
+      const header = JSON.parse(buf.subarray(8, 8 + hl).toString("utf8"));
+      buf = buf.subarray(8 + hl + bl);
+      const answer = (status, body) => frame({ v: 1, t: "res", id: header.id, status, statusText: "",
+        h: [["content-type", "application/json"]], sc: [] }, Buffer.from(JSON.stringify(body), "utf8"));
+      const refusal = Number(process.env.FAKE_STAGE_STATUS || 0);
+      if (refusal) { answer(refusal, { error: { code: "payload_too_large", message: "no", retryable: false } }); continue; }
+      const target = (header.h || []).find(([k]) => k === "x-ohmail-file-target");
+      if (header.method !== "POST" || !/\/attachments\/[0-9a-f-]{36}\/file$/.test(header.url) || !target) { answer(404, {}); continue; }
+      const n = Number(process.env.FAKE_STAGE_BYTES);
+      const bytes = Buffer.alloc(n);
+      for (let i = 0; i < n; i++) bytes[i] = (i * 31) & 255;
+      fs.writeFileSync(Buffer.from(target[1], "base64").toString("utf8"), bytes, { flag: "wx" });
+      answer(200, { bytes: n });
+    }
+  });
+}
+
 if (mode === "echo" || mode === "mute" || mode === "unnamed" || mode === "renamed" || mode === "record") {
   let buf = Buffer.alloc(0);
   let named = mode === "echo" || mode === "mute";
@@ -242,7 +271,7 @@ fn node() -> String {
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
 pub(crate) struct Fixture {
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
     script: PathBuf,
     log: PathBuf,
     /// This process made the directory, and removes it when done.
@@ -4232,8 +4261,8 @@ fn every_command_the_window_calls_is_granted_to_it() {
 
     for command in [
         "engine-status", "engine-request", "engine-configure", "engine-logout",
-        "notify", "set-badge", "open-link", "open-external", "open-attachment",
-        "mailto-claim", "default-mail-status", "default-mail-request", "window-ready",
+        "notify", "set-badge", "open-link", "open-external", "save-attachment",
+        "stage-attachment-preview", "release-attachment-preview", "mailto-claim", "default-mail-status", "default-mail-request", "window-ready",
     ] {
         let permission = format!("allow-{command}");
         assert!(
@@ -4420,15 +4449,15 @@ fn the_mailto_slot_is_take_once_and_newest_wins() {
 
 // ═══ AN ATTACHMENT BECOMES A FILE THIS COMPUTER CAN OPEN ═════════════════════════════════════
 //
-// The window sends bytes and a DISPLAY NAME out of a message somebody else wrote. Everything about
-// where those bytes land is decided in `engine.rs`, and these are the cases that hold that down.
+// The window sends an id and a DISPLAY NAME out of a message somebody else wrote. Everything about
+// where the bytes land is decided in `engine.rs`, and these are the cases that hold that down.
 
 /// A DISPLAY NAME FROM A STRANGER CANNOT NAME A FILE OUTSIDE THE DIRECTORY WE CHOSE.
 ///
 /// This is the whole security argument for the command, so the traversals are asserted as a
 /// PROPERTY of the result rather than as a table of rewrites: whatever comes out carries no
 /// separator and is not a directory, and is therefore a name that can only be joined to the
-/// directory `open_attachment` composed. The rows after it are the second half of the job —
+/// directory the shell composed. The rows after it are the second half of the job —
 /// that an ordinary name survives unchanged, since the name is what the viewer shows and what the
 /// reader recognises, and a sanitiser that mangled ordinary names would trade one defect for a
 /// quieter one.
@@ -4535,54 +4564,39 @@ fn a_display_name_from_a_message_can_only_name_a_file_in_our_own_directory() {
     assert!(capped_plain.starts_with('z'));
 }
 
-/// THE FILE IS WRITTEN WHERE WE SAID, UNDER A NAME OF ITS OWN, AND TWO OF THEM DO NOT COLLIDE.
+/// THE STAGING FOLDER IS THE APP'S OWN AND PRIVATE: `<app_data>/opened`, mode 0700.
 ///
-/// The collision case is the one worth stating: the obvious way to keep two files called
-/// `Invoice.pdf` apart is to rename one, and that loses both the name the reader recognises and —
-/// if the rename reached the tail — the extension the platform picks the program by. So the unique
-/// part is the DIRECTORY and the file keeps its name, which this proves by asserting both.
-///
-/// Mutations watched red:
-///  · resolve collisions by renaming instead of by a unique directory → the same-name assertion
-///    goes red;
-///  · drop the `0o600` mode from the open options                     → the permission row goes red;
-///  · drop `tighten` on the root                                      → the directory row goes red.
+/// Mutation watched red: drop `tighten` on the root → the directory row goes red.
 #[test]
-fn two_attachments_with_one_name_are_two_files() {
-    let fixture = Fixture::new("open-attachment");
+fn the_staging_folder_is_the_apps_own_and_private() {
+    let fixture = Fixture::new("staging-root");
     let root = attachment_root(Some(&fixture.dir)).expect("root");
-    assert!(root.starts_with(&fixture.dir), "the directory escaped the app's own");
-
-    let first = write_attachment(&root, "Invoice.pdf", b"first").expect("first write");
-    let second = write_attachment(&root, "Invoice.pdf", b"second").expect("second write");
-
-    assert_ne!(first, second, "two attachments with one name overwrote each other");
-    assert_eq!(first.file_name(), second.file_name(), "the display name was not preserved");
-    assert_eq!(fs::read(&first).expect("read first"), b"first");
-    assert_eq!(fs::read(&second).expect("read second"), b"second");
-
-    // Both inside the directory this app owns, with nothing between them and it but the unique
-    // holder — so the path is ours from the root down.
-    for path in [&first, &second] {
-        assert!(path.starts_with(&root), "{path:?} is not under {root:?}");
-        assert_eq!(path.parent().and_then(|p| p.parent()), Some(root.as_path()));
-    }
-
-    // Somebody's mail, readable by them and by nobody else on the machine.
+    assert_eq!(root, fixture.dir.join("opened"), "the directory escaped the app's own");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(&first).expect("stat").permissions().mode();
-        assert_eq!(mode & 0o777, 0o600, "an attachment was written world-readable: {mode:o}");
         let dir_mode = fs::metadata(root.as_path()).expect("stat").permissions().mode();
         assert_eq!(dir_mode & 0o777, 0o700, "the directory is not private: {dir_mode:o}");
     }
 }
 
+/// THE OPEN IS GONE: no command writes bytes the window chose and hands them to the opener.
+///
+/// `open_attachment` took bytes and a name from the window and launched the file (rundll32 on
+/// Windows runs an `.exe`), with no caller left. It must be neither declared,
+/// registered nor granted.
+#[test]
+fn no_command_writes_window_bytes_and_launches_them() {
+    assert!(!DECLARED_WINDOW_COMMANDS.split(',').any(|c| c == "open_attachment"), "open_attachment is declared");
+    assert!(!LOCAL_ENGINE_CAPABILITY.contains("allow-open-attachment"), "open_attachment is granted");
+    let src = include_str!("engine.rs");
+    assert!(!src.contains("fn open_attachment("), "open_attachment is defined again");
+    assert!(!src.contains("fn spawn_file_opener("), "a file opener is back");
+}
+
 /// A DOWNLOAD LANDS IN THE PERSON'S DOWNLOADS FOLDER — AND NOWHERE ELSE ON THE DISK.
 ///
-/// `open_attachment` writes into a directory this app owns, so its whole path discipline is about
-/// keeping a stranger's display name from escaping that directory. `save_attachment` writes into a
+/// `save_attachment` writes into a
 /// directory the PERSON owns and shares with everything else they have downloaded, so the same
 /// question is asked one ring further out: the path actually about to be written must sit DIRECTLY
 /// in that folder. The names below are the ones `attachment_file_name` would already have
@@ -4623,7 +4637,7 @@ fn a_saved_attachment_lands_in_downloads_and_never_outside_it() {
 
 /// TWO ATTACHMENTS WITH ONE NAME BECOME TWO FILES, NUMBERED THE WAY A BROWSER NUMBERS THEM.
 ///
-/// `write_attachment`'s answer — a unique DIRECTORY per file — is unavailable here, because this
+/// A unique DIRECTORY per file is unavailable here, because this
 /// directory belongs to the person and is shared with everything else they have saved. So the name
 /// is numbered, on the stem and never on the tail: the extension is the whole of how the platform
 /// picks the program, and `Invoice.pdf (2)` opens in nothing.
@@ -4679,7 +4693,8 @@ fn two_downloads_with_one_name_are_numbered_and_never_overwritten() {
 fn the_sweep_reads_its_window_in_both_directions() {
     let fixture = Fixture::new("sweep-attachment");
     let root = attachment_root(Some(&fixture.dir)).expect("root");
-    let written = write_attachment(&root, "today.pdf", b"today").expect("write");
+    let written = root.join("0123456789abcdef0123456789abcdef.part");
+    fs::write(&written, b"today").expect("write");
 
     // The real window: a file written a moment ago is being read right now.
     sweep_attachments(&root, ATTACHMENT_KEEP);

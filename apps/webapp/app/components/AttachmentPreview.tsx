@@ -44,6 +44,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { fileFaultSentence, fileRetryIsOffered, type AttachmentItem } from "./AttachmentStrip";
 import { useKeyBindings } from "../shell/keymap";
+import { opensInSystemViewer } from "../shell/open-attachment";
 import "./attachment-preview.css";
 import { formatFileSize, Spinner } from "@ohmail/ui";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
@@ -101,6 +102,8 @@ const EN = {
      for the app's own limits sends them looking for a problem they do not have. */
   pdfErrorDetail: "Download it to open in another app.",
   textTruncated: "— preview truncated. Download to read the rest.",
+  /* Under `tooLargeTitle`, for a text the desktop shell would not hand over inline (over its cap). */
+  textTooLargeDetail: "Save it instead.",
   count: (i: number, n: number) => `${i} of ${n}`,
   page: (p: number, n: number) => `${p} / ${n}`,
   prevAttachment: "Previous attachment",
@@ -205,6 +208,8 @@ export interface AttachmentPreviewProps {
   /** Save one item (fetch if needed) — the overlay's Download and the fallback card. */
   onDownload: (attachmentId: string) => void;
   onClose: () => void;
+  /** Called once when the overlay goes: the desktop's staged preview files are removed. */
+  onRelease?: () => void;
 }
 
 export function AttachmentPreview({
@@ -215,11 +220,17 @@ export function AttachmentPreview({
   blobOf,
   onDownload,
   onClose,
+  onRelease,
 }: AttachmentPreviewProps) {
   const index = Math.max(0, items.findIndex((i) => i.id === activeId));
   const active: AttachmentItem | undefined = items.find((i) => i.id === activeId) ?? items[0];
   const kind = active ? previewKind(active.mimeType) : "other";
-  const canPreview = active ? isPreviewable(active.mimeType) : false;
+  // A type the desktop hands to the system viewer (PDF) is never fetched for this overlay.
+  const canPreview = active ? isPreviewable(active.mimeType) && !opensInSystemViewer(active.mimeType) : false;
+
+  const releaseRef = useRef(onRelease);
+  releaseRef.current = onRelease;
+  useEffect(() => () => releaseRef.current?.(), []);
   const hasMultiple = items.length > 1;
 
   /* ── attachment navigation (wraps, like Quick Look) ── */
@@ -577,6 +588,12 @@ function renderContent({
     );
   }
   if (kind === "text") {
+    if (active.previewTooLarge) {
+      return (
+        <Card title={COPY.tooLargeTitle} detail={COPY.textTooLargeDetail}
+          action={{ label: COPY.download, onClick: () => onDownload(active.id) }} />
+      );
+    }
     if (!text || text.id !== activeId) return <Busy label={COPY.rendering} />;
     return (
       <pre className="ap-text">

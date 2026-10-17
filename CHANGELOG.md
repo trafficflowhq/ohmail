@@ -55,6 +55,17 @@ saved when it came back. One attachment can now be opened or saved up to 40 MiB,
 desktop, Download writes the file to your Downloads folder as it arrives from the mail server, so a large
 attachment no longer passes through the app's window.
 
+### Previewing a large attachment on the desktop no longer costs a gigabyte of memory
+<!-- changes: attachment-preview-no-json.md -->
+
+Looking at a picture attachment on the desktop handed the whole file to the app's window as a list of numbers,
+one per byte: a 40 MiB picture took the window about 1.3 GB of memory for a moment, and an 8 MiB one about
+330 MB. The desktop now saves the attachment to a private file first and the window shows it from there, which
+costs about 116 MB for 40 MiB and 27 MB for 8 MiB. A text attachment is shown up to 2 MiB; a larger one says it
+is too large to preview and offers to save it. A PDF is not fetched to be previewed at all. The file is removed
+when the preview closes or the app quits, and one left by a crash or an update is removed at the next start.
+The desktop also no longer carries a command that could write a file the window chose and open it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
