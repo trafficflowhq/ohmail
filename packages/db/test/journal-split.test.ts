@@ -3092,6 +3092,11 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0048_alert_driver_gaps": [
     "5472957cec16b6d0",   // CREATE TABLE alert_driver_gaps (driver, day PK; passes, max_gap_s, max_gap_at)
   ],
+  // CLOUD 0049 — the staff role's grant on 0048's table, for a database migrated but not re-hardened:
+  // one DO block, guarded on `ohmail_admin` existing, no DDL on any object and no DML.
+  "0049_alert_driver_gaps_staff_grant": [
+    "73836bf7c0d8d72d",   // DO … REVOKE ALL, then GRANT SELECT/INSERT/UPDATE (five columns) TO ohmail_admin
+  ],
 };
 
 /** Short, stable identity for one normalized statement. */
@@ -3981,7 +3986,9 @@ describe("the two journals are well-formed", () => {
   // 153 → 154 for `0153_rule_revoke_keeps_its_decisions`: its `when` (1791602600057) is strictly
   // above 0152_search_gin_pending_bounded's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
-  it.each([["mail", MAIL_DIR, 154], ["cloud", CLOUD_DIR, 34]] as const)(
+  // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
+  // above 0048's.
+  it.each([["mail", MAIL_DIR, 154], ["cloud", CLOUD_DIR, 35]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

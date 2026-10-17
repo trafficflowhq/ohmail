@@ -60,6 +60,7 @@ const CLOUD_UNPINNED: Record<string, string> = {
   "0000_auth_ceremony": "baseline: the identity tables, certified by adoption (`baseline.ts#baselineObjects`)",
   "0001_push_subscriptions": "baseline: push_subscriptions, certified by adoption; not on a certified API read path",
   "0032_retire_billing_tables": "table and function DROPS only: an untaken drop costs disk, and no class probes an absence",
+  "0049_alert_driver_gaps_staff_grant": "a GRANT to `ohmail_admin` only, and only where that role exists: no class probes a privilege, /health reads as the runtime role, and an untaken grant fails the API arm's alert stamp, which the worker reports as that arm dark",
 };
 
 const without = <T,>(list: ReadonlyArray<T>, pred: (e: T) => boolean): ReadonlyArray<T> => {

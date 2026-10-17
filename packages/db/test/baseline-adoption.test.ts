@@ -272,7 +272,9 @@ describe("the baseline cutoff is frozen", () => {
     // tables, a backfill from `staff_users` and a trigger on the new one, adopting nothing.
     // `- 27` → `- 28`: cloud 0048_alert_driver_gaps — ONE entry above the cutoff, a NEW table,
     // empty, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 28);
+    // `- 28` → `- 29`: cloud 0049_alert_driver_gaps_staff_grant — ONE entry above the cutoff, a
+    // role-guarded grant on 0048's table, adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 29);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -946,6 +948,9 @@ describe("the baseline cutoff is frozen", () => {
       "0047_staff_roles_and_audit",
       // The alert drivers' gap history: a new table, IF NOT EXISTS, empty. Safe over any history.
       "0048_alert_driver_gaps",
+      // The staff role's grant on that table: REVOKE ALL then three column grants, only where
+      // `ohmail_admin` exists. Re-runnable, so safe over any history.
+      "0049_alert_driver_gaps_staff_grant",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by
