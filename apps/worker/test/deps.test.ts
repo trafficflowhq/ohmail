@@ -462,6 +462,9 @@ describe("worker dependency boundary", () => {
       // The press is `MailboxService.organizeHere` itself: the doorbell it rings beside the takeover
       // stamp is the subject, and a hand-written stamp would test a copy. The import boundary still holds.
       "organize-here-wakes-the-pass.pg.test.ts",
+      // A part read while the organizer moves its message goes through `AttachmentsService` itself:
+      // the re-read where it went is the door's, so a copy would miss it. The import boundary still holds.
+      "part-cut-by-move.e2e.test.ts",
       "profile-fan-out-round-trip.pg.test.ts", "profile-fan-out-round-trip.test.ts",
       "push-wake.e2e.pg.test.ts",
       "reader-decision-two-stores.test.ts",
