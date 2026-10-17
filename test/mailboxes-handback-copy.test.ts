@@ -151,7 +151,7 @@ describe("the stop verb is one sentence, read by both panes", () => {
   it("the confirmation says the act, without the reassurance clause", () => {
     const HALVES = {
       en: { act: /hand the mailbox back/i, calm: /the mail stays where it is/i },
-      de: { act: /Postfach zurückgeben/i, calm: /die Post bleibt, wo sie ist/i },
+      de: { act: /Postfach zurückgeben/i, calm: /die Mails bleiben, wo sie sind/i },
     } as const;
     for (const [locale, cat] of [["en", en], ["de", de]] as const) {
       const confirm = cat.mailboxes.stopOrganizingConfirm;
@@ -170,7 +170,7 @@ describe("the stop verb is one sentence, read by both panes", () => {
   it("the sentence carries the act AND the reassurance, in both languages", () => {
     const HALVES = {
       en: { act: /hand the mailbox back/i, calm: /the mail stays where it is/i },
-      de: { act: /Postfach zurückgeben/i, calm: /die Post bleibt, wo sie ist/i },
+      de: { act: /Postfach zurückgeben/i, calm: /die Mails bleiben, wo sie sind/i },
     } as const;
     for (const [locale, cat] of [["en", en], ["de", de]] as const) {
       const verb = cat.mailboxes.stopOrganizingHandBack;

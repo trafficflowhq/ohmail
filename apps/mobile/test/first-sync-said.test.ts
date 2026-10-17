@@ -81,8 +81,8 @@ describe("the Ohbox tells `no mail` apart from `nothing readable yet`", () => {
        The other line must not carry it in either language. */
     expect(EN.ohboxEmptyHint).toMatch(/lands here/);
     expect(EN.ohboxEmptyNothingReadable).not.toMatch(/lands here/);
-    expect(DE.ohboxEmptyHint).toMatch(/landet hier/);
-    expect(DE.ohboxEmptyNothingReadable).not.toMatch(/landet hier/);
+    expect(DE.ohboxEmptyHint).toMatch(/landen hier/);
+    expect(DE.ohboxEmptyNothingReadable).not.toMatch(/lande[nt] hier/);
   });
 
   it("the screen chooses by the engine's verdict — a census, because nothing renders RN here", () => {

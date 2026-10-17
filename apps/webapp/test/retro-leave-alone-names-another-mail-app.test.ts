@@ -22,7 +22,7 @@ const screening = (m: unknown) => (k: string) => {
 describe("the retro's leave-alone sentence names a filing in another mail app", () => {
   for (const [lang, cat, says, never] of [
     ["en", screening(en), /filed yourself,? here or in another mail app/, /filed by hand/],
-    ["de", screening(de), /selbst hier oder in einem anderen Mailprogramm einsortiert/, /selbst einsortiert/],
+    ["de", screening(de), /selbst hier oder in einer anderen Mail-App einsortiert/, /selbst einsortiert/],
   ] as const) {
     it(`${lang}: every key`, () => {
       for (const k of KEYS) {

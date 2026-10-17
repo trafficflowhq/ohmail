@@ -41,7 +41,7 @@ describe("every door that ends a pairing says the same thing", () => {
 
   it("the sentence ends in the remedy, in both languages", () => {
     expect(EN.pairEnded).toContain("Pair this phone again.");
-    expect(DE.pairEnded).toContain("Koppele dieses Telefon erneut.");
+    expect(DE.pairEnded).toContain("Koppele dieses Handy erneut.");
     // The verb beside it is one word in each deck, and the two decks are not the same string.
     expect(EN.pairAgain).toBe("Pair again");
     expect(DE.pairAgain).toBe("Erneut koppeln");

@@ -26,7 +26,7 @@ const deps: MobileEngineDeps = { openExecutor: world.open, deleteDatabase: world
 
 const SENDER = { name: "Test Sender", address: "sender@fake.test" };
 const DECIDES = "News — 1 message from Test Sender moved. Future mail from them files there too. The rest of their mail here stays where it is.";
-const DECIDES_DE = "News — 1 Nachricht von Test Sender verschoben. Künftige Post von ihm geht auch dorthin. Ihre übrige Post hier bleibt, wo sie ist.";
+const DECIDES_DE = "News — 1 Nachricht von Test Sender verschoben. Künftige Mails von ihm landen auch dort. Seine übrigen Mails hier bleiben, wo sie sind.";
 const BACK = "The mail is back where it was, and no rule was made.";
 
 type Said = { say: string; opts?: ToastOpts & { shown?: () => void } };

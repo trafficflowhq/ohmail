@@ -98,7 +98,7 @@ describe("About — the chrome translates, the imprint facts do not", () => {
     const text = el.textContent ?? "";
 
     expect(text).toContain("Herausgeber");
-    expect(text).toContain("Was mit deiner Post passiert");
+    expect(text).toContain("Was mit deinen Mails passiert");
     expect(text).toContain("Datenschutz");
     expect(text).toContain("Auftragsverarbeiter");
     expect(text).toContain("Impressum");

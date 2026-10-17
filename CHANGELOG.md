@@ -53,6 +53,13 @@ plan step named no plan and said nothing about the trial. The choice is now kept
 the plan step names it next to "14 days free, no card", and opening the account page asks for that plan to be
 selected. The account page also opens in the app's language from the plan step, the trial reminder and Settings.
 
+### German now says Mail, not Post
+
+The German web, desktop and phone apps called your messages "Post", which is not how anyone writes about email.
+They now say Mail and Mails ("deine Mails", "neue Mails"), and use the words German-speaking people use
+anyway: Account, Inbox, Credits, Button, Tracking-Pixel, Handy, Dark Mode, API-Key. "Postfach" stays where it
+means the mailbox itself.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

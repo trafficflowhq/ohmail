@@ -597,10 +597,10 @@ const LIFECYCLE_COPY: Record<LifecycleNoticeData["kind"], Record<"en" | "de", {
     },
     de: {
       subject: "Deine ohmail-Testphase endet in zwei Tagen",
-      action: "Dein ohmail-Konto öffnen",
+      action: "Dein ohmail-Account öffnen",
       body: (d) => [
-        `Die Testphase endet am ${d.anchorDate}. Damit ohmail dein Postfach weiter organisiert, wähle auf deiner Kontoseite ein Abo.`,
-        "Tust du nichts, stoppt das Organisieren am Ende der Testphase. Dein Postfach bleibt unangetastet und gehört dir — alles Einsortierte bleibt, wo es ist.",
+        `Die Testphase endet am ${d.anchorDate}. Damit ohmail dein Postfach weiter organisiert, wähl auf deiner Account-Seite ein Abo.`,
+        "Tust du nichts, stoppt das Organisieren am Ende der Testphase. Dein Postfach bleibt unangetastet und gehört dir. Alles Einsortierte bleibt, wo es ist.",
       ],
     },
   },
@@ -618,12 +618,12 @@ const LIFECYCLE_COPY: Record<LifecycleNoticeData["kind"], Record<"en" | "de", {
     },
     de: {
       subject: "Dein ohmail-Abo ist beendet",
-      action: "Dein ohmail-Konto öffnen",
+      action: "Dein ohmail-Account öffnen",
       body: (d) => [
-        `Dein Abo ist am ${d.anchorDate} beendet worden; ohmail organisiert und synchronisiert nicht mehr. Dein Postfach bleibt unangetastet und gehört dir — die Mails liegen auf deinem eigenen Mailserver.`,
-        "Melde dich an, um wieder zu abonnieren, deine Einstellungen zu exportieren oder dein Konto zu löschen.",
+        `Dein Abo ist am ${d.anchorDate} beendet worden; ohmail organisiert und synchronisiert nicht mehr. Dein Postfach bleibt unangetastet und gehört dir. Deine Mails liegen auf deinem eigenen Mailserver.`,
+        "Melde dich an, um wieder zu abonnieren, deine Einstellungen zu exportieren oder deinen Account zu löschen.",
         ...(d.erasureDate
-          ? [`Tust du nichts, werden deine ohmail-Kontodaten — Regeln, Screener-Entscheidungen und Einstellungen — am ${d.erasureDate} gelöscht.`]
+          ? [`Tust du nichts, werden deine ohmail-Account-Daten (Regeln, Screener-Entscheidungen und Einstellungen) am ${d.erasureDate} gelöscht.`]
           : []),
       ],
     },
@@ -638,11 +638,11 @@ const LIFECYCLE_COPY: Record<LifecycleNoticeData["kind"], Record<"en" | "de", {
       ],
     },
     de: {
-      subject: "Deine ohmail-Kontodaten werden in einer Woche gelöscht",
-      action: "Dein ohmail-Konto öffnen",
+      subject: "Deine ohmail-Account-Daten werden in einer Woche gelöscht",
+      action: "Dein ohmail-Account öffnen",
       body: (d) => [
-        `Am ${d.anchorDate} werden deine ohmail-Kontodaten gelöscht: Regeln, Screener-Entscheidungen und Einstellungen. Dein Postfach bleibt unangetastet — die Mails waren nie bei uns.`,
-        "Melde dich vorher an, um das Konto zu behalten, oder exportiere zuerst deine Einstellungen.",
+        `Am ${d.anchorDate} werden deine ohmail-Account-Daten gelöscht: Regeln, Screener-Entscheidungen und Einstellungen. Dein Postfach bleibt unangetastet, deine Mails waren nie bei uns.`,
+        "Melde dich vorher an, um den Account zu behalten, oder exportiere zuerst deine Einstellungen.",
       ],
     },
   },

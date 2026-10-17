@@ -476,7 +476,7 @@ describe("connectionSay — the engine's connection facts, ranked", () => {
     setActiveLocale("de");
     try {
       expect(connectionSaid(verdict)).toBe(
-        "Dieses Telefon hat das Zertifikat des Mailservers nicht akzeptiert und deshalb abgebrochen, bevor das Passwort rausging.",
+        "Dieses Handy hat das Zertifikat des Mailservers nicht akzeptiert und deshalb abgebrochen, bevor das Passwort rausging.",
       );
     } finally {
       resetLocaleRegisterForTests();

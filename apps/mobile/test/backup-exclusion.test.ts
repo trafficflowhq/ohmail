@@ -136,7 +136,7 @@ describe("the sentence, in both languages", () => {
   it("states the opposite where the reading was false, and claims nothing where there was none", () => {
     for (const [locale, deck] of Object.entries(DECKS)) {
       expect(deck.aboutOnDeviceBackup("included"), locale)
-        .toMatch(/backups include|Backups des Telefons schließen sie ein/);
+        .toMatch(/backups include|Backups des Handys schließen sie ein/);
       expect(deck.aboutOnDeviceBackup("unknown"), locale)
         .toMatch(/could not be read|nicht\s+gelesen werden/);
     }

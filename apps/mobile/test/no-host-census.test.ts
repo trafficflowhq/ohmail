@@ -589,7 +589,7 @@ describe("§3 the route — no screen that offers to organize, and no link to on
  * same force as before on everything the old rule caught, and it names the new true sentences
  * without admitting a single false one — §6 runs both halves over planted input.
  */
-const PHONE = /\b(this phone|dieses telefon|diesem telefon|your phone|dein telefon|deinem telefon)\b/i;
+const PHONE = /\b(this phone|dieses (telefon|handy)|diesem (telefon|handy)|your phone|dein (telefon|handy)|deinem (telefon|handy))\b/i;
 const ORGANIZE = /organiz|organisier/i;
 const NEGATION = /\b(not|never|no|cannot|can't|nicht|kein|keine|keinen)\b/i;
 /**
@@ -1039,8 +1039,8 @@ describe("§6 every refusal rule fires — the controls", () => {
       "Organize your mailbox on this phone. Nothing leaves the device.",
       "This phone organizes your mail.",
       "Your phone organizes everything for you, all the time.",
-      "Dieses Telefon organisiert dein Postfach selbst.",
-      "Organisiere dein Postfach auf diesem Telefon.",
+      "Dieses Handy organisiert dein Postfach selbst.",
+      "Organisiere dein Postfach auf diesem Handy.",
     ]) {
       expect(organizingPromises(promise), promise).not.toEqual([]);
     }
@@ -1050,10 +1050,10 @@ describe("§6 every refusal rule fires — the controls", () => {
     for (const true_ of [
       // The three host doors: an organizing verb and a phone, in different clauses.
       "Our hosted service does the organizing; this phone keeps a copy.",
-      "Unser gehosteter Dienst organisiert; dieses Telefon hält eine Kopie.",
+      "Unser gehosteter Dienst organisiert; dieses Handy hält eine Kopie.",
       // A negation — the shape the rule carried before the fourth door was ruled.
       "This phone does not organize a mailbox on its own: it always works through ohmail Cloud.",
-      "Dieses Telefon organisiert ein Postfach nicht von selbst: Es arbeitet immer über ohmail Cloud.",
+      "Dieses Handy organisiert ein Postfach nicht von selbst: Es arbeitet immer über ohmail Cloud.",
       // A CONDITION — the fourth door's own ruled sentences, which is what 0.18 added.
       "It organizes while ohmail is open",
       "Es organisiert, solange ohmail geöffnet ist",

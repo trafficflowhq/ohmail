@@ -178,6 +178,6 @@ describe("the groups cover every pane and the catalogue carries both languages",
       expect(typeof messages.settings[k]).toBe("string");
       expect(typeof (de as typeof messages).settings[k]).toBe("string");
     }
-    expect((de as typeof messages).settings.groupAccount).toBe("Konto");
+    expect((de as typeof messages).settings.groupAccount).toBe("Account");
   });
 });

@@ -586,7 +586,7 @@ describe("the register, and what subscribes to it", () => {
       "that server is no longer paired on this phone",
     );
     expect(Copy.notPairedHere, "…while a fresh read follows the switch").toBe(
-      "dieser Server ist auf diesem Telefon nicht mehr gekoppelt",
+      "dieser Server ist auf diesem Handy nicht mehr gekoppelt",
     );
   });
 

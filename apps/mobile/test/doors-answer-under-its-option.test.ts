@@ -113,7 +113,7 @@ describe("the heading names what the four choices are", () => {
 
   it("says it in both languages", () => {
     expect(DECKS.en.doorsHead).toBe("What organizes your mail");
-    expect(DECKS.de.doorsHead).toBe("Was deine Post organisiert");
+    expect(DECKS.de.doorsHead).toBe("Was deine Mails organisiert");
   });
 });
 

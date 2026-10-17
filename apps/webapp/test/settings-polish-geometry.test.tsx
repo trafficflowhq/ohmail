@@ -276,7 +276,7 @@ describe("Sync now, Edit and Remove stand on one row", () => {
      1440; paper with the reconnect verb), because the stamp never gave way. The panes are the real ones:
      530 and 548 (1024 three-pane, paper and ohmarchy), 574 (1180 and 1440), 652 (700), 712 (760). */
   const DE = { sub: "Anderes IMAP-Postfach · verbunden · 3086 Nachrichten", ok: "Synchronisiert vor 1 Minute",
-    sync: "Jetzt synchronisieren", rm: "Entfernen", box: "Postfach zurückgeben — die Post bleibt, wo sie ist." };
+    sync: "Jetzt synchronisieren", rm: "Entfernen", box: "Postfach zurückgeben. Die Mails bleiben, wo sie sind." };
   const EN = { sub: "Any other IMAP mailbox · connected · 3,086" + " messages", ok: "Synced 1 minute ago",
     sync: "Sync now", rm: "Remove", box: "Hand the mailbox back — the mail stays where it is." };
   const localRow = (t: typeof DE, verb2: string, withBox: boolean, wrapped = true): string =>

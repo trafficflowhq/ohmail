@@ -19,7 +19,9 @@ export function isPadDevice(): boolean {
 
 /** The sentence with the phone named as an iPad; the same string where there is no phone in it. */
 export function deviceNoun(text: string, locale: AppLocale): string {
-  if (locale === "de") return text.replace(/\bTelefons\b/g, "iPads").replace(/\bTelefon\b/g, "iPad");
+  if (locale === "de") {
+    return text.replace(/\b(Telefon|Handy)s\b/g, "iPads").replace(/\b(Telefon|Handy)\b/g, "iPad");
+  }
   return text
     .replace(/\b([Aa]) phone\b(?!s)/g, "$1n iPad")
     .replace(/(?<![A-Za-z])phone\b(?!s)/g, "iPad")

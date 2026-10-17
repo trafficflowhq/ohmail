@@ -2494,7 +2494,7 @@ describe("the two screen lines a renderer cannot drive", () => {
     expect(src).toContain("account: (rows) => organizesHere(session.profile)");
     expect(src).toContain('{ get name(): string { return Copy.standaloneName; }, email: rows?.[0]?.address ?? "" }');
     /* The title a German reader sees is German; the English one is the claim's own words. */
-    expect(DE.standaloneName).toBe("ohmail auf diesem Telefon");
+    expect(DE.standaloneName).toBe("ohmail auf diesem Handy");
     expect(EN.standaloneName).toBe(PHONE_CLAIM_NAME);
     /* THE PAIRED HEADER reads the same way since 2026-09-21: the server by its host and the
        mailbox from the row — a URL and a UUID were what the iPhone and the iPad showed. */

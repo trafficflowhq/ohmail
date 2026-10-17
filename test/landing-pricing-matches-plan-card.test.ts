@@ -93,7 +93,7 @@ describe("the landing's Cloud tiers are the plan card the API enforces", () => {
    *
    * These two cases read one `catalogue("en")` for every assertion, so the German card's price,
    * mailbox count, credit allowance and email count were pinned to nothing at all: the only
-   * German assertions in this file were about WORDS (the "rund" hedge, the "Guthabenpunkte"
+   * German assertions in this file were about WORDS (the "rund" hedge, the "Credits"
    * unit). A German card advertising 19 $ against a 9 USD Checkout would have shipped green,
    * which is the identical failure this file was written for — the tier change applied to one
    * catalogue and not the other — surviving in the locale nobody parameterized.
@@ -170,7 +170,7 @@ describe("the landing's Cloud tiers are the plan card the API enforces", () => {
    * many classifications or a few drafts, and only the credit figure is true of both. This is the
    * "claims are contracts" rule applied to the one number the site prints that the ledger charges.
    */
-  it.each([["en", /credits/i], ["de", /Guthabenpunkte/i]])(
+  it.each([["en", /credits/i], ["de", /\bCredits\b/]])(
     "%s: the allowance is sold in credits, never as a flat action count",
     (locale, unit) => {
       const { pricing } = catalogue(locale);
@@ -381,7 +381,7 @@ describe("the landing's Cloud tiers are the plan card the API enforces", () => {
     expect(offenders.sort(), `${locale}: these count credits in actions`).toEqual([]);
   });
 
-  it.each([["en", /credits?/i], ["de", /Guthabenpunkte?n?/]])(
+  it.each([["en", /credits?/i], ["de", /\bCredits?\b/]])(
     "%s: every figure that is a credit balance says so",
     (locale, unit) => {
       const all = JSON.parse(readFileSync(

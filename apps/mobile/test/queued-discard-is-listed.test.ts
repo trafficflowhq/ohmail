@@ -156,6 +156,6 @@ describe("the queued rows' words", () => {
 
   it("the why names the phone, not the browser, in both languages", () => {
     expect(EN.unsavedQueuedWhy).toBe("This phone could not reach your account. It keeps trying.");
-    expect(DE.unsavedQueuedWhy).toBe("Dieses Telefon konnte dein Konto nicht erreichen. Es versucht es weiter.");
+    expect(DE.unsavedQueuedWhy).toBe("Dieses Handy konnte deinen Account nicht erreichen. Es versucht es weiter.");
   });
 });

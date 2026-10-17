@@ -280,10 +280,10 @@ describe("the message catalogues", () => {
         all_four: "whose mail lands in Ohbox, in News, in Receipts, or in the Screener",
       },
       de: {
-        ohbox: "deren Post in der Ohbox landet",
-        reads: "deren Post in News landet",
-        ohbox_reads: "deren Post in der Ohbox oder in News landet",
-        all_four: "deren Post in der Ohbox, in News, in Belegen oder im Screener landet",
+        ohbox: "deren Mails in der Ohbox landen",
+        reads: "deren Mails in News landen",
+        ohbox_reads: "deren Mails in der Ohbox oder in News landen",
+        all_four: "deren Mails in der Ohbox, in News, in Belegen oder im Screener landen",
       },
     };
     /**
@@ -352,7 +352,7 @@ describe("the message catalogues", () => {
                By position and not by a concatenation, because the JOINER is the languages'
                own business: English runs the relative clause straight on ("people you've let
                in whose mail lands in Ohbox get"), German fences it with commas ("alle, die
-               schreiben, deren Post in der Ohbox landet, bekommen"). Pinning either one's
+               schreiben, deren Mails in der Ohbox landen, bekommen"). Pinning either one's
                punctuation here would make this guard refuse the other language's grammar. */
             const atSubject = out.indexOf(subject);
             const atClause = out.indexOf(clause);

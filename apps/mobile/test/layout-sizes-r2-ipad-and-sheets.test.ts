@@ -101,13 +101,14 @@ describe("an iPad's sentences name an iPad (R3-03)", () => {
     expect(deviceNoun("on iPhone and iPad the pairing stays in the phone's keychain", "en")).toBe("on iPhone and iPad the pairing stays in the iPad's keychain");
     expect(deviceNoun("two phones", "en")).toBe("two phones");
     expect(deviceNoun("Dieses Telefon und die Daten dieses Telefons", "de")).toBe("Dieses iPad und die Daten dieses iPads");
+    expect(deviceNoun("Dieses Handy und die Daten dieses Handys", "de")).toBe("Dieses iPad und die Daten dieses iPads");
   });
   it("no sentence of either deck still says phone on an iPad", () => {
     for (const [locale, deck] of [["en", EN], ["de", DE]] as const) {
       for (const [k, v] of Object.entries(deck)) {
         if (typeof v !== "string") continue;
         const out = deviceNoun(v, locale);
-        expect(out, `${locale}.${k}`).not.toMatch(locale === "en" ? /(?<![A-Za-z])[Pp]hone(?!s)\b/ : /\bTelefons?\b/);
+        expect(out, `${locale}.${k}`).not.toMatch(locale === "en" ? /(?<![A-Za-z])[Pp]hone(?!s)\b/ : /\b(Telefon|Handy)s?\b/);
       }
     }
   });

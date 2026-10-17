@@ -15,7 +15,7 @@ const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, im
 const REFUSED_FOR_ABSENCE = new RegExp([
   String.raw`\b(nothing|not|n't|cannot|can't)\b[^.\n"]{0,40}\b(mov|delet|tagg?)(e|ed|ing)?\b[^.\n"]*?`
     + String.raw`(no longer here|not (on|in) (this|the) (device|phone|browser)|isn't here|only (on|in) your (server|mailbox))`,
-  String.raw`\b(nichts|nicht)\b[^.\n"]{0,40}(verschoben|gelöscht|markiert)[^.\n"]*?(nicht mehr da|nicht auf diesem (Gerät|Telefon))`,
+  String.raw`\b(nichts|nicht)\b[^.\n"]{0,40}(verschoben|gelöscht|markiert)[^.\n"]*?(nicht mehr da|nicht auf diesem (Gerät|Telefon|Handy))`,
 ].join("|"), "i");
 
 const FILES = [

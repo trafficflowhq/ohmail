@@ -208,11 +208,11 @@ describe("the phone holder's sentence, as the catalogue spells it", () => {
 
   it("German is written, not transliterated — no dash construction, and the same verb as its neighbours", () => {
     expect(deM.readerHolderPhone)
-      .toBe("{name} organisiert dieses Postfach. Ein Telefon tut das nur, solange seine App geöffnet ist.");
+      .toBe("{name} organisiert dieses Postfach. Ein Handy tut das nur, solange seine App geöffnet ist.");
     expect(deM.readerHolderPhoneUnnamed)
-      .toBe("Ein Telefon organisiert dieses Postfach, und nur solange seine App geöffnet ist.");
-    expect(deM.readerHolderPhoneShort).toBe("Von einem Telefon organisiert");
-    expect(deM.readerHolderPhoneWhy).toBe("Ein Telefon organisiert nur, solange seine App geöffnet ist.");
+      .toBe("Ein Handy organisiert dieses Postfach, und nur solange seine App geöffnet ist.");
+    expect(deM.readerHolderPhoneShort).toBe("Von einem Handy organisiert");
+    expect(deM.readerHolderPhoneWhy).toBe("Ein Handy organisiert nur, solange seine App geöffnet ist.");
     for (const key of [
       "readerHolderPhone", "readerHolderPhoneUnnamed",
       "readerHolderPhoneStopped", "readerHolderPhoneStoppedUnnamed",

@@ -125,7 +125,7 @@ describe("the moved toast names the folder without declining it", () => {
 
   it("names the folder behind a dash — which governs no case", () => {
     expect(t("ohbox.toastBulkMovedSenders", ARGS))
-      .toBe(`${PLACE} — Post von 1 Absender landet ab jetzt dort, 1 Nachricht verschoben.`);
+      .toBe(`${PLACE} — Mails von 1 Absender landen ab jetzt dort, 1 Nachricht verschoben.`);
   });
 
   it("the English string is untouched — only the German had the case problem", () => {

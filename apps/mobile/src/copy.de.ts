@@ -1,5 +1,5 @@
 /**
- * Der Kopie-Satz des Telefons auf Deutsch — the phone's copy deck, in German. `Deck` is derived
+ * Der Kopie-Satz des Handys auf Deutsch — the phone's copy deck, in German. `Deck` is derived
  * from the English table in `copy.en.ts`, so shape is compiler-checked: a missing key, an extra
  * key or a differing parameter list is a build error; `test/copy-parity.test.ts` adds what a
  * type cannot see. The vocabulary is not invented here: `apps/webapp/messages/de.json` settled
@@ -14,14 +14,14 @@ import type { UnsubSaid, UnsubToast } from "./state/unsub-arms";
 import { isPinFailure } from "./net/host-pinning";
 import type { Deck } from "./copy.en";
 
-const BOOT_MIGRATING = "Der Postspeicher auf diesem Telefon wird aktualisiert…";
+const BOOT_MIGRATING = "Der Mail-Speicher auf diesem Handy wird aktualisiert…";
 
 /** Hoisted for the same reason its English twin is — see `copy.en.ts`. */
 const PIN_CHANGED =
   "Die Identität dieses Computers hat sich geändert, seit du dich mit ihm gekoppelt hast, deshalb "
   + "hat ohmail angehalten, statt ihm zu vertrauen. Wenn du ohmail auf diesem Computer neu "
   + "installiert oder aus einem Backup wiederhergestellt hast, öffne dort Einstellungen → Geräte "
-  + "und koppele dieses Telefon mit einem frischen Code erneut. Wenn nicht, antwortet etwas in "
+  + "und koppele dieses Handy mit einem frischen Code erneut. Wenn nicht, antwortet etwas in "
   + "deinem Netz an seiner Stelle.";
 
 export const DE: Deck = {
@@ -29,31 +29,31 @@ export const DE: Deck = {
 
   welcomeTitle: "Welches Postfach ist das?",
   welcomeLead:
-    "Was deine Post organisiert, muss laufen — ein Computer, ein Server oder dieses Telefon, solange ohmail offen ist. Deine Post bleibt auf deinem Mailserver.",
+    "Was deine Mails organisiert, muss laufen: ein Computer, ein Server oder dieses Handy, solange ohmail offen ist. Deine Mails bleiben auf deinem Mailserver.",
 
   /* ------------------------------------------------------------------ doors */
 
   doorsLead: "Eine Frage, vier Antworten — welcher Rechner organisiert?",
-  doorsHead: "Was deine Post organisiert",
+  doorsHead: "Was deine Mails organisiert",
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
-    "Unser gehosteter Dienst organisiert; dieses Telefon hält eine Kopie. Melde dich im Web an, öffne Einstellungen → Geräte und scanne den Code, den es zeigt.",
+    "Unser gehosteter Dienst organisiert; dieses Handy hält eine Kopie. Melde dich im Web an, öffne Einstellungen → Geräte und scanne den Code, den es zeigt.",
 
   doorOwnServer: "Dein eigener Server",
   doorOwnServerSay:
-    "Ein Server, den du betreibst, organisiert; dieses Telefon hält eine Kopie. Gib seine Adresse an, und diese App prüft, was dort ist.",
+    "Ein Server, den du betreibst, organisiert; dieses Handy hält eine Kopie. Gib seine Adresse an, und diese App prüft, was dort ist.",
 
   doorDesktop: "Dein eigener Computer",
   doorDesktopSay:
-    "Die ohmail-App auf deinem Computer organisiert; dieses Telefon hält eine Kopie. Öffne dort Einstellungen → Geräte und scanne den Code.",
+    "Die ohmail-App auf deinem Computer organisiert; dieses Handy hält eine Kopie. Öffne dort Einstellungen → Geräte und scanne den Code.",
   doorDesktopNoPin:
-    "Nimm auf diesem Telefon die Tailscale-Adresse, die dieselbe Ansicht zeigt — ohmail kann einen Computer, der über dein eigenes Netz erreicht wird, hier noch nicht prüfen.",
+    "Nimm auf diesem Handy die Tailscale-Adresse, die dieselbe Ansicht zeigt — ohmail kann einen Computer, der über dein eigenes Netz erreicht wird, hier noch nicht prüfen.",
 
   /* Die vierte Tür — see the English deck's note. The third line is the one platform fork on
      any of these screens; both sentences live in both decks. */
-  doorPhone: "Eigenständig auf diesem Telefon",
-  doorPhoneSay: "Dein Postfach, auf diesem Telefon organisiert.",
+  doorPhone: "Eigenständig auf diesem Handy",
+  doorPhoneSay: "Dein Postfach, auf diesem Handy organisiert.",
   doorPhoneNeedIos:
     "Nur solange die App offen ist. Wenn du sie verlässt, gibt sie das Postfach zurück.",
   doorPhoneNeedAndroid:
@@ -73,10 +73,10 @@ export const DE: Deck = {
   doorSelfGo: "Weiter",
   doorSelfChecking: "Dein Server wird geprüft…",
   doorSelfCert:
-    "Dein Server braucht ein https-Zertifikat von einer Stelle, der dieses Telefon schon vertraut. "
+    "Dein Server braucht ein https-Zertifikat von einer Stelle, der dieses Handy schon vertraut. "
     + "Ein Server auf einem öffentlichen Namen bekommt eines automatisch. Ein Server auf einem "
-    + "privaten Namen wie ohmail.test stellt sich sein eigenes aus, und ob dieses Telefon das "
-    + "akzeptiert, hängt vom Telefon ab: Auf Android nicht — ohmail vertraut nur den Stellen, die "
+    + "privaten Namen wie ohmail.test stellt sich sein eigenes aus, und ob dieses Handy das "
+    + "akzeptiert, hängt vom Handy ab: Auf Android nicht — ohmail vertraut nur den Stellen, die "
     + "mit dem System gekommen sind, eine selbst installierte Wurzel ändert also nichts — während "
     + "auf iPhone und iPad eine Wurzel zählt, die du installierst und unter Einstellungen → "
     + "Allgemein → Info → Zertifikatsvertrauenseinstellungen einschaltest. Ein öffentlicher Name "
@@ -89,34 +89,34 @@ export const DE: Deck = {
 
   /* Die drei gesetzten Sätze — see the English deck. The iPhone sentence says the mailbox is
      handed back and never promises the background; that is the ruling, not a shortening. */
-  phoneStandaloneTitle: "Auf diesem Telefon organisieren",
+  phoneStandaloneTitle: "Auf diesem Handy organisieren",
   phoneStandaloneL1Ios:
     "Es organisiert, solange ohmail geöffnet ist. Wenn du die App verlässt, gibt es das Postfach zurück.",
   phoneStandaloneL1Android:
     "Es organisiert, solange seine Benachrichtigung angezeigt wird. Wische sie weg, um zu stoppen.",
-  phoneStandaloneL2: "Ein Postfach auf diesem Telefon.",
+  phoneStandaloneL2: "Ein Postfach auf diesem Handy.",
   phoneStandaloneL3:
     "Dein Mailserver behält alles. Nichts hier ist eine Kopie, die du verlieren könntest.",
   phoneStandaloneL4:
-    "Post der letzten 60 Tage von Absendern, über die du nicht entschieden hast, kommt in den Screener. Ältere Post und Post, die du abgelegt hast, bleibt, wo sie ist.",
+    "Mails der letzten 60 Tage von Absendern, über die du nicht entschieden hast, kommen in den Screener. Ältere Mails und Mails, die du abgelegt hast, bleiben, wo sie sind.",
   phoneStandaloneGo: "Weiter",
   phoneStandaloneBack: "Anders wählen",
 
   /* Jedes Feldlabel ist das des Web-Katalogs, Byte für Byte. */
   phoneStandaloneFormTitle: "Dein eigenes Postfach",
   phoneStandaloneFormLead:
-    "Dieses Telefon verbindet sich direkt mit deinem Mailserver. Dein Passwort liegt auf diesem Telefon, verschlüsselt mit einem Schlüssel aus seinem Schlüsselspeicher, und geht nie an uns.",
+    "Dieses Handy verbindet sich direkt mit deinem Mailserver. Dein Passwort liegt auf diesem Handy, verschlüsselt mit einem Schlüssel aus seinem Schlüsselspeicher, und geht nie an uns.",
   phoneStandaloneAddress: "Postfachadresse",
   phoneStandalonePassword: "Postfachpasswort",
   phoneStandaloneShowPassword: "Passwort zeigen",
   phoneStandaloneHidePassword: "Passwort verbergen",
   phoneStandaloneAdvanced: "Servereinstellungen",
-  phoneStandaloneImapHost: "Posteingangsserver (IMAP)",
+  phoneStandaloneImapHost: "Eingangsserver (IMAP)",
   phoneStandaloneImapPort: "IMAP-Port",
   phoneStandaloneImapTls: "Implizites TLS",
   phoneStandaloneImapTlsHint:
     "Ein bedeutet Port 993. Aus bedeutet Port 143, der per STARTTLS verschlüsselt wird. Wenn du den Port änderst, wandert dieser Schalter mit.",
-  phoneStandaloneSmtpHost: "Postausgangsserver (SMTP)",
+  phoneStandaloneSmtpHost: "Ausgangsserver (SMTP)",
   phoneStandaloneSmtpPort: "SMTP-Port",
   phoneStandaloneConnect: "Verbinden",
   phoneStandaloneConnecting: "Postfach wird geöffnet…",
@@ -127,66 +127,66 @@ export const DE: Deck = {
     `Das Zertifikat dieses Servers gilt für ${certHost}, nicht für ${expectedHost}, wir haben also abgebrochen, bevor das Passwort rausging. Er antwortet auf ${suggestedHost} — nimm das als ${protocol}-Server.`,
 
   /* Die fünf Zustandslabels sind die des Desktops, Byte für Byte. */
-  phoneThisPhone: "Dieses Telefon",
+  phoneThisPhone: "Dieses Handy",
   phoneStateOrganizing: "Organisiert",
   phoneStateStopping: "Wird beendet",
   phoneStateStopPending: "Stopp ausstehend",
   phoneStateStopPendingWhy: "Ein Stopp steht bereits aus; es wartet auf das Postfach.",
-  phoneStateStopSiblingLapse: "Eine andere Kopie dieses Telefons hält den Anspruch auf das Postfach noch; der Stopp endet, wenn dieser Anspruch verfällt.",
-  /* Ohne Desktop-Zwilling: nur auf dem Telefon kann ein Start hinter einem Stopp warten. */
+  phoneStateStopSiblingLapse: "Eine andere Kopie dieses Handys hält den Anspruch auf das Postfach noch; der Stopp endet, wenn dieser Anspruch verfällt.",
+  /* Ohne Desktop-Zwilling: nur auf dem Handy kann ein Start hinter einem Stopp warten. */
   phoneStateStarting: "Wird gestartet",
   phoneStateNotOrganized: "Dieses Postfach wird von nichts organisiert",
-  phoneFreeOffer: "Dieses Postfach wird gerade von nichts organisiert. Von diesem Telefon aus organisieren, solange ohmail darauf läuft?",
+  phoneFreeOffer: "Dieses Postfach wird gerade von nichts organisiert. Von diesem Handy aus organisieren, solange ohmail darauf läuft?",
   /* Der Übergangszustand: zurückgegeben und noch nicht wieder übernommen. */
   phoneStateHandedBack: "Zurückgegeben",
   phoneStateHandedBackWhy: "Ein anderer Computer kann dieses Postfach jetzt übernehmen.",
-  phoneStateParked: "Pausiert, während das Konto geschlossen war — das Organisieren läuft von selbst wieder an",
+  phoneStateParked: "Pausiert, während der Account geschlossen war. Das Organisieren läuft von selbst wieder an",
   phoneStateReader: (name: string) => `Organisiert von ${name}`,
   phoneStateReaderLegacy: "Organisiert von einer anderen Installation",
   /* Der normale gekoppelte Zustand. Es wird keine Maschine genannt, weil keine auf der Leitung
      steht — der antwortende Server organisiert selbst —, und der Server heißt hier nicht
-     "ohmail Cloud": dieses Telefon kann ebenso mit einem selbst gehosteten Server gekoppelt sein. */
+     "ohmail Cloud": dieses Handy kann ebenso mit einem selbst gehosteten Server gekoppelt sein. */
   phoneStatePairedServer: "Organisiert vom gekoppelten Server",
   phoneStatePairedServerWhy:
-    "Er organisiert dieses Postfach, ob ohmail auf diesem Telefon offen ist oder nicht. Dieses "
-    + "Telefon liest es; es verschiebt nichts und sortiert nichts aus.",
-  /* Der zweite Satz ist `mailboxes.readerReadsOnly` aus dem Web-Katalog, mit "dieses Telefon"
-     statt "dieser Computer"; die Telefon-Variante folgt `blocked_organized_elsewhere_mobile`. */
+    "Er organisiert dieses Postfach, ob ohmail auf diesem Handy offen ist oder nicht. Dieses "
+    + "Handy liest es; es verschiebt nichts und sortiert nichts aus.",
+  /* Der zweite Satz ist `mailboxes.readerReadsOnly` aus dem Web-Katalog, mit "dieses Handy"
+     statt "dieser Computer"; die Handy-Variante folgt `blocked_organized_elsewhere_mobile`. */
   phoneStateReaderWhy: (name: string) =>
-    `${name} organisiert dieses Postfach. Dieses Telefon liest es; es verschiebt nichts und sortiert nichts aus.`,
+    `${name} organisiert dieses Postfach. Dieses Handy liest es; es verschiebt nichts und sortiert nichts aus.`,
   phoneStateReaderWhyPhone: (name: string) =>
-    `${name} organisiert dieses Postfach, und ein Telefon organisiert nur, solange ohmail darauf offen ist. Dieses Telefon liest es; es verschiebt nichts und sortiert nichts aus.`,
+    `${name} organisiert dieses Postfach, und ein Handy organisiert nur, solange ohmail darauf offen ist. Dieses Handy liest es; es verschiebt nichts und sortiert nichts aus.`,
   phoneStateReaderWhyUnnamed:
-    "Eine andere Installation organisiert dieses Postfach. Dieses Telefon liest es; es verschiebt nichts und sortiert nichts aus.",
+    "Eine andere Installation organisiert dieses Postfach. Dieses Handy liest es; es verschiebt nichts und sortiert nichts aus.",
   phoneStateReaderWhyUnnamedPhone:
-    "Ein anderes Telefon organisiert dieses Postfach, und ein Telefon organisiert nur, solange ohmail darauf offen ist. Dieses Telefon liest es; es verschiebt nichts und sortiert nichts aus.",
+    "Ein anderes Handy organisiert dieses Postfach, und ein Handy organisiert nur, solange ohmail darauf offen ist. Dieses Handy liest es; es verschiebt nichts und sortiert nichts aus.",
   settingsStopHere: "Hier nicht mehr organisieren",
   settingsStopHereWhat:
-    "Dieses Telefon sortiert dieses Postfach nicht mehr ein und liest es weiter. Deine Ordner und alles darin bleiben, wo sie sind. Danach kann jede Installation es übernehmen, auch diese.",
+    "Dieses Handy sortiert dieses Postfach nicht mehr ein und liest es weiter. Deine Ordner und alles darin bleiben, wo sie sind. Danach kann jede Installation es übernehmen, auch diese.",
   settingsStopHereConfirm: "Postfach zurückgeben",
   settingsStopHereCancel: "Weiter organisieren",
   settingsStartHere: "Hier organisieren",
   settingsStartHereFailed:
-    "Dieses Telefon konnte dieses Postfach nicht zu organisieren beginnen. Nichts hat sich geändert. Versuche es in einem Moment noch einmal.",
+    "Dieses Handy konnte dieses Postfach nicht zu organisieren beginnen. Nichts hat sich geändert. Versuche es in einem Moment noch einmal.",
   settingsStopHereFailed:
-    "Dieses Telefon konnte dieses Postfach nicht zurückgeben und organisiert es weiter. Versuche "
+    "Dieses Handy konnte dieses Postfach nicht zurückgeben und organisiert es weiter. Versuche "
     + "es in einem Moment noch einmal.",
   settingsStopLeftOther:
-    "Die Einstellungen dieses Telefons sind auf diesem Telefon geblieben: Das Postfach enthält Einstellungen aus einem neueren ohmail, die dieses nicht lesen kann.",
+    "Die Einstellungen dieses Handys sind auf diesem Handy geblieben: Das Postfach enthält Einstellungen aus einem neueren ohmail, die dieses nicht lesen kann.",
   settingsStopLeftUnsaved:
-    "Die Einstellungen dieses Telefons konnten nicht im Postfach gespeichert werden und sind nur auf diesem Telefon.",
+    "Die Einstellungen dieses Handys konnten nicht im Postfach gespeichert werden und sind nur auf diesem Handy.",
   /* Ein Blick, der nicht angekommen ist — eigener Satz, nicht der darüber: hier ist auf diesem
-     Telefon nichts schiefgegangen, das Postfach konnte nur nicht gefragt werden. */
+     Handy nichts schiefgegangen, das Postfach konnte nur nicht gefragt werden. */
   settingsStartHereUnreadable:
-    "Dieses Telefon konnte nicht lesen, ob ein anderer Computer dieses Postfach organisiert. Nichts hat sich geändert. Versuche es noch einmal.",
+    "Dieses Handy konnte nicht lesen, ob ein anderer Computer dieses Postfach organisiert. Nichts hat sich geändert. Versuche es noch einmal.",
   settingsStartHeldConsented: (name: string) =>
-    `${name} organisiert dieses Postfach. Dieses Telefon liest es, und deine Zustimmung bleibt gespeichert: Sobald ${name} es freigibt, bietet dieses Telefon das Postfach an, und ein Tippen übernimmt es.`,
+    `${name} organisiert dieses Postfach. Dieses Handy liest es, und deine Zustimmung bleibt gespeichert: Sobald ${name} es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.`,
   settingsStartHeldReturns: (name: string) =>
-    `${name} organisiert dieses Postfach. Dieses Telefon liest es und übernimmt es von selbst wieder, sobald ${name} es freigibt, solange ohmail darauf offen ist.`,
+    `${name} organisiert dieses Postfach. Dieses Handy liest es und übernimmt es von selbst wieder, sobald ${name} es freigibt, solange ohmail darauf offen ist.`,
   settingsStartHeldReturnsUnknown:
-    "Eine andere Installation organisiert dieses Postfach. Dieses Telefon liest es und übernimmt es von selbst wieder, sobald sie es freigibt, solange ohmail darauf offen ist.",
+    "Eine andere Installation organisiert dieses Postfach. Dieses Handy liest es und übernimmt es von selbst wieder, sobald sie es freigibt, solange ohmail darauf offen ist.",
   settingsStartHeldConsentedUnknown:
-    "Eine andere Installation organisiert dieses Postfach. Dieses Telefon liest es, und deine Zustimmung bleibt gespeichert: Sobald sie es freigibt, bietet dieses Telefon das Postfach an, und ein Tippen übernimmt es.",
+    "Eine andere Installation organisiert dieses Postfach. Dieses Handy liest es, und deine Zustimmung bleibt gespeichert: Sobald sie es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.",
   /* Die Sätze der Desktop-Zeile, Wort für Wort (`sync.blocked_meta_*`). */
   phoneStateMetaFolderFull:
     "Wird nicht synchronisiert — der Ordner ohmail/_meta auf diesem Server enthält mehr Nachrichten, als ohmail lesen kann. Verschiebe dort abgelegte Mails in einen anderen Ordner und lass die Nachrichten von ohmail stehen (ihr Betreff beginnt mit „ohmail“). ohmail macht dann von selbst weiter.",
@@ -195,9 +195,9 @@ export const DE: Deck = {
 
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:
-    "Dieser Build kann auf diesem Telefon kein Postfach organisieren. Verbinde es stattdessen mit einem Computer, einem Server oder ohmail Cloud.",
-  standaloneNoHost: "ohmail braucht deinen Posteingangsserver (IMAP). Gib seine Adresse an.",
-  standaloneNoSmtpHost: "ohmail braucht deinen Postausgangsserver (SMTP). Gib seine Adresse an.",
+    "Dieser Build kann auf diesem Handy kein Postfach organisieren. Verbinde es stattdessen mit einem Computer, einem Server oder ohmail Cloud.",
+  standaloneNoHost: "ohmail braucht deinen Eingangsserver (IMAP). Gib seine Adresse an.",
+  standaloneNoSmtpHost: "ohmail braucht deinen Ausgangsserver (SMTP). Gib seine Adresse an.",
   standaloneNoPort: "Der IMAP-Port ist eine ganze Zahl von 1 bis 65535.",
   standaloneNoSmtpPort: "Der SMTP-Port ist eine ganze Zahl von 1 bis 65535.",
   standaloneSignInRefused:
@@ -205,34 +205,34 @@ export const DE: Deck = {
   standaloneNoEncryption:
     "Dein Mailserver bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 993 in den Servereinstellungen.",
   standaloneCertificateRefused:
-    "Dieses Telefon hat das Zertifikat deines Mailservers nicht akzeptiert, ohmail hat also abgebrochen, bevor das Passwort rausging. Prüfe mit deinem Anbieter den Namen des Posteingangsservers.",
-  /* Auch der Postausgangsserver wird beim Verbinden gewählt, und jede seiner drei Antworten nennt ihn. */
+    "Dieses Handy hat das Zertifikat deines Mailservers nicht akzeptiert, ohmail hat also abgebrochen, bevor das Passwort rausging. Prüf mit deinem Anbieter den Namen des Eingangsservers.",
+  /* Auch der Ausgangsserver wird beim Verbinden gewählt, und jede seiner drei Antworten nennt ihn. */
   standaloneSmtpSignInRefused:
-    "Dein Postausgangsserver (SMTP) hat diese Adresse und dieses Passwort nicht akzeptiert. Prüfe ihn und versuche es erneut — es wurde nichts gespeichert.",
+    "Dein Ausgangsserver (SMTP) hat diese Adresse und dieses Passwort nicht akzeptiert. Prüf ihn und versuch es erneut. Es wurde nichts gespeichert.",
   standaloneSmtpNoEncryption:
-    "Dein Postausgangsserver (SMTP) bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 465 oder 587.",
+    "Dein Ausgangsserver (SMTP) bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 465 oder 587.",
   standaloneSmtpUnreachable:
-    "ohmail hat deinen Postausgangsserver (SMTP) unter dieser Adresse und diesem Port nicht erreicht. Prüfe beides und versuche es erneut — es wurde nichts gespeichert.",
+    "ohmail hat deinen Ausgangsserver (SMTP) unter dieser Adresse und diesem Port nicht erreicht. Prüf beides und versuch es erneut. Es wurde nichts gespeichert.",
   standaloneRefused: (detail: string) =>
     `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
   /* Die drei des Neustarts. Jede benennt ein anderes Fehlen. */
   standaloneNoSealedCredential:
-    "Auf diesem Telefon ist nichts gespeichert, womit sich dieses Postfach öffnen ließe. Nimm die Tür noch einmal und gib das Passwort des Postfachs an.",
+    "Auf diesem Handy ist nichts gespeichert, womit sich dieses Postfach öffnen ließe. Nimm die Tür noch einmal und gib das Passwort des Postfachs an.",
   standaloneOtherMailbox:
-    "Das Postfach auf diesem Telefon ist nicht das, welches dieser Eintrag nennt. Entferne den Eintrag und öffne das Postfach erneut.",
+    "Das Postfach auf diesem Handy ist nicht das, welches dieser Eintrag nennt. Entferne den Eintrag und öffne das Postfach erneut.",
   standaloneNotStored: (detail: string) =>
-    `Dieses Telefon konnte das gerade geöffnete Postfach nicht speichern: ${detail}. Es wurde `
+    `Dieses Handy konnte das gerade geöffnete Postfach nicht speichern: ${detail}. Es wurde `
     + "wieder geschlossen und nichts behalten — versuch Verbinden noch einmal.",
   standaloneAlreadyOpen:
-    "Dieses Telefon hat schon ein Postfach geöffnet. Entferne es unter Server, bevor du ein "
+    "Dieses Handy hat schon ein Postfach geöffnet. Entferne es unter Server, bevor du ein "
     + "anderes öffnest.",
   /* Die zwei des Entfernungsgurts. Keine nennt das entfernte Postfach — der Vermerk trägt nur eine Kennung. */
   standaloneMailboxRemoved:
-    "Dieses Postfach wurde von diesem Telefon entfernt, und der Rest davon wurde soeben gelöscht. Öffne wieder ein Postfach, um zu beginnen.",
+    "Dieses Postfach wurde von diesem Handy entfernt, und der Rest davon wurde soeben gelöscht. Öffne wieder ein Postfach, um zu beginnen.",
   standaloneRemovalUnfinished: (detail: string) =>
-    `Ein von dir entferntes Postfach ist noch teilweise auf diesem Telefon (${detail}), deshalb `
+    `Ein von dir entferntes Postfach ist noch teilweise auf diesem Handy (${detail}), deshalb `
     + "öffnet ohmail kein anderes darüber. Starte ohmail neu, um die Löschung abzuschließen.",
-  /* Der Einwilligungs-Aufruf. Keine dieser Zeilen behauptet, das Telefon organisiere gerade. */
+  /* Der Einwilligungs-Aufruf. Keine dieser Zeilen behauptet, das Handy organisiere gerade. */
   organizeHereUnreachable: (detail: string) =>
     `ohmail konnte nicht darum bitten, dieses Postfach zu organisieren: ${detail}`,
   organizeHereUnreadable:
@@ -244,7 +244,7 @@ export const DE: Deck = {
   organizeHereRefused: (status: number) =>
     `Das Organisieren dieses Postfachs wurde abgelehnt (${status}). Vielleicht hält es eine andere Maschine — sieh in den Einstellungen nach, was es organisiert.`,
   organizeStartFailed: (detail: string) =>
-    `Das Organisieren hat nicht begonnen: ${detail}. Dieses Telefon hat das Postfach zurückgegeben, `
+    `Das Organisieren hat nicht begonnen: ${detail}. Dieses Handy hat das Postfach zurückgegeben, `
     + "ein anderer Computer kann es also übernehmen, und es versucht es beim nächsten Öffnen von "
     + "ohmail erneut.",
 
@@ -253,19 +253,19 @@ export const DE: Deck = {
   serversTitle: "Server",
   serversRow: "Mit einem Server verbinden",
   serversNote:
-    "Koppele dieses Telefon mit dem Computer oder Server, auf dem deine Post liegt. Gekoppelt wird über einen QR-Code oder einen kurzlebigen Token, und dafür wird kein Passwort eingetippt.",
+    "Koppele dieses Handy mit dem Computer oder Server, auf dem deine Mails liegen. Gekoppelt wird über einen QR-Code oder einen kurzlebigen Token, und dafür wird kein Passwort eingetippt.",
   serversActive: "Verbunden",
   serversProfiles: "Gekoppelte Server",
-  /* Die eigene Zeile des Telefons in der Liste. Sie benennt, was der Eintrag IST, und verspricht
+  /* Die eigene Zeile des Handys in der Liste. Sie benennt, was der Eintrag IST, und verspricht
      nichts über den Augenblick — siehe die englische Fassung. */
-  serversOrganizedHere: "Das Postfach, das dieses Telefon selbst geöffnet hat.",
+  serversOrganizedHere: "Das Postfach, das dieses Handy selbst geöffnet hat.",
   serversStopHere: "Beenden und entfernen",
   serversForget: "Vergessen",
   serversForgetNote:
-    "Vergessen löscht die Kopplung und die Post, die dieses Telefon kopiert hatte. Über die Geräteliste des Servers lässt sie sich auch dort widerrufen. Wer ein Postfach auf dem Server selbst entfernt, kann dort auch die Kopie seiner Post bei ohmail löschen.",
+    "Vergessen löscht die Kopplung und die Mails, die dieses Handy kopiert hatte. Über die Geräteliste des Servers lässt sie sich auch dort widerrufen. Wer ein Postfach auf dem Server selbst entfernt, kann dort auch die Kopie seiner Mails bei ohmail löschen.",
   /* Dieselbe Notiz, wo es keinen Server gibt — siehe die englische Fassung. */
   serversForgetNoteHere:
-    "Entfernen gibt das Postfach zurück, ohmail sortiert es hier nicht weiter ein, und die Post, die dieses Telefon kopiert hatte, wird gelöscht. Das Postfach auf deinem Mailserver bleibt unberührt.",
+    "Entfernen gibt das Postfach zurück, ohmail sortiert es hier nicht weiter ein, und die Mails, die dieses Handy kopiert hatte, werden gelöscht. Das Postfach auf deinem Mailserver bleibt unberührt.",
   serversForgetFailed: (reason: string) => reason,
   serversEmpty: "Noch keine Kopplungen.",
   serversInstallUnknown: (detail: string) =>
@@ -273,7 +273,7 @@ export const DE: Deck = {
     + `gespeichert hat (${detail}), und hat sie deshalb nicht geöffnet — entfernt hat es sie aber `
     + "auch nicht. Starte die App neu, um es erneut zu versuchen.",
   serversPurgeRefused: (detail: string) =>
-    "Dieses Telefon hält noch Anmeldungen aus einer früheren Installation von ohmail, und es "
+    "Dieses Handy hält noch Anmeldungen aus einer früheren Installation von ohmail, und es "
     + `wollte sie nicht hergeben (${detail}). ohmail wird sie nicht öffnen. Widerrufe dieses Gerät `
     + "in der Geräteliste deines Servers und starte die App dann neu.",
 
@@ -310,7 +310,7 @@ export const DE: Deck = {
 
   /* ── DIE BESTÄTIGUNG, BEVOR EIN CODE EINGELÖST WIRD ────────────────────────────────────────
      Siehe `copy.en.ts` für die Begründung. */
-  pairConfirmTitle: "Dieses Telefon koppeln?",
+  pairConfirmTitle: "Dieses Handy koppeln?",
   pairConfirmLead:
     "Einen Code kann man nicht mit dem Auge lesen \u2014 prüfe darum, was geantwortet hat, "
     + "bevor er eingelöst wird.",
@@ -329,7 +329,7 @@ export const DE: Deck = {
     "Dieselben Zeichen wie dort unter Einstellungen \u2192 Geräte. Weichen sie ab, antwortet "
     + "etwas anderes an Stelle dieses Computers \u2014 dann nicht koppeln.",
   pairConfirmNoKeyWhy:
-    "Diese Adresse hat ein Zertifikat, das dein Telefon selbst prüft; es gibt also keinen "
+    "Diese Adresse hat ein Zertifikat, das dein Handy selbst prüft; es gibt also keinen "
     + "Schlüssel zum Vergleichen.",
   pairConfirmGo: "Koppeln",
   pairConfirmCancel: "Nicht koppeln",
@@ -340,10 +340,10 @@ export const DE: Deck = {
   connectionLost: "Verbindung verloren. Verbinde neu …",
   connectionNeedsPassword: "Dieses Postfach braucht sein Passwort erneut. Gib es ein, damit wieder synchronisiert wird.",
   connectionGoneSince: (time: string) => `Seit ${time} keine Verbindung`,
-  connectionMailHeld: "Neue Post konnte auf diesem Telefon nicht gespeichert werden. Deine Post liegt weiter auf deinem Server.",
+  connectionMailHeld: "Neue Mails ließen sich auf diesem Handy nicht speichern. Deine Mails liegen weiter auf deinem Server.",
 
-  networkOffline: "Dieses Telefon hat kein Netz. ohmail holt nach, sobald es wieder da ist.",
-  networkOfflineHeld: "Dieses Telefon hat kein Netz — angezeigt wird die neuere Post, die es hat.",
+  networkOffline: "Dieses Handy hat kein Netz. ohmail holt nach, sobald es wieder da ist.",
+  networkOfflineHeld: "Dieses Handy hat kein Netz. Angezeigt werden die neueren Mails, die es hat.",
 
   firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
   connectionSetAside: (n: number) => n === 1
@@ -353,7 +353,7 @@ export const DE: Deck = {
   firstSyncContinuesAt: (folder: string) => `Erste Synchronisierung läuft bei ${folder} weiter`,
 
   pairingBusy: "Wird gekoppelt…",
-  pairedOk: "Gekoppelt. Deine Post wird synchronisiert.",
+  pairedOk: "Gekoppelt. Deine Mails werden synchronisiert.",
 
   /* --------------------------------------------------------------- connect */
 
@@ -379,23 +379,23 @@ export const DE: Deck = {
   pairKeyMismatch:
     "Der Kopplungscode nennt einen Computer, und unter dieser Adresse hat etwas anderes "
     + "geantwortet \u2014 deshalb hat ohmail angehalten, bevor irgendetwas gesendet wurde. Auf "
-    + "diesem Telefon hat sich nichts geändert. Öffne auf dem Computer, mit dem du koppeln "
+    + "diesem Handy hat sich nichts geändert. Öffne auf dem Computer, mit dem du koppeln "
     + "wolltest, Einstellungen \u2192 Geräte und scanne den Code, der dort steht. Stammt dieser "
     + "Code von dort, antwortet etwas in deinem Netz an seiner Stelle.",
   connectSyncFailed: (detail: string, pinned: boolean) =>
     isPinFailure(detail)
       ? pinned
         ? `Synchronisierung angehalten. ${PIN_CHANGED}`
-        : "Synchronisierung angehalten. Dieses Telefon hat das Zertifikat unter dieser Adresse "
+        : "Synchronisierung angehalten. Dieses Handy hat das Zertifikat unter dieser Adresse "
           + "nicht akzeptiert und deshalb nichts gesendet. Der Server braucht ein https-Zertifikat "
-          + "von einer Stelle, der dieses Telefon schon vertraut — siehe den Hinweis bei der Tür "
+          + "von einer Stelle, der dieses Handy schon vertraut — siehe den Hinweis bei der Tür "
           + "„Dein eigener Server“."
       : `Synchronisierung fehlgeschlagen — der Spiegel behält, was er hat. ${detail}`,
 
   /* ------------------------------------------- transport & pairing refusals */
 
   admitCleartext:
-    "Diese Adresse ist eine unverschlüsselte Verbindung, und ohmail sendet deine Post nicht "
+    "Diese Adresse ist eine unverschlüsselte Verbindung, und ohmail sendet deine Mails nicht "
     + "darüber. Ein Computer, auf dem ohmail läuft, stellt eine sichere Adresse bereit — öffne "
     + "dort Einstellungen → Geräte und nimm den Code, den es zeigt.",
   admitNoPin:
@@ -407,11 +407,11 @@ export const DE: Deck = {
     + "ohmail-App noch nicht. Nimm stattdessen die Tailscale-Adresse aus Einstellungen → Geräte "
     + "dieses Computers — sie funktioniert auf jeder Plattform.",
   admitPinNotStored:
-    "ohmail konnte die Identität dieses Computers auf diesem Telefon nicht speichern und hat "
+    "ohmail konnte die Identität dieses Computers auf diesem Handy nicht speichern und hat "
     + "deshalb angehalten, statt ohne sie zu verbinden.",
   admitPinUnenforceable:
     "Dieser Kopplungscode enthält einen Schlüssel, aber die Adresse darin ist ein Name, dessen "
-    + "Zertifikat dieses Telefon selbst prüft \u2014 der Schlüssel lässt sich also nicht prüfen, "
+    + "Zertifikat dieses Handy selbst prüft \u2014 der Schlüssel lässt sich also nicht prüfen, "
     + "und ohmail zeigt ihn nicht so, als wäre er geprüft. Nimm den Code, den der Computer oder "
     + "Server anzeigt, mit dem du koppeln willst.",
 
@@ -424,54 +424,54 @@ export const DE: Deck = {
   pairManagedDeferred: "ohmail.app bietet gerade keine Gerätekopplung an — das sagt seine eigene Beschreibung",
   pairNoPairing: "dieser Server bietet keine Gerätekopplung an",
   pairNotStoredClosed: (detail: string) =>
-    `dieses Telefon konnte die Kopplung nicht speichern (${detail}) — die Sitzung wurde geschlossen; erzeuge einen frischen Code und versuch es nochmal`,
+    `dieses Handy konnte die Kopplung nicht speichern (${detail}) — die Sitzung wurde geschlossen; erzeuge einen frischen Code und versuch es nochmal`,
   pairNotStoredOpen: (detail: string) =>
-    `dieses Telefon konnte die Kopplung nicht speichern (${detail}), und der Server war nicht `
+    `dieses Handy konnte die Kopplung nicht speichern (${detail}), und der Server war nicht `
     + "erreichbar, um die gerade geöffnete Sitzung zu schließen — widerrufe dieses Gerät in "
     + "seiner Geräteliste, erzeuge dann einen frischen Code und versuch es nochmal",
   pairEnded:
-    "Dieses Telefon wurde abgemeldet, weil seine Kopplung auf dem Server beendet wurde. "
-    + "Koppele dieses Telefon erneut.",
+    "Dieses Handy wurde abgemeldet, weil seine Kopplung auf dem Server beendet wurde. "
+    + "Koppele dieses Handy erneut.",
   pairAgain: "Erneut koppeln",
   accountErased:
-    "Dieses ohmail-Konto wurde gelöscht, deshalb ist seine Kopie deiner Post von diesem Telefon "
-    + "entfernt. Die Post auf deinem Mailserver ist unberührt.",
+    "Dieser ohmail-Account wurde gelöscht, deshalb ist seine Kopie deiner Mails von diesem Handy "
+    + "entfernt. Die Mails auf deinem Mailserver sind unberührt.",
   pairRedeemUnreachable: "dieser Server war nicht erreichbar, um die Kopplung einzulösen",
   pairCodeRejected: "dieser Kopplungscode wurde nicht angenommen — erzeuge einen frischen und scanne erneut",
   pairNoAccountName:
-    "gekoppelt, aber der Server konnte das Konto nicht benennen, das diese Kopplung öffnet — "
-    + "erzeuge einen frischen Code und koppele erneut, sobald es Post hält",
+    "gekoppelt, aber der Server konnte den Account nicht benennen, den diese Kopplung öffnet — "
+    + "erzeuge einen frischen Code und koppele erneut, sobald es Mails hat",
   pairOwedDeletion: (detail: string) =>
-    "Dieses Telefon schuldet für die kopierte Post dieses Postfachs noch eine Löschung und konnte "
+    "Dieses Handy schuldet für die kopierten Mails dieses Postfachs noch eine Löschung und konnte "
     + `sie nicht ausführen (${detail}). Starte ohmail neu, damit es das abschließen kann, und `
     + "koppele dann mit einem frischen Code erneut.",
-  notPairedHere: "dieser Server ist auf diesem Telefon nicht mehr gekoppelt",
+  notPairedHere: "dieser Server ist auf diesem Handy nicht mehr gekoppelt",
   pairingsUnreadable: (detail: string) =>
-    `die gespeicherten Kopplungen dieses Telefons ließen sich nicht lesen — ${detail}`,
+    `die gespeicherten Kopplungen dieses Handys ließen sich nicht lesen — ${detail}`,
 
   forgetCannotStart: (detail: string) =>
-    `Dieses Telefon konnte nicht beginnen, diesen Server zu vergessen (${detail}). Starte ohmail `
+    `Dieses Handy konnte nicht beginnen, diesen Server zu vergessen (${detail}). Starte ohmail `
     + "neu, damit es die Löschungen abschließen kann, die es schon schuldet, und versuch es dann nochmal.",
   forgetKeystoreRefused: (detail: string) =>
-    `Dieses Telefon wollte die Kopplung nicht hergeben (${detail}). `
+    `Dieses Handy wollte die Kopplung nicht hergeben (${detail}). `
     + "Widerrufe dieses Gerät in der Geräteliste des Servers — das beendet die Sitzung, wo immer sie gehalten wird.",
   forgetMailRemains: (detail: string) =>
-    "Die Kopplung ist entfernt, aber die Post, die dieses Telefon kopiert hatte, ließ sich nicht "
+    "Die Kopplung ist entfernt, aber die Mails, die dieses Handy kopiert hatte, ließen sich nicht "
     + `löschen (${detail}). ohmail versucht es beim nächsten Start erneut.`,
   forgetEngineRemains: (detail: string) =>
-    "Das Postfach auf diesem Telefon ließ sich nicht entfernen: seine Post oder der Schlüssel zu "
+    "Das Postfach auf diesem Handy ließ sich nicht entfernen: Seine Mails oder der Schlüssel zu "
     + `seinem gespeicherten Passwort ist noch hier (${detail}). Sonst wurde nichts angerührt — `
     + "starte ohmail neu, das schließt die Löschung ab, bevor es etwas öffnet.",
   forgetServerUnreachable:
-    "Die Kopplung und die Post, die dieses Telefon kopiert hatte, sind weg. Der Server war nicht "
-    + "erreichbar, um die Sitzung zu beenden, und zählt dieses Telefon womöglich noch als "
+    "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
+    + "erreichbar, um die Sitzung zu beenden, und zählt dieses Handy womöglich noch als "
     + "verbunden — widerrufe dieses Gerät in seiner Geräteliste, um das abzuschließen.",
   forgetClaimStands: (minutes: number) =>
-    "Das Postfach und seine Post sind von diesem Telefon weg. Sein Anspruch auf das Postfach ließ "
+    "Das Postfach und seine Mails sind von diesem Handy weg. Sein Anspruch auf das Postfach ließ "
     + `sich nicht zurückgeben, deshalb kann eine andere Maschine das Postfach in etwa ${minutes} `
     + "Minuten übernehmen.",
   forgetStillPending:
-    "Dieser Server wird auf diesem Telefon noch vergessen — ohmail konnte seine Anmeldung noch "
+    "Dieser Server wird auf diesem Handy noch vergessen — ohmail konnte seine Anmeldung noch "
     + "nicht entfernen. Starte die App neu, damit sie das abschließen kann, oder widerrufe dieses "
     + "Gerät in der Geräteliste des Servers.",
 
@@ -481,7 +481,7 @@ export const DE: Deck = {
     + "bürgen — ohmail kann ihr deshalb nur über den Code vertrauen, den dein Computer zeigt. "
     + "Öffne dort Einstellungen → Geräte und scanne den.",
   baseCleartext:
-    "Das ist eine unverschlüsselte Adresse, und ohmail sendet deine Post nicht darüber. Gib die "
+    "Das ist eine unverschlüsselte Adresse, und ohmail sendet deine Mails nicht darüber. Gib die "
     + "https-Adresse an, unter der du ohmail im Browser öffnest.",
   baseNotAnAddress:
     "Das sieht nicht nach einer Serveradresse aus. Gib die Adresse an, unter der du ohmail im "
@@ -495,7 +495,7 @@ export const DE: Deck = {
     + "durchreicht.",
   baseApiTimeout:
     "Dieser Server hat nicht rechtzeitig geantwortet, ohmail hat deshalb nicht weiter gewartet. "
-    + "Das kann am Netz zwischen diesem Telefon und ihm liegen oder an einer Route auf dem Server, "
+    + "Das kann am Netz zwischen diesem Handy und ihm liegen oder an einer Route auf dem Server, "
     + "die nie antwortet.",
   baseApiMixed: (detail: string) =>
     "Eine der beiden Adressen, die ohmail versucht hat, hat geantwortet und war nicht seine "
@@ -514,9 +514,9 @@ export const DE: Deck = {
   metaUnreadOf: (unread: number, total: number) => `${unread} ungelesen von ${total}`,
   metaNew: (n: number) => `${n} neu`,
   metaWaiting: (n: number) =>
-    `${n} ${n === 1 ? "Erstabsender wartet" : "Erstabsender warten"}`,
+    `${n} ${n === 1 ? "neuer Absender wartet" : "neue Absender warten"}`,
   metaWaitingOnDevice: (n: number) =>
-    `${n} ${n === 1 ? "Erstabsender wartet" : "Erstabsender warten"}, auf diesem Telefon gezählt`,
+    `${n} ${n === 1 ? "neuer Absender wartet" : "neue Absender warten"}, auf diesem Handy gezählt`,
   screeningUnread: (holder: string) =>
     `Alle im Screener-Ordner werden angezeigt – die Screening-Einstellungen von ${holder} wurden noch nicht gelesen.`,
   screeningUnreadNoName:
@@ -548,9 +548,9 @@ export const DE: Deck = {
       ? "Die eine angenommene Nachricht wird gezeigt."
       : `Alle ${shown} angenommenen Nachrichten werden gezeigt.`,
   ohboxEmptyTitle: "Hier ist noch nichts.",
-  ohboxEmptyHint: "Post von Absendern, zu denen du Ja gesagt hast, landet hier, sobald sie synchronisiert wird.",
+  ohboxEmptyHint: "Mails von Absendern, zu denen du Ja gesagt hast, landen hier, sobald sie synchronisiert sind.",
   ohboxEmptyNothingReadable:
-    "Aus diesem Postfach konnte noch nichts gelesen werden. Deine Post liegt weiter auf deinem Server.",
+    "Aus diesem Postfach ließ sich noch nichts lesen. Deine Mails liegen weiter auf deinem Server.",
   /*
    * Two pieces, the count and a quieter tail, as in English. The tail takes the count too, so
    * the verb agrees ("1 neuer Absender wartet", "3 neue Absender warten"); a tail naming the
@@ -601,15 +601,15 @@ export const DE: Deck = {
   scopeSender: "dieser Absender",
   scopeDomain: "ganze Domain",
   decideRule: (target: string) =>
-    `Wird zur Regel — künftige Post von ${target} wird automatisch einsortiert. Die ✓-Hälfte markiert diese Post außerdem als gelesen.`,
+    `Wird zur Regel: Künftige Mails von ${target} werden automatisch einsortiert. Die ✓-Hälfte markiert diese Mails außerdem als gelesen.`,
   decideUnsub: (claim: UnsubSaid, target: string, domain: boolean) =>
     domain
       ? claim === "sends"
-        ? `Aussortieren und Spam senden den wartenden Absendern bei ${target} außerdem eine Ein-Klick-Abmeldung und melden dich bei späterer Post der Domain mit Ein-Klick-Abmeldung erneut ab.`
-        : `Wo Absender bei ${target} Ein-Klick-Abmeldung anbieten, melden Aussortieren und Spam dich außerdem ab, jetzt und bei späterer Post.`
+        ? `Aussortieren und Spam senden den wartenden Absendern bei ${target} außerdem eine Ein-Klick-Abmeldung und melden dich bei späteren Mails der Domain mit Ein-Klick-Abmeldung erneut ab.`
+        : `Bieten Absender bei ${target} Ein-Klick-Abmeldung an, melden Aussortieren und Spam dich gleich mit ab, jetzt und bei späteren Mails.`
       : claim === "sends"
-        ? `Aussortieren und Spam senden ${target} außerdem eine Ein-Klick-Abmeldung und melden dich bei späterer Post mit Ein-Klick-Abmeldung erneut ab.`
-        : `Wo ${target} Ein-Klick-Abmeldung anbietet, melden Aussortieren und Spam dich außerdem ab, jetzt und bei späterer Post.`,
+        ? `Aussortieren und Spam senden ${target} außerdem eine Ein-Klick-Abmeldung und melden dich bei späteren Mails mit Ein-Klick-Abmeldung erneut ab.`
+        : `Bietet ${target} Ein-Klick-Abmeldung an, melden Aussortieren und Spam dich gleich mit ab, jetzt und bei späteren Mails.`,
   decideReadToggle: "& gelesen",
   decideReadOn: "Wird als gelesen einsortiert — der Zähler bewegt sich nicht.",
   decideReadOff: "Wird ungelesen einsortiert — sie meldet sich.",
@@ -622,15 +622,15 @@ export const DE: Deck = {
     `Aussortiert ${date} · ${held} zurückgehalten, vollständig gezeigt. Zulassen gibt jede einzelne davon in die gewählte Ansicht frei.`,
   /* No trailing preposition: the destination is chosen in the control beside this label, and
      "freigeben nach Belege" is not German. The label states the act; the picker states the place. */
-  allowLabel: "Zulassen — zurückgehaltene Post freigeben",
-  notSpamLabel: "Kein Spam — alle zurückgehaltene Post verschieben",
+  allowLabel: "Zulassen: zurückgehaltene Mails freigeben",
+  notSpamLabel: "Kein Spam: alle zurückgehaltenen Mails verschieben",
   spamNote:
     "Die Erkennung liest die Struktur — Absender, Header, Linkziele. Inhalte werden nirgendwohin gesendet.",
   waitingEmptyTitle: "Es wartet niemand.",
-  waitingEmptyHint: "Erstabsender klopfen hier an, bevor irgendetwas in deine Ohbox kommt.",
+  waitingEmptyHint: "Neue Absender klopfen hier an, bevor irgendetwas in deine Ohbox kommt.",
   waitingNotYetTitle: "ohmail organisiert dieses Postfach noch nicht.",
   waitingNotOrganizedTitle: "Dieses Postfach wird von nichts organisiert.",
-  waitingNotYetHint: "Niemand prüft Erstabsender, deshalb landen sie direkt in deiner Ohbox. In den Einstellungen steht, was jedes Postfach organisiert.",
+  waitingNotYetHint: "Niemand prüft neue Absender, deshalb landen sie direkt in deiner Ohbox. In den Einstellungen steht, was jedes Postfach organisiert.",
   waitingNotYetPress: "Einstellungen öffnen",
   cutlinePending:
     "Deine Screening-Einstellungen werden gelesen — bis sie da sind, steht diese Liste nicht fest.",
@@ -638,7 +638,7 @@ export const DE: Deck = {
   screenedEmptyHint: "Absender, zu denen du Nein sagst, warten hier — zurückgehalten, nie gelöscht.",
   spamEmptyTitle: "Kein Spam zurückgehalten.",
   spamEmptyHint:
-    "Vermuteter Spam wartet hier auf deinen Blick — von sich aus löscht ohmail ihn nie. Post, die du als Spam bestätigst, wandert in den eigenen Spam-Ordner deines Mailservers, oder bleibt hier zurückgehalten, wenn dein Postfach keinen hat.",
+    "Vermuteter Spam wartet hier auf deinen Blick — von sich aus löscht ohmail ihn nie. Mails, die du als Spam bestätigst, wandern in den eigenen Spam-Ordner deines Mailservers, oder bleibt hier zurückgehalten, wenn dein Postfach keinen hat.",
 
   /* ---------------------------------------------------------------- triage */
 
@@ -656,39 +656,39 @@ export const DE: Deck = {
 
   storeFault: (code: string): string => {
     switch (code) {
-      case "origin_not_normalized": return "diese Serveradresse hatte nicht die Form, in der dieses Telefon sie speichert";
-      case "account_id_missing": return "der Server hat das Konto nicht benannt, das diese Kopplung öffnet";
-      case "pairing_not_recorded": return "dieses Telefon konnte die Kopplung nicht erfassen, bevor es sie speichert";
-      case "pairing_still_held": return "dieses Telefon hält die Kopplung weiterhin";
-      case "pairing_still_listed": return "dieses Telefon führt die Kopplung weiterhin in seiner Liste";
-      case "no_such_profile": return "eine solche Kopplung gibt es auf diesem Telefon nicht";
-      case "wipe_queue_full": return "dieses Telefon hat bereits mehr unerledigte Löschungen, als es erfassen kann";
-      case "wipe_not_recorded": return "dieses Telefon konnte nicht erfassen, dass für die kopierte Post eine Löschung aussteht";
-      case "wipe_still_owed": return "dieses Telefon führt für dieses Postfach noch eine ausstehende Löschung";
-      case "wake_queue_full": return "dieses Telefon hat bereits mehr unerledigte Weckruf-Abmeldungen, als es erfassen kann";
-      case "wake_not_recorded": return "dieses Telefon konnte nicht erfassen, dass für die Weckruf-Registrierung eine Abmeldung aussteht";
-      case "wake_still_owed": return "dieses Telefon führt für diese Registrierung noch eine ausstehende Abmeldung";
-      case "index_unreadable": return "die Kopplungsliste dieses Telefons ließ sich nicht lesen";
+      case "origin_not_normalized": return "diese Serveradresse hatte nicht die Form, in der dieses Handy sie speichert";
+      case "account_id_missing": return "der Server hat den Account nicht benannt, den diese Kopplung öffnet";
+      case "pairing_not_recorded": return "dieses Handy konnte die Kopplung nicht erfassen, bevor es sie speichert";
+      case "pairing_still_held": return "dieses Handy hält die Kopplung weiterhin";
+      case "pairing_still_listed": return "dieses Handy führt die Kopplung weiterhin in seiner Liste";
+      case "no_such_profile": return "eine solche Kopplung gibt es auf diesem Handy nicht";
+      case "wipe_queue_full": return "dieses Handy hat bereits mehr unerledigte Löschungen, als es erfassen kann";
+      case "wipe_not_recorded": return "dieses Handy konnte nicht erfassen, dass für die kopierten Mails eine Löschung aussteht";
+      case "wipe_still_owed": return "dieses Handy führt für dieses Postfach noch eine ausstehende Löschung";
+      case "wake_queue_full": return "dieses Handy hat bereits mehr unerledigte Weckruf-Abmeldungen, als es erfassen kann";
+      case "wake_not_recorded": return "dieses Handy konnte nicht erfassen, dass für die Weckruf-Registrierung eine Abmeldung aussteht";
+      case "wake_still_owed": return "dieses Handy führt für diese Registrierung noch eine ausstehende Abmeldung";
+      case "index_unreadable": return "die Kopplungsliste dieses Handys ließ sich nicht lesen";
       case "purge_refused": return "der Schlüsselspeicher wollte die Kopplungen der früheren Installation nicht hergeben";
       case "mirror_not_deleted":
-        return "dieses Telefon konnte die gespeicherte Post dieses Kontos nicht löschen";
+        return "dieses Handy konnte die gespeicherten Mails dieses Accounts nicht löschen";
       case "sync_held_pre_identity":
-        return "ohmail prüft noch, welches Konto dieser Server öffnet";
+        return "ohmail prüft noch, welchen Account dieser Server öffnet";
       case "account_mismatch":
-        return "dieser Server synchronisiert ein anderes Konto als das, auf das diese Kopplung lautet";
+        return "dieser Server synchronisiert einen anderen Account als den, auf den diese Kopplung lautet";
       case "index_not_removed": return "der Schlüsselspeicher wollte die Kopplungsliste nicht entfernen";
-      /* Das Entfernen des Postfachs auf diesem Telefon. Jede benennt, welcher Speicher nicht
+      /* Das Entfernen des Postfachs auf diesem Handy. Jede benennt, welcher Speicher nicht
          losgelassen hat — der nächste Schritt hängt davon ab. */
       case "engine_removal_not_recorded":
-        return "dieses Telefon konnte nicht vermerken, dass das Postfach auf ihm entfernt wird";
+        return "dieses Handy konnte nicht vermerken, dass das Postfach auf ihm entfernt wird";
       case "engine_removal_still_recorded":
-        return "dieses Telefon vermerkt noch eine unabgeschlossene Entfernung des Postfachs auf ihm";
+        return "dieses Handy vermerkt noch eine unabgeschlossene Entfernung des Postfachs auf ihm";
       case "engine_store_not_deleted":
-        return "dieses Telefon konnte die Post und das gespeicherte Passwort des Postfachs auf ihm nicht löschen";
+        return "dieses Handy konnte die Mails und das gespeicherte Passwort des Postfachs auf ihm nicht löschen";
       case "engine_key_not_removed":
         return "der Schlüsselspeicher wollte den Schlüssel nicht entfernen, der das gespeicherte Passwort dieses Postfachs öffnet";
       case "engine_store_not_durable":
-        return "die Datenbank dieses Telefons sicherte nicht zu, eine gespeicherte Änderung über einen Stromausfall zu behalten, deshalb wurde das Postfach darauf nicht geöffnet";
+        return "die Datenbank dieses Handys sicherte nicht zu, eine gespeicherte Änderung über einen Stromausfall zu behalten, deshalb wurde das Postfach darauf nicht geöffnet";
       default: return code;
     }
   },
@@ -710,10 +710,10 @@ export const DE: Deck = {
   folderExpand: (name: string) => `${name} aufklappen`,
   folderCollapse: (name: string) => `${name} zuklappen`,
   folderTail: (n: number) =>
-    `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} aus diesem Ordner auf diesem Telefon.`,
-  folderEmptyTitle: "Von diesem Ordner ist keine Post auf diesem Telefon.",
+    `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} aus diesem Ordner auf diesem Handy.`,
+  folderEmptyTitle: "Aus diesem Ordner sind keine Mails auf diesem Handy.",
   folderEmptyHint:
-    "Dieses Telefon spiegelt die neuere Post deines Servers, ältere Post aus diesem Ordner erscheint hier nicht.",
+    "Dieses Handy spiegelt die neueren Mails deines Servers, ältere Mails aus diesem Ordner erscheinen hier nicht.",
 
   history: "Historie",
   historyNavSub: "Alles, was dir gehört, neueste zuerst",
@@ -723,10 +723,10 @@ export const DE: Deck = {
     "Verschoben wurde nichts: Jede Nachricht liegt weiter dort, wo dein Mailserver sie hat, und ihre Zeile nennt diesen Ordner. Die Monate und Jahre rechts springen an jede Stelle.",
   historyExplainerMoreLabel: "Was in der Historie liegt, und wo es liegt",
   historyEmptyTitle: "Noch nichts da.",
-  historyEmptyHint: "Deine Post erscheint, sobald sie synchronisiert ist.",
+  historyEmptyHint: "Deine Mails erscheinen, sobald sie synchronisiert sind.",
   historyTail: (n: number) => `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} in der Historie.`,
-  historyLoading: "Deine Post wird geladen.",
-  historyStoreUnavailable: "Dein Server hat nicht geantwortet — angezeigt wird die neuere Post, die dieses Gerät hat.",
+  historyLoading: "Deine Mails werden geladen.",
+  historyStoreUnavailable: "Dein Server hat nicht geantwortet. Angezeigt werden die neueren Mails, die dieses Gerät hat.",
   historyStoreRetry: "Erneut versuchen",
   historyRowsNotLoaded: "Diese Nachrichten wurden nicht geladen. Scrolle, um es erneut zu versuchen.",
   historyRailLabel: "Zu einem Jahr springen",
@@ -752,7 +752,7 @@ export const DE: Deck = {
   folderErrExists: "Ein Ordner mit diesem Namen existiert bereits.",
   folderErrGone: "Diesen Ordner gibt es auf deinem Mailserver nicht mehr.",
   folderErrNoTrash: "Dieses Postfach hat keinen Papierkorb, und ohmail löscht nie endgültig — lösche den Ordner in deinem eigenen Mailprogramm.",
-  folderErrGotMail: "In diesen Ordner kam neue Post, während er geleert wurde — er wurde nicht gelöscht. Lösche ihn erneut, um noch einmal zu leeren.",
+  folderErrGotMail: "In diesen Ordner kamen neue Mails, während er geleert wurde, deshalb wurde er nicht gelöscht. Lösch ihn noch einmal, um ihn erneut zu leeren.",
   folderNameEmpty: "Gib dem Ordner einen Namen.",
   folderNameSpaces: "Der Name darf nicht mit einem Leerzeichen beginnen oder enden.",
   folderNameChars: "Der Name darf kein % und kein * enthalten.",
@@ -782,9 +782,9 @@ export const DE: Deck = {
   foldersFailed: "Das ließ sich nicht speichern — versuch es nochmal.",
   autoActTitle: "Sichere Vorschläge für mich umsetzen",
   autoActDescription:
-    "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail diesen Absender dort ab, wo der Vorschlag es sagt — in der Ohbox, in News, bei den Belegen, unter Aussortiert oder im Spam — und schreibt die Regel für dich. Jede solche Regel ist als Regel von ohmail markiert, und du kannst sie unter Einstellungen → Regeln rückgängig machen. Absender, denen du geschrieben hast, und sensible Post werden so nie abgelegt. Standardmäßig aus.",
+    "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail den Absender dort ab, wo der Vorschlag es sagt (Ohbox, News, Belege, Aussortiert oder Spam), und schreibt die Regel für dich. Jede solche Regel ist als Regel von ohmail markiert, und du kannst sie unter Einstellungen → Regeln rückgängig machen. Absender, denen du geschrieben hast, und sensible Mails werden so nie abgelegt. Standardmäßig aus.",
   autoActNeedsSuggest: "Braucht automatische Vorschläge",
-  autoActReader: "Stell das auf der Installation ein, die deine Post organisiert.",
+  autoActReader: "Stell das auf der Installation ein, die deine Mails organisiert.",
   autoFiledTitle: "Automatisch einsortiert",
   autoFiledSummary: (n: number) => `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} für dich aus dem Screener einsortiert.`,
   autoFiledSummaryMore: (n: number) => `Die neuesten ${n} Nachrichten, die für dich aus dem Screener einsortiert wurden.`,
@@ -810,27 +810,27 @@ export const DE: Deck = {
   searchResultsHead: (n: number) => (n === 1 ? "Ein Treffer" : `${n} Treffer`),
   searchSimilarHead: "Ähnlich",
   searchSimilarHint: "Nichts stimmte genau überein — das sind die nächstliegenden Wörter.",
-  searchSimilarHintSynced: "In der bisher synchronisierten Post stimmte nichts genau überein — das sind die nächstliegenden Wörter.",
+  searchSimilarHintSynced: "In den bisher synchronisierten Mails passte nichts genau, das hier sind die ähnlichsten Wörter.",
   searchEmptyTitle: "Nichts gefunden.",
   searchPartReach: "Ein Teil innerhalb eines Wortes wird in Betreff, Absendern, Empfängern und Namen von Anhängen gesucht, nicht im Text der Nachricht.",
-  searchIndexing: "Deine neuere Post wird noch gelesen.",
+  searchIndexing: "Deine neueren Mails werden noch gelesen.",
   searchWholeSearching: "Dein ganzes Postfach wird durchsucht …",
   searchWhole: (n: number) => (n === 0 ? "Dein ganzes Postfach wurde durchsucht — nichts gefunden" : `Dein ganzes Postfach wurde durchsucht — ${n} gefunden`),
   searchWholeAtLeast: (n: number) => `Dein ganzes Postfach wurde durchsucht — mindestens ${n} gefunden`,
   searchWholeAbout: (n: number) => `Dein ganzes Postfach wurde durchsucht — etwa ${n} gefunden`,
   searchWholeNear: (n: number) => `Dein ganzes Postfach wurde durchsucht — ${n} mit einem ähnlichen Wort`,
   searchWholeNearAtLeast: (n: number) => `Dein ganzes Postfach wurde durchsucht — mindestens ${n} mit einem ähnlichen Wort`,
-  searchSyncedNear: (n: number) => `Die bisher synchronisierte Post wurde durchsucht — ${n} mit einem ähnlichen Wort`,
-  searchSyncedNearAtLeast: (n: number) => `Die bisher synchronisierte Post wurde durchsucht — mindestens ${n} mit einem ähnlichen Wort`,
+  searchSyncedNear: (n: number) => `Bisher synchronisierte Mails durchsucht: ${n} mit einem ähnlichen Wort`,
+  searchSyncedNearAtLeast: (n: number) => `Bisher synchronisierte Mails durchsucht: mindestens ${n} mit einem ähnlichen Wort`,
   searchDepth: "Eine lange Nachricht wird in ihren ersten 65.536 Zeichen durchsucht.",
-  searchSynced: (n: number) => (n === 0 ? "Die bisher synchronisierte Post wurde durchsucht — nichts gefunden" : `Die bisher synchronisierte Post wurde durchsucht — ${n} gefunden`),
-  searchSyncedAtLeast: (n: number) => `Die bisher synchronisierte Post wurde durchsucht — mindestens ${n} gefunden`,
-  searchSyncedAbout: (n: number) => `Die bisher synchronisierte Post wurde durchsucht — etwa ${n} gefunden`,
-  searchSyncing: "Der Rest deiner Post ist noch nicht synchronisiert.",
+  searchSynced: (n: number) => (n === 0 ? "Bisher synchronisierte Mails durchsucht: nichts gefunden" : `Bisher synchronisierte Mails durchsucht: ${n} gefunden`),
+  searchSyncedAtLeast: (n: number) => `Bisher synchronisierte Mails durchsucht: mindestens ${n} gefunden`,
+  searchSyncedAbout: (n: number) => `Bisher synchronisierte Mails durchsucht: etwa ${n} gefunden`,
+  searchSyncing: "Der Rest deiner Mails ist noch nicht synchronisiert.",
   searchServerMs: (ms: number) => `${ms} ms`,
-  searchUnanswered: "Dein Server hat nicht geantwortet — angezeigt wird die neuere Post, die dieses Gerät hat.",
+  searchUnanswered: "Dein Server hat nicht geantwortet. Angezeigt werden die neueren Mails, die dieses Gerät hat.",
   searchWholeRetry: "Ganzes Postfach erneut durchsuchen",
-  searchIndexingProgress: (percent: number) => `Ältere Post wird noch indiziert — ${percent} % erledigt.`,
+  searchIndexingProgress: (percent: number) => `Ältere Mails werden noch indexiert: ${percent} % erledigt.`,
   searchBounded: (n: number) => `Angezeigt werden die ${n} besten Treffer — nach Datum sortieren, um alle durchzugehen.`,
   searchEmptyAddressScopes: (address: string) =>
     `Eine Adresse ist ihre eigene Suche — alles, was ${address} geschickt hat, oder alles von oder an sie.`,
@@ -854,10 +854,10 @@ export const DE: Deck = {
 
   settings: "Einstellungen",
   theme: "Erscheinungsbild",
-  themeNote: "Automatisch folgt dem System. Bleibt auf diesem Telefon.",
+  themeNote: "Automatisch folgt dem System. Bleibt auf diesem Handy.",
   pictureQuality: "Bildqualität",
   pictureQualityNote:
-    "JPEG- und PNG-Bilder werden auf diesem Telefon verkleinert, bevor sie angehängt werden. Niedrigere Qualität bedeutet kleinere Dateien. Ein Bild, das dadurch nicht kleiner würde, wird unverändert angehängt, und „Original“ wird nie neu codiert. Bleibt auf diesem Telefon.",
+    "JPEG- und PNG-Bilder werden auf diesem Handy verkleinert, bevor sie angehängt werden. Niedrigere Qualität bedeutet kleinere Dateien. Ein Bild, das dadurch nicht kleiner würde, wird unverändert angehängt, und „Original“ wird nie neu codiert. Bleibt auf diesem Handy.",
   pictureQualityLow: "Niedrig",
   pictureQualityMedium: "Mittel",
   pictureQualityHigh: "Hoch",
@@ -867,7 +867,7 @@ export const DE: Deck = {
   themeDark: "Dunkel",
 
   language: "Sprache",
-  languageNote: "Folgt diesem Telefon, solange du nichts wählst. Gilt für ohmail auf diesem Gerät.",
+  languageNote: "Folgt diesem Handy, solange du nichts wählst. Gilt für ohmail auf diesem Gerät.",
   /* Identisch zum englischen Deck, mit Absicht — siehe dort. */
   languageSystem: "System",
   languageEnglish: "English",
@@ -887,52 +887,52 @@ export const DE: Deck = {
 
   phoneBanner: (name: string) => `Organisiert von ${name}`,
   phoneBannerWhy:
-    "Dieses Telefon liest das Postfach. Entschieden wird dort, wo es organisiert wird.",
+    "Dieses Handy liest das Postfach. Entschieden wird dort, wo es organisiert wird.",
   phoneBannerStopped: (name: string) =>
-    `${name} meldet sich nicht mehr. Bis wieder etwas dieses Postfach organisiert, wartet neue Post im Posteingang.`,
+    `${name} meldet sich nicht mehr. Bis wieder etwas dieses Postfach organisiert, warten neue Mails in der Inbox.`,
 
   about: "Über diesen Build",
   buildVersion: (version: string) => `Version ${version}`,
   buildVersionWithCode: (version: string, build: string) => `Version ${version} (${build})`,
   buildCommit: (commit: string) => `Build ${commit}`,
   aboutLive: (origin: string) =>
-    `Gekoppelt mit ${origin}. Post wird in einen Spiegel auf dem Gerät synchronisiert; Lesen, neue Nachrichten schreiben, Sortieren, Antworten, Weiterleiten, Tags und Suche sind live.`,
+    `Gekoppelt mit ${origin}. Mails werden in einen Spiegel auf dem Gerät synchronisiert; Lesen, neue Nachrichten schreiben, Sortieren, Antworten, Weiterleiten, Tags und Suche sind live.`,
   aboutLiveHere:
-    "Dieses Telefon verbindet sich selbst mit deinem Mailserver und synchronisiert die Post in einen Spiegel auf dem Gerät; Lesen, neue Nachrichten schreiben, Sortieren, Antworten, Weiterleiten, Tags und Suche sind live.",
+    "Dieses Handy verbindet sich selbst mit deinem Mailserver und synchronisiert die Mails in einen Spiegel auf dem Gerät; Lesen, neue Nachrichten schreiben, Sortieren, Antworten, Weiterleiten, Tags und Suche sind live.",
   aboutOnDevice:
-    "Einen Server zu vergessen löscht seine Kopplung und die Post, die dieses Telefon kopiert "
-    + "hatte. Die App zu löschen nimmt die kopierte Post mit; auf iPhone und iPad bleibt die "
-    + "Kopplung im Schlüsselbund des Telefons, bis ohmail wieder geöffnet wird — dann wird sie "
+    "Einen Server zu vergessen löscht seine Kopplung und die Mails, die dieses Handy kopiert "
+    + "hatte. Die App zu löschen nimmt die kopierten Mails mit; auf iPhone und iPad bleibt die "
+    + "Kopplung im Schlüsselbund des Handys, bis ohmail wieder geöffnet wird — dann wird sie "
     + "verworfen, bevor irgendetwas geöffnet wird, und wenn das nicht gelingt, wird gar nichts "
     + "geöffnet. Um sie sofort zu beenden, widerrufe dieses Gerät in der Geräteliste des Servers. "
     + "Die Kopplung ist nie in einem Backup enthalten.",
 
   aboutOnDeviceBackup: (state: BackupExclusion): string =>
     state === "excluded"
-      ? "Die kopierte Post ist es auch nicht: Die gespeicherte Post dieser App ist so markiert, "
-        + "dass sie aus den Cloud- und Computer-Backups des Telefons herausbleibt, und dieser "
+      ? "Die kopierten Mails sind es auch nicht: Die gespeicherten Mails dieser App sind so markiert, "
+        + "dass sie aus den Cloud- und Computer-Backups des Handys herausbleibt, und dieser "
         + "Build hat diese Markierung zurückgelesen."
       : state === "included"
-        ? "Die kopierte Post ist es: Sie liegt in den gespeicherten Dateien dieser App, und die "
-          + "Cloud- und Computer-Backups des Telefons schließen sie ein."
-        : "Ob die kopierte Post in einem Backup enthalten ist, konnte auf diesem Build nicht "
+        ? "Die kopierten Mails sind es: Sie liegen in den gespeicherten Dateien dieser App, und die "
+          + "Cloud- und Computer-Backups des Handys schließen sie ein."
+        : "Ob die kopierten Mails in einem Backup enthalten sind, konnte auf diesem Build nicht "
           + "gelesen werden — hier wird deshalb weder das eine noch das andere behauptet.",
 
   /* --------------------------------------------- the diagnostic file */
 
   diagnosticLabel: "Diagnosedatei",
   diagnosticWhy:
-    "Schreibt eine Datei darüber, wie ohmail auf diesem Telefon läuft: Versionen, Anzahlen, "
+    "Schreibt eine Datei darüber, wie ohmail auf diesem Handy läuft: Versionen, Anzahlen, "
     + "Fehlercodes und die letzten Log-Ereignisse, nie Adressen, Betreffzeilen oder Ordnernamen. "
     + "Es wird nichts gesendet.",
   diagnosticAction: "Datei schreiben",
   diagnosticWriting: "Wird geschrieben…",
   diagnosticWritten: (path: string): string =>
-    `Gespeichert unter ${path}, neben der kopierten Post dieses Telefons. Es wurde nichts `
+    `Gespeichert unter ${path}, neben den kopierten Mails dieses Handys. Es wurde nichts `
     + "gesendet. Teile sie selbst mit uns, wenn wir sie ansehen sollen.",
   diagnosticShare: "Datei teilen",
   diagnosticShareFailed:
-    "Dieses Telefon konnte das Teilen-Menü nicht öffnen. Die Datei liegt weiter dort, wo sie "
+    "Dieses Handy konnte das Teilen-Menü nicht öffnen. Die Datei liegt weiter dort, wo sie "
     + "geschrieben wurde; es wurde nichts gesendet.",
   diagnosticFailed: "Die Datei konnte nicht geschrieben werden. Es wurde nichts gesendet.",
 
@@ -943,7 +943,7 @@ export const DE: Deck = {
   notifStop: "Nicht mehr organisieren",
   notifStopFailed: "Stopp nicht abgeschlossen — wird erneut versucht.",
   organizerRestricted:
-    "Der Energiesparmodus lässt ohmail auf diesem Telefon nicht im Hintergrund organisieren. "
+    "Der Energiesparmodus lässt ohmail auf diesem Handy nicht im Hintergrund organisieren. "
     + "Es organisiert, solange die App offen ist, und gibt das Postfach zurück, wenn du sie "
     + "verlässt.",
   organizerNotifyTitle: "Im Hintergrund organisieren",
@@ -959,53 +959,53 @@ export const DE: Deck = {
     + `zurückgeben, deshalb konnte eine andere Maschine es bis zu ${minutes} Minuten nicht übernehmen.`,
   organizerNotificationsSettings: "Benachrichtigungen einstellen",
   gapLetters: (count: number, address: string) => count === 1
-    ? `1 Brief ist in ${address} angekommen, während kein Gerät das Postfach organisiert hat. Nach deinen Regeln ablegen?`
-    : `${count} Briefe sind in ${address} angekommen, während kein Gerät das Postfach organisiert hat. Nach deinen Regeln ablegen?`,
+    ? `1 Mail ist in ${address} angekommen, während kein Gerät das Postfach organisiert hat. Nach deinen Regeln ablegen?`
+    : `${count} Mails sind in ${address} angekommen, während kein Gerät das Postfach organisiert hat. Nach deinen Regeln ablegen?`,
   gapFile: "Ablegen",
   gapLeave: "Liegen lassen",
-  gapChanged: "Die Briefe haben sich seit dem Zählen geändert. Die neue Zahl steht oben.",
+  gapChanged: "Die Mails haben sich seit dem Zählen geändert. Die neue Zahl steht oben.",
   gapFailed: "Keine Antwort möglich — versuch es nochmal.",
 
   /* ------------------------------------------------------------- new mail */
 
   wake: "Neue Mail",
   wakeNoDistributor:
-    "Auf diesem Telefon ist kein Push-Verteiler gewählt, es weckt diese App also nichts zwischen "
+    "Auf diesem Handy ist kein Push-Verteiler gewählt, es weckt diese App also nichts zwischen "
     + "deinen Besuchen. UnifiedPush-Verteiler sind eigene Apps, die du selbst wählst — ein Push-"
-    + "Dienst von Google oder Apple ist so oder so nicht beteiligt. Post kommt an, wenn du die App "
+    + "Dienst von Google oder Apple ist so oder so nicht beteiligt. Mails kommen an, wenn du die App "
     + "öffnest oder zum Aktualisieren ziehst.",
   wakeNoPushIos:
-    "Zwischen deinen Besuchen weckt nichts diese App auf diesem Telefon. Post kommt an, wenn du "
+    "Zwischen deinen Besuchen weckt nichts diese App auf diesem Handy. Mails kommen an, wenn du "
     + "die App öffnest oder zum Aktualisieren ziehst.",
   wakeDesktopHost:
     "Weckrufe brauchen einen gehosteten Server. Mit einem Desktop gekoppelt synchronisiert diese "
     + "App, wenn du sie öffnest und wenn du zum Aktualisieren ziehst.",
   wakeServerNoKey:
     "Dieser Server hat keinen Signaturschlüssel eingerichtet und kann daher keine Weckrufe senden, "
-    + "die dieses Telefon annehmen würde. Wer ihn betreibt, kann einen erzeugen — siehe die "
-    + "Anleitung zum Selbsthosten. Post kommt weiterhin an, wenn du die App öffnest oder zum "
+    + "die dieses Handy annehmen würde. Wer ihn betreibt, kann einen erzeugen — siehe die "
+    + "Anleitung zum Self-Hosting. Mails kommen weiterhin an, wenn du die App öffnest oder zum "
     + "Aktualisieren ziehst.",
   wakeOn:
-    "Solange ohmail läuft — geöffnet oder im Hintergrund — sagt dein Server diesem Telefon, dass "
-    + "sich etwas geändert hat, und die App holt deine Post direkt. Wenn du die App schließt, kommt "
+    "Solange ohmail läuft — geöffnet oder im Hintergrund — sagt dein Server diesem Handy, dass "
+    + "sich etwas geändert hat, und die App holt deine Mails direkt. Wenn du die App schließt, kommt "
     + "stattdessen ein schlichter Hinweis „Neue Mail“ (sofern du Benachrichtigungen erlaubt hast); "
     + "ein Tippen darauf öffnet ohmail. So oder so trägt das Signal weder Betreff noch Absender "
     + "noch Anzahl.",
   wakeDistributor: "Push-Verteiler",
   wakeDistributorHint:
-    "Die App, die das Wecksignal zu diesem Telefon trägt. Du wählst sie, du kannst sie wechseln, "
+    "Die App, die das Wecksignal zu diesem Handy trägt. Du wählst sie, du kannst sie wechseln, "
     + "und außer deinem eigenen Server ist sie das Einzige auf dem Weg.",
   wakeDistributorNone: "Keiner",
   wakeDistributorNoneHint:
     "Das auszuschalten beendet die Weckrufe und entfernt die Registrierung von deinem Server.",
   wakeRowRemains:
-    "Weckrufe sind auf diesem Telefon aus. Dein Server wollte die Registrierung nicht entfernen "
+    "Weckrufe sind auf diesem Handy aus. Dein Server wollte die Registrierung nicht entfernen "
     + "und versucht die alte Adresse womöglich noch eine Weile — versuch es nochmal, oder widerrufe "
     + "dieses Gerät in der Geräteliste des Servers.",
   wakeOff: (reason: string): string => reason === "endpoint_refused"
-    ? "Der Server hat die Adresse deines Verteilers abgelehnt, Weckrufe sind deshalb aus. Post "
-      + "kommt weiterhin an, wenn du die App öffnest oder zum Aktualisieren ziehst."
-    : "Weckrufe konnten nicht eingerichtet werden. Post kommt weiterhin an, wenn du die App "
+    ? "Der Server hat die Adresse deines Verteilers abgelehnt, Weckrufe sind deshalb aus. Mails "
+      + "kommen weiterhin an, wenn du die App öffnest oder zum Aktualisieren ziehst."
+    : "Weckrufe konnten nicht eingerichtet werden. Mails kommen weiterhin an, wenn du die App "
       + "öffnest oder zum Aktualisieren ziehst.",
 
   /* ------------------------------------------------- world (phone-specific) */
@@ -1014,22 +1014,22 @@ export const DE: Deck = {
   newSinceResurfaced: (n: number) => `${n} neu`,
   liveSaveFailed: "Diese Änderung ließ sich nicht speichern. Versuch es nochmal.",
   readerPressRefused: (name: string) =>
-    `Nichts hat sich geändert — dieses Telefon liest dieses Postfach nur. ${name} organisiert es, und Stapel und Tags werden dort gesetzt.`,
+    `Nichts hat sich geändert — dieses Handy liest dieses Postfach nur. ${name} organisiert es, und Stapel und Tags werden dort gesetzt.`,
   readerPressRefusedUnknown:
-    "Nichts hat sich geändert — dieses Telefon liest dieses Postfach nur. Stapel und Tags werden dort gesetzt, wo es organisiert wird.",
-  readerPressReadOnly: "Als gelesen markiert. Sonst hat sich nichts geändert — dieses Telefon liest dieses Postfach nur.",
+    "Nichts hat sich geändert — dieses Handy liest dieses Postfach nur. Stapel und Tags werden dort gesetzt, wo es organisiert wird.",
+  readerPressReadOnly: "Als gelesen markiert. Sonst hat sich nichts geändert — dieses Handy liest dieses Postfach nur.",
   readerPressRefusedNobody:
-    "Nichts hat sich geändert — dieses Telefon liest dieses Postfach nur. Im Moment organisiert es nichts.",
+    "Nichts hat sich geändert — dieses Handy liest dieses Postfach nur. Im Moment organisiert es nichts.",
   liveDecided: (dest: string, target: string) =>
-    `${dest} — künftige Post von ${target} wird automatisch dorthin einsortiert.`,
+    `${dest} — künftige Mails von ${target} werden automatisch dorthin einsortiert.`,
   liveAlsoUnsubscribing: (said: string, how: UnsubToast) =>
     how === "sends"
-      ? `${said} Rückgängig stoppt auch die Ein-Klick-Abmeldung; sobald Rückgängig weg ist, wird sie gesendet und lässt sich nicht zurücknehmen, und spätere Post des Absenders mit Ein-Klick-Abmeldung wird ebenfalls abgemeldet.`
+      ? `${said} Rückgängig stoppt auch die Ein-Klick-Abmeldung. Sobald Rückgängig weg ist, wird sie gesendet und lässt sich nicht zurücknehmen, und spätere Mails des Absenders mit Ein-Klick-Abmeldung werden ebenfalls abgemeldet.`
       : how === "may"
-        ? `${said} Wo der Absender Ein-Klick-Abmeldung anbietet, meldet ohmail dich ab, sobald Rückgängig weg ist, und erneut bei späterer Post; Rückgängig stoppt das auch.`
+        ? `${said} Bietet der Absender Ein-Klick-Abmeldung an, meldet ohmail dich ab, sobald Rückgängig weg ist, und bei späteren Mails erneut; Rückgängig stoppt das auch.`
         : how === "sent"
-          ? `${said} ohmail sendet eine Ein-Klick-Abmeldung, die sich nicht zurücknehmen lässt, und meldet dich bei späterer Post mit Ein-Klick-Abmeldung erneut ab.`
-          : `${said} Wo der Absender Ein-Klick-Abmeldung anbietet, meldet ohmail dich jetzt und bei späterer Post ab; eine gesendete Abmeldung lässt sich nicht zurücknehmen.`,
+          ? `${said} ohmail sendet eine Ein-Klick-Abmeldung, die sich nicht zurücknehmen lässt, und meldet dich bei späteren Mails mit Ein-Klick-Abmeldung erneut ab.`
+          : `${said} Bietet der Absender Ein-Klick-Abmeldung an, meldet ohmail dich jetzt und bei späteren Mails ab; eine gesendete Abmeldung lässt sich nicht zurücknehmen.`,
   liveDecidedElsewhere: (name: string, target: string) =>
     `Entschieden — ${name} sortiert ${target} beim nächsten Durchlauf ein.`,
   liveDecidedElsewhereUnknown: (target: string) =>
@@ -1039,12 +1039,12 @@ export const DE: Deck = {
   liveDecideSentUnknown: (target: string) =>
     `An die Installation geschickt, die dieses Postfach organisiert — ${target} wird dort innerhalb weniger Minuten einsortiert.`,
   relayWaiting: (name: string) => `An ${name} geschickt — wartet darauf, dass es ausgeführt wird.`,
-  relayWaitingUnknown: "An den Organisator geschickt — wartet darauf, dass es ausgeführt wird.",
+  relayWaitingUnknown: "An den Organizer geschickt. Wartet darauf, dass es ausgeführt wird.",
   relayRefused: (reason: string) => `Nicht ausgeführt — ${reason}`,
-  relayRefusedUnknown: "Nicht ausgeführt. Der Organisator hat keinen Grund genannt.",
+  relayRefusedUnknown: "Nicht ausgeführt. Der Organizer hat keinen Grund genannt.",
   relayReasonUnauthenticated: "es konnte nicht erkennen, dass die Entscheidung von dir kam",
   relayReasonConflict: "für denselben Absender kam zuerst eine andere Entscheidung an",
-  relayReasonAccountErased: "das zugehörige Konto gibt es nicht mehr",
+  relayReasonAccountErased: "den zugehörigen Account gibt es nicht mehr",
   relayReasonStale: "sie blieb zu lange unbeantwortet",
   relayReasonUnhandledKind: "es weiß nicht, wie diese Entscheidung auszuführen ist",
   relayReasonInvalidPayload: "es konnte die Entscheidung nicht lesen",
@@ -1052,13 +1052,13 @@ export const DE: Deck = {
   senderSentThere: (name: string) =>
     `Was du hier entscheidest, wird an ${name} geschickt und dort innerhalb weniger Minuten ausgeführt.`,
   readingAtConnect: (name: string) =>
-    `Dieses Telefon liest dieses Postfach. ${name} organisiert es, und deine Screener-Entscheidungen und Verschiebungen hier werden dorthin geschickt.`,
+    `Dieses Handy liest dieses Postfach. ${name} organisiert es, und deine Screener-Entscheidungen und Verschiebungen hier werden dorthin geschickt.`,
   readingAtConnectUnknown:
-    "Dieses Telefon liest dieses Postfach. Eine andere Installation organisiert es, und deine Screener-Entscheidungen und Verschiebungen hier werden dorthin geschickt.",
+    "Dieses Handy liest dieses Postfach. Eine andere Installation organisiert es, und deine Screener-Entscheidungen und Verschiebungen hier werden dorthin geschickt.",
   readingAtConnectKept: (name: string) =>
-    `Dieses Telefon liest dieses Postfach. ${name} organisiert es. Deine Zustimmung bleibt gespeichert: Sobald ${name} es freigibt, bietet dieses Telefon das Postfach an, und ein Tippen übernimmt es.`,
+    `Dieses Handy liest dieses Postfach. ${name} organisiert es. Deine Zustimmung bleibt gespeichert: Sobald ${name} es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.`,
   readingAtConnectKeptUnknown:
-    "Dieses Telefon liest dieses Postfach. Eine andere Installation organisiert es. Deine Zustimmung bleibt gespeichert: Sobald sie es freigibt, bietet dieses Telefon das Postfach an, und ein Tippen übernimmt es.",
+    "Dieses Handy liest dieses Postfach. Eine andere Installation organisiert es. Deine Zustimmung bleibt gespeichert: Sobald sie es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.",
   liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`} nach deiner Regel »${term}« in ${keptPlace}.`,
   liveVerdictKeptDomain: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>
@@ -1076,13 +1076,13 @@ export const DE: Deck = {
   liveVerdictStillLegacy: (count: number, place: string, still: number, folder: string, stillPlace: string) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${still === 1 ? "1 liegt" : `${still} liegen`} noch im Ordner ${folder}, dem alten Namen von ${stillPlace}.`,
   liveVerdictApplying: (count: number, place: string) =>
-    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place}. Auf den Rest ihrer Post im Postfach wendet ohmail die Regel gerade an.`,
+    `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place}. Auf den Rest ihrer Mails im Postfach wendet ohmail die Regel gerade an.`,
   liveDecideFailed: (sender: string) =>
     `Diese Entscheidung ließ sich nicht speichern — ${sender} wartet weiter.`,
-  liveOwnAddress: "Das ist deine eigene Adresse. Regeln sortieren Post von anderen.",
+  liveOwnAddress: "Das ist deine eigene Adresse. Regeln sortieren Mails von anderen.",
   liveDecideUndoLate: "Zu spät — diese Entscheidung ist schon raus.",
   undoReplaced: "Eine spätere Wahl für diesen Absender hat diese ersetzt, hier gibt es nichts rückgängig zu machen.",
-  undoReplacedLetterBack: "Die Post ist wieder da, wo sie war. Wohin die Post dieses Absenders geht, entscheidet eine spätere Wahl.",
+  undoReplacedLetterBack: "Die Mail ist wieder da, wo sie war. Wohin die Mails dieses Absenders gehen, entscheidet eine spätere Wahl.",
   /*
    * ── THE DESTINATION LEADS, BECAUSE GERMAN CANNOT TAKE IT AFTER A PREPOSITION ────────────────
    *
@@ -1100,9 +1100,9 @@ export const DE: Deck = {
   liveReleasedAddress: (n: number, dest: string, domain: string) =>
     `${dest} — ${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} freigegeben; dieser Absender ist dort ab jetzt zugelassen, die Regel für ${domain} sortiert alle anderen dort weiterhin aus.`,
   liveReleaseRuleStands: (sender: string, domain: string) =>
-    `Nichts geändert — die Regel für ${domain} entscheidet über Post von ${sender}. Ändern kannst du sie im Web unter Einstellungen → Regeln.`,
+    `Nichts geändert: Die Regel für ${domain} entscheidet über Mails von ${sender}. Ändern kannst du sie im Web unter Einstellungen → Regeln.`,
   liveReleaseFailed: (sender: string) =>
-    `Diese Freigabe ließ sich nicht speichern — Post von ${sender} liegt, wo sie lag.`,
+    `Diese Freigabe ließ sich nicht speichern. Mails von ${sender} liegen, wo sie lagen.`,
   livePileAdded: (title: string) => `${title} — hinzugefügt.`,
   livePileFailed: (title: string) => `${title} — ließ sich nicht speichern. Versuch es nochmal.`,
   liveBodyLoading: "Die ganze Nachricht wird geladen…",
@@ -1121,16 +1121,16 @@ export const DE: Deck = {
 
   mailImagesBlockedOne: "1 externes Bild blockiert.",
   mailImagesBlockedMany: (n: number) => `${n} externe Bilder blockiert.`,
-  mailPixelOne: "Eines davon ist ein Zählpixel.",
-  mailPixelMany: (n: number) => `${n} davon sind Zählpixel.`,
-  mailPixelOnly: "Ein Zählpixel wurde blockiert.",
-  mailPixelsRefused: (n: number) => `${n} Zählpixel wurden blockiert.`,
+  mailPixelOne: "Eines davon ist ein Tracking-Pixel.",
+  mailPixelMany: (n: number) => `${n} davon sind Tracking-Pixel.`,
+  mailPixelOnly: "Ein Tracking-Pixel wurde blockiert.",
+  mailPixelsRefused: (n: number) => `${n} Tracking-Pixel wurden blockiert.`,
   mailSheetBlockedOne:
     "Ein externes Stylesheet wurde blockiert; diese Nachricht kann darum schlicht aussehen.",
   mailSheetBlockedMany: (n: number) =>
     `${n} externe Stylesheets wurden blockiert; diese Nachricht kann darum schlicht aussehen.`,
   mailImagesFromPhone:
-    "Bilder werden von diesem Telefon geladen; jeder Absender sieht darum seine Netzwerkadresse.",
+    "Bilder werden von diesem Handy geladen; jeder Absender sieht darum seine Netzwerkadresse.",
   mailImagesFromComputer:
     "Bilder werden über deinen Computer geladen; jeder Absender sieht darum dessen Netzwerkadresse.",
   mailImagesRefused: "Die Bilder konnten nicht geladen werden. Versuch es noch einmal.",
@@ -1145,7 +1145,7 @@ export const DE: Deck = {
   mailOpenLinkTitle: "Diesen Link öffnen?",
   mailOpenLinkOpen: "Öffnen",
   mailOpenLinkCancel: "Abbrechen",
-  linkOpenRefused: "Nichts auf diesem Telefon kann diesen Link öffnen.",
+  linkOpenRefused: "Nichts auf diesem Handy kann diesen Link öffnen.",
   attachmentEmbedded: "eingebettet",
   attachmentEmbeddedLabel: (name: string) => `${name}, eingebettet`,
   attachmentOpening: "Wird geöffnet…",
@@ -1163,7 +1163,7 @@ export const DE: Deck = {
   attachmentFaultOffline: "ohmail war nicht erreichbar. Prüf deine Verbindung.",
   attachmentFaultSignedOut: "Deine Sitzung ist beendet. Melde dich neu an.",
   attachmentTapToRetry: "Tippe, um es nochmal zu versuchen.",
-  attachmentShareRefused: "Nichts auf diesem Telefon kann diese Datei öffnen.",
+  attachmentShareRefused: "Nichts auf diesem Handy kann diese Datei öffnen.",
   mailFrameLabel: "Nachrichteninhalt",
 
   /* -------------------------------------------------------- message actions */
@@ -1193,7 +1193,7 @@ export const DE: Deck = {
   actionDone: "Erledigt",
   actionMore: "Mehr",
   tabMore: "Mehr",
-  standaloneName: "ohmail auf diesem Telefon",
+  standaloneName: "ohmail auf diesem Handy",
 
   actionDelete: "Löschen",
   deleteAsk: "Diese Nachricht löschen?",
@@ -1252,9 +1252,9 @@ export const DE: Deck = {
   toastMoved: (place: string) => `Verschoben: ${place}.`,
   /* Die Worte des Web-Katalogs (`screening.toastRuledMoved` / `toastRuledFuture`), siehe `copy.en.ts`. */
   toastRuledMoved: (place: string, n: number, sender: string) =>
-    `${place} — ${n === 1 ? `1 Nachricht von ${sender} verschoben` : `${n} Nachrichten von ${sender} verschoben`}. Künftige Post von ihm geht auch dorthin. Ihre übrige Post hier bleibt, wo sie ist.`,
+    `${place} — ${n === 1 ? `1 Nachricht von ${sender} verschoben` : `${n} Nachrichten von ${sender} verschoben`}. Künftige Mails von ihm landen auch dort. Seine übrigen Mails hier bleiben, wo sie sind.`,
   toastRuledFuture: (place: string, sender: string) =>
-    `${place} — künftige Post von ${sender} geht auch dorthin. Post, die schon hier ist, bleibt, wo sie ist.`,
+    `${place} — künftige Mails von ${sender} landen auch dort. Mails, die schon hier sind, bleiben, wo sie sind.`,
   toastMoveAlready: (place: string) => `Schon in ${place}.`,
   /** Siehe `copy.en.ts`: 202 heisst vorgemerkt, nicht erledigt — verschoben wurde nichts. */
   toastMoveQueued: (place: string, holder: string) =>
@@ -1268,7 +1268,7 @@ export const DE: Deck = {
   toastUndone: "Rückgängig gemacht.",
   deleteUndone: "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
   deleteUndoLost: "Das Rückgängigmachen konnte nicht gespeichert werden — die Nachricht ist im Papierkorb.",
-  toastRoutingUndone: "Die Post ist wieder da, wo sie war, und es wurde keine Regel angelegt.",
+  toastRoutingUndone: "Die Mails sind wieder da, wo sie waren, und es wurde keine Regel angelegt.",
   /* Siehe `copy.en.ts`. Der Doppelpunkt vor dem Ort nimmt keinen Fall — `toastMoved`s Regel. */
   routingReplayedTo: (n: number, place: string) =>
     n === 1
@@ -1279,16 +1279,16 @@ export const DE: Deck = {
       ? "Beim Schließen von ohmail wartete noch 1 Nachricht — jetzt verschoben."
       : `Beim Schließen von ohmail warteten noch ${n} Nachrichten — jetzt verschoben.`,
   routingReplayExpired: (n: number) =>
-    `${n === 1 ? "1 Regel wurde" : `${n} Regeln wurden`} nie angelegt — seit der Anfrage ist zu viel Zeit vergangen. Verschiebe die Post noch einmal, wenn du die Regel weiterhin willst.`,
+    `${n === 1 ? "1 Regel wurde" : `${n} Regeln wurden`} nie angelegt, weil seit der Anfrage zu viel Zeit vergangen ist. Verschieb die Mails noch einmal, wenn du die Regel weiterhin willst.`,
   deleteReplayExpired: (n: number) =>
     `${n === 1 ? "1 Nachricht wurde" : `${n} Nachrichten wurden`} nicht in den Papierkorb verschoben — seit der Anfrage ist zu viel Zeit vergangen. Lösche sie noch einmal, wenn du das weiterhin willst.`,
   deleteReplayGone: (n: number) =>
-    `${n === 1 ? "1 Nachricht wurde" : `${n} Nachrichten wurden`} nicht in den Papierkorb verschoben — dieses Telefon hat sie beim nächsten Start nicht gefunden. Lösche sie noch einmal, wenn du das weiterhin willst.`,
+    `${n === 1 ? "1 Nachricht wurde" : `${n} Nachrichten wurden`} nicht in den Papierkorb verschoben — dieses Handy hat sie beim nächsten Start nicht gefunden. Lösche sie noch einmal, wenn du das weiterhin willst.`,
   /* Das Angebot der Ohbox — die `screener.unscreened*`-Sätze des Web-Katalogs, Wort für Wort. */
   unscreenedLead: (n: number) =>
     n === 1
-      ? "1 Nachricht von einem Absender, über den du nie entschieden hast, liegt noch im Posteingang auf deinem Mailserver."
-      : `${n} Nachrichten von Absendern, über die du nie entschieden hast, liegen noch im Posteingang auf deinem Mailserver.`,
+      ? "1 Nachricht von einem Absender, über den du nie entschieden hast, liegt noch in der Inbox auf deinem Mailserver."
+      : `${n} Nachrichten von Absendern, über die du nie entschieden hast, liegen noch in der Inbox auf deinem Mailserver.`,
   unscreenedAll: (n: number) => `${n} in den Screener`,
   unscreenedMoved: (n: number) => `${n} in den Screener gelegt. Dein Organizer verschiebt sie beim nächsten Durchlauf.`,
   unscreenedMovedNone: "Nichts mehr zu screenen.",
@@ -1350,7 +1350,7 @@ export const DE: Deck = {
   earlierGoing: "Eine frühere Fassung dieser Nachricht wird bereits gesendet. Dein neuerer Text wird nicht als zweite Kopie gesendet.",
   replyQueued: "Noch nicht gesendet. ohmail versucht es weiter.",
   replySendingLong: "Sendet noch.",
-  replyQueuedOffline: "Noch nicht gesendet. Dieses Telefon hat kein Netz; die Nachricht geht raus, sobald es wieder da ist.",
+  replyQueuedOffline: "Noch nicht gesendet. Dieses Handy hat kein Netz; die Nachricht geht raus, sobald es wieder da ist.",
   replyUnverified: "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
   replyAlreadySent: "Zu spät zum Abbrechen. Diese Nachricht ist schon unterwegs.",
   replyCancelUnreachable: "Der Server war zum Abbrechen nicht erreichbar. ohmail fragt weiter nach und sendet das nicht noch einmal.",
@@ -1365,7 +1365,7 @@ export const DE: Deck = {
   composeSendAsNew: "Als neue Nachricht senden",
   replyDeletedElsewhere: "Nicht gesendet: Dieser Entwurf wurde auf einem anderen Gerät gelöscht.",
   composeDeletedElsewhere: "Dieser Entwurf wurde auf einem anderen Gerät gelöscht. Was du jetzt schreibst, wird als neuer Entwurf gespeichert.",
-  composeNotSentOffline: "Nicht gesendet. Dieses Telefon erreicht deinen Mailserver nicht. Die Nachricht liegt in den Entwürfen — sende sie erneut, sobald du wieder online bist.",
+  composeNotSentOffline: "Nicht gesendet. Dieses Handy erreicht deinen Mailserver nicht. Die Nachricht liegt in den Entwürfen — sende sie erneut, sobald du wieder online bist.",
   replyUnverifiedAgain: "Nicht nochmal gesendet. Der erste Versand ist vielleicht schon raus, schau also zuerst in deinen Gesendet-Ordner.",
   /* Die Anhänge des Editors — `apps/webapp/messages/de.json` (`compose.attach*`) byte für Byte,
      wo der Satz dort existiert. */
@@ -1408,14 +1408,14 @@ export const DE: Deck = {
   composeEarlierWent: "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
   composeKept: "In den Entwürfen behalten.",
   composeKeptWithoutFiles: "In den Entwürfen behalten. Die Anhänge wurden nicht behalten.",
-  composeKeptQueued: "Als Entwurf behalten. Er erscheint in den Entwürfen, sobald dieses Telefon wieder online ist.",
+  composeKeptQueued: "Als Entwurf behalten. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
   composeKeptQueuedWithoutFiles:
-    "Als Entwurf behalten, ohne die Anhänge. Er erscheint in den Entwürfen, sobald dieses Telefon wieder online ist.",
+    "Als Entwurf behalten, ohne die Anhänge. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
   composeKeepFailed: "Das konnte nicht als Entwurf behalten werden. Schließe noch einmal, um es zu verwerfen.",
   composeKeepFiles: "Entwürfe behalten keine Anhänge. Schließe noch einmal, um sie zu verwerfen.",
   composeNeedRecipient: "Trag jemanden ein, an den sie gehen soll.",
-  composeNoMailbox: "Noch kann kein Postfach auf diesem Telefon senden.",
-  composeNoMailboxHint: "Sobald dieses Telefon Post hat, kannst du von diesem Postfach aus schreiben.",
+  composeNoMailbox: "Noch kann kein Postfach auf diesem Handy senden.",
+  composeNoMailboxHint: "Sobald dieses Handy Mails hat, kannst du von diesem Postfach aus schreiben.",
 
   sendLater: "Später senden",
   sendLaterWhat: "Wann soll diese Nachricht gesendet werden?",
@@ -1446,11 +1446,11 @@ export const DE: Deck = {
   scheduledWhenUnknown: "Wird zur geplanten Zeit gesendet",
   scheduledNotSent: "Nicht gesendet",
   scheduledNotOnThisPhone:
-    "Dieses Telefon organisiert dein Postfach nur, solange ohmail darauf läuft, und kann eine Nachricht deshalb nicht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf einem Computer oder in ohmail Cloud.",
+    "Dieses Handy organisiert dein Postfach nur, solange ohmail darauf läuft, und kann eine Nachricht deshalb nicht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf einem Computer oder in ohmail Cloud.",
   scheduledReaderHere: (name: string) =>
-    `Dieses Telefon liest dein Postfach und ${name} organisiert es, deshalb kann dieses Telefon keine Nachricht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf ${name}.`,
+    `Dieses Handy liest dein Postfach und ${name} organisiert es, deshalb kann dieses Handy keine Nachricht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf ${name}.`,
   scheduledReaderHereStopped: (name: string) =>
-    `Dieses Telefon liest dein Postfach und ${name} organisiert es nicht mehr, deshalb kann dieses Telefon keine Nachricht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf ${name}, sobald es wieder läuft.`,
+    `Dieses Handy liest dein Postfach und ${name} organisiert es nicht mehr, deshalb kann dieses Handy keine Nachricht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf ${name}, sobald es wieder läuft.`,
 
   awayTitle: "Abwesenheitsantwort",
   awayOn: "An. Antwortet auf neue Mail, aus dem Postfach, in dem sie ankam.",
@@ -1502,10 +1502,10 @@ export const DE: Deck = {
   awayLeaveKeep: "Weiter bearbeiten",
   awayRow: "Abwesenheitsantwort",
   awayRowSub: "Eine automatische Antwort, solange du weg bist.",
-  awayScopeElsewhere: "Diese stellst du auf einem Computer oder in ohmail Cloud ein. Dieses Telefon schickt sie unverändert zurück.",
+  awayScopeElsewhere: "Diese stellst du auf einem Computer oder in ohmail Cloud ein. Dieses Handy schickt sie unverändert zurück.",
   awayPileOther: (folder: string) => `Auch ${folder}`,
   awayPilesNone: "Keine Ablage bekommt eine Antwort, es wird also nichts gesendet.",
-  awayWhereThisPhone: "Antworten werden gesendet, solange ohmail auf diesem Telefon läuft.",
+  awayWhereThisPhone: "Antworten werden gesendet, solange ohmail auf diesem Handy läuft.",
   awayWhereHost: (host: string) => `Antworten werden gesendet, solange ohmail auf ${host} läuft.`,
   awayChangedElsewhere: "Auf einem anderen Gerät geändert. Das sind die Abwesenheitseinstellungen, die jetzt gelten.",
 
@@ -1516,7 +1516,7 @@ export const DE: Deck = {
     return held === 0 ? drafts : `${drafts} · ${held} nicht bestätigt`;
   },
   draftsEmptyTitle: "Nichts Halbfertiges",
-  draftsEmptyHint: "Sie liegen in deinem Konto und sind deshalb auf jedem Gerät da, auf dem du deine Mail liest.",
+  draftsEmptyHint: "Sie liegen in deinem Account und sind deshalb auf jedem Gerät da, auf dem du deine Mails liest.",
   draftsIsReply: "Antwort",
   draftsHeldChecking: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. Wir schauen in deinem Gesendet-Ordner nach.",
   draftsHeldNotInSent: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. In deinem Gesendet-Ordner ist sie nicht.",
@@ -1537,14 +1537,14 @@ export const DE: Deck = {
   draftsDiscardRefusedUnnamed:
     "Das ist nicht durchgegangen, und der Server hat nicht gesagt, warum. Der Entwurf ist noch da.",
   draftsDiscardQueued:
-    "Noch nicht verworfen — dieses Telefon konnte dein Konto nicht erreichen. Wir versuchen es weiter.",
+    "Noch nicht verworfen: Dieses Handy konnte deinen Account nicht erreichen. Wir versuchen es weiter.",
   draftsDiscardAwaitingOrganizer:
     "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn bei ihrem nächsten Durchlauf.",
   draftsOpenConversation: "Unterhaltung öffnen",
   draftsEditNote:
     "Dieser Entwurf lässt sich hier nicht bearbeiten. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
   draftsForwardOriginalAbsent:
-    "Die Nachricht, die dieser Entwurf weiterleitet, ist nicht auf diesem Telefon. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
+    "Die Nachricht, die dieser Entwurf weiterleitet, ist nicht auf diesem Handy. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
   draftsEdit: "Bearbeiten",
   draftsRowGone: "Dieser Entwurf ist nicht mehr in den Entwürfen.",
   draftsTextHeading: "Nachricht",
@@ -1560,7 +1560,7 @@ export const DE: Deck = {
   tagTagged: (name: string) => `Mit „${name}“ getaggt.`,
   tagUntagged: (name: string) => `Tag „${name}“ entfernt.`,
   tagNotOnServer:
-    "Tags speichert ohmail, nicht dein Postfach. Deine Ordner sind echte IMAP-Ordner und bleiben, wenn du gehst; Tags nicht — wenn du dein Konto löschst, sind sie weg.",
+    "Tags speichert ohmail, nicht dein Postfach. Deine Ordner sind echte IMAP-Ordner und bleiben, wenn du gehst; Tags nicht: Wenn du deinen Account löschst, sind sie weg.",
   tagsTitle: "Tags",
   tagMeta: (n: number) => `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`}`,
   tagEmptyTitle: "Noch nichts trägt diesen Tag.",
@@ -1575,11 +1575,11 @@ export const DE: Deck = {
   senderFirstContact:
     "Erster Kontakt. Von diesem Absender hat es noch nichts in die Ohbox geschafft — es hat hier gewartet.",
   domainAlsoFiles: (count: number, senders: string): string =>
-    `Sortiert außerdem ${count === 1 ? "1 Brief" : `${count} Briefe`} von anderen bei dieser Domain ein: ${senders}.`,
+    `Sortiert außerdem ${count === 1 ? "1 Mail" : `${count} Mails`} von anderen bei dieser Domain ein: ${senders}.`,
   senderPastTheGate: (n: number): string =>
     n === 1
-      ? "Ein Brief dieses Absenders ist schon in deiner Post. Die Post unten hat hier gewartet."
-      : `${n} Briefe dieses Absenders sind schon in deiner Post. Die Post unten hat hier gewartet.`,
+      ? "Eine Mail dieses Absenders ist schon in deinen Mails. Die Mails unten haben hier gewartet."
+      : `${n} Mails dieses Absenders sind schon in deinen Mails. Die Mails unten haben hier gewartet.`,
   senderCheckImpersonation: (brand: string, domain: string): string =>
     `Diese Nachricht gibt sich als ${brand} aus, aber ${domain} ist keine Adresse von ${brand}.`,
   senderCheckImpersonationShared: (brand: string, domain: string): string =>
@@ -1604,9 +1604,9 @@ export const DE: Deck = {
     `die Engine einer eigenständigen Installation ist unter „${expected}“ erreichbar, nicht unter `
     + `„${origin}“ — wer sowohl eine lokale Engine als auch eine entfernte Adresse übergibt, hat `
     + "sich nicht entschieden, mit welcher der beiden gesprochen wird",
-  bootNeedsCredential: "eine Anmeldung und eine Konto-Kennung werden beide gebraucht",
+  bootNeedsCredential: "eine Anmeldung und eine Account-ID werden beide gebraucht",
   bootAccountMismatch: (serverSays: string, expected: string) =>
-    `diese Anmeldung gehört zum Konto „${serverSays}“, nicht zu „${expected}“ — prüfe die eingegebene Konto-Kennung`,
+    `diese Anmeldung gehört zum Account „${serverSays}“, nicht zu „${expected}“ — prüfe die eingegebene Account-ID`,
   bootMirrorFailed: (detail: string) => `der Spiegel auf dem Gerät ließ sich nicht öffnen: ${detail}`,
   installMarkerUnopenable: (detail: string) =>
     `die Installationsmarke ließ sich nicht öffnen: ${detail}`,
@@ -1615,29 +1615,29 @@ export const DE: Deck = {
   installMarkerUnreadable: (detail: string) => `die Installationsmarke ließ sich nicht lesen: ${detail}`,
   /* Drei Absagen ohne Argument — der Wert im Schlüsselspeicher ist geheim; siehe `copy.en.ts`. */
   kekUnreadable:
-    "Der Schlüsselspeicher dieses Telefons hält etwas, das kein Schlüssel ist, deshalb lässt sich "
+    "Der Schlüsselspeicher dieses Handys hält etwas, das kein Schlüssel ist, deshalb lässt sich "
     + "das damit versiegelte Postfach-Passwort nicht öffnen. ohmail ersetzt ihn nicht: ein neuer "
-    + "Schlüssel würde dieses Passwort endgültig aussperren. Deine Post auf dem Server bleibt "
-    + "unberührt — richte dieses Telefon für das Postfach neu ein, um von vorn zu beginnen.",
+    + "Schlüssel würde dieses Passwort endgültig aussperren. Deine Mails auf dem Server bleiben "
+    + "unberührt — richte dieses Handy für das Postfach neu ein, um von vorn zu beginnen.",
   kekNotGenerated:
-    "Dieses Telefon konnte den Schlüssel für das Postfach-Passwort nicht erzeugen, deshalb wurde "
+    "Dieses Handy konnte den Schlüssel für das Postfach-Passwort nicht erzeugen, deshalb wurde "
     + "nichts gespeichert und nichts versiegelt. Auf dem Server hat sich nichts geändert. Schließe "
     + "ohmail und öffne es erneut.",
   kekNotKept:
-    "Der Schlüsselspeicher dieses Telefons hat den Schlüssel für das Postfach-Passwort angenommen "
+    "Der Schlüsselspeicher dieses Handys hat den Schlüssel für das Postfach-Passwort angenommen "
     + "und nicht zurückgegeben, deshalb wurde nichts damit versiegelt. Auf dem Server hat sich "
     + "nichts geändert. Schließe ohmail und öffne es erneut.",
   connectSuperseded: "ein neuerer Verbindungsversuch hat übernommen.",
 
   /* "geht nach" + a place name has the same case problem; the web client's own heading for this
-     pane asks the question instead (`screening.sectionWhere`: "Wohin ihre Post geht"). */
-  screeningFor: (sender: string) => `Wohin die Post von ${sender} geht`,
+     pane asks the question instead (`screening.sectionWhere`: "Wohin ihre Mails gehen"). */
+  screeningFor: (sender: string) => `Wohin die Mails von ${sender} gehen`,
   /* Carried with the English above; see `copy.en.ts` for why these live in the deck. */
   unsavedCount: (n: number): string =>
     (n === 1 ? "1 Änderung konnte nicht gespeichert werden" : `${n} Änderungen konnten nicht gespeichert werden`),
   unsavedPendingCount: (n: number): string =>
     (n === 1 ? "1 Änderung ist noch nicht durch" : `${n} Änderungen sind noch nicht durch`),
-  unsavedQueuedWhy: "Dieses Telefon konnte dein Konto nicht erreichen. Es versucht es weiter.",
+  unsavedQueuedWhy: "Dieses Handy konnte deinen Account nicht erreichen. Es versucht es weiter.",
   unsavedShow: "Anzeigen",
   unsavedHide: "Ausblenden",
   unsavedRetry: "Erneut versuchen",
@@ -1651,7 +1651,7 @@ export const DE: Deck = {
   unsavedKindDelete: "Eine Nachricht löschen",
   unsavedKindTriage: "Eine Nachricht zurückstellen",
   unsavedKindScreener: "Eine Screener-Entscheidung",
-  unsavedKindRead: "Post als gelesen markieren",
+  unsavedKindRead: "Mails als gelesen markieren",
   unsavedKindSend: "Eine Nachricht senden",
   unsavedKindDraft: "Einen Entwurf speichern",
   unsavedKindDraftDiscard: "Einen Entwurf verwerfen",
@@ -1661,12 +1661,12 @@ export const DE: Deck = {
   unsavedKindRule: "Eine Regel-Änderung",
 
   screeningNote: (target: string) =>
-    `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Post, die schon hier ist, bleibt, wo sie ist.`,
+    `Wird zur Regel: Künftige Mails von ${target} werden automatisch dorthin einsortiert. Mails, die schon hier sind, bleiben, wo sie sind.`,
   screeningNoteNobody:
     "Dieses Postfach wird von nichts organisiert, deshalb sortiert eine Regel von hier nichts davon ein, bis es wieder organisiert wird. In den Einstellungen steht, was jedes Postfach organisiert.",
   screeningNoteRetro: (target: string) =>
-    `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Außerdem wendet ohmail die Regel auf die Post an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, selbst hier oder in einem anderen Mailprogramm einsortiert oder geparkt hast, bleiben unberührt.`,
-  screeningRetroToggle: "Auch die Post verschieben, die schon im Postfach liegt",
+    `Wird zur Regel: Künftige Mails von ${target} werden automatisch dorthin einsortiert. Außerdem wendet ohmail die Regel auf die Mails an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, selbst hier oder in einer anderen Mail-App einsortiert oder geparkt hast, bleiben unberührt.`,
+  screeningRetroToggle: "Auch die Mails verschieben, die schon im Postfach liegen",
   stayedReplied: (count: number, place: string) =>
     count === 1 ? `1 bleibt in ${place}: Du hast darauf geantwortet.` : `${count} bleiben in ${place}: Du hast darauf geantwortet.`,
   stayedSetAside: (count: number, place: string) =>
@@ -1692,7 +1692,7 @@ export const DE: Deck = {
     count === 1 ? "1 Nachricht ist für den Organizer vorgemerkt." : `${count} Nachrichten sind für den Organizer vorgemerkt.`,
   /* ── THE SHEET'S RESOLVE STEP — the web sheet's words, one function per key ── */
   screeningRulesHead: "Ihre Regeln",
-  screeningRuleAll: "Ihre ganze Post",
+  screeningRuleAll: "Alle ihre Mails",
   screeningRuleSubject: (term: string) => `Betreff enthält »${term}«`,
   screeningRuleBody: (term: string) => `Text enthält »${term}«`,
   screeningRuleEveryone: (domain: string) => `Alle bei ${domain}`,
@@ -1723,43 +1723,43 @@ export const DE: Deck = {
   screeningRuleInsideCount: (senders: number, count: number) =>
     `${senders === 1 ? "1 Absender hier hat eine eigene Regel" : `${senders} Absender hier haben eigene Regeln`} · ${count}`,
   screeningNoteWithCount: (note: string, n: number) => `${note} · ${n === 1 ? "1 Nachricht" : `${n} Nachrichten`}`,
-  screeningPressRuled: (place: string, sender: string) => `${place} — Post von ${sender} geht dorthin, künftige auch.`,
+  screeningPressRuled: (place: string, sender: string) => `${place} — Mails von ${sender} landen dort, künftige auch.`,
   screeningPressRemoved: (place: string, sender: string, rules: number, term: string) =>
-    `${place} — Post von ${sender} geht dorthin, künftige auch. ${rules === 1 ? `Deine Regel »${term}« wird entfernt.` : `${rules} deiner Regeln werden entfernt.`}`,
+    `${place} — Mails von ${sender} landen dort, künftige auch. ${rules === 1 ? `Deine Regel »${term}« wird entfernt.` : `${rules} deiner Regeln werden entfernt.`}`,
   screeningPressKeptOne: (place: string, sender: string, term: string, keptPlace: string) =>
-    `${place} — Post von ${sender} geht dorthin, außer »${term}«, das bleibt in ${keptPlace}.`,
+    `${place} — Mails von ${sender} landen dort, außer »${term}«, das bleibt in ${keptPlace}.`,
   screeningPressKeptMany: (place: string, sender: string, rules: number) =>
-    `${place} — Post von ${sender} geht dorthin, außer dem, was ${rules === 1 ? "deine Regel woanders hält" : `${rules} deiner Regeln woanders halten`}.`,
+    `${place} — Mails von ${sender} landen dort, außer dem, was ${rules === 1 ? "deine Regel woanders hält" : `${rules} deiner Regeln woanders halten`}.`,
   screeningPressException: (place: string, sender: string, domain: string, domainPlace: string) =>
-    `${place} — Post von ${sender} geht dorthin, künftige auch. Alle anderen bei ${domain} bleiben in ${domainPlace}.`,
-  screeningRoutingUndoneRules: "Die Post ist wieder da, wo sie war, und deine Regeln sind unverändert.",
+    `${place} — Mails von ${sender} landen dort, künftige auch. Alle anderen bei ${domain} bleiben in ${domainPlace}.`,
+  screeningRoutingUndoneRules: "Die Mails sind wieder da, wo sie waren, und deine Regeln sind unverändert.",
   screeningVerdictAll: (count: number, sender: string, place: string) =>
     count === 1 ? `Die 1 Nachricht von ${sender} liegt in ${place}.` : `Alle ${count} von ${sender} liegen in ${place}.`,
   screeningVerdictQueued: (name: string, sender: string, place: string) =>
-    `Für ${name} vorgemerkt — beim nächsten Durchlauf: Post von ${sender} → ${place}, und die Regel wird angelegt.`,
+    `Für ${name} vorgemerkt. Beim nächsten Durchlauf: Mails von ${sender} → ${place}, und die Regel wird angelegt.`,
   screeningVerdictQueuedUnnamed: (sender: string, place: string) =>
-    `Für den Organizer vorgemerkt — beim nächsten Durchlauf: Post von ${sender} → ${place}, und die Regel wird angelegt.`,
+    `Für den Organizer vorgemerkt. Beim nächsten Durchlauf: Mails von ${sender} → ${place}, und die Regel wird angelegt.`,
   screeningVerdictChanged: (term: string) => `Deine Regel »${term}« wurde inzwischen geändert und bleibt deshalb, wie sie ist.`,
 
   connectionSignInRefused: "Der Mailserver hat die Anmeldung abgelehnt.",
   connectionCertificateRefused:
-    "Dieses Telefon hat das Zertifikat des Mailservers nicht akzeptiert und deshalb abgebrochen, bevor das Passwort rausging.",
+    "Dieses Handy hat das Zertifikat des Mailservers nicht akzeptiert und deshalb abgebrochen, bevor das Passwort rausging.",
   signInAgain: "Erneut anmelden",
   signInAgainLead:
-    "Hast du das Passwort dieses Postfachs bei deinem Anbieter geändert? Gib ohmail das neue. Die Post, die schon auf diesem Telefon ist, bleibt, wo sie ist.",
+    "Hast du das Passwort dieses Postfachs bei deinem Anbieter geändert? Gib ohmail das neue. Die Mails, die schon auf diesem Handy sind, bleiben, wo sie sind.",
   signInAgainField: "Neues Passwort",
-  signInAgainHint: "Wird auf diesem Telefon versiegelt und nur an den eigenen Server dieses Postfachs gesendet.",
+  signInAgainHint: "Wird auf diesem Handy versiegelt und nur an den eigenen Server dieses Postfachs gesendet.",
   signInAgainSave: "Speichern und anmelden",
   signInAgainSaving: "Anmeldung läuft…",
   signInAgainCancel: "Abbrechen",
   signInAgainDone: "Angemeldet. Dieses Postfach synchronisiert wieder.",
   signInAgainFailed: (detail: string) =>
-    `Dieses Passwort wurde nicht akzeptiert: ${detail}. Auf diesem Telefon hat sich nichts geändert.`,
+    `Dieses Passwort wurde nicht akzeptiert: ${detail}. Auf diesem Handy hat sich nichts geändert.`,
 
   /* DIE SERVER DES POSTFACHS, AN ORT UND STELLE BEARBEITET. Mit dem Passwort geprüft, bevor etwas bleibt. */
   serverSettings: "Servereinstellungen",
   serverSettingsLead:
-    "ohmail prüft diese Einstellungen mit deinem Passwort, bevor es sie behält. Bis sie funktionieren, ändert sich auf diesem Telefon nichts.",
+    "ohmail prüft diese Einstellungen mit deinem Passwort, bevor es sie behält. Bis sie funktionieren, ändert sich auf diesem Handy nichts.",
   serverSettingsPassword: "Passwort",
   serverSettingsPasswordHint: "Wird zum Prüfen der neuen Einstellungen verwendet und nur an die eigenen Server dieses Postfachs gesendet.",
   serverSettingsSave: "Prüfen und speichern",
@@ -1767,17 +1767,17 @@ export const DE: Deck = {
   serverSettingsCancel: "Abbrechen",
   serverSettingsSaved: "Gespeichert. Dieses Postfach verwendet jetzt diese Einstellungen.",
   serverSettingsNoPassword: "Gib das Passwort dieses Postfachs an, um die neuen Einstellungen zu prüfen.",
-  serverSettingsUnreadable: "Dieses Telefon konnte die Servereinstellungen dieses Postfachs nicht lesen. Versuche es noch einmal.",
+  serverSettingsUnreadable: "Dieses Handy konnte die Servereinstellungen dieses Postfachs nicht lesen. Versuche es noch einmal.",
   serverSettingsImapUnreachable:
-    "ohmail hat deinen Posteingangsserver (IMAP) unter dieser Adresse und diesem Port nicht erreicht. Prüfe beides — auf diesem Telefon hat sich nichts geändert.",
+    "ohmail hat deinen Eingangsserver (IMAP) unter dieser Adresse und diesem Port nicht erreicht. Prüf beides. Auf diesem Handy hat sich nichts geändert.",
   serverSettingsHostWhileOrganizing:
-    "Solange dieses Telefon dieses Postfach organisiert, bleibt sein Posteingangsserver, wie er ist. Beende das Organisieren hier, ändere den Server und organisiere dann wieder hier.",
+    "Solange dieses Handy dieses Postfach organisiert, bleibt sein Eingangsserver, wie er ist. Beende das Organisieren hier, ändere den Server und organisiere dann wieder hier.",
   serverSettingsHostHeld: (name: string) =>
-    `${name} organisiert dieses Postfach auf diesem Server. Auf diesem Telefon hat sich nichts geändert.`,
+    `${name} organisiert dieses Postfach auf diesem Server. Auf diesem Handy hat sich nichts geändert.`,
   serverSettingsHostHeldUnnamed:
-    "Eine andere Installation organisiert dieses Postfach auf diesem Server. Auf diesem Telefon hat sich nichts geändert.",
+    "Eine andere Installation organisiert dieses Postfach auf diesem Server. Auf diesem Handy hat sich nichts geändert.",
   serverSettingsRefused: (detail: string) =>
-    `Diese Einstellungen wurden nicht behalten: ${detail}. Auf diesem Telefon hat sich nichts geändert.`,
+    `Diese Einstellungen wurden nicht behalten: ${detail}. Auf diesem Handy hat sich nichts geändert.`,
 
   selfCheckAction: "Dieses Postfach prüfen",
   selfCheckChecking: "Wird geprüft…",
@@ -1812,32 +1812,32 @@ export const DE: Deck = {
   mailRowNewSinceAria: (n: number) =>
     `${n} ${n === 1 ? "Nachricht" : "Nachrichten"}, seit das wieder aufgetaucht ist`,
 
-  /* Der Wall des verwalteten Kontos und seine Streifen — dieselben Sätze wie im Browser. */
+  /* Der Wall des verwalteten Accounts und seine Streifen — dieselben Sätze wie im Browser. */
 
-  wallTitle: "Dieses Konto ist nicht aktiv.",
-  wallSuspendedTitle: "Dieses Konto ist gesperrt.",
+  wallTitle: "Dieser Account ist nicht aktiv.",
+  wallSuspendedTitle: "Dieser Account ist gesperrt.",
   wallTrialEnded: (date: string) => `Deine Testphase ist am ${date} abgelaufen.`,
   wallCanceled: (date: string) => `Dein Abo ist am ${date} ausgelaufen.`,
   wallUnpaid: (date: string) =>
     `Eine Zahlung ist fehlgeschlagen, und die Frist dafür ist am ${date} abgelaufen.`,
-  wallStopped: "ohmail organisiert dieses Konto nicht mehr.",
+  wallStopped: "ohmail organisiert diesen Account nicht mehr.",
   wallMailboxUntouched: "Dein Postfach ist unberührt.",
   wallKept:
-    "Deine Post und deine Einstellungen bleiben. Es wurde nichts gelöscht, und deine Post liegt ohnehin auf deinem eigenen Server.",
+    "Deine Mails und Einstellungen bleiben. Es wurde nichts gelöscht, und deine Mails liegen ohnehin auf deinem eigenen Server.",
   wallErasure: (date: string) =>
-    `Die Regeln, Screener-Entscheidungen und Einstellungen, die ohmail für dich behält, werden am ${date} gelöscht. Deine Post liegt in deinem Postfach und gehört nicht dazu.`,
+    `Die Regeln, Screener-Entscheidungen und Einstellungen, die ohmail für dich speichert, werden am ${date} gelöscht. Deine Mails liegen in deinem Postfach und gehören nicht dazu.`,
   wallErasureHeld:
-    "Ein Betreiber hält dieses Konto; solange das gilt, wird nichts gelöscht. Schreib an support@ohmail.app, falls das unerwartet ist.",
+    "Ein Betreiber hält diesen Account; solange das gilt, wird nichts gelöscht. Schreib an support@ohmail.app, falls das unerwartet ist.",
   wallErasureUnknown:
-    "Es wurde nichts gelöscht. Deine Post liegt in deinem Postfach, und sie zu löschen steht uns nicht zu.",
+    "Es wurde nichts gelöscht. Deine Mails liegen in deinem Postfach, und die zu löschen steht uns nicht zu.",
   wallSubscribe: "Abo abschliessen",
-  wallOpenAccount: "Dein ohmail-Konto öffnen",
+  wallOpenAccount: "Dein ohmail-Account öffnen",
   wallManage: "Abo verwalten",
-  wallSubscribeHint: "Öffnet deine Kontoseite: Tarif wählen, bezahlen, zurück hierher.",
-  wallMintFailed: "Die Kontoseite konnte gerade nicht geöffnet werden. Versuch es gleich noch einmal.",
+  wallSubscribeHint: "Öffnet deine Account-Seite: Tarif wählen, bezahlen, zurück hierher.",
+  wallMintFailed: "Die Account-Seite konnte gerade nicht geöffnet werden. Versuch es gleich noch einmal.",
   wallMintUnverified:
-    "Die Kontoseite braucht eine bestätigte Adresse. Öffne den Link in der Mail, die wir bei der Registrierung geschickt haben.",
-  wallChecking: "Stand deines Kontos wird geprüft …",
+    "Die Account-Seite braucht eine bestätigte Adresse. Öffne den Link in der Mail, die wir bei der Registrierung geschickt haben.",
+  wallChecking: "Stand deines Accounts wird geprüft …",
   wallPending:
     "Die Zahlung ist noch nicht bestätigt. Sobald das passiert, geht es hier weiter — du musst nichts tun.",
   wallCheckAgain: "Erneut prüfen",
@@ -1847,11 +1847,11 @@ export const DE: Deck = {
   wallMoveOutGuide: "Zur Anleitung fürs Selbsthosten",
   wallMoveOutFailed: "Die Datei konnte gerade nicht erstellt werden. Versuch es gleich noch einmal.",
   wallMoveOutBusy: "Die Datei wird vorbereitet…",
-  wallDeleteNow: "Konto jetzt löschen",
+  wallDeleteNow: "Account jetzt löschen",
   wallDeleteElsewhere:
-    "Zum Löschen deines Kontos brauchst du deinen zweiten Faktor — das passiert auf deiner Kontoseite im Browser. Dein Postfach bleibt unberührt.",
+    "Zum Löschen deines Accounts brauchst du deinen zweiten Faktor. Das passiert auf deiner Account-Seite im Browser. Dein Postfach bleibt unberührt.",
   wallOpenInBrowser:
-    "Öffne ohmail.app im Browser, um dieses Konto zu verwalten oder zu löschen.",
+    "Öffne ohmail.app im Browser, um diesen Account zu verwalten oder zu löschen.",
 
   stripGraceEnds: (date: string) =>
     `Deine Testphase ist abgelaufen. ohmail organisiert noch bis zum ${date}.`,
@@ -1885,10 +1885,10 @@ export const DE: Deck = {
   pfiListMany: (head: string, last: string) => `${head} und ${last}`,
   pfiSavedByLocal: (when: string) => `Gespeichert ${when} von ohmail auf einem anderen Computer.`,
   pfiSavedByCloud: (when: string) => `Gespeichert ${when} von ohmail Cloud.`,
-  pfiSavedByPhone: (when: string) => `Gespeichert ${when} von ohmail auf einem Telefon.`,
+  pfiSavedByPhone: (when: string) => `Gespeichert ${when} von ohmail auf einem Handy.`,
   pfiSavedBy: (when: string) => `Gespeichert ${when}.`,
   pfiWillDo:
-    "Der Import fügt sie den Einstellungen dieses Kontos hinzu. Post, die dieses ohmail im Screener zurückgehalten hat, wird für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen, und als gelesen markiert; sonst ändert sich an deiner Mail nichts. Bis du dich entscheidest, bleiben beide im Postfach: diese Einstellungen neben denen, die du hier festlegst.",
+    "Der Import fügt sie den Einstellungen dieses Accounts hinzu. Mails, die dieses ohmail im Screener zurückgehalten hat, werden für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen, und als gelesen markiert; sonst ändert sich an deinen Mails nichts. Bis du dich entscheidest, bleiben beide im Postfach: diese Einstellungen neben denen, die du hier festlegst.",
   pfiHeldRouting:
     "Bis du antwortest, bleibt Mail von Absendern, die diese Einstellungen durchlassen, dort, wo sie angekommen ist; andere neue Absender werden wie gewohnt gescreent.",
   pfiImport: "Einstellungen importieren",

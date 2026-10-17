@@ -45,7 +45,7 @@ export function LastResort({ digest }: { digest?: string }) {
         <h1>ohmail hit an error.</h1>
         <p>Nothing is lost — your mail is on your mail server. Reload to carry on.</p>
         <p lang="de">
-          Nichts ist verloren — deine Post liegt auf deinem Mailserver. Lade neu, um
+          Nichts ist verloren: Deine Mails liegen auf deinem Mailserver. Lade neu, um
           weiterzumachen.
         </p>
         <button

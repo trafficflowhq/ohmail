@@ -66,8 +66,9 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  Raised 2026-10-17: the mailbox step's note says the factor is asked in place (join), and the
  *  sign-in names its wizard continuation (login); both namespaces are carried whole.
  *  Raised 2026-10-17 (both): the plan step's way out says what it does (join, carried whole).
- *  Raised 2026-10-17 (both): the plan step names the site's choice and the trial (join). */
-const INLINE_CEILING_BYTES = { en: 34_700, de: 39_550 } as const;
+ *  Raised 2026-10-17 (both): the plan step names the site's choice and the trial (join).
+ *  Raised 2026-10-17 (de): German says Account and Mails, a few bytes longer than Konto and Post. */
+const INLINE_CEILING_BYTES = { en: 34_700, de: 39_600 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>

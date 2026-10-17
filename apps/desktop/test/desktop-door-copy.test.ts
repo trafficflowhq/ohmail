@@ -135,7 +135,7 @@ describe("with a German catalogue set, the standalone window answers German", ()
     /* TWO VALUES, and the order is the FORMATTER's — a German sentence free to reorder them is
        exactly what the `params` list defends, so both numbers are asserted in their own holes. */
     expect(DOOR_COPY.bootMigratingOf(3, 12))
-      .toBe("Dein lokaler Postspeicher wird aktualisiert… (3 von 12)");
+      .toBe("Dein lokaler Mail-Speicher wird aktualisiert… (3 von 12)");
   });
 
   it("the waiting-changes sentence: en.json's plural renders what the constant says", () => {

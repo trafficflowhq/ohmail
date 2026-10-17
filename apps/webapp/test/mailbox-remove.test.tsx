@@ -410,6 +410,6 @@ describe("the copy exists in both catalogues", () => {
     // The promise is the reason a person can press the button. A locale that dropped it would be
     // a different product in German.
     expect(copyDe.removeMailSafe).toMatch(/Mailserver/);
-    expect(copyDe.removeCopyStays).toMatch(/Konto/);
+    expect(copyDe.removeCopyStays).toMatch(/Account/);
   });
 });

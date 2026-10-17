@@ -232,7 +232,7 @@ describe("the undecided-sender row in the Screener header", () => {
     const en = messages.screener.unscreenedLead;
     const german = de.screener.unscreenedLead;
     expect(en).toContain("Inbox on your mail server");
-    expect(german).toContain("Posteingang auf deinem Mailserver");
+    expect(german).toContain("Inbox auf deinem Mailserver");
     for (const lead of [en, german]) expect(lead).not.toMatch(/Ohbox/);
   });
 

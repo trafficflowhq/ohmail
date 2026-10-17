@@ -104,7 +104,7 @@ describe("the consent sentence names every place mail can be put", () => {
       expect(created.filter((leaf) => !list.includes(leaf)), `${lang}: a created folder is missing`).toEqual([]);
     }
     expect(ob("en").consentBody).toContain("The Ohbox is your Inbox");
-    expect(ob("de").consentBody).toContain("Die Ohbox ist dein Posteingang");
+    expect(ob("de").consentBody).toContain("Die Ohbox ist deine Inbox");
   });
 
   it("says the folders are ordinary IMAP folders other clients can see", () => {
@@ -126,7 +126,7 @@ describe("History is described as a VIEW, because that is what it is", () => {
     expect(en).toMatch(/History is a view/i);
     expect(en).toMatch(/nothing in it moves/i);
     const de = ob("de").consentHistory;
-    expect(de).toMatch(/bleibt im Posteingang/i);
+    expect(de).toMatch(/bleiben in der Inbox/i);
     expect(de).toMatch(/Historie ist eine Ansicht/i);
   });
 

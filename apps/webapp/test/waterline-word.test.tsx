@@ -138,6 +138,16 @@ const BARE_NEW_EXEMPT: Record<string, string> = {
     + "No waterline and no read state is involved, so there is no second word to confuse it with.",
 };
 
+/* German only: "neue Absender" is the German for first-time senders (English "first-time
+   senders", which this pattern never matches). The number counts SENDERS waiting in the Screener,
+   not messages, so neither the waterline nor unread applies; "neu" is what the senders are. */
+const BARE_NEW_EXEMPT_DE: Record<string, string> = {
+  "ohbox.doorbellAria": "A count of first-time SENDERS waiting in the Screener (\"# neue Absender warten\"), not of messages.",
+  "ohbox.emptyScreenerHint": "A count of first-time SENDERS waiting in the Screener, not of messages.",
+  "screener.metaWaiting": "A count of first-time SENDERS waiting in the Screener, not of messages.",
+  "screener.metaWaitingOnDevice": "A count of first-time SENDERS waiting in the Screener, not of messages.",
+};
+
 describe("the catalogues keep the waterline and unread apart", () => {
   it("the sweep can fire, and does not fire on ordinary copy", () => {
     /* The pattern is the whole guard, so it is pinned by example in both directions — a sweep
@@ -195,7 +205,8 @@ describe("the catalogues keep the waterline and unread apart", () => {
             const dotted = prefix ? `${prefix}.${k}` : k;
             if (typeof v === "string") {
               if (BARE_NEW.test(v) && !(WATERLINE_KEYS as readonly string[]).includes(dotted)
-                  && !(dotted in BARE_NEW_EXEMPT)) {
+                  && !(dotted in BARE_NEW_EXEMPT)
+                  && !(locale === "de" && dotted in BARE_NEW_EXEMPT_DE)) {
                 hits.push(`${dotted}  ${JSON.stringify(v)}`);
               }
             } else walk(v, dotted);
@@ -211,7 +222,8 @@ describe("the catalogues keep the waterline and unread apart", () => {
       });
 
       it("every exemption still matches a live string", () => {
-        for (const [key, why] of Object.entries(BARE_NEW_EXEMPT)) {
+        const exempt = { ...BARE_NEW_EXEMPT, ...(locale === "de" ? BARE_NEW_EXEMPT_DE : {}) };
+        for (const [key, why] of Object.entries(exempt)) {
           const s = at(CATALOGUE[locale], key);
           expect(typeof s, `${locale} ${key} is exempted but gone — delete the row`).toBe("string");
           expect(BARE_NEW.test(s as string), `${locale} ${key} no longer needs its exemption`)

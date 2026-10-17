@@ -119,8 +119,8 @@ describe("the strip says the count, in both languages", () => {
   });
 
   it("de: the same four", async () => {
-    expect(await stripText(failing(EXACT), "de")).toContain("konnte 612 Einträge deines Kontos auf diesem Computer nicht speichern. Das liegt an uns.");
-    expect(await stripText(failing(ONE), "de")).toContain("konnte einen Eintrag deines Kontos");
+    expect(await stripText(failing(EXACT), "de")).toContain("konnte 612 Einträge deines Accounts auf diesem Computer nicht speichern. Das liegt an uns.");
+    expect(await stripText(failing(ONE), "de")).toContain("konnte einen Eintrag deines Accounts");
     expect(await stripText(failing(CAPPED), "de")).toContain("mehr als „Jetzt synchronisieren“ erneut versuchen kann");
     expect(await stripText(failing(FLOOR), "de")).toContain("konnte mehr als 10.500 Einträge");
   });
