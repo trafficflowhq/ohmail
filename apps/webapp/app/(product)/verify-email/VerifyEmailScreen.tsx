@@ -30,9 +30,12 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { apiConfigured, auth, codeOf, messageOf } from "../../api-client";
+import { verifyRefusal } from "../join/signup-refusals";
 
 export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
   const t = useTranslations("verify");
+  /** The sign-in throttle's two sentences: this form claims the same keys `login` does. */
+  const tl = useTranslations("login");
   const router = useRouter();
 
   const [token, setToken] = useState(initialToken);
@@ -79,7 +82,9 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
       } catch (err) {
         // `invalid_token` is the one-sentence refusal for every dead link; `credential_refused` is a
         // wrong password, and the token is still live so retrying in place is the right remedy.
-        setError(messageOf(err));
+        // Each in this screen's words; a refusal not named there keeps the server's sentence.
+        const said = verifyRefusal(err);
+        setError(said === null ? messageOf(err) : said.ns === "login" ? tl(said.key) : t(said.key));
         if (codeOf(err) === "invalid_token") setToken("");
       } finally {
         setBusy(false);

@@ -13,7 +13,7 @@ export {
   type OutboundEmail, normalizeRecipient,
 } from "./port.js";
 export {
-  renderTemplate, esc, safeUrl, TEMPLATE_NAMES,
+  renderTemplate, esc, safeUrl, TEMPLATE_NAMES, mailLocaleOf, type MailLocale,
   type RenderedEmail, type TemplateName, type TemplateDataMap, type WaitlistTier,
   type WaitlistConfirmationData, type InviteData,
   type NewDeviceSignInData, type SecurityNoticeData, type EmailVerificationData, type OperatorAlertData,

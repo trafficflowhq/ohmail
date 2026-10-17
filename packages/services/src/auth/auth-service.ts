@@ -39,6 +39,7 @@ import { normalizeRecipient } from "../mail/port.js";
 // peek at rows `consumeEmailVerification` cannot consume, i.e. a link that validates and never
 // works.
 import { EMAIL_VERIFY_PURPOSE } from "../mail/mail-service.js";
+import { mailLocaleOf } from "../mail/templates.js";
 import { generateToken, hashToken, sha256, type PasswordHasher } from "./crypto.js";
 import { throttleKeysFor, THROTTLE_PREFIX, type ThrottleKeys } from "./throttle-keys.js";
 import type { AuthDeps, AuthConfig } from "./types.js";
@@ -641,7 +642,7 @@ export class AuthService extends SessionLifecycle {
    */
   async register(
     ctx: ServiceContext,
-    b: { email: string; password: string; displayName: string; inviteCode?: string },
+    b: { email: string; password: string; displayName: string; inviteCode?: string; locale?: unknown },
   ): Promise<RegistrationResult> {
     // Normalized AND shape-checked: while signup was invite-only the invite row was doing the
     // second job without being asked. See {@link requireEmail}.
@@ -831,9 +832,11 @@ export class AuthService extends SessionLifecycle {
     // resend, so a mail outage costs one sign-in, never an account. `mailed` is for callers
     // inside the trust boundary; the route must never put it on the wire.
     const mail = this.deps.mail!;
+    // The signup screen's language, for BOTH mails alike: a member of the closed set, or English.
+    const locale = mailLocaleOf(b.locale);
     const result = created === null
-      ? await mail.sendAccountExists(ctx, { to: email })
-      : await mail.issueEmailVerification(ctx, { userId: created.openUserId, to: email });
+      ? await mail.sendAccountExists(ctx, { to: email, locale })
+      : await mail.issueEmailVerification(ctx, { userId: created.openUserId, to: email, locale });
     return { status: "verification_pending", mailed: result.status === "sent" };
   }
 
@@ -940,7 +943,7 @@ export class AuthService extends SessionLifecycle {
    * is the identity. The response is uninformative — `{ ok: true }` whether sent, limited, or
    * already verified: a limiter readout on the wire is an oracle.
    */
-  async resendVerification(ctx: ServiceContext): Promise<{ ok: true }> {
+  async resendVerification(ctx: ServiceContext, b?: { locale?: unknown }): Promise<{ ok: true }> {
     const userId = this.requireUser(ctx);
     const mail = this.deps.mail;
     if (!mail) {
@@ -966,7 +969,7 @@ export class AuthService extends SessionLifecycle {
     // proof is pure downside, and the constant response means the caller cannot tell (nor do
     // they need to — the wizard reads `emailVerified` from `GET /auth/session`).
     if (user.emailVerifiedAt === null) {
-      await mail.issueEmailVerification(ctx, { userId, to: user.email });
+      await mail.issueEmailVerification(ctx, { userId, to: user.email, locale: mailLocaleOf(b?.locale) });
     }
     return { ok: true };
   }

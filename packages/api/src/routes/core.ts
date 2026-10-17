@@ -44,7 +44,11 @@ export const coreRoutes: Route[] = [
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
-      const body = await readBody<{ email: string; password: string; displayName: string; inviteCode: string }>(req);
+      // `locale` is the signup screen's language: it picks the mail's language and nothing else
+      // (the service reads it from a closed set, English otherwise).
+      const body = await readBody<{
+        email: string; password: string; displayName: string; inviteCode: string; locale?: unknown;
+      }>(req);
       const result = await auth(deps).register(serviceContext(deps, req), body);
       if (result.status === "verification_pending") {
         // Observability, and it lives here because no service takes a logger — services return
@@ -108,7 +112,9 @@ export const coreRoutes: Route[] = [
     // the fact that it can only ever mail the SESSION's own address.
     cost: "ceremony",
     handler: async (req, deps) => {
-      const result = await auth(deps).resendVerification(serviceContext(deps, req));
+      // The optional body names only the screen's language for the mail; no recipient, as above.
+      const body = await readBody<{ locale?: unknown } | null>(req);
+      const result = await auth(deps).resendVerification(serviceContext(deps, req), { locale: body?.locale });
       return json(result, 200);
     },
   },

@@ -257,7 +257,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // length of that walk is a property of the platform's traffic and not of anything a caller
   // supplies — and a caller could not lengthen it if they wanted to, because there is no channel.
   "GET /internal/platform-signals/run",
-  "POST /auth/verify-email/resend",
   "GET /auth/session",
   "POST /auth/2fa/webauthn/register/options",
   "POST /auth/2fa/totp/enroll",
@@ -500,8 +499,11 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // ── the identity ceremony: credentials, codes and opaque tokens ──────────────────────────
   "POST /auth/register": {
     bounds: [PASSWORD_MAX_LENGTH],
-    door: "`displayName` is stored on one column; the invite code is looked up by equality",
+    door: "`displayName` is stored on one column; the invite code is looked up by equality; `locale` is one of two words that picks the mail's language, anything else is English",
   },
+  /* One field, `locale`, one of two words for the mail's language and otherwise English. The
+     recipient is still the SESSION's own address: there is no field for it. */
+  "POST /auth/verify-email/resend": { scalarsOnly: true },
   // The MAXIMUM only — a stored password shorter than today's minimum must still sign in. This
   // disposition was FALSE until a review round: `login` called `requireField` alone, so the
   // ceiling whose docstring names the scrypt-CPU attack was applied on `register` and not on the

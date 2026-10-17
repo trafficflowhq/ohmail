@@ -42,6 +42,7 @@ import { confirmAccountReturn } from "../../account-return";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 import { gatedRefusal } from "../mailbox/gated-refusal";
 import { PLAN_NAMES, forgetPlanHint, recalledPlanHint, rememberPlanHint, type PlanHint } from "../../plan-hint";
+import { registerRefusal, totpRefusal } from "./signup-refusals";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
@@ -427,9 +428,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       } else if (code === "signup_capacity") {
         // The capacity valve. This is the ONE refusal the wizard cannot retry its way
         // out of, and the remedy is a different surface: the waitlist, which is exactly what
-        // it is for once it stops being the front door. The server's sentence is shown
-        // verbatim above the control, as everywhere else here.
-        setFatal(messageOf(err));
+        // it is for once it stops being the front door. Its sentence is the screen's own.
+        setFatal(t("refusedFull"));
         setFatalAction("waitlist");
       } else if (code === "payment_required") {
         // The allowance gate refused for payment. With the corrected step order this is only
@@ -471,6 +471,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
         out = await auth.register({
           email: email.trim(), password, displayName: displayName.trim(),
           ...(offered.length > 0 ? { inviteCode: offered } : {}),
+          locale: lang, // the verification mail is written in this screen's language
         });
       } catch (err) {
         /* THE DEPLOY-SKEW CASE, and the reason `needsInvite` is state: this webapp is armed for public
@@ -507,6 +508,9 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       // bootstrap 401s and leaves this null — is where the value comes from.
       wizardOwner.current ??= out.user.accountId;
       setStep("factor");
+    }, (err) => {
+      const key = registerRefusal(err);
+      return key === null ? null : t(key);
     });
   };
 
@@ -531,7 +535,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       await auth.totpActivate({ code: totpCode.trim() });
       setTotpCode("");
       setStep("codes");
-    });
+    }, (err) => (totpRefusal(err) === null ? null : t("refusedTotpCode")));
   };
 
   /**
@@ -597,7 +601,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
    */
   const resendVerification = () => void run(async () => {
     if (!await sameAccount()) return;
-    await auth.resendVerification();
+    await auth.resendVerification(lang);
     setResent(true);
   });
 

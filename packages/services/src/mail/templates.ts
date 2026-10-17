@@ -102,7 +102,20 @@ export interface RenderedEmail {
   headers?: Record<string, string>;
 }
 
+/**
+ * The languages a mail can be written in. The signup's two mails take the signup screen's language
+ * (`POST /auth/register`'s optional `locale`, a member of this set or English); the lifecycle notices
+ * take the account's.
+ */
+export type MailLocale = "en" | "de";
+
+export function mailLocaleOf(value: unknown): MailLocale | undefined {
+  return value === "de" || value === "en" ? value : undefined;
+}
+
 interface ShellInput {
+  /** The document's language; English when unset. */
+  lang?: MailLocale;
   title: string;
   /** Paragraphs, already-escaped HTML fragments. */
   blocks: string[];
@@ -123,7 +136,7 @@ function shell(input: ShellInput): string {
     : "";
 
   return `<!doctype html>
-<html lang="en">
+<html lang="${input.lang === "de" ? "de" : "en"}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -413,7 +426,37 @@ export interface EmailVerificationData {
   /** How long the link lives, in whole minutes, rendered as the caller wants it read. */
   expiresIn: string;
   supportEmail: string;
+  /** The signup screen's language; English when unset. */
+  locale?: MailLocale;
 }
+
+const VERIFY_COPY: Record<MailLocale, {
+  subject: string; confirm: string; open: (url: string) => string; once: (expiresIn: string) => string;
+  ifNotYou: string; action: string; noButton: string; human: string;
+}> = {
+  en: {
+    subject: "Verify your email for ohmail",
+    confirm: "Confirm this address to finish setting up your ohmail account.",
+    open: (url) => `Open this link: ${url}`,
+    once: (expiresIn) => `The link works once and expires in ${expiresIn}. You will be asked for the password you chose.`,
+    ifNotYou: "If you did not start this, ignore this message. Without this link the account cannot " +
+      "connect a mailbox and cannot be subscribed to anything.",
+    action: "Verify this address",
+    noButton: "If the button does not work, open",
+    human: "Reach a human:",
+  },
+  de: {
+    subject: "Bestätige deine E-Mail-Adresse für ohmail",
+    confirm: "Bestätige diese Adresse, um die Einrichtung deines ohmail-Accounts abzuschließen.",
+    open: (url) => `Öffne diesen Link: ${url}`,
+    once: (expiresIn) => `Der Link funktioniert einmal und läuft in ${expiresIn} ab. Wir fragen dich nach dem Passwort, das du gewählt hast.`,
+    ifNotYou: "Wenn du das nicht warst, ignoriere diese Nachricht. Ohne diesen Link kann der Account kein " +
+      "Postfach verbinden und nichts abonnieren.",
+    action: "Adresse bestätigen",
+    noButton: "Falls der Button nicht funktioniert, öffne",
+    human: "Einen Menschen erreichen:",
+  },
+};
 
 /**
  * The "if this was not you" line changed, because it had become false. It read "no account is
@@ -426,36 +469,27 @@ export interface EmailVerificationData {
  */
 function emailVerification(d: EmailVerificationData): RenderedEmail {
   const url = safeUrl(d.verifyUrl);
-  const subject = "Verify your email for ohmail";
-  const ifNotYou =
-    "If you did not start this, ignore this message. Without this link the account cannot " +
-    "connect a mailbox and cannot be subscribed to anything.";
+  const locale = mailLocaleOf(d.locale) ?? "en";
+  const c = VERIFY_COPY[locale];
+  const subject = c.subject;
   return {
     subject,
     text: textShell(
       subject,
+      [c.confirm, c.open(url), c.once(d.expiresIn), c.ifNotYou],
       [
-        "Confirm this address to finish setting up your ohmail account.",
-        `Open this link: ${url}`,
-        `The link works once and expires in ${d.expiresIn}. You will be asked for the password you chose.`,
-        ifNotYou,
-      ],
-      [
-        `Reach a human: ${d.supportEmail}`,
+        `${c.human} ${d.supportEmail}`,
         "TrafficFlow GmbH, Zürich, Switzerland",
       ],
     ),
     html: shell({
+      lang: locale,
       title: subject,
-      blocks: [
-        "Confirm this address to finish setting up your ohmail account.",
-        `The link works once and expires in ${esc(d.expiresIn)}. You will be asked for the password you chose.`,
-        ifNotYou,
-      ],
-      action: { label: "Verify this address", url },
+      blocks: [esc(c.confirm), esc(c.once(d.expiresIn)), esc(c.ifNotYou)],
+      action: { label: c.action, url },
       footer: [
-        `If the button does not work, open <a href="${esc(url)}" style="color:${ACCENT};">${esc(url)}</a>`,
-        `Reach a human: <a href="mailto:${esc(d.supportEmail)}" style="color:${ACCENT};">${esc(d.supportEmail)}</a>`,
+        `${esc(c.noButton)} <a href="${esc(url)}" style="color:${ACCENT};">${esc(url)}</a>`,
+        `${esc(c.human)} <a href="mailto:${esc(d.supportEmail)}" style="color:${ACCENT};">${esc(d.supportEmail)}</a>`,
         "TrafficFlow GmbH, Zürich, Switzerland",
       ],
     }),
@@ -523,35 +557,61 @@ export interface AccountExistsData {
   /** `https://ohmail.app/login` — built from config by `MailService`, never by a caller. */
   signInUrl: string;
   supportEmail: string;
+  /** The signup screen's language, as the verification mail's: the two branches stay alike. */
+  locale?: MailLocale;
 }
+
+const EXISTS_COPY: Record<MailLocale, { subject: string; lines: string[]; signIn: string; action: string }> = {
+  en: {
+    subject: "You already have an ohmail account",
+    lines: [
+      "Someone just tried to create an ohmail account with this address. There is already one, " +
+      "so nothing was created and nothing changed.",
+      "If that was you: sign in instead — your existing account is untouched.",
+      "If it was not you: you can ignore this. Whoever tried was not told whether this address " +
+      "has an account, and they have no way in without your password or your passkey.",
+    ],
+    signIn: "Sign in:",
+    action: "Sign in to ohmail",
+  },
+  de: {
+    subject: "Du hast schon einen ohmail-Account",
+    lines: [
+      "Jemand hat gerade versucht, mit dieser Adresse einen ohmail-Account anzulegen. Es gibt schon einen, " +
+      "also wurde nichts angelegt und nichts geändert.",
+      "Wenn du das warst: Melde dich stattdessen an. Dein bestehender Account ist unverändert.",
+      "Wenn nicht, kannst du diese Mail ignorieren. Wer es versucht hat, hat nicht erfahren, ob es zu " +
+      "dieser Adresse einen Account gibt, und kommt ohne dein Passwort oder deinen Passkey nicht hinein.",
+    ],
+    signIn: "Anmelden:",
+    action: "Bei ohmail anmelden",
+  },
+};
 
 function accountExists(d: AccountExistsData): RenderedEmail {
   const url = safeUrl(d.signInUrl);
-  const subject = "You already have an ohmail account";
-  const lines = [
-    "Someone just tried to create an ohmail account with this address. There is already one, " +
-    "so nothing was created and nothing changed.",
-    "If that was you: sign in instead — your existing account is untouched.",
-    "If it was not you: you can ignore this. Whoever tried was not told whether this address " +
-    "has an account, and they have no way in without your password or your passkey.",
-  ];
+  const locale = mailLocaleOf(d.locale) ?? "en";
+  const c = EXISTS_COPY[locale];
+  const v = VERIFY_COPY[locale];
+  const subject = c.subject;
   return {
     subject,
     text: textShell(
       subject,
-      [...lines, `Sign in: ${url}`],
+      [...c.lines, `${c.signIn} ${url}`],
       [
-        `Reach a human: ${d.supportEmail}`,
+        `${v.human} ${d.supportEmail}`,
         "TrafficFlow GmbH, Zürich, Switzerland",
       ],
     ),
     html: shell({
+      lang: locale,
       title: subject,
-      blocks: lines,
-      action: { label: "Sign in to ohmail", url },
+      blocks: c.lines.map(esc),
+      action: { label: c.action, url },
       footer: [
-        `If the button does not work, open <a href="${esc(url)}" style="color:${ACCENT};">${esc(url)}</a>`,
-        `Reach a human: <a href="mailto:${esc(d.supportEmail)}" style="color:${ACCENT};">${esc(d.supportEmail)}</a>`,
+        `${esc(v.noButton)} <a href="${esc(url)}" style="color:${ACCENT};">${esc(url)}</a>`,
+        `${esc(v.human)} <a href="mailto:${esc(d.supportEmail)}" style="color:${ACCENT};">${esc(d.supportEmail)}</a>`,
         "TrafficFlow GmbH, Zürich, Switzerland",
       ],
     }),

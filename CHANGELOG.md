@@ -13,6 +13,16 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Signing up in German stays in German
+
+A German signup was answered in English at almost every turn: the confirmation mail, the "you already have an
+account" mail, every refusal on the signup screens ("email must be a valid address", "invalid TOTP code"), and
+the instructions for each mail provider. The mails are now written in the language of the screen you signed up
+on, the signup and confirmation screens say each refusal in their own words, and the provider instructions are
+written in German. Two lines that were not true are gone: the password hint no longer says a passkey is the
+next step (on ohmail Cloud the next step is the confirmation mail), and the confirmation page no longer says
+"no password to leak" under a password field.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

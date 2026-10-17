@@ -52,6 +52,10 @@ const THIRD_PARTY_KONTO: Record<string, string> = {
   "onboarding.passwordHint": "the mail provider's account password",
   "reply.forwardAsk.verification": "a mail verifying an account at some other service",
   "reply.forwardAsk.security_alert": "a security alert about an account at some other service",
+  "providerPicker.note_microsoft": "the Microsoft account's security defaults, and work accounts at Microsoft",
+  "providerPicker.note_yahoo": "the Yahoo account's security page and its password",
+  "providerPicker.note_infomaniak": "the Infomaniak account's two-factor setting",
+  "providerPicker.help_yahoo": "the name of Yahoo's own account security page",
 };
 
 /** The phone's twins of the two forwarded-mail sentences above. */
@@ -60,14 +64,8 @@ const THIRD_PARTY_KONTO_PHONE = [
   "ohmail hat diese Nachricht als Sicherheitswarnung zu einem Konto erkannt.",
 ];
 
-const SIGNUP_PENDING = "the signup screens' German is rewritten by the signup copy change";
-const PENDING: Record<string, string> = {
-  "join.step_account_lead": SIGNUP_PENDING,
-  "join.footer": SIGNUP_PENDING,
-  "join.step_done_lead": SIGNUP_PENDING,
-};
-/** The signup screens still say Konto; the same change owns them. */
-const pendingKonto = (key: string): boolean => key.startsWith("join.") || key.startsWith("verify.");
+/* Empty since the signup copy change landed: it rewrote the three join lines and the signup screens' Konto. */
+const PENDING: Record<string, string> = {};
 
 const POST_WORD = /[\p{L}\p{N}-]*post[\p{L}\p{N}-]*/giu;
 /** Konto, Kontos, Konten and every compound of them; "Kontakt" is not one. */
@@ -175,7 +173,7 @@ describe("German says Mail, not Post", () => {
 describe("German says Account for the ohmail account, not Konto", () => {
   it("the web catalogue (de.json): Konto only for somebody else's account", () => {
     const found = readDe()
-      .filter(([key]) => !pendingKonto(key) && !(key in THIRD_PARTY_KONTO))
+      .filter(([key]) => !(key in THIRD_PARTY_KONTO))
       .flatMap(([key, value]) => kontoWords(value).map((w) => `${key}: ${w}`));
     expect(found, `the ohmail account is an Account in German:\n  ${found.join("\n  ")}`).toEqual([]);
   });

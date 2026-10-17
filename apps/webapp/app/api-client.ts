@@ -1452,7 +1452,8 @@ export const auth = {
   // path returns `{status:"ok"}` (202) and NO session, byte-identically whether or not the
   // address already had an account — the continuation is the mail, which is the only place the
   // difference can be told to the one person entitled to know it.
-  register: (b: { email: string; password: string; displayName: string; inviteCode?: string }) =>
+  /** `locale` is the signup screen's language: the verification mail is written in it. */
+  register: (b: { email: string; password: string; displayName: string; inviteCode?: string; locale?: "de" | "en" }) =>
     api<EnrollmentSession | RegistrationPending>("/auth/register", { method: "POST", body: b }),
 
   /**
@@ -1464,9 +1465,9 @@ export const auth = {
   verifyEmail: (b: { token: string; password: string }) =>
     api<EnrollmentSession | { status: "verified" }>("/auth/verify-email", { method: "POST", body: b }),
 
-  /** Another link for the SESSION's own address. Takes no recipient, by design. */
-  resendVerification: () =>
-    api<{ ok: true }>("/auth/verify-email/resend", { method: "POST", body: {} }),
+  /** Another link for the SESSION's own address. Takes no recipient, by design; the mail is in `locale`. */
+  resendVerification: (locale?: "de" | "en") =>
+    api<{ ok: true }>("/auth/verify-email/resend", { method: "POST", body: locale ? { locale } : {} }),
 
   login: (b: { email: string; password: string }) =>
     api<LoginResult>("/auth/login", { method: "POST", body: b }),

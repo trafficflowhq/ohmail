@@ -5,7 +5,7 @@ import { bridgeTx, type Db } from "../context.js";
 import { generateToken, hashToken } from "../auth/crypto.js";
 import { isLoopbackHostname } from "../auth/origins.js";
 import { normalizeRecipient, type MailerPort, type MailSendResult } from "./port.js";
-import type { WaitlistTier } from "./templates.js";
+import { mailLocaleOf, type MailLocale, type WaitlistTier } from "./templates.js";
 
 /**
  * The narrow context the mail path needs: a DB handle and a clock.
@@ -429,7 +429,7 @@ export class MailService {
    * to an attacker-supplied inbox. Enforced at issue time against `users.email`.
    */
   async issueEmailVerification(
-    ctx: MailContext, input: { userId: string; to: string },
+    ctx: MailContext, input: { userId: string; to: string; locale?: MailLocale },
   ): Promise<MailSendResult> {
     // `unsolicited`, not `transactional` — see {@link MailQuota}. An anonymous caller on
     // `POST /auth/register` decides who receives this, so it may not spend the budget the
@@ -452,10 +452,12 @@ export class MailService {
       // NO idempotency key. Every re-execution mints a NEW credential, so deduping the
       // mail would leave the user holding a link for a token they never received. The
       // request itself has to be made idempotent one level up, by whoever calls this.
+      const locale = mailLocaleOf(input.locale);
       return this.deps.mailer.send(to, "email_verification", {
         verifyUrl: `${trimSlash(this.cfg.appUrl)}/verify-email?token=${encodeURIComponent(raw)}`,
-        expiresIn: humanDuration(this.cfg.emailVerifyTtlMs),
+        expiresIn: humanDuration(this.cfg.emailVerifyTtlMs, locale),
         supportEmail: this.cfg.supportEmail,
+        ...(locale ? { locale } : {}),
       });
     });
   }
@@ -503,11 +505,13 @@ export class MailService {
       }));
   }
 
-  async sendAccountExists(ctx: MailContext, input: { to: string }): Promise<MailSendResult> {
+  async sendAccountExists(ctx: MailContext, input: { to: string; locale?: MailLocale }): Promise<MailSendResult> {
+    const locale = mailLocaleOf(input.locale);
     return this.guarded(ctx, input.to, "unsolicited", (to) =>
       this.deps.mailer.send(to, "account_exists", {
         signInUrl: `${trimSlash(this.cfg.appUrl)}/login`,
         supportEmail: this.cfg.supportEmail,
+        ...(locale ? { locale } : {}),
       }, {
         idempotencyKey: `exists:${hashToken(`${to}|${ctx.now().toISOString().slice(0, 13)}`)}`,
       }));
@@ -624,13 +628,15 @@ function scrubForLog(e: unknown): string {
     .slice(0, 200);
 }
 
-function humanDuration(ms: number): string {
+/** A duration as the mail's sentence reads it ("expires in …" / "läuft in … ab", the dative). */
+function humanDuration(ms: number, locale: MailLocale = "en"): string {
   const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const de = locale === "de";
+  if (minutes < 60) return de ? `${minutes} ${minutes === 1 ? "Minute" : "Minuten"}` : `${minutes} minute${minutes === 1 ? "" : "s"}`;
   const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  if (hours < 48) return de ? `${hours} ${hours === 1 ? "Stunde" : "Stunden"}` : `${hours} hour${hours === 1 ? "" : "s"}`;
   const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"}`;
+  return de ? `${days} ${days === 1 ? "Tag" : "Tagen"}` : `${days} day${days === 1 ? "" : "s"}`;
 }
 
 const trimSlash = (url: string): string => url.replace(/\/+$/, "");

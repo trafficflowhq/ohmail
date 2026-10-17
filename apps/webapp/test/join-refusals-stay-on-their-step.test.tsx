@@ -161,12 +161,12 @@ describe("the account step keeps its own refusals, and the invite step opens onl
     return ui;
   };
 
-  it("an address the browser takes and the server does not (mila@gmailcom): still the account step, the server's sentence", async () => {
+  it("an address the browser takes and the server does not (mila@gmailcom): still the account step, its own sentence", async () => {
     registerAnswer = refusal(400, "validation_failed", "email must be a valid address");
     const ui = await openAccountForm("mila@gmailcom");
     await ui.submit(en.join.createAccount);
     expect(ui.h1()).toBe(en.join.step_account_title);
-    expect(ui.alertText()).toContain("email must be a valid address");
+    expect(ui.alertText()).toContain(en.join.refusedEmail);
     expect(ui.value("join-email")).toBe("mila@gmailcom");
   });
 

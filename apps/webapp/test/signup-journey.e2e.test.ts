@@ -13,6 +13,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { createApp, apiRoutes, makeProbeHostGuard, type ApiDeps } from "@trafficflow/api";
 import type { AccessLifecycle, AccessVerdict, EntitlementsPort, PlanHint } from "@trafficflow/db";
 import { makeDeps } from "../../../packages/api/test/helpers.js";
+import de from "../messages/de.json";
 
 type SpyMailer = Awaited<ReturnType<typeof makeDeps>>["mailer"];
 
@@ -340,6 +341,59 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       await p.locator('a.btn.primary[href^="https://plane.example/"]').waitFor({ timeout: 30_000 });
       expect(plane.mints, "the plan step's mint carries the language and the site's choice")
         .toContainEqual({ lang: "en", hint: { plan: "pro", interval: "year" } });
+    } finally {
+      await fresh.close();
+    }
+  }, 120_000);
+
+  it("a German signup is answered in German: the mail, a wrong password, a wrong code, the provider note", async () => {
+    await newWorld();
+    const fresh = await browser!.newContext();
+    await fresh.addCookies([{ name: "ohmail.locale", value: "de", domain: "localhost", path: "/" }]);
+    try {
+      const p = await fresh.newPage();
+      const who = { email: "lena@family.example", password: "ein-langes-passwort-fuer-ohmail", totpSecret: "" };
+      await p.goto(`http://localhost:${webPort}/join`);
+      await p.locator("#join-email").waitFor({ timeout: 30_000 });
+      await p.fill("#join-email", who.email);
+      await p.fill("#join-name", "Lena Graf");
+      await p.fill("#join-pw", who.password);
+      await p.getByRole("button", { name: de.join.createAccount }).click();
+      await p.getByRole("heading", { name: de.join.step_sent_title }).waitFor({ timeout: 30_000 });
+
+      const mail = world.mailer.sent.find((m) => m.to === who.email && m.template === "email_verification");
+      expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
+      expect(mail!.rendered.subject).toBe("Bestätige deine E-Mail-Adresse für ohmail");
+      expect(mail!.rendered.html).toContain('<html lang="de">');
+
+      const token = new URL((mail!.data as { verifyUrl: string }).verifyUrl).searchParams.get("token");
+      await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);
+      await p.fill("#verify-pw", "nicht-das-richtige-passwort");
+      await p.getByRole("button", { name: de.verify.confirm }).click();
+      await p.locator(".join-error").first().waitFor({ timeout: 30_000 });
+      expect(await p.locator(".join-error").first().textContent()).toBe(de.verify.refusedPassword);
+      await p.fill("#verify-pw", who.password);
+      await p.getByRole("button", { name: de.verify.confirm }).click();
+      await p.getByRole("heading", { name: de.join.step_factor_title }).waitFor({ timeout: 30_000 });
+
+      await p.getByRole("button", { name: de.join.useTotp }).click();
+      who.totpSecret = ((await p.locator(".join-secret code").textContent()) ?? "").trim();
+      const right = totpAt(who.totpSecret, world.clock.now());
+      await p.fill("#join-totp", right === "000000" ? "111111" : "000000");
+      await p.getByRole("button", { name: de.join.activate }).click();
+      await p.locator(".join-error").first().waitFor({ timeout: 30_000 });
+      expect(await p.locator(".join-error").first().textContent()).toBe(de.join.refusedTotpCode);
+      await p.fill("#join-totp", right);
+      await p.getByRole("button", { name: de.join.activate }).click();
+      await p.locator(".join-codes li").first().waitFor({ timeout: 30_000 });
+      await p.locator(".join-check input[type=checkbox]").check();
+      await p.getByRole("button", { name: de.join.continue }).click();
+      await p.getByRole("heading", { name: de.join.step_mailbox_title }).waitFor({ timeout: 30_000 });
+
+      await p.getByRole("radio", { name: /GMX/ }).click();
+      expect(await p.locator(".pvp-note p").first().textContent()).toBe(de.providerPicker.note_gmx);
+      const text = await p.evaluate(() => document.body?.innerText ?? "");
+      expect(text, "English left on the German mailbox step").not.toMatch(/GMX ships with IMAP|enabling IMAP/);
     } finally {
       await fresh.close();
     }

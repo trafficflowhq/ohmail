@@ -144,10 +144,12 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
         // Keyed by provider so switching re-runs the rise — the panel visibly answers
         // the click rather than silently swapping its text.
         <div className="pvp-note" id={noteId} key={selected.id}>
-          <p>{note ?? selected.note}</p>
+          {/* The preset's note and help label in the screen's language: the catalogue's
+              `note_<id>` and `help_<id>`, whose English is held equal to the engine table's. */}
+          <p>{note ?? t(`note_${selected.id}` as Parameters<typeof t>[0])}</p>
           {showHelp && selected.helpUrl ? (
             <a href={selected.helpUrl} target="_blank" rel="noreferrer noopener">
-              {selected.helpLabel}
+              {t(`help_${selected.id}` as Parameters<typeof t>[0])}
               <Icon name="open" size={11} />
             </a>
           ) : null}
