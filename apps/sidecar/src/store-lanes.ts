@@ -111,6 +111,47 @@ export function onPersonEdge(listener: (waiting: boolean) => void): () => void {
   return () => { personEdges.delete(listener); };
 }
 
+/**
+ * A PERSON AT THE WINDOW: their requests in flight, and when the last one ended. The store's
+ * upkeep (a checkpoint holds the thread for up to 1.8 s on a 74k store) waits for this to go quiet.
+ */
+let windowRequests = 0;
+let windowLastAt = Number.NEGATIVE_INFINITY;
+
+/** How long after a person's last request the store's upkeep may take the thread. */
+export const WINDOW_QUIET_MS = 2_000;
+/** The longest the upkeep waits for that, so a person who never pauses cannot starve it. */
+export const UPKEEP_DEFER_MAX_MS = 30_000;
+
+/** Run `fn` as a person's request at the window (or a paired device): upkeep waits for it. */
+export function forWindow<T>(fn: () => Promise<T>): Promise<T> {
+  windowRequests++;
+  return new Promise<T>((resolve) => resolve(fn())).finally(() => {
+    windowRequests--;
+    windowLastAt = performance.now();
+  });
+}
+
+/** Whether no person's request is in flight or ended within `quietMs`. */
+export function windowIsQuiet(quietMs: number = WINDOW_QUIET_MS): boolean {
+  return windowRequests === 0 && performance.now() - windowLastAt >= quietMs;
+}
+
+/** Resolve once {@link windowIsQuiet}, or after `maxMs` whatever the window does. */
+export function untilWindowQuiet(quietMs: number = WINDOW_QUIET_MS, maxMs: number = UPKEEP_DEFER_MAX_MS): Promise<void> {
+  if (windowIsQuiet(quietMs)) return Promise.resolve();
+  const deadline = performance.now() + maxMs;
+  return new Promise<void>((resolve) => {
+    const look = (): void => {
+      const left = deadline - performance.now();
+      if (left <= 0 || windowIsQuiet(quietMs)) return resolve();
+      const since = windowRequests > 0 ? 0 : performance.now() - windowLastAt;
+      setTimeout(look, Math.max(1, Math.min(quietMs - since, left))).unref?.();
+    };
+    look();
+  });
+}
+
 /** Whether mail is being taken in right now — the condition the scheduler engages on. */
 export function ingestIsRunning(): boolean {
   return drainsRunning > 0;

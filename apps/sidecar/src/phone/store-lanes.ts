@@ -32,3 +32,8 @@ export function ingestIsRunning(): boolean {
 export function forPerson<T>(fn: () => Promise<T>): Promise<T> {
   return fn();
 }
+
+/** A request at the window, as the desktop names it; the phone's store has no checkpoint to hold off. */
+export function forWindow<T>(fn: () => Promise<T>): Promise<T> {
+  return fn();
+}

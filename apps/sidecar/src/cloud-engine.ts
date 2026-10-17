@@ -58,6 +58,8 @@ import { createAdoptedDoor, DoorFileError, serialTail } from "./adopted-door.js"
 import { operatorCaFiles } from "./operator-ca-fetch.js";
 import { answerCloudProbe, CLOUD_PROBE_ROUTE } from "./cloud-probe.js";
 import { ATTACHMENT_FILE_ROUTE, relayAttachmentToFile } from "./attachment-file.js";
+import { isPersonRequest } from "./attention.js";
+import { forWindow } from "./store-lanes.js";
 /* Re-exported so the probe's existing importers keep one address for it. */
 export { describeProbeFailure, probeCloudDoor, probeCloudServer, PROBE_DEADLINE_MS } from "./cloud-probe.js";
 import type { Diagnostic } from "./log.js";
@@ -2102,10 +2104,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        press meets its session or its adopted account instead of running beside it. */
     const signInTail = serialTail();
     const SIGN_IN_PATHS: ReadonlySet<string> = new Set(["/cloud/signin", "/cloud/pair-redeem"]);
-    const queued = (req: Request): Promise<Response> =>
+    const serial = (req: Request): Promise<Response> =>
       req.method === "POST" && SIGN_IN_PATHS.has(new URL(req.url).pathname)
         ? signInTail(() => handle(req))
         : handle(req);
+    /* A person's request holds the mirror's checkpoint off until the window is quiet (`db.ts`). Not the
+       `/local/` routes (the window outbox, its reports): the local door answers those before it marks. */
+    const queued = (req: Request): Promise<Response> => {
+      const path = new URL(req.url).pathname;
+      return isPersonRequest(req.method, path) && !path.startsWith("/local/") ? forWindow(() => serial(req)) : serial(req);
+    };
 
     return {
       db,

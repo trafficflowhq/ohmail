@@ -18,8 +18,9 @@ import {
   type LogBounds, type LogMark,
 } from "@trafficflow/db/dialect";
 import {
-  SCHEDULED_STORE_METHODS, STORE_FLUSH, createStoreScheduler, currentStoreLane, inStoreLane,
-  outsideStoreLanes, scheduleStoreLanes, type StoreLaneCensus,
+  SCHEDULED_STORE_METHODS, STORE_FLUSH, UPKEEP_DEFER_MAX_MS, WINDOW_QUIET_MS, createStoreScheduler,
+  currentStoreLane, inStoreLane, outsideStoreLanes, scheduleStoreLanes, untilWindowQuiet, windowIsQuiet,
+  type StoreLaneCensus,
 } from "./store-lanes.js";
 import { LocalStoreFs, StoreFsyncMissingError } from "./pglite-transport.js";
 import { writeAtomicFileSynced } from "./fs-atomic.js";
@@ -614,13 +615,13 @@ export interface OpenLocalDb {
    * interval while the database is open; exposed because a periodic side effect nothing can call is
    * a periodic side effect nothing can check. See {@link checkpointWal}.
    */
-  checkpoint(): Promise<number>;
+  checkpoint(onWait?: () => void): Promise<number>;
   /**
    * Take one only once the log has GROWN past {@link INGEST_FOLD_WAL_BYTES} since the last fold —
    * the gate the drain's per-cycle call goes through. See {@link walGrownSince} for the pointer it
    * reads and why it is the insert one.
    */
-  foldIfLogGrew(): Promise<StoreFold>;
+  foldIfLogGrew(onWait?: () => void): Promise<StoreFold>;
   /**
    * How many writes this store has committed (`store-writes.ts`): what lowers the store's sentence.
    * Absent on a store that cannot say, which leaves the sentence to a stored message alone.
@@ -765,6 +766,8 @@ export interface OpenLocalDbOptions {
   logFlushIntervalMs?: number;
   /** The {@link CHECKPOINT_SLOW_MS} floor, injectable so a test can drive both sides of it. */
   slowCheckpointFloorMs?: number;
+  /** The window's {@link WINDOW_QUIET_MS} and {@link UPKEEP_DEFER_MAX_MS}, injectable for a test. */
+  upkeepGate?: { quietMs: number; deferMaxMs: number };
   /** The close's {@link STORE_CLOSE_WAIT_MS} bound. Production takes the default; 0 is refused. */
   closeWaitMs?: number;
   /**
@@ -2091,8 +2094,23 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     /* ONE CHECKPOINT AT A TIME: the periodic tick, the drain's and the fold's queue on one chain,
        so none lands inside another and each fold's gate reads the mark the one before it left. */
     let checkpointing: Promise<unknown> = Promise.resolve();
-    const oneAtATime = <T>(fn: () => Promise<T>): Promise<T> => {
-      const run = checkpointing.then(fn);
+    /* AND EACH WAITS FOR THE WINDOW. A checkpoint holds the thread, nearly all of it in fsync: 0.4 to
+       1.8 s on the 74k rig store, which every request behind it waited out. So it starts once no
+       person's request has run for `quietMs`, or `deferMaxMs` after it was asked for whatever the
+       window does. Commits are on the disk through the log already; a later one only means more log
+       to replay. */
+    const gate = opts.upkeepGate ?? { quietMs: WINDOW_QUIET_MS, deferMaxMs: UPKEEP_DEFER_MAX_MS };
+    /* `onWait` is told, here in the chain, when the entry cannot start at once: behind another, or at
+       its gate with the window busy. The drain is released on it and the work stays queued. */
+    let queued = 0;
+    const oneAtATime = <T>(fn: () => Promise<T>, onWait?: () => void): Promise<T> => {
+      const due = performance.now() + gate.deferMaxMs;
+      if (queued > 0) onWait?.();
+      queued++;
+      const run = checkpointing.then(() => {
+        if (!windowIsQuiet(gate.quietMs)) onWait?.();
+        return untilWindowQuiet(gate.quietMs, Math.max(0, due - performance.now()));
+      }).then(fn).finally(() => { queued--; });
       checkpointing = run.catch(() => undefined);
       return run;
     };
@@ -2105,7 +2123,19 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       logMark = { folded: at };
       return dropped;
     };
-    const checkpoint = (): Promise<number> => oneAtATime(() => takeCheckpoint("asked"));
+    /* One that has not started takes every later ask: their writes are behind it when it starts. */
+    let waiting: Promise<number> | null = null;
+    const gatedCheckpoint = (kind: "periodic" | "asked", onWait?: () => void): Promise<number> => {
+      if (waiting !== null) {
+        onWait?.();
+        return waiting;
+      }
+      const behind = queued > 0 || !windowIsQuiet(gate.quietMs);
+      const run = oneAtATime(() => { waiting = null; return takeCheckpoint(kind); }, onWait);
+      if (behind) waiting = run;
+      return run;
+    };
+    const checkpoint = (onWait?: () => void): Promise<number> => gatedCheckpoint("asked", onWait);
     const bounds: LogBounds = {
       foldBytes: opts.ingestFoldWalBytes ?? INGEST_FOLD_WAL_BYTES,
     };
@@ -2116,7 +2146,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
      * count stays here, where the data directory is. An unreadable mark folds rather than
      * skipping, which is the safe side of a question about what a crash would replay.
      */
-    const foldIfLogGrew = (): Promise<StoreFold> => oneAtATime(async (): Promise<StoreFold> => {
+    const foldIfLogGrew = (onWait?: () => void): Promise<StoreFold> => oneAtATime(async (): Promise<StoreFold> => {
       if (closed) return { folded: false, grewBytes: 0, dropped: 0 };
       const before = walSegments(pgDataDir);
       const began = Date.now();
@@ -2127,7 +2157,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       const dropped = before - walSegments(pgDataDir);
       noteCheckpoint(log, "fold", dropped, Date.now() - began, slowCheckpointMs);
       return { folded: true, grewBytes: out.grewBytes, dropped };
-    });
+    }, onWait);
     /* WHERE THE WINDOW STARTS — the pointer as the open leaves it, so the first drain's gate
        measures the mail that drain took and not the migrator and compaction behind it. */
     const opened = await walGrownSince(client, "0/0").then((r) => r.at).catch(() => null);
@@ -2141,7 +2171,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const schedule = (): void => {
       if (closed) return;
       tick = setTimeout(() => {
-        void oneAtATime(() => takeCheckpoint("periodic")).finally(schedule);
+        void gatedCheckpoint("periodic").finally(schedule);
       }, every);
       tick.unref?.();
     };

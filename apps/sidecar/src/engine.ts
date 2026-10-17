@@ -221,7 +221,7 @@ import {
   closeAfterFailedStart, openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress,
   type OpenLocalDb,
 } from "./db.js";
-import { forPerson, inStoreLane, ingestIsRunning } from "./store-lanes.js";
+import { forPerson, forWindow, inStoreLane, ingestIsRunning } from "./store-lanes.js";
 import { awaitFirstPage, firstPageDoorArmed, yieldsToFirstPage } from "./first-page-gate.js";
 
 /**
@@ -262,7 +262,7 @@ import {
   WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
 } from "./window-report.js";
 import { WINDOW_OUTBOX_ROUTE, adoptLegacyWindowOutbox, createWindowOutbox, windowOutboxOwnerKey } from "./window-outbox.js";
-import { createAttentionClock } from "./attention.js";
+import { createAttentionClock, isPersonRequest } from "./attention.js";
 import type { PowerVerdict } from "./host-power.js";
 import { startSearchIndexBackfill } from "./search-backfill.js";
 import { SEARCH_WARMUP_WORD, createSearchWarmup, type SearchWarmup } from "./search-warmup.js";
@@ -6365,7 +6365,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           await loopTurn();
           return inStoreLane("ingest", step);
         };
-        if (cycles > 0 && census.observed > 0 && (await upkeep(() => opened.foldIfLogGrew())).folded) checkpoints += 1;
+        /* A FOLD OR CHECKPOINT WAITS FOR THE WINDOW TO GO QUIET (`db.ts`), AND THE DRAIN DOES NOT WAIT
+           WITH IT: the store's chain says when it cannot start at once, and the drain goes on with
+           `null` while the work stays queued, so the next pass and its moves are not held. */
+        const unlessItWaits = <T>(ask: (onWait: () => void) => Promise<T>): Promise<T | null> =>
+          upkeep(() => new Promise<T | null>((resolve, reject) => { ask(() => resolve(null)).then(resolve, reject); }));
+        if (cycles > 0 && census.observed > 0
+          && (await unlessItWaits((onWait) => opened.foldIfLogGrew(onWait)))?.folded) checkpoints += 1;
         if (cycles > 0 && census.observed > 0) await upkeep(() => statisticsUpkeep.noteIngested(census.observed));
         /* RETENTION, the hosted horizon on this store: hourly, one batch, never while mail comes in.
            Asked before the lane, which would itself read as mail coming in. See `local-retention.ts`. */
@@ -6544,8 +6550,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const markAtEnd = await changeLogMark();
           const tailWrote = markAtStart === null || markAtEnd === null || markAtEnd !== markAtStart;
           if (cycles > 0 && (census.observed > 0 || tailWrote)) {
-            await upkeep(() => opened.checkpoint());
-            checkpoints += 1;
+            if ((await unlessItWaits((onWait) => opened.checkpoint(onWait))) !== null) checkpoints += 1;
           }
           // What the memo above is held against next time — see the note at `markAtStart`.
           knownSetMark = markAtStart;
@@ -8651,9 +8656,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
 
     /* A SEARCH IS A PERSON WAITING, on every door: its statements go ahead of a drain's and the
        drain waits for it (`forPerson`). Only the search — a poll that jumped the queue would starve
-       the mail it is polling for. */
-    const asPerson = (req: Request, run: () => Promise<Response>): Promise<Response> =>
-      req.method === "GET" && new URL(req.url).pathname === "/search" ? forPerson(run) : run();
+       the mail it is polling for. And every person's request holds the store's checkpoint off until
+       the window goes quiet (`forWindow`, `db.ts`); a poll does not, or an open window would. */
+    const asPerson = (req: Request, run: () => Promise<Response>): Promise<Response> => {
+      const path = new URL(req.url).pathname;
+      const answer = req.method === "GET" && path === "/search" ? () => forPerson(run) : run;
+      return isPersonRequest(req.method, path) ? forWindow(answer) : answer();
+    };
 
     let lastDoorMark: string | null = null;
     let doorKickInFlight = false;

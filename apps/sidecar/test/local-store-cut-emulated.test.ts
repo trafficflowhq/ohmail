@@ -4,7 +4,7 @@ import { join, resolve, sep } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { PGDATA_SUBDIR, openLocalDb, type OpenLocalDb } from "../src/db.js";
-import { inStoreLane } from "../src/store-lanes.js";
+import { forWindow, inStoreLane } from "../src/store-lanes.js";
 import { freshDataDir } from "./_datadir.js";
 
 /**
@@ -155,7 +155,7 @@ async function fill(h: OpenLocalDb, mb: number): Promise<void> {
 }
 
 /** One cut: a store that has existed a while, a session in `shape`, the cut, and what the image keeps. */
-async function cut(shape: "linux" | "windows", kind: "open" | "checkpoint"): Promise<string> {
+async function cut(shape: "linux" | "windows", kind: "open" | "checkpoint" | "deferred"): Promise<string> {
   const dir = await freshDataDir(`ohmail-cut-${shape}-${kind}-`);
   dirs.push(dir);
   const made = await openLocalDb(dir);
@@ -165,18 +165,29 @@ async function cut(shape: "linux" | "windows", kind: "open" | "checkpoint"): Pro
   const disk = new Disk(join(dir, PGDATA_SUBDIR));
   const ids: string[] = [];
   let h: OpenLocalDb | null = null;
+  /* "deferred": a person's request is open, so the checkpoint asked after the log grew is still
+     waiting for the window (`db.ts`) when the power goes. */
+  let release = (): void => {};
+  let checkpointed = false;
   disk.install();
   try {
     h = await withNodeShape(shape, () => openLocalDb(dir));
     await acknowledged(h, "A", 10, acct, mbx, ids);
     if (kind === "checkpoint") { await h.checkpoint(); await fill(h, 3); await h.checkpoint(); }
+    if (kind === "deferred") {
+      await fill(h, 3);
+      void forWindow(() => new Promise<void>((r) => { release = r; }));
+      void h.checkpoint().then(() => { checkpointed = true; });
+    }
     await acknowledged(h, "D", 10, acct, mbx, ids);
   } finally {
     disk.restore();
   }
   const image = disk.image(dir);
   dirs.push(image);
+  release();
   await h?.close();
+  if (kind === "deferred" && checkpointed) return "THE CHECKPOINT RAN BEFORE THE CUT";
   let after: OpenLocalDb;
   try {
     after = await openLocalDb(image);
@@ -199,6 +210,10 @@ describe("a power cut emulated at the node:fs seam", () => {
 
   it("keeps the store and every row cut after a checkpoint that recycled the log, with Windows' fs constants", async () => {
     expect(await cut("windows", "checkpoint")).toBe("KEPT 40/40");
+  }, 180_000);
+
+  it("keeps every acknowledged row cut while a checkpoint waits for the window, with Windows' fs constants", async () => {
+    expect(await cut("windows", "deferred")).toBe("KEPT 40/40");
   }, 180_000);
 
   /* The control: the ordinary shape keeps them too, so a red above is the shape's and not the emulator's. */
