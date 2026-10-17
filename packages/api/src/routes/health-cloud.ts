@@ -145,6 +145,10 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // pass READS the table, so a worker ahead of it dies inside the evaluation rather than
   // delivering the finding that would explain why.
   ["api_faults", "arm"],
+  // cloud 0048_alert_driver_gaps — `max_gap_at`, the table's last column. The SWALLOWED kind: the
+  // alert pass writes it in the run stamp's statement, so a host ahead of the migration loses its
+  // stamp silently and the other arm reports it dark.
+  ["alert_driver_gaps", "max_gap_at"],
   // cloud 0036_staff_step_up_and_pending_totp — THREE markers, one per table it touches, because
   // each is missing in a different way. `staff_users.totp_pending_started_at` is that table's LAST
   // added column, on `api_faults.arm`'s rule: absent, `totp/begin` 42703s and nobody can enrol,

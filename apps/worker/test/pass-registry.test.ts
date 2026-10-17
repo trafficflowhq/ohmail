@@ -76,6 +76,7 @@ const IN_WORKER_PASSES: readonly string[] = [
      on the API host, because THIS app's platform blocks outbound SMTP submission at the port level
      (`smtp-size.ts`) and the responder therefore had almost certainly never delivered a reply from
      here. A pass that cannot dial is not a pass this worker owns. */
+  "alert-gap-prune.ts::alertGapPrunePass",
   "api-fault-prune.ts::apiFaultPrunePass",
   "refund-obligation-drain.ts::refundObligationDrainPass",
   "retention-prune.ts::retentionPrunePass",

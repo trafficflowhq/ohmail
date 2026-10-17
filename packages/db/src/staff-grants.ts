@@ -195,6 +195,10 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     "driver", "ran_at", "firing", "delivered", "failed_sinks", "sink_failure_streak",
     "sinks_configured",
   ],
+  // Per-driver gap history (cloud 0048), granted whole on the row above's terms: a driver word, a
+  // day, counts and a timestamp, no `account_id`. Written too (INSERT/UPDATE in the harden
+  // script): the API arm's pass stamps it in the same statement as `alert_pass_runs`.
+  "public.alert_driver_gaps": ["driver", "day", "passes", "max_gap_s", "max_gap_at"],
   // What the platform served (cloud 0030). Granted whole for `platform_costs`'s reason one table
   // over: this is what a VENDOR did, not what a customer did. `project` is a deployment name this
   // repository chooses; `requests` and `errors_5xx` are counts of HTTP requests with no path, no

@@ -162,6 +162,11 @@ export interface AdminAlertDriver {
    * Zero is reserved for a pass that ran and counted none; unknown says unknown.
    */
   sinksConfigured: number | null;
+  /**
+   * The longest this arm went without a recorded pass in the last 30 days, in seconds (the live
+   * gap included). NULL when it cannot be said: never run, or the history was unreadable.
+   */
+  longestGap30dS: number | null;
 }
 
 /**

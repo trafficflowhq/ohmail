@@ -1,5 +1,5 @@
 import {
-  runAlertPass, listOpenAlerts, newDeliveryStreak, firingToLog,
+  runAlertPass, listOpenAlerts, alertDriverStatuses, newDeliveryStreak, firingToLog,
   sinkHealthOf,
   type AlertSink,
 } from "@trafficflow/db/cloud";
@@ -644,8 +644,14 @@ export const internalRoutes: Route[] = [
         return json(401, { error: { code: "unauthorized" } });
       }
       try {
-        const open = await listOpenAlerts(await gate.staff());
-        return json(200, { now: deps.now().toISOString(), open });
+        const staff = await gate.staff();
+        const now = deps.now();
+        const open = await listOpenAlerts(staff);
+        // Both arms' last pass and their longest 30-day gap: self-host has no console to read it.
+        const drivers = (await alertDriverStatuses(staff, now)).map((d) => ({
+          driver: d.driver, ranAt: d.ranAt?.toISOString() ?? null, longestGap30dS: d.longestGap30dS,
+        }));
+        return json(200, { now: now.toISOString(), open, drivers });
       } catch {
         return json(503, { error: { code: "alert_read_failed" } });
       }

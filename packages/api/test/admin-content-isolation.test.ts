@@ -708,6 +708,9 @@ const UNSEEDED_TABLES: readonly string[] = [
   // the account graph — so there is no join by which mail could arrive in one.
   "alert_pass_runs",
   "platform_signals",
+  // Cloud 0048, on `alert_pass_runs`' terms: per driver per day, a driver word from a two-value
+  // CHECK, a date, two counts and a timestamp. No `account_id`, no FK into the account graph.
+  "alert_driver_gaps",
 ];
 
 /**

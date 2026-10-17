@@ -385,6 +385,22 @@ export const alertPassRuns = pgTable("alert_pass_runs", {
 });
 
 /**
+ * Per-driver gap history (cloud 0048): one row per alert driver per UTC day, written in the same
+ * statement that stamps `alertPassRuns`. `max_gap_s` is the longest silence a pass of that day
+ * ended, `max_gap_at` the pass that ended it. No `account_id`: a fact about a process.
+ */
+export const alertDriverGaps = pgTable("alert_driver_gaps", {
+  driver: text("driver").notNull(),
+  day: date("day").notNull(),
+  passes: integer("passes").notNull().default(0),
+  maxGapS: integer("max_gap_s").notNull().default(0),
+  maxGapAt: timestamp("max_gap_at", { withTimezone: true }),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.driver, t.day], name: "alert_driver_gaps_pk" }),
+  ckDriver: check("alert_driver_gaps_driver_check", sql`${t.driver} in ('worker', 'api')`),
+}));
+
+/**
  * What the hosting platform served (cloud 0030) — request and error counts per project per
  * window. The API host's 5xx rate is invisible from inside the host: an invocation that returns a
  * 502 and dies writes nothing here; only the platform's own request-log store knows. A
@@ -951,7 +967,7 @@ export const erasedBearers = pgTable("erased_bearers", {
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
-  workerHeartbeats, alertState, alertPassRuns, platformSignals, apiFaults,
+  workerHeartbeats, alertState, alertPassRuns, alertDriverGaps, platformSignals, apiFaults,
   waitlist, staffUsers, staffSessions, staffAuditLog, staffRoleGrants, staffAuditEvents,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,

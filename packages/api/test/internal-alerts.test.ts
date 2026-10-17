@@ -359,6 +359,19 @@ describe("GET /internal/alerts — read-only", () => {
     expect(await db.select().from(alertState)).toEqual(before);
   });
 
+  it("reports both arms and their longest 30-day gap — self-host has no console to read it", async () => {
+    const { deps } = await makeDeps();
+    const cfg = { secret: SECRET, sinks: [spySink()] };
+    await H(post(SECRET), { ...deps, alerts: cfg });
+    const body = await (await H(get(SECRET), { ...deps, alerts: cfg })).json();
+    const [worker, api] = body.drivers as Array<{ driver: string; ranAt: string | null; longestGap30dS: number | null }>;
+    // The worker never ran here: unknown, never a zero that reads as "never dark".
+    expect(worker).toEqual({ driver: "worker", ranAt: null, longestGap30dS: null });
+    expect(api!.driver).toBe("api");
+    expect(api!.ranAt).not.toBeNull();
+    expect(typeof api!.longestGap30dS).toBe("number");
+  });
+
   it("carries the same 404/401 gates as the POST", async () => {
     const { deps } = await makeDeps();
     expect((await H(get(SECRET), deps)).status).toBe(404);

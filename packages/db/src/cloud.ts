@@ -114,6 +114,7 @@ export {
   newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
   alertSignature, firingToLog, alertClass, incidentsOf, signalsOf,
   alertDriverStatuses, platformSignalWindow, CLOUD_JOURNAL_HEAD_WHEN,
+  pruneAlertDriverGaps, ALERT_DRIVER_GAP_RETENTION_DAYS, ALERT_DRIVER_GAP_WINDOW_MS,
   DEFAULT_ALERT_THRESHOLDS, DEFAULT_ALERT_REPEAT_MS, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS,
   DEFAULT_CRITICAL_HOURLY_PAGES, DEFAULT_ALERT_FLAP_FLOOR_MS,
   SCOPED_ALERT_KINDS, ALERT_KIND_ARMS, alertKindArms, DRIVER_NEVER_RAN, evaluateAlertsWithScope,

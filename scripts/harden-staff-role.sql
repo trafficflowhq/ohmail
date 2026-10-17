@@ -783,6 +783,19 @@ GRANT INSERT (driver, ran_at, firing, delivered, failed_sinks, sink_failure_stre
 GRANT UPDATE (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak, sinks_configured)
   ON public.alert_pass_runs TO ohmail_admin;
 
+-- `alert_driver_gaps` (cloud 0048) — one row per alert driver per day: passes, the longest gap a
+-- pass ended and when. WRITTEN by this role for `alert_pass_runs`' reason: the API arm's pass
+-- writes it in the same statement as its run stamp, so a missing grant fails that stamp too.
+-- A driver word, a day, counts and a timestamp; no `account_id`. NO DELETE: the worker prunes on
+-- its own connection.
+REVOKE ALL ON public.alert_driver_gaps FROM ohmail_admin;
+GRANT SELECT (driver, day, passes, max_gap_s, max_gap_at)
+  ON public.alert_driver_gaps TO ohmail_admin;
+GRANT INSERT (driver, day, passes, max_gap_s, max_gap_at)
+  ON public.alert_driver_gaps TO ohmail_admin;
+GRANT UPDATE (driver, day, passes, max_gap_s, max_gap_at)
+  ON public.alert_driver_gaps TO ohmail_admin;
+
 -- `platform_signals` (cloud 0030) — request and error counts from the hosting platform's own log
 -- store, polled per project per five-minute window.
 --

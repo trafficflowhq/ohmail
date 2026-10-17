@@ -1,7 +1,7 @@
 import { and, eq, exists, gt, isNotNull, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
-  alertPassRuns, alertState, authEvents,
+  alertDriverGaps, alertPassRuns, alertState, authEvents,
   devices, mailboxes, outboundSends, platformSignals, sessions, workerHeartbeats,
 } from "./schema.js";
 import { imapRefusalsInWindow } from "./imap-admission.js";
@@ -2827,6 +2827,48 @@ async function sendDigest(
   return { digest: ok ? digest : null, outcomes };
 }
 
+/** The columns {@link unpagedUnevaluated} reads off an open `alert_state` row. */
+interface OpenAlertRow {
+  alertKey: string; kind: string; notifyCount: number | null; lastSeenAt: unknown;
+  cls: string | null; severity: string; title: string | null; detail: string | null;
+  count: number | null; affectedAccounts: number | null; fixHref: string | null;
+}
+
+/**
+ * OPEN INCIDENTS NOBODY WAS TOLD ABOUT, THAT THIS PASS COULD NOT LOOK AT. Claiming only `firing`
+ * left such a row unpaged for good once its rule stopped reading it: the 2026-09-23 `api_5xx_rate`
+ * opened, its claim did not deliver, the next windows were sampled ("not measured"), and nothing
+ * claimed it again. These stay due until a page is confirmed, the rule clears them, or the
+ * unconfirmed horizon closes them; rebuilt from the row, since this pass evaluated nothing for them.
+ */
+function unpagedUnevaluated(
+  rows: readonly OpenAlertRow[], firingKeys: ReadonlySet<string>, scope: EvaluationScope,
+  t: AlertThresholds, now: Date,
+): Alert[] {
+  const out: Alert[] = [];
+  for (const r of rows) {
+    if (firingKeys.has(r.alertKey) || r.cls !== "incident" || Number(r.notifyCount ?? 0) !== 0) continue;
+    if (!Object.prototype.hasOwnProperty.call(ALERT_KIND_ARMS, r.kind)) continue;
+    const arms = alertKindArms(r.kind);
+    if (arms.evaluated(r.alertKey, scope)) continue;
+    const seen = new Date(r.lastSeenAt as string).getTime();
+    if (seen <= now.getTime() - arms.unconfirmedAfterMs(t)) continue; // the close loop takes it
+    out.push({
+      key: r.alertKey,
+      kind: r.kind as AlertKind,
+      severity: r.severity === "critical" ? "critical" : "warning",
+      title: r.title ?? r.detail ?? r.kind,
+      detail: `${r.detail ?? ""}${r.detail ? " " : ""}(last measured ${humanAge(secondsBetween(now, new Date(seen)))} ago)`,
+      count: Number(r.count ?? 1),
+      oldestSeconds: null,
+      cls: "incident",
+      affectedAccounts: r.affectedAccounts,
+      fixHref: r.fixHref,
+    });
+  }
+  return out;
+}
+
 export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise<AlertPassResult> {
   const now = opts.now ?? new Date();
   const repeatMs = opts.repeatMs ?? DEFAULT_ALERT_REPEAT_MS;
@@ -2908,8 +2950,16 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     notifiedSignature: alertState.notifiedSignature,
     notifyCount: alertState.notifyCount,
     lastSeenAt: alertState.lastSeenAt,
+    cls: alertState.cls,
+    severity: alertState.severity,
+    title: alertState.title,
+    detail: alertState.detail,
+    count: alertState.count,
+    affectedAccounts: alertState.affectedAccounts,
+    fixHref: alertState.fixHref,
   });
   const byKey = new Map(existing.map((r) => [r.alertKey, r]));
+  const carried = unpagedUnevaluated(existing, firingKeys, scope, t, now);
 
   // No same-key escalation arm by severity flip alone — that existed for one pass's lifetime and
   // was twice discarded: without carried state it lacked the claim's three properties
@@ -3047,8 +3097,10 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // pager's accept; with no pager asked it is released and due again next pass.
   const mailSinks = sinks.filter((s) => s.channel === "mail");
   const policyKeys = new Set<string>();
+  // What this pass may claim: what fires, and the unpaged incidents it could not evaluate.
+  const claimable = [...firing, ...carried];
   if (mailSinks.length > 0) {
-    for (const a of firing) {
+    for (const a of claimable) {
       if (alertClass(a) === "incident" && mailVerdictOf(a) === "page") policyKeys.add(policyKeyOf(a));
     }
     if (mailSinks.some((s) => typeof s.notifyDigest === "function")) policyKeys.add(DIGEST_POLICY_KEY);
@@ -3061,7 +3113,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const waiting: Array<{ alertKey: string; kind: string; retryAt: string | null }> = [];
   /** Each claimed alert with the peak its confirm will record and what its mail does. */
   const claimed: Array<{ alert: Alert; peak: string; mail: "page" | "hold" | "none"; retryAt: Date | null }> = [];
-  for (const alert of firing) {
+  for (const alert of claimable) {
     if (alertClass(alert) !== "incident") continue;
     // The stale-evaluation floor for the escalation arm — see the header bullet.
     const changeBefore = new Date(now.getTime() - claimTtlMs);
@@ -3391,7 +3443,8 @@ interface AlertPassRecord {
 }
 
 /**
- * Stamp this driver's pass on `alert_pass_runs` — the write `alert_driver_dark` reads.
+ * Stamp this driver's pass on `alert_pass_runs` — the write `alert_driver_dark` reads — and the
+ * day's gap row on `alert_driver_gaps`.
  * Best-effort, and the direction is deliberate: this never throws — a pass that died because its
  * own bookkeeping failed would be the observability code causing the outage it exists to report.
  * The residual, named: a driver whose row-write keeps failing while its passes succeed is
@@ -3399,43 +3452,63 @@ interface AlertPassRecord {
  * with no `driver` writes nothing: a runbook `curl` recording itself as the API driver would hold
  * that driver's watch open while nothing was scheduled.
  */
-async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<void> {
+export async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<void> {
   if (!rec.driver) return;
+  const at = sql`${rec.now.toISOString()}::timestamptz`;
   try {
-    await db
-      .insert(alertPassRuns)
-      .values({
-        driver: rec.driver,
-        ranAt: rec.now,
-        firing: rec.firing,
-        delivered: rec.delivered,
-        failedSinks: rec.failedSinks,
-        sinkFailureStreak: rec.sinkFailureStreak,
-        sinksConfigured: rec.sinksConfigured,
-      })
-      .onConflictDoUpdate({
-        target: alertPassRuns.driver,
-        set: {
-          ranAt: rec.now,
-          firing: rec.firing,
-          delivered: rec.delivered,
-          failedSinks: rec.failedSinks,
-          sinkFailureStreak: rec.sinkFailureStreak,
-          sinksConfigured: rec.sinksConfigured,
-        },
-        // An older pass may not overwrite a newer one. Nothing serialises two passes of the same
-        // driver: the API arm's scheduler retry can arrive while the first call runs, and the
-        // worker's interval starts the next pass whether or not the last finished — a slow pass
-        // finishes after a fast one that started later, and an unfenced upsert writes its older
-        // snapshot over the newer row. Every column is part of that snapshot, so the damage is
-        // not only a `ran_at` walking backwards: the firing count, delivery count and
-        // sink-failure streak all revert, and a streak in particular is a running total —
-        // rewinding it re-arms an alert the newer pass had already escalated past. The fence is
-        // the row's own stamp; the loser writes nothing and says nothing — its pass still
-        // happened, and the row continues to describe the most recent one.
-        setWhere: sql`${alertPassRuns.ranAt} <= ${rec.now.toISOString()}::timestamptz`,
-      });
+    // ONE STATEMENT: the run stamp and the day's gap row (cloud 0048) land together or not at all.
+    // `prev` locks the run row first, so a pass that waited behind another measures its gap from
+    // that pass's stamp, not from the one its snapshot saw. The run upsert keeps its fence (an
+    // older pass writes nothing: nothing serialises two passes of one driver, and a rewound row
+    // reverts the streak), and the gap row follows the run row only when the fence admitted it.
+    // A missing gap table or grant fails the stamp too, so the other arm reports this one dark.
+    await db.execute(sql`
+      with prev as materialized (
+        select ${alertPassRuns.ranAt} as ran_at from ${alertPassRuns}
+         where ${alertPassRuns.driver} = ${rec.driver}::text for update
+      ), run as (
+        insert into alert_pass_runs as r
+          (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak, sinks_configured)
+        select ${rec.driver}::text, ${at}, ${rec.firing}::int, ${rec.delivered}::int,
+               ${rec.failedSinks}::int, ${rec.sinkFailureStreak}::int, ${rec.sinksConfigured}::int
+          from (select 1) one left join prev on true
+        on conflict (driver) do update set
+          ran_at = excluded.ran_at, firing = excluded.firing, delivered = excluded.delivered,
+          failed_sinks = excluded.failed_sinks, sink_failure_streak = excluded.sink_failure_streak,
+          sinks_configured = excluded.sinks_configured
+          where r.ran_at <= excluded.ran_at
+        returning r.ran_at
+      ), gap as (
+        select run.ran_at,
+               (select p.ran_at from prev p) as prev_at
+          from run
+      )
+      insert into alert_driver_gaps as g (driver, day, passes, max_gap_s, max_gap_at)
+      select ${rec.driver}::text, (gap.ran_at at time zone 'UTC')::date, 1,
+             coalesce(round(extract(epoch from (gap.ran_at - gap.prev_at)))::int, 0),
+             case when gap.prev_at is null then null else gap.ran_at end
+        from gap
+      on conflict (driver, day) do update set
+        passes = g.passes + 1,
+        max_gap_s = greatest(g.max_gap_s, excluded.max_gap_s),
+        max_gap_at = case when excluded.max_gap_s > g.max_gap_s
+          then excluded.max_gap_at else g.max_gap_at end`);
   } catch { /* see the header: the pass must outlive its own bookkeeping */ }
+}
+
+/** `alert_driver_gaps` keeps this many days (cloud 0048); the worker prunes after its pass. */
+export const ALERT_DRIVER_GAP_RETENTION_DAYS = 100;
+
+/** Delete gap rows older than the retention; returns how many went. */
+export async function pruneAlertDriverGaps(
+  db: Tx, now: Date, retentionDays: number = ALERT_DRIVER_GAP_RETENTION_DAYS,
+): Promise<number> {
+  const cut = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+  const res = await db
+    .delete(alertDriverGaps)
+    .where(sql`${alertDriverGaps.day} < (${cut.toISOString()}::timestamptz at time zone 'UTC')::date`);
+  return Number((res as unknown as { count?: number; affectedRows?: number }).count
+    ?? (res as unknown as { affectedRows?: number }).affectedRows ?? 0);
 }
 
 /** One driver's last recorded pass — what the Reliability panel renders for both arms. */
@@ -3462,7 +3535,17 @@ export interface AlertDriverStatus {
    * ran and counted none.
    */
   sinksConfigured: number | null;
+  /**
+   * The longest this arm went without a recorded pass over the last 30 days, in seconds: the
+   * largest gap a pass ended (`alert_driver_gaps`) or the live one since its last pass, whichever
+   * is longer. NULL when it cannot be said — the arm never ran, or the history was unreadable —
+   * never 0, which would read as an arm that was never dark.
+   */
+  longestGap30dS: number | null;
 }
+
+/** The window {@link AlertDriverStatus.longestGap30dS} measures. */
+export const ALERT_DRIVER_GAP_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Both drivers' standing status, ALWAYS two rows.
@@ -3474,7 +3557,8 @@ export interface AlertDriverStatus {
  * in for its first quiet hour — and the state a driver that was configured and never once fired
  * stays in for ever.
  */
-export async function alertDriverStatuses(db: Tx): Promise<AlertDriverStatus[]> {
+export async function alertDriverStatuses(db: Tx, now: Date = new Date()): Promise<AlertDriverStatus[]> {
+  const history = await longestRecordedGaps(db, now);
   const rows = await db
     .select({
       driver: alertPassRuns.driver,
@@ -3499,8 +3583,33 @@ export async function alertDriverStatuses(db: Tx): Promise<AlertDriverStatus[]> 
       sinkFailureStreak: Number(r?.sinkFailureStreak ?? 0),
       // NULL, not zero, when the driver has never written a row: see the field's own note.
       sinksConfigured: r ? Number(r.sinksConfigured ?? 0) : null,
+      longestGap30dS: longestGapOf(r ? new Date(r.ranAt as unknown as string) : null, history, driver, now),
     };
   });
+}
+
+/** The largest gap each driver's passes ended inside the window, or null when unreadable. */
+async function longestRecordedGaps(db: Tx, now: Date): Promise<Map<string, number> | null> {
+  const since = new Date(now.getTime() - ALERT_DRIVER_GAP_WINDOW_MS);
+  try {
+    const rows = await db
+      .select({ driver: alertDriverGaps.driver, gap: sql<number>`max(${alertDriverGaps.maxGapS})` })
+      .from(alertDriverGaps)
+      .where(sql`${alertDriverGaps.maxGapAt} >= ${since.toISOString()}::timestamptz`)
+      .groupBy(alertDriverGaps.driver);
+    return new Map(rows.map((r) => [r.driver, Number(r.gap ?? 0)]));
+  } catch {
+    // A host ahead of 0048, or a staff role not yet re-hardened: unknown, never "no gap".
+    return null;
+  }
+}
+
+function longestGapOf(
+  ranAt: Date | null, history: Map<string, number> | null, driver: AlertDriver, now: Date,
+): number | null {
+  if (history === null || ranAt === null) return null;
+  const live = Math.max(0, Math.round((now.getTime() - ranAt.getTime()) / 1000));
+  return Math.max(live, history.get(driver) ?? 0);
 }
 
 /* ════════════════════════════════════════════════════════════════════════════════════════

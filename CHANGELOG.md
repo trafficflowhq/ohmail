@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A server alert nobody was told about is sent once the server can say it
+
+An alert that opened while its only notification failed, and whose measurement then went missing, stayed open
+without ever being sent. It is now sent on a later check until a notification lands, the condition is seen to
+clear, or it closes unconfirmed. A self-hosted server's `GET /internal/alerts` also lists both alert checkers
+with the longest time each went without running in the last 30 days, kept per day for 100 days.
+
 ### Long conversations take far less of the desktop window's memory
 
 Everything the desktop window asked the app's mail engine for came back as a list of numbers, one per byte,

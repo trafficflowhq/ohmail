@@ -208,7 +208,8 @@ describe("the schema split matches the journal split", () => {
     // justification in `journal-split.test.ts`'s CLOUD_TABLES. The shared count does not move.
     // 28 → 30: `staff_role_grants` and `staff_audit_events` (cloud 0047) — staff roles and the
     // staff audit; per-table justification in `journal-split.test.ts`'s CLOUD_TABLES.
-    expect(declaredTables("schema-cloud.ts").size).toBe(30);
+    // 30 → 31: `alert_driver_gaps` (cloud 0048) — the alert drivers' gap history, as above.
+    expect(declaredTables("schema-cloud.ts").size).toBe(31);
   });
 
   /**

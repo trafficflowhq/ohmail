@@ -185,6 +185,7 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "graduations.action": { not: "a closed set of actions" },
   "unsubscribe_drain_state.pass": { not: "a pass name the product writes" },
   "alert_pass_runs.driver": { not: "a driver name the product writes" },
+  "alert_driver_gaps.driver": { not: "a driver name the product writes" },
   "alert_state.alert_key": { not: "an alert key the product writes" },
   "api_faults.route": { not: "a route pattern the product writes" },
   "platform_signals.provider": { not: "a provider name the product writes" },

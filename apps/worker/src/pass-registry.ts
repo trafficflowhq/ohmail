@@ -373,6 +373,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock (it rides the alert pass, which holds it)",
   },
   {
+    name: "alert_gap_prune",
+    module: `${W}/alert-gap-prune.ts`, entry: "alertGapPrunePass",
+    triggers: ["interval"],
+    cadence: "on the alert pass's own cadence, immediately after it",
+    budget: "one DELETE over alert_driver_gaps (two rows per day, a hundred days kept), empty when nothing is due",
+    owns: "alert_driver_gaps keeps a hundred days and no more — the per-driver gap history",
+    fence: "leader lock (it rides the alert pass, which holds it)",
+  },
+  {
     name: "retention_prune",
     module: `${W}/retention-prune.ts`, entry: "retentionPrunePass",
     triggers: ["interval"],

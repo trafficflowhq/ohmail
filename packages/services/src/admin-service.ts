@@ -1088,8 +1088,7 @@ export async function adminWorkerInstances(db: AdminDb, now: Date): Promise<Work
  * would tell me still running".
  */
 export async function adminAlertDrivers(db: AdminDb, now: Date): Promise<AdminAlertDriver[]> {
-  void now;
-  const rows = await alertDriverStatuses(db);
+  const rows = await alertDriverStatuses(db, now);
   return rows.map((r) => ({
     driver: r.driver,
     ranAt: iso(r.ranAt),
@@ -1098,6 +1097,7 @@ export async function adminAlertDrivers(db: AdminDb, now: Date): Promise<AdminAl
     failedSinks: r.failedSinks,
     sinkFailureStreak: r.sinkFailureStreak,
     sinksConfigured: r.sinksConfigured,
+    longestGap30dS: r.longestGap30dS,
   }));
 }
 

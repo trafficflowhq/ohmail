@@ -631,6 +631,23 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
     await ownerClient.unsafe("update outbound_sends set status = 'pending'");
   });
 
+  it("the API arm's pass records its gap history as the blind role (cloud 0048)", async () => {
+    // The pass swallows a failed stamp by contract, so a missing grant reads as "no gap" here
+    // unless the rows are read back on the database-owning connection. Both come from one statement.
+    const first = new Date(Date.UTC(2026, 9, 17, 12, 0, 0));
+    const second = new Date(first.getTime() + 90_000);
+    for (const now of [first, second]) {
+      await runAlertPass(staff, { now, sinks: [], source: "api", environment: "test", driver: "api" });
+    }
+    const runs = await ownerClient.unsafe<Array<{ ran_at: Date }>>(
+      "select ran_at from alert_pass_runs where driver = 'api'");
+    expect(runs.map((r) => new Date(r.ran_at).toISOString())).toEqual([second.toISOString()]);
+    const gaps = await ownerClient.unsafe<Array<{ passes: number; max_gap_s: number }>>(
+      "select passes, max_gap_s from alert_driver_gaps where driver = 'api' and day = '2026-10-17'");
+    expect(gaps).toEqual([{ passes: 2, max_gap_s: 90 }]);
+    await ownerClient.unsafe("delete from alert_driver_gaps; delete from alert_pass_runs");
+  });
+
   /* ══ 3. The census — equality, so a grant nobody asserted still fails ════════════════ */
 
   it("the SELECT-able set EQUALS the allowlist, column for column", async () => {

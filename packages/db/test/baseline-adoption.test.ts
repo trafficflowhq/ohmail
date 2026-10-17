@@ -270,7 +270,9 @@ describe("the baseline cutoff is frozen", () => {
     // CHECK on an existing table, adopting nothing.
     // `- 26` → `- 27`: cloud 0047_staff_roles_and_audit — ONE entry above the cutoff, two NEW
     // tables, a backfill from `staff_users` and a trigger on the new one, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 27);
+    // `- 27` → `- 28`: cloud 0048_alert_driver_gaps — ONE entry above the cutoff, a NEW table,
+    // empty, adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 28);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -942,6 +944,8 @@ describe("the baseline cutoff is frozen", () => {
       // cloud 0047 — two NEW tables and the staff-owner backfill from `staff_users`. An adopting database
       // takes them over any history: every staff row it holds becomes an owner, as before.
       "0047_staff_roles_and_audit",
+      // The alert drivers' gap history: a new table, IF NOT EXISTS, empty. Safe over any history.
+      "0048_alert_driver_gaps",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by

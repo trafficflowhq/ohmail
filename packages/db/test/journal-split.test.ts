@@ -283,6 +283,8 @@ const CLOUD_TABLES = [
   //    vendor's log store with OUR token. `platform_costs` two lines up is the same argument in
   //    the same words: a standalone install's platform is its owner's business.
   "alert_pass_runs", "platform_signals",
+  // Cloud 0048 — the alert drivers' per-day gap history, CLOUD for `alert_pass_runs`' reason.
+  "alert_driver_gaps",
   // the funnel
   "waitlist", "invites",
   // always-on push — named in §7 as part of the moat
@@ -3086,6 +3088,10 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "64ffe2eff2a426bd",   // REVOKE TRUNCATE … FROM PUBLIC
     "c2f79421850d44c4",   // REVOKE TRUNCATE … FROM CURRENT_USER
   ],
+  // CLOUD 0048 — the alert drivers' per-day gap history: one new table, no DML, no index.
+  "0048_alert_driver_gaps": [
+    "5472957cec16b6d0",   // CREATE TABLE alert_driver_gaps (driver, day PK; passes, max_gap_s, max_gap_at)
+  ],
 };
 
 /** Short, stable identity for one normalized statement. */
@@ -3974,7 +3980,8 @@ describe("the two journals are well-formed", () => {
   // 0151_mailboxes_gap_since's.
   // 153 → 154 for `0153_rule_revoke_keeps_its_decisions`: its `when` (1791602600057) is strictly
   // above 0152_search_gin_pending_bounded's.
-  it.each([["mail", MAIL_DIR, 154], ["cloud", CLOUD_DIR, 33]] as const)(
+  // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
+  it.each([["mail", MAIL_DIR, 154], ["cloud", CLOUD_DIR, 34]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);
@@ -4114,7 +4121,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 99 → 100 for `erased_bearers` (cloud 0043) — an erased account's token hashes, CLOUD.
     // 100 → 102 for `staff_role_grants` and `staff_audit_events` (cloud 0047), both CLOUD.
     // 102 → 103 for `list_addresses` (mail 0150) — the addresses lists post as, MAIL.
-    expect(SIDE.size).toBe(103);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // 103 → 104 for `alert_driver_gaps` (cloud 0048) — the alert drivers' gap history, CLOUD.
+    expect(SIDE.size).toBe(104);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
     expect(MAIL_TABLES).toHaveLength(57);   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
@@ -4128,7 +4136,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 42 → 43: account_lifecycle_notices (cloud 0040)
     // 43 → 44: erased_bearers (cloud 0043)
     // 44 → 46: staff_role_grants + staff_audit_events (cloud 0047)
-    expect(CLOUD_TABLES).toHaveLength(46);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
+    // 46 → 47: alert_driver_gaps (cloud 0048)
+    expect(CLOUD_TABLES).toHaveLength(47);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
   });
 
   it("NO mail statement names a private object — so mail-first is sound, not assumed", () => {

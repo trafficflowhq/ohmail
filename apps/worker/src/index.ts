@@ -100,6 +100,7 @@ import { gateReleasePass } from "./gate-release.js";
 import { senderCheckRetirement } from "./sender-check-backfill.js";
 import { listAddressBackfillPass } from "./list-address-backfill.js";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
+import { alertGapPrunePass } from "./alert-gap-prune.js";
 import { retentionPrunePass, signInRetentionPass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { newScreenerAutoWalk, screenerAutoApplyPass } from "./screener-auto.js";
@@ -5765,6 +5766,8 @@ export async function startWorkerWithLock(
         // them could only ever delete rows they were about to ignore — and if it throws, the
         // pass has already delivered. It swallows its own faults; see the module.
         await apiFaultPrunePass(db as unknown as Tx, new Date(), log);
+        // `alert_driver_gaps`' hundred days, on the same terms.
+        await alertGapPrunePass(db as unknown as Tx, new Date(), log);
         if (result.notified.length > 0) {
           log.warn("alert_notified", {
             alertKeys: result.notified.map((a) => a.key),
