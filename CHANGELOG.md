@@ -27,6 +27,14 @@ mail server at that moment came back cut short and was refused as "a different p
 picture stayed blank and a download failed. A read cut by a move is now seen for what it is, and the part is
 read again where the message went.
 
+### Signing up for ohmail Cloud keeps your place when connecting a mailbox
+
+During signup, a mailbox the server could not use — one on your own network, or a port that carries no mail —
+sent you to the invite-code step, and so did an address the server could not accept. Making an app password took
+longer than the few minutes the mailbox step allowed, and then signup ended on a sign-in screen that led to an
+empty inbox. Each of these is now said on the step it happened on, with everything you typed kept, and when a few
+minutes have passed, ohmail asks for your passkey or authenticator code right there and connects the mailbox.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

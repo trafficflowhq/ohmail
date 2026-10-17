@@ -62,8 +62,10 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  catalogue is many times that). A first-screen string added in a namespace the table
  *  carries whole lands under them; a namespace added whole may have to raise them, said here.
  *  Raised 2026-10-09 for both languages: the Ohbox's "Not organizing yet"
- *  doorbell and the join wizard's "Your mailbox is connected" step are first-screen strings. */
-const INLINE_CEILING_BYTES = { en: 34_400, de: 39_100 } as const;
+ *  doorbell and the join wizard's "Your mailbox is connected" step are first-screen strings.
+ *  Raised 2026-10-17: the mailbox step's note says the factor is asked in place (join), and the
+ *  sign-in names its wizard continuation (login); both namespaces are carried whole. */
+const INLINE_CEILING_BYTES = { en: 34_450, de: 39_250 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>

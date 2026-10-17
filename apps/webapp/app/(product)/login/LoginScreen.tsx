@@ -29,7 +29,7 @@ import { REASON_BODY, takeSignedOutNote, type SignedOutReason } from "../resume/
 // The approval page's way back after an ordinary sign-in: a request id, never a URL.
 import { approvalReturnKept, takeApprovalReturn } from "../approve/approval-return";
 import { whenSignedInElsewhere } from "../approve/signed-in-elsewhere";
-import { leaveFor, type Continuation } from "./continuation";
+import { MANAGE_ROUTE, leaveFor, type Continuation } from "./continuation";
 
 type Stage = "password" | "twofa";
 
@@ -340,7 +340,8 @@ export function LoginScreen(
         {signedOut !== null || next !== null
           ? (
             <p className="sub" role="status">
-              {[signedOut ? tr(REASON_BODY[signedOut]) : null, next !== null ? t("continueManage") : null]
+              {[signedOut ? tr(REASON_BODY[signedOut]) : null,
+                next === null ? null : t(next === MANAGE_ROUTE ? "continueManage" : "continueJoin")]
                 .filter((line): line is string => line !== null).join(" ")}
             </p>
           )

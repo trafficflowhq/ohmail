@@ -54,6 +54,7 @@
   "login": {
     "title": "Anmelden",
     "continueManage": "Melde dich an, dann öffnet sich deine Kontoseite.",
+    "continueJoin": "Melde dich an, dann geht die Einrichtung dort weiter, wo sie stehen geblieben ist.",
     "sub": "Erst dein Passwort, dann dein zweiter Faktor — Passkey oder Einmalcode.",
     "subFirst": "Erst dein Passwort, dann dein zweiter Faktor.",
     "subCode": "Dein Passwort stimmt — jetzt dein zweiter Faktor.",
@@ -181,7 +182,7 @@
     "step_done_lead": "Dein Postfach verbindet sich gerade. Die erste Synchronisierung holt die neuere Post; ältere folgt im Hintergrund.",
     "planPending": "Dieses Konto ist noch nicht als aktiv sichtbar. Lade die Seite gleich neu \u2014 nichts ist verloren.",
     "stepUpExpired": "Zu deiner Sicherheit braucht das Verbinden eines Postfachs einen zweiten Faktor, den du in den letzten Minuten benutzt hast, und dieses Fenster ist zu. Melde dich neu an, dann geht die Einrichtung beim Postfach-Schritt weiter.",
-    "appPasswordReady": "Halt das App-Passwort bereit, bevor du anfängst: dieser Schritt läuft ein paar Minuten nach deiner letzten Passkey- oder Authenticator-Prüfung ab.",
+    "appPasswordReady": "Ein App-Passwort anzulegen kann dauern. Braucht es länger als ein paar Minuten, fragen wir vor dem Verbinden noch einmal nach deinem Passkey oder Authenticator-Code, und alles, was du eingetippt hast, bleibt hier.",
     "totpOpenApp": "Auf diesem Gerät? Öffne deine Authenticator-App mit bereits eingetragenem Schlüssel.",
     "step_invite_lead_open": "Du hast einen Einladungscode? Füg ihn genau so ein, wie er in deiner Einladungsmail steht. Zum Registrieren brauchst du keinen — das hier ist für Leute, die einen bekommen haben.",
     "emailHintOpen": "Darüber erreichen wir dich in Sachen Konto.",

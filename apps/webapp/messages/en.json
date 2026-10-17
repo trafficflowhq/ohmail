@@ -84,7 +84,8 @@
     "inviteOnlyBeta": "New to ohmail? Accounts are by invitation during the beta.",
     "inviteOnlySelfhost": "New here? Accounts on this server are created by invitation — ask the person who runs it.",
     "haveInvite": "Have an invite code?",
-    "continueManage": "Sign in, and your account page opens."
+    "continueManage": "Sign in, and your account page opens.",
+    "continueJoin": "Sign in, and your setup carries on where it stopped."
   },
   "setup": {
     "checkingTitle": "One moment",
@@ -181,7 +182,7 @@
     "step_done_lead": "Your mailbox is connecting now. The first sync brings in recent mail; older mail follows in the background.",
     "planPending": "This account is not showing as active yet. Reload this page in a moment \u2014 nothing is lost.",
     "stepUpExpired": "For your security, connecting a mailbox needs a second factor you used in the last few minutes, and that window has closed. Sign in again and the setup carries on from the mailbox step.",
-    "appPasswordReady": "Have the app password ready before you start: this step expires a few minutes after your last passkey or authenticator check.",
+    "appPasswordReady": "Making an app password can take a while. If it takes more than a few minutes, we ask for your passkey or authenticator code once more before connecting, and everything you typed stays here.",
     "totpOpenApp": "On this device? Open your authenticator app with the key already filled in.",
     "step_invite_lead_open": "Have an invite code? Paste it exactly as your invite mail shows it. You do not need one to sign up — this is here for people who were sent one.",
     "emailHintOpen": "Where we will reach you about your account.",

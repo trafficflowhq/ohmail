@@ -33,14 +33,20 @@ import {
 import { hostsFor, providerById, type ProviderPreset } from "../../shell/providers";
 import { displayAddress } from "../../shell/idn";
 import { ProviderPicker } from "../../shell/ProviderPicker";
-import { noPortProbeSentence, plaintextOfferOf } from "../../shell/probe-refusal";
+import { noPortProbeSentence, plaintextOfferOf, probeReasonOf } from "../../shell/probe-refusal";
 import { splitHostPort } from "../host-port";
 import { useRefusalAtThePress } from "../../shell/refusal-at-the-press";
 import { SELF_HOST_BUILD } from "../../hello";
 import { JOIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 import { confirmAccountReturn } from "../../account-return";
+import { StepUpPrompt } from "../mailbox/StepUpPrompt";
+import { gatedRefusal } from "../mailbox/gated-refusal";
+import { JOIN_ROUTE } from "../login/continuation";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
+
+/** The connect's body, as `mailboxes.create` takes it. */
+type ConnectBody = Parameters<typeof mailboxes.create>[0];
 
 /**
  * The step order, for the progress rail AND the wizard; `done` is what the rail shows complete, not
@@ -98,6 +104,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 }) {
   const t = useTranslations("join");
   const tm = useTranslations("mailboxes");
+  const td = useTranslations("devices");
   /* `bootstrap` is a `useCallback([])` — its identity drives the mount effect, so a translator
      in its dependency list would re-run it on every render. The ref is the same device
      `remote-images.ts` uses for `onFailed`, and for the same reason. */
@@ -166,6 +173,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     setPlain({ imap: false, smtp: false });
   };
   const [connected, setConnected] = useState<MailboxDTO | null>(null);
+  /** A connect the step-up window refused, held as sent until a factor is verified; `null` otherwise. */
+  const [parked, setParked] = useState<ConnectBody | null>(null);
 
 
   const passkeyPossible = useRef(false);
@@ -391,12 +400,9 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
          */
         setError(t("accountConflict"));
       } else if (code === "step_up_required") {
-        // The step-up window (5 minutes since the last second factor) closed while the user
-        // was off fetching an app password from their provider — which realistically takes
-        // longer than that. There is no way to re-assert a factor on a live session today, so
-        // the honest remedy is a fresh sign-in; what must NOT happen is what happened before,
-        // which was the server's raw sentence rendered inline with no control on it and no
-        // explanation of what to do next.
+        // Reached only when the factor asked for in place did not reopen the window (`connect`
+        // asks once, then a second refusal lands here): a fresh sign-in, whose link resumes
+        // this wizard, rather than the server's raw sentence or another prompt that would loop.
         setFatal(t("stepUpExpired"));
         setFatalAction("signIn");
       } else if (code === "signup_capacity") {
@@ -406,18 +412,6 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         // verbatim above the control, as everywhere else here.
         setFatal(messageOf(err));
         setFatalAction("waitlist");
-      } else if (code === "validation_failed" && !needsInvite) {
-        // The deploy-skew case, and the reason `needsInvite` is state.
-        //
-        // This webapp is armed for public signup and the API is not: the only field the
-        // account form can be missing is `inviteCode`, so the honest response is to ask for
-        // one rather than to re-show a form the visitor has already filled in correctly. It
-        // is deliberately not a silent retry — the step appears, with its own copy, and the
-        // typed email and name are still there.
-        setNeedsInvite(true);
-        setStep("invite");
-        // The fallback names who can hand out a code: on a self-hosted server that is its operator.
-        setError(t(SELF_HOST_BUILD ? "inviteRequiredAfterAllSelfHost" : "inviteRequiredAfterAll"));
       } else if (code === "payment_required") {
         // The allowance gate refused for payment. With the corrected step order this is only
         // reachable when Checkout's webhook has not landed, or when a subscription lapsed
@@ -453,10 +447,25 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       // to the server today, but "no code offered" and "an empty code" are different facts
       // and only one of them is what an open signup means.
       const offered = code.trim();
-      const out = await auth.register({
-        email: email.trim(), password, displayName: displayName.trim(),
-        ...(offered.length > 0 ? { inviteCode: offered } : {}),
-      });
+      let out: Awaited<ReturnType<typeof auth.register>>;
+      try {
+        out = await auth.register({
+          email: email.trim(), password, displayName: displayName.trim(),
+          ...(offered.length > 0 ? { inviteCode: offered } : {}),
+        });
+      } catch (err) {
+        /* THE DEPLOY-SKEW CASE, and the reason `needsInvite` is state: this webapp is armed for public
+           signup and the API is not, so it asks for the one field it never sent. Only a refusal that
+           NAMES that field: a refused address shape (`mila@gmailcom` passes the browser's check) or
+           any refusal of a later step is said where it happened, never as a missing invite. */
+        if (!needsInvite && codeOf(err) === "validation_failed" && err instanceof ApiError && /\binviteCode\b/.test(err.message)) {
+          setNeedsInvite(true);
+          setStep("invite");
+          setError(t(SELF_HOST_BUILD ? "inviteRequiredAfterAllSelfHost" : "inviteRequiredAfterAll"));
+          return;
+        }
+        throw err;
+      }
       setPassword("");
       // TWO OUTCOMES, and the wizard must not try to tell them apart beyond this. The PUBLIC path answers
       // `{status:"ok"}` with no session, byte-identically whether or not that address already had an account. There
@@ -589,50 +598,89 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     retireConsent();
   };
 
+  /** What `POST /mailboxes` is sent: built from the form at the press, and re-sent as it was after a step-up. */
+  const connectBodyOf = (chosen: ProviderPreset): ConnectBody => {
+    const address = mbAddress.trim();
+    return {
+      provider: chosen.id,
+      address,
+      imap: {
+        // A manual provider sends no TLS mode, and a port only when one follows the name — the
+        // server's probe walks the standard ladder (993 implicit TLS, then 143 STARTTLS) and
+        // stores what it proved. A refusal is said in this screen's words where it has them
+        // (see `mailboxSentence`), else in the server's.
+        ...(chosen.manual ? splitHostPort(imapHost) : { host: imapHost.trim(), port: chosen.imap.port, secure: chosen.imap.secure }),
+        user: (mbUser.trim() || address), pass: mbPass,
+        // Each consent only after the server refused THAT protocol on a private host.
+        ...(offer.imap && plain.imap ? { allowInsecure: true } : {}),
+      },
+      smtp: {
+        ...(chosen.manual ? splitHostPort(smtpHost) : { host: smtpHost.trim(), port: chosen.smtp.port, secure: chosen.smtp.secure }),
+        user: (mbUser.trim() || address), pass: mbPass,
+        ...(offer.smtp && plain.smtp ? { allowInsecure: true } : {}),
+      },
+    };
+  };
+
+  /** A refused connect in this screen's words, or `null` for the server's own sentence. */
+  const mailboxSentence = (err: unknown, chosen: ProviderPreset): string | null => {
+    // A refusal on a private host with no TLS opens that protocol's consent line.
+    const opens = plaintextOfferOf(err);
+    if (opens) setOffer((o) => ({ ...o, [opens]: true }));
+    // This form has no port field, so a refusal that would tell the person to check one says
+    // what the form holds instead: the server name on the generic entry, nothing behind a preset.
+    const said = noPortProbeSentence(err, chosen.manual === true);
+    if (said) return tm(said.key, { field: said.field });
+    // The reasons whose sentence names no port: the Settings pane's own lines, in the reader's language.
+    const reason = probeReasonOf(err);
+    if (reason === "auth" || reason === "storage" || reason === "sync" || reason === "unknown") return tm(`probe_${reason}`);
+    return null;
+  };
+
+  /**
+   * One connect. Every refusal stays on this step with what was typed. The five-minute step-up window
+   * closing is not a refusal of the mailbox: making an app password takes longer than that, so the
+   * factor is asked for HERE (`StepUpPrompt`, Settings' own) and this exact connect runs again once.
+   * A second window refusal right after a verified factor is the sign-in screen, whose link resumes
+   * `/join` (`gatedRefusal`'s rule: a second prompt would loop).
+   */
+  const connect = (chosen: ProviderPreset, body: ConnectBody, afterFactor: boolean): void => void run(async () => {
+    // Mail credentials typed for one account must not be attached to another.
+    if (!await sameAccount()) return;
+    let dto: MailboxDTO;
+    try {
+      dto = await mailboxes.create(body);
+    } catch (err) {
+      if (gatedRefusal(err, afterFactor) === "factor") { setParked(body); return; }
+      throw err;
+    }
+    // The password leaves this component's memory the moment the server has it. It is
+    // already envelope-encrypted at rest (RC1) and is never echoed back in the DTO.
+    setMbPass("");
+    setParked(null);
+    setConnected(dto);
+    setStep("done");
+  }, (err) => mailboxSentence(err, chosen));
+
   const submitMailbox = (e: React.FormEvent) => {
     e.preventDefault();
     // The credential fields (and with them this form's submit) only render once a
     // provider is chosen, so this guard is structural rather than reachable.
     const chosen = provider;
     if (!chosen) return;
-    void run(async () => {
-      // Mail credentials typed for one account must not be attached to another.
-      if (!await sameAccount()) return;
-      const address = mbAddress.trim();
-      const dto = await mailboxes.create({
-        provider: chosen.id,
-        address,
-        imap: {
-          // A manual provider sends no TLS mode, and a port only when one follows the name — the
-          // server's probe walks the standard ladder (993 implicit TLS, then 143 STARTTLS) and
-          // stores what it proved. This screen shows the server's own refusal sentence, except
-          // one that names a port (see the `sentenceOf` below).
-          ...(chosen.manual ? splitHostPort(imapHost) : { host: imapHost.trim(), port: chosen.imap.port, secure: chosen.imap.secure }),
-          user: (mbUser.trim() || address), pass: mbPass,
-          // Each consent only after the server refused THAT protocol on a private host.
-          ...(offer.imap && plain.imap ? { allowInsecure: true } : {}),
-        },
-        smtp: {
-          ...(chosen.manual ? splitHostPort(smtpHost) : { host: smtpHost.trim(), port: chosen.smtp.port, secure: chosen.smtp.secure }),
-          user: (mbUser.trim() || address), pass: mbPass,
-          ...(offer.smtp && plain.smtp ? { allowInsecure: true } : {}),
-        },
-      });
-      // The password leaves this component's memory the moment the server has it. It is
-      // already envelope-encrypted at rest (RC1) and is never echoed back in the DTO.
-      setMbPass("");
-      setConnected(dto);
-      setStep("done");
-    }, (err) => {
-      // A refusal on a private host with no TLS opens that protocol's consent line.
-      const opens = plaintextOfferOf(err);
-      if (opens) setOffer((o) => ({ ...o, [opens]: true }));
-      // This form has no port field, so a refusal that would tell the person to check one says
-      // what the form holds instead: the server name on the generic entry, nothing behind a preset.
-      const said = noPortProbeSentence(err, chosen.manual === true);
-      return said ? tm(said.key, { field: said.field }) : null;
-    });
+    connect(chosen, connectBodyOf(chosen), false);
   };
+
+  /* The step-up prompt opens under a long form: it is brought into view and its first control is
+     focused once the prompt has read which factor the account has, as the refusal at the press is. */
+  const stepUpAt = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (parked === null) return;
+    const el = stepUpAt.current;
+    el?.scrollIntoView?.({ block: "nearest" });
+    const timer = setTimeout(() => el?.querySelector<HTMLElement>("input, button")?.focus(), 50);
+    return () => clearTimeout(timer);
+  }, [parked]);
 
   /* The mailbox step's refusal sits beside Connect, and is brought into view and focused. */
   const mailboxRefusalAt = useRefusalAtThePress<HTMLParagraphElement>(step === "mailbox" ? error : null);
@@ -666,7 +714,9 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
           {capacity ? (
             <a className="btn primary" href="/#pricing">{t("capacityCta")}</a>
           ) : (
-            <Link className="btn primary" href="/login">{t("signIn")}</Link>
+            /* The sign-in continues HERE, on the step the server says the account is on: plain
+               `/login` forwards a live session to `/`, which has no mailbox step. */
+            <Link className="btn primary" href={`/login?next=${JOIN_ROUTE.slice(1)}`}>{t("signIn")}</Link>
           )}
         </div>
       </Shell>
@@ -880,11 +930,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       {step === "mailbox" && (
         <form onSubmit={submitMailbox}>
           <p className="sub">{t("step_mailbox_lead")}</p>
-          {/* Said BEFORE the trip to the provider's settings, not after. `POST /mailboxes` is
-              step-up gated on a second factor used within `stepUpWindowMs` (5 minutes), and
-              fetching an app password from Gmail or Microsoft reliably takes longer than that
-              — so the honest thing is to warn while the user can still act on it. The refusal
-              itself is handled in `run()`; this is what keeps it rare. */}
+          {/* Said BEFORE the trip to the provider's settings. `POST /mailboxes` is step-up gated on
+              a second factor used within `stepUpWindowMs` (5 minutes), and fetching an app password
+              from Gmail or Microsoft reliably takes longer than that; `connect` asks for the factor
+              in place when it does, so this says what will happen rather than racing a clock. */}
           <p className="join-note">{t("appPasswordReady")}</p>
 
           {/* The picker owns the choice, the provider's note and the help link; the
@@ -946,7 +995,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
               {mailboxRefusal}
               <div className="join-actions">
-                <Button variant="primary" type="submit" disabled={busy}>
+                <Button variant="primary" type="submit" disabled={busy || parked !== null}>
                   {busy ? t("working") : t("connectMailbox")}
                 </Button>
               </div>
@@ -955,6 +1004,23 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
           {provider ? null : mailboxRefusal}
         </form>
       )}
+
+      {/* The step-up, asked beside the form it unblocks — outside it, because the prompt is a form of
+          its own. A verified factor re-sends the parked connect once; Cancel keeps everything typed. */}
+      {step === "mailbox" && parked !== null ? (
+        <div ref={stepUpAt}>
+          <StepUpPrompt
+            onVerified={() => {
+              const body = parked;
+              const chosen = provider;
+              setParked(null);
+              if (chosen) connect(chosen, body, true);
+            }}
+            onCancel={() => setParked(null)}
+            onDiscarded={() => { setParked(null); setError(td("stepUpCancelledNothingRan")); }}
+          />
+        </div>
+      ) : null}
 
       {step === "plan" && (
         <>

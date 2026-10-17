@@ -71,7 +71,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mount(next: "/account/manage" | null): Promise<void> {
+async function mount(next: "/account/manage" | "/join" | null): Promise<void> {
   const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -85,11 +85,13 @@ async function mount(next: "/account/manage" | null): Promise<void> {
 }
 
 describe("the continuation is a name read once, never a URL", () => {
-  it("`manage` and nothing else names /account/manage", async () => {
+  it("`manage` and `join` and nothing else name a route", async () => {
     const { continuationOf } = await import("../app/(product)/login/continuation.js");
     expect(continuationOf("manage")).toBe("/account/manage");
+    expect(continuationOf("join")).toBe("/join");
     for (const other of [
       "https://evil.example", "/account/manage", "//evil.example", "Manage", "manage ", ["manage"], "", undefined, null,
+      "/join", "Join", "join ", ["join"], "join?step=mailbox",
     ]) {
       expect(continuationOf(other), JSON.stringify(other)).toBeNull();
     }
@@ -100,6 +102,7 @@ describe("the continuation is a name read once, never a URL", () => {
     const nextOf = async (searchParams: Record<string, string>): Promise<unknown> =>
       ((await LoginPage({ searchParams: Promise.resolve(searchParams) })) as React.ReactElement<{ next: unknown }>).props.next;
     expect(await nextOf({ next: "manage" })).toBe("/account/manage");
+    expect(await nextOf({ next: "join" })).toBe("/join");
     expect(await nextOf({ next: "https://evil.example" })).toBeNull();
     expect(await nextOf({})).toBeNull();
   });
@@ -109,6 +112,12 @@ describe("a browser already signed in continues without the form", () => {
   it("with next=manage it leaves for /account/manage as a document navigation", async () => {
     await mount("/account/manage");
     expect(assigned).toEqual(["/account/manage"]);
+    expect(routed).toEqual([]);
+  });
+
+  it("with next=join it leaves for the signup wizard, which resumes on the server's step", async () => {
+    await mount("/join");
+    expect(assigned).toEqual(["/join"]);
     expect(routed).toEqual([]);
   });
 
@@ -141,6 +150,13 @@ describe("the form says where it goes", () => {
     await mount(null);
     expect(host.textContent).not.toContain(messages.login.continueManage);
     expect(status()).toEqual([]);
+  });
+
+  it("names the setup, not the account page, when the continuation is the wizard", async () => {
+    session = () => json({ error: { code: "unauthorized", message: "no" } }, 401);
+    await mount("/join");
+    expect(status().map((el) => el.textContent)).toEqual([messages.login.continueJoin]);
+    expect(host.textContent).not.toContain(messages.login.continueManage);
   });
 
   it("a sign-out's reason and the continuation share that one slot, the reason first", async () => {
