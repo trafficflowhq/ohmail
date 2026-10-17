@@ -40,11 +40,12 @@ export type AiProviderEnv =
   | ({ provider: "ollama" } & Chosen<OllamaTransportOptions>);
 
 /** What a boot line says of the choice: the provider, and whether its address is the default or
- *  one the operator set (Ollama's always is) — never the address, never a key. */
-export function aiBootFields(ai: AiProviderEnv | null): { kind: AiProvider | "none"; endpoint?: "default" | "custom" } {
+ *  one the operator set (Ollama's always is) — never the address, never a key. `aiEndpoint`, not
+ *  `endpoint`: the logger's allowlist is global, and a bare `endpoint` would admit a push URL. */
+export function aiBootFields(ai: AiProviderEnv | null): { kind: AiProvider | "none"; aiEndpoint?: "default" | "custom" } {
   if (ai === null) return { kind: "none" };
   const custom = ai.provider === "ollama" || (ai.provider === "anthropic" && ai.baseUrl !== null);
-  return { kind: ai.provider, endpoint: custom ? "custom" : "default" };
+  return { kind: ai.provider, aiEndpoint: custom ? "custom" : "default" };
 }
 
 /** A refused AI block. `remedy` is a fixed sentence naming variables, safe to log. */

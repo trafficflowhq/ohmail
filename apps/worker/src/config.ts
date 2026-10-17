@@ -826,7 +826,18 @@ function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string 
  */
 function loadEntitlements(env: NodeJS.ProcessEnv): { url: string; secret: string } | null {
   const raw = (env.ENTITLEMENTS_URL ?? "").trim();
-  if (raw === "") return null;
+  if (raw === "") {
+    // THE MANAGED MARKER. BILLING_PLANE_SECRET is the billing plane's bearer: the managed deploy sets
+    // it and no self-host template or guide names it. Present at all (an emptied value included)
+    // beside no ENTITLEMENTS_URL, this is a managed worker that would boot unmetered, AI included.
+    if (env.BILLING_PLANE_SECRET !== undefined) {
+      throw new WorkerConfigError("ENTITLEMENTS_URL",
+        "BILLING_PLANE_SECRET is set without ENTITLEMENTS_URL — a worker beside the billing plane meters "
+        + "every AI action through it, and without it would charge none",
+        "set ENTITLEMENTS_URL to the entitlements program's origin, or unset BILLING_PLANE_SECRET on a self-hosted organizer");
+    }
+    return null;
+  }
   const secret = (env.BILLING_PLANE_SECRET ?? "").trim();
   if (secret === "") {
     throw new WorkerConfigError("BILLING_PLANE_SECRET",
@@ -1010,22 +1021,22 @@ export function loadConfig(
     healthDetailSecret: healthDetailSecretFrom(env),
     ...loadAttachmentStagingConfig(env),
     aiProvider: ai?.provider ?? null,
-    aiEndpoint: aiBootFields(ai).endpoint ?? null,
+    aiEndpoint: aiBootFields(ai).aiEndpoint ?? null,
     ...loadAiPorts(ai, env, opts.log),
   };
 }
 
 /**
  * The organizer's `ai_provider_configured` line: the provider, whether its address is the default,
- * and whether this worker meters. A managed worker without ENTITLEMENTS_URL boots unmetered with
- * nothing else to say so, so the line states it either way, and a deploy reads it first.
+ * and whether this worker meters. A worker beside the billing plane refuses to boot without
+ * ENTITLEMENTS_URL (`loadEntitlements`); the line states the meter either way, and a deploy reads it.
  */
 export function aiProviderLine(
   config: Pick<WorkerConfig, "aiProvider" | "aiEndpoint" | "entitlements">,
-): { kind: AiProvider | "none"; endpoint?: "default" | "custom"; metered: boolean } {
+): { kind: AiProvider | "none"; aiEndpoint?: "default" | "custom"; metered: boolean } {
   return {
     kind: config.aiProvider ?? "none",
-    ...(config.aiEndpoint ? { endpoint: config.aiEndpoint } : {}),
+    ...(config.aiEndpoint ? { aiEndpoint: config.aiEndpoint } : {}),
     metered: config.entitlements != null,
   };
 }

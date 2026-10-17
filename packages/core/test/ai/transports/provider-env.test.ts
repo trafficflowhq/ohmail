@@ -117,20 +117,20 @@ describe("aiProviderEnv", () => {
 describe("aiBootFields — what the boot line says of the choice", () => {
   it("the provider, and whether its address is the default or one the operator set", () => {
     expect(aiBootFields(null)).toEqual({ kind: "none" });
-    expect(aiBootFields(aiProviderEnv({ ANTHROPIC_API_KEY: ANTHROPIC }))).toEqual({ kind: "anthropic", endpoint: "default" });
-    expect(aiBootFields(aiProviderEnv({ TF_AI_PROVIDER: "openai", OPENAI_API_KEY: OPENAI }))).toEqual({ kind: "openai", endpoint: "default" });
+    expect(aiBootFields(aiProviderEnv({ ANTHROPIC_API_KEY: ANTHROPIC }))).toEqual({ kind: "anthropic", aiEndpoint: "default" });
+    expect(aiBootFields(aiProviderEnv({ TF_AI_PROVIDER: "openai", OPENAI_API_KEY: OPENAI }))).toEqual({ kind: "openai", aiEndpoint: "default" });
     expect(aiBootFields(aiProviderEnv({
       TF_AI_PROVIDER: "opencode-go", OPENCODE_GO_API_KEY: GO,
       TF_AI_CLASSIFY_MODEL: OPENCODE_GO_MODEL_IDS[0]!, TF_AI_DRAFT_MODEL: OPENCODE_GO_MODEL_IDS[0]!,
-    }))).toEqual({ kind: "opencode-go", endpoint: "default" });
+    }))).toEqual({ kind: "opencode-go", aiEndpoint: "default" });
   });
 
   it("a gateway or a model server is custom, and the line never carries the address", () => {
     const gateway = "https://gateway.boot-line.example";
     const viaGateway = aiBootFields(aiProviderEnv({ ANTHROPIC_API_KEY: ANTHROPIC, ANTHROPIC_BASE_URL: gateway }));
     const ollama = aiBootFields(aiProviderEnv({ TF_AI_PROVIDER: "ollama", OLLAMA_BASE_URL: "http://ollama:11434", TF_AI_ALLOW_PRIVATE: "1" }));
-    expect(viaGateway).toEqual({ kind: "anthropic", endpoint: "custom" });
-    expect(ollama).toEqual({ kind: "ollama", endpoint: "custom" });
+    expect(viaGateway).toEqual({ kind: "anthropic", aiEndpoint: "custom" });
+    expect(ollama).toEqual({ kind: "ollama", aiEndpoint: "custom" });
     for (const [line, value] of [[viaGateway, "gateway.boot-line"], [ollama, "ollama:11434"]] as const) {
       expect(JSON.stringify(line)).not.toContain(value);
     }

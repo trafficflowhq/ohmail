@@ -609,6 +609,12 @@ describe("the AI choice's boot line reaches the drain whole", () => {
     }));
     for (const out of [server, organizer]) expect(out.droppedFields, JSON.stringify(out)).toBeUndefined();
     expect(server.kind).toBe("none");
-    expect([organizer.kind, organizer.endpoint, organizer.metered]).toEqual(["ollama", "custom", false]);
+    expect([organizer.kind, organizer.aiEndpoint, organizer.metered]).toEqual(["ollama", "custom", false]);
+  });
+
+  it("CONTROL: a bare endpoint stays off the census, so a push URL logged under it is dropped", () => {
+    const out = parse(capture((log) => { log.info("field_census", { endpoint: "https://push.example/up/fixture-topic" }); }));
+    expect(out.droppedFields).toEqual(["endpoint"]);
+    expect(JSON.stringify(out)).not.toContain("push.example");
   });
 });

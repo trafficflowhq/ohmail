@@ -602,9 +602,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // so because a generic `value` stays refused by design and `header` is a secret-name fragment.
   "effective", "proxyPeerFrom",
   // THE SELF-HOST AI CHOICE (`ai_provider_configured`, server and organizer), added WITH its call
-  // sites. `endpoint` is the fixed word `default` or `custom` for the model's address, never the
-  // address; `metered` is the organizer's boolean, ENTITLEMENTS_URL set. `kind` is admitted above.
-  "endpoint", "metered",
+  // sites. `aiEndpoint` is the fixed word `default` or `custom` for the model's address, never the
+  // address — named so, because a bare `endpoint` here would admit a push URL anywhere; `metered` is
+  // the organizer's boolean, ENTITLEMENTS_URL set. `kind` is admitted above.
+  "aiEndpoint", "metered",
 ] as const;
 
 /**

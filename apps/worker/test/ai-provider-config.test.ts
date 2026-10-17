@@ -136,24 +136,50 @@ describe("THE LOCK: a worker that meters runs Anthropic on its shipped models", 
 });
 
 describe("the boot line: the provider, its address kind, and whether this worker meters", () => {
-  it("states metered either way, so a managed worker that lost ENTITLEMENTS_URL says so", () => {
+  it("states metered either way", () => {
     expect(aiProviderLine(loadConfig({ ...BASE, ...METERED, ANTHROPIC_API_KEY: KEY })))
-      .toEqual({ kind: "anthropic", endpoint: "default", metered: true });
+      .toEqual({ kind: "anthropic", aiEndpoint: "default", metered: true });
     expect(aiProviderLine(loadConfig({ ...BASE, ANTHROPIC_API_KEY: KEY })))
-      .toEqual({ kind: "anthropic", endpoint: "default", metered: false });
+      .toEqual({ kind: "anthropic", aiEndpoint: "default", metered: false });
     expect(aiProviderLine(loadConfig({ ...BASE, ...METERED }))).toEqual({ kind: "none", metered: true });
   });
 
   it("a gateway or a model server is custom, and the line never carries the address", () => {
     const gateway = aiProviderLine(loadConfig({ ...BASE, ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: "https://gateway.worker-line.example" }));
     const ollama = aiProviderLine(loadConfig({ ...BASE, ...OLLAMA }));
-    expect(gateway).toEqual({ kind: "anthropic", endpoint: "custom", metered: false });
-    expect(ollama).toEqual({ kind: "ollama", endpoint: "custom", metered: false });
+    expect(gateway).toEqual({ kind: "anthropic", aiEndpoint: "custom", metered: false });
+    expect(ollama).toEqual({ kind: "ollama", aiEndpoint: "custom", metered: false });
     expect(JSON.stringify([gateway, ollama])).not.toMatch(/gateway\.worker-line|ollama:11434/);
   });
 
   it("the worker logs that line at boot", () => {
     const src = readFileSync(fileURLToPath(new URL("../src/index.ts", import.meta.url)), "utf8");
     expect(src).toContain('cliLog.info("ai_provider_configured", aiProviderLine(config));');
+  });
+});
+
+describe("THE METER: a worker beside the billing plane never boots without ENTITLEMENTS_URL", () => {
+  // BILLING_PLANE_SECRET is the marker the managed deploy alone sets; the value is a fixture.
+  const MARKER = { BILLING_PLANE_SECRET: METERED.BILLING_PLANE_SECRET };
+
+  it("the marker with ENTITLEMENTS_URL unset, empty or blank refuses by name, AI or not", () => {
+    for (const url of [undefined, "", "   "]) {
+      for (const ai of [{}, { ANTHROPIC_API_KEY: KEY }]) {
+        const r = refusal({ ...MARKER, ...ai, ...(url === undefined ? {} : { ENTITLEMENTS_URL: url }) });
+        expect([r.configVar, r.message.includes("BILLING_PLANE_SECRET"), r.remedy?.includes("ENTITLEMENTS_URL")], JSON.stringify(url))
+          .toEqual(["ENTITLEMENTS_URL", true, true]);
+      }
+    }
+  });
+
+  it("an emptied marker is still the marker: present at all, the meter must be there", () => {
+    expect(refusal({ BILLING_PLANE_SECRET: "", ANTHROPIC_API_KEY: KEY }).configVar).toBe("ENTITLEMENTS_URL");
+    expect(refusal({ BILLING_PLANE_SECRET: "", ENTITLEMENTS_URL: "" }).configVar).toBe("ENTITLEMENTS_URL");
+  });
+
+  it("CONTROL: without the marker a self-hosted organizer boots unmetered; with both it meters", () => {
+    expect(aiProviderLine(loadConfig({ ...BASE, ANTHROPIC_API_KEY: KEY })).metered).toBe(false);
+    expect(aiProviderLine(loadConfig({ ...BASE, ENTITLEMENTS_URL: "", ANTHROPIC_API_KEY: KEY })).metered).toBe(false);
+    expect(aiProviderLine(loadConfig({ ...BASE, ...METERED, ANTHROPIC_API_KEY: KEY })).metered).toBe(true);
   });
 });
