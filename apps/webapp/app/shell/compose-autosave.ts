@@ -893,6 +893,12 @@ export function useComposeAutosave(opts: {
    */
   useEffect(() => {
     if (draftId === null) return;
+    /* THE RE-BOOTSTRAP ARM: a 410's snapshot lacks a row deleted meanwhile, with no tombstone. A
+       row this page saw live and the mirror no longer holds once a drain has completed since is
+       asked of the server, once; its 404 is the delete. A pruned or refilling row answers held. */
+    let seenLive = false;
+    let absentAsOf: string | null | undefined;
+    let asked = false;
     const check = (): void => {
       if (draftIdRef.current !== draftId || sendInFlightRef.current) return;
       const hold = holdOf(engine, {
@@ -902,9 +908,22 @@ export function useComposeAutosave(opts: {
         letGo("sent", draftId);
         return;
       }
-      if (hold.kind !== "parked" && !ownDiscards.has(draftId) && tombstoned(engine, draftId)) {
+      if (hold.kind === "parked" || ownDiscards.has(draftId)) return;
+      if (tombstoned(engine, draftId)) {
         letGo("deleted", draftId);
+        return;
       }
+      if (engine.read().get("draft", draftId) != null) { seenLive = true; absentAsOf = undefined; return; }
+      if (!seenLive || asked || typeof engine.draftOnServer !== "function") return;
+      const asOf = engine.freshness?.().asOf ?? null;
+      if (absentAsOf === undefined) { absentAsOf = asOf; return; }
+      if (asOf === null || asOf === absentAsOf) return;
+      asked = true;
+      void engine.draftOnServer(draftId).then((answer) => {
+        if (answer === "gone" && draftIdRef.current === draftId && !ownDiscards.has(draftId)) {
+          letGo("deleted", draftId);
+        }
+      });
     };
     check();
     return engine.subscribe(check);

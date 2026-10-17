@@ -3945,9 +3945,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const foldersGone: string[] = [];
     if (listedPaths !== null && stoppedAt === undefined && !createsOwed) {
       const scanned = new Set(scanFolders);
+      /* PAST THE CEILING the same holds: a folder renamed to a name the cap leaves unread never
+         meets its creates, so a vanished folder WITH letters is unknown while any listed folder
+         goes unread, and is asked again next pass. An empty one has nothing to lose and still goes. */
+      const unread = this.passiveOverflow.length > 0;
       for (const [name, prev] of stored) {
         if (scanned.has(name) || listedPaths.has(name)) continue;
         if (SENT_SHAPED_PATHS.includes(name.toLowerCase())) continue;
+        if (unread && prev.known.length > 0) continue;
         const epoch = epochOf(prev.uidValidity);
         if (prev.known.length > 0 && !epoch.known) continue;
         if (!(await this.folderStatedGone(name))) continue;

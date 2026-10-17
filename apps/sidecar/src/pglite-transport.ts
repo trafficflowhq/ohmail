@@ -122,7 +122,7 @@ function refusedForDirectory(err: unknown): boolean {
 }
 
 /** Sync a directory's entries; `false` where the platform cannot. */
-function syncDirectory(path: string): boolean {
+export function syncDirectory(path: string): boolean {
   let fd: number;
   try {
     fd = fs.openSync(path, "r");

@@ -273,6 +273,25 @@ describe("changesSince — a remembered folder the LIST no longer names", () => 
     expect(batch.creates.filter((c) => c.locator.folder === "Work")).toEqual([]);
   });
 
+  it("renamed past the ceiling: its letters are not read as deleted while a listed folder goes unread", async () => {
+    // FOLDER-RENAMED-PAST-THE-PASS-LIMIT-READS-AS-DELETED. No LIST-STATUS, so the cap is 32 and
+    // `zz-renamed` (where the letters now are) sorts past it: the pass never meets its creates.
+    const own: Record<string, FakeFolder> = {};
+    for (let i = 0; i < PASSIVE_FOLDERS_MAX_NO_STATUS; i++) own[`f${String(i).padStart(2, "0")}`] = folder([]);
+    const server = { ...watched(), ...own, "zz-renamed": folder(mails("p", 3), 901n) };
+    const client = makeClient(server);
+    const batch = await pass(client, cursorOf({ ...watched(), Projects: projects, Empty: folder([]) }));
+    expect(refsIn(batch.deletes, "Projects"), "letters read as deleted past the ceiling").toEqual([]);
+    expect(batch.foldersGone ?? []).not.toContain("Projects");
+    expect(client.asked).not.toContain("Projects");
+    // An empty folder loses nothing and still leaves the list.
+    expect(batch.foldersGone).toEqual(["Empty"]);
+    // Once nothing listed goes unread, the same absence is believed again.
+    const fewer = makeClient({ ...watched(), "zz-renamed": folder(mails("p", 3), 901n) });
+    const next = await pass(fewer, cursorOf({ ...watched(), Projects: projects }));
+    expect(next.foldersGone).toEqual(["Projects"]);
+  });
+
   it("not asked while creates are owed, so a big rename cannot read as a delete", async () => {
     const renamed = folder(mails("p", 3), 901n);
     const client = makeClient({ ...watched(), Work: renamed });

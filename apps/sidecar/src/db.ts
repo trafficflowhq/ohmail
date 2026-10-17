@@ -25,7 +25,7 @@ import {
 import { LocalStoreFs, StoreFsyncMissingError } from "./pglite-transport.js";
 import { writeAtomicFileSynced } from "./fs-atomic.js";
 import { afterFirstPage } from "./first-page-gate.js";
-import { makeStoreInMemory } from "./fresh-store.js";
+import { makeStoreInMemory, syncStoreTree } from "./fresh-store.js";
 import { keepIngestPlans } from "./pglite-plans.js";
 import { markStoreStatement } from "@trafficflow/core/mail";
 import { anyWrite, statementKind, storeWriteGauge } from "./store-writes.js";
@@ -2062,8 +2062,9 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // A no-op everywhere else (`REISSUED_ORIGINALS`, packages/db/src/baseline.ts).
     await adoptReissuedOriginals(db, MAIL_JOURNAL);
     /* LAST OF WHAT A FIRST START MAKES: the schema has committed, and everything after this is
-       redone by every open. Nothing of the person's is in the store before this line. */
-    if (fresh) markStoreFinished(dataDir);
+       redone by every open. Nothing of the person's is in the store before this line, and the
+       catalog is synced first, so a cleared marker never stands over files still in the cache. */
+    if (fresh) { await syncStoreTree(pgDataDir); markStoreFinished(dataDir); }
     const migrateMs = Date.now() - tMigrate;
     /* THE STORE'S MARK, OUTERMOST — above the close door, so a call it refuses is the store's — and
        after the migrator, whose refusal names its own statement. See {@link markStoreStatements}. */

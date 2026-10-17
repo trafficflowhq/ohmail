@@ -5711,6 +5711,22 @@ export class OhmailEngine {
   }
 
   /**
+   * DOES THE SERVER STILL HOLD THIS DRAFT? Asked by a composer whose bound row left the mirror with
+   * no tombstone — a 410 re-bootstrap's snapshot simply lacks a row deleted meanwhile. `gone` only
+   * on the server's own 404; a refusal of any other kind, or no route, is `unknown`.
+   */
+  async draftOnServer(draftId: string): Promise<"held" | "gone" | "unknown"> {
+    const fetchDraftBody = this.adapter.fetchDraftBody?.bind(this.adapter);
+    if (!fetchDraftBody) return "unknown";
+    try {
+      await fetchDraftBody(draftId);
+      return "held";
+    } catch (err) {
+      return err instanceof MutationRejectedError && err.status === 404 ? "gone" : "unknown";
+    }
+  }
+
+  /**
    * The shared batch core behind {@link hydrateThread} and the eager pass. `rendered` is the
    * one difference between the two callers, and it is a fact only the caller knows: a thread
    * open means every one of these ids is ON SCREEN and must be pinned against the windowed

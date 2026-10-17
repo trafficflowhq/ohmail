@@ -21,6 +21,14 @@ address, and `TF_AI_CLASSIFY_MODEL` and `TF_AI_DRAFT_MODEL` choose the models. A
 `ANTHROPIC_API_KEY` runs as before. A model server has no default address and needs `TF_AI_ALLOW_PRIVATE=1` to be
 reached on the stack's own network. Workflow proposals need Anthropic, as on the desktop, and ohmail Cloud is unchanged.
 
+### A first start, a renamed folder and a resync lose nothing quietly
+
+On the desktop, a power cut soon after ohmail made its local store for the first time could leave a store that
+would not open; the new store is now on the disk before ohmail counts it as made. A folder renamed on the mail
+server, on a mailbox with more folders than one sync reads, no longer has its mail leave ohmail until the new
+folder is read. On the web, a draft deleted on another device while the tab re-synced from the start is now said
+to be deleted, and what you type is kept as a new draft.
+
 ### New mail shows up on the desktop within seconds again
 
 When the desktop app talked to the mail server itself, a new message often waited up to two minutes before it

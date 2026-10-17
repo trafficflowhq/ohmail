@@ -190,6 +190,35 @@ describe("a draft deleted on another device while it is open here", () => {
   }, 30_000);
 });
 
+describe("a draft deleted on another device across a full resync (410)", () => {
+  /* DRAFT-DELETED-ELSEWHERE-ACROSS-A-RESYNC-STAYS-SILENT: the re-bootstrap's replay simply lacks the
+     row, so no tombstone arrives and no 404 comes back to a save the mirror refuses locally. */
+  it("asks the server once after the drain, says so, and keeps what is typed as a new draft", async () => {
+    await openLetter();
+    shell.serverGone.add(D);
+    shell.resync.armed = true;
+    await sync();
+    await waitFor(() => text().includes(compose.deletedElsewhere ?? "\u0000"), "the sentence", 40).catch(() => undefined);
+    expect(text().includes(compose.deletedElsewhere ?? "\u0000"), "the editor stayed silent over a row the resync dropped").toBe(true);
+    const before = saves().length;
+    await typeSubject("Plans for Friday, after the resync");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => saves().length > before, "a save of the new text", 40).catch(() => undefined);
+    expect(rows(saves().slice(before)), "the words typed after the resync were not kept as a new draft")
+      .toEqual([{ row: null, subject: "Plans for Friday, after the resync" }]);
+  }, 30_000);
+
+  it("CONTROL: a row the server still holds is not called deleted when the resync leaves it out", async () => {
+    await openLetter();
+    shell.resync.armed = true;
+    await sync();
+    await pause(300);
+    await sync();
+    await pause(300);
+    expect(text().includes(compose.deletedElsewhere ?? "\u0000"), "a held row was called deleted").toBe(false);
+  }, 30_000);
+});
+
 describe("a draft sent from another device while this tab was closed", () => {
   it("keeps the words typed here that the row never held, as a new draft, and says why", async () => {
     await openLetter();

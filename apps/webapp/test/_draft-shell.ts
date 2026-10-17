@@ -228,6 +228,11 @@ function engineOver(
         const entityId = m.kind === "draft_save" ? (m.draftId ?? changes[0]?.id) : undefined;
         return { changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}) };
       },
+      /* `GET /drafts/:id`: a row another device deleted answers 404, as the route does. */
+      fetchDraftBody: async (id: string) => {
+        if (serverGone.has(id)) throw new MutationRejectedError("draft not found", { status: 404, code: "not_found", retryable: false });
+        return s.get("draft", id) ? "the text of the draft" : "the text of the draft on the server";
+      },
       fetchBody: async (id: string) => ({
         text: `the text of ${id}`, html: null, loadedRemoteContent: false,
         unsubscribe: "no_header", unsubscribeUrl: null,

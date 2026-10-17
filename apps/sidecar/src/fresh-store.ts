@@ -1,8 +1,10 @@
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Worker } from "node:worker_threads";
+import wt, { Worker } from "node:worker_threads";
 import { PGDATA } from "@electric-sql/pglite/basefs";
-import { PGLITE_TRANSPORT_NAMES } from "./pglite-transport.js";
+import { PGLITE_TRANSPORT_NAMES, syncDirectory } from "./pglite-transport.js";
 
 /**
  * A NEW STORE IS MADE IN MEMORY AND WRITTEN TO ITS DIRECTORY ONCE.
@@ -84,4 +86,64 @@ export async function makeStoreInMemory(pgDataDir: string, boundMs: number = FRE
     clearTimeout(timer);
     await worker.terminate();
   }
+}
+
+/**
+ * ONE SLICE OF THE CATALOG, SYNCED. Its own thread because a sync waits for the disk's journal:
+ * 1 300 files one after another took 6.6 s on a Linux desktop, sixteen threads 1.0 s.
+ */
+const SYNCER = `
+const { parentPort, workerData } = require("node:worker_threads");
+const fs = require("node:fs");
+try {
+  for (const p of workerData.paths) {
+    const fd = fs.openSync(p, "r+");
+    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  }
+  parentPort.postMessage({ synced: workerData.paths.length });
+} catch (err) {
+  parentPort.postMessage({ error: String((err && err.message) || err) });
+}
+`;
+
+/** How many threads sync a new store's files. */
+export const STORE_SYNC_THREADS = 16;
+
+function syncSlice(paths: readonly string[]): Promise<number> {
+  /* `wt.Worker`, read at the call, so the cut emulator can run this slice at its seam. */
+  const worker = new wt.Worker(SYNCER, { eval: true, workerData: { paths } });
+  return new Promise<number>((resolve, reject) => {
+    worker.once("message", (m: { synced?: unknown; error?: unknown }) => {
+      if (typeof m?.synced === "number") resolve(m.synced);
+      else reject(new Error(typeof m?.error === "string" ? m.error : "the store syncer answered nothing"));
+    });
+    worker.once("error", reject);
+    worker.once("exit", (code) => reject(new Error(`the store syncer exited ${code} before answering`)));
+  }).finally(() => { void worker.terminate(); });
+}
+
+/**
+ * PUT A NEW STORE'S CATALOG ON THE DISK before the start marks it finished. The maker above writes
+ * it with `writeFileSync`, and `initdb` on the disk (the fallback) through a filesystem that syncs
+ * only what Postgres asks: neither syncs the files, so a power cut after the marker cleared could
+ * leave a half catalog no later start sets aside. Every file (`r+`: Windows flushes only through
+ * a handle that may write), then each directory after its entries, `dir` last.
+ */
+export async function syncStoreTree(dir: string, threads: number = STORE_SYNC_THREADS): Promise<number> {
+  const files: string[] = [];
+  const dirs: string[] = [];
+  const walk = (at: string): void => {
+    for (const entry of fs.readdirSync(at, { withFileTypes: true })) {
+      const path = join(at, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile()) files.push(path);
+    }
+    dirs.push(at);
+  };
+  walk(dir);
+  const k = Math.max(1, Math.min(threads, files.length));
+  const slices = Array.from({ length: k }, (_, i) => files.filter((_, j) => j % k === i));
+  const synced = (await Promise.all(slices.map(syncSlice))).reduce((a, b) => a + b, 0);
+  for (const at of dirs) syncDirectory(at);
+  return synced;
 }
