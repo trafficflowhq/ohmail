@@ -193,24 +193,39 @@ export interface LinkRun {
 /**
  * A picture that is part of the message itself — a `cid:` part the sanitize pass resolved, or the
  * sender's own embedded `data:` image. `src` is a value the walker COPIED off the sanitized,
- * post-passed document, where the only srcs that pass {@link INLINE_IMAGE_SRC} are ones the resolve
- * step wrote (gated) or the sender's own small-raster bytes; the renderer below re-tests the SAME
- * constant before constructing the element, so a node built by anything else still cannot put a
+ * post-passed document, where the only srcs that pass {@link inlineImageAdmitted} are ones the
+ * resolve step wrote (gated) or the sender's own small-raster bytes; the renderer below re-tests the
+ * SAME gate before constructing the element, so a node built by anything else still cannot put a
  * `javascript:` or `data:text/html` into the app document. `alt` renders only as a React text node.
  */
 export interface ImageRun { kind: "image"; src: string; alt: string }
 export type InlineNode = TextRun | LineBreak | StyledRun | LinkRun | ImageRun;
 
 /**
- * The only shape an embedded image's `src` may take: a base64 `data:` URI of one of the four
- * raster types. ONE VALUE, ENFORCED AT BOTH SINKS — `MessageBody`'s post-pass tests it before the
- * attribute write into the frame document, and {@link renderInline} tests it again before
- * constructing the app-document element — the same arrangement as its `SAFE_HREF`: widen it to
- * `/./` and both enforcement points open at once, which is what the mutation in
+ * The `data:` shape an embedded image's `src` may take — the sender's own pictures, and the ones
+ * the phone mints: a base64 `data:` URI of one of the four raster types. ONE VALUE, ENFORCED AT
+ * BOTH SINKS through {@link inlineImageAdmitted} — `MessageBody`'s post-pass before the attribute
+ * write into the frame document, {@link renderInline} again before constructing the app-document
+ * element: widen it to `/./` and both open at once, which is what the mutation in
  * `test/message-body-cid-images.test.tsx` proves it against. It lives HERE because this file is
  * the prose sink; `MessageBody` imports it rather than keeping a second spelling that could drift.
  */
 export const INLINE_IMAGE_SRC = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+const INLINE_OBJECT_URL = /^blob:/;
+
+/** No embedded picture of the message's own: what a body with no map, or the text part, admits. */
+export const NO_OWN_IMAGES: ReadonlySet<string> = new Set();
+
+/**
+ * AN EMBEDDED PICTURE'S SRC, AT EVERY SINK: an {@link INLINE_IMAGE_SRC} `data:` URI, or a `blob:`
+ * URL that is one of THIS message's own map values (`own`: what its engine minted on a browser
+ * door). Membership, never the scheme alone — a `blob:` that is not this message's is refused like
+ * a missing picture, so another message's picture never draws here.
+ */
+export function inlineImageAdmitted(src: string, own: ReadonlySet<string>): boolean {
+  return INLINE_IMAGE_SRC.test(src) || (INLINE_OBJECT_URL.test(src) && own.has(src));
+}
 
 /**
  * A run of rich inline content, and WHAT CONTAINED IT decides its spacing.
@@ -457,18 +472,18 @@ function linkify(block: string, keyBase: string): ReactNode[] {
  * than the destination ({@link LinkRun.elsewhere}), the real host is printed beside it — the
  * framed path's anti-phishing marker, carried natively.
  */
-function renderInline(nodes: InlineNode[], keyBase: string): ReactNode[] {
+function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<string>): ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyBase}i${i}`;
     switch (node.kind) {
       case "text": return node.text;
       case "break": return <br key={key} />;
-      case "strong": return <strong key={key}>{renderInline(node.children, key)}</strong>;
-      case "em": return <em key={key}>{renderInline(node.children, key)}</em>;
-      case "underline": return <u key={key}>{renderInline(node.children, key)}</u>;
+      case "strong": return <strong key={key}>{renderInline(node.children, key, own)}</strong>;
+      case "em": return <em key={key}>{renderInline(node.children, key, own)}</em>;
+      case "underline": return <u key={key}>{renderInline(node.children, key, own)}</u>;
       // Literal characters inside a sentence. Faint tint, no border, no highlighting — this is
       // received mail, and the app is not pretending to be an editor for somebody else's source.
-      case "code": return <code className="msg-code" key={key}>{renderInline(node.children, key)}</code>;
+      case "code": return <code className="msg-code" key={key}>{renderInline(node.children, key, own)}</code>;
       case "link":
         return (
           <a
@@ -479,23 +494,23 @@ function renderInline(nodes: InlineNode[], keyBase: string): ReactNode[] {
             rel="noopener noreferrer"
             title={COPY.linkTitle(node.host)}
           >
-            {renderInline(node.children, key)}
+            {renderInline(node.children, key, own)}
             {node.elsewhere ? <span className="msg-link-host"> ({node.host})</span> : null}
           </a>
         );
       case "image":
-        // THE GATE AT THE SINK — see {@link INLINE_IMAGE_SRC}. A node whose src fails it draws
+        // THE GATE AT THE SINK — see {@link inlineImageAdmitted}. A node whose src fails it draws
         // nothing (the strip still lists the part); the alt text is the sender's and enters the
         // document only as a React attribute value. `.msg-img` caps the width at the column
         // (message-body.css) — the stored size otherwise, which is what a signature logo wants.
-        return INLINE_IMAGE_SRC.test(node.src)
+        return inlineImageAdmitted(node.src, own)
           ? <img key={key} className="msg-img" src={node.src} alt={node.alt} loading="lazy" decoding="async" />
           : null;
     }
   });
 }
 
-function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
+function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<string>): ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyPrefix}${i}`;
     switch (node.kind) {
@@ -506,7 +521,7 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
         // MAX_QUOTE_DEPTH, enforced where the tree is built.
         return (
           <div className="msg-quote" data-quote-depth={node.depth} key={key}>
-            {renderNodes(node.children, `${key}-`)}
+            {renderNodes(node.children, `${key}-`, own)}
           </div>
         );
       case "para":
@@ -532,14 +547,14 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
             }
             key={key}
           >
-            {renderInline(node.children, key)}
+            {renderInline(node.children, key, own)}
           </p>
         );
       case "heading": {
         // The app's scale, not the sender's: `.msg-h` caps the size (message-body.css), so a
         // newsletter-sized h1 reads as a letter's heading rather than a shout.
         const H = `h${node.level}` as "h1";
-        return <H className="msg-h" key={key}>{renderInline(node.children, key)}</H>;
+        return <H className="msg-h" key={key}>{renderInline(node.children, key, own)}</H>;
       }
       case "rule":
         return <hr className="msg-hr" key={key} />;
@@ -557,7 +572,7 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
         );
       case "list": {
         const items = node.items.map((item, j) => (
-          <li key={`${key}-${j}`}>{renderNodes(item, `${key}-${j}-`)}</li>
+          <li key={`${key}-${j}`}>{renderNodes(item, `${key}-${j}-`, own)}</li>
         ));
         return node.ordered
           ? <ol className="msg-list" key={key}>{items}</ol>
@@ -581,7 +596,7 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
                           colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
                           rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
                         >
-                          {renderNodes(cell.children, `${key}-${r}-${c}-`)}
+                          {renderNodes(cell.children, `${key}-${r}-${c}-`, own)}
                         </Cell>
                       );
                     })}
@@ -610,7 +625,7 @@ function parsePlain(text: string): BodyNode[] {
 
 /** One page of a long body. Memoised on its own text, so a further page parses and lays out alone. */
 const BodyPage = memo(function BodyPage({ text, index }: { text: string; index: number }) {
-  return <div className="msg-page">{renderNodes(parsePlain(text), `p${index}-`)}</div>;
+  return <div className="msg-page">{renderNodes(parsePlain(text), `p${index}-`, NO_OWN_IMAGES)}</div>;
 });
 
 /**
@@ -635,7 +650,12 @@ function PagedBody({ text }: { text: string }) {
   );
 }
 
-export function BodyText({ text, rich }: { text: string; rich?: BodyNode[] | null }) {
+/** `ownImages`: the message's own embedded-picture URLs, the only `blob:` srcs {@link inlineImageAdmitted} draws. */
+export function BodyText({ text, rich, ownImages = NO_OWN_IMAGES }: {
+  text: string;
+  rich?: BodyNode[] | null;
+  ownImages?: ReadonlySet<string>;
+}) {
   /**
    * The fold's state keys on the MESSAGE TEXT, not on the component instance: `open` is only
    * true while the text it was opened for is the text on screen. The pane reuses one mounted
@@ -652,11 +672,11 @@ export function BodyText({ text, rich }: { text: string; rich?: BodyNode[] | nul
   // blank line is `\r\n\r\n` and every paragraph boundary is missed.
   const nodes = useRich ? rich : parsePlain(text ?? "");
   const split = splitTrailingHistory(nodes);
-  if (split === null) return <>{renderNodes(nodes, "b")}</>;
+  if (split === null) return <>{renderNodes(nodes, "b", ownImages)}</>;
   const open = openedFor === text;
   return (
     <>
-      {renderNodes(split.lead, "b")}
+      {renderNodes(split.lead, "b", ownImages)}
       {/* A real <button> — Enter and Space come with the element; `aria-expanded` reports the
           fold. Collapsed history is NOT RENDERED rather than hidden: nothing in it (including
           its anchors) exists until the reader asks. */}
@@ -668,7 +688,7 @@ export function BodyText({ text, rich }: { text: string; rich?: BodyNode[] | nul
       >
         {open ? COPY.hide : COPY.show}
       </button>
-      {open ? renderNodes(split.history, "h") : null}
+      {open ? renderNodes(split.history, "h", ownImages) : null}
     </>
   );
 }

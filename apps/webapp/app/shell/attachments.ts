@@ -86,7 +86,7 @@ export interface AttachmentsChrome {
   downloadAll(messageId: string, opts?: { includeInlineParts?: boolean }): void;
   downloadingAll(messageId: string): boolean;
   /**
-   * THE EMBEDDED IMAGES ALREADY IN HAND for one message — `contentId → data: URI`, straight off
+   * THE EMBEDDED IMAGES ALREADY IN HAND for one message — `contentId → the part's object URL`, straight off
    * the engine (`inlineImagesOf`). Identity-stable between arrivals, so `MessageBody` can hang
    * its sanitize memo on it. Empty until {@link needCidImages} has fetched something.
    */

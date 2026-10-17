@@ -981,6 +981,9 @@ export function createLocalEngine(scope: string, options: EngineAdapterOptions =
     warmSearch: true,
     // A server without the Cancel route (the hosted one, in Cloud mode), said once per send.
     onWithdrawUnsupported: () => console.warn("ohmail: send_withdraw_unsupported — this server has no Cancel route"),
+    // Embedded pictures by their object URL: the mail frame loads them by reference, where a
+    // `data:` copy cost the renderer about 1 GB opening twelve pictures of 16 MiB.
+    inlineImageUrls: "object",
   });
 }
 

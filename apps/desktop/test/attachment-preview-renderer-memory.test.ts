@@ -14,7 +14,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
  *
  * Bounds: each class of raw answer grows the renderer by at most 4x its bytes + 48 MiB and crosses as
  * bytes; a picture preview by at most 3x + 48 MiB; the controls, under the base's closed policy, by
- * more than 8x. Watched red: `tauri.windows.conf.json`'s connect-src back to `'none'`.
+ * more than 8x. Watched red: `tauri.windows.conf.json`'s connect-src back to `'none'`. An inline
+ * class draws its letter in the reader's frame (the real sanitizer, document and sandbox) and must
+ * show every picture, by object URL; its control, the same message with `data:` pictures, grows the
+ * renderer by more than twice that bound.
  */
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
@@ -156,7 +159,10 @@ beforeAll(async () => {
   await build({
     entryPoints: [join(ROOT, "apps/desktop/test/rigs/preview-memory-entry.ts")],
     bundle: true, format: "iife", platform: "browser", target: ["es2020"], jsx: "automatic",
-    outdir: out, loader: { ".css": "css", ".svg": "file", ".png": "file", ".woff2": "file" },
+    outdir: out, loader: { ".css": "css", ".svg": "file", ".png": "file", ".woff2": "file", ".woff": "file" },
+    // The reader's frame (`MessageBody`) reads its sentences through next-intl, which is use-intl here.
+    alias: { "next-intl": join(ROOT, "apps/webapp/test/editor-feel/intl-shim.mjs") },
+    banner: { js: "window.process = window.process || { env: {} };" },
     define: { "process.env.NODE_ENV": '"production"' }, logLevel: "warning",
   });
   bundle = readFileSync(join(out, "preview-memory-entry.js"), "utf8");
@@ -175,7 +181,7 @@ function rssOf(pid: number, field: "VmRSS" | "VmHWM"): number {
 type Reading = { bridgeTransport: string | null; answers: number; json: number };
 type Rig = {
   open: (id: string, how: string) => Promise<Record<string, unknown>>;
-  load: (kind: string, messageId?: string) => Promise<Record<string, unknown>>;
+  load: (kind: string, messageId?: string, carrier?: string) => Promise<Record<string, unknown>>;
   transport: () => Reading;
 };
 
@@ -263,8 +269,8 @@ async function measure(policy: string, run: (page: Page) => Promise<Record<strin
 
 const opening = (id: string, how: "preview" | "bytes") => (page: Page) =>
   page.evaluate(([fid, way]) => (window as unknown as { rig: Rig }).rig.open(fid!, way!), [id, how]);
-const loading = (kind: string, messageId = "") => (page: Page) =>
-  page.evaluate(([k, m]) => (window as unknown as { rig: Rig }).rig.load(k!, m!), [kind, messageId]);
+const loading = (kind: string, messageId = "", carrier = "object") => (page: Page) =>
+  page.evaluate(([k, m, c]) => (window as unknown as { rig: Rig }).rig.load(k!, m!, c!), [kind, messageId, carrier]);
 
 const say = (what: string, growth: number) => process.stderr.write(`[renderer-memory] ${what}: renderer peak RSS +${(growth / MIB).toFixed(1)} MiB\n`);
 
@@ -301,8 +307,9 @@ describe.runIf(process.platform === "linux")("the desktop preview's renderer mem
 describe.runIf(process.platform === "linux")("every class of raw answer crosses as bytes, and costs the renderer at most 4x them + 48 MiB", () => {
   const CLASSES = [
     { name: "a bodies page, 20 x 1 MiB", bytes: BODIES.length, run: loading("bodies"), held: { rows: 20, chars: 20 * MIB } },
-    { name: "one 4 MiB inline picture", bytes: partBytes("m-inline4"), run: loading("inline", "m-inline4"), held: { minted: 1 } },
-    { name: "a 16 MiB inline message, 12 parts", bytes: partBytes("m-inline16"), run: loading("inline", "m-inline16"), held: { minted: 12 } },
+    // Drawn in the reader's frame, by the window's object URLs: every picture shown, none as data:.
+    { name: "one 4 MiB inline picture", bytes: partBytes("m-inline4"), run: loading("inline", "m-inline4"), held: { minted: 1, drawn: 1, blob: 1, data: 0 } },
+    { name: "a 16 MiB inline message, 12 parts", bytes: partBytes("m-inline16"), run: loading("inline", "m-inline16"), held: { minted: 12, drawn: 12, blob: 12, data: 0 } },
     { name: "three 256 KiB calendar parts", bytes: partBytes("m-cal"), run: loading("calendar", "m-cal"), held: { texts: 3 } },
     { name: "a 10 MiB snapshot page", bytes: SNAPSHOT.length, run: loading("snapshot"), held: { changes: SNAPSHOT_ROWS } },
   ];
@@ -315,6 +322,15 @@ describe.runIf(process.platform === "linux")("every class of raw answer crosses 
       expect(growth, `grew the renderer by ${(growth / MIB).toFixed(1)} MiB`).toBeLessThan(4 * c.bytes + 48 * MIB);
     }, 120_000);
   }
+
+  it("THE CONTROL: the same 16 MiB message drawn from data: pictures grows the renderer by more than twice the bound", async () => {
+    const bytes = partBytes("m-inline16");
+    const { growth, result, transport } = await measure(WINDOWS_POLICY, loading("inline", "m-inline16", "data"));
+    say("a 16 MiB inline message drawn from data: pictures", growth);
+    expect(result).toMatchObject({ minted: 12, drawn: 12, blob: 0, data: 12 });
+    expect(transport).toMatchObject({ bridgeTransport: "ipc", json: 0 });
+    expect(growth, "the instrument did not see the data: copies").toBeGreaterThan(2 * (4 * bytes + 48 * MIB));
+  }, 120_000);
 
   it("THE CONTROL: the 16 MiB message under the closed policy crosses as JSON arrays, more than 8x its bytes", async () => {
     const bytes = partBytes("m-inline16");

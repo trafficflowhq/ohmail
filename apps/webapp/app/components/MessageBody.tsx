@@ -7,8 +7,8 @@
  * CSP decides what the browser MAY DO — never allow-scripts/forms/top-navigation
  * (`allow-same-origin` is safe only without scripts). Remote content is not requested: every
  * remote reference is removed pre-build, `default-src 'none'` covers the rest. Text rewrites
- * only BEFORE the sanitizer; images ride `GET /img` only; `cid:` images are this message's own
- * bytes.
+ * only BEFORE the sanitizer; remote images ride `GET /img` only; `cid:` images are this message's
+ * own bytes — the object URL this window minted for the part (`blob:`), or a `data:` URI.
  */
 
 import DOMPurify from "dompurify";
@@ -19,9 +19,10 @@ import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
 import {
   anchorFor,
   BodyText,
-  INLINE_IMAGE_SRC,
+  inlineImageAdmitted,
   isAttribution,
   MAX_QUOTE_DEPTH,
+  NO_OWN_IMAGES,
   type BodyNode,
   type InlineNode,
   type QuoteNode,
@@ -231,16 +232,21 @@ const CID_URL = /^cid:/i;
 const INERT_CSS_URL = /^(?:data:|cid:)/i;
 
 /**
- * The only shape a resolved embedded image may take: a base64 `data:` URI of one of the four
- * raster types (`INLINE_IMAGE_MIME`). Enforced at the write into the document, not only at the
- * mint: the map arrives through a prop, and "the engine is the only caller" is a fact about
- * today's wiring, not a property of this function. A value of any other shape — `javascript:`,
- * `data:text/html`, `data:image/svg+xml`, non-base64 characters — reads as absent and the image
+ * The shapes a resolved embedded image may take: a base64 `data:` URI of one of the four raster
+ * types (`INLINE_IMAGE_MIME`), or a `blob:` URL that is one of this message's own map values
+ * ({@link inlineImageAdmitted}). Enforced at the write into the document, not only at the mint:
+ * the map arrives through a prop, and "the engine is the only caller" is a fact about today's
+ * wiring, not a property of this function. A value of any other shape — `javascript:`,
+ * `data:text/html`, `data:image/svg+xml`, a preview-scheme URL — reads as absent and the image
  * stays blanked; `test/message-body-cid-images.test.tsx` hands this a hostile map and watches.
- * ONE value, now HOMED in `BodyText` (the prose sink re-tests it before constructing the app
- * document's element) and imported here for the frame-document writes — see its docblock there.
+ * ONE gate, HOMED in `BodyText` (the prose sink) and imported here — see its docblock there.
  */
 export { INLINE_IMAGE_SRC } from "../shell/BodyText";
+
+/** The message's own embedded-picture URLs: the values of its `cid:` map, or none. */
+function ownImagesOf(map: ReadonlyMap<string, string> | null | undefined): ReadonlySet<string> {
+  return map && map.size > 0 ? new Set(map.values()) : NO_OWN_IMAGES;
+}
 
 /** The Content-ID an `<img src="cid:…">` names — brackets and the scheme stripped — or null. */
 function cidOfSrc(src: string): string | null {
@@ -801,7 +807,7 @@ export function neutraliseCss(
         replacement = "none"; // unterminated: the browser reads it to EOF, so so do we
       } else if (CID_URL.test(url) && onCid) {
         // A `cid:` in an inline style names a part of this very message — same contract as the
-        // `<img>` branch: the callback answers with the gated `data:` URI or `null`, and null
+        // `<img>` branch: the callback answers with the gated URL or `null`, and null
         // keeps the reference verbatim (inert; it fetches nothing and paints nothing). The
         // substituted value is written through {@link cssString} like the proxy's, though a
         // value that passed the gate has nothing to escape.
@@ -1755,7 +1761,7 @@ export function isDesignedLayout(root: Element, styleText: string | readonly str
  * app's own document — so this walker emits `BodyText`'s node model. The invariant: no sender
  * byte leaves except as a text run's `text`, and no sender attribute leaves at all (`href` via
  * {@link anchorFor}, `colspan` via {@link boundedSpan}; an `img` only as an
- * {@link INLINE_IMAGE_SRC}-gated src plus alt — the message's own bytes, never a fetchable url).
+ * {@link inlineImageAdmitted}-gated src plus alt — the message's own bytes, never a fetchable url).
  * `style` stays absent ({@link RICH_SKIP}); everything else is transparent. `pre` reads as
  * literal text; `blockquote` clamps at {@link MAX_QUOTE_DEPTH}; past {@link MAX_RICH_NODES} it
  * answers `null`.
@@ -1785,8 +1791,11 @@ const RICH_SKIP = new Set(["style"]);
  */
 export const MAX_RICH_CHARS = BODY_PAGE_CHARS;
 
-/** The walk's budget, per EMITTED node and per character of text; below zero the build is refused. */
-interface RichBudget { left: number; chars: number }
+/**
+ * The walk's budget, per EMITTED node and per character of text; below zero the build is refused.
+ * `own` rides with it: the message's own picture URLs, the only `blob:` srcs an image run copies.
+ */
+interface RichBudget { left: number; chars: number; own: ReadonlySet<string> }
 function spend(b: RichBudget): boolean { return --b.left >= 0; }
 /** Spend a node that carries `n` characters of the sender's text. */
 function spendText(b: RichBudget, n: number): boolean {
@@ -1836,13 +1845,13 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
   if (RICH_SKIP.has(tag)) return;
   if (tag === "img") {
     // AN EMBEDDED PICTURE, ALREADY RESOLVED — the walk runs on the post-passed document, so a
-    // `cid:` image the resolve step could serve carries its gated `data:` URI here and every
+    // `cid:` image the resolve step could serve carries its gated URL here and every
     // other image (unresolved cid, blocked remote, beacon) carries {@link BLANK_GIF}, which is
     // itself a raster data: URI and is therefore excluded BY NAME, or every blanked box would
     // spend budget on an invisible 1×1. The src is copied, never composed; `BodyText` re-tests
-    // {@link INLINE_IMAGE_SRC} at the element write — one constant, both sinks.
+    // {@link inlineImageAdmitted} at the element write — one gate, both sinks.
     const src = el.getAttribute("src") ?? "";
-    if (src !== BLANK_GIF && INLINE_IMAGE_SRC.test(src) && spend(b)) {
+    if (src !== BLANK_GIF && inlineImageAdmitted(src, b.own) && spend(b)) {
       out.push({ kind: "image", src, alt: el.getAttribute("alt") ?? "" });
     }
     return;
@@ -2089,8 +2098,8 @@ function tableOf(el: Element, depth: number, b: RichBudget, out: BodyNode[], nes
  * means "render the text part", which is the rendering every prose message had before this
  * walker existed — the fallback is the previous behaviour, not a degraded one.
  */
-export function buildRichNodes(root: Element): BodyNode[] | null {
-  const b: RichBudget = { left: MAX_RICH_NODES, chars: MAX_RICH_CHARS };
+export function buildRichNodes(root: Element, own: ReadonlySet<string> = NO_OWN_IMAGES): BodyNode[] | null {
+  const b: RichBudget = { left: MAX_RICH_NODES, chars: MAX_RICH_CHARS, own };
   const nodes = blocksOf(root, 0, b, 0);
   if (b.left < 0) return null;
   return nodes.length > 0 ? nodes : null;
@@ -2106,14 +2115,13 @@ export interface SanitizeOptions {
    */
   imageProxy?: ((url: string) => string) | null;
   /**
-   * The message's own embedded images: `contentId → data: URI`, minted by the engine from the
-   * part's own bytes (`OhmailEngine.loadInlineImages`). A `cid:` `<img>` whose Content-ID is
-   * here renders in place; one that is not stays blanked and is reported in {@link
-   * SanitizedMail.cids}. Nothing is fetched by the document — the URI carries the bytes — so
-   * the frame's CSP needs no widening. The values are still not trusted: {@link
-   * INLINE_IMAGE_SRC} gates every one at the point of use, so a caller wired to something other
-   * than the engine cannot smuggle a `javascript:` or `data:text/html` into a src through this
-   * map.
+   * The message's own embedded images: `contentId → URL`, from the part's own bytes
+   * (`OhmailEngine.loadInlineImages`) — its object URL on a browser door, which the frame loads
+   * in-process (`img-src blob:`, no host), else a `data:` URI. A `cid:` `<img>` whose Content-ID
+   * is here renders in place; one that is not stays blanked and is reported in {@link
+   * SanitizedMail.cids}. The values are still not trusted: {@link inlineImageAdmitted} gates
+   * every one at the point of use, so a caller wired to something other than the engine cannot
+   * smuggle a `javascript:`, a `data:text/html` or a preview-scheme URL into a src through this map.
    */
   cidImages?: ReadonlyMap<string, string> | null;
   /**
@@ -2263,6 +2271,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const sheets: string[] = [];
   const proxy = opts.imageProxy ?? null;
   const cidImages = opts.cidImages ?? null;
+  const ownImages = ownImagesOf(cidImages);
   const resolvedRemote = opts.resolvedRemoteImages ?? null;
   // Strictly `=== true`: an absent option, `undefined` and anything else all mean BLOCK.
   const loadPixels = opts.loadPixels === true;
@@ -2330,14 +2339,14 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   /**
    * How a style-attribute `url(cid:…)` resolves: the SAME map and the SAME gate as the `<img>`
    * branch — exact Content-ID match (case-sensitive, brackets already stripped by
-   * {@link cidOfSrc}), the value admitted only through {@link INLINE_IMAGE_SRC}. An unresolved
+   * {@link cidOfSrc}), the value admitted only through {@link inlineImageAdmitted}. An unresolved
    * one is RECORDED so the same fetch effect asks for it, and stays verbatim — inert — until the
    * map grows and this pass runs again. It is never counted in `blocked`: a `cid:` is not a
    * remote image and must not trip the "images blocked" notice.
    */
   const cssCid = (cid: string): string | null => {
     const resolved = cidImages?.get(cid);
-    if (resolved && INLINE_IMAGE_SRC.test(resolved)) return resolved;
+    if (resolved && inlineImageAdmitted(resolved, ownImages)) return resolved;
     recordCid(cid);
     return null;
   };
@@ -2443,14 +2452,14 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         //
         // A `cid:` names a part of this very message; it cannot phone home, so resolving it
         // costs the sender nothing to learn and the reader their own signature logos, pasted
-        // screenshots and embedded receipts. The caller supplies the bytes as `data:` URIs
-        // (the engine fetched them from the part itself — never from any url the sender wrote)
-        // and this branch does exactly one thing with them: an ATTRIBUTE write, the only kind
-        // of write the post-pass is allowed. {@link INLINE_IMAGE_SRC} gates every value, so a
-        // map entry that is not a small-raster data: URI blanks exactly like a missing one.
+        // screenshots and embedded receipts. The caller supplies a URL per part (the engine
+        // fetched the part itself — never any url the sender wrote) and this branch does
+        // exactly one thing with it: an ATTRIBUTE write, the only kind of write the post-pass
+        // is allowed. {@link inlineImageAdmitted} gates every value, so a map entry that is
+        // neither a small-raster data: URI nor this message's own `blob:` blanks like a missing one.
         const cid = cidOfSrc(src);
         const resolved = cid ? cidImages?.get(cid) : undefined;
-        if (cid && resolved && INLINE_IMAGE_SRC.test(resolved)) {
+        if (cid && resolved && inlineImageAdmitted(resolved, ownImages)) {
           node.setAttribute("src", resolved);
         } else {
           if (cid) recordCid(cid);
@@ -2644,7 +2653,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     // THE WALK RUNS ON THE SAME ELEMENT the line above is about to serialize — the sanitized,
     // post-passed document — and only for a mail the frame will not render. What it emits is
     // data (text runs, bounded ints, gated hrefs); the serialized string stays the frame's.
-    rich: designed ? null : buildRichNodes(sanitized),
+    rich: designed ? null : buildRichNodes(sanitized, ownImages),
     background,
     cids,
   };
@@ -2712,7 +2721,7 @@ export function proxyImgSource(proxy: (url: string) => string, pageOrigin: strin
 /**
  * The frame's own Content-Security-Policy. THIS IS THE ENFORCEMENT: everything above is presentation and accounting;
  * this line makes "opening a message fetches nothing" true for the remote-reference shape nobody has thought of — an
- * allow-list of `data:` over a `default-src 'none'`, so an unknown vector is refused by not being mentioned.
+ * allow-list of `data:` and `blob:` over a `default-src 'none'`, so an unknown vector is refused by not being mentioned.
  * `img-src` gains ONE SOURCE — the image proxy's own path, nothing else — when images are consented: the one place a
  * consented image may come from is our own proxy, which fetches server-side so the sender never sees the reader.
  * {@link proxyImgSource} decides whether such a source can be stated at all; `null` here is the blocked policy. There
@@ -2745,15 +2754,18 @@ export function proxyImgSource(proxy: (url: string) => string, pageOrigin: strin
  * need `base-uri` to stop being `'none'` — a widening — to buy a second answer to a question this directive already
  * answers; this file's own rule ({@link SAFE_HREF}) is that two overlapping guards behave as neither. And a source in
  * the BLOCKED policy for a future `cid:` url: blocked-by-default is the product's central promise, and the slice that
- * resolved `cid:` references confirmed the refusal — they resolve as `data:` URIs minted from the part's own bytes
- * ({@link SanitizeOptions.cidImages}), which the blocked policy has always admitted. @param imgSource the proxy's own
- * source expression from {@link proxyImgSource}, or `null` for the blocked policy. NOT a boolean: a caller that knows
- * only "images are on" cannot say WHERE from, and that gap is what `'self'` used to paper over.
+ * resolved `cid:` references confirmed the refusal — they resolve to the part's own bytes
+ * ({@link SanitizeOptions.cidImages}): a `data:` URI, or the object URL this window minted. `blob:` names no host: it
+ * resolves in-process or not at all, and the sanitizer writes one only by membership in this message's own map
+ * ({@link inlineImageAdmitted}); the frame shares the window's origin (`allow-same-origin`), which is what lets it
+ * read one. @param imgSource the proxy's own source expression from {@link proxyImgSource}, or `null` for the
+ * blocked policy. NOT a boolean: a caller that knows only "images are on" cannot say WHERE from, and that gap is what
+ * `'self'` used to paper over.
  */
 export function frameCsp(imgSource: string | null): string {
   return [
     "default-src 'none'",
-    `img-src data:${imgSource === null ? "" : ` ${imgSource}`}`,
+    `img-src data: blob:${imgSource === null ? "" : ` ${imgSource}`}`,
     "style-src 'unsafe-inline'",
     "font-src data:",
     "script-src 'none'",
@@ -3313,7 +3325,7 @@ export interface MessageBodyProps {
    */
   loadTrackingPixels?: boolean;
   /**
-   * The message's embedded images, `contentId → data: URI` — see
+   * The message's embedded images, `contentId → URL` (its object URL, or a `data:` URI) — see
    * {@link SanitizeOptions.cidImages}, which is where this goes verbatim. Absent ⇒ every
    * `cid:` image stays a blanked box, which is what the demo and any client without an
    * attachment service render. The map's IDENTITY is a memo dependency: hand a stable
@@ -3515,6 +3527,9 @@ export function MessageBody({
 
   // `text` is null on a body the mirror has not loaded, whatever its type says; read it as empty.
   const hasText = (text ?? "").trim().length > 0;
+  // The prose sink's half of the walk's gate: the same map's values, so `BodyText` draws a `blob:`
+  // only when it is this message's own (see `inlineImageAdmitted`).
+  const ownImages = useMemo(() => ownImagesOf(cidImages), [cidImages]);
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
@@ -4071,7 +4086,7 @@ export function MessageBody({
            rendered by `BodyText` element by element; when it is null — the walk refused, or the
            mail had no structure worth keeping — the text part renders exactly as it always has.
            See `proseView` above. */
-        <BodyText text={text} rich={mail.rich} />
+        <BodyText text={text} rich={mail.rich} ownImages={ownImages} />
       ) : (
         /* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
            the transform inside the frame, so a short mail's surround does not read as a light

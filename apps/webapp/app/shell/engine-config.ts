@@ -247,6 +247,9 @@ export function createEngine(
       eagerBodies: true,
       // A server without the Cancel route, said once per send on the console.
       onWithdrawUnsupported: () => console.warn("ohmail: send_withdraw_unsupported — this server has no Cancel route"),
+      // Embedded pictures by their object URL, which the mail frame loads by reference: a `data:`
+      // copy is written into the frame's document and copied again at every step that reads it.
+      inlineImageUrls: "object",
     }),
     gate,
   );

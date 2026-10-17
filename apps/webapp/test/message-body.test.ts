@@ -364,13 +364,20 @@ describe("remote content is blocked, and blocked means not named", () => {
     expect(doc).toContain('name="referrer" content="no-referrer"');
     // There is NO policy under which the frame may name a sender's host. Consent adds ONE
     // source — our own proxy's own path, which fetches server-side — and nothing else.
+    // `blob:` is the message's own pictures by reference (the object URLs this window minted);
+    // it names no host, and no preview scheme or plain `http` source rides beside it.
     expect(frameCsp(null)).toBe(
-      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; " +
+      "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; " +
       "script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'",
     );
     expect(frameCsp("https://ohmail.app/api/img")).toContain(
-      "img-src data: https://ohmail.app/api/img",
+      "img-src data: blob: https://ohmail.app/api/img",
     );
+    for (const policy of [frameCsp(null), frameCsp("https://ohmail.app/api/img")]) {
+      expect(policy, "the frame may load a staged preview").not.toContain("attachment-preview");
+      expect(policy, "the frame names a plain-http source").not.toMatch(/(^|[ ;])http:/);
+    }
+    expect(frameCsp(null), "the blocked policy names a scheme with a host").not.toMatch(/https?:/);
   });
 
   it("the consented policy names the proxy's PATH, never all of `'self'`", async () => {
@@ -392,7 +399,7 @@ describe("remote content is blocked, and blocked means not named", () => {
     // that lost its path would be `https://ohmail.app` — every url on the origin again, by
     // another spelling — so the path is asserted rather than the string as a whole.
     const imgSrc = /(?:^|; )img-src ([^;]*)/.exec(consented)?.[1];
-    expect(imgSrc).toBe("data: https://ohmail.app/api/img");
+    expect(imgSrc).toBe("data: blob: https://ohmail.app/api/img");
   });
 
   it("the CSP source is MINTED by the proxy, so the policy cannot drift from the url", async () => {
@@ -732,7 +739,7 @@ describe("what the reader is told, and what they are offered", () => {
     expect(doc, "a url the frame's CSP cannot name was written into the document")
       .not.toContain("evil.example");
     // …and the policy stayed the blocked one rather than naming that host.
-    expect(doc).toContain("img-src data:;");
+    expect(doc).toContain("img-src data: blob:;");
     // The bar tells the truth about it, and there is no button over a dead capability.
     expect(el.querySelector(".mb-bar")?.textContent ?? "").toMatch(/remote image/i);
     expect(el.textContent ?? "").not.toMatch(/show images/i);

@@ -59,13 +59,14 @@ describe("the desktop reading pane and the picture it cannot show", () => {
 
   /**
    * AND THE POLICY AGREES, which is the half that makes the first assertion structural rather
-   * than incidental: with no proxy source the frame's `img-src` admits `data:` and nothing
-   * else, so even a desktop pane that DID name `https://…/hero.png` would be refused by its
-   * own document's policy. This is the line that decides whether a picture can ever arrive.
+   * than incidental: with no proxy source the frame's `img-src` admits `data:` and the window's
+   * own `blob:` URLs and nothing else, so even a desktop pane that DID name `https://…/hero.png`
+   * would be refused by its own document's policy. This is the line that decides whether a
+   * picture can ever arrive.
    */
-  it("serves a policy that admits data: and no remote source at all", () => {
+  it("serves a policy that admits data: and blob: and no remote source at all", () => {
     const csp = frameCsp(null);
-    expect(csp, "the desktop frame's img-src gained a source").toContain("img-src data:;");
+    expect(csp, "the desktop frame's img-src gained a source").toContain("img-src data: blob:;");
     expect(csp, "the desktop frame admitted a remote origin").not.toMatch(/img-src[^;]*https?:/);
   });
 
@@ -151,16 +152,16 @@ describe("a picture the desktop already holds the bytes of", () => {
 
   /**
    * CONTROL (e), and it is a byte comparison rather than a reading of the policy's parts: the
-   * whole argument for `data:` over a door origin is that the frame's policy does not move, and
-   * "img-src still mentions data:" would stay green through a widening that added a source
-   * beside it.
+   * whole argument for `data:` over a door origin is that a resolved remote picture adds no
+   * source to the frame's policy, and "img-src still mentions data:" would stay green through a
+   * widening that added one beside it. (`blob:` is the message's own embedded parts, in-process.)
    */
   it("leaves the frame's policy byte-identical", () => {
     expect(
       frameCsp(null),
       "the desktop's frame policy moved to let a resolved picture in",
     ).toBe(
-      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; "
+      "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; "
       + "script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; "
       + "base-uri 'none'",
     );

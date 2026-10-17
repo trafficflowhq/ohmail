@@ -110,7 +110,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "apps/webapp/app/components/MessageBody.tsx": [
     { text: "table table", why: "a CSS rule fragment for the sanitized mail frame's stylesheet" },
     { text: "default-src 'none'", why: "CSP directive — the mail frame's policy, parsed by the browser" },
-    { text: "img-src data:{}", why: "CSP directive — the image arm, with the proxy path spliced in" },
+    { text: "img-src data: blob:{}", why: "CSP directive — the image arm, with the proxy path spliced in" },
     { text: "style-src 'unsafe-inline'", why: "CSP directive for the frame's own stylesheet" },
     { text: "font-src data:", why: "CSP directive — embedded faces only" },
     { text: "script-src 'none'", why: "CSP directive — the frame runs nothing" },

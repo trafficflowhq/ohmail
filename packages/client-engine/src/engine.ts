@@ -1705,8 +1705,8 @@ function toAttachmentItem(wire: AttachmentWire): AttachmentItem {
 }
 
 /**
- * The MIME types an embedded (`cid:`) image may carry into the mail
- * document as a `data:` URI — a strict subset of {@link RENDERABLE_MIME}:
+ * The MIME types an embedded (`cid:`) image may be drawn from in the mail
+ * document, by object URL or `data:` URI — a strict subset of {@link RENDERABLE_MIME}:
  * the four raster types, nothing else. SVG is a document format that
  * executes script; "the sandbox would have caught it" is not a reason to
  * open the first gate. Checked twice per part, deliberately: against the
@@ -1720,8 +1720,8 @@ const INLINE_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/gif", "imag
  * The per-part ceiling on an automatically fetched embedded image — 4 MiB.
  * Covers both real populations (signature logos and newsletter art at tens
  * to hundreds of KB; pasted screenshots up to a few MB). The cost is not
- * just the fetch: the image lands in the frame as base64 (+33%), ~5.6 MB
- * at this ceiling. A part over it stays a blanked box — what every message
+ * just the fetch: on the phone the image lands in the frame as base64 (+33%),
+ * ~5.6 MB at this ceiling. A part over it stays a blanked box — what every message
  * showed before this existed — and remains reachable through the strip's
  * explicit-press fetch, which allows the server's 40 MiB.
  */
@@ -1770,19 +1770,22 @@ function isCalendarItem(item: AttachmentItem): boolean {
 }
 
 /**
- * The fetched bytes of one embedded image, as a `data:` URI — or `null` for
- * anything that is not a small raster image. Both refusals here are the
- * enforcement (the declared-type pre-filter is the optimisation):
- * `blob.type` must be in {@link INLINE_IMAGE_MIME} — the post-downgrade
- * type, so an SVG arrives as `application/octet-stream` and can never be
- * minted, and nothing sender-controlled is spliced into the scheme; and
- * `blob.size` is the real byte count against {@link INLINE_IMAGE_MAX_BYTES}
- * — the metadata size the pre-filter read is only the sender's claim.
+ * May these fetched bytes be drawn as an embedded image at all, by either carrier? Both refusals
+ * are the enforcement (the declared-type pre-filter is the optimisation): `blob.type` must be in
+ * {@link INLINE_IMAGE_MIME} — the post-downgrade type, so an SVG arrives as
+ * `application/octet-stream` and is never drawn, and nothing sender-controlled is spliced into a
+ * scheme; and `blob.size` is the real byte count against {@link INLINE_IMAGE_MAX_BYTES} — the
+ * metadata size the pre-filter read is only the sender's claim.
  */
+function inlineImageBytesAdmitted(blob: Blob): boolean {
+  if (!INLINE_IMAGE_MIME.has(blob.type.toLowerCase())) return false;
+  return blob.size > 0 && blob.size <= INLINE_IMAGE_MAX_BYTES;
+}
+
+/** The fetched bytes of one embedded image as a `data:` URI (the phone's carrier), or `null`. */
 async function mintInlineDataUrl(blob: Blob): Promise<string | null> {
+  if (!inlineImageBytesAdmitted(blob)) return null;
   const type = blob.type.toLowerCase();
-  if (!INLINE_IMAGE_MIME.has(type)) return null;
-  if (blob.size === 0 || blob.size > INLINE_IMAGE_MAX_BYTES) return null;
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   const CHUNK = 0x8000; // String.fromCharCode is applied per-chunk: one call over MBs overflows the arg limit.
@@ -1989,6 +1992,14 @@ export interface EngineOptions {
    * per key, on every road a Cancel is asked by, so a host can log it. Content-free.
    */
   onWithdrawUnsupported?: () => void;
+  /**
+   * WHAT AN EMBEDDED PICTURE IS DRAWN FROM ({@link OhmailEngine.inlineImagesOf}). `"object"`: the
+   * part's own object URL, which the mail frame loads by reference — a browser door, whose frame
+   * admits `blob:`. `"data"`, the default: the bytes as a `data:` URI, for the phone's WebView,
+   * which cannot read a URL minted in the app's runtime. Said by the door, never detected: a
+   * detected `createObjectURL` reads absent in a test and present live.
+   */
+  inlineImageUrls?: "object" | "data";
 }
 
 /**
@@ -2952,12 +2963,15 @@ export class OhmailEngine {
    */
   private readonly objectUrls = new ObjectUrlLedger();
   /**
-   * `contentId → data: URI` per message — the embedded images already minted for the reader's
-   * frame, dropped with the rest of the message's byte state by
-   * {@link OhmailEngine.releaseAttachments}. The held map is REPLACED on every mint, never
+   * `contentId → URL` per message — the embedded images ready for the reader's frame: the part's
+   * own object URL under `inlineImageUrls: "object"` (a value lives exactly as long as its URL,
+   * {@link revokeUrl}), else a `data:` URI. Dropped with the rest of the message's byte state by
+   * {@link OhmailEngine.releaseAttachments}. The held map is REPLACED on every change, never
    * mutated, so a React memo keyed on its identity re-renders exactly when an image arrives.
    */
   private readonly inlineImages = new Map<string, ReadonlyMap<string, string>>();
+  /** {@link EngineOptions.inlineImageUrls}, resolved once: anything but `"object"` is `"data"`. */
+  private readonly inlineImageUrls: "object" | "data";
   /** In-flight inline-image passes by message id — single-flight, see {@link OhmailEngine.loadInlineImages}. */
   private readonly inlineImageRequests = new Map<string, Promise<void>>();
   /**
@@ -2985,6 +2999,7 @@ export class OhmailEngine {
 
   constructor(opts: EngineOptions) {
     this.adapter = opts.adapter;
+    this.inlineImageUrls = opts.inlineImageUrls === "object" ? "object" : "data";
     // The adapter's own capability is the shipped path; the option is the override. Resolved
     // ONCE, here, so `serverSearchAvailable()` cannot answer differently from what
     // `searchServer` will do a moment later.
@@ -10511,18 +10526,23 @@ export class OhmailEngine {
   /**
    * The preview overlay closed: release every staged preview this message holds (the shell removes
    * its files) and put those items back to `idle`, so a re-open stages again. Bytes this document
-   * holds itself are untouched; they go with the message's release as before.
+   * holds itself are untouched; they go with the message's release as before. A picture the open
+   * letter asked for, which the inline pass left to the overlay, is fetched and drawn now.
    */
   releasePreviews(messageId: string): void {
     const adopted = new Set(this.objectUrls.adoptedOf(messageId));
     const held = this.attachmentLists.get(messageId);
     for (const url of adopted) this.revokeUrl(url);
     if (adopted.size === 0 || held?.state !== "ready") return;
+    const asked = this.inlineImageAsks.get(messageId);
+    let owed = false;
     for (const item of held.items) {
       if (item.objectUrl !== undefined && adopted.has(item.objectUrl)) {
         this.patchAttachment(messageId, item.id, { state: "idle", objectUrl: undefined });
+        if (item.contentId !== null && asked?.cids.includes(item.contentId)) owed = true;
       }
     }
+    if (owed) this.healInlineImages(messageId, false);
   }
 
   /**
@@ -10545,7 +10565,7 @@ export class OhmailEngine {
   }
 
   /**
-   * The embedded images already minted for one message: `contentId → data: URI`, the map a
+   * The embedded images ready for one message: `contentId → URL` ({@link inlineImages}), the map a
    * renderer resolves the html body's `cid:` references against. Synchronous, no side effects —
    * the render path reads, {@link OhmailEngine.loadInlineImages} is what asks.
    *
@@ -10557,9 +10577,10 @@ export class OhmailEngine {
   }
 
   /**
-   * Fetch the embedded images a message's html actually references, and mint each as a `data:` URI for the mail
-   * frame. `contentIds` comes from the renderer's own pass over the sanitized document — parts nothing references are
-   * never fetched. What this spends: one `cost: "connection"` fetch per part through {@link
+   * Fetch the embedded images a message's html actually references, for the mail frame: each part's own object URL
+   * (`inlineImageUrls: "object"`) or its bytes as a `data:` URI. `contentIds` comes from the renderer's own pass over
+   * the sanitized document — parts nothing references are never fetched. What this spends: one `cost: "connection"`
+   * fetch per part through {@link
    * OhmailEngine.openAttachment} (single-flight, never re-asked after a refusal); the reader OPENED this message and
    * the document names these parts — a signature logo as a grey box in every mail from a colleague is the defect, not
    * thrift. Bounds: only `Content-ID`-referenced parts; only declared raster images within {@link
@@ -10666,6 +10687,9 @@ export class OhmailEngine {
 
     const minted: Array<[string, string]> = [];
     for (const item of wanted) {
+      // A STAGED PREVIEW STANDS: the overlay shows it, and `openAttachment` would fetch over it and
+      // release it. The picture is drawn when the overlay closes ({@link releasePreviews}).
+      if (this.objectUrls.isAdopted(this.itemOf(messageId, item.id)?.objectUrl)) continue;
       const part = `${messageId}:${item.id}`;
       this.inlinePassParts.add(part);
       try {
@@ -10673,25 +10697,38 @@ export class OhmailEngine {
       } finally {
         this.inlinePassParts.delete(part);
       }
-      const blob = this.attachmentBlobOf(messageId, item.id);
-      if (!blob) continue;
+      const now = this.itemOf(messageId, item.id);
+      if (!now?.blob) continue;
+      if (this.inlineImageUrls === "object") {
+        // THE PART'S OWN URL, over these very bytes: no second carrier, the frame loads it by
+        // reference. Which URLs may be drawn from is decided once, after the walk.
+        if (now.objectUrl !== undefined && inlineImageBytesAdmitted(now.blob)) {
+          minted.push([item.contentId!, now.objectUrl]);
+        }
+        continue;
+      }
       // PER PART: a byte read that throws (a device FileReader refusal) costs that image its
       // blank box and nothing else — unguarded, one bad part killed the whole pass and every
       // image already minted in this walk was lost with it.
       try {
-        const url = await mintInlineDataUrl(blob);
+        const url = await mintInlineDataUrl(now.blob);
         if (url) minted.push([item.contentId!, url]);
       } catch {
         /* this part stays the blank box it already was; the others still land below */
       }
     }
-    if (minted.length === 0) return;
+    // ONLY A URL THE LEDGER MINTED FOR THIS MESSAGE AND STILL HOLDS: never an adopted preview, and
+    // never one revoked while the pass walked on (a fetch over its part).
+    const live = minted.filter(
+      ([, url]) => this.inlineImageUrls === "data" || this.objectUrls.mintedFor(messageId, url),
+    );
+    if (live.length === 0) return;
 
     // Re-checked AFTER the awaits: a message released mid-pass (the reader moved on) must not
     // have its map re-created to outlive the byte state it belongs with.
     if (this.attachmentLists.get(messageId)?.state !== "ready") return;
     const next = new Map(this.inlineImages.get(messageId) ?? NO_INLINE_IMAGES);
-    for (const [cid, url] of minted) next.set(cid, url);
+    for (const [cid, url] of live) next.set(cid, url);
     // ONE replacement and ONE notification for the whole pass, not one per image: every map
     // identity change re-sanitizes and re-measures the mail document downstream.
     this.inlineImages.set(messageId, next);
@@ -10927,9 +10964,18 @@ export class OhmailEngine {
     this.revokeUrl(this.itemOf(messageId, attachmentId)?.objectUrl);
   }
 
-  /** Through the ledger, so a URL already revoked is not revoked a second time. */
+  /**
+   * Through the ledger, so a URL already revoked is not revoked a second time. An embedded picture
+   * drawn from it leaves its message's map with it: the map never names a dead URL, and the
+   * renderer asks for that part again.
+   */
   private revokeUrl(url: string | undefined): void {
+    const owner = url === undefined ? undefined : this.objectUrls.heldFor(url);
     this.objectUrls.revoke(url);
+    const held = owner === undefined ? undefined : this.inlineImages.get(owner);
+    if (!held || ![...held.values()].includes(url!)) return;
+    this.inlineImages.set(owner!, new Map([...held].filter(([, drawn]) => drawn !== url)));
+    this.notify();
   }
 
   /**

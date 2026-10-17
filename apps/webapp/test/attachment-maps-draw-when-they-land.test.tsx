@@ -18,7 +18,8 @@ const INVITE = "a-maps-invite";
 const PNG = Uint8Array.from(atob(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
 ), (c) => c.charCodeAt(0));
-const DRAWN = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`;
+/** The web door draws the picture from the part's object URL — the one this harness mints. */
+const DRAWN = "blob:harness/1";
 const ICS = [
   "BEGIN:VCALENDAR", "METHOD:REQUEST", "BEGIN:VEVENT",
   "DTSTART;TZID=Europe/Zurich:20260911T160000", "DTEND;TZID=Europe/Zurich:20260911T163000",
@@ -132,9 +133,10 @@ describe("a letter's picture and invitation are drawn the moment their bytes lan
     parts = "picture";
     await mountWithTheLetter();
     await goHash(`#/ohbox/m/${LETTER}`);
+    // The letter's own picture, in the frame or the prose: the strip's thumbnail shares its URL.
     const drawn = (): boolean =>
       [...document.querySelectorAll("iframe")].some((f) => (f.getAttribute("srcdoc") ?? "").includes(DRAWN))
-      || [...document.querySelectorAll("img")].some((i) => i.getAttribute("src") === DRAWN);
+      || [...document.querySelectorAll("img.msg-img")].some((i) => i.getAttribute("src") === DRAWN);
     expect(await msToDraw(PICTURE, drawn), "the picture waited for another render")
       .toBeLessThanOrEqual(100);
   }, 60_000);

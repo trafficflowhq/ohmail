@@ -13,13 +13,13 @@ import {
 
 const LETTER = "news-letter-f5";
 const PART = "a-f5-logo";
-/** A 1x1 PNG: the engine mints a `data:` URI only from a declared raster image with bytes. */
+/** A 1x1 PNG: the engine draws a picture only from a declared raster image with bytes. */
 const PNG = Uint8Array.from(atob(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
 ), (c) => c.charCodeAt(0));
 const HTML = `<p>An inline image:</p><img src="cid:e2e-logo" alt="e2e logo"><p>Regards, quillfen</p>`;
-/** The picture as the card must draw it: the part's own bytes. */
-const DRAWN = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`;
+/** The picture as the card must draw it: the part's own object URL, the one this harness mints. */
+const DRAWN = "blob:harness/1";
 
 let fetched: string[] = [];
 
@@ -74,8 +74,9 @@ afterEach(async () => { await teardownShellEnv(); });
 const drawnOf = (scope: Element): string =>
   (scope.querySelector(".sc-viewer")?.innerHTML ?? "") + (scope.querySelector("iframe")?.getAttribute("srcdoc") ?? "");
 /** The pictures the card draws, by their src. */
+/** The letter's own pictures in the card (`.msg-img`): the strip's thumbnail shares the part's URL. */
 const picturesOf = (scope: Element): string[] =>
-  [...scope.querySelectorAll(".sc-viewer img")].map((i) => i.getAttribute("src") ?? "");
+  [...scope.querySelectorAll(".sc-viewer img.msg-img")].map((i) => i.getAttribute("src") ?? "");
 
 async function mountWithTheLetter(): Promise<void> {
     answerSyncWith(() => new Response(JSON.stringify({

@@ -642,6 +642,9 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     outboxAutoReplay: false,
     // A server without the Cancel route (a desktop host not yet updated), said once per send.
     onWithdrawUnsupported: logWithdrawUnsupported,
+    // Embedded pictures as `data:` URIs: the reading WebView cannot read an object URL this
+    // runtime mints, and its document admits `img-src data:` alone (`mail-document.ts`).
+    inlineImageUrls: "data",
   });
   /**
    * RE-ARM THE DURABLE OUTBOX NOW, not at the first drive. The store loaded ABOVE the engine

@@ -39,6 +39,16 @@ export class ObjectUrlLedger {
     return [...(this.byOwner.get(owner) ?? [])].filter((url) => this.releases.has(url));
   }
 
+  /** The message a live URL is held for, or `undefined` once it is revoked (or was never here). */
+  heldFor(url: string): string | undefined {
+    return this.ownerOf.get(url);
+  }
+
+  /** Whether THIS ledger minted `url` for `owner` and has not revoked it: never an adopted URL. */
+  mintedFor(owner: string, url: string | undefined): boolean {
+    return url !== undefined && this.ownerOf.get(url) === owner && !this.releases.has(url);
+  }
+
   /**
    * Create a URL for `blob` and record the debt under `owner`. `undefined` where the runtime has
    * no `URL.createObjectURL` (SSR, node) — and where the call itself THROWS: Expo's runtime

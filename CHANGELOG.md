@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Opening a message full of pictures takes far less memory
+
+On the desktop and in the web app, the pictures embedded in a message were copied into the message's page as
+text, and every step that read the page copied them again: on Linux, opening a message with twelve pictures of
+16 MB in all grew the desktop window by about 1 GB. The page now names each picture by a link to the copy the
+app already holds, which only that window can read, so a picture is no longer copied into it. The phone shows
+pictures as before.
+
 ### A server alert nobody was told about is sent once the server can say it
 
 An alert that opened while its only notification failed, and whose measurement then went missing, stayed open
