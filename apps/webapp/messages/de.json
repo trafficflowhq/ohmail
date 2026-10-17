@@ -1697,7 +1697,9 @@
       "saving": "Speichert…",
       "revert": "Änderungen verwerfen",
       "preview": "Vorschau",
-      "failed": "Das wurde nicht gespeichert — dein Text ist noch da, versuch es nochmal."
+      "failed": "Das wurde nicht gespeichert — dein Text ist noch da, versuch es nochmal.",
+      "leaveAsk": "Verlassen, ohne die Signatur zu speichern?",
+      "leaveKeep": "Weiter bearbeiten"
     }
   },
   "palette": {

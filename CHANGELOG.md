@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Away and signature edits are kept until you save or discard them
+
+On the web and the desktop, an away message typed before a save that could not reach the server stays in the
+field under the sentence that says it did not save, as on the phone. An edit made while a save waits for the
+computer that organizes the mailbox is kept when that save lands, and leaving asks first. Leaving Settings →
+Signatures with an edited signature now asks before it is dropped.
+
 ### A self-hosted server can use OpenAI, OpenCode Go or Ollama
 
 The self-host server stack took an Anthropic key and nothing else. It now offers the four providers the desktop app

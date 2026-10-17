@@ -126,9 +126,9 @@ export const AWAY_COPY = {
   /**
    * THE SWITCH AND THE SENTENCE AFTER A REFUSED SAVE. Turning the responder off and pressing Save
    * during an outage left the row reading "Off. Nothing is sent." over a responder that was still
-   * enabled and still answering mail — the controls kept the optimistic edit while the sentence
-   * said only that something had failed. The controls go back to what is STORED and these say
-   * which state that is, because "it did not save" does not tell somebody whether mail is going out.
+   * enabled and still answering mail, and the sentence said only that something had failed. The
+   * edit stays in the controls (a typed message is never dropped) and these say which state is
+   * STORED, because "it did not save" does not tell somebody whether mail is going out.
    */
   failedStillOn: "Could not save — the responder is still on.",
   failedStillOff: "Could not save — the responder is still off.",
@@ -361,10 +361,8 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    */
   const saveGen = useRef(0);
   /**
-   * WHAT THE SERVER LAST CONFIRMED — written wherever `draft` is set from an answer, and read by
-   * the refusal path. A refused save may not leave the switch showing the edit: the responder is
-   * whatever is stored, and a row that says "Off" over a responder still sending is a false state
-   * about mail going out in somebody's name.
+   * WHAT THE SERVER LAST CONFIRMED — written wherever `saved` is, and read by the `asked` watcher
+   * to tell an untouched draft (replaced by the row that landed) from one edited since (kept).
    */
   const stored = useRef<Draft | null>(null);
   const keep = (row: Draft): void => { stored.current = row; setSaved(row); };
@@ -490,8 +488,12 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
                 audience: now.audience, throttle: now.throttle,
                 piles: now.piles ?? [...AWAY_PILES_DEFAULT],
               };
+              /* AN EDIT MADE WHILE THE REQUEST TRAVELLED IS KEPT. The draft is replaced only when it
+                 still equals the row as stored before; otherwise it stays, differs from the row
+                 that landed, and the leave hold asks before it can be dropped. */
+              const before = stored.current;
               keep(row);
-              setDraft(row);
+              setDraft((d) => (d !== null && before !== null && unsavedIn(d, before) ? d : row));
               changed.current?.({
                 enabled: now.enabled, audience: now.audience, throttle: now.throttle,
                 piles: now.piles ?? [...AWAY_PILES_DEFAULT],
@@ -566,10 +568,9 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         }
       } catch {
         if (!alive.current) return;
-        /* THE CONTROLS GO BACK TO WHAT IS STORED. Without this the switch kept the edit: turn the
-           responder off, press Save during an outage, and the row read "Off. Nothing is sent."
-           while the saved responder was still on and still answering every stranger who wrote. */
-        if (stored.current) setDraft(stored.current);
+        /* THE EDIT STAYS, as on the phone: putting the stored row back threw away a message typed
+           before the outage. The status line and the unsaved line state the STORED responder, and
+           the failure sentence reads `saved`, so a kept edit never reads as mail going out. */
         setState("failedWire");
       } finally {
         if (alive.current) setPending(false);
@@ -596,14 +597,12 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
       {state === "failed" ? (
         <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
       ) : null}
-      {/* THE SENTENCE FOLLOWS THE SWITCH, which by now shows the SAVED state — a refusal that
-          says only "that did not save" leaves somebody not knowing whether mail is going out in
-          their name. Its own state rather than a re-derivation of `complete`: that predicate
-          reads the reverted draft, and a stored responder with no body would have answered
-          "Add a message before turning this on." to an outage. */}
+      {/* THE SENTENCE STATES THE SAVED RESPONDER, not the kept edit — a refusal that says only
+          "that did not save" leaves somebody not knowing whether mail is going out in their
+          name. Its own state rather than a re-derivation of `complete`, which reads the draft. */}
       {state === "failedWire" ? (
         <span className="set-note-inline" role="alert">
-          {draft.enabled ? t("failedStillOn") : t("failedStillOff")}
+          {saved.enabled ? t("failedStillOn") : t("failedStillOff")}
         </span>
       ) : null}
       {state === "expired" ? (

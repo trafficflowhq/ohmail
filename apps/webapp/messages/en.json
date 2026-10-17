@@ -1697,7 +1697,9 @@
       "saving": "Saving…",
       "revert": "Discard changes",
       "preview": "Preview",
-      "failed": "That didn't save — your text is still here, try again."
+      "failed": "That didn't save — your text is still here, try again.",
+      "leaveAsk": "Leave without saving the signature?",
+      "leaveKeep": "Keep editing"
     }
   },
   "palette": {

@@ -618,6 +618,55 @@ describe("the away responder's `asked` state ends when the organizer applies the
       .not.toContain(messages.away.applied);
   });
 
+  it("an edit made while the request travels is kept when it lands, and leaving asks", async () => {
+    /* AWAY-RELAYED-SAVE-OVERWRITES-A-LATER-EDIT: the landing put the row's values over the field
+       and the hold released, so words typed during the wait were gone without a question. */
+    window.history.replaceState(null, "", "/mailbox#/settings/away");
+    let answer = WAITING;
+    await mountRow(
+      async (next) => ({ ...next, updatedAt: null, pending: true }),
+      {}, "en",
+      async () => answer,
+    );
+    await switchOn();
+    await press("Save");
+    const field = host.querySelector("#away-body") as HTMLTextAreaElement;
+    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => { set.call(field, "Back Tuesday"); field.dispatchEvent(new Event("input", { bubbles: true })); });
+
+    answer = APPLIED;
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(host.textContent).toContain(messages.away.applied);
+    expect((host.querySelector("#away-body") as HTMLTextAreaElement).value, "the later edit was overwritten")
+      .toBe("Back Tuesday");
+    expect(host.textContent).toContain(messages.away.unsavedStillOn);
+
+    const { go } = await import("../app/shell/routing");
+    await act(async () => { go("ohbox"); });
+    expect(host.querySelector("[role=alertdialog]"), "the hold released without a question").not.toBeNull();
+    expect(window.location.hash).toBe("#/settings/away");
+  });
+
+  it("an untouched draft takes the landed row and holds nothing — the control", async () => {
+    window.history.replaceState(null, "", "/mailbox#/settings/away");
+    let answer = WAITING;
+    await mountRow(
+      async (next) => ({ ...next, updatedAt: null, pending: true }),
+      {}, "en",
+      async () => answer,
+    );
+    await switchOn();
+    await press("Save");
+    answer = APPLIED;
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(host.textContent).toContain(messages.away.on);
+    expect(host.textContent).not.toContain(messages.away.unsavedStillOn);
+    const { go } = await import("../app/shell/routing");
+    await act(async () => { go("ohbox"); });
+    expect(host.querySelector("[role=alertdialog]")).toBeNull();
+    expect(window.location.hash).toBe("#/ohbox");
+  });
+
   it("an ORDINARY save starts no watcher at all — the positive control", async () => {
     /* The watcher belongs to the travelled save and to nothing else. A save written HERE has its
        answer already, and a timer armed on it would be a settings row polling for no reason. */

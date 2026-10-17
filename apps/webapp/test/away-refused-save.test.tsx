@@ -27,12 +27,13 @@ import type { AwayResponderSaveWire, AwayResponderWire } from "../app/api-client
  *  3. A save that SUCCEEDS still applies the edit and still says "Saved." — the positive control.
  *  4. The local refusal (an enabled responder with no message) keeps its own sentence rather than
  *     being swallowed by the new one.
+ *  5. A message typed before the outage stays in the field under the failure sentence.
  *
  * ── HOW TO WATCH IT FAIL ────────────────────────────────────────────────────────────────────
  *
- * In `AwayResponderRow`'s save `catch`, drop `if (stored.current) setDraft(stored.current);` and
- * cases 1 and 2 go red on the rendered description; swap `failedWire` back to `failed` and they
- * go red on the sentence.
+ * The status line reads the STORED row, so the edit itself stays in the controls (a typed message
+ * is never dropped, case 5). Make the failure sentence read `draft.enabled` and cases 1 and 2 go
+ * red on it; swap `failedWire` back to `failed` and they go red on the sentence too.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -133,6 +134,20 @@ describe("a refused save is reported from the answer", () => {
     expect(text()).toContain(messages.away.saved);
     expect(text()).not.toContain(messages.away.failedStillOn);
     expect(text()).not.toContain(messages.away.failedStillOff);
+  });
+
+  it("a message typed before the outage stays in the field, and the sentence says it failed", async () => {
+    /* AWAY-OUTAGE-ON-SAVE-DROPS-THE-TYPED-MESSAGE: the catch put the stored row back, so the words
+       were gone. The phone keeps them; so does this row now, still stating the stored responder. */
+    await mountRow(refuse, { enabled: true });
+    const field = host.querySelector("#away-body") as HTMLTextAreaElement;
+    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => { set.call(field, "Away until the 20th, Anna covers"); field.dispatchEvent(new Event("input", { bubbles: true })); });
+    await press(messages.away.save);
+    expect((host.querySelector("#away-body") as HTMLTextAreaElement).value, "the typed message was dropped")
+      .toBe("Away until the 20th, Anna covers");
+    expect(text()).toContain(messages.away.failedStillOn);
+    expect(text(), "the kept edit is not named as unsaved").toContain(messages.away.unsavedStillOn);
   });
 
   it("an enabled responder with no message keeps its own sentence", async () => {

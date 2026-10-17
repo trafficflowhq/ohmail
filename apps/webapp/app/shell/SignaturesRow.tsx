@@ -42,6 +42,7 @@ import { Button } from "@ohmail/ui";
 import { RichEditor } from "./RichEditorLazy";
 import { isRichEmpty, type RichValue } from "./rich-text";
 import { standingNote, TravelledChangeNote, type TravelledChangeWire } from "./travelled-change";
+import { holdLeave } from "./routing";
 
 export function SignaturesRow({
   mailboxes,
@@ -104,6 +105,34 @@ export function SignaturesRow({
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
+
+  /**
+   * AN EDITED SIGNATURE HOLDS THE ROUTE, as the away pane's change does: leaving the pane unmounts
+   * these editors, so a draft not saved was dropped in silence. While any editor differs from the
+   * store (and no save is in flight) a leave asks first, and closing the tab asks the browser's
+   * question. Discard drops every draft and leaves; Keep editing stays.
+   */
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  const askRef = useRef<HTMLDivElement | null>(null);
+  const dirtyOf = (id: string): boolean => {
+    const d = drafts[id];
+    return d !== undefined
+      && (d.text !== (signatures[id] ?? "") || d.html !== (signaturesHtml[id] ?? ""));
+  };
+  const firstDirty = mailboxes.find((mb) => dirtyOf(mb.id))?.id ?? null;
+  const holding = firstDirty !== null && pending === null;
+  useEffect(() => {
+    if (!holding) { setLeaving(null); return; }
+    const release = holdLeave((leave) => setLeaving(() => leave), "#/settings/signatures");
+    const onUnload = (e: BeforeUnloadEvent): void => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onUnload);
+    return () => { release(); window.removeEventListener("beforeunload", onUnload); };
+  }, [holding]);
+  useEffect(() => {
+    if (leaving === null) return;
+    askRef.current?.scrollIntoView?.({ block: "nearest" });
+    askRef.current?.focus();
+  }, [leaving]);
 
   const save = (mailboxId: string, value: RichValue) => {
     if (pending !== null) return;
@@ -211,7 +240,21 @@ export function SignaturesRow({
               </div>
             ) : null}
             <TravelledChangeNote note={standingNote(changes[mb.id])} />
-            {reading ? null : (
+            {leaving !== null && mb.id === firstDirty ? (
+              <div
+                ref={askRef}
+                className="sig-settings-actions"
+                role="alertdialog"
+                aria-label={t("signatures.leaveAsk")}
+                tabIndex={-1}
+              >
+                <span className="set-note-inline">{t("signatures.leaveAsk")}</span>
+                <Button variant="primary" onClick={() => { const leave = leaving; setDrafts({}); setLeaving(null); leave(); }}>
+                  {t("signatures.revert")}
+                </Button>
+                <Button variant="ghost" onClick={() => setLeaving(null)}>{t("signatures.leaveKeep")}</Button>
+              </div>
+            ) : reading ? null : (
             <div className="sig-settings-actions">
               <Button
                 variant="primary"
