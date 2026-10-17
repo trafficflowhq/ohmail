@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import { mailboxes, mailboxCredentials, messages } from "@trafficflow/db";
 import { makeDb, closeDb } from "@trafficflow/db/cloud";
-import { StaticKeyProvider } from "@trafficflow/core";
+import { StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import { MAX_CYCLE_LANES, DEFAULT_CYCLE_LANES, CYCLE_FAST_LANES, type WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
@@ -121,6 +121,55 @@ function parkSync(fleet: FakeAdapterFleet, mailboxId: string): () => void {
   const gate = new Promise<void>((r) => { release = r; });
   fleet.behave(mailboxId, { syncGate: gate });
   return () => { fleet.behave(mailboxId, { syncGate: undefined }); release(); };
+}
+
+/**
+ * A PASS BOUNDARY, exactly. A pass gives each mailbox one turn and ends only when its lanes
+ * return, so a park planted mid-pass can land on a mailbox the pass has already served and decide
+ * the case by where the pass happened to be. The tail runs on the rotation's own serial queue, so
+ * while a tail slice runs no pass is mid-way and every lane has returned: parks planted from its
+ * hook land on each mailbox's own turn of the next pass. Install `tailSliceHook` in the worker's
+ * config; `park` arms it and resolves at the next slice with every seed's turn count there.
+ */
+function passBoundary(fleet: FakeAdapterFleet, releases: Array<() => void>): {
+  tailSliceHook: () => Promise<void>;
+  park: (seeds: ReadonlyArray<{ mailboxId: string }>, park: ReadonlyArray<{ mailboxId: string }>) => Promise<number[]>;
+} {
+  let armed: (() => void) | null = null;
+  return {
+    tailSliceHook: async () => { const fire = armed; armed = null; fire?.(); },
+    park: (seeds, park) => new Promise<number[]>((resolve, reject) => {
+      const timer = setTimeout(() => { armed = null; reject(new Error("no tail slice, so no pass boundary, in 20 s")); }, 20_000);
+      armed = () => {
+        clearTimeout(timer);
+        const starts = seeds.map((s) => fleet.indicesOf(s.mailboxId, "sync_start").length);
+        const ends = seeds.map((s) => fleet.indicesOf(s.mailboxId, "sync_end").length);
+        if (fleet.syncInFlight !== 0 || starts.some((n, i) => n !== ends[i])) {
+          reject(new Error(`a sync was in flight during a tail slice: starts ${starts}, ends ${ends}`));
+          return;
+        }
+        for (const p of park) releases.push(parkSync(fleet, p.mailboxId));
+        resolve(ends);
+      };
+    }),
+  };
+}
+
+/** Every `mailbox_visit` line the worker writes, AFTER the log allow-list: a field it drops is not there. */
+function visitLog(): { logger: ReturnType<typeof createLogger>; visits: Array<Record<string, unknown>> } {
+  const visits: Array<Record<string, unknown>> = [];
+  const logger = createLogger({
+    service: "worker", level: "info",
+    sink: (line) => { const j = JSON.parse(line) as Record<string, unknown>; if (j.event === "mailbox_visit") visits.push(j); },
+  });
+  return { logger, visits };
+}
+
+/** One turn of a mailbox at a time: its starts and ends alternate, start first. */
+function oneTurnAtATime(fleet: FakeAdapterFleet, mailboxId: string): boolean {
+  return fleet.trace
+    .filter((e) => e.mailboxId === mailboxId && (e.event === "sync_start" || e.event === "sync_end"))
+    .every((e, i) => e.event === (i % 2 === 0 ? "sync_start" : "sync_end"));
 }
 
 /* THE LEAK PROBE COUNTS CLIENT BACKENDS ONLY (ROSTER-PROBE-COUNTS-AUTOVACUUM): an autovacuum worker on this
@@ -571,31 +620,15 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     const seeds = [];
     for (let i = 0; i < 8; i++) seeds.push(await seedMailbox(db));
 
-    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 32 });
+    const boundary = passBoundary(fleet, releases);
+    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 32, tailSliceHook: boundary.tailSliceHook });
 
     /* PARKED AT A PASS BOUNDARY, so every mailbox is unserved in the pass that fills the lanes.
-       A pass gives each mailbox one turn and ends only when its lanes return. Parked mid-pass with
-       six already served, the last two parked and held the pass open, and the rotation sat at 2 of
-       3 lanes for the whole 20 s: 10 of 30 runs of this case alone, the six never started again
-       (ROSTER-ROTATION-STUCK-UNDER-PARK, a scheduler finding of its own). This case asserts the
-       clamp, so it parks where no pass is mid-way: nothing in a sync, every mailbox with as many
-       ends as starts, all at the same count. Checked and parked in one synchronous step, so no
-       turn can start between the two. */
-    const counts = (event: "sync_start" | "sync_end") => seeds.map((s) => fleet.indicesOf(s.mailboxId, event).length);
-    const boundary = (): boolean => {
-      const starts = counts("sync_start");
-      const ends = counts("sync_end");
-      return starts.every((n, i) => n === ends[i]) && new Set(ends).size === 1;
-    };
-    const boundaryBy = Date.now() + 20_000;
-    for (;;) {
-      if (boundary()) {
-        for (const s of seeds) releases.push(parkSync(fleet, s.mailboxId));
-        break;
-      }
-      if (Date.now() > boundaryBy) throw new Error(`no pass boundary in 20 s: starts ${counts("sync_start")}, ends ${counts("sync_end")}`);
-      await new Promise((r) => setTimeout(r, 2));
-    }
+       Parked mid-pass with six already served, the last two parked and held the pass open, and
+       the rotation sat at 2 of 3 lanes for the whole 20 s: 10 of 30 runs of this case alone
+       (ROSTER-ROTATION-STUCK-UNDER-PARK, which the due turns below now answer). This case asserts
+       the clamp, so it fills the lanes with own turns only. */
+    await boundary.park(seeds, seeds);
     // As many lanes as the clamp allows, and then it blocks. Reaching the ceiling is what makes
     // the "never above it" assertion below a bound rather than an accident of scheduling.
     await waitFor(
@@ -614,6 +647,204 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
       `on it while still holding ${8} provider connections and ${8} batches in memory`,
     ).toBe(MAX_CYCLE_LANES);
     expect(worker.stats().mailboxes, "a mailbox was lost while the lanes were full").toBe(8);
+  }, 120_000);
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════════════
+   *  A MAILBOX DUE ITS POLL TAKES A FREE LANE WHILE LONG BATCHES HOLD THE PASS
+   * ══════════════════════════════════════════════════════════════════════════════════════
+   *
+   * ROSTER-ROTATION-STUCK-UNDER-PARK. A pass gives each mailbox one turn and ends when its lanes
+   * return, so two batches parked in it held it open while the third lane idled and the six other
+   * mailboxes, served and due their poll again, did not start for the whole 20 s at an 80 ms poll
+   * (in production: a deep batch's length). They are IDLE-armed, as every attached mailbox is, and
+   * no doorbell rings here: what they owe is the poll, which is how flag changes from other devices
+   * and every folder but INBOX arrive. Each must now take the free lane every time its own poll
+   * comes due, while both parked batches still hold the pass.
+   */
+  it("gives every other mailbox a turn each time its poll comes due while two batches hold the pass", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const seeds = [];
+    for (let i = 0; i < 8; i++) seeds.push(await seedMailbox(db));
+    const [a, b, ...six] = seeds;
+    const names = new Map(seeds.map((s, i) => [s.mailboxId, i < 2 ? `parked${i + 1}` : `M${i - 1}`]));
+    const { logger, visits } = visitLog();
+    const boundary = passBoundary(fleet, releases);
+    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 3, logger, tailSliceHook: boundary.tailSliceHook });
+    // Production's shape: every mailbox watched, so the claim is about one whose doorbell has not rung.
+    expect(seeds.every((s) => fleet.indicesOf(s.mailboxId, "watch").length > 0), "a mailbox is not IDLE-armed").toBe(true);
+
+    const at = await boundary.park(seeds, [a!, b!]);
+    await waitFor(() => fleet.syncInFlight === 2, 20_000,
+      `both batches parked inside their own turns of the next pass — trace: ${fleet.describeTrace(names)}`);
+    // Stamped when a pass ENDS: the parks pin it from here until their release.
+    const passStamp = worker.stats().lastCycleAt?.getTime() ?? null;
+    expect(passStamp, "no pass had ended before the parks, so the pin below is vacuous").not.toBeNull();
+
+    const TURNS = 3;
+    const dueTurns = (id: string): number => visits.filter((v) => v.mailboxId === id && v.due === true).length;
+    await waitFor(() => six.every((s) => dueTurns(s.mailboxId) >= TURNS), 20_000,
+      `${TURNS} due turns for each of the six while two batches hold the pass — they waited for the pass ` +
+      `to end — trace: ${fleet.describeTrace(names)}`);
+    // AT THE SAME INSTANT both batches are still parked and no pass has ended: the turns did not
+    // ride a new pass.
+    expect(fleet.syncInFlight, `a parked batch returned, so the turns prove nothing — trace: ${fleet.describeTrace(names)}`).toBe(2);
+    expect(worker.stats().lastCycleAt?.getTime() ?? null, "a pass ended, so the turns rode new passes").toBe(passStamp);
+    six.forEach((s, i) => {
+      expect(fleet.indicesOf(s.mailboxId, "sync_end").length, `${names.get(s.mailboxId)} turns`).toBeGreaterThanOrEqual(at[i + 2]! + 1 + TURNS);
+    });
+    // The parked mailboxes are on their own turns, never on a due one.
+    expect(visits.filter((v) => (v.mailboxId === a!.mailboxId || v.mailboxId === b!.mailboxId) && v.due === true)).toHaveLength(0);
+    for (const s of seeds) {
+      expect(oneTurnAtATime(fleet, s.mailboxId), `two turns of ${names.get(s.mailboxId)} at once — trace: ${fleet.describeTrace(names)}`).toBe(true);
+    }
+    expect(worker.stats().mailboxes, "a mailbox was lost while the batches were parked").toBe(8);
+  }, 120_000);
+
+  /**
+   * A SECOND TURN NEVER GOES AHEAD OF A FIRST. A 1 ms poll makes every served mailbox due again
+   * the moment its turn ends, so the only thing between a due turn and a mailbox still waiting for
+   * its first turn of the pass is the gate itself: without it, the first mailbox through the free
+   * lane goes round again before the last one has had its turn.
+   */
+  it("gives no mailbox a second turn of a pass while another still waits for its first", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const seeds = [];
+    for (let i = 0; i < 8; i++) seeds.push(await seedMailbox(db));
+    const [a, b, ...six] = seeds;
+    const names = new Map(seeds.map((s, i) => [s.mailboxId, i < 2 ? `parked${i + 1}` : `M${i - 1}`]));
+    const boundary = passBoundary(fleet, releases);
+    await warmShard(db, fleet, seeds, { cycleLanes: 3, pollIntervalMs: 1, tailSliceHook: boundary.tailSliceHook });
+
+    const at = await boundary.park(seeds, [a!, b!]);
+    await waitFor(() => fleet.syncInFlight === 2, 20_000,
+      `both batches parked inside their own turns of the next pass — trace: ${fleet.describeTrace(names)}`);
+    await waitFor(() => six.every((s, i) => fleet.indicesOf(s.mailboxId, "sync_end").length >= at[i + 2]! + 1), 20_000,
+      `every one of the six to have its own turn of the held pass — due turns kept going ahead of it — trace: ${fleet.describeTrace(names)}`);
+    await waitFor(() => six.every((s, i) => fleet.indicesOf(s.mailboxId, "sync_end").length >= at[i + 2]! + 2), 20_000,
+      `a second turn for each of the six while two batches hold the pass — trace: ${fleet.describeTrace(names)}`);
+    // Turn n+1 is each mailbox's own turn of the held pass, n+2 its first due turn (n: its count at the boundary).
+    const lastFirst = Math.max(...seeds.map((s, i) => fleet.nth(s.mailboxId, "sync_start", at[i]! + 1)));
+    const firstSecond = Math.min(...six.map((s, i) => fleet.nth(s.mailboxId, "sync_start", at[i + 2]! + 2)));
+    expect(firstSecond, `a second turn started before every mailbox had its first — trace: ${fleet.describeTrace(names)}`)
+      .toBeGreaterThan(lastFirst);
+  }, 120_000);
+
+  /**
+   * A RUNG DOORBELL GOES AHEAD OF EVERY DUE TURN. At a 1 ms poll some mailbox is always due, so
+   * a doorbell revisit `admitWoken` queued would wait behind due turns for as long as the parked
+   * batches hold the pass, if due turns were placed in front of it: the wake latency the doorbell
+   * exists to remove, back again.
+   */
+  it("lets a rung doorbell's mail in ahead of every due turn while two batches hold the pass", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const seeds = [];
+    for (let i = 0; i < 8; i++) seeds.push(await seedMailbox(db));
+    const [a, b, ...six] = seeds;
+    const w = six[0]!;
+    const names = new Map(seeds.map((s, i) => [s.mailboxId, i < 2 ? `parked${i + 1}` : i === 2 ? "W" : `M${i - 1}`]));
+    const { logger, visits } = visitLog();
+    const boundary = passBoundary(fleet, releases);
+    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 3, pollIntervalMs: 1, logger, tailSliceHook: boundary.tailSliceHook });
+
+    const at = await boundary.park(seeds, [a!, b!]);
+    await waitFor(() => fleet.syncInFlight === 2, 20_000,
+      `both batches parked inside their own turns of the next pass — trace: ${fleet.describeTrace(names)}`);
+    // Due turns are flowing through the free lane before the doorbell rings.
+    await waitFor(() => six.every((s, i) => fleet.indicesOf(s.mailboxId, "sync_end").length >= at[i + 2]! + 2), 20_000,
+      `a due turn for each of the six — trace: ${fleet.describeTrace(names)}`);
+
+    fleet.behave(w.mailboxId, { deliver: [{ from: "anna@x.example", subject: "hi", messageId: "due-w@x" }] });
+    fleet.signal.get(w.mailboxId)!();
+    await waitFor(() => landed(db, w.mailboxId, "due-w@x"), 10_000,
+      `W's woken mail while two batches hold the pass — due turns went ahead of its doorbell — trace tail: ` +
+      `${fleet.describeTrace(names).slice(-2_000)}`);
+    expect(fleet.syncInFlight, "a parked batch returned, so the mail proves nothing").toBe(2);
+    expect(visits.some((v) => v.mailboxId === w.mailboxId && v.woken === true), "W's visit was not logged as woken").toBe(true);
+    expect(worker.stats().mailboxes).toBe(8);
+  }, 120_000);
+
+  /**
+   * A MAILBOX THE PASS WILL QUARANTINE TAKES NO DUE TURN. At `maxSyncFailures` its own turn queues
+   * it for the post-loop quarantine; a due turn after that could succeed, reset its failures and
+   * still be quarantined as broken once the pass ends.
+   */
+  it("takes no due turn for a mailbox the pass will quarantine", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const seeds = [];
+    for (let i = 0; i < 8; i++) seeds.push(await seedMailbox(db));
+    const [a, b, m, ...five] = seeds;
+    const names = new Map(seeds.map((s, i) => [s.mailboxId, i < 2 ? `parked${i + 1}` : i === 2 ? "Q" : `M${i - 2}`]));
+    const { logger, visits } = visitLog();
+    const boundary = passBoundary(fleet, releases);
+    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 3, maxSyncFailures: 1, logger, tailSliceHook: boundary.tailSliceHook });
+
+    const at = await boundary.park(seeds, [a!, b!]);
+    // Q's own turn of the held pass fails, which at a bound of one queues it for quarantine.
+    fleet.behave(m!.mailboxId, { failSync: true });
+    await waitFor(() => fleet.syncInFlight === 2, 20_000,
+      `both batches parked inside their own turns of the next pass — trace: ${fleet.describeTrace(names)}`);
+    await waitFor(() => fleet.indicesOf(m!.mailboxId, "sync_start").length >= at[2]! + 1, 20_000,
+      `Q's own turn of the held pass — trace: ${fleet.describeTrace(names)}`);
+    // From here a turn would succeed: only the exclusion keeps Q out.
+    fleet.behave(m!.mailboxId, { failSync: false });
+    const qStarts = fleet.indicesOf(m!.mailboxId, "sync_start").length;
+    await waitFor(() => five.every((s, i) => visits.filter((v) => v.mailboxId === s.mailboxId && v.due === true).length >= 3), 20_000,
+      `three due turns for each of the other five — trace: ${fleet.describeTrace(names)}`);
+    expect(fleet.syncInFlight, "a parked batch returned, so the claim proves nothing").toBe(2);
+    expect(fleet.indicesOf(m!.mailboxId, "sync_start").length,
+      `Q, queued for quarantine, took a turn inside the pass — trace: ${fleet.describeTrace(names)}`).toBe(qStarts);
+    expect(visits.filter((v) => v.mailboxId === m!.mailboxId && v.due === true)).toHaveLength(0);
+    expect(worker.stats().mailboxes).toBe(8);
+  }, 120_000);
+
+  /**
+   * DUE TURNS NEVER HOLD A PASS OPEN. Only a lane on a mailbox's own turn lets a due turn start,
+   * so when the last own turn returns the due lanes drain and the pass ends. With a 1 ms poll every
+   * served mailbox is due at once for ever; were a due lane enough to admit the next, they would
+   * keep each other's pass open and no pass would end again.
+   */
+  it("still ends its passes when every mailbox is due again at once", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const seeds = [];
+    for (let i = 0; i < 8; i++) seeds.push(await seedMailbox(db));
+    const { logger, visits } = visitLog();
+    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 3, pollIntervalMs: 1, logger });
+    await waitFor(() => worker.stats().lastCycleAt !== null, 20_000, "the first pass to end");
+
+    for (let pass = 0; pass < 3; pass++) {
+      const stamp = worker.stats().lastCycleAt!.getTime();
+      await waitFor(() => (worker.stats().lastCycleAt?.getTime() ?? stamp) !== stamp, 20_000,
+        `pass ${pass + 1} of 3 to end — due turns held it open — trace tail: ${fleet.describeTrace().slice(-2_000)}`);
+    }
+    expect(visits.some((v) => v.due === true), "no due turn was taken, so the claim is vacuous").toBe(true);
+    for (const s of seeds) expect(oneTurnAtATime(fleet, s.mailboxId), "two turns of one mailbox at once").toBe(true);
+  }, 120_000);
+
+  /**
+   * A PASS WITH NO LONG BATCH ENDS AS IT DID: no mailbox is due again inside it (a 2 s poll against
+   * batches of milliseconds), so no due turn is taken and each mailbox has exactly one turn a pass.
+   */
+  it("takes no due turn in a pass no long batch holds", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const seeds = [];
+    for (let i = 0; i < 8; i++) seeds.push(await seedMailbox(db));
+    const { logger, visits } = visitLog();
+    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 3, pollIntervalMs: 2_000, logger });
+    await waitFor(() => worker.stats().lastCycleAt !== null, 20_000, "the first pass to end");
+    const stamp = worker.stats().lastCycleAt!.getTime();
+    await waitFor(() => (worker.stats().lastCycleAt?.getTime() ?? stamp) !== stamp, 20_000, "the next pass to end");
+
+    expect(visits.length, "no visit was logged, so the claim is vacuous").toBeGreaterThanOrEqual(16);
+    expect(visits.filter((v) => v.due === true), "a due turn in a pass no long batch held").toHaveLength(0);
+    const starts = seeds.map((s) => fleet.indicesOf(s.mailboxId, "sync_start").length);
+    expect(new Set(starts).size, `turns per mailbox differ: ${starts}`).toBe(1);
   }, 120_000);
 
   /**
@@ -645,7 +876,8 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
       fleet.behave(h.mailboxId, { deliver: mail(400, `deep${i}`), batchSize: 40 });
     }
 
-    const worker = await warmShard(db, fleet, [...heavies, light]);
+    const boundary = passBoundary(fleet, releases);
+    const worker = await warmShard(db, fleet, [...heavies, light], { tailSliceHook: boundary.tailSliceHook });
     // TWO completed cycles each, so every heavy has REPORTED its backlog: the first cycle is what
     // sets the flag, and a claim read before it would be testing the attach-time default instead.
     await waitFor(
@@ -653,7 +885,10 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
       "every heavy mailbox to have reported a backlog of its own",
     );
 
-    for (const h of heavies) releases.push(parkSync(fleet, h.mailboxId));
+    // At a pass boundary, so each heavy parks on its own turn of the next pass. Parked mid-pass, one
+    // could land on a turn taken while its poll came due, which holds the pass without letting the
+    // others in (`admitDue`), and the lanes would never fill.
+    await boundary.park([...heavies, light], heavies);
     const heavyLanes = DEFAULT_CYCLE_LANES - CYCLE_FAST_LANES;
     await waitFor(
       () => fleet.syncInFlight >= heavyLanes, 30_000,

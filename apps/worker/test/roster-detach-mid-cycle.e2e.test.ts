@@ -49,12 +49,12 @@ async function waitFor(cond: () => boolean | Promise<boolean>, ms: number, label
   throw new Error(`timed out after ${ms}ms waiting for ${label}`);
 }
 
-function cfgFor(fleet: FakeAdapterFleet): WorkerConfig {
+function cfgFor(fleet: FakeAdapterFleet, over: Partial<WorkerConfig> = {}): WorkerConfig {
   return {
     databaseUrl: DB, keyProvider: KP, pollIntervalMs: 120, sentDomain: "trafficflow.test",
     rosterIntervalMs: ROSTER_MS, mailboxRetryMs: 300, maxSyncFailures: 2,
     lockHeartbeatMs: 60_000, servingNothingMaxMs: 500, adapterFactory: fleet.factory,
-    organizer: { installId: INSTALL, displayName: "Cloud", staleAfterMs: 60_000 },
+    organizer: { installId: INSTALL, displayName: "Cloud", staleAfterMs: 60_000 }, ...over,
   };
 }
 
@@ -138,11 +138,17 @@ describe("FIX-026-A — a roster pass inside a parked cycle", () => {
     opens.push(releaseB);
     const holdC = holdCycleLeaseRead(fleet, c.mailboxId);
     opens.push(holdC.release);
+    const visits: Array<Record<string, unknown>> = [];
+    const logger = createLogger({
+      service: "worker", level: "info",
+      sink: (l) => { const j = JSON.parse(l) as Record<string, unknown>; if (j.event === "mailbox_visit") visits.push(j); },
+    });
 
-    const worker = await startWorker(cfgFor(fleet));
+    const worker = await startWorker(cfgFor(fleet, { logger }));
     closers.push(() => worker.stop());
     await waitFor(() => fleet.syncInFlight === 1 && holdC.held(), 8000, "B parked and C held in one cycle");
     const cSyncsBefore = fleet.indicesOf(c.mailboxId, "sync_start").length;
+    const cTurnsBefore = visits.filter((v) => v.mailboxId === c.mailboxId && v.due !== true).length;
 
     holdC.release();
     await waitFor(() => fleet.indicesOf(c.mailboxId, "sync_end").length > cSyncsBefore, 8000, "C's visit of this cycle");
@@ -153,7 +159,10 @@ describe("FIX-026-A — a roster pass inside a parked cycle", () => {
     await twoCycles(worker);
 
     expect(syncsAfterClose(fleet, c.mailboxId), "a sync began on C after C was closed").toBe(0);
-    expect(fleet.indicesOf(c.mailboxId, "sync_start").length, "C's admitted visit ran exactly once").toBe(cSyncsBefore + 1);
+    // C may also take turns while B is parked, each one due its poll (`admitDue`) and logged so;
+    // the visit admitted beside B is its one turn of the pass that is not.
+    expect(visits.filter((v) => v.mailboxId === c.mailboxId && v.due !== true).length, "C's admitted visit ran exactly once")
+      .toBe(cTurnsBefore + 1);
     expect(fleet.nth(c.mailboxId, "sync_start", cSyncsBefore + 1)).toBeLessThan(fleet.nth(c.mailboxId, "close", 1));
   }, 30000);
 
@@ -179,13 +188,16 @@ describe("FIX-026-A — a roster pass inside a parked cycle", () => {
     const d = await seedMailbox(db);
     await waitFor(() => worker.stats().mailboxes === 4, 8000, "D adopted while B is parked");
     expect(fleet.syncInFlight).toBe(1);
+    const atRelease = fleet.trace.length;
     releaseB();
     await twoCycles(worker);
     const dConnect = fleet.nth(d.mailboxId, "connect", 1);
     expect(fleet.nth(c.mailboxId, "sync_start", cSyncsBefore + 1), "C's admitted visit came first").toBeLessThan(dConnect);
-    const cNext = fleet.nth(c.mailboxId, "sync_start", cSyncsBefore + 2);
-    expect(cNext, "C's next batch ran").not.toBe(Infinity);
-    expect(dConnect, "D is adopted before C's next batch").toBeLessThan(cNext);
+    // C may take further turns while B is parked, each one due its poll (`admitDue`), so "C's next
+    // batch" no longer marks the end of the parked pass; B's release does.
+    expect(dConnect, "D is adopted inside the parked pass, before B's release").toBeLessThan(atRelease);
+    const cNext = fleet.indicesOf(c.mailboxId, "sync_start").find((i) => i >= atRelease) ?? Infinity;
+    expect(cNext, "C's next batch after the release ran").not.toBe(Infinity);
   }, 30000);
 
   /**

@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Other mailboxes keep syncing while one works through a large import
+
+On a server with several mailboxes, one mailbox working through a large import could hold up the regular check of
+every other mailbox until its batch finished, so read marks and moves made on another device, and mail in folders
+other than the inbox, showed up late. Each mailbox now gets its regular check on time while the long batch runs. New
+mail in the inbox was not affected: it already arrived within seconds.
+
 ### Opening a message full of pictures takes far less memory
 
 On the desktop and in the web app, the pictures embedded in a message were copied into the message's page as

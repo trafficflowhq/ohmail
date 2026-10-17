@@ -519,6 +519,12 @@ interface MailboxRuntime {
    * `changesSince`, and clearing on completion would swallow it.
    */
   wokenAt: number | null;
+  /**
+   * `Date.now()` when this mailbox's last visit ENDED, or `null` before its first. A mailbox
+   * with no unserved wake is due its poll again once `pollIntervalMs` has passed since then, and may take a
+   * turn inside a pass that a long lane is holding open; see `admitDue` in `cycle()`.
+   */
+  lastVisitEndedAt: number | null;
 }
 
 /** A detached mailbox waiting out its exponential retry backoff. */
@@ -807,6 +813,8 @@ export async function startWorkerWithLock(
     let lastCycleAt: Date | null = null;
     /** The last rotation's and the last completed tail's wall clock, for `/health` and `cycle_phases`. */
     let lastRotationMs: number | null = null;
+    /** How many due turns (`admitDue`) the last rotation gave, for `cycle_phases`. */
+    let lastDueRevisits = 0;
     let lastTailMs: number | null = null;
     let dutyAccounts: string[] = [];
     /* THE ROSTER ROWS BEHIND `dutyAccounts`, kept because a per-account pass that writes mail state
@@ -2769,6 +2777,7 @@ export async function startWorkerWithLock(
             },
           }),
           wokenAt: null,
+          lastVisitEndedAt: null,
         };
         runtimes.set(mb.mailboxId, rt);
         await beat();
@@ -3564,10 +3573,109 @@ export async function startWorkerWithLock(
        * woken mailboxes could otherwise keep each other's pass open for ever.
        */
       function heldOpenByAnother(): boolean {
-        if (pending.some((p) => !servedIds.has(p.mailboxId) && admissible(p))) return false;
+        if (unservedWaiting()) return false;
+        // A due lane (`admitDue`) holds here like an own turn: it is bounded, and a wake past the
+        // cap admits nothing after it, so the two cannot keep each other's pass open.
         for (const id of inFlight.keys()) if (!overCapLanes.has(id)) return true;
         return false;
       }
+      /** An unserved mailbox that could take a free lane right now: it goes before any second turn. */
+      function unservedWaiting(): boolean {
+        return pending.some((p) => !servedIds.has(p.mailboxId) && admissible(p));
+      }
+      /**
+       * A lane on a mailbox's OWN turn of this pass (or an in-cap wake) is in flight: not an over-cap
+       * wake, not a due turn. Only such a lane lets a due turn start, so due turns can never keep
+       * each other's pass open: once the last of these returns, the due lanes drain and it ends.
+       */
+      function longLaneInFlight(): boolean {
+        for (const id of inFlight.keys()) if (!overCapLanes.has(id) && !dueLanes.has(id)) return true;
+        return false;
+      }
+      /**
+       * A MAILBOX DUE ITS POLL AGAIN TAKES A FREE LANE (ROSTER-ROTATION-STUCK-UNDER-PARK).
+       * A pass gives each mailbox one turn and ends when its lanes return, so two long batches used
+       * to hold it open while the third lane idled and every other mailbox, due its poll again, waited
+       * for them: 20 s at an 80 ms poll in the test that found it, a deep batch's length in
+       * production. Admitted here, only while all of these hold, each one load-bearing:
+       *  - a lane is free, and nothing already queued could take it (`queuedWaiting`): a due turn
+       *    never goes ahead of a first turn, a new first-syncer or a rung doorbell's revisit;
+       *  - a lane on a bounded turn of its own is in flight (`longLaneInFlight`), so a due turn only
+       *    fills time the pass is already spending and never holds it open for anyone;
+       *  - the mailbox has had its turn this pass, is in no lane (one turn of a mailbox at a time),
+       *    is not already queued, is owed no post-loop action (`owedAfterThePass`), carries no unserved wake (a rung doorbell goes through
+       *    `admitWoken` and its bound, unchanged), and its own `pollIntervalMs` has passed since its
+       *    last visit ENDED. IDLE does not exempt it: the doorbell rings for new INBOX mail only, so
+       *    flag changes from other devices and every other folder still arrive by the poll;
+       *  - it is admissible now (its account has no lane, and the heavy cap holds), so a heavy
+       *    mailbox still holds only its own lane.
+       * Oldest-due first, at most one candidate per free lane and per account. The fill loop below
+       * consumes each through `revisitAllowed`, exactly once.
+       */
+      function admitDue(): void {
+        let free = cycleLanes - inFlight.size;
+        if (free <= 0 || queuedWaiting() || !longLaneInFlight()) return;
+        const now = Date.now();
+        const accounts = new Set<string>();
+        const due = dueCandidates().filter((rt) => now - rt.lastVisitEndedAt! >= config.pollIntervalMs);
+        for (const rt of due) {
+          if (free <= 0) break;
+          if (accounts.has(rt.accountId) || !admissible(rt)) continue;
+          accounts.add(rt.accountId);
+          revisitAllowed.add(rt.mailboxId);
+          dueAdmitted.add(rt.mailboxId);
+          pending.unshift(rt);
+          free--;
+        }
+      }
+      /**
+       * Anything queued that could take a free lane now: an unserved mailbox, a first-syncer
+       * (`admitNewFirstSyncers`) or a doorbell revisit (`admitWoken`). Each goes before a due turn;
+       * counting only the unserved let due turns queue in front of a rung doorbell and hold it until
+       * the long lanes ended.
+       */
+      function queuedWaiting(): boolean {
+        return pending.some(admissible);
+      }
+      /**
+       * A runtime this pass already queued for a post-loop detach (quarantine, reconnect, stand-down,
+       * a closed connection) takes no due turn: one at `maxSyncFailures` would succeed, reset its
+       * failures, and still be quarantined after the loop as broken.
+       */
+      function owedAfterThePass(rt: MailboxRuntime): boolean {
+        return closedOwed.has(rt.mailboxId) || toStandDown.includes(rt)
+          || toQuarantine.some((q) => q.rt === rt) || toReconnect.some((r) => r.rt === rt);
+      }
+      /** Served, unwoken runtimes free to take another turn once due, oldest visit first. */
+      function dueCandidates(): MailboxRuntime[] {
+        return [...runtimes.values()]
+          .filter((rt) => servedIds.has(rt.mailboxId) && !laneBusy.has(rt.mailboxId) && !pending.includes(rt)
+            && rt.wokenAt === null && rt.lastVisitEndedAt !== null && !owedAfterThePass(rt))
+          .sort((a, b) => a.lastVisitEndedAt! - b.lastVisitEndedAt!);
+      }
+      /**
+       * When the oldest ADMISSIBLE candidate comes due, if a lane is free and the pass is held by a
+       * long lane: the instant the loop must wake for even though no lane returned and no doorbell
+       * rang. Admissible only: one already due but held back by its account's lane or the heavy cap
+       * can move only when a lane returns, which the race already waits for, and timing it would
+       * re-arm a zero-delay timer every round, a spin for as long as that lane runs.
+       */
+      function nextDueAt(): number | null {
+        if (cycleLanes - inFlight.size <= 0 || queuedWaiting() || !longLaneInFlight()) return null;
+        let at: number | null = null;
+        for (const rt of dueCandidates()) {
+          if (!admissible(rt)) continue;
+          const due = rt.lastVisitEndedAt! + config.pollIntervalMs;
+          if (at === null || due < at) at = due;
+        }
+        return at;
+      }
+      /** Admitted by `admitDue`, lane not yet started — consumed at lane start. */
+      const dueAdmitted = new Set<string>();
+      /** Mailbox ids whose IN-FLIGHT lane is a due turn. */
+      const dueLanes = new Set<string>();
+      /** Due turns this pass gave, for `cycle_phases`. */
+      let dueRevisits = 0;
       /**
        * {@link closedOwed}, served here: a runtime a lane is inside waits for that lane to return, and
        * one this pass will QUARANTINE is left to the post-loop step (main's order) — detached and
@@ -4350,6 +4458,9 @@ export async function startWorkerWithLock(
         // …and whoever rang it BEFORE their turn stops waiting at a position planned before the
         // wake existed — the mid-pass half of the wake ordering (see `reorderPending`).
         reorderPending();
+        // …and a mailbox that came due its poll again while a long lane holds the pass takes a free
+        // lane rather than waiting for that lane (see `admitDue`). After the reorder, at the front.
+        admitDue();
 
         // Fill every free lane with the first ADMISSIBLE runtime, not merely the first one: a
         // mailbox held back by a busy account or by the heavy cap must not block the mailboxes
@@ -4392,6 +4503,8 @@ export async function startWorkerWithLock(
           laneBusy.add(rt.mailboxId);
           const overCap = overCapAdmitted.delete(rt.mailboxId);
           if (overCap) overCapLanes.add(rt.mailboxId);
+          const dueTurn = dueAdmitted.delete(rt.mailboxId);
+          if (dueTurn) { dueLanes.add(rt.mailboxId); dueRevisits++; }
           if (heavy) heavyInFlight++;
           // The bookkeeping is in a `finally` INSIDE the async body, so it has already run by the
           // time this promise settles — which is what lets the `Promise.race` below trust the
@@ -4405,12 +4518,14 @@ export async function startWorkerWithLock(
               // 2026-10-09 burst waited on a 271 s pass and no line said whose turn it was.
               log.info("mailbox_visit", {
                 mailboxId: rt.mailboxId, accountId: rt.accountId, visitMs: Date.now() - visitStarted,
-                woken: wokenVisit, overCap, heavy,
+                woken: wokenVisit, overCap, heavy, due: dueTurn,
               });
+              rt.lastVisitEndedAt = Date.now();
               inFlight.delete(rt.mailboxId);
               busyAccounts.delete(rt.accountId);
               laneBusy.delete(rt.mailboxId);
               overCapLanes.delete(rt.mailboxId);
+              dueLanes.delete(rt.mailboxId);
               if (heavy) heavyInFlight--;
             }
           })();
@@ -4429,7 +4544,17 @@ export async function startWorkerWithLock(
         // beside it — and `wakeSignal` is what makes a doorbell audible to a cycle whose every
         // lane is inside a long batch, which is the difference between a bounded-batch wait and a
         // free-lane wait. Neither a lane nor the signal ever rejects, so this never does either.
-        await Promise.race([...inFlight.values(), wakeSignal]);
+        // …or when a mailbox comes due its poll while a long lane holds the pass (see `admitDue`):
+        // nothing else would wake this loop before that lane returns.
+        const dueAt = nextDueAt();
+        let dueTimer: ReturnType<typeof setTimeout> | undefined;
+        const dueSignal = dueAt === null ? null
+          : new Promise<void>((r) => { dueTimer = setTimeout(r, Math.max(0, dueAt - Date.now())); });
+        try {
+          await Promise.race([...inFlight.values(), wakeSignal, ...(dueSignal ? [dueSignal] : [])]);
+        } finally {
+          if (dueTimer !== undefined) clearTimeout(dueTimer);
+        }
       }
       // JOINED, NEVER ABANDONED. Every list the post-loop bookkeeping reads — `synced`,
       // `toStandDown`, `toQuarantine`, `toReconnect` — is written by lanes, and a `stopped` or a
@@ -4524,6 +4649,7 @@ export async function startWorkerWithLock(
       // nothing to sync, so a dead leader never looks fresh.
       const rotationMs = Date.now() - passStartedMs;
       lastRotationMs = rotationMs;
+      lastDueRevisits = dueRevisits;
       if (succeeded > 0 || expected === 0) lastCycleAt = new Date();
       await beat();
       // …and the per-account passes run next, as their own queue entry behind this one.
@@ -4571,6 +4697,8 @@ export async function startWorkerWithLock(
       list: readonly string[] | null;
       index: number;
       rotationMs: number;
+      /** Due turns the rotation before this walk gave — see `admitDue`. */
+      dueRevisits: number;
       startedAt: number;
       workMs: number;
       turns: number;
@@ -5452,7 +5580,7 @@ export async function startWorkerWithLock(
         const mailboxesNow = await tailSnapshot();
         tailWalk = {
           mailboxes: mailboxesNow, accounts: accountsOf(mailboxesNow), section: 0, list: null, index: 0,
-          rotationMs: lastRotationMs ?? 0, startedAt: turnStarted, workMs: 0, turns: 0,
+          rotationMs: lastRotationMs ?? 0, dueRevisits: lastDueRevisits, startedAt: turnStarted, workMs: 0, turns: 0,
           sectionMs: TAIL_SECTIONS.map(() => 0),
         };
       }
@@ -5499,7 +5627,7 @@ export async function startWorkerWithLock(
       tailWalk = null;
       lastTailMs = walk.workMs;
       log.info("cycle_phases", {
-        rotationMs: walk.rotationMs, tailMs: walk.workMs, tailWallMs: Date.now() - walk.startedAt,
+        rotationMs: walk.rotationMs, dueRevisits: walk.dueRevisits, tailMs: walk.workMs, tailWallMs: Date.now() - walk.startedAt,
         turns: walk.turns,
         sections: TAIL_SECTIONS.map((s, i) => ({ section: s.name, ms: walk.sectionMs[i]! })),
       });
