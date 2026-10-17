@@ -7249,6 +7249,22 @@ pub fn on_new_window<R: tauri::Runtime>(
     }
 }
 
+/// The same door for an address the navigation guard refused (`navigation.rs`), where WKWebView
+/// asks the guard about a new-window request before raising one: on macOS a message link arrives
+/// here instead of at [`on_new_window`]. The same route and delivery; `false` for an ignored one.
+#[cfg(feature = "local-engine")]
+pub fn link_door<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> impl Fn(&str) -> bool + Send + Sync + 'static {
+    move |url| {
+        let route = popup_route(url);
+        if route == PopupRoute::Ignored {
+            return false;
+        }
+        let app = app.clone();
+        thread::spawn(move || deliver_popup(&app, route));
+        true
+    }
+}
+
 /// The address a refusal hands the window, cut to the gate's bound on a character boundary: the
 /// over-length refusal is said too, and the window's parser admits nothing longer.
 #[cfg(feature = "local-engine")]

@@ -13,6 +13,10 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The desktop window can no longer be navigated away from the app
+
+The desktop window now refuses to load any page that is not the app's own; links still open in your browser.
+
 ### Signing out of the web app no longer hangs, and ohmail.app no longer reloads in a loop afterwards
 
 Signing out could stay on "Signing out…" while another tab was renewing the session or the server was slow to

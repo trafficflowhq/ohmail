@@ -83,6 +83,9 @@ mod host;
 // the one `setup` this binary has.
 mod frame;
 mod menu;
+// Every window stays on the app's own origin. Always compiled: every build opens windows, and
+// `navigation::lock` is the one way any of them is built.
+mod navigation;
 // The Omarchy theme feed — on an Omarchy desktop the window follows the system theme live.
 // Two modules on purpose: `omarchy_core` is the Tauri-free machinery a standalone harness
 // can compile and run against a real install (its header says why that matters on a machine

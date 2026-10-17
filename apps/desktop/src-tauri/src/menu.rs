@@ -215,9 +215,10 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
 }
 
 /// Build the main window from its config entry (`"create": false` there), the line Tauri runs
-/// itself at the same moment, so the engine build can give it a new-window handler: every link in a
-/// message frame reaches the shell as that request (`engine::on_new_window`). The plain build
-/// attaches none, which is the behaviour it always had.
+/// itself at the same moment, so it is born through the navigation lock (`navigation.rs`) and the
+/// engine build can give it a new-window handler: every link in a message frame reaches the shell
+/// as that request (`engine::on_new_window`). The plain build attaches none, which is the behaviour
+/// it always had.
 fn build_main_window<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
     let config = app
         .config()
@@ -226,11 +227,31 @@ fn build_main_window<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std:
         .iter()
         .find(|w| w.label == "main")
         .ok_or("ohmail: tauri.conf.json names no main window")?;
-    let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
+    let builder = crate::navigation::lock(
+        tauri::WebviewWindowBuilder::from_config(app.handle(), config)?,
+        app.config(),
+        link_door(app.handle()),
+    );
     #[cfg(feature = "local-engine")]
     let builder = builder.on_new_window(crate::engine::on_new_window(app.handle().clone()));
     builder.build()?;
     Ok(())
+}
+
+/// The navigation guard's link door: `engine::link_door` where the webview asks the guard about a
+/// new-window request before raising it (`navigation::ASKED_ABOUT_NEW_WINDOWS`, macOS), none
+/// elsewhere, and none in the plain build, which opens no link anywhere.
+fn link_door<R: Runtime>(app: &AppHandle<R>) -> Option<Box<crate::navigation::Door>> {
+    if !crate::navigation::ASKED_ABOUT_NEW_WINDOWS {
+        return None;
+    }
+    #[cfg(feature = "local-engine")]
+    return Some(Box::new(crate::engine::link_door(app.clone())));
+    #[cfg(not(feature = "local-engine"))]
+    {
+        let _ = app;
+        None
+    }
 }
 
 /// Hand the window's frame to the compositor.

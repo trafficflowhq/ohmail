@@ -147,13 +147,16 @@ describe("tauri.conf.json", () => {
      frame's links have (`engine::on_new_window`). Mutations watched red: `create: false` dropped
      (Tauri builds a second `main` and the launch refuses); the build moved below
      `renderer_recovery::arm` (the watch arms before the window exists). */
-  it("builds the main window in the setup, first, with the new-window handler", () => {
+  it("builds the main window in the setup, first, locked, with the new-window handler", () => {
     const main = conf.app.windows.find((w) => w.label === "main");
     expect(main?.create, "Tauri would build the main window a second time").toBe(false);
     const menu = rustCode(read("src-tauri/src/menu.rs"));
     expect(menu).toMatch(/\.setup\(\|app\| \{\s*build_main_window\(app\)\?;\s*crate::renderer_recovery::arm\(app\.handle\(\)\);/);
     const build = menu.slice(menu.indexOf("fn build_main_window"));
-    expect(build).toMatch(/WebviewWindowBuilder::from_config\(app\.handle\(\), config\)\?;/);
+    // Born inside the navigation lock (`navigation.rs`): the window stays on the app's own pages.
+    expect(build).toMatch(
+      /crate::navigation::lock\(\s*tauri::WebviewWindowBuilder::from_config\(app\.handle\(\), config\)\?,\s*app\.config\(\),\s*link_door\(app\.handle\(\)\),\s*\);/,
+    );
     expect(build).toMatch(
       /#\[cfg\(feature = "local-engine"\)\]\s*let builder = builder\.on_new_window\(crate::engine::on_new_window\(app\.handle\(\)\.clone\(\)\)\);\s*builder\.build\(\)\?;/,
     );
@@ -639,7 +642,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these thirty-nine files and no others", () => {
+  it("is these forty-one files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -710,6 +713,14 @@ describe("the Rust side", () => {
       // navigation submenu is not, because only the engine build's window may hear the event.
       "menu.rs",
       "menu_tests.rs",
+      // EVERY WINDOW STAYS ON THE APP'S OWN PAGES. ALWAYS compiled: every build opens windows, and
+      // `navigation::lock` is the one way any of them is built, which its tests hold every builder
+      // in the crate to. One predicate admits the app's own origin in this platform's spelling, the
+      // message frame's `about:srcdoc` and, in a debug build only, `devUrl`. It opens and spawns
+      // nothing itself: a refusal is one line through the shell's existing sinks, and on macOS a
+      // refused link is handed to the engine's link door.
+      "navigation.rs",
+      "navigation_tests.rs",
       // The Omarchy theme feed (§3c): `omarchy_core.rs` is the Tauri-free machinery — detection,
       // the raw read, the quiet-debounced watch — kept std+serde_json only so a standalone
       // harness can compile and run it against a real Omarchy install (this repo's machine has

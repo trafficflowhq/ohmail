@@ -105,7 +105,14 @@ processes around it:**
   path, and exactly one takes a URL: `open_external`, which hands a link found
   in a message to your browser only after the shell's own vetting
   (`external_url` in `engine.rs`) accepts it — every other outbound address the
-  shell can open is a named constant. What connects is the mail **engine** — to
+  shell can open is a named constant. Beside the three, every window the shell
+  builds is locked to the app's own pages: a navigation to any other address is
+  refused (`apps/desktop/src-tauri/src/navigation.rs`), so a script that got
+  into the page cannot take the window to a page none of the three governs.
+  On macOS, where the webview asks about a message link before opening it, a
+  refused web address goes to the same door such a link uses; that adds
+  nothing, since a script in the page can already pass any web address to
+  `open_external`. What connects is the mail **engine** — to
   your own mail server, and on
   the hosted door to your account — and the Rust shell's updater, to its one
   pinned signed feed. One other window has a grant — the transient one shown
