@@ -1,5 +1,5 @@
 import { deleteAccount, erasureOutcome, throttleKeysFor } from "@trafficflow/services";
-import type { ReleaseOutcome } from "@trafficflow/db";
+import { planHintOf, type ReleaseOutcome } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
    cloud table the reopening reads never enters a standalone bundle. */
@@ -205,9 +205,11 @@ export const accountRoutes: Route[] = [
    * subscription gets a plan choice there. `paid`: a network hop to a third party, and a verified
    * address is the floor for a link to a page holding payment details. The one `paid` route a
    * refused account may reach (`ACCESS_REFUSED_MAY_REACH_ROUTES`): the way back to paying is not
-   * behind the lock. The account is the session's; the optional body names only the page's
-   * language, one of two words, and anything else is dropped. 404 has two causes — no such program
-   * here, or a program that does not know an account we just authenticated.
+   * behind the lock. The account is the session's; the optional body names the page's language,
+   * one of two words, and the plan and interval a signup carried from the site's tier buttons, each
+   * from its closed set (`planHintOf`) — a hint that picks the page's preselection and never a
+   * price. Anything else is dropped. 404 has two causes — no such program here, or a program that
+   * does not know an account we just authenticated.
    */
   {
     method: "POST",
@@ -217,11 +219,16 @@ export const accountRoutes: Route[] = [
     replay: "ephemeral",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      // A body that is JSON but not an object (`null`, a string) names no language either.
-      const lang = (await readBody<{ lang?: unknown } | null>(req))?.lang;
+      // A body that is JSON but not an object (`null`, a string) names no language and no hint either.
+      const body = await readBody<{ lang?: unknown; plan?: unknown; interval?: unknown } | null>(req);
+      const lang = body?.lang;
+      const hint = planHintOf(body?.plan, body?.interval);
       const port = entitlementsPort(deps);
       const link = port
-        ? await port.manageLink(ctx.accountId, lang === "de" || lang === "en" ? lang : undefined)
+        ? await port.manageLink(
+          ctx.accountId, lang === "de" || lang === "en" ? lang : undefined,
+          hint.plan || hint.interval ? hint : undefined,
+        )
         : null;
       if (!link) {
         throw new ServiceError(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   ApiError, account, accessFeedFor, apiConfigured, onAccessFeed, putAwayCatchUp,
   type AccessFeed, type AccountAccess, type AccountLifecycle,
@@ -121,6 +121,8 @@ async function readForStrip(): Promise<boolean> {
 export function LifecycleBanner() {
   const t = useTranslations("accountLifecycle");
   const tLock = useTranslations("accessLock");
+  /** The account page opens in this screen's language, as the wall's does. */
+  const lang = useLocale() === "de" ? "de" : "en";
   const active = !SELF_HOST_BUILD && apiConfigured();
   const entry = useSyncExternalStore(onAccessFeed, () => accessFeedFor(readOwner()), () => null);
   // Put away in THIS mount, so "Later" holds where the session store refuses the write.
@@ -161,7 +163,7 @@ export function LifecycleBanner() {
     setBusy(true);
     setMintRefusal(null);
     try {
-      const link = await account.manageLink();
+      const link = await account.manageLink({ lang });
       const url = link?.url;
       if (typeof url === "string" && url.length > 0) {
         armPoll();
@@ -176,7 +178,7 @@ export function LifecycleBanner() {
       if (alive.current) setMintRefusal(unverified ? "unverified" : "failed");
     }
     if (alive.current) setBusy(false);
-  }, [armPoll]);
+  }, [armPoll, lang]);
 
   if (notice === null) return null;
 

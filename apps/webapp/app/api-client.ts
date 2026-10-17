@@ -21,6 +21,7 @@ import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie"
 import { refusedFactsOf, verdictOf } from "./access-verdict";
 import { RETURN_DEBOUNCE_MS, readStoredVerdict, storeVerdict } from "./shell/wall-lift";
 import { durableSessionRemove, durableSessionSet } from "./shell/durable";
+import { planHintOf, type PlanHint } from "./plan-hint";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
 import {
   ACCOUNT_ERASED, ERASED_DECLARATION, accountErasedOwner, clearAccountErased, erasedCapture, hearAccountErased,
@@ -3094,10 +3095,15 @@ export const account = {
       return null;
     }
   },
-  manageLink: async (opts?: { lang?: "de" | "en" }): Promise<{ url: string } | null> => {
+  manageLink: async (opts?: { lang?: "de" | "en" } & PlanHint): Promise<{ url: string } | null> => {
     try {
-      // `lang` is the page's language on the far side; absent, that page reads the browser's.
-      const body = opts?.lang === "de" || opts?.lang === "en" ? { lang: opts.lang } : {};
+      // `lang` is the page's language on the far side; absent, that page reads the browser's. The plan
+      // and interval a signup carried from the site pick that page's preselection; members only.
+      const { plan, interval } = planHintOf(opts?.plan, opts?.interval);
+      const body = {
+        ...(opts?.lang === "de" || opts?.lang === "en" ? { lang: opts.lang } : {}),
+        ...(plan ? { plan } : {}), ...(interval ? { interval } : {}),
+      };
       return await api<{ url: string }>("/account/manage-link", { method: "POST", body });
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) return null;

@@ -1,6 +1,7 @@
 import { JoinScreen } from "./JoinScreen";
 import type { SearchParamsLike } from "../../demo-mode";
 import { publicSignupEnabled } from "../../signup-mode";
+import { planHintOf } from "../../plan-hint";
 
 /**
  * `/join?code=…` — the URL the invite mail links to (`MailService.sendInvite` builds it). The code is read here and
@@ -13,8 +14,9 @@ import { publicSignupEnabled } from "../../signup-mode";
  * A repeated `?code=a&code=b` arrives as an array; the FIRST value wins — the worst outcome is a prefilled field the
  * user corrects. `?billing=success|cancelled` is the other way in (the plan step's account page redirects back here);
  * anything else is dropped — a stranger's link value may only influence whether the wizard WAITS for entitlement,
- * which it then reads from the server. `publicSignup` decides where the wizard STARTS and nothing else, read here on
- * the server so a bookmarked `/join` gets the same answer as the CTA.
+ * which it then reads from the server. `?plan=solo|plus|pro` and `?interval=month|year` are what the site's tier
+ * buttons carry: closed sets, a preselection hint for the plan page and never a price. `publicSignup` decides where
+ * the wizard STARTS and nothing else, read here on the server so a bookmarked `/join` gets the same answer as the CTA.
  */
 export default async function JoinPage(props: { searchParams?: Promise<SearchParamsLike> }) {
   const searchParams = await props.searchParams;
@@ -27,6 +29,7 @@ export default async function JoinPage(props: { searchParams?: Promise<SearchPar
       initialCode={typeof first === "string" ? first.trim().slice(0, 64) : ""}
       billingReturn={billing === "success" || billing === "cancelled" ? billing : undefined}
       publicSignup={publicSignupEnabled()}
+      planHint={planHintOf(searchParams?.plan, searchParams?.interval)}
     />
   );
 }

@@ -131,6 +131,12 @@ const SURVIVES_SIGN_OUT = new Set([
    * Same class as `ohmail.theme` and `ohmail.face`: a fact about this machine.
    */
   "ohmail.updateAsked",
+  /*
+   * `ohmail.signup.plan` — the plan and interval a person chose on the site before any account
+   * existed (`app/plan-hint.ts`), kept through the signup's mail round trip. No address, no account,
+   * no mail: a preselection hint, forgotten once the trial starts and ignored after a week.
+   */
+  "ohmail.signup.plan",
 ]);
 
 /**

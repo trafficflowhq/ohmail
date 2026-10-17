@@ -24,6 +24,26 @@ export type AccessLifecycleState =
 export type AccessClosedReason = "trial_ended" | "canceled" | "unpaid" | "suspended";
 
 /**
+ * THE PLAN A PERSON CHOSE ON THE SITE before signing up (its tier buttons link `/join?plan=…`), carried
+ * to the plan page as a hint: it picks which choice that page shows preselected, and never a price or an
+ * entitlement — Checkout prices what the person submits there. Closed sets; anything else is no hint.
+ */
+export const PLAN_HINT_PLANS = ["solo", "plus", "pro"] as const;
+export const PLAN_HINT_INTERVALS = ["month", "year"] as const;
+export interface PlanHint {
+  plan?: (typeof PLAN_HINT_PLANS)[number];
+  interval?: (typeof PLAN_HINT_INTERVALS)[number];
+}
+
+/** Read a hint from untrusted values: each half kept only when it is a member of its closed set. */
+export function planHintOf(plan: unknown, interval: unknown): PlanHint {
+  return {
+    ...((PLAN_HINT_PLANS as readonly unknown[]).includes(plan) ? { plan: plan as PlanHint["plan"] } : {}),
+    ...((PLAN_HINT_INTERVALS as readonly unknown[]).includes(interval) ? { interval: interval as PlanHint["interval"] } : {}),
+  };
+}
+
+/**
  * The program's `lifecycle` block, carried VERBATIM (ISO strings, not Dates): every consumer is a
  * renderer or a comparator, and parsing dates here would put a timezone decision in a port.
  * Absent on the wire = an old program = today's behaviour, so the field below is optional on both
@@ -398,9 +418,10 @@ export interface EntitlementsPort {
    * program does not know this account, and not "nothing to manage".
    *
    * Render the row, or the onboarding link, only when a URL comes back; never store one. `lang`
-   * is the page's language; absent, the page picks its own.
+   * is the page's language; absent, the page picks its own. `hint` is the plan the person chose
+   * on the site before signing up: it picks the page's preselected choice and nothing else.
    */
-  manageLink(accountId: string, lang?: "de" | "en"): Promise<{ url: string } | null>;
+  manageLink(accountId: string, lang?: "de" | "en", hint?: PlanHint): Promise<{ url: string } | null>;
   /** The person is being erased: stop the money. Bounded and never throwing, because Article 17
    *  may not be withheld because a payment processor is unreachable. */
   releaseAccount(accountId: string): Promise<ReleaseOutcome>;

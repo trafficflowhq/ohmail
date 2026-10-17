@@ -775,6 +775,21 @@ describe("manageLink — the one door, to a first plan as well as an existing on
     ]);
   });
 
+  it("the site's plan and interval ride the wire when named, members of their sets only", async () => {
+    // A preselection hint for the page; a program that predates it reads the body field by field.
+    const c = client([{ status: 200, body: wire("manage-link-200") }]);
+    await c.port.manageLink(ACC, "de", { plan: "pro", interval: "year" });
+    await c.port.manageLink(ACC, undefined, { plan: "solo" });
+    await c.port.manageLink(ACC, "en", { plan: "gold", interval: "week" } as never);
+    await c.port.manageLink(ACC, "en", {});
+    expect(c.bodies.map((b) => JSON.parse(b))).toEqual([
+      { accountId: ACC, lang: "de", plan: "pro", interval: "year" },
+      { accountId: ACC, plan: "solo" },
+      { accountId: ACC, lang: "en" },
+      { accountId: ACC, lang: "en" },
+    ]);
+  });
+
   it("`{url: null}` is an ANSWER, not drift — the program does not know this account", async () => {
     // It used to mean "nothing to manage". Under the current contract that state cannot happen
     // for a known account, so a null here is the program not recognising the id.

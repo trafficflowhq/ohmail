@@ -3,7 +3,7 @@ import {
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type UsageReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
-  type SpendRelease, type ReturnConfirmOutcome,
+  type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
 import { SPEND_ACTIONS, assertAttemptKey } from "./ledger-source.js";
@@ -660,9 +660,13 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       return "settled";
     },
 
-    async manageLink(accountId: string, lang?: "de" | "en"): Promise<{ url: string } | null> {
-      // Named only when the caller chose one: an older program reads `accountId` alone.
-      const res = await post("/v1/manage-link", { accountId, ...(lang ? { lang } : {}) });
+    async manageLink(accountId: string, lang?: "de" | "en", hint?: PlanHint): Promise<{ url: string } | null> {
+      // Named only when the caller chose one: an older program reads `accountId` alone, and one that
+      // predates the hint ignores `plan` and `interval` (the body is read field by field).
+      const { plan, interval } = planHintOf(hint?.plan, hint?.interval);
+      const res = await post("/v1/manage-link", {
+        accountId, ...(lang ? { lang } : {}), ...(plan ? { plan } : {}), ...(interval ? { interval } : {}),
+      });
       if (!res || res.status !== 200 || !res.bodyIsJson) return null;
       const b = obj(res.body);
       // `{url: null}` is an ANSWER — the program does not know this account. Only a body that

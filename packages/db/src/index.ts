@@ -477,6 +477,7 @@ export {
   type SpendPort, type SpendComposition, type SpendMeta, type AccessPort,
   type AccessVerdict, type AccessLimits, type AccessRefusal, type AccessReadOpts,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason,
+  PLAN_HINT_PLANS, PLAN_HINT_INTERVALS, planHintOf, type PlanHint,
   type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
   type ReleaseReceipt, type UsageReceipt, type RefundObligation, type RefundObligationPort,
   type RefundObligationReason, type ReturnConfirmOutcome,

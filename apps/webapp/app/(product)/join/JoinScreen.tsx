@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import {
   ApiError, account, apiConfigured, auth, codeOf, createPasskey, mailboxes,
@@ -41,6 +41,7 @@ import { JOIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 import { confirmAccountReturn } from "../../account-return";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 import { gatedRefusal } from "../mailbox/gated-refusal";
+import { PLAN_NAMES, forgetPlanHint, recalledPlanHint, rememberPlanHint, type PlanHint } from "../../plan-hint";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
@@ -86,7 +87,7 @@ const RAIL_OPEN: Step[] = RAIL_BASE.filter((s) => s !== "invite");
 const ACCESS_POLL_ATTEMPTS = 10;
 const ACCESS_POLL_MS = 1_500;
 
-export function JoinScreen({ initialCode, billingReturn, publicSignup = false }: {
+export function JoinScreen({ initialCode, billingReturn, publicSignup = false, planHint }: {
   initialCode: string;
   /** `?billing=success|cancelled`, the two values Stripe Checkout redirects back with. */
   billingReturn?: "success" | "cancelled";
@@ -100,10 +101,26 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
    * promises an account this deployment will not create.
    */
   publicSignup?: boolean;
+  /** `?plan` and `?interval` from the site's tier buttons, already read from their closed sets (`page.tsx`). */
+  planHint?: PlanHint;
 }) {
   const t = useTranslations("join");
   const tm = useTranslations("mailboxes");
   const td = useTranslations("devices");
+  const lang = useLocale() === "de" ? "de" : "en";
+
+  /**
+   * THE PLAN CHOSEN ON THE SITE. The verification link comes back to `/join` without the query, so a hint
+   * that arrives in the URL is kept in this browser and recalled when it does not (read in an effect: the
+   * server render has no storage). It names the choice on the plan step and preselects it on the account
+   * page; it is forgotten once the trial starts.
+   */
+  const [hint, setHint] = useState<PlanHint>(planHint ?? {});
+  useEffect(() => {
+    if (planHint?.plan || planHint?.interval) rememberPlanHint(planHint);
+    else setHint(recalledPlanHint());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planHint?.plan, planHint?.interval]);
   /* `bootstrap` is a `useCallback([])` — its identity drives the mount effect, so a translator
      in its dependency list would re-run it on every render. The ref is the same device
      `remote-images.ts` uses for `onFailed`, and for the same reason. */
@@ -277,6 +294,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
          account page they may not need is worse than letting the mailbox step's own refusal
          speak. `false` is the only answer that routes to the plan step. */
       if (may === false) { setStep("plan"); return; }
+      if (may === true) forgetPlanHint();
 
       await landEntitled();
     } catch {
@@ -324,6 +342,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         .catch(() => null);
       if (cancelled) return;
       if (may === true) {
+        forgetPlanHint(); // the trial started: the site's choice has done its job
         // An account that already has a mailbox is set up, not asked to connect one.
         await landEntitled(() => !cancelled).catch(() => { if (!cancelled) setStep("mailbox"); });
         return;
@@ -358,7 +377,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   useEffect(() => {
     if (step !== "plan") return;
     let cancelled = false;
-    void account.manageLink()
+    // The account page opens in this screen's language with the site's choice preselected.
+    void account.manageLink({ lang, ...hint })
       .then((link) => {
         if (cancelled) return;
         const u = link?.url;
@@ -1025,6 +1045,14 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       {step === "plan" && (
         <>
           <p className="sub">{t("step_plan_lead")}</p>
+          {/* What the site promised, and the plan picked there; never a price (the account page owns prices). */}
+          <p className="join-note" data-testid="join-plan-trial">
+            {hint.plan
+              ? `${t(hint.interval === "year" ? "planChosenYear" : hint.interval === "month" ? "planChosenMonth" : "planChosen",
+                { plan: PLAN_NAMES[hint.plan] })} `
+              : null}
+            {t("planTrial")}
+          </p>
           {/* ONE STEP, ONE CONTROL. The plan cards, the prices, the interval toggle and the
               trial figure were all this app quoting a catalogue it does not own; they live on
               the account page the service operator serves, which is also where the card is

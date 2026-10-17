@@ -11,7 +11,7 @@ import { createHmac } from "node:crypto";
 import { dirname, join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { createApp, apiRoutes, makeProbeHostGuard, type ApiDeps } from "@trafficflow/api";
-import type { AccessLifecycle, AccessVerdict, EntitlementsPort } from "@trafficflow/db";
+import type { AccessLifecycle, AccessVerdict, EntitlementsPort, PlanHint } from "@trafficflow/db";
 import { makeDeps } from "../../../packages/api/test/helpers.js";
 
 type SpyMailer = Awaited<ReturnType<typeof makeDeps>>["mailer"];
@@ -159,8 +159,10 @@ async function newWorld(entitlementsPort?: EntitlementsPort): Promise<void> {
 }
 
 /** The account, the mailed link, an authenticator and the codes: everything before the plan step. */
-async function signUp(p: Page, who: { email: string; password: string; totpSecret: string }): Promise<void> {
-  await p.goto(`http://localhost:${webPort}/join`);
+async function signUp(
+  p: Page, who: { email: string; password: string; totpSecret: string }, start = "/join",
+): Promise<void> {
+  await p.goto(`http://localhost:${webPort}${start}`);
   await p.locator("#join-email").waitFor({ timeout: 30_000 });
   await p.fill("#join-email", who.email);
   await p.fill("#join-name", "Mila Reyes");
@@ -190,8 +192,8 @@ async function signUp(p: Page, who: { email: string; password: string; totpSecre
  * date, no erasure clock and nothing ever paid — the state an account is in between signing up and
  * starting the trial. The mint answers a page address and records what it was asked.
  */
-function neverStartedPlane(): { port: EntitlementsPort; mints: Array<{ lang?: string }> } {
-  const mints: Array<{ lang?: string }> = [];
+function neverStartedPlane(): { port: EntitlementsPort; mints: Array<{ lang?: string; hint?: PlanHint }> } {
+  const mints: Array<{ lang?: string; hint?: PlanHint }> = [];
   const lifecycle: AccessLifecycle = {
     state: "closed", closedReason: null, trialEndsAt: null, graceUntil: null, closedAt: null,
     erasureAt: null, erasedAt: null, formerlyPaid: false,
@@ -206,8 +208,8 @@ function neverStartedPlane(): { port: EntitlementsPort; mints: Array<{ lang?: st
       accessOrFault: access,
       spend: async (_a, _b, key) => ({ verdict: "ok", charged: true, attempt: key }),
       release: async () => "settled" as const,
-      manageLink: async (_accountId, lang) => {
-        mints.push({ ...(lang ? { lang } : {}) });
+      manageLink: async (_accountId, lang, hint) => {
+        mints.push({ ...(lang ? { lang } : {}), ...(hint ? { hint } : {}) });
         return { url: "https://plane.example/manage?token=t" };
       },
       releaseAccount: async () => "none",
@@ -316,6 +318,28 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
       // Nothing a closed account is told: not inactive, not stopped, no erasure clock, no move to self-hosting.
       expect(wall).not.toMatch(/not active|stopped organizing|will be (erased|deleted)|self-host/i);
       expect(label, "the plan step's way out says what it does").toBe("Not now");
+    } finally {
+      await fresh.close();
+    }
+  }, 120_000);
+
+  it("a tier button's plan outlives the mail round trip: named on the plan step, sent to the account page", async () => {
+    const plane = neverStartedPlane();
+    await newWorld(plane.port);
+    const fresh = await browser!.newContext();
+    try {
+      const p = await fresh.newPage();
+      const who = { email: "ines@family.example", password: "a-third-long-signup-password", totpSecret: "" };
+      // The site's Pro button with the yearly toggle; the verification link comes back without the query.
+      await signUp(p, who, "/join?plan=pro&interval=year");
+      await p.getByRole("heading", { name: "Choose your plan" }).waitFor({ timeout: 30_000 });
+      const trial = p.locator('[data-testid="join-plan-trial"]');
+      await trial.waitFor({ timeout: 30_000 }).catch(() => {});
+      expect(await trial.count(), `no trial line: ${await said(p)}`).toBe(1);
+      expect(((await trial.textContent()) ?? "").trim()).toBe("You chose Pro, billed yearly. 14 days free, no card.");
+      await p.locator('a.btn.primary[href^="https://plane.example/"]').waitFor({ timeout: 30_000 });
+      expect(plane.mints, "the plan step's mint carries the language and the site's choice")
+        .toContainEqual({ lang: "en", hint: { plan: "pro", interval: "year" } });
     } finally {
       await fresh.close();
     }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 import { account, accessFeedFor, apiConfigured, onAccessFeed } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
@@ -18,6 +18,8 @@ import { readOwner } from "../../shell/owner-cookie";
  */
 export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
   const t = useTranslations("settings");
+  /** The account page opens in this screen's language, as the wall's does. */
+  const lang = useLocale() === "de" ? "de" : "en";
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   /** The pane can be left mid-press; nothing may set state after that. */
@@ -28,7 +30,7 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
     setBusy(true);
     setFailed(false);
     try {
-      const link = await account.manageLink();
+      const link = await account.manageLink({ lang });
       const url = link?.url;
       // A URL is a non-empty STRING or it is nothing. `{ url: "" }`, a 200 with no `url` at all
       // and the `null` of a 404 say the same thing — there is no page — and the answer to that is
@@ -43,7 +45,7 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
     } finally {
       if (alive.current) setBusy(false);
     }
-  }, [onNowhere]);
+  }, [onNowhere, lang]);
 
   return (
     <SettingsSection>

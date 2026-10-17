@@ -793,9 +793,9 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
 
   // ── account + consent ───────────────────────────────────────────────────────────────────
   "PATCH /account/ai": { scalarsOnly: true },
-  /* One field, `lang`, read as one of two words and otherwise dropped. The account is still the
-     SESSION's: a manage link for an account the caller merely named would be a link to somebody
-     else's payment details. */
+  /* Three fields, `lang`, `plan` and `interval`, each read as a member of its closed set and
+     otherwise dropped. The account is still the SESSION's: a manage link for an account the caller
+     merely named would be a link to somebody else's payment details. */
   "POST /account/manage-link": { scalarsOnly: true },
   /* One field, the session id the return address carried, refused 400 unless it is a token of at
      most this many letters, digits, `_` or `-`. The account is the SESSION's, as above. */

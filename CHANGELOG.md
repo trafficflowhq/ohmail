@@ -46,6 +46,13 @@ screen for a closed account: "This account is not active", "ohmail has stopped o
 to self-hosting. They now see "Start your free trial" with the 14 free days, no card, a button that opens the account
 page, and Sign out. The plan step's "Do this later" is now "Not now" and says the account is kept.
 
+### Signing up from a plan on ohmail.app remembers the plan
+
+Choosing Solo, Plus or Pro, monthly or yearly, on ohmail.app and then signing up lost the choice on the way: the
+plan step named no plan and said nothing about the trial. The choice is now kept through the confirmation mail,
+the plan step names it next to "14 days free, no card", and opening the account page asks for that plan to be
+selected. The account page also opens in the app's language from the plan step, the trial reminder and Settings.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

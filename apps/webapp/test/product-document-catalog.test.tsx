@@ -65,8 +65,9 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  doorbell and the join wizard's "Your mailbox is connected" step are first-screen strings.
  *  Raised 2026-10-17: the mailbox step's note says the factor is asked in place (join), and the
  *  sign-in names its wizard continuation (login); both namespaces are carried whole.
- *  Raised 2026-10-17 (both): the plan step's way out says what it does (join, carried whole). */
-const INLINE_CEILING_BYTES = { en: 34_550, de: 39_350 } as const;
+ *  Raised 2026-10-17 (both): the plan step's way out says what it does (join, carried whole).
+ *  Raised 2026-10-17 (both): the plan step names the site's choice and the trial (join). */
+const INLINE_CEILING_BYTES = { en: 34_700, de: 39_550 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>

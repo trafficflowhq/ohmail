@@ -204,8 +204,19 @@ describe("refusals are the server's sentence, never a client copy of it", () => 
    * all, and a literal cannot drift if there is none.
    */
   it("the join copy states no price, no tier and no trial term", () => {
-    const messages = JSON.parse(read("../messages/en.json")) as { join: Record<string, string> };
-    const copy = Object.values(messages.join).join(" ");
+    const messages = JSON.parse(read("../messages/en.json")) as {
+      join: Record<string, string>; accessLock: Record<string, string>;
+    };
+    /*
+     * ONE trial sentence is ruled in (2026-10-17): the plan step says what the site's tier buttons
+     * promise, `planTrial`, in the same words as the wall's never-started state. No price and no
+     * tier in it; the terms are the plane's (a 14-day trial, no card while trial-eligible), so a
+     * change there changes this sentence and the wall's together, which the second check holds.
+     */
+    const { planTrial, ...rest } = messages.join;
+    expect(planTrial).toBe("14 days free, no card.");
+    expect(messages.accessLock.neverStartedLead.startsWith(planTrial!)).toBe(true);
+    const copy = Object.values(rest).join(" ");
     expect(copy.length, "the join namespace is empty — then this guards nothing")
       .toBeGreaterThan(400);
     expect(copy, "a price is back in the signup funnel").not.toMatch(/\$\d/);
