@@ -14,9 +14,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { REFRESH_ENDPOINT, lastRefreshReport, resumeSession, type RefreshReport } from "../../session-refresh";
-import { readOwner } from "../../shell/owner-cookie";
+import { OWNER_SIGNED_OUT, readOwnerCookie } from "../../shell/owner-cookie";
+import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
 import { storageOwner } from "../../shell/storage-owner";
-import { durableSessionSet } from "../../shell/durable";
+import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
 import { REASON_BODY, isSignedOutReason, leaveSignedOutNote, type SignedOutReason } from "./signed-out-note";
 
@@ -86,10 +87,44 @@ function writeStamp(answer: ResumeAnswer, reloads = 0): void {
   durableSessionSet(resumeOnceKey(), JSON.stringify({ at: Date.now(), answer, reloads }), "resume.once");
 }
 
-type View = { kind: "working" } | { kind: "busy" } | { kind: "signedOut"; reason: SignedOutReason };
+/**
+ * EVERY PASS THROUGH THIS SPLASH, counted per tab and keyed by nothing that can change between
+ * passes. The stamp above is keyed by `tf_owner`, and a pass that reloaded without stamping (the
+ * jar compared as changed hands) left nothing to read: on ohmail.app the splash reloaded about five
+ * times a second until the platform's firewall stepped in. Past the limit the busy card stands
+ * until somebody presses Try again; the minted ladder above takes five passes at most.
+ */
+export const RESUME_PASSES_KEY = "ohmail.resume.passes";
+export const RESUME_PASS_LIMIT = 6;
+export const RESUME_PASS_WINDOW_MS = 60_000;
+
+/** Count this pass and answer its number within the window. */
+function countPass(): number {
+  let prev: { first?: unknown; n?: unknown } | null = null;
+  try {
+    const raw = sessionStorage.getItem(RESUME_PASSES_KEY);
+    prev = raw === null ? null : (JSON.parse(raw) as { first?: unknown; n?: unknown } | null);
+  } catch {
+    prev = null;
+  }
+  const now = Date.now();
+  const age = typeof prev?.first === "number" ? now - prev.first : -1;
+  const open = age >= 0 && age < RESUME_PASS_WINDOW_MS && typeof prev?.n === "number";
+  const pass = { first: open ? (prev!.first as number) : now, n: open ? (prev!.n as number) + 1 : 1 };
+  durableSessionSet(RESUME_PASSES_KEY, JSON.stringify(pass), "resume.passes");
+  return pass.n;
+}
+
+type View =
+  | { kind: "working" } | { kind: "busy" } | { kind: "signedOut"; reason: SignedOutReason }
+  | { kind: "signOut"; said: SignOutTrouble };
 
 export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | null }) {
   const t = useTranslations("resume");
+  /* The account pane's sentences for a sign-out that did not finish: one taxonomy, one set of words. */
+  const ta = useTranslations("account");
+  /** The edge chose this splash for a sign-out the server never confirmed: it is finished, not resumed. */
+  const finishing = initialOwner === OWNER_SIGNED_OUT;
   const [view, setView] = useState<View>({ kind: "working" });
   /** React 18 StrictMode double-invokes effects in dev; the refresh must fire once. */
   const started = useRef(false);
@@ -99,10 +134,12 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
    * The account this splash was chosen for. `initialOwner` is the marker as the EDGE saw it; the jar
    * can have changed hands since (hydration, then the lock's wait), and a refresh under somebody
    * else's jar rotates THEIR session from a window that is not theirs. `null` means the edge saw no
-   * marker — a cross-site navigation that withheld the cookies — and nothing is compared.
+   * marker — a cross-site navigation that withheld the cookies — and nothing is compared. Raw against
+   * raw: the parsed reading is null for `signed_out_pending` and for any malformed value, so it never
+   * matched the edge's and every pass reloaded.
    */
   const stillMine = useCallback(
-    (): boolean => initialOwner === null || readOwner() === initialOwner,
+    (): boolean => initialOwner === null || readOwnerCookie() === initialOwner,
     [initialOwner],
   );
 
@@ -135,9 +172,29 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
     timer.current = setTimeout(() => void attempt(n + 1), nextConfirmDelay(n, report?.retryAfterMs ?? null));
   }, [stillMine]);
 
+  /**
+   * FINISH THE SIGN-OUT THIS BROWSER ASKED FOR. Its server half went unconfirmed, so the session may
+   * still be live: it is presented at the sign-out door, never the refresh door, and the local half
+   * runs again. Confirmed lands on /login; a fault walks the confirm ladder, then says so. No reload.
+   */
+  const finish = useCallback(async (n: number): Promise<void> => {
+    // Another tab signed in since the edge chose this page: that jar is not this splash's to end.
+    if (!stillMine()) { window.location.reload(); return; }
+    const { signOut } = await import("../../sign-out");
+    const said = signOutTrouble(await signOut());
+    if (said === null) { window.location.replace("/login"); return; }
+    if (said.key === "signOutServerRefused" && n < CONFIRM_ATTEMPTS) {
+      timer.current = setTimeout(() => void finish(n + 1), nextConfirmDelay(n, null));
+      return;
+    }
+    setView({ kind: "signOut", said });
+  }, [stillMine]);
+
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    if (countPass() > RESUME_PASS_LIMIT) { setView({ kind: "busy" }); return; }
+    if (finishing) { void finish(1); return; }
     const prev = readStamp();
     const looping = prev !== null && Date.now() - prev.at < LOOP_WINDOW_MS;
     if (looping && prev.answer !== null && isSignedOutReason(prev.answer)) {
@@ -155,14 +212,16 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
       return;
     }
     void attempt(1);
-  }, [attempt]);
+  }, [attempt, finish, finishing]);
 
   useEffect(() => () => { if (timer.current !== null) clearTimeout(timer.current); }, []);
 
   const tryAgain = useCallback(() => {
+    // A person asked: the pass count starts again from here.
+    durableSessionRemove(RESUME_PASSES_KEY, "resume.passes");
     setView({ kind: "working" });
-    void attempt(1);
-  }, [attempt]);
+    void (finishing ? finish(1) : attempt(1));
+  }, [attempt, finish, finishing]);
 
   // Deliberately silent while it works: a sentence that flashes for a third of a second is worse
   // than a quiet frame — the same call `EngineProvider`'s "resolving" state makes.
@@ -182,6 +241,18 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
             <p>{t("busyBody")}</p>
             <div className="gate-actions">
               <button type="button" className="btn primary" onClick={tryAgain}>{t("tryAgain")}</button>
+            </div>
+          </>
+        ) : view.kind === "signOut" ? (
+          <>
+            <h1>{ta("signOutTitle")}</h1>
+            <p role="alert">
+              {view.said.key === "signOutServerRefused"
+                ? ta(view.said.key, { reason: view.said.reason })
+                : ta(view.said.key)}
+            </p>
+            <div className="gate-actions">
+              <button type="button" className="btn primary" onClick={tryAgain}>{ta("signOut")}</button>
             </div>
           </>
         ) : (

@@ -5,6 +5,7 @@ import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, zonePathOf } from "./rou
 import { armedZone, resolveLandingZone, zoneRequestHeaders, zoneTarget } from "./landing-zone.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
 import { cookieFromStore } from "./app/shell/cookie-jar";
+import { OWNER_COOKIE, OWNER_SIGNED_OUT } from "./app/shell/owner-cookie";
 import {
   APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface,
 } from "./app/session-gate";
@@ -304,11 +305,14 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // Presence only, and never sent to the gate as a credential — see `RESUME_COOKIE`. It is
   // NOT subject to the burst cap: it costs no fetch on the branch it selects.
   const marker = cookieFromStore(request.cookies, RESUME_COOKIE) !== null;
+  // The client's own word for a sign-out the server never confirmed (`owner-cookie.ts`).
+  const signOutPending = cookieFromStore(request.cookies, OWNER_COOKIE) === OWNER_SIGNED_OUT;
 
   const surface = await resolveSurface({
     sessionToken: token,
     throttled,
     resumeMarker: marker,
+    signOutPending,
     search: request.nextUrl.searchParams,
     apiOrigin: API_ORIGIN,
     env: { NEXT_PUBLIC_DEMO: process.env.NEXT_PUBLIC_DEMO },

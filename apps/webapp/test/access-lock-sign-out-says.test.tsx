@@ -64,15 +64,14 @@ async function pressSignOut(): Promise<string[]> {
 }
 
 describe("the lock screen's sign-out", () => {
-  it("a refusal on the server says so under the button, and the button presses again", async () => {
+  /* The browser is wiped and marked `signed_out_pending`, so `/` sends it to the splash, which
+     finishes the sign-out at the door and says the refusal only if it keeps happening. Standing
+     here kept the lock over a client that could no longer ask anything (`resume-never-loops`). */
+  it("a refusal on the server leaves for the front door that finishes it, claiming nothing", async () => {
     outcome = { ...FINISHED, serverRefused: "the server said no." };
     const alerts = await pressSignOut();
-    expect(alerts, "the refused sign-out was silent").toEqual([
-      account.signOutServerRefused!.replace("{reason}", "the server said no."),
-    ]);
-    expect(navigatedTo, "a refused sign-out left the screen").toBeNull();
-    const out = [...host.querySelectorAll("button")].find((b) => b.textContent === "Sign out")!;
-    expect(out.disabled).toBe(false);
+    expect(alerts, "a refused sign-out claimed an ending here").toEqual([]);
+    expect(navigatedTo, "a refused sign-out stood over a client that can no longer ask").toBe("/");
   });
 
   it("a blocked wipe and an unverifiable one are said as the account pane says them", async () => {

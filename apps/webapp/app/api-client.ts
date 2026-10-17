@@ -49,6 +49,16 @@ export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
  */
 const SIGN_OUT_PATH = `${REFRESH_ENDPOINT}/logout` as const;
 
+/**
+ * THE SIGN-OUT ENDS. Its door waits this long behind a renewal holding the refresh lock and then
+ * goes without it (`withSessionCookieLock`'s sign-out terms), and the whole call, wait and request,
+ * is given up at the deadline: the local half then runs and the server half is named unconfirmed.
+ * It used to wait 15 s and refuse unasked, and once granted it waited on the request for ever.
+ * Module-local for `SIGN_OUT_PATH`'s reason.
+ */
+const SIGN_OUT_LOCK_WAIT_MS = 3_000;
+const SIGN_OUT_DEADLINE_MS = 10_000;
+
 /** Is this build wired to a server at all? `false` ⇒ demo/gate only. */
 export const apiConfigured = (): boolean => typeof API_BASE === "string" && API_BASE.length > 0;
 
@@ -537,7 +547,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
       answerHolds();
       checkAnswerOwner(path, seen.account, ceremony);
       return answer;
-    });
+    }, path === SIGN_OUT_PATH ? { waitMs: SIGN_OUT_LOCK_WAIT_MS, unlockedAfterWait: true } : {});
   }
 
   const mintsAtSend = sessionMints();
@@ -1480,7 +1490,15 @@ export const auth = {
    * The sign-out door: it revokes the family this jar's refresh cookie names, which survives a
    * renewal in another tab whose answer never arrived. No body, the refresh request's own shape.
    */
-  logout: () => api<void>(SIGN_OUT_PATH, { method: "POST" }),
+  logout: async (): Promise<void> => {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), SIGN_OUT_DEADLINE_MS);
+    try {
+      return await api<void>(SIGN_OUT_PATH, { method: "POST", signal: deadline.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  },
 
   // ── 2FA enrollment (the enrollment-session surface: the server's `enrollmentOk` routes) ──
 

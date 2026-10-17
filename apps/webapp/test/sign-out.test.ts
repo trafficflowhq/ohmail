@@ -217,14 +217,22 @@ describe("the sign-out CONTROL is wired", () => {
     const body = sliceOfDeclaration(account, "doSignOut");
     expect(reader).toMatch(/if \(outcome\.serverRefused !== null\) return \{ key: "signOutServerRefused"/);
     expect(body).toMatch(/const said = signOutTrouble\(outcome\);/);
-    const gate = body.indexOf("if (said !== null) {");
+    // ── THE REFUSAL NOW LEAVES, FOR THE FRONT DOOR THAT FINISHES IT ───────────────────────
+    //
+    // It used to stay on the pane and say so, over a mailbox the blocked client could no longer
+    // use. The browser is wiped and marked `signed_out_pending`, so `/` never serves it the app or a
+    // resume (`session-gate.ts`): the splash presents the session at the sign-out door, and only if
+    // that keeps failing does it say which half did not happen. The pane claims nothing either way.
+    const gate = body.indexOf('if (said !== null && said.key !== "signOutServerRefused") {');
     const leave = body.indexOf("window.location.assign");
     expect(gate).toBeGreaterThan(-1);
     expect(leave, "leaving must come after the reader's gate").toBeGreaterThan(gate);
     expect(body.slice(gate, leave)).toMatch(/return;/);
-    // …and it says which half did not happen, with a remedy that works from anywhere.
-    expect(body).toContain("setSignOutServerRefused(said.reason)");
-    expect(account).toContain('t("signOutServerRefused"');
+    expect(body.slice(leave), "the press leaves for anything but the front door").toMatch(/window\.location\.assign\("\/"\)/);
+    expect(account, "the pane still claims to say the server refused").not.toContain('t("signOutServerRefused"');
+    // …and the sentence is said where the sign-out is finished, with a remedy that works from anywhere.
+    const splash = read("../app/(product)/resume/ResumeScreen.tsx");
+    expect(splash).toMatch(/ta\(view\.said\.key, \{ reason: view\.said\.reason \}\)/);
     const copy = JSON.parse(read("../messages/en.json")) as Record<string, Record<string, string>>;
     expect(copy.account!.signOutServerRefused).toMatch(/could not be ended/i);
     expect(copy.account!.signOutServerRefused).toMatch(/Devices list/);
@@ -299,7 +307,7 @@ describe("the sign-out CONTROL is wired", () => {
     // property it no longer holds. Its sibling case above pins the server half.
     expect(body).toMatch(/const outcome = await signOut\(owner\)/);
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
-    const gate = body.indexOf("if (said !== null) {");
+    const gate = body.indexOf('if (said !== null && said.key !== "signOutServerRefused") {');
     const leave = body.indexOf("window.location.assign");
     expect(gate, "the wipe verdict must be checked before leaving").toBeGreaterThan(-1);
     expect(leave, "and leaving must come after it").toBeGreaterThan(gate);

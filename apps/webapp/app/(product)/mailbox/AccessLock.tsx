@@ -102,13 +102,15 @@ export function AccessLock(
     setSignOutSaid(null);
     // `owner` is captured before the call: afterwards there is nobody to ask which mirror to wipe.
     const said = signOutTrouble(await signOut(readOwner() ?? undefined));
-    /* A sign-out that did not finish keeps the button and says why under it; a finished one
-       leaves, as the error page's does — this screen has nothing else to fall back to. */
-    if (said !== null) {
+    /* A wipe that did not land keeps the button and says why under it; a finished sign-out leaves
+       for the sign-in page, as the error page's does; a server half that went unconfirmed leaves
+       for `/`, whose front door finishes it at the sign-out door. */
+    if (said !== null && said.key !== "signOutServerRefused") {
       setSignOutSaid(said);
       setSigningOut(false);
       return;
     }
+    if (said !== null) { window.location.assign("/"); return; }
     window.location.assign("/login");
   }, []);
 

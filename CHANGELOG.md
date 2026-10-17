@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Signing out of the web app no longer hangs, and ohmail.app no longer reloads in a loop afterwards
+
+Signing out could stay on "Signing out…" while another tab was renewing the session or the server was slow to
+answer, and when the server never confirmed a sign-out, every later visit to ohmail.app reloaded the page over and
+over. A sign-out now always ends and removes the mail this browser holds; if the server could not confirm it, the
+next visit to ohmail.app finishes it first and then shows the sign-in page.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

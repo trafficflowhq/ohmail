@@ -31,17 +31,19 @@ export default function ProductError({ error }: { error: Error & { digest?: stri
      while rendering would paint a control on the client that the server's HTML did not have. */
   useEffect(() => { setSignedIn(readOwner() !== null); }, []);
 
-  /* The outcomes and their order are `signOutTrouble`'s; only a finished sign-out leaves.
-     Pressing again is safe: the session and the cookie are already gone. */
+  /* The outcomes and their order are `signOutTrouble`'s. A finished sign-out leaves for the sign-in
+     page; a server half that went unconfirmed leaves for `/`, whose front door finishes it; a wipe
+     that did not land stays and says so. Pressing again is safe. */
   const doSignOut = useCallback(async () => {
     setSigningOut(true);
     setTrouble(null);
     const said = signOutTrouble(await signOut(readOwner() ?? undefined));
-    if (said !== null) {
-      setTrouble(said.key === "signOutServerRefused" ? ta(said.key, { reason: said.reason }) : ta(said.key));
+    if (said !== null && said.key !== "signOutServerRefused") {
+      setTrouble(ta(said.key));
       setSigningOut(false);
       return;
     }
+    if (said !== null) { window.location.assign("/"); return; }
     window.location.assign("/login");
   }, [ta]);
 

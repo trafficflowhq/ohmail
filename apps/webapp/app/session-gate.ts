@@ -117,6 +117,12 @@ export interface GateInput {
    * being fast is not a reason to spend a rotation.
    */
   throttled?: boolean;
+  /**
+   * `tf_owner` says `signed_out_pending`: this browser asked to sign out and the server never
+   * confirmed it. Such a browser is sent to the splash, which finishes the sign-out at the door; it
+   * is never served the app (every request refused there) and never resumed (the person said no).
+   */
+  signOutPending?: boolean;
   /** Injectable so the tests can assert the ZERO-fetch branches by counting calls. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -157,6 +163,12 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   //    `Lax`, so it arrives, and such a visitor resumes instead of being shown marketing.
   const token = input.sessionToken?.trim();
   const resumable = input.resumeMarker === true && input.apiOrigin !== null;
+
+  // 2a. A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED: the splash finishes it.
+  //     Before the probe and the throttle, because the answer does not depend on the session.
+  if (input.signOutPending === true && input.apiOrigin !== null && (token || input.resumeMarker === true)) {
+    return "resume";
+  }
   if (!token) return resumable ? "resume" : "marketing";
 
   // 2b. A value no `generateToken()` could ever have produced is not worth a network

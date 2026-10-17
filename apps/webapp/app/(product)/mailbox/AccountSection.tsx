@@ -106,8 +106,6 @@ export function AccountSection() {
   const [signOutBlocked, setSignOutBlocked] = useState(false);
   /** This browser will not say what it holds, so the wipe cannot be proved complete. */
   const [signOutUnverified, setSignOutUnverified] = useState(false);
-  /** The sign-out door refused or never answered, so the SESSION may still be live. See `doSignOut`. */
-  const [signOutServerRefused, setSignOutServerRefused] = useState<string | null>(null);
   /** The erasure landed and the local wipe did not. See `erase`. */
   const [eraseMirrorBlocked, setEraseMirrorBlocked] = useState(false);
 
@@ -119,9 +117,9 @@ export function AccountSection() {
    * Sign out of THIS browser. Not step-up gated, deliberately: it destroys nothing the user cannot
    * get back by signing in again, and a password prompt in front of "get me off this machine" is
    * exactly backwards on the shared computer this exists for. The failure path matters more:
-   * `signOut` wipes the local mirror in a `finally`, so an unreachable server still clears the mail
-   * from this browser — which is why this does not surface a network error and stay put; either way
-   * the user asked to be signed out here, and either way they are. `location.assign` rather than a
+   * `signOut` wipes the local mirror whatever the server said, so an unreachable server still clears
+   * the mail from this browser, and the press leaves for `/`, whose front door finishes the server
+   * half (`ResumeScreen`) and says so if it cannot. `location.assign` rather than a
    * router push: the cookie is gone, so the shell must be re-decided by the server — a client-side
    * navigation would keep the signed-in React tree alive on a dead session.
    */
@@ -129,17 +127,16 @@ export function AccountSection() {
     setSigningOut(true);
     setSignOutBlocked(false);
     setSignOutUnverified(false);
-    setSignOutServerRefused(null);
     const outcome = await signOut(owner);
-    /* If the mail is still here, or the session may be, this does not leave: an IndexedDB delete
-       is BLOCKED while another tab holds the database open, and leaving would be a silent false
-       promise about mail on a borrowed machine. The arms and their order are `signOutTrouble`'s. */
+    /* If the mail is still here this does not leave: an IndexedDB delete is BLOCKED while another
+       tab holds the database open, and leaving would be a silent false promise about mail on a
+       borrowed machine. A server half that went unconfirmed DOES leave, for `/`: the browser is
+       wiped and marked, and the front door finishes the sign-out at the door (`session-gate.ts`). */
     const said = signOutTrouble(outcome);
-    if (said !== null) {
+    if (said !== null && said.key !== "signOutServerRefused") {
       if (alive.current) {
         if (said.key === "signOutUnverified") setSignOutUnverified(true);
-        else if (said.key === "signOutBlocked") setSignOutBlocked(true);
-        else setSignOutServerRefused(said.reason);
+        else setSignOutBlocked(true);
         setSigningOut(false);
       }
       return;
@@ -314,11 +311,6 @@ export function AccountSection() {
             <p className="acct-fine">{t("signOutBody")}</p>
             {signOutBlocked ? <p className="acct-fine acct-warn" role="alert">{t("signOutBlocked")}</p> : null}
             {signOutUnverified ? <p className="acct-fine acct-warn" role="alert">{t("signOutUnverified")}</p> : null}
-            {signOutServerRefused === null ? null : (
-              <p className="acct-fine acct-warn" role="alert">
-                {t("signOutServerRefused", { reason: signOutServerRefused })}
-              </p>
-            )}
           </div>
           {/* `acct-signout-btn` is `flex:0 0 auto` and `white-space:nowrap`. Without it the
               button is an ordinary flex item beside a paragraph that wants the whole row, so

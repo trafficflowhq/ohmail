@@ -158,10 +158,16 @@ export interface IndexedDbMirrorStoreOptions {
  * doing hygiene, not enforcing an invariant". One of its two callers is `signOut`, and there
  * hygiene is exactly the invariant: `onblocked` fires when ANOTHER TAB still holds the mirror
  * open, the delete then does not happen, and resolving quietly turned "your mail is off this
- * browser" into a sentence nobody had checked. The promise still never hangs — a blocked
- * delete settles immediately, it just settles as `blocked`.
+ * browser" into a sentence nobody had checked. A blocked delete settles at once as `blocked`.
  */
 type DeleteOutcome = "deleted" | "blocked" | "error";
+
+/**
+ * How long a delete or a `databases()` read may go unanswered. A blocked delete stays queued
+ * until the connection holding the mirror closes, and a second delete of that name waits behind
+ * it with no event at all: the second Sign out press awaited it for ever. Unanswered is still here.
+ */
+export const IDB_ANSWER_BUDGET_MS = 5_000;
 
 function deleteDatabase(factory: IDBFactory, name: string): Promise<DeleteOutcome> {
   return new Promise((resolve) => {
@@ -172,11 +178,24 @@ function deleteDatabase(factory: IDBFactory, name: string): Promise<DeleteOutcom
       resolve("error");
       return;
     }
-    req.onsuccess = () => resolve("deleted");
-    req.onerror = () => resolve("error");
+    const timer = setTimeout(() => resolve("blocked"), IDB_ANSWER_BUDGET_MS);
+    const answer = (outcome: DeleteOutcome): void => { clearTimeout(timer); resolve(outcome); };
+    req.onsuccess = () => answer("deleted");
+    req.onerror = () => answer("error");
     // NOT a rejection and NOT a hang: another tab is holding the database open, the browser
     // will complete the delete when it closes, and the caller has to be able to say so NOW.
-    req.onblocked = () => resolve("blocked");
+    req.onblocked = () => answer("blocked");
+  });
+}
+
+/** `databases()` within {@link IDB_ANSWER_BUDGET_MS}; unanswered rejects, read as "could not be asked". */
+function listDatabases(factory: IDBFactory): Promise<IDBDatabaseInfo[]> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("databases() did not answer")), IDB_ANSWER_BUDGET_MS);
+    factory.databases().then(
+      (list) => { clearTimeout(timer); resolve(list); },
+      (err: unknown) => { clearTimeout(timer); reject(err); },
+    );
   });
 }
 
@@ -420,7 +439,7 @@ export async function clearAllMirrors(
   const enumerable = typeof f.databases === "function";
   if (enumerable) {
     try {
-      for (const info of await f.databases()) {
+      for (const info of await listDatabases(f)) {
         if (info.name && info.name.startsWith(MIRROR_DB_PREFIX)) names.add(info.name);
       }
     } catch {
@@ -456,7 +475,7 @@ export async function clearAllMirrors(
       : "partial";
   if (enumerable) {
     try {
-      const present = new Set((await f.databases()).map((i) => i.name).filter((n): n is string => !!n));
+      const present = new Set((await listDatabases(f)).map((i) => i.name).filter((n): n is string => !!n));
       // ENUMERATION MAY ONLY ADD, NEVER CLEAR. This used to delete a name the second read did
       // not list, letting `databases()` outrank a direct `onblocked` — and it is the weaker
       // witness: implementations ship it stale or partial, so a name it omits is not evidence
@@ -496,7 +515,7 @@ async function clearOneMirror(f: IDBFactory, name: string): Promise<WipeVerdict>
   let here = (await deleteDatabase(f, name)) !== "deleted";
   if (typeof f.databases === "function") {
     try {
-      if ((await f.databases()).some((i) => i.name === name)) here = true;
+      if ((await listDatabases(f)).some((i) => i.name === name)) here = true;
     } catch {
       /* the delete's outcome stands */
     }

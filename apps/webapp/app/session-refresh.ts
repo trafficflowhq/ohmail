@@ -139,10 +139,20 @@ const REFRESH_LOCK = "ohmail:session-refresh";
  * every request that WRITES session cookies runs inside the same origin-wide lock. Held around the REQUEST,
  * never the human: wrapping the whole ceremony would stall every tab's refresh for minutes. The wait has a
  * floor (`AbortSignal` cancels the wait for a grant, never the holder), and on expiry the ceremony REFUSES
- * (`SessionBusyError`, retryable) — proceeding unlocked is the original race with a delay in front. The one
- * path that proceeds unlocked is a browser with NO lock manager, which otherwise could not sign in at all.
+ * (`SessionBusyError`, retryable) — proceeding unlocked is the original race with a delay in front. Two paths
+ * proceed unlocked: a browser with NO lock manager, which otherwise could not sign in at all, and the sign-out
+ * door after its own short wait (`opts` below), whose answer can only end a family.
  */
-export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T> {
+export async function withSessionCookieLock<T>(
+  fn: () => Promise<T>,
+  /**
+   * The sign-out door's terms, and only its own (`api-client.ts`): a short wait, then the request
+   * WITHOUT the lock. It ends the family its cookie names in any state, and a rotation racing it
+   * waits on the session row and has its successor revoked (`sign-out-races-a-renewal.pg.test.ts`),
+   * so a late renewal answer can only plant an ended family. A sign-in may never take these terms.
+   */
+  opts: { waitMs?: number; unlockedAfterWait?: boolean } = {},
+): Promise<T> {
   /*
    * PER CALL, in a closure, and never module state: two ceremonies can be in flight in one tab
    * (a resend beside a verify), and a shared flag would let one decide the other's fate. It
@@ -176,7 +186,7 @@ export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T>
     const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
     if (locks?.request) {
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), SETTLE_DEADLINE_MS);
+      const timer = setTimeout(() => ctl.abort(), opts.waitMs ?? SETTLE_DEADLINE_MS);
       try {
         return await locks.request(REFRESH_LOCK, { mode: "exclusive", signal: ctl.signal }, run) as T;
       } finally {
@@ -201,6 +211,7 @@ export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T>
      * window is the only instrument.
      */
     if (isAbort(err)) {
+      if (opts.unlockedAfterWait === true) return run();
       throw new SessionBusyError();
     }
   }
