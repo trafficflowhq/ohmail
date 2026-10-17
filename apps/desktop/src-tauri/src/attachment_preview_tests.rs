@@ -137,6 +137,15 @@ fn a_request_outside_the_staging_folder_is_refused() {
         assert_eq!(answer(&previews, &root, "main", "GET", &format!("/{good}")).status(), StatusCode::NOT_FOUND);
         fs::remove_file(&inside).expect("rm link");
     }
+    // The same swap on Windows: a file symlink (the CI runner is elevated, which creating one
+    // needs), refused because canonicalize resolves it to a path outside the staging folder.
+    #[cfg(windows)]
+    {
+        fs::remove_file(&inside).expect("rm");
+        std::os::windows::fs::symlink_file(&secret, &inside).expect("link (needs an elevated or Developer Mode session)");
+        assert_eq!(answer(&previews, &root, "main", "GET", &format!("/{good}")).status(), StatusCode::NOT_FOUND);
+        fs::remove_file(&inside).expect("rm link");
+    }
     fs::write(&inside, b"pixels and more").expect("grown");
     assert_eq!(answer(&previews, &root, "main", "GET", &format!("/{good}")).status(), StatusCode::NOT_FOUND);
     assert_eq!(fs::read(&secret).expect("secret"), b"not yours");
