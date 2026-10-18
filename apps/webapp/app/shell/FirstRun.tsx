@@ -32,6 +32,7 @@ import {
   deriveOnboardingStep, importOverOf, onboardingPath, sendingLine,
   type OnboardingFacts, type OnboardingStep,
 } from "./onboarding";
+import { AGREE_REREAD_MS, AGREE_SWEEP_MS, firstRunImportOver } from "./first-run-queue-settle";
 import type {
   FirstRunDecisionCount, FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome, FirstRunProbeOk,
 } from "./first-run-host";
@@ -194,6 +195,18 @@ export interface FirstRunProps {
   decide: FirstRunDecideSubject | null;
   /** `true` while the run resumed after the connection dropped — the pull's own notice. */
   resumed?: boolean;
+  /**
+   * `true` while the import is over and the shell waits for the store's answer about the Screener's
+   * queue (`first-run-queue-settle.ts`); the pull screen says so. The shell already narrows the
+   * facts, so this prop only changes the words.
+   */
+  queueSettling?: boolean;
+  /**
+   * Ask the store for the Screener's queue again. The stage calls it while it holds the pull for
+   * the senders its own Agree will move (`AGREE_SWEEP_MS`); absent, the hold waits on the shell's
+   * own re-asks.
+   */
+  rereadQueue?: () => Promise<void>;
   /**
    * THE MAILBOX'S ID — a separate prop rather than a field on {@link OnboardingFacts}.
    *
@@ -490,7 +503,7 @@ export function firstRunStep(
 }
 
 export function FirstRun({
-  host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
+  host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed, queueSettling, rereadQueue,
   mailboxId, organizedSince, rerun, add, screening, mailboxAddress, onConnected,
   subjectVanished, subjectChoices, onChooseMailbox, accountOrganizer,
 }: FirstRunProps) {
@@ -520,13 +533,49 @@ export function FirstRun({
    * carry the assertion onto a new row nobody consented to.
    */
   const [consented, setConsented] = useState<{ mailboxId: string; at: string } | null>(null);
+  /**
+   * THE SENDERS THIS RUN'S AGREE WILL MOVE, not there yet. Set by a join Agree whose window showed
+   * senders to screen; the pull is held (the import reads as not over) until the queue has any, or
+   * until `AGREE_SWEEP_MS` from the press. `done` latches: a release never holds again.
+   */
+  const [sweepHold, setSweepHold] = useState<{ mailboxId: string; at: number; done: boolean } | null>(null);
+  const sweepHolding = sweepHold !== null && !sweepHold.done && sweepHold.mailboxId === mailboxId
+    && wireFacts.queuedSenders === 0;
   const facts = useMemo(() => {
     const mb = wireFacts.mailbox;
-    if (!consented || !mb || mb.organizeConsentedAt || consented.mailboxId !== mailboxId) {
-      return wireFacts;
+    if (!mb) return wireFacts;
+    const agreed = consented !== null && !mb.organizeConsentedAt && consented.mailboxId === mailboxId;
+    if (!agreed && !sweepHolding) return wireFacts;
+    return {
+      ...wireFacts,
+      mailbox: {
+        ...mb,
+        ...(agreed ? { organizeConsentedAt: consented.at } : {}),
+        ...(sweepHolding ? { importOver: firstRunImportOver(mb.importOver, true) } : {}),
+      },
+    };
+  }, [consented, mailboxId, wireFacts, sweepHolding]);
+  /** The import's own end, before the hold narrows it: the pull's line says which wait it is. */
+  const importReallyOver = wireFacts.mailbox !== null && importOverOf(wireFacts.mailbox);
+  const queuedNow = wireFacts.queuedSenders > 0;
+  /* A ref: the shell passes a fresh closure each render, and the pull screen renders often. */
+  const rereadRef = useRef(rereadQueue);
+  rereadRef.current = rereadQueue;
+  useEffect(() => {
+    if (sweepHold === null || sweepHold.done || sweepHold.mailboxId !== mailboxId) return;
+    if (queuedNow) {
+      setSweepHold({ ...sweepHold, done: true });
+      return;
     }
-    return { ...wireFacts, mailbox: { ...mb, organizeConsentedAt: consented.at } };
-  }, [consented, mailboxId, wireFacts]);
+    const bound = setTimeout(
+      () => setSweepHold((h) => (h === sweepHold ? { ...h, done: true } : h)),
+      Math.max(0, sweepHold.at + AGREE_SWEEP_MS - Date.now()),
+    );
+    const again = setInterval(() => {
+      void rereadRef.current?.().catch(() => { /* the next ask, or the bound */ });
+    }, AGREE_REREAD_MS);
+    return () => { clearTimeout(bound); clearInterval(again); };
+  }, [sweepHold, mailboxId, queuedNow]);
 
   /** The cursor inside this run — never a step counter. See the header. */
   const [at, setAt] = useState<OnboardingStep | null>(null);
@@ -714,6 +763,7 @@ export function FirstRun({
     /* A TAKEOVER ONLY BY NAME: the person chose "Organize here instead" in this run.
        Every other Agree is a join, which yields to a live claim it has not been shown. */
     const intent = claimAnsweredFor === mailboxId && elsewhereChoice === "here" ? "takeover" : "join";
+    const sweeps = intent === "join" && rerun !== true && shownCount !== null && shownCount.senders > 0;
     void run(async () => {
       let outcome: FirstRunOrganizeOutcome;
       try {
@@ -746,6 +796,8 @@ export function FirstRun({
       if (outcome === "gone") throw new Error(t("windowGone"));
       // The write's own result, applied before the re-read lands. See `consented`.
       setConsented({ mailboxId, at: new Date().toISOString() });
+      // The sweep this press asked for writes the Screener's senders after it. See `sweepHold`.
+      if (sweeps) setSweepHold({ mailboxId, at: Date.now(), done: false });
       /* A READER'S AGREE ASKED FOR A CLAIM the gate has still to answer — a takeover, or the
          first claim on a mailbox nothing holds. Done says so until the row answers. */
       if (facts.mailbox?.organizerRole === "reader") setTakeoverAsk({ mailboxId, floor: null });
@@ -1792,11 +1844,27 @@ export function FirstRun({
                 until it opens the line says the flow is still working the number out, which is
                 true and is not a number. */}
             <p className="ob-eta" role="status">
-              {etaMs !== null && rate !== null
-                ? t("eta", { eta: durationWords(etaMs), rate: Math.round(rate) })
-                : readAll ? t("pullRead") : t("etaSoon")}
+              {queueSettling || (sweepHolding && importReallyOver)
+                ? t("pullScreener")
+                : etaMs !== null && rate !== null
+                  ? t("eta", { eta: durationWords(etaMs), rate: Math.round(rate) })
+                  : readAll ? t("pullRead") : t("etaSoon")}
             </p>
             {resumed ? <SettingsVerdict state="wait" headline={t("pullResumed")} /> : null}
+            {foot({
+              primary: (
+                <Button variant="ghost" type="submit" data-focus-entry disabled={busy}>{t("pullLeave")}</Button>
+              ),
+            })}
+          </>
+        )) : null}
+
+        {step === "decide" && !decide ? screen(onLeave, (
+          /* A COUNT WITH NO CARD YET. The step is chosen by the count and filled by the queue's
+             head, and the two can land apart: say so rather than draw nothing. */
+          <>
+            <h1 id={`${ids}-title`}>{t("decideTitle")}</h1>
+            <p className="ob-eta" role="status">{t("decideLoading")}</p>
             {foot({
               primary: (
                 <Button variant="ghost" type="submit" data-focus-entry disabled={busy}>{t("pullLeave")}</Button>

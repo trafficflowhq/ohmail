@@ -32,6 +32,10 @@ const OWED = [
   "pull",
   /* The guided decision's sender. */
   "decide",
+  /* The pull held open until the store has answered the Screener's queue since the import ended. */
+  "queueSettling",
+  /* The store re-asked while the pull waits for the senders the run's own Agree will move. */
+  "rereadQueue",
 ] as const;
 
 function mountProps(source: string): { names: string[]; text: string } {
@@ -102,6 +106,7 @@ describe("AppShell's first-run mount", () => {
     expect(calls(real, "firstRunCounts"), "the counters are composed inline again").toBe(true);
     expect(calls(real, "screenerForMailbox"), "the guided queue is the install's again").toBe(true);
     expect(calls(real, "accountOrganizer")).toBe(true);
+    expect(calls(real, "useFirstRunQueueSettle"), "the stage's queue hold is never armed").toBe(true);
   });
 
   it("DOCTORED CONTROL — a call reduced to a mention is not read as a call", () => {

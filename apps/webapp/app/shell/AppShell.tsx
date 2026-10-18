@@ -89,7 +89,8 @@ import { useRemoteImages } from "./remote-images";
 import { useConsentState, type ConsentTransport } from "./consent-state";
 import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
 import type { FirstRunHost } from "./first-run-host";
-import type { OnboardingFacts } from "./onboarding";
+import { importOverOf, type OnboardingFacts } from "./onboarding";
+import { firstRunImportOver, useFirstRunQueueSettle } from "./first-run-queue-settle";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useJunkWindow, type JunkWire } from "./junk-window";
@@ -1540,6 +1541,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       : { screened: 0, history: 0 }),
     [route.firstRun, reader, derived, history, firstRunMailbox],
   );
+  /* The pull waits for the store's answer about the Screener's queue (`first-run-queue-settle.ts`). */
+  const firstRunStripOver = firstRun && firstRunMailbox ? importOverById.get(firstRunMailbox.id) : undefined;
+  const queueSettling = useFirstRunQueueSettle({
+    active: Boolean(firstRun && route.firstRun), mailboxId: firstRunMailbox?.id ?? null,
+    over: firstRunMailbox !== null && importOverOf({ ...firstRunMailbox, importOver: firstRunStripOver }),
+    reread: () => engine.refreshScreenerWaiting(),
+  });
   const onboardingFacts: OnboardingFacts | null = useMemo(() => {
     if (!firstRun || facts === null) return null;
     return {
@@ -1561,7 +1569,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
         // and a `?? null` at this seam is what destroyed the distinction the last two times.
         organizeConsentedAt: firstRunMailbox.organizeConsentedAt,
         initialImportCompletedAt: firstRunMailbox.initialImportCompletedAt,
-        importOver: importOverById.get(firstRunMailbox.id), // the strip's own end (`importOver`)
+        importOver: firstRunImportOver(firstRunStripOver, queueSettling), // the strip's end, held for the queue
       },
       account: { onboardingCompletedAt: consent.onboardingCompletedAt },
       ai: firstRun.ai,
@@ -1571,7 +1579,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       queuedSenders: (facts.length ?? 0) > 1 ? firstRunQueue.length : screener.waitingCount,
     };
   }, [firstRun, facts, firstRunMailbox, firstRunQueue, consent.onboardingCompletedAt,
-    screener.waitingCount, importOverById]);
+    screener.waitingCount, firstRunStripOver, queueSettling]);
   /**
    * The one sender the guided decision is about — the head of the real queue, decided through the real
    * `ScreenerState`, not a fabricated card: the first decision a person makes in the flow IS a decision
@@ -3762,6 +3770,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             whole: engine.storeCoverage().state === "whole",
           }}
           decide={firstRunDecide}
+          queueSettling={queueSettling}
+          /* The stage re-asks while it holds the pull for its own Agree's sweep. */
+          rereadQueue={() => engine.refreshScreenerWaiting()}
           /* THE RUN NAMES A MAILBOX THIS INSTALL DOES NOT HOLD — the stage cannot derive it:
              `facts.mailbox` is null for a row that LEFT and for an install that never had one, and
              those two want opposite screens. */

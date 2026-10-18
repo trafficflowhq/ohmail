@@ -13,6 +13,12 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The first decision waits for the Screener
+
+After you agree, setup now waits a few seconds for the senders it will hold in the Screener before it says
+everything is sorted, also when the first pull ended before you agreed. "Your first decision" is no longer skipped
+when they arrive late. This applies to an install with one mailbox.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
