@@ -1549,6 +1549,14 @@ export const auth = {
    */
   totpRemove: () => api<void>("/auth/2fa/totp", { method: "DELETE" }),
 
+  /**
+   * Change the password. Step-up gated at the route and in the service; a wrong current password
+   * is 401 `credential_refused`, a verdict this client never renews and sends again. `revoked` is
+   * how many other sessions were signed out; this one stays.
+   */
+  changePassword: (b: { currentPassword: string; newPassword: string }) =>
+    api<{ revoked: number }>("/auth/password", { method: "POST", body: b }),
+
   // ── Sign-in completion ────────────────────────────────────────────────────────────────
 
   webauthnAssertOptions: (b: { loginToken: string }) =>

@@ -29,6 +29,7 @@ import { DevicesSection, useDevicePairing } from "./DevicesSection";
 import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
 import { AccountSection } from "./AccountSection";
+import { PasswordSection } from "./PasswordSection";
 import { MailboxSection } from "./MailboxSection";
 import { SubscriptionSection, useManageOffer } from "./SubscriptionSection";
 import { beginOAuthReturn } from "./oauth-return";
@@ -297,7 +298,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
            ceiling, applied server-side at the mint too. The desktop's cloud
            door keeps the constant: it forwards verbatim (`DesktopGate.tsx`). */
         sendSurfaceMaxTotalBytes={COMPOSE_ATTACH_STAGED_SURFACE_BYTES}
-        accountSection={<AccountSection />}
+        /* The password change sits above the account's own cards, managed and self-hosted alike;
+           the wall (`AccessLock`) opens the same pane. */
+        accountSection={<><PasswordSection /><AccountSection /></>}
         securitySection={<SecuritySection />}
         mailboxSection={<><MailboxSection subscriptionPane={manageOffered} /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>}
         /* UNCONDITIONAL, unlike the row below it: every host this shell runs on has an account

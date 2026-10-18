@@ -480,14 +480,16 @@ export class SessionLifecycle {
     if (opts.olderThanDays !== undefined) {
       preds.push(lt(sessions.lastSeenAt, new Date(now.getTime() - opts.olderThanDays * DAY_MS)));
     }
-    return this.revokeClaimedSessions(ctx, userId, preds, now);
+    // The count alone: this is the route's answer, and the family ids are not the browser's.
+    const { revoked } = await this.revokeClaimedSessions(ctx, userId, preds, now);
+    return { revoked };
   }
 
   /**
    * Claim every session matching `preds` and sweep their refresh families, in ONE transaction.
    * The shared core behind both mass revocations — "sign out all other web sessions" and the
    * credential-change rule below — because two hand-written claim-and-sweep pairs agree until
-   * one is edited.
+   * one is edited. `familyIds` names what was swept, for a hosted caller that prunes by family.
    */
   /*
    * Set-based AND atomic, one measured defect each. Set-based: a per-family loop was 400+ round
@@ -499,7 +501,7 @@ export class SessionLifecycle {
    */
   protected async revokeClaimedSessions(
     ctx: ServiceContext, userId: string, preds: SQL[], now: Date,
-  ): Promise<{ revoked: number }> {
+  ): Promise<{ revoked: number; familyIds: string[] }> {
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       // Locked in id order first, erasure's step-7 order: the claim alone locks in scan order, and
@@ -522,8 +524,8 @@ export class SessionLifecycle {
         const u = await this.loadUser(tx, userId);
         await this.audit(tx, u, "device_revoked", undefined, txCtx);
       }
-      return { revoked: claimed.length };
-    }, { fence: { accountId: ctx.accountId, onErased: () => ({ revoked: 0 }) } });
+      return { revoked: claimed.length, familyIds: families };
+    }, { fence: { accountId: ctx.accountId, onErased: () => ({ revoked: 0, familyIds: [] }) } });
   }
 
   /**
@@ -538,7 +540,7 @@ export class SessionLifecycle {
    */
   protected async revokeOtherSessions(
     ctx: ServiceContext, userId: string,
-  ): Promise<{ revoked: number }> {
+  ): Promise<{ revoked: number; familyIds: string[] }> {
     const db = asTx(ctx);
     const now = ctx.now();
     const current = ctx.sessionId

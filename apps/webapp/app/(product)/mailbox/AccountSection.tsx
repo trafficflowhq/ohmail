@@ -109,9 +109,13 @@ export function AccountSection() {
   /** The erasure landed and the local wipe did not. See `erase`. */
   const [eraseMirrorBlocked, setEraseMirrorBlocked] = useState(false);
 
-  /** The pane can be navigated away from mid-ceremony; nothing may set state after that. */
+  /** The pane can be navigated away from mid-ceremony; nothing may set state, or erase, after that. */
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Re-armed on mount: StrictMode replays the cleanup once, and a pane left at false never loads.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   /**
    * Sign out of THIS browser. Not step-up gated, deliberately: it destroys nothing the user cannot
@@ -417,7 +421,7 @@ export function AccountSection() {
               DELETE, with no further click. */}
           <p className="acct-fine">{t("factorBody", { email: who.email })}</p>
           <StepUpPrompt
-            onVerified={() => { void erase(who.accountId, true); }}
+            onVerified={() => { if (alive.current) void erase(who.accountId, true); }}
             onCancel={() => setStage("facts")}
             onDiscarded={() => setStepUpDiscarded(true)}
           />

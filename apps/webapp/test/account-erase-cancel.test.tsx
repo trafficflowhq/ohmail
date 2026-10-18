@@ -457,7 +457,10 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
       expect(src, `${file} takes the shared gate`).toMatch(/useCeremonyGeneration\(\)/);
       expect(src, `${file} captures before its first await`).toMatch(/ceremony\.begin\(\)/);
       expect(src, `${file} compares at its one door`).toMatch(/ceremony\.claim\(/);
-      expect(src, `${file} ends the ceremony on Cancel or Back`).toMatch(/ceremony\.end\(\)/);
+      expect(src, `${file} ends the ceremony on Cancel`).toMatch(/ceremony\.end\(\)/);
+      // Back on the wall and a pane switch press no Cancel: they unmount the prompt.
+      expect(src, `${file} ends the ceremony when it unmounts`)
+        .toMatch(/use(?:Layout)?Effect\(\s*\(\)\s*=>\s*\(\)\s*=>\s*\{?\s*ceremony\.end\(\)/);
     }
   });
 });

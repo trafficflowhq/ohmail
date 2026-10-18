@@ -336,6 +336,12 @@ const WRITERS: Array<[string, Arm, Expected]> = [
     const minted = await mintPairingToken(ctxOn(db(), { userId: p.userId, accountId: p.accountId }), { grant: "device-pair", label: "fix026 phone" });
     return (h) => redeemDevicePair(ctxOn(h), auth(), { token: minted.token, kind: "mobile-android" });
   }, ERASED],
+  ["changePassword (rewrites the credential, voids pending grants, signs every other session out)", async (p) => {
+    await withPassword(p);
+    const caller = await family(p, new Date());
+    return (h) => auth().changePassword(ctxOn(h, { userId: p.userId, accountId: p.accountId, sessionId: caller.sessionId }),
+      { currentPassword: PASSWORD, newPassword: `${PASSWORD}-next` });
+  }, "ok"],
 ];
 
 function answered(r: Reading): Expected {

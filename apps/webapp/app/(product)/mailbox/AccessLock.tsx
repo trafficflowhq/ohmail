@@ -12,6 +12,7 @@ import { dayStamp } from "../../shell/format";
 import { saveBlob } from "../../shell/attachments";
 import { ApiError, account, type AccessRefusedFacts, type AccountLifecycle } from "../../api-client";
 import { AccountSection } from "./AccountSection";
+import { PasswordSection } from "./PasswordSection";
 import { leaveForManagePage } from "./SubscriptionSection";
 import { useWallLift } from "../../shell/wall-lift";
 import { opensTheWall } from "../../access-verdict";
@@ -84,6 +85,12 @@ export function AccessLock(
   const [exportFailed, setExportFailed] = useState(false);
   /** The erasure ceremony, in place. It is the Settings pane's own, not a second door. */
   const [deleting, setDeleting] = useState(false);
+  /**
+   * The password change, in place, on the same terms: a refused subscription must not keep a
+   * person from taking back a password somebody else knows (`POST /auth/password` is `ceremony`,
+   * which a refused account still reaches). Opened by a press, so the wall itself takes no password.
+   */
+  const [changingPassword, setChangingPassword] = useState(false);
   const lang = useLocale() === "de" ? "de" : "en";
   const [minting, setMinting] = useState(false);
   /** Why the last press did not leave: an unconfirmed address is its own sentence. */
@@ -226,6 +233,13 @@ export function AccessLock(
               <Button onClick={() => setDeleting(false)}>{t("back")}</Button>
             </div>
           )
+          : changingPassword
+          ? (
+            <div className="wall-erase">
+              <PasswordSection />
+              <Button onClick={() => setChangingPassword(false)}>{t("back")}</Button>
+            </div>
+          )
           : check === "checking"
           ? (
             /* While the answer is in flight nothing else is true to offer; the way out stays. */
@@ -321,6 +335,11 @@ export function AccessLock(
               <div className="gate-actions">
                 <Button onClick={doSignOut} disabled={signingOut}>
                   {t("signOut")}
+                </Button>
+                {/* Beside the way out and not in the action column: it is about signing in, not
+                    about the account's standing. */}
+                <Button variant="ghost" onClick={() => setChangingPassword(true)}>
+                  {t("changePassword")}
                 </Button>
               </div>
               {signOutLine}

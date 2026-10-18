@@ -1074,6 +1074,8 @@ const NEVER_REFRESH = [
    */
   "/auth/step-up/",
   "/pair/redeem",
+  // The password change checks the current password on the sign-in lockout: its 401 is a verdict.
+  "/auth/password",
   /*
    * `/auth/logout`, and the web's sign-out door below `/auth/refresh`, which that entry already
    * covers: a 401 at either is an answer, never an accident. Refreshing first re-mints a session

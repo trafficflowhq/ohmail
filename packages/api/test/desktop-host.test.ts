@@ -167,8 +167,11 @@ describe("the composition census — exactly the ruled table, and nothing else",
     //    device-less non-current session IS the host's LAUNCH session — a remote viewer holding
     //    the verb could kill the very engine serving it.
     // Watched red by temporarily spreading both arrays into `desktopHostRoutes`.
+    // The password change is the third: it reaches the ceremony accessor, and this store keeps
+    // no password to change.
     for (const r of desktopHostRoutes) {
       expect(r.pattern.startsWith("/auth/step-up"), `${key(r)} is the hosted step-up ceremony`).toBe(false);
+      expect(r.pattern !== "/auth/password", `${key(r)} is the hosted password change`).toBe(true);
     }
     expect(desktopHostRoutes.some((r) => key(r) === "POST /devices/revoke-web-sessions")).toBe(false);
   });
@@ -198,7 +201,7 @@ describe("the composition census — exactly the ruled table, and nothing else",
   it("the mint/list/revoke answer 404 — the routes are ABSENT, not gated", async () => {
     const { deps } = await makeDeps();
     for (const [method, path] of [
-      ["POST", "/pair"], ["GET", "/pair"], ["DELETE", `/pair/${randomUUID()}`],
+      ["POST", "/pair"], ["GET", "/pair"], ["DELETE", `/pair/${randomUUID()}`], ["POST", "/auth/password"],
     ] as const) {
       const res = await app.handle(req(method, path, method === "GET" ? {} : { body: "{}" }), hostDeps(deps));
       expect(res.status, `${method} ${path} must be structurally absent`).toBe(404);

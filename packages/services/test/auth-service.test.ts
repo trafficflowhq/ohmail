@@ -3,11 +3,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, eq, desc, isNull, like } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { refreshTokens, sessions } from "@trafficflow/db";
-import { authEvents, authThrottle, recoveryCodes, totpSecrets } from "@trafficflow/db/cloud";
+import { devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
+import {
+  authEvents, authThrottle, credentials, loginTokens, pushSubscriptions, recoveryCodes, totpSecrets,
+} from "@trafficflow/db/cloud";
 import {
   AuthService, makeTestAuthDeps, ServiceError, resolveSession, generateToken, hashToken,
-  classifyRefreshFailure, throttleKeysFor,
+  classifyRefreshFailure, throttleKeysFor, mintPairingToken, redeemDevicePair, OAuthCodeReplayed,
   type AuthDeps, type SessionUser, type SessionEstablished, type ServiceContext,
 } from "../src/index.js";
 import { SoftwareAuthenticator } from "./webauthn-authenticator.js";
@@ -1697,6 +1699,525 @@ describe("AuthService — step-up & last-factor guard", () => {
     // The positive control: the caller is still signed in, and the factor is gone.
     const after = await h.svc.getSession(sctx);
     expect(after.user.twofaEnrolled.totp).toBe(false);
+  });
+});
+
+/**
+ * Changing the password: the current one plus a fresh second factor, the sign-up rule for the new
+ * one, and the credential-change rule. Somebody told their password is known has no other way to
+ * take it back, and whoever holds it keeps every session it minted unless they all go.
+ */
+describe("AuthService — changing the password", () => {
+  const OLD = "pw-correct-horse-password-password";
+  const NEW = "new-battery-staple-password";
+  const WRONG = "wrong-guess-password";
+
+  /** A full sign-in through TOTP, so the session carries a refresh family. Returns its id. */
+  async function signIn(h: Harness, user: SessionUser, secret: string): Promise<string> {
+    h.clock.advance(31_000); // a fresh timestep: codes are single-use
+    const ch = await h.svc.login(h.ctxFor(), { email: user.email, password: OLD }) as { loginToken: string };
+    const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
+    await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
+    return latestSessionId(h, user.userId);
+  }
+
+  const storedHash = async (h: Harness, userId: string): Promise<string> =>
+    (await h.db.select({ hash: credentials.passwordHash }).from(credentials).where(eq(credentials.userId, userId)))[0]!.hash;
+  const throttleRows = (h: Harness) => h.db.select().from(authThrottle).orderBy(authThrottle.key);
+  const passwordEvents = async (h: Harness, userId: string) =>
+    (await h.db.select().from(authEvents).where(eq(authEvents.userId, userId)).orderBy(authEvents.at))
+      .filter((r) => r.event.startsWith("password_"));
+
+  it("stores the new hash, signs every other session out with its refresh family, and keeps the caller", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const sidOther = await signIn(h, user, secret);
+    const sidCaller = await signIn(h, user, secret);
+    const ctx = sessionCtx(h, user, sidCaller);
+    const before = await storedHash(h, user.userId);
+    const liveBefore = (await h.db.select().from(sessions)
+      .where(and(eq(sessions.userId, user.userId), isNull(sessions.revokedAt)))).length;
+
+    const out = await h.svc.changePassword(ctx, { currentPassword: OLD, newPassword: NEW });
+
+    const after = await storedHash(h, user.userId);
+    expect(after).not.toBe(before);
+    expect(await h.deps.passwordHasher.verify(NEW, after)).toBe(true);
+    expect(await h.deps.passwordHasher.verify(OLD, after)).toBe(false);
+
+    const rows = await h.db.select().from(sessions).where(eq(sessions.userId, user.userId));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(sidOther)!.revokedAt, "the other session survived the change").not.toBeNull();
+    expect(rows.filter((r) => r.revokedAt === null).map((r) => r.id)).toEqual([sidCaller]);
+    // The answer is the count and nothing else: no family id reaches the wire.
+    expect(out).toEqual({ revoked: liveBefore - 1 });
+    const live = await h.db.select().from(refreshTokens)
+      .where(and(eq(refreshTokens.userId, user.userId), isNull(refreshTokens.revokedAt)));
+    expect(new Set(live.map((r) => r.familyId))).toEqual(new Set([byId.get(sidCaller)!.familyId]));
+    await expect(h.svc.getSession(ctx)).resolves.toMatchObject({ user: { userId: user.userId } });
+
+    // The old password signs in nowhere; the new one reaches the second factor.
+    await expect(h.svc.login(h.ctxFor(), { email: user.email, password: OLD }))
+      .rejects.toMatchObject({ code: "credential_refused", httpStatus: 401 });
+    await expect(h.svc.login(h.ctxFor(), { email: user.email, password: NEW }))
+      .resolves.toMatchObject({ status: "twofa_required" });
+  });
+
+  it("audits the refusal and the change, and never a password", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const ctx = sessionCtx(h, user, await signIn(h, user, secret));
+
+    await expect(h.svc.changePassword(ctx, { currentPassword: WRONG, newPassword: NEW }))
+      .rejects.toMatchObject({ code: "credential_refused" });
+    await h.svc.changePassword(ctx, { currentPassword: OLD, newPassword: NEW });
+
+    expect((await passwordEvents(h, user.userId)).map((r) => [r.event, r.method])).toEqual([
+      ["password_change_refused", "password"], ["password_changed", "password"],
+    ]);
+    const trail = JSON.stringify(await h.db.select().from(authEvents));
+    for (const typed of [OLD, NEW, WRONG]) expect(trail).not.toContain(typed);
+  });
+
+  it("a wrong current password is refused credential_refused and changes nothing", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const sidOther = await signIn(h, user, secret);
+    const sidCaller = await signIn(h, user, secret);
+    const before = await storedHash(h, user.userId);
+
+    await expect(h.svc.changePassword(sessionCtx(h, user, sidCaller), { currentPassword: WRONG, newPassword: NEW }))
+      .rejects.toMatchObject({ code: "credential_refused", httpStatus: 401 });
+
+    expect(await storedHash(h, user.userId)).toBe(before);
+    const live = (await h.db.select().from(sessions)
+      .where(and(eq(sessions.userId, user.userId), isNull(sessions.revokedAt)))).map((r) => r.id);
+    expect(live).toEqual(expect.arrayContaining([sidOther, sidCaller]));
+  });
+
+  it("five wrong tries lock this client like sign-in: the next is 423 even when right, and right works once served", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const ctx = sessionCtx(h, user, await signIn(h, user, secret));
+    const k = throttleKeysFor(h.deps.keyProvider);
+    const pwKey = `pw:${k.address(user.email)}:${k.client("1.2.3.4")}`;
+
+    for (let i = 0; i < 5; i++) {
+      await expect(h.svc.changePassword(ctx, { currentPassword: WRONG, newPassword: NEW }))
+        .rejects.toMatchObject({ code: "credential_refused" });
+    }
+    // Locked by the fifth failure itself, as sign-in's fifth locks: not one attempt later.
+    const [locked] = await h.db.select().from(authThrottle).where(eq(authThrottle.key, pwKey));
+    expect(locked!.lockedUntil, "the fifth wrong password installed no lock").not.toBeNull();
+    await expect(h.svc.changePassword(ctx, { currentPassword: OLD, newPassword: NEW }))
+      .rejects.toMatchObject({ code: "account_locked", httpStatus: 423 });
+    // Sign-in's own bucket: this client's sign-in is locked by the same five.
+    await expect(h.svc.login(h.ctxFor(), { email: user.email, password: OLD }))
+      .rejects.toMatchObject({ code: "account_locked" });
+
+    // The lock served, as fifteen minutes would serve it.
+    await h.db.update(authThrottle).set({ lockedUntil: new Date(Date.now() - 1_000) })
+      .where(eq(authThrottle.key, pwKey));
+    await expect(h.svc.changePassword(ctx, { currentPassword: OLD, newPassword: NEW }))
+      .resolves.toMatchObject({ revoked: expect.any(Number) });
+  });
+
+  it("a closed step-up window is refused 403 before anything is counted", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const ctx = sessionCtx(h, user, await signIn(h, user, secret));
+    h.clock.advance(6 * 60_000);
+    const before = await throttleRows(h);
+
+    await expect(h.svc.changePassword(ctx, { currentPassword: WRONG, newPassword: NEW }))
+      .rejects.toMatchObject({ code: "step_up_required", httpStatus: 403 });
+
+    expect(await throttleRows(h)).toEqual(before);
+    expect(await passwordEvents(h, user.userId)).toEqual([]);
+  });
+
+  it("an enrollment-scoped session cannot change the password", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const sid = await latestSessionId(h, user.userId);
+    const [row] = await h.db.select({ scope: sessions.scope }).from(sessions).where(eq(sessions.id, sid));
+    expect(row!.scope).toBe("enrollment");
+
+    await expect(h.svc.changePassword(sessionCtx(h, user, sid), { currentPassword: OLD, newPassword: NEW }))
+      .rejects.toMatchObject({ code: "step_up_required", httpStatus: 403 });
+  });
+
+  it("a new password under twelve characters, the same one, or an over-long current one is refused 400 before the throttle and the trail", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const ctx = sessionCtx(h, user, await signIn(h, user, secret));
+    const before = await throttleRows(h);
+
+    await expect(h.svc.changePassword(ctx, { currentPassword: OLD, newPassword: "password-1x" }))
+      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+    await expect(h.svc.changePassword(ctx, { currentPassword: OLD, newPassword: OLD }))
+      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+    await expect(h.svc.changePassword(ctx, { newPassword: NEW }))
+      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+    // Sign-in's ceiling on a guess, before scrypt: past it nothing is hashed and nothing counted.
+    await expect(h.svc.changePassword(ctx, { currentPassword: "x".repeat(257), newPassword: NEW }))
+      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+
+    expect(await throttleRows(h)).toEqual(before);
+    expect(await passwordEvents(h, user.userId)).toEqual([]);
+  });
+
+  it("two overlapping changes: one wins, the other is told 409, and the winner's password is stored", async () => {
+    const base = makeTestAuthDeps();
+    let racing = false;
+    let arrived = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((r) => { release = r; });
+    const deps: AuthDeps = {
+      ...base,
+      passwordHasher: {
+        // Both changes hold here until both have verified the current password, so both write
+        // over the same old hash.
+        hash: async (p) => {
+          const out = await base.passwordHasher.hash(p);
+          if (racing) {
+            if (++arrived === 2) release();
+            await barrier;
+          }
+          return out;
+        },
+        verify: (p, s) => base.passwordHasher.verify(p, s),
+      },
+    };
+    const h = await harness(deps);
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const ctxA = sessionCtx(h, user, await signIn(h, user, secret));
+    const ctxB = sessionCtx(h, user, await signIn(h, user, secret));
+    const NEW_A = "new-alpha-staple-password";
+    const NEW_B = "new-bravo-staple-password";
+
+    racing = true;
+    const [a, b] = await Promise.allSettled([
+      h.svc.changePassword(ctxA, { currentPassword: OLD, newPassword: NEW_A }),
+      h.svc.changePassword(ctxB, { currentPassword: OLD, newPassword: NEW_B }),
+    ]);
+    racing = false;
+
+    expect([a.status, b.status].sort()).toEqual(["fulfilled", "rejected"]);
+    const lost = (a.status === "rejected" ? a : b) as PromiseRejectedResult;
+    expect(lost.reason).toMatchObject({ code: "conflict", httpStatus: 409 });
+    const winner = a.status === "fulfilled" ? NEW_A : NEW_B;
+    const stored = await storedHash(h, user.userId);
+    expect(await base.passwordHasher.verify(winner, stored)).toBe(true);
+    expect(await base.passwordHasher.verify(winner === NEW_A ? NEW_B : NEW_A, stored)).toBe(false);
+  });
+
+  it("a revoked paired device loses its wake registration; the caller's device keeps its own", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const now = h.clock.now();
+    const device = async (label: string): Promise<string> => (await h.db.insert(devices).values({
+      accountId: user.accountId, userId: user.userId, kind: "mobile-android", label,
+    }).returning({ id: devices.id }))[0]!.id;
+    const session = async (deviceId: string, lastTwofaAt: Date | null): Promise<string> => (await h.db.insert(sessions).values({
+      accountId: user.accountId, userId: user.userId, familyId: randomUUID(), deviceId, scope: "full",
+      accessExpiresAt: new Date(now.getTime() + 60 * 60_000), refreshExpiresAt: new Date(now.getTime() + 120 * 60_000),
+      lastTwofaAt, lastSeenAt: now,
+    }).returning({ id: sessions.id }))[0]!.id;
+    const wake = async (deviceId: string): Promise<string> => (await h.db.insert(pushSubscriptions).values({
+      accountId: user.accountId, transport: "unifiedpush", endpoint: `https://ntfy.test/${randomUUID()}`, deviceId,
+    }).returning({ id: pushSubscriptions.id }))[0]!.id;
+    const mine = await device("This phone");
+    const paired = await device("The other phone");
+    const sidCaller = await session(mine, now);
+    await session(paired, null);
+    const myRow = await wake(mine);
+    const pairedRow = await wake(paired);
+
+    await h.svc.changePassword(sessionCtx(h, user, sidCaller), { currentPassword: OLD, newPassword: NEW });
+
+    const left = (await h.db.select({ id: pushSubscriptions.id }).from(pushSubscriptions)
+      .where(eq(pushSubscriptions.accountId, user.accountId))).map((r) => r.id);
+    expect(left).toContain(myRow);
+    expect(left).not.toContain(pairedRow);
+  });
+
+  /*
+   * WHAT IS STILL WAITING TO SIGN SOMEBODY IN. Whoever held the password and a factor may also hold
+   * something minted before the change that signs in on its own: a first step waiting for its factor,
+   * a desktop link code, a desktop approval a browser confirmed, a device-pair code, an OAuth code.
+   * Each redeem mints a session the change never saw, so the change spends them. Each grant below is
+   * minted by the OTHER session, the one the change signs out, and presented after the change; the
+   * caller's session is the only one left, and what the caller mints afterwards still works.
+   */
+
+  /** The session a leaked password signed in, and the one the person changes it from. */
+  async function twoSessions(h: Harness) {
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const other = sessionCtx(h, user, await signIn(h, user, secret));
+    const caller = sessionCtx(h, user, await signIn(h, user, secret));
+    return { user, secret, other, caller };
+  }
+  const liveSessions = async (h: Harness, userId: string): Promise<string[]> =>
+    (await h.db.select({ id: sessions.id }).from(sessions)
+      .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)))).map((r) => r.id);
+  const totpCode = (h: Harness, secret: string): string =>
+    generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
+
+  it("a first step taken with the old password before the change is refused at the factor", async () => {
+    const h = await harness();
+    const { user, secret, caller } = await twoSessions(h);
+    const held = await h.svc.login(h.ctxFor(), { email: user.email, password: OLD }) as { loginToken: string };
+
+    await h.svc.changePassword(caller, { currentPassword: OLD, newPassword: NEW });
+
+    h.clock.advance(31_000); // a fresh timestep, well inside the held token's five minutes
+    const code = totpCode(h, secret);
+    await expect(h.svc.totpVerify(h.ctxFor(), { loginToken: held.loginToken, code }))
+      .rejects.toMatchObject({ code: "credential_refused", httpStatus: 401 });
+    expect(await liveSessions(h, user.userId)).toEqual([caller.sessionId]);
+
+    // The control: a first step taken with the new password, after the change, reaches a session.
+    const fresh = await h.svc.login(h.ctxFor(), { email: user.email, password: NEW }) as { loginToken: string };
+    await expect(h.svc.totpVerify(h.ctxFor(), { loginToken: fresh.loginToken, code }))
+      .resolves.toMatchObject({ status: "authenticated" });
+  });
+
+  it("a desktop link code the other session minted is not claimed after the change", async () => {
+    const h = await harness();
+    const { user, other, caller } = await twoSessions(h);
+    const { code } = await h.svc.issueDesktopLink(other);
+
+    await h.svc.changePassword(caller, { currentPassword: OLD, newPassword: NEW });
+
+    await expect(h.svc.claimDesktopLink(h.ctxFor(), { code }))
+      .rejects.toMatchObject({ code: "invalid_code", httpStatus: 400 });
+    expect(await liveSessions(h, user.userId)).toEqual([caller.sessionId]);
+
+    const next = await h.svc.issueDesktopLink(caller);
+    await expect(h.svc.claimDesktopLink(h.ctxFor(), { code: next.code }))
+      .resolves.toMatchObject({ tokens: { tokenType: "Bearer" } });
+  });
+
+  it("a device-pair code the other session minted is not redeemed after the change; an invite stays", async () => {
+    const h = await harness();
+    const { user, other, caller } = await twoSessions(h);
+    const pair = await mintPairingToken(other, { grant: "device-pair", label: "Phone" });
+    const invite = await mintPairingToken(caller, { grant: "invite", label: "Family" });
+
+    await h.svc.changePassword(caller, { currentPassword: OLD, newPassword: NEW });
+
+    await expect(redeemDevicePair(h.ctxFor(), h.svc, { token: pair.token }))
+      .rejects.toMatchObject({ code: "pairing_invalid", httpStatus: 400 });
+    expect(await liveSessions(h, user.userId)).toEqual([caller.sessionId]);
+    // An invite opens somebody else's NEW account and never a session of this one: it is left.
+    const [kept] = await h.db.select({ revokedAt: pairingTokens.revokedAt }).from(pairingTokens)
+      .where(eq(pairingTokens.id, invite.id));
+    expect(kept!.revokedAt).toBeNull();
+
+    const next = await mintPairingToken(caller, { grant: "device-pair", label: "My phone" });
+    await expect(redeemDevicePair(h.ctxFor(), h.svc, { token: next.token }))
+      .resolves.toMatchObject({ tokens: { tokenType: "Bearer" } });
+  });
+
+  it("a desktop approval the other session confirmed is not claimed after the change", async () => {
+    const h = await harness();
+    const { user, other, caller } = await twoSessions(h);
+    const kind = "desktop-linux" as const;
+    const ask = async () => {
+      const verifier = generateToken();
+      const { approvalId } = await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(verifier), kind });
+      return { approvalId, verifier, kind };
+    };
+    const confirmed = await ask();
+    await h.svc.confirmDesktopApproval(other, confirmed.approvalId);
+
+    await h.svc.changePassword(caller, { currentPassword: OLD, newPassword: NEW });
+
+    await expect(h.svc.claimDesktopApproval(h.ctxFor(), confirmed))
+      .rejects.toMatchObject({ code: "approval_denied", httpStatus: 410 });
+    expect(await liveSessions(h, user.userId)).toEqual([caller.sessionId]);
+
+    const next = await ask();
+    await h.svc.confirmDesktopApproval(caller, next.approvalId);
+    await expect(h.svc.claimDesktopApproval(h.ctxFor(), next))
+      .resolves.toMatchObject({ tokens: { tokenType: "Bearer" } });
+  });
+
+  it("an OAuth code the other session minted is not exchanged after the change", async () => {
+    const h = await harness();
+    const { user, other, caller } = await twoSessions(h);
+    const verifier = generateToken();
+    const mint = async (ctx: ServiceContext): Promise<string> => {
+      const { request } = await h.svc.authorize(ctx, {
+        response_type: "code", client_id: "tf-macos", redirect_uri: "trafficflow://auth",
+        code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+        code_challenge_method: `S${"256"}` as const, state: "s", scope: "full",
+      });
+      const { redirect } = await h.svc.approveAuthorize(ctx, { request });
+      return new URL(redirect).searchParams.get("code")!;
+    };
+    const exchange = (code: string) => h.svc.token(h.ctxFor(), {
+      grant_type: "authorization_code", code, redirect_uri: "trafficflow://auth",
+      client_id: "tf-macos", code_verifier: verifier,
+    });
+    const code = await mint(other);
+
+    await h.svc.changePassword(caller, { currentPassword: OLD, newPassword: NEW });
+
+    const refused = await exchange(code).then(() => null, (e: unknown) => e);
+    expect(refused).toMatchObject({ code: "invalid_grant", httpStatus: 400 });
+    // Voided, not spent: a spent code presented again is a replay, and this one issued nothing.
+    expect(refused).not.toBeInstanceOf(OAuthCodeReplayed);
+    expect(await liveSessions(h, user.userId)).toEqual([caller.sessionId]);
+
+    await expect(exchange(await mint(caller))).resolves.toMatchObject({ tokenType: "Bearer" });
+  });
+
+  /**
+   * A sign-in checks the password, then writes its first step in a transaction of its own. A change
+   * that commits between the two has already voided every first step there was, so the one written
+   * after it would outlive the change. It is answered as a wrong password is. With the stored hash
+   * due a rewrite at today's cost, the sign-in's rewrite misses the changed row, and the new hash it
+   * then finds is not one its password verifies: it must not take that hash for its own.
+   */
+  for (const [also, stale] of [["", false], [", its stored hash due a rewrite", true]] as const) {
+    it(`a sign-in that checked the old password while the change committed is refused and writes no first step${also}`, async () => {
+      const base = makeTestAuthDeps();
+      let hold = false;
+      let atVerify!: () => void;
+      const reached = new Promise<void>((r) => { atVerify = r; });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      const deps: AuthDeps = {
+        ...base,
+        passwordHasher: {
+          hash: (p) => base.passwordHasher.hash(p),
+          // The sign-in under test has its answer, and waits here while the change commits.
+          verify: async (p, s) => {
+            const ok = await base.passwordHasher.verify(p, s);
+            if (hold) {
+              hold = false;
+              atVerify();
+              await gate;
+            }
+            return ok;
+          },
+          needsRehash: () => stale,
+        },
+      };
+      const h = await harness(deps);
+      const { user, caller } = await twoSessions(h);
+      const elsewhere = h.ctxFor({ ip: "5.6.7.8" });
+
+      hold = true;
+      const racing = h.svc.login(elsewhere, { email: user.email, password: OLD });
+      await reached;
+      await h.svc.changePassword(caller, { currentPassword: OLD, newPassword: NEW });
+      release();
+
+      await expect(racing).rejects.toMatchObject({ code: "credential_refused", httpStatus: 401 });
+      const firstSteps = await h.db.select().from(loginTokens).where(and(
+        eq(loginTokens.userId, user.userId), eq(loginTokens.purpose, "login"), isNull(loginTokens.consumedAt),
+      ));
+      expect(firstSteps, "a first step outlived the change").toEqual([]);
+      expect(await h.deps.passwordHasher.verify(NEW, await storedHash(h, user.userId)), "the change was undone").toBe(true);
+      // Counted and audited as a wrong password, against that client.
+      const k = throttleKeysFor(h.deps.keyProvider);
+      const [bucket] = await h.db.select().from(authThrottle)
+        .where(eq(authThrottle.key, `pw:${k.address(user.email)}:${k.client("5.6.7.8")}`));
+      expect(bucket!.failures).toBe(1);
+      const failed = await h.db.select().from(authEvents).where(and(
+        eq(authEvents.userId, user.userId), eq(authEvents.event, "login_failed"), eq(authEvents.ip, "5.6.7.8"),
+      ));
+      expect(failed).toHaveLength(1);
+
+      await expect(h.svc.login(elsewhere, { email: user.email, password: NEW }))
+        .resolves.toMatchObject({ status: "twofa_required" });
+    });
+  }
+
+  it("a sign-in that rewrites the stored hash at today's cost still gets a first step that works", async () => {
+    const base = makeTestAuthDeps();
+    let stale = false;
+    const deps: AuthDeps = {
+      ...base,
+      passwordHasher: {
+        hash: (p) => base.passwordHasher.hash(p),
+        verify: (p, s) => base.passwordHasher.verify(p, s),
+        needsRehash: () => stale,
+      },
+    };
+    const h = await harness(deps);
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    const before = await storedHash(h, user.userId);
+
+    stale = true;
+    const step = await h.svc.login(h.ctxFor(), { email: user.email, password: OLD });
+    stale = false;
+
+    expect(step).toMatchObject({ status: "twofa_required" });
+    expect(await storedHash(h, user.userId), "the sign-in rewrote nothing").not.toBe(before);
+    h.clock.advance(31_000);
+    const { loginToken } = step as { loginToken: string };
+    await expect(h.svc.totpVerify(h.ctxFor(), { loginToken, code: totpCode(h, secret) }))
+      .resolves.toMatchObject({ status: "authenticated" });
+  });
+
+  it("two sign-ins that rewrite the same stale hash at once both get a first step that works", async () => {
+    const base = makeTestAuthDeps();
+    let stale = false;
+    let hold = false;
+    let atVerify!: () => void;
+    const reached = new Promise<void>((r) => { atVerify = r; });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const deps: AuthDeps = {
+      ...base,
+      passwordHasher: {
+        hash: (p) => base.passwordHasher.hash(p),
+        // The first sign-in has its answer and waits here while the second rewrites the hash.
+        verify: async (p, s) => {
+          const ok = await base.passwordHasher.verify(p, s);
+          if (hold) {
+            hold = false;
+            atVerify();
+            await gate;
+          }
+          return ok;
+        },
+        needsRehash: () => stale,
+      },
+    };
+    const h = await harness(deps);
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+
+    stale = true;
+    hold = true;
+    const first = h.svc.login(h.ctxFor(), { email: user.email, password: OLD });
+    await reached;
+    const second = await h.svc.login(h.ctxFor({ ip: "5.6.7.8" }), { email: user.email, password: OLD });
+    release();
+    const firstStep = await first;
+    stale = false;
+
+    expect([firstStep, second]).toMatchObject([{ status: "twofa_required" }, { status: "twofa_required" }]);
+    for (const step of [firstStep, second]) {
+      h.clock.advance(31_000);
+      const { loginToken } = step as { loginToken: string };
+      await expect(h.svc.totpVerify(h.ctxFor(), { loginToken, code: totpCode(h, secret) }))
+        .resolves.toMatchObject({ status: "authenticated" });
+    }
   });
 });
 

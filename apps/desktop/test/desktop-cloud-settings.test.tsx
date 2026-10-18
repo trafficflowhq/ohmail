@@ -419,7 +419,9 @@ describe("the panes whose ceremony is a browser's — a door, not a form", () =>
       copy: { title: "webSecurityTitle", why: "webSecurityWhy" },
     }));
 
-    expect(el.textContent).toContain("Your password and second factor");
+    expect(el.textContent).toContain("Your second factor");
+    // The password change is the Account door's: the web keeps it in Settings → Account.
+    expect(el.textContent).not.toMatch(/password/i);
     // The copy says where the button goes BEFORE it is pressed.
     expect(el.textContent).toContain("open in your browser");
 
@@ -446,6 +448,7 @@ describe("the panes whose ceremony is a browser's — a door, not a form", () =>
       place: "account",
       copy: { title: "webAccountTitle", why: "webAccountWhy", note: "webAccountNote" },
     }));
+    expect(el.textContent).toContain("changing your password");
     await click(button("Open in browser"));
     expect(el.textContent).toContain("would not open a browser");
   });

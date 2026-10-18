@@ -133,8 +133,9 @@ describe("the auth family's transactions open on the erasure fence", () => {
   it("the counts: every opener fenced but three named (register by creation), one raw", () => {
     const fenced = tree.openers.filter((o) => o.fenced).length;
     const byCreation = tree.openers.filter((o) => !o.fenced && o.key === FENCED_BY_CREATION && o.createsFence).length;
+    // 24 -> 25 with `changePassword`: the swap, the revoke, the prune and its audit, fenced.
     expect({ fenced, byCreation, named: Object.keys(UNFENCED).length, raw: tree.raw.length })
-      .toEqual({ fenced: 24, byCreation: 1, named: 3, raw: 1 });
+      .toEqual({ fenced: 25, byCreation: 1, named: 3, raw: 1 });
   });
 
   it("RED: a planted unfenced opener is named", () => {

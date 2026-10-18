@@ -102,7 +102,9 @@ describe("the projection the sidecar reads matches the table", () => {
     // 183 -> 184 with `POST /mailboxes/:id/gap-letters`: the gap offer is answered on the server
     // that organizes the mailbox, like the organizer notice's dismiss beside it.
     // 184 -> 185 with `GET /screener/unscreened/count`, relayed like the offer's read beside it.
-    expect(RELAY_ALLOWLIST.length).toBe(185);
+    // 185 -> 186 with `POST /auth/password`: the session is the subject and the body a
+    // re-assertion, the position `POST /auth/step-up/totp` is relayed from.
+    expect(RELAY_ALLOWLIST.length).toBe(186);
   });
 
   it("every pattern in the projection is a real route", () => {

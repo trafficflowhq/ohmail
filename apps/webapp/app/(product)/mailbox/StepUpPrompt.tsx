@@ -15,7 +15,7 @@
  * read `SecuritySection` trusts, so the prompt never offers a ceremony the account cannot finish.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import { auth, assertPasskey, webauthnAvailable } from "../../api-client";
@@ -78,6 +78,9 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
    * verb is somebody's device or session either way. Cancel bumps, `finish` compares.
    */
   const ceremony = useCeremonyGeneration();
+  // Leaving ends it as Cancel does: the wall's Back or another Settings pane drops the prompt with
+  // no Cancel pressed, and a factor landing after that runs nothing. In the commit that removes it.
+  useLayoutEffect(() => () => { ceremony.end(); }, [ceremony.end]);
 
   useEffect(() => {
     void (async () => {

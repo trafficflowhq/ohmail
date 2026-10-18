@@ -3,8 +3,8 @@ import { randomInt, randomUUID } from "node:crypto";
 // login-token row, and the shadowing turns a comparison into "call an object".
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
-  accounts, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle, markFenced,
-  type Tx,
+  accounts, users, devices, sessions, pairingTokens, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
+  markFenced, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -1031,7 +1031,7 @@ export class AuthService extends SessionLifecycle {
     // their own client. See {@link throttleRefund} for why this is a decrement and never a reset.
     if (pwKey) await this.throttleRefund(db, pwKey);
     if (!known) await this.throttleRefund(db, ceilingKey, this.ceilingPolicy());
-    await this.rehashIfStale(db, user.id, cred.passwordHash, b.password);
+    const verifiedHash = await this.rehashIfStale(db, user.id, cred.passwordHash, b.password);
 
     const methods = await this.enrolledMethods(db, user.id);
 
@@ -1051,15 +1051,39 @@ export class AuthService extends SessionLifecycle {
     // First factor OK → mint a single-use, short-lived login token carrying the
     // user's enrolled 2FA methods (never a full session on step one).
     const rawToken = generateToken();
-    await this.inTransaction(ctx, async (txCtx) => {
-      await asTx(txCtx).insert(loginTokens).values({
+    const minted = await this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      // ONLY WHILE THE PASSWORD IT CHECKED IS STILL THE ACCOUNT'S. A password change voids every
+      // first step there is ({@link voidPendingGrants}); one committing between the verify above
+      // and this insert would leave this one, minted with the old password, outliving it. FOR
+      // SHARE: a change in flight holds the row, so this waits for it and reads its new hash.
+      const [still] = await tx.select({ id: credentials.id }).from(credentials)
+        .where(and(eq(credentials.userId, user.id), eq(credentials.passwordHash, verifiedHash)))
+        .limit(1).for("share");
+      if (!still) return false;
+      await tx.insert(loginTokens).values({
         userId: user.id,
         tokenHash: hashToken(rawToken),
         methods,
         purpose: "login",
         expiresAt: new Date(ctx.now().getTime() + this.cfg.loginTokenTtlMs),
       });
+      return true;
     }, { fence });
+    if (!minted) {
+      // What this sign-in checked is a wrong password now, and it is answered as one: counted (the
+      // refund above is taken back), locked at the threshold, audited, refused in the same words.
+      if (pwKey) {
+        await this.throttleReserve(db, pwKey);
+        await this.throttleLock(db, pwKey);
+      }
+      if (!known) {
+        await this.reserveCeiling(db, ceilingKey, hA);
+        await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
+      }
+      await this.audit(db, user, "login_failed", "password", ctx);
+      throw credentialRefused("invalid email or password");
+    }
     return { status: "twofa_required", loginToken: rawToken, methods };
   }
 
@@ -1830,6 +1854,71 @@ export class AuthService extends SessionLifecycle {
       await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
       await this.revokeOtherSessions(txCtx, userId);
     }, { fence: { accountId: ctx.accountId, onErased: () => undefined } });
+  }
+
+  /**
+   * Change the password: the current one, a second factor inside the step-up window, and the
+   * sign-up rule for the new one. The current password is checked on `login`'s keys and lockout,
+   * and a wrong one answers `credential_refused` so no client renews and sends it again. The new
+   * hash replaces the one just verified by a compare-and-set, so of two overlapping changes one
+   * wins and the other is told. Then everything that could still mint a session is voided
+   * ({@link voidPendingGrants}), and the credential-change rule: every OTHER session family goes,
+   * with its devices' wake registrations; the caller's session stays as it is.
+   */
+  async changePassword(
+    ctx: ServiceContext, b: { currentPassword?: unknown; newPassword?: unknown },
+  ): Promise<{ revoked: number }> {
+    const userId = this.requireUser(ctx);
+    await this.requireStepUp(ctx);
+    // Refused before any throttle write: a malformed request burns no attempt. The current one
+    // takes `login`'s rule, the maximum only, so a password older than the minimum still counts.
+    const next = requirePassword(requireField(b.newPassword, "newPassword"));
+    const current = requireField(b.currentPassword, "currentPassword");
+    if ([...current].length > PASSWORD_MAX_LENGTH) {
+      throw new ServiceError("validation_failed", 400, `currentPassword must be at most ${PASSWORD_MAX_LENGTH} characters`);
+    }
+    if (next === current) {
+      throw new ServiceError("validation_failed", 400, "the new password must differ from the current one");
+    }
+
+    const db = asTx(ctx);
+    const user = await this.loadUser(db, userId);
+    // `login`'s password keys, reserved before the verify: this client's bucket, and the address
+    // ceiling for a client that never signed in here. Never `user:<id>`, the second factor's.
+    const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(user.email, ctx);
+    const known = hC !== null && await this.isKnownClient(db, hA, hC);
+    if (pwKey) await this.throttleReserve(db, pwKey);
+    if (!known) await this.reserveCeiling(db, ceilingKey, hA);
+    const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
+    const verified = await this.deps.passwordHasher.verify(
+      current, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher));
+    if (!verified || !cred) {
+      if (pwKey) await this.throttleLock(db, pwKey);
+      if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
+      await this.audit(db, user, "password_change_refused", "password", ctx);
+      throw credentialRefused("current password is incorrect");
+    }
+    if (pwKey) await this.throttleRefund(db, pwKey);
+    if (!known) await this.throttleRefund(db, ceilingKey, this.ceilingPolicy());
+
+    // Hashed before the transaction: scrypt must not hold row locks.
+    const nextHash = await this.deps.passwordHasher.hash(next);
+    return this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      const swapped = await tx.update(credentials)
+        .set({ passwordHash: nextHash, algo: "scrypt", updatedAt: txCtx.now() })
+        .where(and(eq(credentials.userId, user.id), eq(credentials.passwordHash, cred.passwordHash)))
+        .returning({ id: credentials.id });
+      if (swapped.length === 0) {
+        throw new ServiceError("conflict", 409, "the password was changed by another request");
+      }
+      // Before the sessions: a redeem racing this then loses its burn or has its session claimed.
+      await this.voidPendingGrants(tx, user.id, txCtx.now());
+      const { revoked, familyIds } = await this.revokeOtherSessions(txCtx, user.id);
+      await this.pruneWakeRegistrations(tx, familyIds);
+      await this.audit(tx, user, "password_changed", "password", txCtx);
+      return { revoked };
+    }, { fence: { accountId: ctx.accountId, onErased: () => ({ revoked: 0 }) } });
   }
 
   // Step-up re-verification — the inline ceremony behind a stale 5-minute window. `withStepUp`
@@ -2837,16 +2926,26 @@ export class AuthService extends SessionLifecycle {
    * A password just VERIFIED under an older cost is written again at the current one. A compare-
    * and-set on the old hash, so a password changed underneath is never overwritten; best-effort,
    * so a failed rehash never fails the sign-in (the next one tries again). Never a forced reset.
+   * Answers the hash the row holds for this password afterwards, which `login` binds its first
+   * step to: the fresh one when the write landed. A missed write means another sign-in rewrote the
+   * same password first, or the password changed; only the first still verifies, so the row's hash
+   * is answered only then, and a change leaves the one verified, which no longer matches.
    */
-  private async rehashIfStale(db: Tx, userId: string, stored: string, password: string): Promise<void> {
+  private async rehashIfStale(db: Tx, userId: string, stored: string, password: string): Promise<string> {
     const hasher = this.deps.passwordHasher;
-    if (!hasher.needsRehash?.(stored)) return;
+    if (!hasher.needsRehash?.(stored)) return stored;
     try {
       const fresh = await hasher.hash(password);
-      await db.update(credentials).set({ passwordHash: fresh, updatedAt: new Date() })
-        .where(and(eq(credentials.userId, userId), eq(credentials.passwordHash, stored)));
+      const written = await db.update(credentials).set({ passwordHash: fresh, updatedAt: new Date() })
+        .where(and(eq(credentials.userId, userId), eq(credentials.passwordHash, stored)))
+        .returning({ id: credentials.id });
+      if (written.length > 0) return fresh;
+      const [row] = await db.select({ hash: credentials.passwordHash }).from(credentials)
+        .where(eq(credentials.userId, userId)).limit(1);
+      return row !== undefined && row.hash !== stored && await hasher.verify(password, row.hash) ? row.hash : stored;
     } catch {
       /* the stored hash still verifies; the next sign-in rehashes */
+      return stored;
     }
   }
 
@@ -3189,6 +3288,56 @@ export class AuthService extends SessionLifecycle {
         ));
       }
     }
+  }
+
+  /**
+   * EVERY LIVE GRANT THAT CAN STILL MINT A SESSION FOR THIS USER, voided: the half of a take-back
+   * that revoking sessions does not reach. A first step waiting for its factor, a desktop link
+   * code, a desktop approval a browser confirmed, a device-pair code and an OAuth code not yet
+   * exchanged each redeem into a fresh session (the pair code into a 400-day one) without asking
+   * for the credential again, so a revoke that leaves them signs out whoever holds one only until
+   * they spend it. Each is retired the way its own door retires it, and its redeem answers what a
+   * spent or taken-back one gets. The caller's own grants go too: no row records which session
+   * minted it. Left on purpose: an open OAuth authorization request, which only the session that
+   * opened it can confirm (the revoke takes that session); a mail-verification link, which mints no
+   * session for an account with a factor; an invite-grant pairing token, which opens somebody
+   * else's new account and never a session of this one.
+   *
+   * Inside the revoke's transaction and BEFORE its session claim: a redeem that burns its grant and
+   * mints in one transaction either commits first, and the claim then takes its session, or waits
+   * on the row voided here and finds it spent. The password change is the one caller so far.
+   */
+  protected async voidPendingGrants(db: Tx, userId: string, now: Date): Promise<void> {
+    await db.update(loginTokens).set({ consumedAt: now }).where(and(
+      eq(loginTokens.userId, userId),
+      inArray(loginTokens.purpose, ["login", DESKTOP_LINK_PURPOSE]),
+      isNull(loginTokens.consumedAt),
+      gt(loginTokens.expiresAt, now),
+    ));
+    // "Not me" kills an approval with `revoked_at`; the desktop's claim then reads it as declined.
+    await db.update(loginTokens).set({ revokedAt: now }).where(and(
+      eq(loginTokens.userId, userId),
+      eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
+      isNotNull(loginTokens.approvedAt),
+      isNull(loginTokens.consumedAt),
+      isNull(loginTokens.revokedAt),
+      gt(loginTokens.expiresAt, now),
+    ));
+    // `revokePairingToken`'s write, over every live device-pair code this user minted.
+    await db.update(pairingTokens).set({ revokedAt: now }).where(and(
+      eq(pairingTokens.createdByUserId, userId),
+      eq(pairingTokens.grant, "device-pair"),
+      isNull(pairingTokens.consumedAt),
+      isNull(pairingTokens.revokedAt),
+      gt(pairingTokens.expiresAt, now),
+    ));
+    // DELETED, not marked consumed: the exchange reads a consumed code as a replay and withdraws
+    // what it issued, and a code voided here issued nothing. A spent code stays for that check.
+    await db.delete(oauthAuthCodes).where(and(
+      eq(oauthAuthCodes.userId, userId),
+      isNull(oauthAuthCodes.consumedAt),
+      gt(oauthAuthCodes.expiresAt, now),
+    ));
   }
 
 }

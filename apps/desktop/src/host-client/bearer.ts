@@ -106,6 +106,7 @@ function mintAttemptId(): string {
 const NEVER_RENEW = [
   "/auth/login", "/auth/register", "/auth/refresh", "/auth/verify-email", "/auth/2fa/", "/auth/step-up/",
   "/pair/redeem", "/admin/staff/", "/auth/desktop-claim", "/auth/desktop-approval/claim", "/oauth/token",
+  "/auth/password",
 ];
 
 /** A stated window this close to its end counts as lapsed: the answer's transit, on this clock. */

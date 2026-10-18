@@ -358,6 +358,10 @@ const CEREMONY = [
   "POST /auth/desktop-link",
   "POST /auth/login",
   "POST /auth/logout",
+  // Changing the password, on `POST /auth/logout`'s terms: rotating a credential somebody else
+  // knows must not wait on a verified address. One scrypt per attempt, bounded by the sign-in
+  // lockout, and step-up gated besides.
+  "POST /auth/password",
   "POST /auth/refresh",
   // The web's sign-out door, `POST /auth/logout`'s class and reasoning: leaving, one lookup and two
   // updates and an audit row, no work. Sorted after `refresh` (`refresh` < `refresh/logout`).
@@ -919,7 +923,9 @@ describe("the route table declares what every handler causes", () => {
     // `unauthenticated` on the `/admin/*` table's terms, so they join the exempt list and this
     // total together and the gated remainder is unchanged.
     // 246 -> 247: the billing link, `unauthenticated` like the release; the remainder is unchanged.
-    expect(apiRoutes).toHaveLength(247);
+    // 247 -> 248: `POST /auth/password`, a `ceremony`, so it joins `CEREMONY` and this total
+    // together and the gated remainder is unchanged.
+    expect(apiRoutes).toHaveLength(248);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1143,7 +1149,9 @@ describe("the route table declares what every handler causes", () => {
     // 241 -> 246 with the console's five reads, `unauthenticated`: the total and `UNAUTHENTICATED`
     // grow by five each, the remainder does not move.
     // 246 -> 247 with the billing link, `unauthenticated`: the remainder does not move.
-    expect(gated.length).toBe(247 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 247 -> 248 with the password change, a `ceremony`: the total and `CEREMONY` grow by one
+    // each, the remainder does not move.
+    expect(gated.length).toBe(248 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });
@@ -1269,6 +1277,10 @@ describe("the gate, over HTTP, on every route it governs", () => {
       bearer: s.token, headers: { "x-vercel-forwarded-for": "198.51.100.7" }, body: "{}",
     }), deps);
     expect(resend.status).toBe(200);
+
+    // Taking back a password somebody else knows: its own refusal (an empty body), never this gate's.
+    const rotate = await H(req("POST", "/auth/password", { bearer: s.token, body: "{}" }), deps);
+    expect(rotate.status, "a password change must not be gated on a verification").toBe(400);
 
     const erase = await H(req("DELETE", "/account", { bearer: s.token, body: "{}" }), deps);
     expect(erase.status, "Art. 17 erasure must not be gated on a verification").toBe(200);

@@ -41,6 +41,18 @@ within about three minutes, and `/internal/alerts` answers instead of 503. The a
 Telegram, and by mail to `TF_ALERT_EMAIL` through your SMTP settings; `/health` lists the channels it pages on,
 and `deploy/selfhost/.env.example` says which service pages on which.
 
+### Change your password
+
+Change your password from Settings; your other sessions are signed out, and sign-ins still waiting to finish are
+cancelled, such as one made with the old password that waits for its second factor, a desktop link or approval,
+or a pairing code. It asks for your current password and your second factor, and a wrong current password counts
+toward the same lockout as signing in.
+
+### Back stops the account deletion
+
+Leaving the account deletion while your second factor was being checked (Back on the account wall, or another
+pane in Settings) could still delete the account once the check came back. Leaving now stops it, as Cancel does.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

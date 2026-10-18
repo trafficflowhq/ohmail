@@ -6,6 +6,7 @@ import { recoveryRoutes } from "./recovery.js";
 import { oauthRoutes } from "./oauth.js";
 import { deviceRoutes, webSessionRevokeRoutes } from "./devices.js";
 import { stepUpRoutes } from "./step-up.js";
+import { passwordRoutes } from "./password.js";
 
 /**
  * The auth/2FA/OAuth endpoints, each wired to an AuthService method. Route `options` drive the
@@ -30,5 +31,8 @@ export const authRoutes: Route[] = [
   // `authRoutes` — a table the desktop-host composition never imports — and
   // `desktop-host.test.ts` censuses the absence.
   ...stepUpRoutes,
+  // The password change, on the same terms: the hosted ceremony's accessor, and absent from the
+  // desktop-host door, whose store keeps no password.
+  ...passwordRoutes,
   ...webSessionRevokeRoutes,
 ];

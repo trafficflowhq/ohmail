@@ -217,7 +217,11 @@ export interface AuthAuditEvent {
     // under another: a captured renewal request was replayed, or a late answer landed over the
     // replay's line. Its own name so the reuse alert, which reads event names only, can tell it
     // from a stolen token; `device` carries `family=<id> session=<id> cause=attempt_mismatch`.
-    | "refresh_attempt_revoked";
+    | "refresh_attempt_revoked"
+    // The password was changed from a stepped-up session (`POST /auth/password`), and every other
+    // session family went with the old one; `password_change_refused` is a wrong current password
+    // there, counted on the sign-in lockout. Neither row carries a password.
+    | "password_changed" | "password_change_refused";
   method?: "webauthn" | "totp" | "recovery_code" | "password";
   ip: string;
   device?: string;
