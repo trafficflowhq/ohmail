@@ -4,7 +4,7 @@
  * reads them here, which keeps alert-mail-policy.ts and alerts.ts out of an import cycle.
  */
 
-/** The seven conditions. Stable strings — they are the alert identity in `alert_state`. */
+/** The conditions, twenty-one of them. Stable strings — they are the alert identity in `alert_state`. */
 export type AlertKind =
   /** No leader heartbeat for a shard within the threshold: nothing is syncing. */
   | "worker_down"
@@ -127,7 +127,33 @@ export type AlertKind =
    * convergence arms). One or two is a dropped answer; a burst is a client that cannot ADOPT what
    * it is given, spending rotations it never keeps, and nothing else in this file can see it.
    */
-  | "session_refresh_replayed";
+  | "session_refresh_replayed"
+  /**
+   * THE OTHER ALERT DRIVER RUNS AND CAN PAGE NOBODY, reported by this one: its last pass counted no
+   * usable sink, or its last passes asked every arm it has and each one refused. The driver's own
+   * `alerts_undeliverable` line is a log line on a host nobody is watching; this is the same fact
+   * delivered through the sinks of the driver that can still page.
+   */
+  | "alert_driver_undeliverable"
+  /**
+   * One arm of THIS driver's pager has refused a full streak while another arm delivered: the pages
+   * still land and the deployment is back to a single vendor. Self-reported, because the driver is
+   * alive and its surviving arm is the witness.
+   */
+  | "alert_sink_degraded"
+  /**
+   * One of the API routes the worker drives on a clock (`api-cron.ts`) has not answered 2xx within
+   * twice its cadence with its retry failed too, or within three cadences (floor fifteen minutes):
+   * the schedule stopped, the poke is refused, or the route keeps failing. Evaluated by the worker
+   * driver, which holds the schedule's memory; only a 2xx clears it.
+   */
+  | "api_cron_stale"
+  /**
+   * The platform-signals poller stopped writing: the newest `platform_signals.fetched_at` of a
+   * project is older than the threshold. `api_5xx_rate` reads that table and says "not measured"
+   * when it is empty; this says that the measuring stopped.
+   */
+  | "signal_source_dark";
 
 export type AlertSeverity = "critical" | "warning";
 

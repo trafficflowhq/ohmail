@@ -46,6 +46,10 @@ export const MAIL_POLICY: { readonly [K in AlertKind]: (a: Alert) => MailVerdict
   pooler_refusals: page,
   schema_behind: page,
   alert_driver_dark: page,
+  alert_driver_undeliverable: page,
+  alert_sink_degraded: page,
+  api_cron_stale: page,
+  signal_source_dark: page,
   api_fault_rate: (a) => (isEntitlements(a) || onPageRoute(a) ? "page" : "digest"),
   sync_lag: (a) =>
     a.severity === "critical" && (a.affectedAccounts ?? 0) >= SYNC_LAG_PAGE_ACCOUNTS ? "page" : "digest",
@@ -64,12 +68,15 @@ export function mailVerdictOf(a: Alert): MailVerdict {
   return rule ? rule(a) : "page";
 }
 
-/** The ordinary page window, and the one kind that asks daily. */
+/** The ordinary page window, and the kinds about the alerting itself, which ask daily. */
 export const MAIL_COOLDOWN_MS = 6 * 60 * 60 * 1000;
-const DRIVER_DARK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const DAILY_MAIL_KINDS: ReadonlySet<string> = new Set<AlertKind>([
+  "alert_driver_dark", "alert_driver_undeliverable", "alert_sink_degraded", "signal_source_dark",
+]);
 
 export function mailCooldownMs(kind: string): number {
-  return kind === "alert_driver_dark" ? DRIVER_DARK_COOLDOWN_MS : MAIL_COOLDOWN_MS;
+  return DAILY_MAIL_KINDS.has(kind) ? DAILY_COOLDOWN_MS : MAIL_COOLDOWN_MS;
 }
 
 /**

@@ -17,7 +17,7 @@ import {
   webhookAlertSink,
   resendAlertSink,
   telegramAlertSink,
-  sinkHealthOf,
+  sinkHealthOf, pagerVerdictOf, type PagerVerdict,
   newDeliveryStreak,
   writeHeartbeat,
   refreshHeartbeat,
@@ -286,6 +286,8 @@ export interface WorkerStats {
    * a `lastOkAt: null` with `attempts: 0` is the honest report for an arm nobody has exercised.
    */
   alertSinks: AlertSinkHealth[];
+  /** `pagerVerdictOf(alertSinks)`: `dead` is every arm refusing, `unarmed` no arm at all. */
+  pager: PagerVerdict;
   /**
    * THE API-CRON SCHEDULE'S STANDING REPORT — one entry per internal API route this worker
    * drives on a clock (`api-cron.ts`), in the table's order. `[]` on a deployment that armed
@@ -803,8 +805,9 @@ export async function startWorkerWithLock(
      *
      * Held for the life of this leadership rather than in the database — see
      * {@link DeliveryStreak}. A restart or a lock handover starts a fresh streak, which costs
-     * three minutes of escalation latency and cannot lose an escalation: the fault is still
-     * there on the next three passes.
+     * three minutes of escalation latency. The alarms built on it are rows: a fresh streak is no
+     * evidence, so `alert_sink_degraded` is withheld rather than resolved until an arm delivers,
+     * and `alert_driver_undeliverable` reads the streak `recordAlertPass` keeps in the database.
      */
     const alertDeliveryStreak = newDeliveryStreak();
 
@@ -5872,6 +5875,9 @@ export async function startWorkerWithLock(
           // An API arm exists only where this worker drives the API host's internal routes (the
           // secret is shared); there, an API driver that has never run is dark, not a choice.
           apiArmExpected: Boolean(config.apiCron),
+          // The schedule this leader holds, for `api_cron_stale`. `null` on shards > 0, on the
+          // self-hosted organizer and after quiescing: unread, so it clears none of shard 0's rows.
+          apiCron: apiCron ? { since: apiCron.since(), targets: apiCron.health() } : null,
         });
         for (const alert of firingToLog(alertFiringLogged, result.firing)) {
           log.warn("alert_firing", {
@@ -6277,6 +6283,8 @@ export async function startWorkerWithLock(
           // Derived rather than stored, so it cannot drift from the streak the pass actually
           // mutates. `sinkHealthOf` reads memory only — `/health` still touches no database.
           alertSinks: sinkHealthOf(alertSinks, alertDeliveryStreak),
+          // The pager's own verdict over the same arms: `dead` when every arm refuses.
+          pager: pagerVerdictOf(sinkHealthOf(alertSinks, alertDeliveryStreak)),
           // The API-cron schedule's per-target report — a memory read like everything else
           // here. `[]` when the arm is unconfigured, on shards > 0, or after quiescing.
           apiCron: apiCron?.health() ?? [],

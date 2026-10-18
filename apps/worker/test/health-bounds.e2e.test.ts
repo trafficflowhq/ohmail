@@ -314,6 +314,33 @@ describe("/health bounds", () => {
     expect(body.unserved.total).toBe(0);
   }, 60_000);
 
+  it("the pager verdict reaches the PUBLIC endpoint through the supervisor's snapshot", async () => {
+    const fleet = new FakeAdapterFleet();
+    const unarmed = await runWorkerSupervised(cfgFor(fleet));
+    closers.push(() => unarmed.stop());
+    const read = async (port: number) => (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as
+      { pager?: string | null; leader?: boolean };
+    const deadline = Date.now() + 15_000;
+    let body = await read(unarmed.healthPort);
+    while (!body.leader && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+      body = await read(unarmed.healthPort);
+    }
+    expect(body.pager, "a leader with no arm cannot page anybody, and says so").toBe("unarmed");
+    await unarmed.stop();
+
+    const armed = await runWorkerSupervised(cfgFor(fleet, {
+      alertWebhookUrl: "https://ntfy.example/ohmail", alertPost: async () => ({ status: 200 }),
+    }));
+    closers.push(() => armed.stop());
+    body = await read(armed.healthPort);
+    while (!body.leader && Date.now() < deadline + 15_000) {
+      await new Promise((r) => setTimeout(r, 50));
+      body = await read(armed.healthPort);
+    }
+    expect(body.pager, "an arm never attempted is not a dead one").toBe("ok");
+  }, 60_000);
+
   it("…and stays 200 inside the grace, so a cold deploy during an incident can still ship", async () => {
     // A cold start reaches `leader` in seconds — which is precisely what happens right after the
     // previous instance crashed. If the reason nothing attaches is external (the provider is

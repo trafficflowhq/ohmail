@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats, alertState, SYNC_LAG_PAGE_ACCOUNTS } from "@trafficflow/db/cloud";
@@ -245,6 +245,67 @@ describe("worker observability wiring", () => {
       JSON.stringify(health),
       "/health is readable by anyone: no credential and no vendor prose may ride on it",
     ).not.toContain("8123456789");
+    expect(worker.stats().pager, "two arms delivering").toBe("ok");
+  }, 30_000);
+
+  it("EVERY arm refusing publishes pager: dead and logs alerts_undeliverable", async () => {
+    const db = makeDb(DB);
+    const { logger, events } = collectingLogger();
+    await seedUnreachableMailbox(db);
+    await db.update(mailboxes).set({ lastSyncAt: new Date(Date.now() - 60 * 60 * 1000) });
+    const worker = await startWorker({
+      databaseUrl: DB, pollIntervalMs: 60_000, sentDomain: "app.ohmail.app",
+      keyProvider: KP, logger, instanceId: "wkr-obs-9", environment: "test",
+      alertIntervalMs: 150,
+      alertWebhookUrl: "https://ntfy.example/ohmail",
+      alertPost: async () => ({ status: 503, body: "down" }),
+      mailboxRetryMs: 60_000,
+    });
+    closers.push(() => worker.stop());
+    const dead = await waitFor(async () => (worker.stats().pager === "dead" ? true : null), 10_000);
+    expect(dead, "three refused passes and the pager reports itself dead").toBe(true);
+    expect(events()).toContain("alerts_undeliverable");
+  }, 30_000);
+
+  it("the shard-0 leader hands its API-cron schedule to the pass: api_cron_stale is evaluated, not unread", async () => {
+    // Two rows. `retired` names a target the schedule no longer drives: with the schedule handed
+    // over the pass evaluates it clear; handed nothing it stays open (the control below), which is
+    // the built-tested-unreachable shape. `scheduled_send` is a target the fresh schedule has not
+    // poked yet: no 2xx, no evidence, so it stays open with the schedule handed over too.
+    const db = makeDb(DB);
+    const seed = (target: string) => db.insert(alertState).values({
+      alertKey: `api_cron_stale:${target}`, kind: "api_cron_stale", severity: "critical",
+      openedAt: new Date(Date.now() - 60 * 60 * 1000), lastSeenAt: new Date(Date.now() - 60 * 1000),
+      notifiedAt: new Date(Date.now() - 60 * 60 * 1000), notifyCount: 1, detail: "seeded", cls: "incident",
+      title: "seeded", count: 1,
+    } as never);
+    const open = async () => (await db.select({ k: alertState.alertKey }).from(alertState)
+      .where(isNull(alertState.resolvedAt))).map((r) => r.k);
+
+    await seed("scheduled_send");
+    await seed("retired");
+    const bare = await startWorker({
+      databaseUrl: DB, pollIntervalMs: 60_000, sentDomain: "app.ohmail.app",
+      keyProvider: KP, logger: collectingLogger().logger, instanceId: "wkr-obs-10", environment: "test",
+      alertIntervalMs: 150, mailboxRetryMs: 60_000,
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    await bare.stop();
+    expect(await open(), "no schedule: unread, the row stays").toContain("api_cron_stale:retired");
+
+    const worker = await startWorker({
+      databaseUrl: DB, pollIntervalMs: 60_000, sentDomain: "app.ohmail.app",
+      keyProvider: KP, logger: collectingLogger().logger, instanceId: "wkr-obs-11", environment: "test",
+      alertIntervalMs: 150, mailboxRetryMs: 60_000,
+      // Nothing listens there, and no target's first poke falls inside this test.
+      apiCron: { baseUrl: "http://127.0.0.1:1", secret: "s".repeat(32) },
+    });
+    closers.push(() => worker.stop());
+    const cleared = await waitFor(async () =>
+      ((await open()).includes("api_cron_stale:retired") ? null : true), 8000);
+    expect(cleared, "the schedule was handed to the pass, which evaluated the retired key clear").toBe(true);
+    expect(await open(), "a target with no 2xx since the schedule started is not cleared")
+      .toContain("api_cron_stale:scheduled_send");
   }, 30_000);
 
   it("ONE arm is announced as a single point of failure, not published as a healthy pager", async () => {

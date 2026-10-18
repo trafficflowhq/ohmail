@@ -17,7 +17,7 @@ const snap: HealthSnapshot = {
   unserved: { total: 2, quarantined: 1, awaitingCredentials: 1, standDown: 0, leaseUnreadable: 0, unaccounted: 0 },
   databaseFaultSeconds: null, healthy: true, unhealthyReason: null, waitingForLockSeconds: null, takingOver: false,
   lastCycleAt: "2026-09-26T00:00:00.000Z", lagSeconds: 12, kekFingerprint: "fp", kekActiveVersion: 1, kekVersionCount: 1,
-  kek: { active: 1, count: 1, fingerprint: "fp" }, shard: { index: 0, shards: 1 }, alertSinks: [], apiCron: [],
+  kek: { active: 1, count: 1, fingerprint: "fp" }, shard: { index: 0, shards: 1 }, alertSinks: [], pager: "dead", apiCron: [],
   parkedReader: "composed", dbTls: true, lastRotationMs: null, lastTailMs: null, tail: null,
 };
 const COUNTS = ["mailboxes", "accounts", "expected", "quarantined", "awaitingCredentials", "truncated", "escalatedMessages", "unserved"];
@@ -40,6 +40,8 @@ describe("worker /health — public liveness, counts behind the credential", () 
     }
     expect(body).toMatchObject({ ok: true, healthy: true, version: "sha", leader: true, parkedReader: "composed", dbTls: true });
     expect(body.kek).toEqual(snap.kek);
+    // The pager's own verdict is public: with every arm down it is the one signal left.
+    expect(body.pager).toBe("dead");
   });
 
   it("the worker's own API-cron credential reads the whole snapshot", async () => {

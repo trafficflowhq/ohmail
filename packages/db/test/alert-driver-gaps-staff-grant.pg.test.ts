@@ -146,7 +146,7 @@ describe.skipIf(!PG_UP)("cloud 0049 on real Postgres: the role's gap writes, ref
   /** The stamp the API's pass runs, on the role's connection. It swallows its own failure by contract. */
   const stampAsRole = (now: Date): Promise<void> =>
     recordAlertPass(brandDialect(drizzle(roleClient, { schema }), "pg") as unknown as Tx, {
-      driver: "api", now, firing: 0, delivered: 0, failedSinks: 0, sinkFailureStreak: 0, sinksConfigured: 1,
+      driver: "api", now, firing: 0, delivered: 0, failedSinks: 0, refusedAll: false, sinksConfigured: 1,
     });
   const rows = async () => {
     const [runs] = await ownerClient<Array<{ n: number }>>`select count(*)::int as n from alert_pass_runs where driver = 'api'`;

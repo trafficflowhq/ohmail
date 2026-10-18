@@ -40,6 +40,7 @@ async function alive(db: Db, now: Date): Promise<void> {
   for (const driver of ["worker", "api"] as const) {
     await db.insert(alertPassRuns).values({
       driver, ranAt: at(now, -MIN), firing: 0, delivered: 0, failedSinks: 0, sinkFailureStreak: 0,
+      sinksConfigured: 1,
     });
   }
 }

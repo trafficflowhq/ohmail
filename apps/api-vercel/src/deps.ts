@@ -10,7 +10,7 @@ import {
   makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS, readDbTls,
   type EntitlementsClient,
 } from "@trafficflow/db/cloud";
-import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
+import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, refusingAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
   // `@trafficflow/services`. This host is the one place that needs both halves.
   makeSupabaseStagingStorage, // The organizer's last completed pass, for the filing strip (mail 0097).
@@ -496,8 +496,8 @@ function customerMailerFor(cfg: HostConfig): MailService | null {
  * indistinguishable from none, so the pager does not get exactly one. Cached on the config
  * object like the service bag. It cannot throw: this runs inside `buildDeps` on the path of
  * every request, and an observability feature must never cause the outage it exists to
- * report — a sink that cannot be constructed is not added, the pass reports `undeliverable`,
- * and the product serves.
+ * report — a sink that cannot be constructed stays as an arm that refuses (`refusingAlertSink`,
+ * read dead on `/health`), and the product serves.
  */
 let sinksCache: { key: object; sinks: AlertSink[] } | null = null;
 
@@ -533,37 +533,51 @@ function alertReadersFor(cfg: HostConfig): HostAlertReaders {
   return readers;
 }
 
-function alertSinksFor(cfg: HostConfig): AlertSink[] {
+export function alertSinksFor(cfg: HostConfig): AlertSink[] {
   if (sinksCache && sinksCache.key === cfg) return sinksCache.sinks;
   const sinks: AlertSink[] = [];
   const alerts = cfg.alerts;
   if (alerts) {
-    try {
-      const hook = webhookAlertSink(alerts.webhookUrl ?? undefined);
-      if (hook) sinks.push(hook);
-      // The PUSH arm — the pager's second vendor, and this host is the only observer of a dead
-      // worker, so a single-vendor delivery path here is the version of the problem that can
-      // coincide with the outage it is meant to report. Built before the mail sink because it
-      // needs no `MailService` and therefore cannot be the thing that throws in this block.
-      const push = telegramAlertSink({
-        botToken: alerts.telegram?.botToken ?? undefined,
-        chatId: alerts.telegram?.chatId ?? undefined,
-      });
-      if (push) sinks.push(push);
-      if (alerts.mail && alerts.operatorEmail) {
+    // PER ARM: a throw building one arm must not take the arms after it, and the broken arm stays
+    // in the list as one that refuses, so `/health`, the pager verdict and the other driver see it.
+    const add = (name: string, build: () => AlertSink | null): void => {
+      try {
+        const sink = build();
+        if (sink) sinks.push(sink);
+      } catch (err) {
+        // Structured, and it names no value: the thing most likely to be malformed here is a
+        // URL from an env var, and this line goes to a log drain.
+        hostLogger(cfg).error("alert_sink_unavailable", {
+          err, sink: name, reason: "an alert sink could not be constructed; it is published as refusing",
+        });
+        sinks.push(refusingAlertSink(name, `the ${name} arm could not be built at boot (alert_sink_unavailable)`));
+      }
+    };
+    add("webhook", () => webhookAlertSink(alerts.webhookUrl ?? undefined));
+    // The PUSH arm — the pager's second vendor, and this host is the only observer of a dead
+    // worker, so a single-vendor delivery path here is the version of the problem that can
+    // coincide with the outage it is meant to report.
+    add("telegram", () => telegramAlertSink({
+      botToken: alerts.telegram?.botToken ?? undefined,
+      chatId: alerts.telegram?.chatId ?? undefined,
+    }));
+    const mail = alerts.mail;
+    const operatorEmail = alerts.operatorEmail;
+    if (mail && operatorEmail) {
+      add("mail", () => {
         const mailer = new ResendMailer({
-          apiKey: alerts.mail.apiKey,
-          from: alerts.mail.from,
-          replyTo: alerts.mail.replyTo ?? undefined,
+          apiKey: mail.apiKey,
+          from: mail.from,
+          replyTo: mail.replyTo ?? undefined,
         });
         const service = new MailService({
           mailer,
           config: {
-            appUrl: alerts.mail.appUrl,
-            siteUrl: alerts.mail.siteUrl,
-            adminUrl: alerts.mail.adminUrl,
-            supportEmail: alerts.mail.supportEmail,
-            operatorEmail: alerts.operatorEmail,
+            appUrl: mail.appUrl,
+            siteUrl: mail.siteUrl,
+            adminUrl: mail.adminUrl,
+            supportEmail: mail.supportEmail,
+            operatorEmail,
           },
         });
         // A limiter, not a database: `sendOperatorAlert` uses it for exactly one thing —
@@ -571,16 +585,10 @@ function alertSinksFor(cfg: HostConfig): AlertSink[] {
         // runtime handle stays here in the composition root, the shape the `/admin/*`
         // callbacks take. It cannot move onto the blind handle: `ohmail_admin` has no grant
         // on `auth_throttle`, and inventing one would widen the staff role to buy nothing.
-        sinks.push(mailAlertSink(service, {
+        return mailAlertSink(service, {
           limiter: dbRecipientLimiter(makePooledDb(cfg.databaseUrlPooled)),
           now: () => new Date(),
-        }));
-      }
-    } catch (err) {
-      // Structured, and it names no value: the thing most likely to be malformed here is a
-      // URL from an env var, and this line goes to a log drain.
-      hostLogger(cfg).error("alert_sink_unavailable", {
-        err, reason: "an alert sink could not be constructed; the pass will report undeliverable",
+        });
       });
     }
   }

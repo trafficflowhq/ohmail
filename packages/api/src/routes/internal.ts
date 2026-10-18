@@ -1,6 +1,6 @@
 import {
   runAlertPass, listOpenAlerts, alertDriverStatuses, newDeliveryStreak, firingToLog,
-  sinkHealthOf,
+  sinkHealthOf, pagerVerdictOf,
   type AlertSink,
 } from "@trafficflow/db/cloud";
 import { sql } from "drizzle-orm";
@@ -337,8 +337,9 @@ let apiAlertPasses = 0;
  * makes a later `AlertSinkHealth` addition a compile error, not new text on a public endpoint.
  */
 export function apiAlertSinkSummary(sinks: readonly AlertSink[]): AlertSinkSummary {
+  const health = sinkHealthOf(sinks, apiDeliveryStreak);
   return {
-    arms: sinkHealthOf(sinks, apiDeliveryStreak).map((arm): AlertArmHealth => ({
+    arms: health.map((arm): AlertArmHealth => ({
       name: arm.name,
       outcome: arm.outcome,
       consecutiveFailures: arm.consecutiveFailures,
@@ -346,6 +347,7 @@ export function apiAlertSinkSummary(sinks: readonly AlertSink[]): AlertSinkSumma
       lastOkAt: arm.lastOkAt,
     })),
     passes: apiAlertPasses,
+    pager: pagerVerdictOf(health),
   };
 }
 

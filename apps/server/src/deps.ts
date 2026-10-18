@@ -1,7 +1,7 @@
 import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, parkedAccountsOf, type Tx } from "@trafficflow/db";
 import { readDbTls } from "@trafficflow/db/cloud";
 import {
-  acquireImapSlot, releaseImapSlot, webhookAlertSink, telegramAlertSink,
+  acquireImapSlot, releaseImapSlot, webhookAlertSink, telegramAlertSink, refusingAlertSink,
   recordApiFault, accountsAtCapOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   makeSupabaseStagingStorage, makeS3StagingStorage,
@@ -425,8 +425,10 @@ export function alertSinksFor(cfg: ServerConfig, logger: Logger, db: Db): AlertS
       if (sink) sinks.push(sink);
     } catch (err) {
       logger.error("alert_sink_unavailable", {
-        err, sink: name, reason: "an alert sink could not be constructed; the pass will not deliver to it",
+        err, sink: name, reason: "an alert sink could not be constructed; it is published as refusing",
       });
+      // Kept as an arm that refuses, so `/health`, the pager verdict and the other driver see it.
+      sinks.push(refusingAlertSink(name, `the ${name} arm could not be built at boot (alert_sink_unavailable)`));
     }
   };
   add("webhook", () => webhookAlertSink(alerts.webhookUrl ?? undefined));

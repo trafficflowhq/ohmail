@@ -374,10 +374,15 @@ export const alertPassRuns = pgTable("alert_pass_runs", {
   delivered: integer("delivered").notNull().default(0),
   /** Sinks that REFUSED on this pass. */
   failedSinks: integer("failed_sinks").notNull().default(0),
-  /** Consecutive passes in which no sink accepted — `AlertPassResult.sinkFailureStreak`. */
+  /**
+   * Consecutive passes that asked every sink the arm can deliver through and were refused by each,
+   * counted in the database by `recordAlertPass` (any acceptance clears it; a pass with no usable
+   * sink records 0). Not the in-memory `AlertPassResult.sinkFailureStreak`.
+   */
   sinkFailureStreak: integer("sink_failure_streak").notNull().default(0),
   /**
-   * How many sinks that arm had configured on its last pass. ZERO means it cannot page anybody,
+   * How many sinks that arm could deliver through on its last pass (an arm whose build threw is not
+   * counted). ZERO means it cannot page anybody,
    * which `sink_failure_streak` cannot express: an arm that never attempts a delivery never
    * fails one, so its streak stays at zero and reads exactly like a healthy arm.
    */

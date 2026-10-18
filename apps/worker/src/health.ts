@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { AlertSinkHealth } from "@trafficflow/db/cloud";
+import type { AlertSinkHealth, PagerVerdict } from "@trafficflow/db/cloud";
 import type { ApiCronTargetHealth } from "./api-cron.js";
 
 /**
@@ -135,6 +135,12 @@ export interface HealthSnapshot {
    */
   alertSinks: AlertSinkHealth[];
   /**
+   * THE PAGER'S OWN VERDICT over `alertSinks`: `ok`, `unarmed` (no arm) or `dead` (every arm has
+   * refused a full streak). Null on a standby, which has composed no sinks. A field, never a 503:
+   * a dead pager must not restart a worker that syncs perfectly, nor fail a deploy on its own.
+   */
+  pager: PagerVerdict | null;
+  /**
    * THE API-CRON SCHEDULE, PER TARGET — the internal API routes this worker drives on a clock
    * (`api-cron.ts`: billing reconcile hourly, session reap and the SMTP SIZE back-fill daily).
    * Published because its predecessor (the API deployment's platform cron) failed by SAYING NOTHING
@@ -166,7 +172,7 @@ export interface HealthSnapshot {
 export const PUBLIC_HEALTH_KEYS = [
   "version", "buildError", "leader", "standby", "takingOver", "healthy", "unhealthyReason",
   "waitingForLockSeconds", "kekFingerprint", "kekActiveVersion", "kekVersionCount", "kek", "shard",
-  "alertSinks", "apiCron", "parkedReader", "dbTls", "error",
+  "alertSinks", "pager", "apiCron", "parkedReader", "dbTls", "error",
 ] as const satisfies readonly (keyof HealthSnapshot)[];
 
 export type PublicHealth = Pick<HealthSnapshot, (typeof PUBLIC_HEALTH_KEYS)[number]>;

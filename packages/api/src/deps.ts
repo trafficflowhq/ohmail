@@ -430,6 +430,12 @@ export interface AlertSinkSummary {
    * `passes` can over-report activity, never under-report it.
    */
   passes: number;
+  /**
+   * The pager's own verdict over {@link AlertSinkSummary.arms}: `unarmed` (no arm), `dead`
+   * (every arm has refused a full streak on this instance) or `ok`. A field, never a 503. On a
+   * cold instance it reads `ok` until the arms are exercised; `passes` says how warm it is.
+   */
+  pager: "ok" | "unarmed" | "dead";
 }
 
 /**

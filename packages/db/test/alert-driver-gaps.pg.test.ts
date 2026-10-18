@@ -8,6 +8,7 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 import { schema, alertDriverGaps, alertPassRuns } from "../src/schema.js";
 import {
   recordAlertPass, alertDriverStatuses, pruneAlertDriverGaps, ALERT_DRIVER_GAP_RETENTION_DAYS,
+  evaluateAlerts,
 } from "../src/alerts.js";
 import { STAFF_SELECT_GRANTS } from "../src/staff-grants.js";
 import type { Tx } from "../src/change-log.js";
@@ -32,8 +33,24 @@ describe.skipIf(!AVAILABLE)("alert_driver_gaps on real Postgres", () => {
   let probe: ReturnType<typeof postgres>;
 
   const pass = (d: Tx, driver: "worker" | "api", now: Date): Promise<void> => recordAlertPass(d, {
-    driver, now, firing: 0, delivered: 0, failedSinks: 0, sinkFailureStreak: 0, sinksConfigured: 1,
+    driver, now, firing: 0, delivered: 0, failedSinks: 0, refusedAll: false, sinksConfigured: 1,
   });
+  /**
+   * A pass that attempted a delivery: `delivered` sinks accepted, `failed` refused. `refusedAll` is
+   * the pass's own verdict that it asked every usable arm and each refused; by default, a pass that
+   * delivered nothing and was refused.
+   */
+  const stamp = (driver: "worker" | "api", now: Date, delivered: number, failed: number, sinks = 2,
+    refusedAll = delivered === 0 && failed > 0) =>
+    recordAlertPass(db, { driver, now, firing: 1, delivered, failedSinks: failed, refusedAll, sinksConfigured: sinks });
+  const streakOf = async (driver: string) => {
+    const [r] = await db.select({ s: alertPassRuns.sinkFailureStreak }).from(alertPassRuns)
+      .where(eq(alertPassRuns.driver, driver));
+    return r ? Number(r.s) : null;
+  };
+  const undeliverable = async (asDriver: "worker" | "api", now = NOW) =>
+    (await evaluateAlerts(db, { now, driver: asDriver, shards: [] }))
+      .filter((a) => a.kind === "alert_driver_undeliverable").map((a) => a.key);
   const dayRow = async (driver: string, day = TODAY) => {
     const [r] = await db.select().from(alertDriverGaps)
       .where(dsql`${alertDriverGaps.driver} = ${driver} and ${alertDriverGaps.day} = ${day}::date`);
@@ -160,6 +177,82 @@ describe.skipIf(!AVAILABLE)("alert_driver_gaps on real Postgres", () => {
     expect(await pruneAlertDriverGaps(db, NOW)).toBe(1);
     const days = (await db.select({ day: alertDriverGaps.day }).from(alertDriverGaps)).map((r) => r.day);
     expect(days).toEqual(["2026-07-10"]);
+  });
+
+  it("the streak is counted in the database: refusals add, a delivery clears, a quiet pass keeps", async () => {
+    await stamp("api", at(-4 * MIN), 0, 2);
+    expect(await streakOf("api"), "the first refused pass inserts one").toBe(1);
+    await stamp("api", at(-3 * MIN), 0, 2);
+    await stamp("api", at(-2 * MIN), 0, 1);
+    expect(await streakOf("api"), "three stamps that delivered nothing").toBe(3);
+    await pass(db, "api", at(-90 * SEC));
+    expect(await streakOf("api"), "a pass that attempted nothing neither counts nor clears").toBe(3);
+    await stamp("api", at(-MIN), 1, 1);
+    expect(await streakOf("api"), "one arm accepted: the streak is over").toBe(0);
+    await pass(db, "worker", at(-MIN));
+    expect(await streakOf("worker"), "a quiet first pass inserts zero").toBe(0);
+  });
+
+  it("only a pass that asked every usable arm counts; a subset keeps the streak, no usable arm records 0", async () => {
+    await stamp("api", at(-6 * MIN), 0, 2);
+    await stamp("api", at(-5 * MIN), 0, 2);
+    await stamp("api", at(-4 * MIN), 0, 1, 2, false);
+    expect(await streakOf("api"), "only some arms were asked: the others said nothing").toBe(2);
+    await stamp("api", at(-3 * MIN), 0, 2);
+    expect(await streakOf("api"), "every arm asked and refused").toBe(3);
+    expect(await undeliverable("worker")).toEqual(["alert_driver_undeliverable:api"]);
+    await recordAlertPass(db, {
+      driver: "api", now: at(-2 * MIN), firing: 1, delivered: 0, failedSinks: 0, refusedAll: false, sinksConfigured: 0,
+    });
+    expect(await streakOf("api"), "no usable arm: the refusals it counted went with it").toBe(0);
+    const [a] = (await evaluateAlerts(db, { now: NOW, driver: "worker", shards: [] }))
+      .filter((x) => x.kind === "alert_driver_undeliverable");
+    expect([a?.signature, a?.severity, a?.cls]).toEqual(["none", "warning", "signal"]);
+    // The insert branch reads the same: a first pass that asked a subset inserts 0, and so does a
+    // refusal stamped with no usable arm.
+    await stamp("worker", at(-MIN), 0, 1, 2, false);
+    expect(await streakOf("worker")).toBe(0);
+    await db.delete(alertPassRuns);
+    await recordAlertPass(db, {
+      driver: "worker", now: at(-MIN), firing: 1, delivered: 0, failedSinks: 1, refusedAll: true, sinksConfigured: 0,
+    });
+    expect(await streakOf("worker")).toBe(0);
+  });
+
+  it("an OLDER stamp landing after a newer one moves no streak (the fence holds)", async () => {
+    await stamp("api", at(-5 * MIN), 0, 2);
+    await stamp("api", at(-3 * MIN), 0, 2);
+    await stamp("api", at(-4 * MIN), 1, 1);
+    expect(await streakOf("api"), "the late delivery belongs to the past and clears nothing").toBe(2);
+  });
+
+  it("alert_driver_undeliverable: an api arm with no sink is reported by the worker, never by itself", async () => {
+    await pass(db, "worker", at(-MIN));
+    await recordAlertPass(db, {
+      driver: "api", now: at(-MIN), firing: 0, delivered: 0, failedSinks: 0, refusedAll: false, sinksConfigured: 0,
+    });
+    expect(await undeliverable("worker")).toEqual(["alert_driver_undeliverable:api"]);
+    expect(await undeliverable("api"), "the api arm says nothing about itself").toEqual([]);
+  });
+
+  it("alert_driver_undeliverable: three refused stamps fire, two do not", async () => {
+    await pass(db, "worker", at(-MIN));
+    await stamp("api", at(-3 * MIN), 0, 2);
+    await stamp("api", at(-2 * MIN), 0, 2);
+    expect(await undeliverable("worker"), "two is a blip").toEqual([]);
+    await stamp("api", at(-MIN), 0, 2);
+    expect(await undeliverable("worker")).toEqual(["alert_driver_undeliverable:api"]);
+    expect(await undeliverable("api")).toEqual([]);
+  });
+
+  it("alert_driver_undeliverable: past the dark threshold the row is alert_driver_dark's alone", async () => {
+    await pass(db, "worker", NOW);
+    await recordAlertPass(db, {
+      driver: "api", now: at(-HOUR), firing: 0, delivered: 0, failedSinks: 0, refusedAll: false, sinksConfigured: 0,
+    });
+    const kinds = (await evaluateAlerts(db, { now: NOW, driver: "worker", shards: [] }))
+      .filter((a) => a.key.endsWith(":api")).map((a) => a.kind);
+    expect(kinds).toEqual(["alert_driver_dark"]);
   });
 
   it("privacy: the table carries no account_id and no key into any other table", async () => {

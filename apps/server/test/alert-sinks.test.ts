@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { sql } from "drizzle-orm";
-import { silentLogger, type Logger } from "@trafficflow/core";
+import { createLogger, silentLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import type { Alert } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -66,6 +66,28 @@ describe("the arms TF_ALERT_SECRET arms, named the way the organizer names its o
     expect(armNames(cfgWith({
       TF_ALERT_SECRET: SECRET, TF_ALERT_WEBHOOK_URL: WEBHOOK, ...push, ...SMTP, TF_ALERT_EMAIL: PAGER,
     }))).toEqual(["webhook", "telegram", "mail"]);
+  });
+
+  it("an arm whose build THROWS stays composed and refuses as misconfigured, the arms after it kept", async () => {
+    // An smtp: scheme the loader admitted, then broken: SmtpMailer's constructor refuses it.
+    const loaded = cfgWith({ TF_ALERT_SECRET: SECRET, TF_ALERT_WEBHOOK_URL: WEBHOOK, ...SMTP, TF_ALERT_EMAIL: PAGER });
+    const cfg: ServerConfig = { ...loaded, smtp: { ...loaded.smtp!, url: "http://127.0.0.1:2525" } };
+    const lines: string[] = [];
+    const logger = createLogger({ service: "server", level: "debug", sink: (l) => lines.push(l) });
+    const sinks = alertSinksFor(cfg, logger, {} as never);
+    expect(sinks.map((s) => s.name)).toEqual(["webhook", "mail"]);
+    expect(lines.map((l) => (JSON.parse(l) as { event: string }).event)).toContain("alert_sink_unavailable");
+    const out = await sinks[1]!.notify([], { source: "api", environment: "production", now: new Date() });
+    expect(out).toMatchObject({ ok: false, outcome: "misconfigured" });
+    expect(JSON.stringify(out)).not.toContain(PAGER);
+    const summary = buildDeps(new Request(cfg.origin), { ...runtime(cfg, {}), alertSinks: sinks }).health?.alertSinks?.();
+    expect(summary?.arms.map((a) => a.name)).toEqual(["webhook", "mail"]);
+    expect(summary?.arms[1]?.outcome, "known dead from boot, not unexercised").toBe("misconfigured");
+    expect(summary?.pager).toBe("ok");
+    // The same broken arm alone: the pager is dead before any page is attempted.
+    const alone = sinks.filter((s) => s.name === "mail");
+    const lone = buildDeps(new Request(cfg.origin), { ...runtime(cfg, {}), alertSinks: alone }).health?.alertSinks?.();
+    expect(lone?.pager).toBe("dead");
   });
 
   it("a half-set Telegram pair is an arm that refuses every page naming the missing variable", async () => {

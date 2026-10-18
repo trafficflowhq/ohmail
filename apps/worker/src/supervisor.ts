@@ -169,6 +169,8 @@ export async function runWorkerSupervised(
         // `[]` when there is no worker yet — a standby has composed no sinks and run no pass,
         // and an empty list is the honest answer rather than a fabricated healthy one.
         alertSinks: stats?.alertSinks ?? [],
+        // Null until a worker runs: a standby has no arms to judge.
+        pager: stats?.pager ?? null,
         // Same contract: a standby has scheduled nothing, and `[]` is the honest report.
         apiCron: stats?.apiCron ?? [],
         // The wall's reader (mail 0124): the worker's own answer once it runs; before that, the

@@ -75,6 +75,14 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
     expect(missing, "the at-cap reader is the drivers' to run").toEqual([]);
   });
 
+  it("the worker's call names apiCron — without it api_cron_stale is unread on every pass", () => {
+    const worker = calls.filter((c) => c.file === "apps/worker/src/index.ts");
+    expect(worker).toHaveLength(1);
+    expect(worker[0]!.args, "the schedule the leader holds reaches the pass").toMatch(/\bapiCron\b\s*:/);
+    const api = calls.filter((c) => c.file === "packages/api/src/routes/internal.ts");
+    expect(api[0]!.args, "the API driver holds no schedule and hands none").not.toMatch(/\bapiCron\b\s*:/);
+  });
+
   it("every host that arms the API's alert route composes the reader it forwards", () => {
     const hosts = productionSources().flatMap((file) => {
       const src = withoutComments(readFileSync(file, "utf8"));

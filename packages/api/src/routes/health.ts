@@ -21,8 +21,9 @@ import type { Route } from "../router.js";
  * direction: database unreachable ⇒ 503 `database_unreachable`; schema incomplete ⇒ 503
  * `schema_incomplete`; missing `pg_trgm` ⇒ 200 with `pgTrgm: false`; a KEK fault or no build
  * identity in production ⇒ 503 with the reason. One round trip: the probes are one statement.
- * `cookieAuth` reports this request's cookie/bearer split; `alertSinks`/`alertPasses` mirror the
- * worker's keys. A database error forwards the code, never the driver's message.
+ * `cookieAuth` reports this request's cookie/bearer split; `alertSinks`/`pager` mirror the
+ * worker's keys and `alertPasses` says how warm they are. A database error forwards the code,
+ * never the driver's message.
  */
 
 
@@ -412,7 +413,7 @@ export const healthRoutes: Route[] = [
       if (injected?.alertSinks) {
         try {
           const summary = injected.alertSinks();
-          pager = { alertSinks: summary.arms, alertPasses: summary.passes };
+          pager = { alertSinks: summary.arms, alertPasses: summary.passes, pager: summary.pager };
         } catch {
           // Contracted not to throw — it reads memory. Belt-and-braces for the same reason
           // `staffDbAttestation`'s catch exists: an observability surface may never darken the

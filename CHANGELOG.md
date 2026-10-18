@@ -19,6 +19,21 @@ After you agree, setup now waits a few seconds for the senders it will hold in t
 everything is sorted, also when the first pull ended before you agreed. "Your first decision" is no longer skipped
 when they arrive late. This applies to an install with one mailbox.
 
+### The pager reports its own failures
+
+For operators. Each alert driver now pages through its own channels when every channel of the other one
+refused three passes in a row (`alert_driver_undeliverable`; it clears once a repaired channel delivers). A
+pass that asked only some of a driver's channels, such as a re-page held back from mail, does not count
+toward it. A driver also names a channel that keeps refusing beside one that works (`alert_sink_degraded`).
+The organizer pages when an API pass it schedules has failed twice in a row past its cadence, or not run for
+three (`api_cron_stale`), and either driver when the platform-signals poller stops writing
+(`signal_source_dark`). `/health` on the api and the organizer publishes `pager` (`ok`, `unarmed` or `dead`),
+and a pager that reaches nobody now logs `alerts_undeliverable` every hour instead of once. A channel that
+cannot be built at boot is listed as `misconfigured`, the pager reads `dead` when nothing else is left, and a
+service with no channel that builds counts as having none. On upgrade: where only one of the two services
+has a channel, `/internal/alerts` lists the other as a warning signal that pages nobody; with no channel on
+either, nothing new is listed.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

@@ -42,6 +42,10 @@ const EVERY_KIND: ReadonlyArray<{ kind: AlertKind; count: number }> = [
   { kind: "alert_driver_dark", count: 1 },
   { kind: "api_fault_rate", count: 12 },
   { kind: "pooler_refusals", count: 11 },
+  { kind: "alert_driver_undeliverable", count: 1 },
+  { kind: "alert_sink_degraded", count: 1 },
+  { kind: "api_cron_stale", count: 1 },
+  { kind: "signal_source_dark", count: 1 },
 ];
 
 describe("alert_state round-trips every field, for every kind", () => {

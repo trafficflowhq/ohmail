@@ -282,6 +282,8 @@ export interface ApiCronDeps {
 export interface ApiCronHandle {
   /** Memory read — `/health` touches no database, and this keeps that true. */
   health(): ApiCronTargetHealth[];
+  /** When this schedule started: the age `api_cron_stale` counts a never-answered target from. */
+  since(): Date;
   /** Idempotent. Clears every armed timer and aborts every in-flight request. */
   stop(): void;
 }
@@ -354,6 +356,7 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
   const baseUrl = deps.baseUrl.replace(/\/+$/, "");
 
   let stopped = false;
+  const startedAt = now();
   const states = new Map<string, TargetState>();
   for (const t of targets) {
     states.set(t.target, {
@@ -507,6 +510,9 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
           remaining: s.remaining,
         };
       });
+    },
+    since(): Date {
+      return startedAt;
     },
     stop(): void {
       stopped = true;

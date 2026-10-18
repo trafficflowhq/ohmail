@@ -395,6 +395,9 @@ describe("evaluateAlerts — the original rules, against seeded failure states",
       aiCircuitOpenMs: 10 * 60 * 1000,    // below the breaker's 15-min max cooldown, so only a
       alertDriverDarkMs: 30 * 60 * 1000,  // many missed passes for either arm, no plausible jitter
       alertDriverNeverRanMs: 30 * 60 * 1000,  // the dark threshold, counted from the leader's boot
+      driverUndeliverableStreak: 3,       // passes refused by every arm: a 502 is a blip, three is not
+      apiCronStaleFloorMs: 15 * 60 * 1000, // under twice a clocked pass's cadence, so a minute clock needs misses
+      signalSourceDarkMs: 30 * 60 * 1000, // the poller runs every five; the widest gap measured was ten
       reuseWideAccounts: 3,               // one account is a client bug; three is a pattern
       refreshReplayedWindowMs: 60 * 60 * 1000, // a client rotates ~4x an hour at the access window
       refreshReplayedThreshold: 5,        // …so five replays in one is replaying more than rotating

@@ -198,6 +198,25 @@ export interface AlertThresholds {
    */
   alertDriverNeverRanMs: number;
   /**
+   * The refusal streak at which a pager counts as reaching nobody: a driver's consecutive passes
+   * that asked every arm it can deliver through and were refused by each (`alert_driver_undeliverable`),
+   * and one arm's consecutive refused attempts (`alert_sink_degraded`). Three, {@link DEFAULT_SINK_FAILURE_ESCALATION}'s
+   * number: a single 502 is a blip, three attempts in a row is an arm that stopped.
+   */
+  driverUndeliverableStreak: number;
+  /**
+   * The floor under `api_cron_stale`'s cadence margin: a target is stale when its last 2xx is older
+   * than twice its cadence with the retry failed too, or three times it, or this, whichever is
+   * longer. Fifteen minutes, so the minute clocks and
+   * the five-minute ones (plus their jitter) need several missed pokes before they page.
+   */
+  apiCronStaleFloorMs: number;
+  /**
+   * How old a project's newest `platform_signals.fetched_at` may be before the poller counts as
+   * dark. Thirty minutes: the poller runs every five, and the largest gap measured live was ten.
+   */
+  signalSourceDarkMs: number;
+  /**
    * Distinct accounts with a reuse revocation inside {@link reuseRevokedWindowMs} before the
    * per-account signals escalate to a `credential_replay_wide` incident. Three: one account is a
    * client bug or one stolen token, and three separate accounts in a day is a pattern that is
@@ -250,6 +269,9 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   aiCircuitOpenMs: 10 * 60 * 1000,
   alertDriverDarkMs: 30 * 60 * 1000,
   alertDriverNeverRanMs: 30 * 60 * 1000,
+  driverUndeliverableStreak: 3,
+  apiCronStaleFloorMs: 15 * 60 * 1000,
+  signalSourceDarkMs: 30 * 60 * 1000,
   reuseWideAccounts: 3,
   refreshReplayedWindowMs: 60 * 60 * 1000,
   refreshReplayedThreshold: 5,
@@ -435,7 +457,57 @@ export interface EvaluateOptions {
    * and not a fault. The worker arm needs no such flag: every deployment that leads a shard has one.
    */
   apiArmExpected?: boolean;
+  /**
+   * THIS DRIVER'S OWN ARMS, as its delivery streak holds them — `alert_sink_degraded`'s input.
+   * `runAlertPass` derives it from its `sinks` and `deliveryStreak`; absent ⇒ the rule is unread.
+   */
+  sinkStreaks?: SinkStreakReading;
+  /**
+   * The worker's API-cron schedule (`api-cron.ts`), as its handle reports it — `api_cron_stale`'s
+   * input. `null` or absent ⇒ unread: a shard > 0, a standby, the self-host organizer and the API
+   * driver hold no schedule, and none of them may clear shard 0's rows.
+   */
+  apiCron?: ApiCronReading | null;
+  /**
+   * How many arms THIS driver can deliver through (built ones; see {@link AlertSink.unusable}).
+   * `alert_driver_undeliverable`'s "none" reads it: an observer that can push nothing says
+   * nothing. Absent ⇒ armed, the reading every caller before this field had.
+   */
+  usableSinks?: number;
 }
+
+/** One driver's arms and their streaks — see {@link EvaluateOptions.sinkStreaks}. */
+export interface SinkStreakReading {
+  /** The configured arms, by name. */
+  sinks: readonly string[];
+  streaks: Readonly<Record<string, Pick<SinkStreak, "consecutiveFailures" | "attempts">>>;
+}
+
+/**
+ * The worker's schedule as `api_cron_stale` reads it: a structural subset of the worker's
+ * `ApiCronTargetHealth`, so this package imports nothing from the worker. `since` is when the
+ * schedule started, the age a target that never answered 2xx is counted from.
+ */
+export interface ApiCronReading {
+  since: Date;
+  targets: ReadonlyArray<{
+    target: string;
+    everySeconds: number;
+    lastOkAt: string | null;
+    outcome?: string | null;
+    consecutiveFailures?: number;
+  }>;
+}
+
+/** The env variables that arm each driver's pager, named in `alert_driver_undeliverable`. */
+const PAGER_VARIABLES: { readonly [D in AlertDriver]: string } = {
+  worker: "TF_ALERT_WEBHOOK_URL, the TF_ALERT_TELEGRAM_BOT_TOKEN + TF_ALERT_TELEGRAM_CHAT_ID pair, " +
+    "or TF_ALERT_EMAIL with RESEND_API_KEY + MAIL_FROM on the worker (the self-hosted organizer's " +
+    "mail arm speaks Resend)",
+  api: "TF_ALERT_WEBHOOK_URL, the TF_ALERT_TELEGRAM_BOT_TOKEN + TF_ALERT_TELEGRAM_CHAT_ID pair, " +
+    "or TF_ALERT_EMAIL on the API host (with RESEND_API_KEY + MAIL_FROM on the managed host, " +
+    "with SMTP_URL + MAIL_FROM on a self-hosted server)",
+};
 
 /**
  * The two arms of the alerting, as a closed set — `alert_pass_runs`'s primary key.
@@ -464,6 +536,8 @@ export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   // it and emits no key, and before this entry the API pass then DELETED the worker's row on
   // every pass. Same flap as the four above, arriving through a grant rather than a signature.
   "imap_admission_refused",
+  // Keyed by the OTHER driver, by this driver's own arm, and read from the worker's schedule.
+  "alert_driver_undeliverable", "alert_sink_degraded", "api_cron_stale",
 ]);
 
 /**
@@ -479,6 +553,17 @@ export interface EvaluationScope {
   unread: ReadonlySet<AlertKind>;
   /** Why, for every member of `unread` — the words a board renders instead of a zero. */
   unreadReasons: ReadonlyMap<AlertKind, UnreadReason>;
+  /**
+   * Keys of a READ kind that this evaluation could not judge: no evidence either way (a schedule
+   * that has not poked since it started, an arm not exercised since boot). Neither cleared nor
+   * confirmed, so an open row goes to the unconfirmed clock instead of a told resolution.
+   */
+  withheld?: ReadonlySet<string>;
+  /**
+   * This driver's own recorded refusal streak is at the undeliverable line: its pass may carry
+   * its own `alert_driver_undeliverable` row once it is due, which is how a repaired arm proves it.
+   */
+  selfPagerRefusing?: boolean;
 }
 
 /**
@@ -545,6 +630,26 @@ export const ALERT_KIND_ARMS: { readonly [K in AlertKind]: AlertKindArms } = {
     evaluated: (_key, s) => s.driver === "worker" && !s.unread.has("imap_admission_refused"),
     unconfirmedAfterMs: UNCONFIRMED_AFTER,
   },
+  // The other driver's pass row, as `alert_driver_dark` reads it; a stale row is rule 15's.
+  alert_driver_undeliverable: {
+    evaluated: (key, s) => s.driver !== undefined && key === `alert_driver_undeliverable:${otherDriver(s.driver)}`,
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
+  // This driver's own arms; a pass that was handed no streaks read nothing, and an arm with no
+  // evidence since boot is withheld (a restart must not announce a dead arm recovered).
+  alert_sink_degraded: {
+    evaluated: (key, s) => s.driver !== undefined && !s.unread.has("alert_sink_degraded")
+      && key.startsWith(`alert_sink_degraded:${s.driver}:`) && !(s.withheld?.has(key) ?? false),
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
+  // Only the worker that holds the schedule; shards > 0 and the organizer pass `null`. A target
+  // that has not answered since the schedule started is withheld: only a 2xx clears.
+  api_cron_stale: {
+    evaluated: (key, s) => s.driver === "worker" && !s.unread.has("api_cron_stale")
+      && !(s.withheld?.has(key) ?? false),
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
+  signal_source_dark: readHere("signal_source_dark"),
 };
 
 /** A row whose kind this build does not know: nothing here can clear it, so only the clock can. */
@@ -1805,7 +1910,224 @@ export async function evaluateAlertsWithScope(
     }
   }
 
-  return { alerts, scope: { driver: opts.driver, shards, measuredWindows, unread, unreadReasons } };
+  // 16. The OTHER driver runs and can page nobody. Its own `alerts_undeliverable` is a log line on
+  // a host nobody may be reading; this delivers the same fact through THIS driver's sinks, and a
+  // driver is never evaluated about itself, so a dead pager cannot page about itself through
+  // itself. Only while the row is fresh: past the dark threshold rule 15 owns the driver. The
+  // streak counts only passes that asked every arm the driver can deliver through and were refused
+  // by each (`recordAlertPass`): one dead arm beside a live one is rule 17's, never this.
+  //
+  // "none" (no usable sink counted: none set, or none that could be built) is a configuration, and
+  // this driver carries every unpaged finding of the other one while it runs: lost redundancy,
+  // recorded as a signal. An observer that cannot push anything either says nothing, or every
+  // no-channel install would hold two permanent rows.
+  let selfPagerRefusing = false;
+  if (opts.driver) {
+    const other = otherDriver(opts.driver);
+    const rows = await db
+      .select({
+        driver: alertPassRuns.driver,
+        ranAt: alertPassRuns.ranAt,
+        streak: alertPassRuns.sinkFailureStreak,
+        sinks: alertPassRuns.sinksConfigured,
+      })
+      .from(alertPassRuns);
+    const row = rows.find((r) => r.driver === other);
+    const self = rows.find((r) => r.driver === opts.driver);
+    selfPagerRefusing = Number(self?.streak ?? 0) >= t.driverUndeliverableStreak;
+    const fresh = row !== undefined
+      && (secondsBetween(now, row.ranAt) ?? Infinity) * 1000 <= t.alertDriverDarkMs;
+    const streak = Number(row?.streak ?? 0);
+    const refusing = fresh && streak >= t.driverUndeliverableStreak;
+    const none = fresh && !refusing && Number(row!.sinks ?? 0) === 0 && (opts.usableSinks ?? 1) > 0;
+    if (refusing || none) {
+      alerts.push({
+        key: `alert_driver_undeliverable:${other}`,
+        kind: "alert_driver_undeliverable",
+        severity: refusing ? "critical" : "warning",
+        title: none
+          ? `The ${other} alert driver has no usable alert sink`
+          : `The ${other} alert driver's last ${streak} delivery attempts all failed`,
+        detail:
+          (none
+            ? `The ${other} alert driver ran ${humanAge(secondsBetween(now, row!.ranAt))} ago and ` +
+              `counted no alert sink it can deliver through (none is set, or none could be built). ` +
+              `Its findings reach a person only because the ${opts.driver} ` +
+              `driver carries them; if the ${opts.driver} driver stops too, nothing pages. `
+            : `The ${other} alert driver's last ${streak} passes that tried to deliver asked every ` +
+              `sink it has and each one refused, so whatever it finds pages nobody. ` +
+              `Reported by the ${opts.driver} driver through its own sinks. ` +
+              (other === "api"
+                ? "The API driver is the only observer of worker_down: while it cannot page, a dead " +
+                  "sync worker pages nobody. "
+                : "The worker driver is the fast arm; while it cannot page, alerts reach a person only " +
+                  "on the API scheduler's cadence. ")) +
+          `Arm or fix ${PAGER_VARIABLES[other]}; its alerts_undeliverable log lines and its ` +
+          `/health alertSinks name the arm that refuses.`,
+        count: 1,
+        oldestSeconds: null,
+        cls: none ? "signal" : "incident",
+        affectedAccounts: null,
+        fixHref: "/reliability",
+        signature: none ? "none" : `refusing|${pow2Floor(streak)}`,
+      });
+    }
+  }
+
+  // 17. One arm of THIS driver's pager has refused a full streak while another delivers. Self-
+  // reported: the driver is alive and the surviving arm is the witness. Not when every arm is
+  // down — that silence is rule 16's, on the other driver, and two alarms for one silence is how
+  // a real one gets filtered.
+  //
+  // Cleared only by an arm that delivered: a fresh streak (a restart, a cold instance) or one
+  // still refusing under the line is no evidence, so its key is withheld rather than resolved.
+  const withheld = new Set<string>();
+  if (opts.driver && opts.sinkStreaks) {
+    const { sinks: arms, streaks } = opts.sinkStreaks;
+    const failing = arms.filter((n) => (streaks[n]?.consecutiveFailures ?? 0) >= t.driverUndeliverableStreak);
+    const live = arms.filter((n) => (streaks[n]?.consecutiveFailures ?? 0) === 0 && (streaks[n]?.attempts ?? 0) > 0);
+    for (const n of arms) {
+      if (live.includes(n) || (failing.includes(n) && live.length > 0)) continue;
+      withheld.add(`alert_sink_degraded:${opts.driver}:${n}`);
+    }
+    if (live.length > 0) {
+      for (const sink of failing) {
+        const n = streaks[sink]!.consecutiveFailures;
+        alerts.push({
+          key: `alert_sink_degraded:${opts.driver}:${sink}`,
+          kind: "alert_sink_degraded",
+          severity: "warning",
+          title: `The ${opts.driver} driver's ${sink} alert arm has refused ${n} deliveries in a row`,
+          detail:
+            `The ${sink} arm of the ${opts.driver} driver's pager refused its last ${n} delivery ` +
+            `attempts while ${live.join(", ")} delivered. Pages still land, through one vendor ` +
+            `fewer: the next outage of ${live.join(", ")} silences this driver. The ` +
+            `alert_sink_degraded log line carries the arm's own reason, and /health alertSinks ` +
+            `its closed code.`,
+          count: 1,
+          oldestSeconds: null,
+          cls: "incident",
+          affectedAccounts: null,
+          fixHref: "/reliability",
+          signature: "degraded",
+        });
+      }
+    }
+  } else {
+    markUnread("alert_sink_degraded", "no_reader");
+  }
+
+  // 18. A route the worker drives on a clock (`api-cron.ts`) has not answered 2xx within twice
+  // its cadence, floored. `lastOkAt`-based on purpose: a stopped timer, a wedged poke and every
+  // failure outcome look the same from here, and a 401 that "attempted" never clears it. Only the
+  // worker holds the schedule; every other pass is unread and clears nothing.
+  //
+  // One failed poke is a blip: the scheduler only ADDS jitter, so its retry lands just past twice
+  // the cadence. Twice the cadence therefore needs the retry to have failed too; three times is a
+  // schedule that stopped or a poke that hangs. A restart wipes the schedule's memory: a target
+  // with no 2xx since it started is judged only once it is past its limit, and until then a failed
+  // attempt keeps an open row confirmed and nothing clears it (withheld).
+  if (opts.driver === "worker" && opts.apiCron) {
+    const since = opts.apiCron.since.getTime();
+    let openRows: Set<string> | null = null;
+    for (const target of opts.apiCron.targets) {
+      const key = `api_cron_stale:${target.target}`;
+      const everyMs = target.everySeconds * 1000;
+      const okAt = target.lastOkAt === null ? since : new Date(target.lastOkAt).getTime();
+      const ageMs = now.getTime() - okAt;
+      const retried = (target.consecutiveFailures ?? 0) >= 2;
+      const limitMs = Math.max((retried ? 2 : 3) * everyMs, t.apiCronStaleFloorMs);
+      let restarted = false;
+      if (!(ageMs > limitMs)) {
+        if (target.lastOkAt !== null) continue; // a 2xx inside the limit: evaluated clear
+        const failed = target.outcome != null && target.outcome !== "ok";
+        if (failed) {
+          openRows ??= new Set((await selectOpenAlerts(db, { key: alertState.alertKey },
+            eq(alertState.kind, "api_cron_stale"))).map((r) => r.key));
+        }
+        if (!failed || !openRows!.has(key)) {
+          withheld.add(key);
+          continue;
+        }
+        restarted = true;
+      }
+      const age = humanAge(Math.round(ageMs / 1000));
+      alerts.push({
+        key,
+        kind: "api_cron_stale",
+        severity: target.everySeconds <= 300 ? "critical" : "warning",
+        title: restarted
+          ? `The ${target.target} pass still fails since the schedule restarted ${age} ago`
+          : target.lastOkAt === null
+          ? `The ${target.target} pass has not answered since the schedule started ${age} ago`
+          : `The ${target.target} pass last ran ${age} ago`,
+        detail:
+          `The worker pokes the API host's ${target.target} pass every ` +
+          `${humanAge(target.everySeconds)}, and its last 2xx answer was ` +
+          `${restarted ? `not seen in the ${age} since the schedule restarted, and it was stale before`
+            : target.lastOkAt === null ? `never, in the ${age} since the schedule started` : `${age} ago`} ` +
+          `(limit ${humanAge(Math.round(limitMs / 1000))}).` +
+          (target.outcome ? ` Its last attempt ended '${target.outcome}'` +
+            `${target.consecutiveFailures ? `, ${target.consecutiveFailures} failure(s) in a row` : ""}.` : "") +
+          ` http_401 is a TF_API_CRON_SECRET the API host does not accept; http_404 an API host ` +
+          `with no TF_ALERT_SECRET; no outcome at all is a schedule that stopped. The worker's ` +
+          `api_cron_failed log lines and /health apiCron name it.`,
+        count: 1,
+        oldestSeconds: Math.round(ageMs / 1000),
+        cls: "incident",
+        affectedAccounts: null,
+        fixHref: "/worker",
+        signature: `stale|${target.outcome ?? "none"}`,
+      });
+    }
+  } else {
+    markUnread("api_cron_stale", "no_reader");
+  }
+
+  // 19. The platform-signals poller stopped writing. `api_5xx_rate` says "not measured" over an
+  // empty window; this says the measuring stopped. Armed by the first row: an empty table says
+  // nothing, and only a running poller empties it (it prunes on every pass).
+  try {
+    const sources = await db
+      .select({
+        provider: platformSignals.provider,
+        project: platformSignals.project,
+        newest: sql<Date>`max(${platformSignals.fetchedAt})`,
+      })
+      .from(platformSignals)
+      .groupBy(platformSignals.provider, platformSignals.project);
+    for (const s of sources) {
+      const darkSeconds = secondsBetween(now, new Date(s.newest as unknown as string));
+      if ((darkSeconds ?? 0) * 1000 <= t.signalSourceDarkMs) continue;
+      alerts.push({
+        key: `signal_source_dark:${s.provider}:${s.project}`,
+        kind: "signal_source_dark",
+        severity: "warning",
+        title: `No platform signals for ${s.project} in ${humanAge(darkSeconds)}`,
+        detail:
+          `The newest ${s.provider} reading for ${s.project} was fetched ${humanAge(darkSeconds)} ago ` +
+          `(threshold ${humanAge(Math.round(t.signalSourceDarkMs / 1000))}), so api_5xx_rate is ` +
+          `measuring nothing. If api_cron_stale:platform_signals is also firing, the poke is ` +
+          `failing; otherwise the poll runs and writes nothing (its token was removed, or the ` +
+          `vendor refuses it).`,
+        count: 1,
+        oldestSeconds: darkSeconds,
+        cls: "incident",
+        affectedAccounts: null,
+        fixHref: "/reliability",
+        signature: "dark",
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (code !== "42501") throw err;
+    markUnread("signal_source_dark", "refused");
+  }
+
+  return {
+    alerts,
+    scope: { driver: opts.driver, shards, measuredWindows, unread, unreadReasons, withheld, selfPagerRefusing },
+  };
 }
 
 /**
@@ -2019,6 +2341,11 @@ export interface AlertSink {
    * the loud default. Decided here and never by `name`, which two unrelated sinks may share.
    */
   readonly channel?: "mail";
+  /**
+   * The host could not build this arm (`alert_sink_unavailable`): it refuses every delivery.
+   * Known dead rather than unexercised — see {@link refusingAlertSink}.
+   */
+  readonly unusable?: boolean;
   notify(alerts: readonly Alert[], ctx: AlertNotifyContext): Promise<boolean | AlertDeliveryResult>;
   /** Optional: the daily summary of incidents. Same never-throws contract; bytes from the digest alone. */
   notifyDigest?(digest: AlertDigest, ctx: AlertNotifyContext): Promise<boolean | AlertDeliveryResult>;
@@ -2314,10 +2641,26 @@ export const DEFAULT_SINK_FAILURE_ESCALATION = 3;
  * cannot forget to store it back.
  */
 export interface DeliveryStreak {
-  /** Consecutive delivery ATTEMPTS in which not one sink accepted. */
+  /**
+   * Consecutive delivery ATTEMPTS that asked every usable arm and not one accepted. An attempt
+   * that asked only some arms (a re-page the mail window held from the mail arm, an incident whose
+   * mail verdict is the digest, a digest only the mail arm gets) neither counts nor clears.
+   */
   consecutiveFailures: number;
-  /** Whether the current streak has already been escalated. One ERROR per streak. */
+  /** Whether the current streak has already been escalated. One ERROR per streak, then hourly. */
   escalated: boolean;
+  /**
+   * ISO of the last escalation of the current streak, null between streaks. A streak that holds
+   * escalates again once this is {@link UNDELIVERABLE_REPEAT_MS} old: with every arm down, that
+   * line is the last signal left, and once per streak let it scroll away. Optional, so a streak
+   * object built by an older bundle still reads.
+   */
+  escalatedAt?: string | null;
+  /**
+   * ISO of this process's last self-probe ({@link selfProbe}): one per repeat window, so an arm
+   * still broken is asked once an hour, not on every pass while the other driver's mail is held.
+   */
+  probedAt?: string | null;
   /**
    * The same memory, per sink — needed the moment a second vendor existed. The global counter is
    * cleared by ANY success: right while one arm's failure was total failure, silently inverted
@@ -2350,8 +2693,11 @@ export function newSinkStreak(): SinkStreak {
 }
 
 export function newDeliveryStreak(): DeliveryStreak {
-  return { consecutiveFailures: 0, escalated: false, sinks: {} };
+  return { consecutiveFailures: 0, escalated: false, escalatedAt: null, sinks: {} };
 }
+
+/** How often a standing full-delivery failure escalates again. See {@link DeliveryStreak.escalatedAt}. */
+export const UNDELIVERABLE_REPEAT_MS = 60 * 60 * 1000;
 
 /** Emitted on the ONE pass where a streak crosses the threshold. */
 export interface SinkEscalation {
@@ -2444,9 +2790,10 @@ export interface AlertPassResult {
   /** True when there were alerts to send and not one sink was CONFIGURED. */
   undeliverable: boolean;
   /**
-   * Consecutive delivery attempts, including this one, in which no sink accepted. `0` when
-   * this pass delivered, and unchanged when this pass had nothing to deliver — an absence of
-   * attempts is not evidence of health, so it neither counts nor clears.
+   * Consecutive delivery attempts, including this one, that asked every usable arm and in which
+   * no sink accepted. `0` when this pass delivered, and unchanged when this pass had nothing to
+   * deliver or asked only some arms — an absence of attempts is not evidence of health, so it
+   * neither counts nor clears.
    */
   sinkFailureStreak: number;
   /**
@@ -2505,6 +2852,16 @@ export function sinkHealthOf(
 ): AlertSinkHealth[] {
   return sinks.map((sink) => {
     const s = streak?.sinks?.[sink.name];
+    // An arm that could not be built is known dead from boot, not "never exercised".
+    if (sink.unusable) {
+      return {
+        name: sink.name,
+        outcome: "misconfigured" as const,
+        consecutiveFailures: Math.max(s?.consecutiveFailures ?? 0, DEFAULT_SINK_FAILURE_ESCALATION),
+        attempts: s?.attempts ?? 0,
+        lastOkAt: null,
+      };
+    }
     return {
       name: sink.name,
       outcome: s?.lastOutcome ?? null,
@@ -2513,6 +2870,34 @@ export function sinkHealthOf(
       lastOkAt: s?.lastOkAt ?? null,
     };
   });
+}
+
+/**
+ * THE PAGER'S OWN VERDICT, published on both hosts' `/health` as `pager`. `unarmed`: no arm at
+ * all. `dead`: every arm has refused a full streak. `ok` otherwise, an arm never attempted
+ * included (absence of evidence, which `alertSinks` beside it shows). A field and never a 503: a
+ * dead pager must not restart a worker that syncs, nor fail a deploy on its own. With every arm
+ * down this and the hourly `alerts_undeliverable` line are the only signals left.
+ */
+export type PagerVerdict = "ok" | "unarmed" | "dead";
+
+export function pagerVerdictOf(
+  arms: ReadonlyArray<Pick<AlertSinkHealth, "consecutiveFailures">>,
+  threshold: number = DEFAULT_SINK_FAILURE_ESCALATION,
+): PagerVerdict {
+  if (arms.length === 0) return "unarmed";
+  return arms.every((a) => a.consecutiveFailures >= threshold) ? "dead" : "ok";
+}
+
+/**
+ * The arm a host composes when building a sink THREW: present and refusing, so `/health`, the
+ * pager verdict and `alert_sink_degraded` see a broken arm instead of a missing one. `error` is
+ * the host's own fixed sentence, never the exception's text. Marked `unusable`: `/health` reads it
+ * misconfigured at a full streak, and the pass's stamp does not count it, so a driver left with
+ * only such arms records no usable sink: the other driver lists it as "none", never as refusing.
+ */
+export function refusingAlertSink(name: string, error: string): AlertSink {
+  return { name, unusable: true, notify: () => Promise.resolve({ ok: false, outcome: "misconfigured", error }) };
 }
 
 /**
@@ -2576,6 +2961,7 @@ function accountDelivery(
         // that delivered is exactly the pass on which a dead arm would otherwise be invisible.
         streak.consecutiveFailures = 0;
         streak.escalated = false;
+        streak.escalatedAt = null;
         for (const o of outcomes) {
           if (o.ok) continue;
           const per = streak.sinks[o.sink];
@@ -2589,10 +2975,23 @@ function accountDelivery(
             survivors: [...delivered],
           });
         }
-      } else {
+      } else if (sinks.every((s) => s.unusable || outcomes.some((o) => o.sink === s.name))) {
+        // EVERY USABLE ARM WAS ASKED and none accepted: only that is "alerts reach nobody". An
+        // attempt that asked some of them (a re-page the mail window held from the mail arm, an
+        // incident whose mail verdict is the digest, a digest only the mail arm gets) says nothing
+        // about the arms it did not ask, so it neither counts nor escalates; counted, one dead
+        // pager arm beside a mail arm that delivers read as a pager reaching nobody. The per-arm
+        // counters above moved either way. The database streak applies the same rule to the
+        // whole pass, notices included (`stampOf` in `runAlertPass`).
         streak.consecutiveFailures += 1;
-        if (streak.consecutiveFailures >= threshold && !streak.escalated) {
+        // Once per streak, and again every hour it holds: with every arm down this ERROR is the
+        // last signal there is. A streak escalated without a stamp (an older object) re-arms now.
+        const lastAt = streak.escalatedAt ? Date.parse(streak.escalatedAt) : Number.NaN;
+        const due = !streak.escalated || !Number.isFinite(lastAt)
+          || now.getTime() - lastAt >= UNDELIVERABLE_REPEAT_MS;
+        if (streak.consecutiveFailures >= threshold && due) {
           streak.escalated = true;
+          streak.escalatedAt = now.toISOString();
           escalate = { consecutiveFailures: streak.consecutiveFailures, sinks: [...failed], errors: [...errors] };
         }
         // Per-arm reports are deliberately NOT emitted here — see {@link SinkDegradation}. The
@@ -2721,9 +3120,12 @@ function notWrittenByANewerPass(at: Date) {
  */
 async function tellResolutions(
   db: Tx, sinks: readonly AlertSink[], ctx: AlertNotifyContext, floorAt: Date, leaseUntil: Date,
-): Promise<string[]> {
+): Promise<{ told: string[]; accepted: Set<string>; refused: Set<string> }> {
+  /** Which arms took or refused a notice: proof of reach for the pass's stamp. */
+  const accepted = new Set<string>();
+  const refused = new Set<string>();
   const tellers = sinks.filter((s) => typeof s.notifyResolved === "function");
-  if (tellers.length === 0) return [];
+  if (tellers.length === 0) return { told: [], accepted, refused };
   const horizon = new Date(floorAt.getTime() - RESOLUTION_NOTICE_HORIZON_MS);
   const owed = await db.update(alertState)
     .set({ claimedUntil: leaseUntil })
@@ -2748,17 +3150,20 @@ async function tellResolutions(
     };
     let ok = false;
     for (const sink of tellers) {
+      let took = false;
       try {
         const out = await sink.notifyResolved!([notice], ctx);
-        if (typeof out === "boolean" ? out : out.ok) ok = true;
+        took = typeof out === "boolean" ? out : out.ok;
       } catch { /* never throws by contract; a thrown one is a refusal */ }
+      (took ? accepted : refused).add(sink.name);
+      if (took) ok = true;
     }
     await db.update(alertState)
       .set(ok ? { notifyCount: 0, claimedUntil: null } : { claimedUntil: null })
       .where(and(eq(alertState.alertKey, row.key), eq(alertState.claimedUntil, leaseUntil)));
     if (ok) told.push(row.key);
   }
-  return told;
+  return { told, accepted, refused };
 }
 
 const EPOCH = new Date(0);
@@ -2876,20 +3281,45 @@ function unpagedUnevaluated(
     if (arms.evaluated(r.alertKey, scope)) continue;
     const seen = new Date(r.lastSeenAt as string).getTime();
     if (seen <= now.getTime() - arms.unconfirmedAfterMs(t)) continue; // the close loop takes it
-    out.push({
-      key: r.alertKey,
-      kind: r.kind as AlertKind,
-      severity: r.severity === "critical" ? "critical" : "warning",
-      title: r.title ?? r.detail ?? r.kind,
-      detail: `${r.detail ?? ""}${r.detail ? " " : ""}(last measured ${humanAge(secondsBetween(now, new Date(seen)))} ago)`,
-      count: Number(r.count ?? 1),
-      oldestSeconds: null,
-      cls: "incident",
-      affectedAccounts: r.affectedAccounts,
-      fixHref: r.fixHref,
-    });
+    out.push(rebuiltFromRow(r, now));
   }
   return out;
+}
+
+/** An open row as an alert this pass may claim, though it evaluated nothing for it. */
+function rebuiltFromRow(r: OpenAlertRow, now: Date): Alert {
+  const seen = new Date(r.lastSeenAt as string).getTime();
+  return {
+    key: r.alertKey,
+    kind: r.kind as AlertKind,
+    severity: r.severity === "critical" ? "critical" : "warning",
+    title: r.title ?? r.detail ?? r.kind,
+    detail: `${r.detail ?? ""}${r.detail ? " " : ""}(last measured ${humanAge(secondsBetween(now, new Date(seen)))} ago)`,
+    count: Number(r.count ?? 1),
+    oldestSeconds: null,
+    cls: "incident",
+    affectedAccounts: r.affectedAccounts,
+    fixHref: r.fixHref,
+  };
+}
+
+/**
+ * THE REPAIRED ARM'S PROOF. The database streak resets only on a delivery, and once the other
+ * driver has paged `alert_driver_undeliverable:<this driver>` nothing is left for this driver to
+ * deliver: the alarm outlived the fault. While this driver's own recorded streak is at the line,
+ * its pass carries that row itself whenever the row is due again, past the mail window. A repaired
+ * arm delivers it, the streak resets and the other driver clears the row on its next pass; a
+ * still-broken arm refuses it, at most once per re-page window, and nobody is paged.
+ */
+function selfProbe(
+  rows: readonly OpenAlertRow[], scope: EvaluationScope, usable: number, t: AlertThresholds, now: Date,
+): Alert | null {
+  if (!scope.driver || !scope.selfPagerRefusing || usable === 0) return null;
+  const r = rows.find((x) => x.alertKey === `alert_driver_undeliverable:${scope.driver}`);
+  if (!r || r.cls !== "incident") return null;
+  const seen = new Date(r.lastSeenAt as string).getTime();
+  if (seen <= now.getTime() - alertKindArms(r.kind).unconfirmedAfterMs(t)) return null;
+  return rebuiltFromRow(r, now);
 }
 
 export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise<AlertPassResult> {
@@ -2899,7 +3329,23 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const claimTtlMs = opts.claimTtlMs ?? DEFAULT_CLAIM_TTL_MS;
   const sinks = opts.sinks ?? [];
   const t: AlertThresholds = { ...DEFAULT_ALERT_THRESHOLDS, ...opts.thresholds };
-  const { alerts: firing, scope } = await evaluateAlertsWithScope(db, opts);
+  const usable = sinks.filter((s) => !s.unusable);
+  // `alert_sink_degraded` reads this driver's own arms, as the last delivery left them; an arm
+  // that could not be built counts as a full refusal streak from boot.
+  const sinkStreaks: SinkStreakReading | undefined = opts.sinkStreaks ?? (opts.deliveryStreak
+    ? {
+      sinks: sinks.map((s) => s.name),
+      streaks: Object.fromEntries(sinks.map((s) => {
+        const cur = opts.deliveryStreak!.sinks?.[s.name];
+        return [s.name, s.unusable
+          ? { consecutiveFailures: Math.max(cur?.consecutiveFailures ?? 0, t.driverUndeliverableStreak), attempts: Math.max(cur?.attempts ?? 0, 1) }
+          : { consecutiveFailures: cur?.consecutiveFailures ?? 0, attempts: cur?.attempts ?? 0 }];
+      })),
+    }
+    : undefined);
+  const { alerts: firing, scope } = await evaluateAlertsWithScope(db, {
+    ...opts, sinkStreaks, usableSinks: opts.usableSinks ?? usable.length,
+  });
 
   // The database is older than this bundle: deliver, do not persist. `alert_state` is one of the
   // tables the older schema lacks columns for — the preflight's marker IS a column this function
@@ -2983,6 +3429,12 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   });
   const byKey = new Map(existing.map((r) => [r.alertKey, r]));
   const carried = unpagedUnevaluated(existing, firingKeys, scope, t, now);
+  const probedAt = opts.deliveryStreak?.probedAt ? Date.parse(opts.deliveryStreak.probedAt) : Number.NaN;
+  const probe = opts.deliveryStreak && !(now.getTime() - probedAt < repeatMs)
+    ? selfProbe(existing, scope, usable.length, t, now) : null;
+  /** Keys carried as this driver's own proof of reach: past the mail window, see {@link selfProbe}. */
+  const probeKeys = new Set<string>(probe ? [probe.key] : []);
+  if (probe && !carried.some((a) => a.key === probe.key)) carried.push(probe);
 
   // No same-key escalation arm by severity flip alone — that existed for one pass's lifetime and
   // was twice discarded: without carried state it lacked the claim's three properties
@@ -3124,6 +3576,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const claimable = [...firing, ...carried];
   if (mailSinks.length > 0) {
     for (const a of claimable) {
+      if (probeKeys.has(a.key)) continue;
       if (alertClass(a) === "incident" && mailVerdictOf(a) === "page") policyKeys.add(policyKeyOf(a));
     }
     if (mailSinks.some((s) => typeof s.notifyDigest === "function")) policyKeys.add(DIGEST_POLICY_KEY);
@@ -3140,8 +3593,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     if (alertClass(alert) !== "incident") continue;
     // The stale-evaluation floor for the escalation arm — see the header bullet.
     const changeBefore = new Date(now.getTime() - claimTtlMs);
+    const probing = probeKeys.has(alert.key);
     const verdict: MailVerdict | null = mailSinks.length > 0 ? mailVerdictOf(alert) : null;
-    const pkey = verdict === "page" ? policyKeyOf(alert) : null;
+    const pkey = verdict === "page" && !probing ? policyKeyOf(alert) : null;
     type Won = { peak: string; mail: "page" | "hold" | "none"; retryAt: Date | null };
     /** Due, but the window is another pass's in-flight mail: not claimed, asked again next pass. */
     let waitingUntil: Date | null = null;
@@ -3195,7 +3649,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       if (!due) return null;
       // The mail verdict, under the policy row's lock: a page when no other lease is live and
       // the window is empty or expired, or the severity rose past what it mailed.
-      let mail: Won["mail"] = verdict === "page" ? "hold" : "none";
+      let mail: Won["mail"] = verdict === "page" ? (probing ? "page" : "hold") : "none";
       let retryAt: Date | null = null;
       if (pkey !== null && (wonPolicy.has(pkey) || !policy)) {
         mail = "page";
@@ -3237,6 +3691,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       return { peak: raisedPeak(cur.notifiedSignature, alert), mail, retryAt };
     });
     if (won !== null) claimed.push({ alert, ...won });
+    if (won !== null && probing) opts.deliveryStreak!.probedAt = now.toISOString();
     else if (waitingUntil !== null) {
       waiting.push({ alertKey: alert.key, kind: alert.kind, retryAt: (waitingUntil as Date).toISOString() });
     }
@@ -3303,10 +3758,28 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       });
   }
 
-  const resolutionsTold = await tellResolutions(db, sinks, {
+  const resolutions = await tellResolutions(db, sinks, {
     source: opts.source ?? "api", environment: opts.environment ?? "production", now,
   }, floorAt, leaseUntil);
+  const resolutionsTold = resolutions.told;
   const streak = opts.deliveryStreak;
+  /**
+   * What the pass stamps: every arm that took or refused ANY delivery (page, digest, resolution),
+   * so a recovered pager clears its recorded streak on its next delivery of any kind. The streak
+   * moves only when this pass asked EVERY usable arm and each one refused (`refusedAll`): a pass
+   * that asked some of them (a resolution notice only a pager arm takes, a re-page the mail window
+   * held from the mail arm, an incident whose mail verdict is the digest, a digest only the mail
+   * arm gets) says nothing about the arms it did not ask, and counted it paged a driver whose mail
+   * delivers as one reaching nobody. Only arms it can deliver through are counted: a driver left
+   * with none (none set, or none that could be built) stamps zero, which records its streak as 0
+   * and reads "none" to the other driver, so a refusal streak never outlives the arms it counted.
+   */
+  const stampOf = (took: Iterable<string>, refusedBy: Iterable<string>) => {
+    const ok = new Set([...took, ...resolutions.accepted]);
+    const bad = new Set([...refusedBy, ...resolutions.refused]);
+    const refusedAll = usable.length > 0 && ok.size === 0 && usable.every((s) => bad.has(s.name));
+    return { delivered: ok.size, failedSinks: bad.size, refusedAll, sinksConfigured: usable.length };
+  };
   // The daily digest goes after this pass's pages, so a page is never second in the inbox. Its
   // attempt moves the sink streaks like a page's does.
   const digestNow = async () => {
@@ -3332,10 +3805,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       driver: opts.driver,
       now,
       firing: firing.length,
-      delivered: 0,
-      failedSinks: 0,
-      sinkFailureStreak: streak?.consecutiveFailures ?? 0,
-      sinksConfigured: sinks.length,
+      ...stampOf(digestOutcomes.filter((o) => o.ok).map((o) => o.sink), digestOutcomes.filter((o) => !o.ok).map((o) => o.sink)),
     });
     // Nothing was ATTEMPTED, so the streak is neither advanced nor cleared. A quiet hour is
     // not evidence that the pager works — that was the whole shape of the bug this reports.
@@ -3425,10 +3895,10 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     driver: opts.driver,
     now,
     firing: firing.length,
-    delivered: delivered.length,
-    failedSinks: failed.length,
-    sinkFailureStreak: streak?.consecutiveFailures ?? 0,
-    sinksConfigured: sinks.length,
+    ...stampOf(
+      [...delivered, ...digestRun.outcomes.filter((o) => o.ok).map((o) => o.sink)],
+      [...failed, ...digestRun.outcomes.filter((o) => !o.ok).map((o) => o.sink)],
+    ),
   });
 
   return {
@@ -3458,10 +3928,19 @@ interface AlertPassRecord {
   driver: AlertDriver | undefined;
   now: Date;
   firing: number;
+  /** Arms that accepted any delivery this pass: a page, the digest or a resolution notice. */
   delivered: number;
+  /** Arms that refused one. */
   failedSinks: number;
-  sinkFailureStreak: number;
-  /** How many sinks this arm had. ZERO is the finding — it cannot page anybody. */
+  /**
+   * This pass asked EVERY arm it can deliver through and each one refused: the one pass that adds
+   * to the streak. A pass that asked only some of them leaves it; see `stampOf` in {@link runAlertPass}.
+   */
+  refusedAll: boolean;
+  /**
+   * How many sinks this arm can deliver through (an arm whose build threw is not counted). ZERO is
+   * the finding — it cannot page anybody — and records the streak as 0.
+   */
   sinksConfigured: number;
 }
 
@@ -3478,6 +3957,7 @@ interface AlertPassRecord {
 export async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<void> {
   if (!rec.driver) return;
   const at = sql`${rec.now.toISOString()}::timestamptz`;
+  const refusedAll = rec.refusedAll ? 1 : 0;
   try {
     // ONE STATEMENT: the run stamp and the day's gap row (cloud 0048) land together or not at all.
     // `prev` locks the run row first, so a pass that waited behind another measures its gap from
@@ -3493,11 +3973,20 @@ export async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<voi
         insert into alert_pass_runs as r
           (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak, sinks_configured)
         select ${rec.driver}::text, ${at}, ${rec.firing}::int, ${rec.delivered}::int,
-               ${rec.failedSinks}::int, ${rec.sinkFailureStreak}::int, ${rec.sinksConfigured}::int
+               ${rec.failedSinks}::int,
+               case when ${rec.sinksConfigured}::int = 0 or ${rec.delivered}::int > 0 then 0
+                    when ${refusedAll}::int = 1 then 1 else 0 end,
+               ${rec.sinksConfigured}::int
           from (select 1) one left join prev on true
         on conflict (driver) do update set
           ran_at = excluded.ran_at, firing = excluded.firing, delivered = excluded.delivered,
-          failed_sinks = excluded.failed_sinks, sink_failure_streak = excluded.sink_failure_streak,
+          failed_sinks = excluded.failed_sinks,
+          -- Counted here, not in a warm instance's memory: a delivery clears it, a pass that asked
+          -- every usable arm and was refused by each adds one, any other pass leaves it, and a
+          -- driver with no usable arm records 0 (a refusal never outlives the arms it counted).
+          sink_failure_streak = case when excluded.sinks_configured = 0 or excluded.delivered > 0 then 0
+            when ${refusedAll}::int = 1 then r.sink_failure_streak + 1
+            else r.sink_failure_streak end,
           sinks_configured = excluded.sinks_configured
           where r.ran_at <= excluded.ran_at
         returning r.ran_at
@@ -3542,9 +4031,17 @@ export interface AlertDriverStatus {
   firing: number;
   delivered: number;
   failedSinks: number;
+  /**
+   * Consecutive recorded passes of this arm that asked every sink it can deliver through and were
+   * refused by each, counted by `recordAlertPass` in the database (any delivery clears it, a page,
+   * the digest or a resolution notice; a quiet pass or one that asked only some arms leaves it; a
+   * pass with no usable sink records 0),
+   * so a serverless arm's streak survives its cold instances. `alert_driver_undeliverable` reads it.
+   */
   sinkFailureStreak: number;
   /**
-   * How many sinks this arm had on its last pass. ZERO means it CANNOT PAGE ANYBODY, and no
+   * How many sinks this arm could deliver through on its last pass (an arm whose build threw is
+   * not counted). ZERO means it CANNOT PAGE ANYBODY, and no
    * other field on this row can say so: an arm that never attempts a delivery never fails one,
    * so `sinkFailureStreak` sits at zero and reads exactly like a healthy arm.
    */

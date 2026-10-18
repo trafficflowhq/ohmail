@@ -6,7 +6,7 @@ import { makeTestDb } from "../src/testing.js";
 import { authEvents, devices, sessions } from "../src/schema.js";
 import {
   alertPassRuns, alertState, platformSignals, writeHeartbeat,
-  runAlertPass, type AlertKind, type AlertPassOptions, type AlertSink,
+  runAlertPass, newDeliveryStreak, type AlertKind, type AlertPassOptions, type AlertSink,
 } from "../src/cloud.js";
 /* @reads: packages/db/src/alert-types.ts */
 
@@ -35,6 +35,7 @@ async function seedLeader(db: Db): Promise<void> {
   for (const driver of ["worker", "api"] as const) {
     await db.insert(alertPassRuns).values({
       driver, ranAt: ago(MIN), firing: 0, delivered: 0, failedSinks: 0, sinkFailureStreak: 0,
+      sinksConfigured: 1,
     });
   }
 }
@@ -156,6 +157,25 @@ const KIND_CASES: readonly KindCase[] = [
   { kind: "sync_lag", key: "sync_lag", notEvaluated: null, evaluatedClear: { pass: W } },
   { kind: "api_fault_rate", key: "api_fault_rate:api:/auth/session", notEvaluated: null, evaluatedClear: { pass: W } },
   { kind: "pooler_refusals", key: "pooler_refusals", notEvaluated: null, evaluatedClear: { pass: W } },
+  // Keyed by the OTHER driver: the worker never evaluates its own reach.
+  {
+    kind: "alert_driver_undeliverable", key: "alert_driver_undeliverable:worker",
+    notEvaluated: { pass: W }, evaluatedClear: { pass: A },
+  },
+  // Absent streaks are no reader, never "every arm is fine".
+  {
+    kind: "alert_sink_degraded", key: "alert_sink_degraded:worker:mail",
+    notEvaluated: { pass: W }, evaluatedClear: { pass: { ...W, deliveryStreak: newDeliveryStreak() } },
+  },
+  // `apiCron: null` is a shard > 0 or the organizer: it clears nothing of shard 0's.
+  {
+    kind: "api_cron_stale", key: "api_cron_stale:scheduled_send",
+    notEvaluated: { pass: { ...W, apiCron: null } },
+    evaluatedClear: { pass: { ...W, apiCron: { since: ago(MIN), targets: [
+      { target: "scheduled_send", everySeconds: 60, lastOkAt: ago(MIN).toISOString() },
+    ] } } },
+  },
+  { kind: "signal_source_dark", key: "signal_source_dark:vercel:ohmail-api", notEvaluated: null, evaluatedClear: { pass: W, world: measuredWindow } },
 ];
 
 async function passOver(c: KindCase, sc: Scenario, seenAgo: number) {

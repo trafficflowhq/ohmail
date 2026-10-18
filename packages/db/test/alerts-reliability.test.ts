@@ -14,6 +14,7 @@ import {
   CLOUD_JOURNAL_HEAD_WHEN, DEFAULT_ALERT_THRESHOLDS, SCOPED_ALERT_KINDS, isSchemaBehind,
   type Alert, type AlertKind, type AlertSink,
 } from "../src/cloud.js";
+import { recordAlertPass } from "../src/alerts.js";
 
 /**
  * INCIDENTS AND SIGNALS — the reliability rules of cloud 0030, each asserted against a seeded
@@ -69,11 +70,12 @@ async function seedAccount(db: Db, name = "Reliability"): Promise<string> {
  * It defaults to `upFor`, i.e. degraded since boot, which is what every test written before the
  * column existed meant by `degraded: true`.
  */
-/** The worker arm's own pass row, a minute old: a leader that is up and whose alert pass runs. */
+/** The worker arm's own pass row, a minute old: a leader that is up and whose alert pass runs
+ *  with a sink (a row with none is `alert_driver_undeliverable:worker`). */
 async function seedWorkerPass(db: Db): Promise<void> {
   await db.insert(alertPassRuns).values({
     driver: "worker", ranAt: ago(MIN), firing: 0, delivered: 0, failedSinks: 0,
-    sinkFailureStreak: 0,
+    sinkFailureStreak: 0, sinksConfigured: 1,
   });
 }
 
@@ -1570,12 +1572,12 @@ describe("a pass resolves ONLY what it evaluated", () => {
         "the worker arm reports the API arm's silence").toBe(true);
     });
 
-  it("EVERY scoped kind is named in SCOPED_ALERT_KINDS — a sixth cannot be added silently", () => {
+  it("EVERY scoped kind is named in SCOPED_ALERT_KINDS — a tenth cannot be added silently", () => {
     // A census rather than a behaviour test. A rule keyed by shard or by driver that is missing
     // from the set flaps, and the flap is invisible in any single-driver test.
     expect([...SCOPED_ALERT_KINDS].sort()).toEqual([
-      "ai_provider_down", "alert_driver_dark", "imap_admission_refused", "schema_behind",
-      "worker_degraded", "worker_down",
+      "ai_provider_down", "alert_driver_dark", "alert_driver_undeliverable", "alert_sink_degraded",
+      "api_cron_stale", "imap_admission_refused", "schema_behind", "worker_degraded", "worker_down",
     ]);
   });
 });
@@ -1677,10 +1679,12 @@ describe("the alerting's own pulse", () => {
 
   it("alertDriverStatuses ALWAYS returns both arms — 'never run' is a state, not an absence", async () => {
     const db = await makeTestDb();
-    await db.insert(alertPassRuns).values({
-      driver: "worker", ranAt: ago(MIN), firing: 2, delivered: 1, failedSinks: 1,
-      sinkFailureStreak: 3,
-    });
+    // Three stamps whose every arm was asked and refused: the database counts the streak.
+    for (const m of [3, 2, 1]) {
+      await recordAlertPass(db, {
+        driver: "worker", now: ago(m * MIN), firing: 2, delivered: 0, failedSinks: 1, refusedAll: true, sinksConfigured: 1,
+      });
+    }
     const statuses = await alertDriverStatuses(db);
     expect(statuses.map((s) => s.driver)).toEqual(["worker", "api"]);
     const api = statuses.find((s) => s.driver === "api")!;
@@ -1743,6 +1747,9 @@ describe("the rule census", () => {
     // floors in `packages/api/test/api-faults.pg.test.ts` (real Postgres — the window reads bind
     // an instant in a raw fragment, which PGlite would accept as a bare Date).
     "api_fault_rate", "pooler_refusals",
+    // The alerting's own reach, rules 16-19, each driven firing and clear in
+    // `alert-reach.test.ts` and `alert-driver-gaps.pg.test.ts`.
+    "alert_driver_undeliverable", "alert_sink_degraded", "api_cron_stale", "signal_source_dark",
   ];
 
   it("every kind in the union is EMITTED by a branch of evaluateAlerts", async () => {

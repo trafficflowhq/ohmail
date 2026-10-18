@@ -28,7 +28,10 @@ export type AdminAlertKind =
   // Cloud 0033's two first-party rules, read from `api_faults`: one route answering 5xx above a
   // floor, and the pooled-acquire ceiling refusing work. `api_5xx_rate` above them counts what
   // the PLATFORM served and needs a vendor token; these two need none and name the route.
-  | "api_fault_rate" | "pooler_refusals";
+  | "api_fault_rate" | "pooler_refusals"
+  // The alerting's own reach: a driver that can page nobody, one arm of a pager refusing, a
+  // clocked API pass gone stale, the platform-signals poller gone dark.
+  | "alert_driver_undeliverable" | "alert_sink_degraded" | "api_cron_stale" | "signal_source_dark";
 /**
  * INCIDENT or SIGNAL — the class that decided whether this row went to a sink.
  *
