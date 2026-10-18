@@ -932,6 +932,13 @@ export interface MailboxFacts {
    */
   smtpMaxSizeBytes?: number | null;
   /**
+   * Does ohmail read this mailbox's provider's word on who sent a message (`MailboxDTO.providerConfirms`).
+   * `deriveMailState` never reads it; the screen-out's unsubscribe disclosure does
+   * (`autoUnsubscribeConfirms`): where no mailbox's is read, nothing is sent by itself. Absent is a
+   * server that cannot say, which keeps the disclosure.
+   */
+  providerConfirms?: boolean;
+  /**
    * The provider's own Junk folder, canonical path, as discovery resolved it at the last attach.
    * `deriveMailState` never reads it: a folder name says nothing about whether mail is arriving.
    * It is here because the two surfaces where somebody hunts for missing mail — the rail's

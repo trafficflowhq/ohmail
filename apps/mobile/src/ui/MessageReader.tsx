@@ -240,6 +240,15 @@ export function MessageReader({
                   : Copy.senderCheckImpersonation(m.senderCheck.brand, m.senderCheck.domain)}
               </Txt>
             </View>
+          ) : m.senderUnverified ? (
+            <View style={{ flexDirection: "row", gap: 6, marginTop: 6, alignItems: "flex-start" }}>
+              <View style={{ marginTop: 2 }}>
+                <Icon name="shield" size={13} color={t.c.accentInk} />
+              </View>
+              <Txt variant="note" tone="ink" style={{ flex: 1 }} testID="reader-sender-unverified">
+                {Copy.senderCheckUnverified(m.senderUnverified.brand)}
+              </Txt>
+            </View>
           ) : null}
 
           <Txt variant="h2" style={{ marginTop: 14, marginBottom: 14 }}>

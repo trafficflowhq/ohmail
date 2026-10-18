@@ -31,7 +31,11 @@ afterEach(async () => {
 const words = (key: string, v: Record<string, string> = {}): string => ({
   "senderCheck.impersonation": `This message claims to be from ${v.brand}, but ${v.domain} isn't one of ${v.brand}'s addresses.`,
   "senderCheck.impersonationShared": `This message claims to be from ${v.brand}, but anyone can register a ${v.domain} address.`,
+  "senderCheck.unverified": `This message says it is from ${v.brand}. Your mail provider did not confirm that.`,
 } as Record<string, string>)[key] ?? key;
+
+/** A sender at the brand's own domain whose provider did not confirm it (`reason: "unverified"`). */
+const UNVERIFIED = { reason: "unverified" as const, brand: "PayPal", domainShared: false };
 
 /** The phish's sender: a fixture at a shared provider, whose address anyone can register. */
 const PHISH = personalAt("fixture.mila", "gmail.com");
@@ -98,6 +102,12 @@ describe("the identity fact on the web", () => {
     expect(senderCheckFact(message(undefined))).toBeNull();
   });
 
+  it("an unconfirmed sender at a brand's own domain reads as unconfirmed, never as a claim", () => {
+    const f = senderCheckFact({ from: { name: "PayPal", address: "service@paypal.com" }, senderCheck: UNVERIFIED });
+    expect(f).toMatchObject({ reason: "unverified", brand: "PayPal", domain: "paypal.com" });
+    expect(senderCheckSentence(words, f!)).toBe("This message says it is from PayPal. Your mail provider did not confirm that.");
+  });
+
   it("the guided first decision and every one-line name carry the claim with its denial", () => {
     const not = (brand: string) => `Not ${brand}`;
     expect(notifiedSenderName({ ...message({ reason: "impersonation", brand: "PostFinance", domainShared: true }) }, not))
@@ -111,7 +121,7 @@ describe("the identity fact on the web", () => {
     process.env.NEXT_PUBLIC_API_BASE ??= "/api";
     const { MessagePane } = await import("../app/shell/MessagePane.js");
     const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-    const open = async (senderCheck: EngineMessage["senderCheck"]) => {
+    const open = async (senderCheck: EngineMessage["senderCheck"], reason = "identity") => {
       const m = {
         id: "o1", accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null, subject: "Bitte bestätigen",
         from: { name: "PostFinance", address: PHISH }, to: [{ name: null, address: "me@firma.example" }], cc: [],
@@ -140,7 +150,7 @@ describe("the identity fact on the web", () => {
           }),
         }));
       });
-      const line = host.querySelector('.msg-from > .msg-from-check[data-reason="identity"]');
+      const line = host.querySelector(`.msg-from > .msg-from-check[data-reason="${reason}"]`);
       if (line !== null) expect(line.querySelector("svg"), "the reader's line draws the shield").not.toBeNull();
       return line?.textContent ?? null;
     };
@@ -149,6 +159,11 @@ describe("the identity fact on the web", () => {
     await act(async () => { root!.unmount(); });
     host!.remove();
     expect(await open(null)).toBeNull();
+    await act(async () => { root!.unmount(); });
+    host!.remove();
+    // An unconfirmed sender at the brand's own domain: its own line, and never the claim's.
+    expect(await open(UNVERIFIED, "unverified")).toBe("This message says it is from PayPal. Your mail provider did not confirm that.");
+    expect(host!.querySelector('.msg-from-check[data-reason="identity"]')).toBeNull();
   });
 
   it("the sender sheet says the sentence, behind the shield, before any choice; an unmarked sender's says nothing", async () => {
@@ -167,8 +182,13 @@ describe("the identity fact on the web", () => {
       { id: "p1", from: { name: "PostFinance", address: PHISH },
         senderCheck: { reason: "impersonation", brand: "PostFinance", domainShared: true } },
       { id: "a1", from: { name: "Anna", address: "anna@firma.example" }, senderCheck: null },
+      { id: "u1", from: { name: "PayPal", address: "service@paypal.com" }, senderCheck: UNVERIFIED },
+      // One address, two letters: a claim, and a NEWER unconfirmed line. The claim is what the sheet says.
+      { id: "x1", from: { name: "PostFinance", address: "alerts@paypal.com" },
+        senderCheck: { reason: "impersonation", brand: "PostFinance", domainShared: false } },
+      { id: "x2", from: { name: "PayPal", address: "alerts@paypal.com" }, senderCheck: UNVERIFIED, date: "2026-10-07T10:00:00.000Z" },
     ].map((m, i) => ({ type: "message", op: "create", id: m.id, seq: i + 1, updatedAt: base.updatedAt, entity: { ...base, ...m } })) as never);
-    const sheet = async (id: string) => {
+    const sheet = async (id: string, reason = "identity") => {
       host = document.createElement("div");
       document.body.appendChild(host);
       root = createRoot(host);
@@ -180,13 +200,20 @@ describe("the identity fact on the web", () => {
           }),
         }));
       });
-      const line = host.querySelector('.sm-check[data-reason="identity"]');
+      const line = host.querySelector(`.sm-check[data-reason="${reason}"]`);
       return line === null ? null : { text: line.textContent, shield: line.querySelector("svg") !== null };
     };
     expect(await sheet("p1")).toEqual({ text: "This message claims to be from PostFinance, but anyone can register a gmail.com address.", shield: true });
     await act(async () => { root!.unmount(); });
     host!.remove();
     expect(await sheet("a1")).toBeNull();
+    await act(async () => { root!.unmount(); });
+    host!.remove();
+    expect(await sheet("u1", "unverified")).toEqual({ text: "This message says it is from PayPal. Your mail provider did not confirm that.", shield: true });
+    await act(async () => { root!.unmount(); });
+    host!.remove();
+    expect(await sheet("x2")).toEqual({ text: "This message claims to be from PostFinance, but paypal.com isn't one of PostFinance's addresses.", shield: true });
+    expect(host!.querySelector('.sm-check[data-reason="unverified"]')).toBeNull();
   });
 
   it("a marked message's pictures wait for a press on an account that loads them on open", () => {
@@ -194,5 +221,10 @@ describe("the identity fact on the web", () => {
     expect(autoLoadsImages({ auto: true }, { senderCheck: null })).toBe(true);
     expect(autoLoadsImages({ auto: false }, {})).toBe(false);
     expect(autoLoadsImages(undefined, {})).toBe(false);
+  });
+
+  it("an unconfirmed line holds nothing back: the pictures load as the account says", () => {
+    expect(autoLoadsImages({ auto: true }, { senderCheck: UNVERIFIED })).toBe(true);
+    expect(autoLoadsImages({ auto: false }, { senderCheck: UNVERIFIED })).toBe(false);
   });
 });

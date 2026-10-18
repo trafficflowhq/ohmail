@@ -423,9 +423,13 @@ export interface EngineMessage extends EngineMessageExtras {
    * renders as nothing. The client reads it and decides nothing from a dictionary of its own.
    * `by` is which writer gave it (mail 0149), read by the held-claim term; absent from an older server.
    * `list` — the address is one a mailing list posts as (mail 0150); absent reads as not.
+   * `unverified` — the address is `brand`'s own and its provider did not confirm the sender: a line
+   * to read, never a claim; `unchecked` says the identity column under it was never written. There
+   * `brand` may be a domain (`admin.ch`), where the address names no one brand: say it as given.
    */
   senderCheck?: {
-    reason: "impersonation"; brand: string; domainShared: boolean; by?: "ingest" | "backfill"; list?: boolean;
+    reason: "impersonation" | "unverified"; brand: string; domainShared: boolean; by?: "ingest" | "backfill";
+    list?: boolean; unchecked?: true;
   } | null;
   /**
    * THIS LETTER'S PLACE IS DECIDED (`MessageDTO.placeDecided`): a person placed it, or the gate
@@ -898,8 +902,13 @@ export interface ScreenerSenderDTO {
    * this row lists, the newest marked message naming the brand. `domain` is the address's own, for
    * the shared-provider sentence. Rendered outside the AI advice, whether or not any was bought.
    * `list`: anyone on a mailing list can write as this address (mail 0150) — its own sentence.
+   * `unverified`: no held letter claims anything, and the address is `brand`'s own while its
+   * provider did not confirm the sender — said on the row, with no chip; a claim outranks it.
+   * `brand` may then be a domain (`admin.ch`), where the address names no one brand.
    */
-  checked?: { reason: "impersonation"; brand: string; domainShared: boolean; domain: string; list?: true };
+  checked?: {
+    reason: "impersonation" | "unverified"; brand: string; domainShared: boolean; domain: string; list?: true;
+  };
   /**
    * HOW MANY LETTERS OF THIS SENDER THE LISTS SHOW PAST THE GATE — in the Ohbox, News or Receipts.
    * A waiting row is first contact only while this is absent: an answer the gate admitted is there.

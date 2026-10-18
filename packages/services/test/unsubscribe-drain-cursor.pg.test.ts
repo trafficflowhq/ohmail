@@ -40,7 +40,11 @@ let client: ReturnType<typeof postgres>;
 let db: ReturnType<typeof drizzle<typeof schema>>;
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
-const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`). The eligible rows carry that
+ * provider's confirmation of their sender: the drain asks a list only for a confirmed sender.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
 
 function spy(): OneClickPost & { calls: string[] } {
   const calls: string[] = [];
@@ -48,7 +52,7 @@ function spy(): OneClickPost & { calls: string[] } {
 }
 
 const svcWith = (post: OneClickPost) =>
-  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
 /**
  * A budget whose POSTING allowance pays for exactly `asks` chunk reads and is then spent, with the
@@ -75,6 +79,7 @@ const at = (i: number): Date => new Date(NOW.getTime() - 3_600_000 + i * 1000);
 const ONE_CLICK = {
   "list-unsubscribe": ["<https://sender.example/u?t=abc>"],
   "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+  "authentication-results": ["mx.google.com; dmarc=pass"],
 };
 
 interface World { accountId: string; mailboxId: string }

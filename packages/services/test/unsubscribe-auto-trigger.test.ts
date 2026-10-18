@@ -41,6 +41,13 @@ const FORBIDDEN_POST: OneClickPost = {
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
 const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`), and that provider confirming a
+ * letter's sender. The automatic arm asks a list only for a confirmed sender, so `seed` writes the
+ * confirmation unless a case states its own; the identity gate's cases below vary it.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
+const CONFIRMED = { "authentication-results": ["mx.google.com; dmarc=pass"] };
 
 const ONE_CLICK = {
   "list-unsubscribe": ["<https://sender.example/u?t=abc>"],
@@ -64,7 +71,7 @@ const MAILTO_ONLY = {
 const NO_POST_HEADER = { "list-unsubscribe": ["<https://sender.example/u?t=abc>"] };
 
 const svcWith = (post: OneClickPost) =>
-  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
 type Db = Awaited<ReturnType<typeof makeCtx>>["db"];
 
@@ -76,7 +83,7 @@ async function seed(
   const from = opts.from ?? "news@sender.example";
   const folder = opts.desired ?? "ohmail/Screened";
   const messageId = await seedMessage(db, accountId, mailboxId, { from, folder });
-  await db.insert(messageBodies).values({ messageId, text: "", headers });
+  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
   // A person screened the sender out — the only licence the automatic arm acts on (UD-R4-03).
   if (folder === "ohmail/Screened" || folder === "ohmail/Quarantine") {
     await personScreenedOut(db, accountId, from, { destination: folder });
@@ -377,29 +384,18 @@ describe("unsubscribeListKey — the idempotency key", () => {
 /**
  * `unsubscribeListKey` namespaces a `list:` claim under the CLAIMED author domain, which closes
  * the attack that needs no forgery. The residual it cannot close is a FORGED `From`, and this is
- * that residual's other half: the automatic pass wants a vouched-for author.
+ * that residual's other half: the automatic pass wants an author the mailbox's provider confirmed.
  *
- * ── THE HONEST STATE OF THIS GATE, AND WHY IT IS ASSERTED THIS WAY ─────────────────────────
- *
- * `authVerdictFromHeaders` answers `"unavailable"` for every message whose mailbox sits at a
- * provider with no trusted authserv-id, and measured against the production corpus that is EVERY
- * message — `auth_verdict` is `unavailable` or unset, with not one `pass` and
- * not one `fail`. So a gate that demanded a `pass` unconditionally would refuse all real
- * traffic while reading like hardening, which is why the condition is `identityCheckable &&
- * verdict !== "pass"` rather than `verdict !== "pass"`.
- *
- * **The consequence, stated rather than buried: the gate is INERT in production today.** These
- * tests inject a trusted authserv-id precisely so the branch is EXECUTED here instead of shipped
- * unrun — the mistake `NO_TRUSTED_AUTHSERV_IDS`' own docblock describes, where a wired path is
- * permanently one config value away from ever running.
+ * Any verdict but `pass` refuses, `unavailable` included: at a provider no authserv-id is known for,
+ * `authVerdictFromHeaders` answers `unavailable` for every message, and an automatic request there
+ * would be made for whoever wrote the `From`. The refusal sits before the claim, and the person's
+ * button is not gated.
  *
  * ── HOW TO SEE EACH ONE FAIL ──────────────────────────────────────────────────────────────
  *
- *  · Delete the `mode === "automatic" && identityCheckable && …` refusal → case 1 posts.
- *  · Drop `identityCheckable` from the condition → case 4 stops posting, which is the shape that
- *    silently retires the feature for the whole production population.
- *  · Change `run(ctx, id, "automatic")` in `onScreenOut` to `"manual"` → case 1 posts.
- *  · Change `unsubscribe()` to pass `"automatic"` → case 3 stops posting, which is a button
+ *  · Delete the `mode === "automatic" && authVerdict !== "pass"` refusal → cases 1 and 4 post.
+ *  · Change `run(ctx, id, "automatic")` in `onScreenOut` to `"manual"` → cases 1 and 4 post.
+ *  · Change `unsubscribe()` to pass `"automatic"` → cases 3 and 4 stop posting, which is a button
  *    disabled by a rule about a pass nobody watches.
  */
 describe("onScreenOut — the automatic pass wants an author its provider vouches for", () => {
@@ -456,16 +452,21 @@ describe("onScreenOut — the automatic pass wants an author its provider vouche
     expect(post.calls).toHaveLength(1);
   });
 
-  it("4. INERT where nothing can be verified — the measured production state still acts", async () => {
-    // The whole production population, and the reason the gate is not simply `verdict !== "pass"`.
-    // No trusted authserv-id means the deployment has no opinion about ANY message, and refusing
-    // on no opinion is not caution — it is retiring a shipping feature for everybody.
+  it("4. a provider nobody is known for confirms nothing: the pass sends nothing, the button still posts", async () => {
+    // Every mailbox outside the provider map: every verdict is `unavailable`, and a header claiming
+    // `pass` is one any sender can write — from a position nobody trusts it says nothing. No record
+    // is written, so the person's own press on the same letter is a first request.
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const id = await seed(db, accountId, mailboxId, AR_INCONCLUSIVE);
-    const post = spyPost();
+    const id = await seed(db, accountId, mailboxId, AR_PASS);
+    const untrusted = (post: OneClickPost) =>
+      makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
 
-    expect(await svcWith(post).onScreenOut(ctx, [id]))
-      .toEqual({ considered: 1, posted: 1, skipped: 0, failed: 0, remaining: 0 });
+    expect(await untrusted(FORBIDDEN_POST).onScreenOut(ctx, [id]))
+      .toEqual({ considered: 1, posted: 0, skipped: 1, failed: 0, remaining: 0 });
+    expect(await recordsOf(db, accountId)).toHaveLength(0);
+
+    const post = spyPost();
+    expect((await untrusted(post).unsubscribe(ctx, id)).posted).toBe(true);
     expect(post.calls).toHaveLength(1);
   });
 
@@ -528,7 +529,7 @@ describe("onScreenOut — a courtesy on top, never a gate", () => {
     const insideDns: HostResolver = { async resolve() { return ["169.254.169.254"]; } };
     const post = spyPost();
 
-    const sweep = await makeUnsubscribeService({ post, resolver: insideDns, trustedAuthservIdsFor: async () => NOBODY })
+    const sweep = await makeUnsubscribeService({ post, resolver: insideDns, trustedAuthservIdsFor: async () => GMAIL })
       .onScreenOut(ctx, [id]);
 
     expect(post.calls).toHaveLength(0);

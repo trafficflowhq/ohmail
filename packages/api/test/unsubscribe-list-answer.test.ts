@@ -59,7 +59,10 @@ const headersFor = (path: string) => ({
   "list-unsubscribe": [`<https://list.example${path}?t=${path.slice(1)}>`],
   "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
   "list-id": [`<${path.slice(1)}.list.example>`],
+  // The mailbox's provider (Gmail's position, `GMAIL` below) confirming the sender: the drain's licence.
+  "authentication-results": ["mx.google.com; dmarc=pass"],
 });
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
 
 async function world(path: string) {
   const { db, deps } = await makeDeps(FIXED_NOW, {}, { oneClickPost: fixturePort() });
@@ -142,7 +145,7 @@ describe("GET /internal/unsubscribe/drain — the worker's pass counts a refusal
     ["/accepts", { delivered: 1, failed: 0 }, { state: "sent", httpStatus: 200 }],
   ])("%s", async (path, counts, row) => {
     hits.clear();
-    const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: fixturePort() });
+    const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: fixturePort(), trustedAuthservIds: GMAIL });
     const s = await seedSession(db, { now: deps.now() });
     const from = `news@${path.slice(1)}.example`;
     const { id } = await seedMessage(db, { accountId: s.accountId, fromAddress: from, folder: "ohmail/Screened" });

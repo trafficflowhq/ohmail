@@ -416,6 +416,168 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(r).toMatchObject({ filed: 1, identity: 0 });
     expect(await desiredOf(m)).toBe(SPAM);
   });
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  (h) THE PROVIDER'S WORD — a brand's own domain is let through only when its provider confirmed
+  //      the sender. At a host with no known authserv-id every verdict is `unavailable`, and an
+  //      exact-domain forgery reads exactly like the brand's own mail.
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+
+  /** A held message whose provider said `verdict` about its author (NULL: nobody asked). */
+  async function heldWithVerdict(w: World, from: string, verdict: string | null): Promise<string> {
+    const id = await held(w, from);
+    await db.update(messages).set({ authVerdict: verdict }).where(eq(messages.id, id));
+    return id;
+  }
+
+  it("MUTATION-WATCH (h): a brand's own domain its provider did not confirm is not let through on advice", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "service@paypal.com";
+    const m = await heldWithVerdict(w, sender, "unavailable");
+    await suggest(w, m, "INBOX", 0.95);
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r).toMatchObject({ ran: true, filed: 0, kept: 1, unverified: 1, identity: 0 });
+    expect(await desiredOf(m)).toBe(SCREENER);
+    expect(await rulesFor(w, sender), "no rule is promoted for an unconfirmed brand sender").toHaveLength(0);
+  });
+
+  it("(h) the same sender its provider confirmed is filed: the verified path is unchanged", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "service@paypal.com";
+    const m = await heldWithVerdict(w, sender, "pass");
+    await suggest(w, m, "INBOX", 0.95);
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r).toMatchObject({ filed: 1, unverified: 0 });
+    expect(await desiredOf(m)).toBe("INBOX");
+    expect(await rulesFor(w, sender)).toHaveLength(1);
+  });
+
+  it("(h) NULL is nobody asking, not a confirmation: the brand sender waits", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const m = await heldWithVerdict(w, "news@mail.paypal.com", null);
+    await suggest(w, m, "ohmail/News", 0.95);
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r).toMatchObject({ filed: 0, unverified: 1 });
+    expect(await desiredOf(m)).toBe(SCREENER);
+  });
+
+  it("(h) a denying plan needs no identity: an unconfirmed brand sender is still filed to Spam", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const m = await heldWithVerdict(w, "service@paypal.com", "unavailable");
+    await suggest(w, m, SPAM, 0.95);
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r).toMatchObject({ filed: 1, unverified: 0 });
+    expect(await desiredOf(m)).toBe(SPAM);
+  });
+
+  it("(h) a sender at no brand's domain is filed on advice as before, confirmed or not", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const m = await heldWithVerdict(w, "news@shop.test", "unavailable");
+    await suggest(w, m, "INBOX", 0.95);
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r).toMatchObject({ filed: 1, unverified: 0 });
+    expect(await desiredOf(m)).toBe("INBOX");
+  });
+
+  /* THE WHOLE HELD BAG, NOT THE REPRESENTATIVE: the door moves every held letter of the address, and
+     the sender-written Date header picks which one represents them. */
+  for (const verdict of ["unavailable", null, "fail"] as const) {
+    it(`MUTATION-WATCH (h): a confirmed representative does not carry a held ${String(verdict)} letter of the same address`, async () => {
+      const w = await newWorld();
+      await settingsRow(w, false);
+      const sender = "service@paypal.com";
+      const forged = await heldWithVerdict(w, sender, verdict);
+      // Backdated by its own Date header, so the confirmed letter is the representative.
+      await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, forged));
+      const genuine = await heldWithVerdict(w, sender, "pass");
+      await suggest(w, genuine, "INBOX", 0.95);
+      const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+      expect(r).toMatchObject({ filed: 0, kept: 1, unverified: 1 });
+      expect(await desiredOf(forged), "the unconfirmed letter rode the confirmed one's advice").toBe(SCREENER);
+      expect(await desiredOf(genuine)).toBe(SCREENER);
+      expect(await rulesFor(w, sender)).toHaveLength(0);
+    });
+  }
+
+  it("(h) an unconfirmed letter held in another mailbox of the account keeps the sender waiting", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const [other] = await db.insert(mailboxes).values({
+      accountId: w.accountId, provider: "imap", address: `two-${w.accountId.slice(0, 8)}@example.test`,
+    }).returning();
+    const sender = "noreply@post.ch";
+    const forged = await heldWithVerdict({ accountId: w.accountId, mailboxId: other!.id }, sender, "unavailable");
+    await suggest(w, forged, "INBOX", 0.95);
+    expect(await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN }))
+      .toMatchObject({ filed: 0, unverified: 1 });
+    // The confirmed letter arrives later in the first mailbox and becomes the representative.
+    await heldWithVerdict(w, sender, "pass");
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r).toMatchObject({ filed: 0, unverified: 1 });
+    expect(await desiredOf(forged)).toBe(SCREENER);
+    expect(await rulesFor(w, sender)).toHaveLength(0);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  (i) EACH SENDER'S OWN LETTERS — both held-bag facts are asked of the sender's letters, never
+  //      of the account's. The selection reads one table, where the query builder writes a column
+  //      without its table, so an unqualified outer address inside the subquery would bind to the
+  //      inner row and compare it with itself: any held letter of anyone would hold everyone.
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+
+  it("MUTATION-WATCH (i): an unconfirmed letter of another sender holds nobody else; one of the same address still does", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    // Confirmed by its provider, with confident advice: filed, whoever else waits.
+    const confirmed = "service@paypal.com";
+    const genuine = await heldWithVerdict(w, confirmed, "pass");
+    await suggest(w, genuine, "ohmail/Receipts", 0.95);
+    // A stranger at no brand's domain, unconfirmed, no advice: waits, and decides nothing for others.
+    const stranger = await heldWithVerdict(w, "anna@studio-nord.example", "unavailable");
+    // CONTROL in the same account: a brand address whose own older letter is unconfirmed still waits.
+    const held2 = "noreply@post.ch";
+    const forged = await heldWithVerdict(w, held2, "unavailable");
+    await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, forged));
+    const rep = await heldWithVerdict(w, held2, "pass");
+    await suggest(w, rep, "INBOX", 0.95);
+
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r, "a confirmed sender was held for another sender's letter").toMatchObject({
+      ran: true, examined: 3, filed: 1, kept: 2, unverified: 1, identity: 0,
+    });
+    expect(await desiredOf(genuine)).toBe("ohmail/Receipts");
+    expect(await rulesFor(w, confirmed)).toHaveLength(1);
+    expect(await desiredOf(stranger)).toBe(SCREENER);
+    expect(await desiredOf(forged)).toBe(SCREENER);
+    expect(await desiredOf(rep)).toBe(SCREENER);
+    expect(await rulesFor(w, held2)).toHaveLength(0);
+  });
+
+  it("MUTATION-WATCH (i): a marked letter of another sender holds nobody else; the marked sender still waits", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const clean = "anna@studio-nord.example";
+    const benign = await held(w, clean);
+    await suggest(w, benign, "INBOX", 0.95);
+    // CONTROL in the same account: the marked sender, with the same confident admitting advice.
+    const phish = "kartenservice@gmail.test";
+    const claim = await marked(w, phish, "PostFinance");
+    await suggest(w, claim, "INBOX", 0.95);
+
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r, "a clean sender was held for another sender's claim").toMatchObject({
+      ran: true, examined: 2, filed: 1, kept: 1, identity: 1, unverified: 0,
+    });
+    expect(await desiredOf(benign)).toBe("INBOX");
+    expect(await rulesFor(w, clean)).toHaveLength(1);
+    expect(await desiredOf(claim)).toBe(SCREENER);
+    expect(await rulesFor(w, phish)).toHaveLength(0);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════

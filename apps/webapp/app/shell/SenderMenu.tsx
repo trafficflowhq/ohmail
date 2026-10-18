@@ -17,7 +17,8 @@
  * sentence shown after the act is not a disclosure. It is conditional on the account's switch (mail
  * 0054) and an unsubscribe service ({@link autoUnsubscribe}). The server asks for any of the sender's
  * mail offering one-click, now and later, so the confirm says that condition, made a fact where a held
- * letter is seen offering it (`unsubscribeClaim` over {@link posturesFor}).
+ * letter is seen offering it from a sender its provider confirmed (`unsubscribeClaim` over
+ * {@link lettersFor}).
  */
 
 /**
@@ -41,7 +42,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { useTranslations } from "next-intl";
 import {
   VIEW_OF_FOLDER, type ConflictGroup, type Folder, type PressForecast, type RuleDTO, type RulesInPlay,
-  type StayedWhy, type UnsubscribeClaim, type UnsubscribeHeaderState, ruleMatchKey, ruleTwins, twinWinner,
+  type StayedWhy, type UnsubscribeClaim, type UnsubscribeLetter, ruleMatchKey, ruleTwins, twinWinner,
   unsubscribeClaim,
 } from "@ohmail/client-engine";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
@@ -137,7 +138,7 @@ export function SenderMenu({
   mailboxNameOf,
   onMoveToo,
   autoUnsubscribe = true,
-  posturesFor,
+  lettersFor,
   forecastFor,
   rulesFor,
   organizer,
@@ -206,19 +207,21 @@ export function SenderMenu({
    */
   autoUnsubscribe?: boolean;
   /**
-   * The one-click posture of each held letter the scope's press moves, `null` while unread. Absent:
-   * nothing is known, and an armed press says the request as a condition (`unsubscribe-claim.ts`).
+   * Each held letter the scope's press moves: its one-click posture (`null` while unread) and its
+   * provider's verdict on the sender. Absent: nothing is known, and an armed press says the request
+   * as a condition (`unsubscribe-claim.ts`).
    */
-  posturesFor?: (scope: ScreeningScope) => readonly (UnsubscribeHeaderState | null)[];
+  lettersFor?: (scope: ScreeningScope) => readonly UnsubscribeLetter[];
   onClose: () => void;
 }) {
   const t = useTranslations("screening");
   /* The five pile names, from the Screener's namespace — the same words the rail and the
      decision bar use. See `decision-copy.ts`. */
   const piles = usePileNames();
-  // The identity fact off the newest marked message the sheet's subject sent (mail 0148).
+  // The identity fact off the newest marked message the sheet's subject sent (mail 0148); with none
+  // marked, the newest one whose provider did not confirm the brand's own address.
   const checkWords = useSenderCheckWords();
-  const checkLine = sender.messages.map(checkWords.line).find((l) => l !== null) ?? null;
+  const checkLine = checkWords.lineAmong(sender.messages);
   const rootRef = useRef<HTMLDivElement>(null);
   const [scope, setScope] = useState<ScreeningScope>("sender");
   /** The sheet's step: the list, the resolve step over rules that disagree, or the unsubscribe
@@ -348,7 +351,7 @@ export function SenderMenu({
     // are separate questions rather than one flag pushed down into the planner.
     const unsub: UnsubscribeClaim = unsubscribeClaim({
       armed: autoUnsubscribe && planScreeningChange(sender, dest, scope, makeRule, applyRetro).unsubscribes,
-      postures: posturesFor?.(scope) ?? [],
+      letters: lettersFor?.(scope) ?? [],
     });
     /* A RULE THAT DISAGREES IS ASKED ABOUT FIRST — only when the press writes one (or decides at
        the gate) and the forecast finds a rule keeping mail elsewhere, or an exception to write. */
@@ -432,9 +435,10 @@ export function SenderMenu({
       <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
       {head}
       {/* THE IDENTITY FACT before any choice: the name claims a company this address does not
-          belong to, said as the reader and the Screener row say it. */}
+          belong to, or the company's own address went unconfirmed by the provider — said as the
+          reader and the Screener row say it. */}
       {checkLine ? (
-        <p className="sm-check" data-reason="identity"><Icon name="shield" size={12} /><span>{checkLine}</span></p>
+        <p className="sm-check" data-reason={checkLine.reason}><Icon name="shield" size={12} /><span>{checkLine.text}</span></p>
       ) : null}
 
       {canScope ? (

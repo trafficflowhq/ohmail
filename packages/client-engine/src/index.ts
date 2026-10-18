@@ -76,6 +76,8 @@ export { watchWireFailedLists } from "./attachment-reask.js";
  */
 export { countWhen, listSurface, metaWhen, mirrorCountInput, saysEmpty, waitingSurfaceInput } from "./list-surface.js";
 export { notifiedSenderName } from "./notified-sender.js";
+// A held letter's identity column as a press reads it, under an `unverified` line too.
+export { heldCheckOf } from "./held-check.js";
 export { firstContactTime } from "./first-contact.js";
 export type { ListSurface, ListSurfaceInput, MirrorCountFacts, WaitingSurfaceFacts, WaitingWhy } from "./list-surface.js";
 
@@ -914,7 +916,10 @@ export {
   type RulesInPlay,
 } from "./press-forecast.js";
 // What a screen-out says about the one-click unsubscribe before the press. See `unsubscribe-claim.ts`.
-export { unsubscribeClaim, unsubscribePostureOf, type UnsubscribeClaim } from "./unsubscribe-claim.js";
+export {
+  autoUnsubscribeConfirms, unsubscribeClaim, unsubscribeLetterOf, unsubscribePostureOf,
+  type UnsubscribeClaim, type UnsubscribeLetter,
+} from "./unsubscribe-claim.js";
 // The local diagnostic file — core's one builder, for the phone. See `diagnostics.ts`.
 export {
   DIAGNOSTIC_FILE_NAME,

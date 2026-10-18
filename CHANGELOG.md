@@ -19,6 +19,21 @@ A web address now goes to your browser only when the window reported it as a lin
 a draft or a signature — or it is one of the app's own help links. This limits what a bug in the window can
 open; it does not stop a script already running in the window. The links you click open as before.
 
+### Unconfirmed mail from a company's own address
+
+When your mail provider did not confirm that a message from a company's own address really came from there,
+the open message, the sender sheet and the Screener now say so. They name the company, or, for a government
+domain many offices send from, such as admin.ch or bund.de, the domain. "Act on confident suggestions for me"
+no longer lets such a sender through, and a screen-out sends a one-click unsubscribe only for a sender your
+provider confirmed; the Unsubscribe button works as before. ohmail reads this confirmation from Gmail and
+Microsoft mailboxes only, so a screen-out sends no unsubscribe by itself for mail at other providers, and no
+longer says it will when none of your mailboxes is at either.
+
+### Confident suggestions acted on per sender
+
+"Act on confident suggestions for me" no longer keeps every sender it would let through waiting because some
+other held message claims a company it does not come from. Each sender is judged by their own messages.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

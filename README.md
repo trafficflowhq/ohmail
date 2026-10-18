@@ -81,7 +81,8 @@ Junk folder — where the mailbox has one — and the sender rule remembers, so
 the next mail from that sender never reaches the gate, and a message you move
 back out of Junk has its text again with the move. Screening out or
 marking spam also sends the list's one-click unsubscribe on your behalf, where
-one is offered (on by default; a switch turns it off). Plain newsletters and
+one is offered and your mail provider confirmed the sender (on by default; a
+switch turns it off). Plain newsletters and
 receipts can be filed out of the Screener by deterministic rules alone, once
 you switch that on. ohmail deletes nothing on its own.
 

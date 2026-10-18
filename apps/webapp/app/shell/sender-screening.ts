@@ -886,11 +886,13 @@ export function releaseCommit(reader: EntityReader, intent: ReleaseIntent): Engi
  * being a consent row to ask (`standalone` is "nothing to reach", and the desktop's own door hands
  * one in), because a promise nobody can withdraw is worse than no promise. `known` gates the
  * control alone: the switch rests ON, so drawing it before the row has answered would show it on
- * to somebody who turned it off.
+ * to somebody who turned it off. `confirms` gates the promise alone: with no mailbox whose
+ * provider's word is read (`autoUnsubscribeConfirms`) nothing is sent by itself, and the switch
+ * still decides for a mailbox added later.
  */
 export function autoUnsubscribeDoor(o: {
-  demo: boolean; known: boolean; on: boolean; standalone: boolean;
+  demo: boolean; known: boolean; on: boolean; standalone: boolean; confirms: boolean;
 }): { discloses: boolean; control: boolean } {
   const reaches = !o.standalone;
-  return { discloses: o.on && reaches, control: !o.demo && o.known && reaches };
+  return { discloses: o.on && reaches && o.confirms, control: !o.demo && o.known && reaches };
 }

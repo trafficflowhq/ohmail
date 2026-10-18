@@ -119,6 +119,12 @@ export interface PhoneMailbox {
    */
   smtpMaxSizeBytes: number | null;
   /**
+   * DOES OHMAIL READ THIS MAILBOX'S PROVIDER'S WORD ON A SENDER — `MailboxDTO.providerConfirms`. Where
+   * no mailbox's is read, a screen-out unsubscribes nobody by itself and the press says none
+   * (`autoUnsubscribeConfirms`). Absent where the server cannot say, which keeps the sentence.
+   */
+  providerConfirms?: boolean;
+  /**
    * WHERE A BUDGETED FIRST SYNC IS CONTINUING — `MailboxDTO.firstSyncStopFolder`, the folder the
    * last pass's byte budget stopped at. A first sync of a large mailbox runs in bounded passes
    * and pauses between them; without this the chrome shows a mirror that fills in steps and says
@@ -231,6 +237,8 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
           typeof r.smtpMaxSizeBytes === "number" && Number.isFinite(r.smtpMaxSizeBytes) && r.smtpMaxSizeBytes > 0
             ? r.smtpMaxSizeBytes
             : null,
+        /* Only a boolean the server sent; anything else is a server that cannot say. */
+        ...(typeof r.providerConfirms === "boolean" ? { providerConfirms: r.providerConfirms } : {}),
         /* Same normalisation, same reason: an empty string is not a folder name, and a server
            that predates the field sends nothing — both land as `null`, which says nothing. */
         firstSyncStopFolder: typeof r.firstSyncStopFolder === "string" && r.firstSyncStopFolder !== ""

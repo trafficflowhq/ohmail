@@ -102,6 +102,9 @@ describe("the desktop mailbox-facts seam", () => {
       },
       serverMessageCount: 4242,
       smtpMaxSizeBytes: 26_214_400,
+      /* Whose word on a sender is read: `false` at a provider no authserv-id is known for, so a
+         seam that dropped it would keep promising an unsubscribe nothing sends. */
+      providerConfirms: false,
       /* The provider's own Junk folder (mail 0065) — the local engine discovers it on every
          attach and answers it here. Nested on purpose: the surfaces that render it show the
          LEAF, so a seam that forwarded a truncated path would still look right in one test and

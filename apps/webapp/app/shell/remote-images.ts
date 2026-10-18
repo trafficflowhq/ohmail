@@ -31,12 +31,14 @@ import { API_BASE, apiConfigured, messageOf, privacy } from "../api-client";
 /**
  * DOES THIS MESSAGE LOAD ITS PICTURES ON OPEN — the account's `auto`, and never for a message whose
  * sender's name claims a company the address does not belong to (`MessageDTO.senderCheck`): its
- * pictures wait for a press, and the bar says they were held back. The one default-read term.
+ * pictures wait for a press, and the bar says they were held back. The one default-read term. An
+ * `unverified` line holds nothing back: it is the company's own address, unconfirmed.
  */
 export function autoLoadsImages(
   chrome: Pick<RemoteImagesChrome, "auto"> | undefined, m: { senderCheck?: unknown },
 ): boolean {
-  return (chrome?.auto ?? false) && !m.senderCheck;
+  const reason = (m.senderCheck as { reason?: unknown } | null | undefined)?.reason;
+  return (chrome?.auto ?? false) && (!m.senderCheck || reason === "unverified");
 }
 
 /**

@@ -704,7 +704,8 @@
       "impersonation": "Diese Nachricht gibt sich als {brand} aus, aber {domain} ist keine Adresse von {brand}.",
       "impersonationShared": "Diese Nachricht gibt sich als {brand} aus, aber eine {domain}-Adresse kann sich jeder anlegen.",
       "chip": "Nicht {brand}",
-      "list": "Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben."
+      "list": "Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben.",
+      "unverified": "Diese Nachricht gibt an, von {brand} zu kommen. Dein Mailanbieter hat das nicht bestätigt."
     },
     "title": "Screener",
     "metaWaiting": "{count, plural, =0 {alles klar} one {1 neuer Absender wartet} other {# neue Absender warten}}",
@@ -1549,7 +1550,7 @@
     },
     "autoUnsub": {
       "title": "Abmelden, wenn ich aussortiere oder als Spam markiere",
-      "on": "Wer aussortiert wird, bekommt auch die Abmeldung geschickt — sofern der Absender Ein-Klick-Abmeldung anbietet.",
+      "on": "Wer aussortiert wird, bekommt auch die Abmeldung geschickt — sofern der Absender Ein-Klick-Abmeldung anbietet und dein Mailanbieter den Absender bestätigt hat.",
       "off": "Die Mails werden einsortiert, gesendet wird nichts.",
       "microcopy": "Eine Anfrage pro Liste, einmal, von unseren Servern — deine Adresse und deine Lesezeiten bleiben so aus dem Log des Absenders heraus. Für Absender ohne Ein-Klick-Link wird nur einsortiert und nichts geschickt, und eine schon geschickte Anfrage lässt sich nicht zurückholen.",
       "failed": "Das ließ sich nicht speichern — versuch es nochmal."
@@ -2046,7 +2047,7 @@
     "laterTerm": "Später",
     "laterBody": "Schick eine Nachricht auf morgen, auf nächste Woche oder auf ein Datum, das du wählst.",
     "unsubTerm": "Abmelden",
-    "unsubBody": "Screene einen Absender aus oder markiere ihn als Spam, und ohmail schickt auch die Ein-Klick-Abmeldung für dich — wo die Liste eine anbietet. Standardmäßig an; ein Schalter in den Einstellungen stellt es ab.",
+    "unsubBody": "Screene einen Absender aus oder markiere ihn als Spam, und ohmail schickt auch die Ein-Klick-Abmeldung für dich — wo die Liste eine anbietet und dein Mailanbieter den Absender bestätigt hat. Standardmäßig an; ein Schalter in den Einstellungen stellt es ab.",
     "writeTerm": "Schreiben",
     "writeBody": "Antworten und weiterleiten mit Kopie und Blindkopie, aus dem Postfach, das du dafür wählst.",
     "tagsTerm": "Tags",

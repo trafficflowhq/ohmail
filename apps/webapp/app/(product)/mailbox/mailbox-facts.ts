@@ -146,6 +146,8 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // nothing breaks either way — the `??` is left off because the seam is where that distinction
     // was destroyed the last two times, not because this consumer needs it.
     smtpMaxSizeBytes: m.smtpMaxSizeBytes,
+    // SPREAD: absent is a server that cannot say whose word on a sender it reads, and keeps the disclosure.
+    ...("providerConfirms" in m ? { providerConfirms: m.providerConfirms } : {}),
     // The provider's own Junk folder (mail 0065). FORWARDED UNTOUCHED on the rule above: absent
     // is an API that cannot say and `null` is a mailbox with no Junk folder, and while both make
     // the note render nothing today, a `?? null` here would be the seam destroying the

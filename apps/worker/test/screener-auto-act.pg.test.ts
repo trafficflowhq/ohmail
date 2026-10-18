@@ -342,4 +342,92 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     expect(await materialize(db as never, w.accountId, "screener_suggestion", sug!.id))
       .toMatchObject({ actRefusal: null, actRefusedAt: null });
   }, 60_000);
+
+  /** One waiting sender at a brand's own domain, its provider's verdict `verdict`, advised to the Ohbox. */
+  async function brandHeld(verdict: string | null): Promise<{ accountId: string; mailboxId: string; id: string; sender: string }> {
+    const w = await seed(0, { noAiSwitch: false });
+    const sender = "service@paypal.com";
+    const [m] = await db.insert(messages).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `brand-${w.accountId}`, dedupKey: `brand:${w.accountId}`,
+      subject: "Your receipt", fromAddress: sender, authVerdict: verdict,
+      nativeLocator: { folder: SCREENER, ref: "1:900" },
+    }).returning();
+    await db.insert(folderState).values({
+      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
+    await db.insert(routingDecisions).values({
+      accountId: w.accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
+      destination: "INBOX", confidence: 0.95, rationale: "", spam: false, status: SCREENER_SUGGESTION_STATUS,
+    });
+    return { accountId: w.accountId, mailboxId: w.mailboxId, id: m!.id, sender };
+  }
+
+  it("a brand's own domain its provider did not confirm waits; the same sender confirmed is filed", async () => {
+    const unconfirmed = await brandHeld("unavailable");
+    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: unconfirmed.accountId, consent: GIVEN }, NOW);
+    expect(r).toMatchObject({ ran: true, filed: 0, unverified: 1 });
+    expect((await intentOf(unconfirmed.id)).desired).toBe(SCREENER);
+    expect(await ruleOf(unconfirmed.accountId, unconfirmed.sender)).toBeNull();
+
+    const confirmed = await brandHeld("pass");
+    const ok = await screenerAutoActPass(db as unknown as Tx, { accountId: confirmed.accountId, consent: GIVEN }, NOW);
+    expect(ok).toMatchObject({ filed: 1, unverified: 0 });
+    expect((await intentOf(confirmed.id)).desired).toBe("INBOX");
+  }, 60_000);
+
+  it("a confirmed representative does not carry an unconfirmed letter of the same address held beside it", async () => {
+    const w = await brandHeld("pass");
+    const [m] = await db.insert(messages).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `forged-${w.accountId}`,
+      dedupKey: `forged:${w.accountId}`, subject: "Your receipt", fromAddress: w.sender, authVerdict: "unavailable",
+      // Backdated by its own Date header, so the confirmed letter stays the representative.
+      date: new Date("2020-01-01T00:00:00Z"), nativeLocator: { folder: SCREENER, ref: "1:901" },
+    }).returning();
+    await db.insert(folderState).values({
+      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
+    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
+    expect(r).toMatchObject({ filed: 0, unverified: 1 });
+    expect((await intentOf(m!.id)).desired).toBe(SCREENER);
+    expect(await ruleOf(w.accountId, w.sender)).toBeNull();
+  }, 60_000);
+
+  /** Another sender's held letter in the same account, with no advice of its own. */
+  async function heldBeside(
+    w: { accountId: string; mailboxId: string }, from: string, ref: number,
+    facts: { authVerdict: string | null; senderCheck?: "impersonation"; senderCheckBrand?: string },
+  ): Promise<string> {
+    const [m] = await db.insert(messages).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `beside-${ref}-${w.accountId}`,
+      dedupKey: `beside:${ref}:${w.accountId}`, subject: "hello there", fromAddress: from,
+      nativeLocator: { folder: SCREENER, ref: `1:${ref}` }, ...facts,
+    }).returning();
+    await db.insert(folderState).values({
+      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
+    return m!.id;
+  }
+
+  it("each sender's own letters: another sender's unconfirmed letter does not hold a confirmed brand sender", async () => {
+    const w = await brandHeld("pass");
+    const stranger = await heldBeside(w, "anna@studio-nord.example", 902, { authVerdict: "unavailable" });
+    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
+    expect(r, "a confirmed sender was held for another sender's letter").toMatchObject({ filed: 1, unverified: 0 });
+    expect((await intentOf(w.id)).desired).toBe("INBOX");
+    expect((await intentOf(stranger)).desired).toBe(SCREENER);
+  }, 60_000);
+
+  it("each sender's own letters: another sender's marked letter does not hold a confirmed brand sender", async () => {
+    const w = await brandHeld("pass");
+    const phish = await heldBeside(w, "kartenservice@gmail.test", 903, {
+      authVerdict: "pass", senderCheck: "impersonation", senderCheckBrand: "PostFinance",
+    });
+    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
+    expect(r, "a sender was held for another sender's claim").toMatchObject({ filed: 1, identity: 0 });
+    expect((await intentOf(w.id)).desired).toBe("INBOX");
+    expect((await intentOf(phish)).desired).toBe(SCREENER);
+  }, 60_000);
 });

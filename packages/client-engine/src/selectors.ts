@@ -1519,20 +1519,23 @@ function withInertRule(dto: ScreenerSenderDTO, inert: ReadonlySet<string>): Scre
 
 /**
  * THE IDENTITY FACT FOR A SENDER'S ROW, off the messages it lists (newest first): the newest held
- * message the server marked names the brand. The client holds no dictionary; it reads the wire.
+ * message the server marked names the brand; with none marked, the newest one the server says its
+ * provider did not confirm (`unverified`). The client holds no dictionary; it reads the wire.
  */
 function checkedOf(newestFirst: readonly EngineMessage[]): { checked?: ScreenerSenderDTO["checked"] } {
-  for (const m of newestFirst) {
-    const c = m.senderCheck;
-    if (!c || c.reason !== "impersonation" || !c.brand) continue;
-    const at = m.from.address.lastIndexOf("@");
-    return {
-      checked: {
-        reason: "impersonation", brand: c.brand, domainShared: c.domainShared === true,
-        domain: at < 0 ? "" : m.from.address.slice(at + 1).toLowerCase(),
-        ...(c.list === true ? { list: true as const } : {}),
-      },
-    };
+  for (const reason of ["impersonation", "unverified"] as const) {
+    for (const m of newestFirst) {
+      const c = m.senderCheck;
+      if (!c || c.reason !== reason || !c.brand) continue;
+      const at = m.from.address.lastIndexOf("@");
+      return {
+        checked: {
+          reason, brand: c.brand, domainShared: c.domainShared === true,
+          domain: at < 0 ? "" : m.from.address.slice(at + 1).toLowerCase(),
+          ...(c.list === true ? { list: true as const } : {}),
+        },
+      };
+    }
   }
   return {};
 }

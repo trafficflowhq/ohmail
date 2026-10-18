@@ -704,7 +704,8 @@
       "impersonation": "This message claims to be from {brand}, but {domain} isn't one of {brand}'s addresses.",
       "impersonationShared": "This message claims to be from {brand}, but anyone can register a {domain} address.",
       "chip": "Not {brand}",
-      "list": "Sent through a mailing list — anyone on it can write as this address."
+      "list": "Sent through a mailing list — anyone on it can write as this address.",
+      "unverified": "This message says it is from {brand}. Your mail provider did not confirm that."
     },
     "title": "Screener",
     "metaWaiting": "{count, plural, =0 {all clear} one {1 first-time sender waiting} other {# first-time senders waiting}}",
@@ -1549,7 +1550,7 @@
     },
     "autoUnsub": {
       "title": "Unsubscribe when I screen out or mark spam",
-      "on": "Screening a sender out also sends their unsubscribe, where they offer one-click.",
+      "on": "Screening a sender out also sends their unsubscribe, where they offer one-click and your mail provider confirmed the sender.",
       "off": "Their mail is filed and nothing is sent.",
       "microcopy": "One request per list, once, from our servers — so your address and reading times stay out of the sender's log. Senders who offer no one-click link are filed and nothing is sent for them, and a request already sent cannot be taken back.",
       "failed": "Couldn't save that — try again."
@@ -2046,7 +2047,7 @@
     "laterTerm": "Later",
     "laterBody": "Send a message back to tomorrow, to next week, or to a date you pick.",
     "unsubTerm": "Unsubscribe",
-    "unsubBody": "Screen a sender out or mark them spam, and ohmail also sends the one-click unsubscribe for you — where the list offers one. On by default; a switch in Settings turns it off.",
+    "unsubBody": "Screen a sender out or mark them spam, and ohmail also sends the one-click unsubscribe for you — where the list offers one and your mail provider confirmed the sender. On by default; a switch in Settings turns it off.",
     "writeTerm": "Writing",
     "writeBody": "Reply and forward with Cc and Bcc, from whichever of your mailboxes you choose.",
     "tagsTerm": "Tags",

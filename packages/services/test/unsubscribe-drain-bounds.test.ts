@@ -30,7 +30,13 @@ import { makeCtx, personScreenedOut, seedMessage } from "./helpers.js";
  */
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
-const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`), and that provider confirming a
+ * candidate's sender, which `seedCandidate` writes: the drain asks a list only for a confirmed
+ * sender, and every bound here is about something else.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
+const CONFIRMED = { "authentication-results": ["mx.google.com; dmarc=pass"] };
 
 const ONE_CLICK = {
   "list-unsubscribe": ["<https://sender.example/u?t=abc>"],
@@ -57,7 +63,7 @@ function spyPost(delayMs = 0, onSend?: () => void): OneClickPost & { calls: stri
 }
 
 const svcWith = (post: OneClickPost) =>
-  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
 type Db = Awaited<ReturnType<typeof makeCtx>>["db"];
 
@@ -69,7 +75,7 @@ async function seedCandidate(
   const from = opts.from ?? `news-${randomUUID()}@sender.example`;
   const messageId = await seedMessage(db, accountId, mailboxId, { from, folder: "ohmail/Screened" });
   await personScreenedOut(db, accountId, from);
-  await db.insert(messageBodies).values({ messageId, text: "", headers });
+  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
   if (opts.screenedAt) {
     await db.update(folderState).set({ updatedAt: opts.screenedAt })
       .where(eq(folderState.messageId, messageId));

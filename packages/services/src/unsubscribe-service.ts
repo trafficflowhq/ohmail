@@ -128,8 +128,9 @@ export type UnsubscribeRefusal =
    * The AUTOMATIC pass declined to act because the author's identity was not vouched for.
    *
    * Distinct from {@link UnsubscribeRefusal} `"author_failed_authentication"`, which is a
-   * provider saying "this is forged". This one is a provider we trust saying nothing conclusive,
-   * on the one path where nobody is looking at the message. See
+   * provider saying "this is forged". This one is the mailbox's provider not confirming the
+   * author — saying nothing conclusive, or a provider no authserv-id is known for, where every
+   * verdict is `unavailable` — on the one path where nobody is looking at the message. See
    * {@link UnsubscribeService.onScreenOut}.
    */
   | "sender_identity_unverified"
@@ -586,12 +587,9 @@ export class UnsubscribeService {
     }
 
     // Per-mailbox trust, resolved for the mailbox that HOLDS this message — see
-    // {@link UnsubscribeDeps.trustedAuthservIdsFor}. Held rather than inlined because its SIZE is
-    // a second, independent fact: it says whether an identity claim about this message is
-    // CHECKABLE at all, which the verdict alone cannot distinguish from "checked, inconclusive".
+    // {@link UnsubscribeDeps.trustedAuthservIdsFor}. An empty set answers `unavailable`.
     const trusted = await within(
       this.deps.trustedAuthservIdsFor(asTx(ctx), row.mailboxId), "the trust read");
-    const identityCheckable = trusted.size > 0;
     const authVerdict = authVerdictFromHeaders(row.headers, row.fromAddress, trusted);
     await within(
       asTx(ctx).update(messages)
@@ -632,27 +630,22 @@ export class UnsubscribeService {
     // message, and `From` by the same person: if the claimed author is forged, the list we leave
     // is a stranger's choice — at best confirming to a spammer that this address is read, at
     // worst carrying somebody ELSE'S subscription token and unsubscribing a third party.
-    // Demote-only: an explicit failure from the account's own provider refuses. Absent evidence
-    // does NOT — `"unavailable"` is the answer for every deployment that has not named its
-    // provider, and refusing on it would make the feature dead on arrival while teaching the
-    // codebase the exact "absence selects the destructive branch" habit `rules.ts` argues
-    // against.
+    // BOTH ARMS refuse an explicit failure from the account's own provider. Absent evidence
+    // refuses only the automatic arm, below: a person pressing the button is looking at the mail.
     if (authVerdict === "fail") {
       refuse("author_failed_authentication", 409,
         "your provider reports that this message failed authentication for its claimed sender");
     }
 
-    // THE AUTOMATIC PASS WANTS A VOUCHED-FOR AUTHOR, THE BUTTON DOES NOT. `unsubscribeListKey`
+    // THE AUTOMATIC PASS WANTS A CONFIRMED AUTHOR, THE BUTTON DOES NOT. `unsubscribeListKey`
     // namespaces under the CLAIMED author domain; the residual is a FORGED `From`, and this gate
-    // is its other half, narrow in two directions. AUTOMATIC ONLY: `unsubscribe()` is a person
-    // looking at the mail; `onScreenOut` is a pass nobody watches. ONLY WHERE THE CLAIM IS
-    // CHECKABLE: `identityCheckable` is false where the provider has no trusted authserv-id — the
-    // production corpus has `auth_verdict` `unavailable` or unset for EVERY message, so demanding
-    // a `pass` unconditionally refuses 100% of real traffic while reading like hardening. STATED
-    // PLAINLY: THIS GATE IS INERT IN PRODUCTION TODAY — it fires when `providerAuthservIds`
-    // resolves a real authserv-id; the tests inject a trusted set so the branch is EXECUTED, not
-    // shipped unrun.
-    if (mode === "automatic" && identityCheckable && authVerdict !== "pass") {
+    // is its other half. AUTOMATIC ONLY: `unsubscribe()` is a person looking at the mail;
+    // `onScreenOut` is a pass nobody watches. ANY VERDICT BUT `pass` REFUSES, `unavailable`
+    // included: at a provider no authserv-id is known for every verdict is `unavailable`, and an
+    // automatic request there is made for whoever wrote the `From`. Before the claim, so a refusal
+    // writes no record and the person's button on the same letter still posts; the drain's walk
+    // reads the verdict saved above and does not offer the letter again (`scanChunk`).
+    if (mode === "automatic" && authVerdict !== "pass") {
       refuse("sender_identity_unverified", 409,
         "your provider did not confirm who sent this, and ohmail only leaves lists " +
         "automatically for senders it can confirm");
@@ -913,6 +906,7 @@ export class UnsubscribeService {
       accountId: messages.accountId,
       mailboxId: messages.mailboxId,
       fromAddress: messages.fromAddress,
+      authVerdict: messages.authVerdict,
     })
       .from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
@@ -957,6 +951,9 @@ export class UnsubscribeService {
         // none — a pass that runs to its end and does nothing, which looks exactly like a
         // mailbox with nothing owed. `case when` collapses both, and NULL (an absent join) is
         // `no` on both, as it was.
+        // THE STORED VERDICT: `run()` refuses any but `pass` before the claim and saves the one it
+        // computed, so a refused letter leaves here after one look instead of holding the
+        // account's slots for the whole window. NULL is nobody asked yet.
         eligible: sql<string>`(case when (
           ${senderScreenedOutByPersonSql(d, sql`${page.accountId}`, sql`lower(${page.fromAddress})`, REJECT_DESTINATIONS)}
           and ${unsubscribeRecords.id} is null
@@ -964,6 +961,7 @@ export class UnsubscribeService {
           and ${accountSettings.blockAutoUnsubscribeAt} is null
           and ${mailboxes.status} <> 'disabled'
           and ${messageBodies.messageId} is not null
+          and (${page.authVerdict} is null or ${page.authVerdict} = 'pass')
           and ${hasUnsubscribe}
           and ${hasOneClickPost}
         ) then 'yes' else 'no' end)`,

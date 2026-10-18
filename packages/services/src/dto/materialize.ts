@@ -1,7 +1,7 @@
 import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type SQL, type Table } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import {
-  asAuthVerdict, capSuggestion, draftBodyOverCeiling, resolveOhboxPolicy, senderCheckAll, senderDomainOf,
+  asAuthVerdict, capSuggestion, draftBodyOverCeiling, ownedSenderName, resolveOhboxPolicy, senderCheckAll, senderDomainOf,
   type CheckedSuggestion, type EmailAddress,
 } from "@trafficflow/core/mail";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
@@ -217,12 +217,28 @@ export function sortAtOf(date: Date | null | undefined, arrivedAt: Date | null |
 
 /**
  * `messages.sender_check` on the wire: `'impersonation'` → the fact, `'none'` → `null`, NULL (never
- * checked) → nothing. Whether the address is at a shared provider is read here, off the one list;
- * whether a list posts as it (`list`, mail 0150) is the batch's answer, the address's own fact.
+ * checked) → nothing. Below a claim, an address at a brand's own domain whose provider did not
+ * confirm the sender (any verdict but `pass`, NULL included) reads `unverified`: derived here from
+ * the two columns, never stored, and named as the address names itself (`ownedSenderName`: the
+ * brand, or a government's umbrella domain, which names no one office). Whether the address is at a
+ * shared provider is read here, off the one list; whether a list posts as it (`list`, mail 0150) is
+ * the batch's answer.
  */
 function senderCheckOf(
   value: string | null, brand: string | null, fromAddress: string, by: string | null | undefined, list: boolean,
+  authVerdict: string | null,
 ): { senderCheck?: SenderCheckDTO | null } {
+  const owned = value === "impersonation" || asAuthVerdict(authVerdict) === "pass" ? undefined : ownedSenderName(fromAddress);
+  if (owned !== undefined) {
+    return {
+      senderCheck: {
+        reason: "unverified", brand: owned, domainShared: false,
+        ...(list ? { list: true as const } : {}),
+        // The column under the line, for a press: only a checked-clean row moves on another's press.
+        ...(value === "none" ? {} : { unchecked: true as const }),
+      },
+    };
+  }
   if (value === "none") return { senderCheck: null };
   if (value !== "impersonation") return {};
   return {
@@ -348,7 +364,7 @@ export function messageRowToDTO(
     // On the row, so every projection carries it; a word from the other vocabulary reads `null`.
     authVerdict: asAuthVerdict(m.authVerdict),
     // The identity fact, spread-in: a NULL column (never checked) leaves the key ABSENT.
-    ...senderCheckOf(m.senderCheck, m.senderCheckBrand, m.fromAddress, m.senderCheckBy, listAddress === true),
+    ...senderCheckOf(m.senderCheck, m.senderCheckBrand, m.fromAddress, m.senderCheckBy, listAddress === true, m.authVerdict),
     // A placement somebody decided — a person, or the gate's admission of an answer — keeps the key.
     ...(fs?.decidedAt != null ? { placeDecided: true as const } : {}),
     // Spread-in rather than a plain `autoReplyByUs:` so an un-asked caller yields a DTO with the

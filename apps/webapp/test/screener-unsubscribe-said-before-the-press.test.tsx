@@ -4,11 +4,12 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  MemoryMirrorStore, OhmailEngine, consentPartition, mutationEffects, presentationReader, senderKey,
+  MemoryMirrorStore, OhmailEngine, autoUnsubscribeConfirms, consentPartition, mutationEffects, presentationReader, senderKey,
   type EngineMessage, type EngineMutation, type Folder, type SyncChange, type UnsubscribeHeaderState,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import type { ScreenerState } from "../app/shell/screener-state.js";
+import { autoUnsubscribeDoor } from "../app/shell/sender-screening.js";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 
@@ -60,15 +61,21 @@ function msg(id: string, from: string, folder: Folder = "ohmail/Screener"): Engi
   };
 }
 
-/** A held letter with its body read: the posture the server stated on it. */
-interface Held { id: string; from: string; posture: UnsubscribeHeaderState | "unread"; folder?: Folder }
+/**
+ * A held letter with its body read: the posture the server stated on it, and what its provider said
+ * about its author (`authVerdict`; absent is nobody asked).
+ */
+interface Held {
+  id: string; from: string; posture: UnsubscribeHeaderState | "unread"; folder?: Folder;
+  verdict?: EngineMessage["authVerdict"];
+}
 
 async function engineWith(held: Held[]): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
   await store.load();
   await store.applyChanges([
     ...held.map((x): SyncChange => {
-      const m = msg(x.id, x.from, x.folder);
+      const m = { ...msg(x.id, x.from, x.folder), ...(x.verdict === undefined ? {} : { authVerdict: x.verdict }) };
       return { type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m };
     }),
     ...held.filter((x) => x.posture !== "unread").map((x): SyncChange => ({
@@ -194,8 +201,13 @@ afterEach(async () => {
 
 describe.each([1280, 390] as const)("the Screener card at %i says the unsubscribe before the press", (width) => {
   it("a sender whose held letter offers one-click: the card says it as a fact", async () => {
-    await mount({ held: [{ id: "a1", from: ONE_CLICK, posture: "one_click" }], width });
+    await mount({ held: [{ id: "a1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width });
     expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
+  });
+
+  it("a one-click letter its provider did not confirm: the condition, never the fact — the pass sends only for a confirmed sender", async () => {
+    await mount({ held: [{ id: "a2", from: ONE_CLICK, posture: "one_click", verdict: "unavailable" }], width });
+    expect(cardLine()).toBe(`Where ${ONE_CLICK} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`);
   });
 
   it("every held letter read and none offering it: the condition still stands — later mail and past mail may offer one", async () => {
@@ -209,7 +221,7 @@ describe.each([1280, 390] as const)("the Screener card at %i says the unsubscrib
   });
 
   it("the account's switch off: nothing is said, whatever the sender offers", async () => {
-    await mount({ held: [{ id: "d1", from: ONE_CLICK, posture: "one_click" }], width, autoUnsubscribe: false });
+    await mount({ held: [{ id: "d1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width, autoUnsubscribe: false });
     expect(cardLine()).toBeNull();
     expect(capsule("Screen out")).toBeTruthy();
   });
@@ -225,7 +237,7 @@ describe.each([1280, 390] as const)("the Screener card at %i says the unsubscrib
 
 describe("the press, and how far its Undo reaches", () => {
   it("Undo inside the window stops the decision and the request: nothing reaches the wire", async () => {
-    const { latest } = await mount({ held: [{ id: "e1", from: ONE_CLICK, posture: "one_click" }], width: 1280 });
+    const { latest } = await mount({ held: [{ id: "e1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280 });
     await click(capsule("Screen out"));
     const said = toasts.at(-1)!;
     expect(said.message).toContain("Undo also stops their one-click unsubscribe request");
@@ -238,7 +250,7 @@ describe("the press, and how far its Undo reaches", () => {
   });
 
   it("left alone, the window closes and the screen-out is sent once — the request the server then makes", async () => {
-    const { latest } = await mount({ held: [{ id: "f1", from: ONE_CLICK, posture: "one_click" }], width: 1280 });
+    const { latest } = await mount({ held: [{ id: "f1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280 });
     await click(capsule("Screen out"));
     await act(async () => { latest().flush(); });
     await flush();
@@ -255,6 +267,33 @@ describe("the press, and how far its Undo reaches", () => {
   });
 });
 
+/**
+ * WHERE NO MAILBOX'S PROVIDER CAN CONFIRM A SENDER (every host but Gmail's and Microsoft's), the
+ * server refuses every automatic request, so the card, the bulk strip and the toast promise none —
+ * the shell's own door over the account's mailbox rows (`autoUnsubscribeDoor`, `autoUnsubscribeConfirms`).
+ */
+describe("an account whose mailboxes' providers ohmail cannot read says no unsubscribe before or after the press", () => {
+  const discloses = (providerConfirms: boolean): boolean => autoUnsubscribeDoor({
+    demo: false, known: true, on: true, standalone: false,
+    confirms: autoUnsubscribeConfirms([{ status: "connected", providerConfirms }]),
+  }).discloses;
+
+  it("nothing on the card, the bulk strip or the toast, over a one-click letter", async () => {
+    await mount({ held: [{ id: "m1", from: ONE_CLICK, posture: "one_click", verdict: "unavailable" }], width: 1280, autoUnsubscribe: discloses(false) });
+    expect(capsule("Screen out"), "premise: the card is on screen").toBeTruthy();
+    expect(cardLine()).toBeNull();
+    expect(host!.querySelector(".scn-bulk-unsub")).toBeNull();
+    await click(capsule("Screen out"));
+    expect(toasts.at(-1)!.message).toContain("Screened out");
+    expect(toasts.at(-1)!.message).not.toContain("unsubscrib");
+  });
+
+  it("the control: a Gmail mailbox's confirmed one-click letter is said as a fact", async () => {
+    await mount({ held: [{ id: "m2", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280, autoUnsubscribe: discloses(true) });
+    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
+  });
+});
+
 describe("the row's menu, its Accept and the bulk strip say it before the press too", () => {
   const slot = (address: string): HTMLElement => {
     const found = [...host!.querySelectorAll<HTMLElement>(".row-slot")].find((s) =>
@@ -265,7 +304,7 @@ describe("the row's menu, its Accept and the bulk strip say it before the press 
 
   it("the menu that offers Screen out and Spam names the request: a fact for a one-click sender, the condition for one offering none", async () => {
     await mount({
-      held: [{ id: "h1", from: ONE_CLICK, posture: "one_click" }, { id: "h2", from: NO_OFFER, posture: "no_header" }],
+      held: [{ id: "h1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }, { id: "h2", from: NO_OFFER, posture: "no_header" }],
       width: 1280,
     });
     await click(slot(ONE_CLICK).querySelector(".scn-act-more")!);
@@ -279,7 +318,7 @@ describe("the row's menu, its Accept and the bulk strip say it before the press 
 
   it("an Accept that screens out says it unsubscribes; an Accept that keeps says nothing", async () => {
     await mount({
-      held: [{ id: "i1", from: ONE_CLICK, posture: "one_click" }, { id: "i2", from: "keep@shop.example", posture: "one_click" }],
+      held: [{ id: "i1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }, { id: "i2", from: "keep@shop.example", posture: "one_click", verdict: "pass" }],
       width: 1280,
       suggestions: { [ONE_CLICK]: "screened", "keep@shop.example": "receipts" },
     });
@@ -288,7 +327,7 @@ describe("the row's menu, its Accept and the bulk strip say it before the press 
   });
 
   it("the bulk strip says it for any waiting sender, and not with the switch off", async () => {
-    await mount({ held: [{ id: "j1", from: ONE_CLICK, posture: "one_click" }], width: 1280 });
+    await mount({ held: [{ id: "j1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280 });
     expect(host!.querySelector(".scn-bulk-unsub")?.textContent)
       .toBe("Where a sender offers one-click unsubscribe, Spam and Screen out here also ask to unsubscribe you, now and for their later mail.");
     await act(async () => { root!.unmount(); });

@@ -50,6 +50,8 @@ interface MailboxWire {
   lastSyncAt: string | null;
   initialImportCompletedAt?: string | null;
   smtpMaxSizeBytes?: number | null;
+  /** Does ohmail read this mailbox's provider's word on a sender; absent where the engine cannot say. See `MailboxFacts`. */
+  providerConfirms?: boolean;
   /** The provider's own Junk folder, canonical path — absent/null when there is none. See `MailboxFacts`. */
   junkFolder?: string | null;
   /** Why sending is not set up, or absent/null when it is. See `MailboxFacts`. */
@@ -221,6 +223,8 @@ export async function readMailboxFactsVia(
     // standalone door's attach cap can follow the user's own server instead of the hosted
     // constant; the engine has served it all along, and this narrowing used to drop it.
     ...("smtpMaxSizeBytes" in m ? { smtpMaxSizeBytes: m.smtpMaxSizeBytes } : {}),
+    // Whose word on a sender is read, by the same spread: absent keeps the unsubscribe disclosure.
+    ...("providerConfirms" in m ? { providerConfirms: m.providerConfirms } : {}),
     // The provider's own Junk folder (mail 0065), spread on this file's rule: absent is an
     // engine that predates the field, `null` is a mailbox with no Junk folder, and the note
     // both surfaces render is silent for either — but the distinction is not this seam's to

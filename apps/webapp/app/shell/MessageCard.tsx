@@ -251,8 +251,9 @@ export function MessageHeader({
             recipients block shows, because a display name alone is what a spoofed sender relies on. */}
         {address ? <p className="msg-from-line">{tfrom("fromAddress", { address })}</p> : null}
         {/* THE IDENTITY FACT, under the address it is about: the name claims a company this address
-            does not belong to (`MessageDTO.senderCheck`). Not a block notice — nothing is withheld. */}
-        {checkLine ? <p className="msg-from-check" data-reason="identity"><Icon name="shield" size={12} /><span>{checkLine}</span></p> : null}
+            does not belong to, or the company's own address went unconfirmed by the provider
+            (`MessageDTO.senderCheck`). Not a block notice — nothing is withheld. */}
+        {checkLine ? <p className="msg-from-check" data-reason={checkLine.reason}><Icon name="shield" size={12} /><span>{checkLine.text}</span></p> : null}
       </div>
       {subjectLine}
       <MessageRecipients message={message} notice={notice} />

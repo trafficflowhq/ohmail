@@ -19,7 +19,11 @@ import { makeCtx, seedMessage } from "./helpers.js";
  */
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
-const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`); every letter below carries that
+ * provider's confirmation of its sender, so the licence is what each case decides on.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
 const NOW = new Date("2026-07-28T12:00:00Z");
 const secondsAgo = (s: number): Date => new Date(NOW.getTime() - s * 1000);
 
@@ -29,13 +33,14 @@ function spy(): OneClickPost & { calls: string[] } {
 }
 
 const svcWith = (post: OneClickPost) =>
-  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
 type Ctx = Awaited<ReturnType<typeof makeCtx>>;
 
 const oneClick = (host: string) => ({
   "list-unsubscribe": [`<https://${host}/u?t=abc>`],
   "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+  "authentication-results": ["mx.google.com; dmarc=pass"],
 });
 
 /** Held at the gate, then decided `no` through the one apply — by a person or by the auto-act pass. */

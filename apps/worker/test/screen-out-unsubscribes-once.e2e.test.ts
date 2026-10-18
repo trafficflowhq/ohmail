@@ -26,10 +26,17 @@ import { FIXTURE_LEASE } from "./_door.js";
 /** The sender's host resolves public for the SSRF gate; the rig port then dials loopback only. */
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
 const WINDOW_MS = 60 * 60 * 1000;
+/**
+ * The mailbox's provider, as a Gmail-held mailbox resolves it (`providerAuthservIds`): every path
+ * that reads a verdict here trusts the same position, and each letter carries that provider's
+ * confirmation of its sender — the automatic pass asks a list only for a sender it can confirm.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
 
 function eml(o: { from: string; subject: string; messageId: string; date?: Date; oneClick?: { list: string; token: string } }): string {
   return [
     `Message-ID: <${o.messageId}>`, `From: ${o.from}`, "To: reader@mailbox.rig.test", `Subject: ${o.subject}`,
+    "Authentication-Results: mx.google.com; spf=pass; dmarc=pass",
     ...(o.date ? [`Date: ${o.date.toUTCString()}`] : []),
     ...(o.oneClick
       ? [`List-Id: <${o.oneClick.list}>`, `List-Unsubscribe: <https://${o.oneClick.list}/leave?t=${o.oneClick.token}>`,
@@ -62,7 +69,7 @@ describe("a screen-out asks each list once, for the sender's mail now and later 
         return real.post(`http://127.0.0.1:${port}${u.pathname}${u.search}`, ["127.0.0.1"], timeoutMs);
       },
     };
-    const unsubscribe = makeUnsubscribeService({ post: rigPost, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => new Set() });
+    const unsubscribe = makeUnsubscribeService({ post: rigPost, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
     const screener = makeScreenerService({ unsubscribe });
     const paths = () => received.map((r) => r.url);
 
@@ -71,7 +78,7 @@ describe("a screen-out asks each list once, for the sender's mail now and later 
     await h.db.update(mailboxes).set(ORGANIZER_CONSENT).where(eq(mailboxes.id, h.mailboxId));
     // Mail that arrived before the cutoff keeps its place: the person's older letter stays in the INBOX.
     const deps: SyncDeps = { repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId, storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
-      role: "organizer", trustedAuthservIds: new Set<string>(), screeningCutoff: new Date(Date.now() - WINDOW_MS) };
+      role: "organizer", trustedAuthservIds: GMAIL, screeningCutoff: new Date(Date.now() - WINDOW_MS) };
 
     const c = await rawClient(h.cfg);
     closers.push(async () => { await c.logout(); });
@@ -100,7 +107,7 @@ describe("a screen-out asks each list once, for the sender's mail now and later 
     await screener.decide(ctx, plain.id, { decision: "no", dest: "ohmail/Screened", scope: "sender" });
     expect(paths()).toEqual(["/leave?t=rig-token"]);
     // …but the past-mail pass moves the older letter, and the drain asks for it.
-    await ruleRetroPass(h.db as unknown as Tx, { accountId: h.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, new Date());
+    await ruleRetroPass(h.db as unknown as Tx, { accountId: h.accountId, trustedAuthservIdsFor: async () => GMAIL }, new Date());
     expect(await desired(plainOld.id), "the past-mail pass moved the older letter").toBe("ohmail/Screened");
     await drain();
     expect(paths()).toEqual(["/leave?t=rig-token", "/leave?t=old"]);

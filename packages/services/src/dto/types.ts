@@ -221,7 +221,8 @@ export interface MessageDTO {
    * THE IDENTITY FACT (`messages.sender_check`, mail 0148): the sender's name claims `brand`, and
    * this address is not one `brand` sends from; `domainShared` — the address is at a provider where
    * anyone can register one. `null` is "checked, nothing found"; ABSENT is "never checked" (a row
-   * older than the column, an older server), which a client renders as nothing.
+   * older than the column, an older server), which a client renders as nothing. `unverified` is
+   * read off `authVerdict` beside it: see {@link SenderCheckDTO.reason}.
    */
   senderCheck?: SenderCheckDTO | null;
   /**
@@ -234,7 +235,15 @@ export interface MessageDTO {
 
 /** The identity fact as every surface reads it — one sentence per field, outside any AI advice. */
 export interface SenderCheckDTO {
-  reason: "impersonation";
+  /**
+   * `impersonation`: the sender's name claims `brand` and the address is not `brand`'s.
+   * `unverified`: the address is at `brand`'s own domain and the mailbox's provider did not confirm
+   * the sender (`auth_verdict` not `pass`), so a forgery of that exact domain would read the same.
+   * Derived when read, never stored; a line to read, which holds nothing back and draws no chip.
+   * There `brand` is the name the address gives itself: the brand's, or the registrable domain where
+   * that names no one brand (a government's umbrella such as `admin.ch`, a domain two brands list).
+   */
+  reason: "impersonation" | "unverified";
   brand: string;
   domainShared: boolean;
   /**
@@ -248,6 +257,11 @@ export interface SenderCheckDTO {
    * Present only as `true`; absent is "not a list address" and "an older server" alike.
    */
   list?: true;
+  /**
+   * On `unverified` only: the row's identity column was never written (NULL), so a press reads the
+   * letter as never checked, exactly as the server's press does (`heldRowMovesOnPress`).
+   */
+  unchecked?: true;
 }
 
 /**
@@ -881,6 +895,13 @@ export interface MailboxDTO {
    * take — `effectiveAttachmentCap` in `send-service.ts` is the authority.
    */
   smtpMaxSizeBytes?: number | null;
+  /**
+   * Does ohmail read this mailbox's provider's word on who sent a message — an authserv-id known for
+   * the IMAP host its credential records (`providerAuthservIds`). `false`: every verdict there is
+   * `unavailable`, so nothing of its mail is unsubscribed from automatically. ABSENT where no host is
+   * recorded, which says nothing.
+   */
+  providerConfirms?: boolean;
   /**
    * The provider's OWN Junk folder, canonical path, as discovery resolved it at the last attach
    * (mail 0065 — SPECIAL-USE `\Junk` first, then the well-known leaf names). It is on the wire

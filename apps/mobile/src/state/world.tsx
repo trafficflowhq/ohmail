@@ -60,6 +60,7 @@ import { usePrefs } from "./store";
 import { useListsClock } from "./use-lists-clock";
 import {
   connectionSay, firstSyncSay, setAsideSaid,
+  autoUnsubscribeConfirms,
   dispatchHeldRouting,
   answersWaiting, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
   liveActions,
@@ -971,7 +972,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => ownAddressesOf(mailboxes ?? []),
     [mailboxes],
   );
-  /** The roster as it stands now, for `LiveDeps.readsOnly` — behind a ref for the same reason. */
+  /**
+   * The roster as it stands now, for `LiveDeps.readsOnly` and the press's unsubscribe getter (where
+   * no mailbox's provider's word on a sender is read, the press says none) — behind a ref for the
+   * same reason.
+   */
   const mailboxesNow = useRef<readonly PhoneMailbox[] | null>(null);
   mailboxesNow.current = mailboxes;
   /**
@@ -1347,7 +1352,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           setScreenerServer((prev) => waitingAfterDecide(prev, decided));
         },
         /* The standalone door sends nothing (its one-click port refuses), so it says nothing. */
-        autoUnsubscribe: () => !standaloneNow.current && autoUnsubscribeNow.current,
+        autoUnsubscribe: () => !standaloneNow.current && autoUnsubscribeNow.current && autoUnsubscribeConfirms(mailboxesNow.current),
         /* THE PRESS THAT WAS SENT, MARKED AT ONCE; the next read confirms or replaces it. */
         relayedHere: (decided) => {
           relayReadNow.current?.localWrite();

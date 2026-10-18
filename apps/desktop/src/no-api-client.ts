@@ -249,6 +249,7 @@ export interface MailboxDTO {
     inboundQuietSince?: string | null;
     inboundQuietDismissedAt?: string | null;
     smtpMaxSizeBytes?: number | null;
+    providerConfirms?: boolean;
     junkFolder?: string | null;
     sendingUnsettledReason?: string | null;
     messageCount?: number;

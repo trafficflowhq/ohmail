@@ -14,7 +14,7 @@ import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { correspondentsAmong, sendersAnsweringOwnWriting } from "@trafficflow/core/adapters/drizzle-repo";
 import { SENDER_CHECK_BACKFILL_BATCH, writeSenderChecks } from "./sender-check-backfill.js";
 import {
-  canonicalDestination, effectForDestination, silentLogger,
+  canonicalDestination, effectForDestination, ownedBrand, silentLogger,
   type Destination, type Logger,
 } from "@trafficflow/core/mail";
 
@@ -141,11 +141,17 @@ export interface ScreenerAutoActResult {
    * {@link kept}. A denying plan still files.
    */
   identity: number;
+  /**
+   * Senders left waiting because their address is at a brand's own domain and a held message of
+   * theirs is one their provider did not confirm (`auth_verdict` not `pass`) while the advice would
+   * let them through — counted inside {@link kept}. A denying plan still files.
+   */
+  unverified: number;
 }
 
 const EMPTY = (): ScreenerAutoActResult => ({
   ran: false, examined: 0, filed: 0, kept: 0, failed: 0, destinations: {}, capped: false,
-  revoked: false, correspondents: 0, identity: 0,
+  revoked: false, correspondents: 0, identity: 0, unverified: 0,
 });
 
 /** A waiting sender and the decision their stored advice amounts to. */
@@ -271,6 +277,15 @@ export async function screenerAutoActPass(
       result.identity++;
       continue;
     }
+    /* THE PROVIDER'S WORD, ABOVE THE BARS: an address at a brand's own domain is let through only
+       when its provider confirmed every held message of it — the door moves them all, and a
+       sender-written Date picks the representative. Where no authserv-id is known for the provider
+       every verdict is `unavailable`, and a forgery of that exact domain reads like the brand's own. */
+    if (plan.decision === "yes" && sender.unconfirmedHeld && ownedBrand(sender.address) !== undefined) {
+      result.kept++;
+      result.unverified++;
+      continue;
+    }
     if (planned++ > 0 && deps.until?.()) { result.capped = true; break; }
 
     // Could a decision land on the mailbox this sender waits in — the shared question the suggest
@@ -372,6 +387,13 @@ export async function screenerAutoActPass(
       accountId, skipped: result.identity,
       reason: "these senders were not let through: a held message names a company their address "
         + "does not belong to, and only a person's press admits that",
+    });
+  }
+  if (result.unverified > 0) {
+    log.info("screener_auto_act_unverified_kept", {
+      accountId, skipped: result.unverified,
+      reason: "these senders were not let through: their address is a company's own and their mail "
+        + "provider did not confirm the mail came from it, and only a person's press admits that",
     });
   }
   // FIELD NAMES THE HARDENED LOGGER KEEPS, asked of it rather than guessed: `filed`, `kept` and
@@ -480,6 +502,8 @@ interface WaitingSender {
   mailboxId: string;
   /** A non-deleted held message of this sender carries `sender_check = 'impersonation'`. */
   identityHeld: boolean;
+  /** A non-deleted held message of this sender is one its provider did not confirm (`auth_verdict` not `pass`, NULL included). */
+  unconfirmedHeld: boolean;
 }
 
 /**
@@ -520,6 +544,14 @@ async function selectWaitingSenders(
     ))
     .as("reps");
 
+  /* THE OUTER ROW'S ADDRESS, NAMED WITH ITS TABLE, for the two subqueries below. This select reads
+     one table, and there the query builder writes a column inside a selected `sql` field without
+     its table (`"from_address"`): inside a subquery that name binds to the INNER row, so the
+     predicate compared each held letter with itself and asked the whole account instead of the
+     sender — one held letter of anyone held everyone. Two identifiers are never rewritten: the
+     subquery's own alias, above, and the schema column's name. */
+  const repSender = sql`lower(${sql.identifier("reps")}.${sql.identifier(messages.fromAddress.name)})`;
+
   const rows = await db.select({
     mailboxId: reps.mailboxId,
     fromAddress: reps.fromAddress,
@@ -529,10 +561,20 @@ async function selectWaitingSenders(
       select 1 from ${messages} im
         join ${folderState} ifs on ifs.message_id = im.id
        where im.account_id = ${opts.accountId}
-         and lower(im.from_address) = lower(${reps.fromAddress})
+         and lower(im.from_address) = ${repSender}
          and ifs.desired_folder = ${SCREENER_FOLDER}
          and im.deleted_at is null
          and im.sender_check = 'impersonation'
+    )`,
+    // The same reach for the provider's word, in every mailbox of the account: the door moves them all.
+    unconfirmedHeld: sql<boolean | number>`exists (
+      select 1 from ${messages} um
+        join ${folderState} ufs on ufs.message_id = um.id
+       where um.account_id = ${opts.accountId}
+         and lower(um.from_address) = ${repSender}
+         and ufs.desired_folder = ${SCREENER_FOLDER}
+         and um.deleted_at is null
+         and coalesce(um.auth_verdict, '') <> 'pass'
     )`,
   }).from(reps)
     .where(and(
@@ -549,5 +591,6 @@ async function selectWaitingSenders(
     address: r.fromAddress.toLowerCase(), mailboxId: r.mailboxId,
     // Both stores' spellings of true: a pg boolean, a sqlite integer.
     identityHeld: r.identityHeld === true || r.identityHeld === 1,
+    unconfirmedHeld: r.unconfirmedHeld === true || r.unconfirmedHeld === 1,
   }));
 }

@@ -51,7 +51,7 @@ import {
   domainOfAddress,
   ruleMatchKey,
   unsubscribeClaim,
-  unsubscribePostureOf,
+  unsubscribeLetterOf,
 } from "@ohmail/client-engine";
 import { scheduleFirstDerivation } from "./first-paint";
 import type { SuggestionOverlay } from "./screener-suggest";
@@ -787,7 +787,7 @@ export function useScreenerState(
     return cardReach(engine.read(), rows, sender.from.address, scope);
   };
 
-  /** The held letters a demoting press moves, by the server's posture of each (`unsubscribe-claim.ts`). */
+  /** The held letters a demoting press moves, by the server's posture and verdict of each (`unsubscribe-claim.ts`). */
   const unsubClaimOf = (sender: ScreenerSenderDTO, scope: DecisionScope): UnsubscribeClaim => {
     const own = senderKey(sender.from.address);
     const domain = domainOfAddress(own);
@@ -795,10 +795,11 @@ export function useScreenerState(
       ? [sender, ...undecided.filter((x) => senderKey(x.from.address) !== own && domainOfAddress(senderKey(x.from.address)) === domain)]
       : [sender];
     const reader = engine.read();
-    // A fixture row's held mail carries its own posture; a derived row's is the body the server sent.
-    const postures = rows.flatMap((x) => x.held.map((h) => (x.derived ? unsubscribePostureOf(reader, h.id) : h.unsubscribe ?? null)));
+    // A fixture row's held mail carries its own posture and no verdict; a derived row's is the mirror's.
+    const letters = rows.flatMap((x) => x.held.map((h) => (x.derived
+      ? unsubscribeLetterOf(reader, h.id) : { posture: h.unsubscribe ?? null, authVerdict: null })));
     // Armed by the press's own path: only a decide at the gate licenses a request (`atTheGate`).
-    return unsubscribeClaim({ armed: autoUnsubscribe && atTheGate(sender.id, sender.derived === true), postures });
+    return unsubscribeClaim({ armed: autoUnsubscribe && atTheGate(sender.id, sender.derived === true), letters });
   };
 
   /**

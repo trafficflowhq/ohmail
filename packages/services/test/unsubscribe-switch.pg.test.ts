@@ -66,7 +66,11 @@ const ctx = (accountId: string): ServiceContext => ({
 });
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
-const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`). Each letter below carries that
+ * provider's confirmation of its sender: the automatic arm asks a list only for a confirmed sender.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
 
 function countingPost(): OneClickPost & { calls: string[] } {
   const calls: string[] = [];
@@ -80,7 +84,7 @@ const FORBIDDEN_POST: OneClickPost = {
 };
 
 const svcWith = (post: OneClickPost) =>
-  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
 interface World { accountId: string; mailboxId: string; messageIds: string[] }
 
@@ -108,6 +112,7 @@ async function newWorld(n: number): Promise<World> {
         "list-id": [`Weekly <list-${i}.sender.example>`],
         "list-unsubscribe": [`<https://sender-${i}.example/u?t=${randomUUID()}>`],
         "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+        "authentication-results": ["mx.google.com; dmarc=pass"],
       },
     });
     await db.insert(folderState).values({

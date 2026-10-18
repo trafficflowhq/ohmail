@@ -23,7 +23,12 @@ import { personScreenedOut, seedMessage } from "./helpers.js";
  * jsonb_exists` on both cases while the server run stays green.
  */
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
-const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`), and that provider confirming a
+ * row's sender, which the seed writes: the drain asks a list only for a confirmed sender.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
+const CONFIRMED = { "authentication-results": ["mx.google.com; dmarc=pass"] };
 
 const ONE_CLICK = {
   "list-unsubscribe": ["<https://sender.example/u?t=abc>"],
@@ -50,7 +55,7 @@ async function seedScreenedOut(headers: Record<string, string[]>): Promise<{
   const messageId = await seedMessage(db, accountId, mb!.id, {
     from: "news@sender.example", folder: "ohmail/Screened",
   });
-  await db.insert(messageBodies).values({ messageId, text: "", headers });
+  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
   await personScreenedOut(db, accountId, "news@sender.example");
   await db.update(folderState)
     .set({ updatedAt: new Date(NOW.getTime() - 60_000) })
@@ -59,7 +64,7 @@ async function seedScreenedOut(headers: Record<string, string[]>): Promise<{
 }
 
 const drain = (db: Db, post: OneClickPost) =>
-  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY })
+  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL })
     .drainScreenedOut(db, { now: () => NOW, requestId: "d1" });
 
 describe("the unsubscribe drain reads its candidates the same way on both stores", () => {

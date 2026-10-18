@@ -24,9 +24,12 @@ import { createSidecar, type Sidecar } from "../src/engine.js";
  * so the screen-out states the unsubscribe before the press and then makes it, which is the
  * self-host bag's wiring exactly. The landing copy drops its standalone qualifier with it.
  *
- * Four properties, all watched at the network edge:
+ * Five properties, all watched at the network edge:
  *
  *  · a screen-out POSTS once and records it; an admit posts nothing (the reject branch only);
+ *  · it posts only for a sender the mailbox's provider confirmed: at an IMAP host whose
+ *    `Authentication-Results` nobody is known to sign, it asks nobody, and the person's own press
+ *    still posts;
  *  · the account's switch STOPS it — the promise "a switch in Settings turns it off" is a
  *    claim about this door too, and it is made true by a route this door serves;
  *  · a consent-less READER posts nothing: its decision is a request for whoever organizes the
@@ -135,14 +138,19 @@ describe("auto-unsubscribe on the standalone door", () => {
     for (const c of cleanups.splice(0).reverse()) await c();
   });
 
+  /**
+   * `host` decides whose `Authentication-Results` this install believes (`providerAuthservIds`):
+   * Gmail's by default, so the screen-out below meets a sender its provider confirmed; an unmapped
+   * host trusts nobody. The adapter is the quiet double above, so no host is ever dialled.
+   */
   async function boot(
-    post: ReturnType<typeof recordingPost>, consented = true,
+    post: ReturnType<typeof recordingPost>, consented = true, host = "imap.gmail.com",
   ): Promise<Sidecar> {
     const dataDir = await freshDataDir("ohmail-autounsub-");
     const sidecar = await createSidecar({
       dataDir,
       imap: {
-        host: "imap.invalid", port: 993, secure: true,
+        host, port: 993, secure: true,
         auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
       },
       address: "owner@trafficflow.test",
@@ -197,6 +205,8 @@ describe("auto-unsubscribe on the standalone door", () => {
       headers: {
         "list-unsubscribe": [`<${ONE_CLICK_URL}>`],
         "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+        // The mailbox's provider confirming the sender, from the position a Gmail host trusts.
+        "authentication-results": ["mx.google.com; spf=pass; dkim=pass header.d=bulk.example; dmarc=pass"],
         ...(listId ? { "list-id": [listId] } : {}),
       },
     });
@@ -227,6 +237,28 @@ describe("auto-unsubscribe on the standalone door", () => {
       .where(eq(unsubscribeRecords.accountId, s.world.accountId));
     expect(records).toHaveLength(1);
     expect(records[0]!.state).toBe("sent");
+  }, 60_000);
+
+  it("at a host no provider is known for, a screen-out asks nobody and records nothing; the person's press still posts", async () => {
+    const post = recordingPost();
+    const s = await boot(post, true, "imap.invalid");
+    const held = await seedHeldOneClick(s, "unknown@bulk.example", "Unknown <unknown.bulk.example>");
+
+    const res = await s.handle(new Request(`http://local/screener/${held}`, {
+      method: "POST", headers: auth(s), body: JSON.stringify({ decision: "no" }),
+    }));
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(post.calls, "a request left for a sender nobody confirmed").toEqual([]);
+    expect(await s.db.select().from(unsubscribeRecords)
+      .where(eq(unsubscribeRecords.accountId, s.world.accountId))).toHaveLength(0);
+
+    // The button is a person looking at the letter.
+    const pressed = await s.handle(new Request(`http://local/messages/${held}/unsubscribe`, {
+      method: "POST", headers: auth(s), body: JSON.stringify({}),
+    }));
+    expect(pressed.status, await pressed.clone().text()).toBe(200);
+    expect(((await pressed.json()) as { posted: boolean }).posted).toBe(true);
+    expect(post.calls).toEqual([{ url: ONE_CLICK_URL, pin: ["11.22.33.44"] }]);
   }, 60_000);
 
   it("the account's switch stops it — the promise the copy makes, on this door", async () => {

@@ -76,6 +76,7 @@
       "organizerState": null,
       "pendingMoves": 0,
       "provider": "imap",
+      "providerConfirms": false,
       "releaseRefusal": null,
       "releaseRequestedAt": null,
       "retryCount": 0,

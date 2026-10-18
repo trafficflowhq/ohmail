@@ -313,6 +313,8 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
         messageId: id, text: "", headers: {
           "list-unsubscribe": [`<https://corp.example/u?t=${i}>`],
           "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+          // The mailbox's provider confirming the sender: the automatic arm's licence to ask.
+          "authentication-results": ["mx.google.com; dmarc=pass"],
         },
       });
     }
@@ -324,7 +326,8 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
       unsubscribe: makeUnsubscribeService({
         post: { async post(url: string) { posted.push(url); return { status: 200 }; } },
         resolver,
-        trustedAuthservIdsFor: async () => new Set<string>(),
+        // The position a Gmail-held mailbox trusts (`providerAuthservIds`).
+        trustedAuthservIdsFor: async () => new Set(["mx.google.com"]),
       }),
     });
 

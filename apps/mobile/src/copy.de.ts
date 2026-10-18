@@ -1586,6 +1586,8 @@ export const DE: Deck = {
     `Diese Nachricht gibt sich als ${brand} aus, aber eine ${domain}-Adresse kann sich jeder anlegen.`,
   senderCheckChip: (brand: string): string => `Nicht ${brand}`,
   senderCheckList: "Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben.",
+  senderCheckUnverified: (brand: string): string =>
+    `Diese Nachricht gibt an, von ${brand} zu kommen. Dein Mailanbieter hat das nicht bestätigt.`,
   screeningScopeShared: (domain: string): string =>
     `${domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.`,
   rulesSharedProviderInert: (domain: string): string =>

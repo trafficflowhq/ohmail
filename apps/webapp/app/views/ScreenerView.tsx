@@ -1357,8 +1357,9 @@ export function ScreenerView({
   }
 
   /* THE IDENTITY CHIP ON THE SENDER'S ROW (`ScreenerSenderDTO.checked`), the list rows' face and
-     sentence: one of their held messages claims a company their address does not belong to. */
-  const chipOf = (s: ScreenerSenderDTO): { senderCheckLabel?: string; senderCheckTitle?: string } => (s.checked ? {
+     sentence: one of their held messages claims a company their address does not belong to. An
+     unconfirmed company address draws none: its line is in the pane. */
+  const chipOf = (s: ScreenerSenderDTO): { senderCheckLabel?: string; senderCheckTitle?: string } => (s.checked?.reason === "impersonation" ? {
     senderCheckLabel: t("senderCheck.chip", { brand: s.checked.brand }),
     senderCheckTitle: s.checked.domainShared
       ? t("senderCheck.impersonationShared", { brand: s.checked.brand, domain: s.checked.domain })
@@ -1964,7 +1965,7 @@ function drawnTarget(h: ScreenerHeldMail): BodyTarget | null {
 function heldRemoteProps(
   remoteImages: RemoteImagesChrome | undefined,
   h: { id: string; loadedRemoteContent?: boolean },
-  /** The sender's identity fact (`ScreenerSenderDTO.checked`): its pictures wait for a press. */
+  /** The sender's identity fact (`ScreenerSenderDTO.checked`): a claim's pictures wait for a press. */
   checked: unknown,
 ): {
   remoteLoaded: boolean;
@@ -2695,10 +2696,13 @@ function WaitingPreview({
           <div className="scn-why scn-why-identity">
             <Icon name="shield" />
             <span className="scn-why-lines">
-              <span className="scn-why-checked" data-reason="identity">
-                {sender.checked.domainShared
-                  ? t("senderCheck.impersonationShared", { brand: sender.checked.brand, domain: sender.checked.domain })
-                  : t("senderCheck.impersonation", { brand: sender.checked.brand, domain: sender.checked.domain })}
+              {/* A claim, or the company's own address its provider did not confirm (no chip for that). */}
+              <span className="scn-why-checked" data-reason={sender.checked.reason === "unverified" ? "unverified" : "identity"}>
+                {sender.checked.reason === "unverified"
+                  ? t("senderCheck.unverified", { brand: sender.checked.brand })
+                  : sender.checked.domainShared
+                    ? t("senderCheck.impersonationShared", { brand: sender.checked.brand, domain: sender.checked.domain })
+                    : t("senderCheck.impersonation", { brand: sender.checked.brand, domain: sender.checked.domain })}
               </span>
               {/* A LIST ADDRESS (mail 0150): why one press does not open it to every company name. */}
               {sender.checked.list ? (

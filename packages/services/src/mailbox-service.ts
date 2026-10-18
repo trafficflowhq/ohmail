@@ -35,7 +35,7 @@ import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
-import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
+import { DEFAULT_DORMANCY_DAYS, providerAuthservIds, type ScreeningScope } from "@trafficflow/core/mail";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -2835,6 +2835,12 @@ export class MailboxService {
     const sendingUnsettled = typeof unsettledRaw === "string" && unsettledRaw !== ""
       ? unsettledRaw
       : null;
+    /* The host the credential records, off the same read: whose `Authentication-Results` ingest and
+       the unsubscribe believe for this mailbox (`providerAuthservIds`). No host, no answer. */
+    const imapHost = (imapCred?.meta as { host?: unknown } | null | undefined)?.host;
+    const providerConfirms = typeof imapHost === "string" && imapHost.trim() !== ""
+      ? providerAuthservIds(imapHost).size > 0
+      : undefined;
     const folders: MailboxFolderSummary[] = fRows.map((f) => ({
       folder: f.folder,
       hasSyncCursor: f.highestmodseq != null,
@@ -3120,6 +3126,8 @@ export class MailboxService {
          mailbox connected before this existed reports and what a mailbox with a proven submission
          server reports after a repair. */
       sendingUnsettledReason: sendingUnsettled,
+      // Absent where the credential names no host: a row that cannot say claims nothing.
+      ...(providerConfirms === undefined ? {} : { providerConfirms }),
       /* SPREAD, not `messageCount: messageCount`. The key must be genuinely ABSENT when nobody
          asked, because absent and `0` are different answers here and a client tells them apart
          with a `typeof` guard. `JSON.stringify` would drop an explicitly-undefined property on

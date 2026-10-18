@@ -130,7 +130,7 @@ import {
   joinableStandingSend,
   watchWireFailedLists,
   unsubscribeClaim,
-  unsubscribePostureOf,
+  unsubscribeLetterOf,
   type MessageBody,
   type UnsubscribeClaim,
 } from "@ohmail/client-engine";
@@ -463,6 +463,8 @@ export { isSharedProviderDomain } from "@ohmail/client-engine";
 export type { WaitingOnOrganizerView } from "@ohmail/client-engine";
 /** Forward's one predicate and its ask, for the reader — the engine's own, through this seam. */
 export { forwardOffered, type ForwardAsk } from "@ohmail/client-engine";
+/** Whether any mailbox's provider's word on a sender is read, for the world's unsubscribe getter. */
+export { autoUnsubscribeConfirms } from "@ohmail/client-engine";
 
 /** A conversation member under the opened message, with its own files beside its text. */
 export type WorldEarlier = Held & {
@@ -697,9 +699,13 @@ function sentFaceOf(m: EngineMessage, own: readonly string[] | undefined): strin
   return to.length > 1 ? Copy.rowSentToMore(name, to.length - 1) : Copy.rowSentTo(name);
 }
 
-/** The identity fact off the wire; the phone holds no dictionary and decides nothing itself. */
-function senderCheckOf(m: EngineMessage): { senderCheck?: Mail["senderCheck"] } {
+/**
+ * The identity fact off the wire; the phone holds no dictionary and decides nothing itself. An
+ * unconfirmed company address rides its own field, so no reader of the claim ever meets it.
+ */
+function senderCheckOf(m: EngineMessage): { senderCheck?: Mail["senderCheck"]; senderUnverified?: Mail["senderUnverified"] } {
   const c = m.senderCheck;
+  if (c?.reason === "unverified" && c.brand) return { senderUnverified: { brand: c.brand } };
   if (!c || c.reason !== "impersonation" || !c.brand) return {};
   const at = m.from.address.lastIndexOf("@");
   return {
@@ -1528,6 +1534,12 @@ export interface ScreenerRow {
    * list posts as this address (mail 0150), said on its own line beneath.
    */
   checked?: { brand: string; domainShared: boolean; domain: string; list?: true };
+  /**
+   * No held message claims anything, and the address is `brand`'s own while its provider did not
+   * confirm the sender (`ScreenerSenderDTO.checked`, `unverified`): the sender screen's line, and
+   * no chip on the row. Never beside {@link checked}.
+   */
+  unverified?: { brand: string; list?: true };
   /** An allow rule for everyone at this sender's shared provider names them and admits nobody. */
   inertRule?: { domain: string };
   /** Letters of this sender already past the gate (`ScreenerSenderDTO.reached`); 0 = first contact. */
@@ -1612,11 +1624,14 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
     dull: dto.dull === true,
     scope: domainScopeOffered(dto.from.address) ? scope ?? dto.scope : "sender",
     ai,
-    ...(dto.checked ? {
+    ...(dto.checked?.reason === "impersonation" ? {
       checked: {
         brand: dto.checked.brand, domainShared: dto.checked.domainShared, domain: dto.checked.domain,
         ...(dto.checked.list === true ? { list: true as const } : {}),
       },
+    } : {}),
+    ...(dto.checked?.reason === "unverified" ? {
+      unverified: { brand: dto.checked.brand, ...(dto.checked.list === true ? { list: true as const } : {}) },
     } : {}),
     ...(dto.inertRule ? { inertRule: { domain: dto.inertRule.domain } } : {}),
     reached: dto.reached ?? 0,
@@ -3382,13 +3397,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /**
    * WHAT THIS PRESS SAYS ABOUT THE SENDER'S UNSUBSCRIBE (`unsubscribe-claim.ts`) — armed by the decide
    * route (`screener_decide`) with a `no` on a door whose switch is on, which is exactly the server's
-   * trigger (a rule past the gate and a plain move arm nothing); then the held letters' postures.
+   * trigger (a rule past the gate and a plain move arm nothing); then the held letters' postures, each
+   * with what its provider said of the sender.
    */
   const pressClaim = (decideRoute: boolean, decision: "yes" | "no", heldIds: readonly string[]): UnsubscribeClaim => {
     const reader = engine.read();
     return unsubscribeClaim({
       armed: decideRoute && decision === "no" && (deps.autoUnsubscribe?.() ?? true),
-      postures: heldIds.map((id) => unsubscribePostureOf(reader, id)),
+      letters: heldIds.map((id) => unsubscribeLetterOf(reader, id)),
     });
   };
   /** The press's sentence with the unsubscribe arm, if any: `held` while Undo is still to come. */

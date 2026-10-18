@@ -1763,6 +1763,35 @@ export async function discloseLocalSyncFailures(
 }
 
 /**
+ * WHOSE WORD ON A SENDER THIS DOOR READS, per mailbox row (`MailboxDTO.providerConfirms`): the host
+ * each runtime dials, which is what ingest and the unsubscribe believe, over the service's reading of
+ * the credential row — a seed with no stored password has none. A row with no runtime keeps the
+ * service's answer.
+ */
+export async function discloseProviderConfirms(
+  res: Response, runtimes: readonly { mailboxId: string; imap: { host: string } }[],
+): Promise<Response> {
+  if (res.status !== 200 || runtimes.length === 0) return res;
+  const hostOf = new Map(runtimes.map((r) => [r.mailboxId, r.imap.host]));
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch {
+    return res;
+  }
+  const items = (body as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) return res;
+  const overlaid = items.map((row) => {
+    const id = (row as { id?: unknown } | null)?.id;
+    const host = typeof id === "string" ? hostOf.get(id) : undefined;
+    return host === undefined ? row : { ...(row as object), providerConfirms: providerAuthservIds(host).size > 0 };
+  });
+  return new Response(JSON.stringify({ ...(body as object), items: overlaid }), {
+    status: res.status, headers: { "content-type": "application/json" },
+  });
+}
+
+/**
  * The budget for the historical-name repair, per drain — see `backfillStoredNames`. Two numbers because they
  * bound different things: the batch is how many rows one transaction writes; the pages are how many of those
  * a drain may run before yielding. Their product — 200 rows — is one visit's whole work, a deliberately small
@@ -2213,13 +2242,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * nodeOneClickPost}, the pinned redirect-refusing client (the second of the process's two non-mailbox egresses);
      * `resolver` — the REAL `node:dns`, as the image proxy above now also uses: the SSRF gate protects the user's own home network
      * from a `List-Unsubscribe` header naming a private address, and this URL is only POSTed after a screen-out the
-     * user performed; `trustedAuthservIdsFor` — `providerAuthservIds` over the same host string the sync loop
-     * resolves, so the two paths cannot disagree.
+     * user performed; `trustedAuthservIdsFor` — the provider of the mailbox that HOLDS the letter, never the first
+     * mailbox's: the host its runtime dials, which is the one ingest checked it against (a seed with no stored
+     * password has no credential row to ask), else its credential row, read through the handle the service passes
+     * and never the outer one, for `retroDue`'s one-connection reason. `runtimes` is called at request time only.
      */
     const unsubscribe = makeUnsubscribeService({
       post: config.oneClickPost ?? nodeOneClickPost,
       resolver: nodeHostResolver,
-      trustedAuthservIdsFor: async () => providerAuthservIds(config.imap.host),
+      trustedAuthservIdsFor: async (tx, mailboxId) => {
+        const rt = runtimes.get(mailboxId);
+        return rt ? providerAuthservIds(rt.imap.host) : mailboxProviderAuthservIds(tx, mailboxId);
+      },
     });
 
     /**
@@ -10000,7 +10034,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // ALONE, like the local routes above: a paired device renders its own indicator and
         // the pairing layer answers for the host. See {@link discloseLocalSyncFailures}.
         if (req.method === "GET" && url.pathname === "/mailboxes") {
-          return await discloseLocalSyncFailures(answered, runtimes.all(), now());
+          return await discloseProviderConfirms(
+            await discloseLocalSyncFailures(answered, runtimes.all(), now()), runtimes.all());
         }
         return answered;
       },

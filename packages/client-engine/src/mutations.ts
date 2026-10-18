@@ -2,6 +2,7 @@ import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { replySubject } from "@trafficflow/core/reply-subject";
 import { heldMovesOnPress } from "@trafficflow/core/sender-headers";
 import { outrankCoveringDomains } from "./address-rank.js";
+import { heldCheckOf } from "./held-check.js";
 import { domainOfAddress } from "./consent-cutline.js";
 import { ruleKeyOf, twinWinner } from "./rule-twins.js";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
@@ -331,8 +332,7 @@ function derivedScreenerEffects(
   const gate = reader.list<EngineMessage>("message")
     .filter((x) => x.folder === FOLDER_OF_VIEW.screener && inScope(x.from.address));
   const moves = (x: EngineMessage): boolean => heldMovesOnPress({
-    check: x.senderCheck === null ? "none" : x.senderCheck === undefined ? "unchecked" : "claim",
-    from: x.from.address, auth: x.authVerdict,
+    check: heldCheckOf(x.senderCheck), from: x.from.address, auth: x.authVerdict,
   }, key);
   const kept = new Set(gate.filter((x) => !moves(x)).map((x) => senderKey(x.from.address)));
   const effects: MutationEffect[] = gate.filter(moves).map((msg) => ({

@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { autoUnsubscribeConfirms } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { sayArg } from "../src/refusal";
 import { Copy } from "../src/copy";
@@ -27,6 +28,8 @@ const source = (rel: string) => withoutComments(fs.readFileSync(path.join(HERE, 
 const view: WorldView = { now: new Date("2026-08-19T10:00:00Z"), zone: "UTC" };
 const LIST = "news@list.test";
 const PLAIN = "person@plain.test";
+/** A list offering one-click whose letter its provider did not confirm: the pass will not send for it. */
+const UNCONFIRMED = "news@unconfirmed.test";
 /** A stranger whose mail sits in the INBOX: presented at the gate, decided by the rule path. */
 const PAST = "early@past.test";
 
@@ -51,11 +54,16 @@ async function until(ok: () => boolean, ms = 2000): Promise<void> {
 async function scene(opts: { unread?: boolean; autoUnsubscribe?: boolean } = {}) {
   const fake = mailServer();
   const origin = await listen(fake.server);
-  fake.addMessage(dto("l1", { from: { name: "List", address: LIST }, folder: "ohmail/Screener" }));
+  // The list's provider confirmed its sender (the pass sends for it); the other list's did not.
+  const confirmed = { ...dto("l1", { from: { name: "List", address: LIST }, folder: "ohmail/Screener" }), authVerdict: "pass" };
+  const unconfirmed = { ...dto("u1", { from: { name: "Unconfirmed", address: UNCONFIRMED }, folder: "ohmail/Screener" }), authVerdict: "unavailable" };
+  fake.addMessage(confirmed);
   fake.addMessage(dto("p1", { from: { name: "Person", address: PLAIN }, folder: "ohmail/Screener" }));
   fake.addMessage(dto("p2", { from: { name: "Person", address: PLAIN }, folder: "ohmail/Screener" }));
   fake.addMessage(dto("e1", { from: { name: "Early", address: PAST }, folder: "INBOX" }));
+  fake.addMessage(unconfirmed);
   fake.setBody("l1", "news", "one_click");
+  fake.setBody("u1", "news", "one_click");
   fake.setBody("p1", "hello", "no_header");
   fake.setBody("p2", "again", "not_one_click");
   fake.setBody("e1", "before", "one_click");
@@ -69,7 +77,7 @@ async function scene(opts: { unread?: boolean; autoUnsubscribe?: boolean } = {})
     toast: (m, o?: { undo?: () => void }) => { said.push({ text: String(sayArg(m)), ...(o?.undo ? { undo: o.undo } : {}) }); },
   });
   // The sender screen hydrates every held body it shows; this one leaves `p2` unread on request.
-  const read = opts.unread ? ["l1", "p1", "e1"] : ["l1", "p1", "p2", "e1"];
+  const read = opts.unread ? ["l1", "p1", "e1", "u1"] : ["l1", "p1", "p2", "e1", "u1"];
   actions.hydrateHeld(read);
   await until(() => read.every((id) => boot.engine.read().get<{ state?: string }>("message_body", id)?.state === "ready"));
   const waiting = liveScreener(presentedOf(boot.engine.read(), view.now), view).waiting;
@@ -89,6 +97,14 @@ describe("the phone says the unsubscribe before Screen out or Spam is pressed", 
       // The open message's sheet asks the same question of the same letters.
       expect(s.actions.screeningUnsubClaim("l1", "sender")).toBe("sends");
       expect(s.actions.screeningUnsubClaim("p1", "sender")).toBe("may_send");
+    } finally { s.close(); }
+  });
+
+  it("a one-click letter its provider did not confirm: the condition, never the fact", async () => {
+    const s = await scene();
+    try {
+      expect(s.actions.unsubClaimOf(s.row(UNCONFIRMED), s.waiting, "sender")).toBe("may_send");
+      expect(s.actions.screeningUnsubClaim("u1", "sender")).toBe("may_send");
     } finally { s.close(); }
   });
 
@@ -115,6 +131,19 @@ describe("the phone says the unsubscribe before Screen out or Spam is pressed", 
       expect(s.actions.unsubClaimOf(s.row(LIST), s.waiting, "sender")).toBe("none");
       expect(s.actions.screeningUnsubClaim("l1", "sender")).toBe("none");
     } finally { s.close(); }
+  });
+
+  it("no mailbox whose provider's word ohmail reads: nothing is sent by itself, so nothing is said", async () => {
+    const s = await scene({ autoUnsubscribe: autoUnsubscribeConfirms([{ status: "connected", providerConfirms: false }]) });
+    try {
+      expect(s.actions.unsubClaimOf(s.row(LIST), s.waiting, "sender")).toBe("none");
+      expect(s.actions.unsubClaimOf(s.row(PLAIN), s.waiting, "sender")).toBe("none");
+      expect(s.actions.screeningUnsubClaim("l1", "sender")).toBe("none");
+    } finally { s.close(); }
+    // The world reads the account's mailbox rows into the same getter the switch sits in.
+    expect(source("src/state/world.tsx")).toContain(
+      "autoUnsubscribe: () => !standaloneNow.current && autoUnsubscribeNow.current && autoUnsubscribeConfirms(mailboxesNow.current),",
+    );
   });
 
   it("the sender screen draws the line under the bar, and the open message's sheet above its note", () => {

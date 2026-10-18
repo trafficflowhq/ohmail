@@ -51,9 +51,16 @@ const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, s
 
 const SECRET = "s".repeat(32);
 const CRON = "c".repeat(32);
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`), and that provider confirming the
+ * sender on the letter: the drain asks a list only for a confirmed sender, and each case below is
+ * about something else (the run, its budget, its address check).
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
 const ONE_CLICK = {
   "list-unsubscribe": ["<https://sender.example/u?t=abc>"],
   "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+  "authentication-results": ["mx.google.com; dmarc=pass"],
 };
 
 function get(secret?: string): Request {
@@ -98,7 +105,7 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
 
   it("leaves the list a screened-out sender published, and says what it did", async () => {
     const post = spyPost();
-    const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: post });
+    const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: post, trustedAuthservIds: GMAIL });
     const s = await seedSession(db, { now: deps.now() });
     const mb = await seedMailbox(db, { accountId: s.accountId });
     const { id: messageId } = await seedMessage(db, {
@@ -162,7 +169,7 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
     vi.useFakeTimers();
     try {
       const post = spyPost();
-      const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: post });
+      const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: post, trustedAuthservIds: GMAIL });
       const s = await seedSession(db, { now: deps.now() });
       const mb = await seedMailbox(db, { accountId: s.accountId });
       const { id: messageId } = await seedMessage(db, {
@@ -214,7 +221,7 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
     try {
       const post = spyPost();
       const { db, deps } = await makeDeps(undefined, {}, {
-        oneClickPost: post,
+        oneClickPost: post, trustedAuthservIds: GMAIL,
         resolver: { resolve: () => new Promise<string[]>(() => { /* never */ }) },
       });
       const s = await seedSession(db, { now: deps.now() });

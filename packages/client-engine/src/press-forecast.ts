@@ -1,6 +1,7 @@
 import { canonicalDestination, isOrganizedFolder, retroPassWouldMove } from "@trafficflow/core/destinations";
 import { heldMovesOnPress } from "@trafficflow/core/sender-headers";
 import { outrankCoveringDomains } from "./address-rank.js";
+import { heldCheckOf } from "./held-check.js";
 import {
   consentIndex, consentPartition, domainOfAddress, mailboxProfiles, messagePlacement, outranks, ruleMatchKey,
   ruleTerms,
@@ -45,7 +46,7 @@ export function cardReach(
         if (m.placeDecided !== true) { out.inboxIds.push(id); count++; }
         continue;
       }
-      const check = m.senderCheck === null ? "none" : m.senderCheck === undefined ? "unchecked" : "claim";
+      const check = heldCheckOf(m.senderCheck);
       if (m.folder === FOLDER_OF_VIEW.screener && heldMovesOnPress({ check, from: m.from.address, auth: m.authVerdict }, key)) count++;
     }
     if (at !== key && count > 0) out.others.push({ address: row.address, count });

@@ -128,6 +128,38 @@ describe("the Cloud mirror and MessageDTO.senderCheck", () => {
     expect(got.get(older.id)?.senderCheck).toEqual(FACT);
   });
 
+  it("an unconfirmed brand sender mirrors as never checked, and the local door says the line off its own verdict", async () => {
+    const { db, world, cursorPath } = await standUp();
+    const BRAND = "service@paypal.com";
+    const unconfirmed: MessageDTO = {
+      ...inbound(randomUUID(), BRAND, "unavailable"),
+      senderCheck: { reason: "unverified", brand: "PayPal", domainShared: false },
+    };
+    const confirmed: MessageDTO = { ...inbound(randomUUID(), BRAND, "pass"), senderCheck: null };
+    await createCloudMirror({ db, world, cursorPath, now: () => new Date(), auth: fakeAuth(page([unconfirmed, confirmed])) }).pullOnce();
+    // The mirror stores no fact it did not compute: the line is not a column value.
+    const [row] = await db.select({ c: messages.senderCheck, b: messages.senderCheckBrand })
+      .from(messages).where(eq(messages.id, unconfirmed.id));
+    expect(row).toEqual({ c: null, b: null });
+    const got = await materializeMessages(db, world.accountId, [unconfirmed.id, confirmed.id]);
+    expect(got.get(unconfirmed.id)?.senderCheck)
+      .toEqual({ reason: "unverified", brand: "PayPal", domainShared: false, unchecked: true });
+    expect(got.get(confirmed.id)?.senderCheck).toBeNull();
+  });
+
+  it("a Cloud that named one office for an umbrella domain is not repeated: the local door names the domain", async () => {
+    const { db, world, cursorPath } = await standUp();
+    // What a Cloud before this change served for a BAG letter: the first office listed under admin.ch.
+    const bag: MessageDTO = {
+      ...inbound(randomUUID(), "info@bag.admin.ch", "unavailable"),
+      senderCheck: { reason: "unverified", brand: "ESTV", domainShared: false },
+    };
+    await createCloudMirror({ db, world, cursorPath, now: () => new Date(), auth: fakeAuth(page([bag])) }).pullOnce();
+    const got = await materializeMessages(db, world.accountId, [bag.id]);
+    expect(got.get(bag.id)?.senderCheck)
+      .toEqual({ reason: "unverified", brand: "admin.ch", domainShared: false, unchecked: true });
+  });
+
   it("checked-and-clean is null, never-checked is absent", async () => {
     const { db, world, cursorPath } = await standUp();
     const clean = marked(randomUUID(), null);

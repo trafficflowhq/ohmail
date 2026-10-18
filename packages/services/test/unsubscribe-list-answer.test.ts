@@ -19,12 +19,17 @@ import { makeCtx, personScreenedOut, seedMessage } from "./helpers.js";
  */
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
-const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`). The letter carries that
+ * provider's confirmation of its sender: the automatic arm asks a list only for a confirmed sender.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
 const URL_ = "https://list.example/leave?t=abc";
 const ONE_CLICK = {
   "list-unsubscribe": [`<${URL_}>`],
   "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
   "list-id": ["<weekly.list.example>"],
+  "authentication-results": ["mx.google.com; dmarc=pass"],
 };
 const FROM = "news@list.example";
 
@@ -42,7 +47,7 @@ function answering(...answers: Array<number | Error>): OneClickPost & { calls: n
 }
 
 const svcWith = (post: OneClickPost, log?: Logger) =>
-  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY, ...(log ? { log } : {}) });
+  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL, ...(log ? { log } : {}) });
 
 /** The hardened logger into a sink, and every console call rendered as the process would print it. */
 function heard(): { log: Logger; lines: () => Array<Record<string, unknown>>; printed: () => string } {

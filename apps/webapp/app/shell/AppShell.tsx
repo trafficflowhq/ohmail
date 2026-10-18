@@ -44,7 +44,8 @@ import {
   type OhmailView,
   type SearchHit,
   type TagDTO,
-  unsubscribePostureOf,
+  autoUnsubscribeConfirms,
+  unsubscribeLetterOf,
 } from "@ohmail/client-engine";
 import {
   Button,
@@ -1454,10 +1455,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * `consent.autoUnsubscribe` — the account's switch (mail 0054), resting TRUE so a failed `GET
    * /consent` keeps the disclosure; and `!consent.standalone` — the build: a standalone install
    * wires no unsubscribe service, so a warning there would name a request it cannot make. The
-   * demo is not excluded: its job is to show what the product does.
+   * demo is not excluded: its job is to show what the product does. And the account's mailbox
+   * rows: where no provider's word on a sender is read, the server sends nothing by itself.
    */
   const autoUnsub = autoUnsubscribeDoor({
     demo, known: consent.known, on: consent.autoUnsubscribe, standalone: consent.standalone,
+    confirms: autoUnsubscribeConfirms(facts),
   });
   const autoUnsubscribeDiscloses = autoUnsub.discloses;
   /**
@@ -3679,10 +3682,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           // Our own address: the sheet says why it offers no press (`isOwnSubject`).
           own={isOwnSubject(engine.verbRead(), senderMenu!.messageId, senderMenu!.address, ownAddresses)}
           autoUnsubscribe={autoUnsubscribeDiscloses}
-          // The held letters the scope's press moves, by the one-click posture their bodies carry.
-          posturesFor={(scope) => senderMenuFor.scopes[scope].messages
+          // The held letters the scope's press moves: the posture their bodies carry, and each verdict.
+          lettersFor={(scope) => senderMenuFor.scopes[scope].messages
             .filter((m) => m.folder === FOLDER_OF_VIEW.screener)
-            .map((m) => unsubscribePostureOf(engine.read(), m.id))}
+            .map((m) => unsubscribeLetterOf(engine.read(), m.id))}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope, senderMenu!.address)}
           // The subject sheet resolves the message's SENDER (`subjectRuleContext`), so under an
           // override the row is withheld rather than offered about somebody the sheet never named.

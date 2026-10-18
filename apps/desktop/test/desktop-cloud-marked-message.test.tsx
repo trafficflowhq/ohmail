@@ -133,7 +133,7 @@ describe("a marked message on the Cloud-mode desktop", () => {
     const m = await served();
     expect(autoLoadsImages({ auto: true }, m)).toBe(false);
     const fact = senderCheckFact(m as never);
-    expect(fact).toEqual({ brand: "PostFinance", domainShared: true, domain: "gmail.com" });
+    expect(fact).toEqual({ reason: "impersonation", brand: "PostFinance", domainShared: true, domain: "gmail.com" });
     expect(senderCheckSentence(words, fact!)).toBe("This message claims to be from PostFinance, but anyone can register a gmail.com address.");
 
     host = document.createElement("div");

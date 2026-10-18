@@ -11,6 +11,7 @@ import {
   type EngineMessage,
   type Folder,
   type SyncChange,
+  type UnsubscribeLetter,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
@@ -100,7 +101,7 @@ async function render(
    * own default so every existing case in this file keeps asserting the shipped behaviour.
    * `address` is the contact-chip override (viewer), resolved exactly as `AppShell` does.
    */
-  opts: { autoUnsubscribe?: boolean; address?: string; postures?: readonly ("one_click" | "no_header" | null)[] } = {},
+  opts: { autoUnsubscribe?: boolean; address?: string; letters?: readonly UnsubscribeLetter[] } = {},
 ): Promise<Rendered> {
   const store = await mirror(list);
   const sender = senderScreening(store, seedId, opts.address)!;
@@ -124,7 +125,7 @@ async function render(
           onChoose,
           onOpenDetail,
           ...(opts.autoUnsubscribe === undefined ? {} : { autoUnsubscribe: opts.autoUnsubscribe }),
-          ...(opts.postures === undefined ? {} : { posturesFor: () => opts.postures! }),
+          ...(opts.letters === undefined ? {} : { lettersFor: () => opts.letters! }),
           onClose: () => {},
         }),
       }),
@@ -183,8 +184,10 @@ describe("the scope switch is on the sheet and does something", () => {
 
 describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
   it("screening a waiting sender out opens the disclosure instead of committing", async () => {
-    // A held letter that offers one-click: the sentence is a fact (`unsubscribe-claim.ts`).
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", { postures: ["one_click"] });
+    // A held letter that offers one-click from a sender its provider confirmed: a fact (`unsubscribe-claim.ts`).
+    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", {
+      letters: [{ posture: "one_click", authVerdict: "pass" }],
+    });
 
     await click(byText(el, "li", "Screened"));
     // THE ASSERTION THAT MATTERS: nothing has been dispatched yet.
@@ -284,7 +287,9 @@ describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
    * request as that condition; a seen one-click letter makes it a fact.
    */
   it("held mail read and offering no one-click: the confirm still says the sender-level condition", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", { postures: ["no_header"] });
+    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", {
+      letters: [{ posture: "no_header", authVerdict: "pass" }],
+    });
     await click(byText(el, "li", "Screened"));
     expect(onChoose, "a press that may ask a list committed with no word").not.toHaveBeenCalled();
     expect(el.querySelector(".sm-confirm")?.getAttribute("data-unsub")).toBe("may_send");
@@ -296,12 +301,24 @@ describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
     const at = shell.indexOf("<SenderMenu");
     const mount = shell.slice(at, shell.indexOf("/>", shell.indexOf("onClose={() => setSenderMenu(null)}", at)));
     expect(at, "the sheet is mounted in the shell").toBeGreaterThan(-1);
-    expect(mount).toMatch(/posturesFor=\{\(scope\) => senderMenuFor\.scopes\[scope\]\.messages/);
-    expect(mount).toContain("unsubscribePostureOf(engine.read(), m.id)");
+    expect(mount).toMatch(/lettersFor=\{\(scope\) => senderMenuFor\.scopes\[scope\]\.messages/);
+    expect(mount).toContain("unsubscribeLetterOf(engine.read(), m.id)");
+  });
+
+  it("a one-click letter its provider did not confirm: the condition, not the fact", async () => {
+    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", {
+      letters: [{ posture: "one_click", authVerdict: "unavailable" }],
+    });
+    await click(byText(el, "li", "Screened"));
+    expect(onChoose).not.toHaveBeenCalled();
+    expect(el.querySelector(".sm-confirm")?.getAttribute("data-unsub")).toBe("may_send");
+    expect(byText(el, ".sm-confirm-row button", "Screen out and unsubscribe")).toBeUndefined();
   });
 
   it("a held letter still unread: the same condition, and its commit is Continue rather than a promise", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", { postures: ["no_header", null] });
+    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", {
+      letters: [{ posture: "no_header", authVerdict: null }, { posture: null, authVerdict: null }],
+    });
     await click(byText(el, "li", "Screened"));
     const confirm = el.querySelector(".sm-confirm");
     expect(confirm?.getAttribute("data-unsub")).toBe("may_send");

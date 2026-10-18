@@ -267,6 +267,16 @@ describe("readMailboxes — the wire, and what it refuses to guess", () => {
     }
   });
 
+  it("keeps whether the mailbox's provider's word is read only as the server said it", async () => {
+    /* `MailboxDTO.providerConfirms`: where no mailbox has it, no screen-out unsubscribes by itself and
+       none is said. Absent is a server that cannot say, which keeps the sentence (the safe side). */
+    for (const [sent, want] of [[true, true], [false, false], ["false", undefined], [undefined, undefined]] as const) {
+      const out = await readMailboxes(session(ok([{ id: "m1", address: "a@b.test", providerConfirms: sent }])));
+      expect(out?.[0]!.providerConfirms, String(sent)).toBe(want);
+      expect("providerConfirms" in out![0]!, String(sent)).toBe(want !== undefined);
+    }
+  });
+
   it("reads an object of nulls as NO holder, at the wire", async () => {
     const out = await readMailboxes(session(ok([
       { id: "m1", address: "a@b.test", organizedBy: { kind: null, name: null } },

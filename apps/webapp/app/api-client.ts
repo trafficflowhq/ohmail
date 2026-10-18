@@ -1369,6 +1369,8 @@ export interface MailboxDTO {
    * resolves the same way).
    */
   smtpMaxSizeBytes?: number | null;
+  /** Does ohmail read this mailbox's provider's word on a sender; absent where the server cannot say — see `MailboxFacts`. */
+  providerConfirms?: boolean;
   /**
    * The provider's own Junk folder, canonical path, as discovery resolved it at the last attach
    * (mail 0065). ohmail never mirrors that folder, so the surfaces that explain where mail went

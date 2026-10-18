@@ -1137,10 +1137,14 @@ describe("the past-mail switch decides whether mail already here moves", () => {
  * state is shown to somebody whose account turned it off.
  */
 describe("autoUnsubscribeDoor — what this build says, and what it lets you change", () => {
-  const D = { demo: false, known: true, on: true, standalone: false };
+  const D = { demo: false, known: true, on: true, standalone: false, confirms: true };
 
   it("a door with a consent row states it AND offers the switch", () => {
     expect(autoUnsubscribeDoor(D)).toEqual({ discloses: true, control: true });
+  });
+
+  it("no mailbox whose provider's word ohmail reads: nothing is sent by itself, so nothing is said; the switch stays", () => {
+    expect(autoUnsubscribeDoor({ ...D, confirms: false })).toEqual({ discloses: false, control: true });
   });
 
   it("nothing to reach: no promise, and no control over one", () => {
@@ -1167,6 +1171,9 @@ describe("autoUnsubscribeDoor — what this build says, and what it lets you cha
     expect(existsSync(at), `the shell is not at ${at} — this census read nothing`).toBe(true);
     const shell = withoutComments(readFileSync(at, "utf8"));
     expect(shell).toContain("autoUnsubscribeDoor({");
+    expect(shell, "the door is not told whether any mailbox's provider can confirm a sender").toContain(
+      "confirms: autoUnsubscribeConfirms(facts),",
+    );
     expect(shell, "the disclosure is a second expression again").toContain(
       "const autoUnsubscribeDiscloses = autoUnsub.discloses;",
     );

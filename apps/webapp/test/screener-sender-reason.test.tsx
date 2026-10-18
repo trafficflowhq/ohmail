@@ -289,6 +289,29 @@ describe("the identity fact, outside the AI advice", () => {
     expect(host!.querySelector(".bdg-check")).toBeNull();
   });
 
+  /* AN UNCONFIRMED SENDER AT A BRAND'S OWN DOMAIN: the row says the provider did not confirm it, and
+     draws no chip, since the address is the brand's. */
+  const unconfirmed = (id: string): EngineMessage => ({
+    ...held(id, "service@paypal.com", 11), from: { name: "PayPal", address: "service@paypal.com" },
+    senderCheck: { reason: "unverified", brand: "PayPal", domainShared: false },
+  });
+
+  it("an unconfirmed brand sender's row says so, with no chip", async () => {
+    await mount("en", [unconfirmed("v0"), held("m1", CLEAN, 10)], [], false);
+    await open("service@paypal.com");
+    expect(host!.querySelector('.scn-why-checked[data-reason="unverified"]')?.textContent)
+      .toBe("This message says it is from PayPal. Your mail provider did not confirm that.");
+    expect(host!.querySelector('[data-reason="identity"]')).toBeNull();
+    expect(host!.querySelector(".bdg-check")).toBeNull();
+  });
+
+  it("says it in German too", async () => {
+    await mount("de", [unconfirmed("v1")], [], false);
+    await open("service@paypal.com");
+    expect(host!.querySelector('.scn-why-checked[data-reason="unverified"]')?.textContent)
+      .toBe("Diese Nachricht gibt an, von PayPal zu kommen. Dein Mailanbieter hat das nicht bestätigt.");
+  });
+
   it("says why an allow rule for everyone at gmail.com did not let the stranger through", async () => {
     const rule = {
       type: "rule", op: "create", id: "rule-gmail", seq: ++seq, updatedAt: "2026-08-02T09:00:00.000Z",
@@ -342,7 +365,7 @@ describe("the new keys are du-form German, and only du-form", () => {
   const ADDED = [
     ["screener", "senderCheck", "impersonation"], ["screener", "senderCheck", "impersonationShared"],
     ["screener", "senderCheck", "chip"], ["screening", "scopeShared"], ["rules", "sharedProviderInert"],
-    ["screener", "senderCheck", "list"],
+    ["screener", "senderCheck", "list"], ["screener", "senderCheck", "unverified"],
   ] as const;
   const SIE = /\b(Sie|Ihnen|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres)\b/;
   const at = (cat: unknown, path: readonly string[]): string =>

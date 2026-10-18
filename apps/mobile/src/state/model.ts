@@ -65,6 +65,11 @@ export interface Mail {
    * reader's line, and a marked message's pictures wait for a press.
    */
   senderCheck?: { brand: string; domainShared: boolean; domain: string };
+  /**
+   * The address is `brand`'s own and its provider did not confirm the sender (`MessageDTO.senderCheck`
+   * `unverified`): the reader's line only. No chip, nothing spoken on the row, no pictures held.
+   */
+  senderUnverified?: { brand: string };
   subject: string;
   time: string;
   body: string;

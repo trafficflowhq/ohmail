@@ -1,5 +1,5 @@
 import { DESTINATIONS, isConsentingDestination, type Destination } from "./types.js";
-import { BRANDS, type Brand } from "./brands.js";
+import { BRANDS, UMBRELLA_DOMAINS, type Brand } from "./brands.js";
 import { foldForMatch, INVISIBLE, SOFT_HYPHEN } from "./text-fold.js";
 import { isSharedProviderDomain } from "./rule-order.js";
 
@@ -421,6 +421,30 @@ function splitCase(s: string): string {
 /** A shared provider owns nothing: anyone can register an address there, whichever row lists it. */
 function owns(b: Brand, domain: string): boolean {
   return domain !== "" && b.domains.includes(domain) && !isSharedProviderDomain(domain);
+}
+
+/**
+ * The dictionary brand whose own registrable domain this address is at (`mail.paypal.com` is
+ * PayPal's), or `undefined`. A fact about the address only: whether a message really came from
+ * there is its provider's verdict, which every caller reads beside this. Pure.
+ */
+export function ownedBrand(fromAddress: string): Brand | undefined {
+  const domain = senderDomainOf(fromAddress);
+  return BRANDS.find((b) => owns(b, domain));
+}
+
+/**
+ * WHO AN ADDRESS AT A BRAND'S OWN DOMAIN SAYS IT IS FROM, as the "did not confirm" line names it: the
+ * brand, where its registrable domain is that one brand's; the domain itself where it names no ONE
+ * brand — a government's umbrella (`UMBRELLA_DOMAINS`: every federal office sends from under
+ * `admin.ch`) or a domain two rows list. Naming the first row there put ESTV on a BAG letter.
+ * `undefined` exactly where {@link ownedBrand} is, so the act's refusal and the line read one fact.
+ */
+export function ownedSenderName(fromAddress: string): string | undefined {
+  const domain = senderDomainOf(fromAddress);
+  const owners = BRANDS.filter((b) => owns(b, domain));
+  if (owners.length === 0) return undefined;
+  return owners.length === 1 && !UMBRELLA_DOMAINS.has(domain) ? owners[0]!.name : domain;
 }
 
 /** The most of a name, a local part or a subject the fact reads: each is cut here before any reading. */

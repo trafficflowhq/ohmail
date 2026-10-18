@@ -146,6 +146,20 @@ export function SenderDetail({
                 ) : null}
               </View>
             </View>
+          ) : row.unverified ? (
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12, alignItems: "flex-start" }}>
+              <View style={{ marginTop: 2 }}>
+                <Icon name="shield" size={13} color={t.c.accentInk} />
+              </View>
+              <View style={{ flex: 1, gap: 4 }}>
+                <Txt variant="note" tone="ink" testID="sender-check-unverified">
+                  {Copy.senderCheckUnverified(row.unverified.brand)}
+                </Txt>
+                {row.unverified.list ? (
+                  <Txt variant="note" tone="ink" testID="sender-check-list">{Copy.senderCheckList}</Txt>
+                ) : null}
+              </View>
+            </View>
           ) : null}
           {row.inertRule ? (
             <Txt variant="note" tone="ink2" style={{ marginTop: 10 }} testID="sender-inert-rule">

@@ -201,6 +201,9 @@ export default defineConfig({
       "packages/services/test/screener-decide-statements.test.ts",
       // A decided placement on the wire and out of the count, and a rule group's offer: this store too.
       "packages/services/test/screener-says-what-it-does.test.ts",
+      // The "did not confirm" line and the name it gives, off the message and the Screener row:
+      // the phone's local engine projects both over this store.
+      "packages/services/test/sender-unverified.test.ts",
       "packages/services/test/card-move-is-conditional.test.ts",
       "apps/worker/test/inbound-quiet.test.ts",
       /* Mail from a gap: a phone that organizes again runs the same catch-up over this store. */

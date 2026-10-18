@@ -50,7 +50,12 @@ const ctx = (accountId: string): ServiceContext => ({
 });
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
-const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`). Every letter below carries that
+ * provider's confirmation of its own sender's domain — the attacker's too, for the domain they own:
+ * the automatic arm asks a list only for a confirmed sender, and the races here are about the claim.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
 
 /** Counts every call. Opens nothing. Slow on purpose — see `newWorld`'s comment. */
 function countingPost(delayMs = 0): OneClickPost & { calls: string[] } {
@@ -109,6 +114,7 @@ async function newWorld(n: number): Promise<World> {
         "list-id": [`Weekly <${LIST_ID}>`],
         "list-unsubscribe": [`<https://sender.example/u?t=${randomUUID()}>`],
         "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+        "authentication-results": ["mx.google.com; dmarc=pass"],
       },
     });
     await db.insert(folderState).values({
@@ -138,7 +144,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
     // returning. Without the unique index every one of the eight would be inside that window
     // together and eight requests would leave the building.
     const post = countingPost(25);
-    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
     await Promise.allSettled(w.messageIds.map((id) => svc.unsubscribe(ctx(w.accountId), id)));
 
@@ -159,7 +165,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
     // claim and is re-run, or a user's client replaying a POST.
     const w = await newWorld(1);
     const post = countingPost();
-    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
     await svc.onScreenOut(ctx(w.accountId), w.messageIds);
     await svc.onScreenOut(ctx(w.accountId), w.messageIds);
@@ -198,6 +204,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
         "list-id": ["<offers.elsewhere.example>"],
         "list-unsubscribe": ["<https://elsewhere.example/u?t=x>"],
         "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+        "authentication-results": ["mx.google.com; dmarc=pass"],
       },
     });
     await db.insert(folderState).values({
@@ -207,7 +214,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
     await personDecided(w.accountId, m2!.fromAddress);
 
     const post = countingPost();
-    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
     await svc.onScreenOut(ctx(w.accountId), [...w.messageIds, m2!.id]);
 
     expect(post.calls).toHaveLength(2);
@@ -227,7 +234,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
     // a drain sweeping the same mailbox reaches a DIFFERENT message from the same list.
     const w = await newWorld(2);
     const post = countingPost(25);
-    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
     await Promise.allSettled([
       svc.onScreenOut(ctx(w.accountId), [w.messageIds[0]!]),
@@ -269,6 +276,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
           "list-id": [`Weekly <${listId}>`],
           "list-unsubscribe": [`<${url}>`],
           "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+          "authentication-results": ["mx.google.com; dmarc=pass"],
         },
       });
       await db.insert(folderState).values({
@@ -286,7 +294,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
 
     const post = countingPost();
     const svc = makeUnsubscribeService({
-      post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY,
+      post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL,
     });
 
     // The order is the attack: the attacker gets there FIRST.
@@ -325,7 +333,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
     await db.update(folderState).set({ updatedAt: sql`now() - interval '30 days'` })
       .where(eq(folderState.messageId, w.messageIds[0]!));
     const post = countingPost();
-    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
     const sweep = await svc.sweepScreenedOut(ctx(w.accountId), {
       since: new Date(Date.now() - 86_400_000), limit: 50,

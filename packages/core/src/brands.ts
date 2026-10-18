@@ -122,3 +122,11 @@ export const BRANDS: readonly Brand[] = [
   { name: "DocuSign", aliases: ["docusign"], domains: ["docusign.com", "docusign.net"], gate: ["docusign"] },
   { name: "Dropbox", aliases: ["dropbox"], domains: ["dropbox.com", "dropboxmail.com"], gate: ["dropbox"] },
 ];
+
+/**
+ * A GOVERNMENT'S UMBRELLA DOMAINS: every federal office sends from its own host under one registrable
+ * domain (`bag.admin.ch`, `estv.admin.ch`; `bsi.bund.de`, `bzst.bund.de`). A row that lists one owns it,
+ * because the domain is the state's and a forgery of it is still a forgery; but an address there names
+ * no ONE office, so a sentence naming the sender names the domain instead (`ownedSenderName`).
+ */
+export const UMBRELLA_DOMAINS: ReadonlySet<string> = new Set(["admin.ch", "bund.de"]);

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
-  folderState, messageBodies, unsubscribeDrainState, unsubscribeExamined, unsubscribeRecords,
+  folderState, mailboxes, messageBodies, unsubscribeDrainState, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db";
 import {
   makeUnsubscribeService, type HostResolver, type OneClickPost,
@@ -21,7 +21,12 @@ import { makeCtx, personScreenedOut, seedMessage } from "./helpers.js";
  */
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
-const NOBODY: ReadonlySet<string> = new Set<string>();
+/**
+ * The position a Gmail-held mailbox trusts (`providerAuthservIds`), and that provider confirming a
+ * row's sender, which the seed writes: the drain asks a list only for a confirmed sender.
+ */
+const GMAIL: ReadonlySet<string> = new Set(["mx.google.com"]);
+const CONFIRMED = { "authentication-results": ["mx.google.com; dmarc=pass"] };
 
 const ONE_CLICK = {
   "list-unsubscribe": ["<https://sender.example/u?t=abc>"],
@@ -45,7 +50,7 @@ function spy(): OneClickPost & { calls: string[] } {
 }
 
 const svcWith = (post: OneClickPost) =>
-  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+  makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => GMAIL });
 
 /** Seed one screened-out candidate at an exact position in the walk's `(updated_at, id)` order. */
 async function seedAt(
@@ -54,7 +59,7 @@ async function seedAt(
 ): Promise<string> {
   const messageId = await seedMessage(db, accountId, mailboxId, { from, folder: "ohmail/Screened" });
   await personScreenedOut(db, accountId, from);
-  await db.insert(messageBodies).values({ messageId, text: "", headers });
+  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
   await db.update(folderState).set({ updatedAt: at }).where(eq(folderState.messageId, messageId));
   return messageId;
 }
@@ -211,5 +216,72 @@ describe("the window walk resumes where it stopped", () => {
     const [afterDeath] = await db.select().from(unsubscribeDrainState);
     expect(afterDeath!.cursorMessageId, "a dead run does not move the cursor").toBe(messageId);
     expect((afterDeath!.cursorAt as Date).getTime()).toBe((at as Date).getTime());
+  });
+});
+
+/**
+ * A REFUSAL OF THE PROVIDER'S WORD LEAVES THE WINDOW. The automatic arm refuses a sender its
+ * mailbox's provider did not confirm BEFORE the claim, so no record and no examined mark is written:
+ * eligibility alone has to drop it, or the same oldest refusals take the account's slots at every
+ * run and a confirmed letter behind them in another mailbox is never reached.
+ */
+describe("a sender the provider did not confirm is not a drain candidate", () => {
+  const NOBODY: ReadonlySet<string> = new Set<string>();
+
+  async function twoMailboxes() {
+    const { db, accountId, mailboxId: unmapped } = await makeCtx();
+    const [g] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "mila@gmail.example" }).returning();
+    const gmail = g!.id;
+    const post = spy();
+    const svc = makeUnsubscribeService({
+      post, resolver: PUBLIC_DNS,
+      trustedAuthservIdsFor: async (_tx, mb) => (mb === gmail ? GMAIL : NOBODY),
+    });
+    return { db, accountId, unmapped, gmail, post, svc };
+  }
+
+  /** A screened-out one-click letter, its verdict as ingest stored it (NULL: never asked). */
+  async function letter(
+    db: Db, accountId: string, mailboxId: string, from: string, tag: string, at: Date, authVerdict: string | null,
+  ): Promise<string> {
+    const messageId = await seedMessage(db, accountId, mailboxId, { from, folder: "ohmail/Screened", authVerdict });
+    await personScreenedOut(db, accountId, from);
+    await db.insert(messageBodies).values({ messageId, text: "", headers: {
+      ...CONFIRMED,
+      "list-unsubscribe": [`<https://sender.example/u?t=${tag}>`],
+      "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+    } });
+    await db.update(folderState).set({ updatedAt: at }).where(eq(folderState.messageId, messageId));
+    return messageId;
+  }
+
+  it("refusals at an unmapped host ahead of a confirmed letter: the confirmed one posts on the first run", async () => {
+    const w = await twoMailboxes();
+    for (let i = 0; i < 12; i += 1) {
+      await letter(w.db, w.accountId, w.unmapped, `news${i}@list-${i}.example`, `u${i}`, ago(3_600_000 - i), "unavailable");
+    }
+    await letter(w.db, w.accountId, w.gmail, "letters@confirmed.example", "gmail", ago(1_800_000), "pass");
+
+    const run = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    expect(w.post.calls).toEqual(["https://sender.example/u?t=gmail"]);
+    expect(run.sweep).toMatchObject({ considered: 1, posted: 1 });
+    expect(run.remaining, "a refused letter is not counted as owed").toBe(0);
+  });
+
+  it("a letter nobody judged yet is looked at once, then leaves the window with the verdict it got", async () => {
+    const w = await twoMailboxes();
+    for (let i = 0; i < 12; i += 1) {
+      await letter(w.db, w.accountId, w.unmapped, `news${i}@list-${i}.example`, `u${i}`, ago(3_600_000 - i), null);
+    }
+    await letter(w.db, w.accountId, w.gmail, "letters@confirmed.example", "gmail", ago(1_800_000), null);
+
+    const first = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    expect(first.sweep).toMatchObject({ considered: 10, posted: 0, skipped: 10 });
+    const second = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d2" });
+    expect(second.sweep, "the ten refused at the first look are not looked at again").toMatchObject({ considered: 3, posted: 1 });
+    expect(w.post.calls).toEqual(["https://sender.example/u?t=gmail"]);
+    expect(second.remaining).toBe(0);
+    const third = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d3" });
+    expect(third.sweep.considered).toBe(0);
   });
 });

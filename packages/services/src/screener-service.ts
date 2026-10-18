@@ -41,6 +41,7 @@ import {
   applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
   DESTINATIONS, effectForDestination, isDecidedDestination, ModelDeclinedError,
   resolveOhboxPolicy, senderCheckAll, senderDomainOf, senderFacts, BRANDS, SCREENING_AUTH_VERDICTS,
+  asAuthVerdict, ownedSenderName,
 } from "@trafficflow/core/mail";
 /* The verdict derivation moved to its own leaf when `materializeScreenerSuggestion` became its
    third reader — one reading for the page, the purchase and the `/sync` entity. */
@@ -2736,10 +2737,18 @@ function parseAutomatic(body: ScreenerSuggestBody): boolean {
  * brand, else the representative's own fact as the page computed it — so a NULL column never reads
  * as "nothing found". When it marks the sender, the signals carry it too, so the displayed advice
  * is capped whichever message it was bought on. `list`: the address is one a list posts as.
+ * Unmarked, a representative at a brand's own domain its provider did not confirm reads
+ * `unverified`, named as the message's own line names it (`ownedSenderName`): said on the row, and
+ * the signals and the advice are left exactly as they were.
  */
 function checkedOfSender(r: ScreenerRow, signals: SenderSignals | undefined, isList: boolean): ScreenerItem["checked"] {
   const brand = r.markedBrand ?? signals?.impersonation?.brand ?? null;
-  if (brand === null) return undefined;
+  if (brand === null) {
+    const owned = asAuthVerdict(r.authVerdict) === "pass" ? undefined : ownedSenderName(r.fromAddress);
+    return owned === undefined ? undefined : {
+      reason: "unverified", brand: owned, domainShared: false, ...(isList ? { list: true as const } : {}),
+    };
+  }
   if (signals && !signals.impersonation) {
     const row = BRANDS.find((b) => b.name === brand);
     signals.impersonation = { brand, brandDomains: row?.domains ?? [] };
