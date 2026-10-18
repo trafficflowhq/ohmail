@@ -41,6 +41,16 @@ within about three minutes, and `/internal/alerts` answers instead of 503. The a
 Telegram, and by mail to `TF_ALERT_EMAIL` through your SMTP settings; `/health` lists the channels it pages on,
 and `deploy/selfhost/.env.example` says which service pages on which.
 
+### Coming back to ohmail.app after signing out no longer shows an empty page
+
+After a sign-out the server had not confirmed, or while a saved sign-in was being checked, ohmail.app could show
+an empty page for 20 seconds or more before the sign-in page. The sign-in page now appears at once and ends the
+session on the server behind it, as do the sign-up and email confirmation pages; the sign-up page no longer reads
+or changes the signed-out account. If the session cannot be ended, the page says so and offers Sign out again,
+and signing in, creating an account or confirming an address on that browser starts only once it has ended. The
+check of a saved sign-in shows the ohmail card while it waits. Opening ohmail.app from a link on another site, an
+invitation included, no longer signs you back in after such a sign-out.
+
 ### Change your password
 
 Change your password from Settings; your other sessions are signed out, and sign-ins still waiting to finish are

@@ -71,8 +71,10 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  Raised 2026-10-17 (both): the signup's refusals in the screen's words, sentences shown the
  *  moment a submit is refused (join, verify; both carried whole), and Account for Konto there.
  *  Raised 2026-10-17 (both): the authenticator's Copy and QR label, the codes' Copy and Download,
- *  "Did you mean" and "Wrong address?" (join, carried whole). */
-const INLINE_CEILING_BYTES = { en: 36_550, de: 41_800 } as const;
+ *  "Did you mean" and "Wrong address?" (join, carried whole).
+ *  Raised 2026-10-18 (both): the splash's waiting line and the sign-in's sentence for a pending
+ *  sign-out (resume, carried whole). */
+const INLINE_CEILING_BYTES = { en: 36_650, de: 41_900 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>

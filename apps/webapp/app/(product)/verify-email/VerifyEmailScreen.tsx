@@ -24,13 +24,15 @@
  * an account. This screen shows what it is given.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { apiConfigured, auth, codeOf, messageOf } from "../../api-client";
+import { readOwnerMarker } from "../../shell/owner-cookie";
 import { verifyRefusal } from "../join/signup-refusals";
+import { PendingSignOutSaid, usePendingSignOut } from "../login/pending-sign-out";
 
 export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
   const t = useTranslations("verify");
@@ -61,12 +63,31 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, [initialToken]);
 
+  /**
+   * A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED (`login/pending-sign-out.tsx`). A
+   * confirmation can mint a session, and one minted beside that sign-out leaves its family live in this
+   * jar for good. So the sign-out is finished at the door behind the form from the moment the page opens,
+   * and asked once more before the confirmation; `stopFinish` is how the press stops the ladder's next ask.
+   */
+  const pending = usePendingSignOut();
+  const stopFinish = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!apiConfigured() || readOwnerMarker().kind !== "signed-out") return;
+    let cancelled = false;
+    stopFinish.current = () => { cancelled = true; };
+    void pending.finish(() => cancelled);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `pending.finish` is the page's for its life
+  }, []);
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     void (async () => {
       try {
+        stopFinish.current?.();
+        if (!await pending.settle()) return;
         const out = await auth.verifyEmail({ token: token.trim(), password });
         setPassword("");
         if (out.status === "enrollment") {
@@ -115,6 +136,8 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
     <Shell title={t("title")}>
       <p className="sub">{t("lead")}</p>
       {error && <p className="join-error" role="alert">{error}</p>}
+      {/* A sign-out this browser asked for that ended unconfirmed here, and Sign out to ask again. */}
+      <PendingSignOutSaid pending={pending} busy={busy} />
 
       <form onSubmit={submit}>
         {/* The token field is VISIBLE when the link did not carry one — somebody who typed the
@@ -138,7 +161,7 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
         <p className="join-hint">{t("passwordHint")}</p>
 
         <div className="join-actions">
-          <Button variant="primary" type="submit" disabled={busy || token.trim().length === 0}>
+          <Button variant="primary" type="submit" disabled={busy || pending.signingOut || token.trim().length === 0}>
             {busy ? t("working") : t("confirm")}
           </Button>
         </div>

@@ -23,9 +23,11 @@ import {
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { LOGIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
+import { readOwnerMarker } from "../../shell/owner-cookie";
 import { refreshSettled } from "../../session-refresh";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { REASON_BODY, takeSignedOutNote, type SignedOutReason } from "../resume/signed-out-note";
+import { PendingSignOutSaid, usePendingSignOut } from "./pending-sign-out";
 // The approval page's way back after an ordinary sign-in: a request id, never a URL.
 import { approvalReturnKept, takeApprovalReturn } from "../approve/approval-return";
 import { whenSignedInElsewhere } from "../approve/signed-in-elsewhere";
@@ -86,12 +88,23 @@ export function LoginScreen(
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Why the resume splash sent this tab here, read once after mount (never during render). */
+  /**
+   * Why this tab is here, read once after mount (never during render): a sign-out this browser asked
+   * for that the server never confirmed (`tf_owner`), else the resume splash's note.
+   */
   const [signedOut, setSignedOut] = useState<SignedOutReason | null>(null);
   useEffect(() => {
     const note = takeSignedOutNote();
-    if (note !== null) setSignedOut(note);
+    if (readOwnerMarker().kind === "signed-out") setSignedOut("pending");
+    else if (note !== null) setSignedOut(note);
   }, []);
+
+  /**
+   * HOW THE PENDING SIGN-OUT ENDED, when it did not finish: the server kept refusing, or the wipe did
+   * not land. Said in the card with Sign out to ask again, as the splash said it before this page
+   * finished sign-outs (`pending-sign-out.tsx`, shared with the sign-up and confirmation pages).
+   */
+  const pending = usePendingSignOut();
 
   const configured = apiConfigured();
 
@@ -149,6 +162,16 @@ export function LoginScreen(
     };
     // A ceremony already owns this page — see `submittedRef`. Nothing to confirm.
     if (submittedRef.current) return;
+    /*
+     * A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED: the edge sends it here, and
+     * this page finishes it at the sign-out door behind the form (`finish-sign-out.ts`), and says so
+     * if it cannot. INSTEAD of the confirm below, never beside it: the session read refreshes on a
+     * 401, which would resume the family the person ended. The submit's cancel stops the next attempt.
+     */
+    if (readOwnerMarker().kind === "signed-out") {
+      void pending.finish(() => cancelled);
+      return () => { cancelled = true; };
+    }
     const ask = async (attempt: number): Promise<void> => {
       // `resolveOwnerOutcome` answers rather than rejects for every network and server
       // reason; the one thing it rethrows is an unarmed build, which `configured` above has
@@ -262,6 +285,13 @@ export function LoginScreen(
        * rather than to cancel one: it writes, then we write. See `refreshSettled`.
        */
       await refreshSettled();
+      /*
+       * NO SIGN-IN BESIDE A SIGN-OUT THE SERVER HAS NOT CONFIRMED: its family is still live, and in
+       * this jar, and a session minted beside it would leave it so. A pending sign-out's attempt still
+       * out ends first, then the door is asked once more; anything short of a finished sign-out is
+       * said, and the ceremony does not start.
+       */
+      if (!await pending.settle()) return;
       /**
        * THE ORIGIN-WIDE LOCK IS THE CLIENT'S NOW, NOT THIS SCREEN'S: This call took `withSessionCookieLock`
        * explicitly, which fixed the sign-in and nothing else: registration, first-run, and four in-shell
@@ -346,6 +376,8 @@ export function LoginScreen(
             </p>
           )
           : null}
+        {/* …and, when the pending sign-out ended unfinished, what did not happen and how to ask again. */}
+        <PendingSignOutSaid pending={pending} busy={busy} />
         {/* THE SUBTITLE FOLLOWS THE FACTS ON SCREEN — claims-are-contracts. The old fixed
             "Your password, then your passkey… nothing to type" stood over the TOTP step, which
             was at that moment asking the user to type a six-digit code — directly false for the
@@ -384,7 +416,7 @@ export function LoginScreen(
               value={password} onChange={(e) => setPassword(e.target.value)} required
             />
             <div className="join-actions">
-              <Button variant="primary" type="submit" disabled={busy}>
+              <Button variant="primary" type="submit" disabled={busy || pending.signingOut}>
                 {busy ? t("working") : t("continue")}
               </Button>
             </div>

@@ -48,7 +48,8 @@ describe("signOut", () => {
   const src = read("../app/sign-out.ts");
 
   it("revokes the session AND wipes the local mirror", () => {
-    expect(src).toMatch(/await auth\.logout\(\)/);
+    // The door is asked with the caller's predicate, which only the sign-in page's finisher passes.
+    expect(src).toMatch(/await auth\.logout\(\{ mayProceed: opts\.mayProceed \}\)/);
     expect(src).toMatch(/await clearAllMirrors\(owner\)/);
     expect(src).toContain('from "@ohmail/client-engine"');
   });
@@ -217,12 +218,12 @@ describe("the sign-out CONTROL is wired", () => {
     const body = sliceOfDeclaration(account, "doSignOut");
     expect(reader).toMatch(/if \(outcome\.serverRefused !== null\) return \{ key: "signOutServerRefused"/);
     expect(body).toMatch(/const said = signOutTrouble\(outcome\);/);
-    // ── THE REFUSAL NOW LEAVES, FOR THE FRONT DOOR THAT FINISHES IT ───────────────────────
+    // ── THE REFUSAL NOW LEAVES, FOR THE SIGN-IN PAGE THAT FINISHES IT ─────────────────────
     //
     // It used to stay on the pane and say so, over a mailbox the blocked client could no longer
     // use. The browser is wiped and marked `signed_out_pending`, so `/` never serves it the app or a
-    // resume (`session-gate.ts`): the splash presents the session at the sign-out door, and only if
-    // that keeps failing does it say which half did not happen. The pane claims nothing either way.
+    // resume (`session-gate.ts`): it sends it to the sign-in page, which presents the session at the
+    // sign-out door behind its form, on the confirm ladder. The pane claims nothing either way.
     const gate = body.indexOf('if (said !== null && said.key !== "signOutServerRefused") {');
     const leave = body.indexOf("window.location.assign");
     expect(gate).toBeGreaterThan(-1);
@@ -230,9 +231,31 @@ describe("the sign-out CONTROL is wired", () => {
     expect(body.slice(gate, leave)).toMatch(/return;/);
     expect(body.slice(leave), "the press leaves for anything but the front door").toMatch(/window\.location\.assign\("\/"\)/);
     expect(account, "the pane still claims to say the server refused").not.toContain('t("signOutServerRefused"');
-    // …and the sentence is said where the sign-out is finished, with a remedy that works from anywhere.
+    // …and it is finished where the form is, never behind a page with nothing on it: the sign-in
+    // page asks the sign-out door under the marker, and so do the sign-up and confirmation pages one
+    // link away (one hook, `pending-sign-out.tsx`); the splash never loads the sign-out at all.
+    const login = read("../app/(product)/login/LoginScreen.tsx");
+    expect(login).toMatch(/if \(readOwnerMarker\(\)\.kind === "signed-out"\) \{\s*void pending\.finish\(/);
+    const join = read("../app/(product)/join/JoinScreen.tsx");
+    const branch = join.indexOf('if (apiConfigured() && readOwnerMarker().kind === "signed-out") {');
+    const finish = join.indexOf("void pending.finish(", branch);
+    const back = join.indexOf("return () => { cancelled = true; };", finish);
+    expect(branch, "the sign-up page never reads the marker").toBeGreaterThan(-1);
+    expect(finish).toBeGreaterThan(branch);
+    expect(join.indexOf("void bootstrap();", branch), "the sign-up page reads the session under a pending sign-out")
+      .toBeGreaterThan(back);
+    expect(back).toBeGreaterThan(finish);
+    const verify = read("../app/(product)/verify-email/VerifyEmailScreen.tsx");
+    expect(verify).toMatch(/void pending\.finish\(/);
+    for (const [page, src] of [["sign-in", login], ["sign-up", join], ["confirmation", verify]] as const) {
+      expect(src, `the ${page} page starts a ceremony beside the pending sign-out`).toMatch(/if \(!await pending\.settle\(\)\) return;/);
+      expect(src, `the ${page} page does not say how the sign-out ended`).toMatch(/<PendingSignOutSaid pending=\{pending\}/);
+    }
+    // …and what it ends on is said there, in this pane's words, through the same reader.
+    const said = read("../app/(product)/login/pending-sign-out.tsx");
+    expect(said).toMatch(/ta\(pending\.said\.key, \{ reason: pending\.said\.reason \}\)/);
     const splash = read("../app/(product)/resume/ResumeScreen.tsx");
-    expect(splash).toMatch(/ta\(view\.said\.key, \{ reason: view\.said\.reason \}\)/);
+    expect(splash).not.toMatch(/import\(["']\.\.\/\.\.\/sign-out["']\)|from ["']\.\.\/\.\.\/sign-out(?:-trouble)?["']/);
     const copy = JSON.parse(read("../messages/en.json")) as Record<string, Record<string, string>>;
     expect(copy.account!.signOutServerRefused).toMatch(/could not be ended/i);
     expect(copy.account!.signOutServerRefused).toMatch(/Devices list/);
@@ -402,5 +425,95 @@ describe("the door's answer is the verdict", () => {
     const { ApiError } = await import("../app/api-client");
     expect(await signOutAnswered(new ApiError(403, "csrf_failed", "csrf validation failed", undefined, { coded: true })))
       .toEqual(REFUSED);
+  });
+});
+
+/**
+ * THE SIGN-IN PAGE'S FINISHER passes a predicate: may this call still end the jar it started on? A
+ * jar another tab signed in to while the door was out is not its to mark or wipe. A refusal leaves
+ * the jar as it was, so a predicate that no longer holds after one means somebody else wrote it; the
+ * door's own answer (204, its coded 401) clears the marker itself and is never read as that.
+ */
+describe("the finisher's predicate", () => {
+  const PENDING = "signed_out_pending";
+  const OTHER = "acct_signed_in_elsewhere";
+  const JOURNAL = "ohmail.screener.intents.";
+  const pending = (): boolean => document.cookie.split("; ").includes(`tf_owner=${PENDING}`);
+
+  beforeEach(async () => {
+    mockLogout.mockReset();
+    localStorage.clear();
+    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = {
+      databases: async () => [],
+      deleteDatabase: () => {
+        const req = { onsuccess: null } as unknown as IDBOpenDBRequest;
+        queueMicrotask(() => (req.onsuccess as unknown as (() => void) | null)?.());
+        return req;
+      },
+    } as unknown as IDBFactory;
+    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    (await import("../app/api-client")).blockApiOwner();
+  });
+
+  it("is handed to the door, which asks it inside the cookie lock", async () => {
+    mockLogout.mockResolvedValueOnce(undefined);
+    const { signOut } = await import("../app/sign-out");
+    await signOut(undefined, { mayProceed: pending });
+    expect(mockLogout).toHaveBeenCalledWith({ mayProceed: pending });
+  });
+
+  it("a refusal over a jar another tab signed in to answers null, and marks and sweeps nothing", async () => {
+    const { ApiError, OFFLINE_CODE } = await import("../app/api-client");
+    mockLogout.mockImplementationOnce(async () => {
+      // The other tab's answer lands while this door is out.
+      document.cookie = `tf_owner=${OTHER}; Path=/`;
+      localStorage.setItem(`${JOURNAL}${OTHER}`, "[]");
+      throw new ApiError(0, OFFLINE_CODE, "We could not reach ohmail.");
+    });
+    const { signOut } = await import("../app/sign-out");
+    expect(await signOut(undefined, { mayProceed: pending }), "a refusal about somebody else's jar was reported").toBeNull();
+    expect(document.cookie, "the other tab's session was marked pending").toContain(`tf_owner=${OTHER}`);
+    expect(localStorage.getItem(`${JOURNAL}${OTHER}`), "the other tab's stores were swept").toBe("[]");
+  });
+
+  it("THE CONTROL — the same refusal over the jar it started on is reported, marked and swept as ever", async () => {
+    const { ApiError, OFFLINE_CODE } = await import("../app/api-client");
+    localStorage.setItem(`${JOURNAL}acct_left`, "[]");
+    mockLogout.mockRejectedValueOnce(new ApiError(0, OFFLINE_CODE, "We could not reach ohmail."));
+    const { signOut } = await import("../app/sign-out");
+    const out = await signOut(undefined, { mayProceed: pending });
+    expect(out?.serverRefused).toBe("We could not reach ohmail.");
+    expect(pending()).toBe(true);
+    expect(localStorage.getItem(`${JOURNAL}acct_left`)).toBeNull();
+  });
+
+  it("the door's own clear is never read as a jar that moved: 204 and its coded 401 run the local half", async () => {
+    const { ApiError } = await import("../app/api-client");
+    const { signOut } = await import("../app/sign-out");
+    for (const answer of ["ok", new ApiError(401, "refresh_revoked", "revoked", undefined, { coded: true })] as const) {
+      document.cookie = `tf_owner=${PENDING}; Path=/`;
+      localStorage.setItem(`${JOURNAL}acct_left`, "[]");
+      mockLogout.mockImplementationOnce(async () => {
+        // The door's answer clears the jar, `tf_owner` with it.
+        document.cookie = "tf_owner=; Path=/; Max-Age=0";
+        if (answer !== "ok") throw answer;
+      });
+      const out = await signOut(undefined, { mayProceed: pending });
+      expect(out, `${answer === "ok" ? "a 204" : "a coded 401"} was read as a jar that moved`).not.toBeNull();
+      expect(out!.serverRefused).toBeNull();
+      expect(localStorage.getItem(`${JOURNAL}acct_left`), "the local half did not run").toBeNull();
+    }
+  });
+
+  it("WITHOUT a predicate there is no such exit: every press runs its local half", async () => {
+    const { ApiError, OFFLINE_CODE } = await import("../app/api-client");
+    mockLogout.mockImplementationOnce(async () => {
+      document.cookie = `tf_owner=${OTHER}; Path=/`;
+      throw new ApiError(0, OFFLINE_CODE, "We could not reach ohmail.");
+    });
+    const { signOut } = await import("../app/sign-out");
+    const out = await signOut();
+    expect(out.serverRefused).toBe("We could not reach ohmail.");
+    expect(pending(), "a press with no predicate skipped its local half").toBe(true);
   });
 });

@@ -64,8 +64,8 @@ async function pressSignOut(): Promise<string[]> {
 }
 
 describe("the lock screen's sign-out", () => {
-  /* The browser is wiped and marked `signed_out_pending`, so `/` sends it to the splash, which
-     finishes the sign-out at the door and says the refusal only if it keeps happening. Standing
+  /* The browser is wiped and marked `signed_out_pending`, so `/` sends it to the sign-in page,
+     which finishes the sign-out at the door behind its form (`login-finishes-sign-out`). Standing
      here kept the lock over a client that could no longer ask anything (`resume-never-loops`). */
   it("a refusal on the server leaves for the front door that finishes it, claiming nothing", async () => {
     outcome = { ...FINISHED, serverRefused: "the server said no." };

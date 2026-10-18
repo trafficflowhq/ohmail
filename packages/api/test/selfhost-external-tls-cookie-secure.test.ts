@@ -40,7 +40,8 @@ const MINTS: ReadonlyArray<{ name: string; lines: string[]; expect: number }> = 
      owner), and it returns a SHORTER set — so it is measured separately rather than assumed to
      be the same lines. */
   { name: "sessionCookies, owner absent", lines: sessionCookies(TOKENS, "csrf-1", CFG, null), expect: 4 },
-  { name: "enrollmentCookies", lines: enrollmentCookies("enroll-ghi", "csrf-2", CFG), expect: 2 },
+  /* Two set and two expired: the jar's earlier refresh cookie and resume marker go with it. */
+  { name: "enrollmentCookies", lines: enrollmentCookies("enroll-ghi", "csrf-2", CFG), expect: 4 },
   /* The CLEAR is in scope and it is not pedantry: a browser only replaces a cookie when the
      replacement matches on the attributes that scope it, so a clear that dropped `Secure` would
      leave the live cookie in the jar on the one door where it matters. */

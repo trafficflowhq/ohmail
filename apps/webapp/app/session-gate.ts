@@ -2,11 +2,12 @@
  * The single-origin decision: what does `https://ohmail.app/` serve? A stranger gets the marketing
  * page; a signed-in browser gets the mail client, same URL, no redirect, no flash. A pure function
  * of (cookie, query, armed-or-not, a `fetch`); `middleware.ts` is the only caller and just turns
- * the answer into a rewrite. The network call is not optional: `tf_session` is an OPAQUE token —
- * nothing at the edge can read it — and a presence check would render the app shell for an expired
- * or revoked cookie, a signed-in-looking chrome around nothing. The anonymous path reads a cookie
- * that is not there and returns immediately, so `/` stays a cacheable marketing page; the cost
- * lands only on requests that claim a session.
+ * the answer into a rewrite (a pending sign-out's into a redirect to the sign-in page). The network
+ * call is not optional: `tf_session` is an OPAQUE token — nothing at the edge can read it — and a
+ * presence check would render the app shell for an expired or revoked cookie, a signed-in-looking
+ * chrome around nothing. The anonymous path reads a cookie that is not there and returns
+ * immediately, so `/` stays a cacheable marketing page; the cost lands only on requests that claim
+ * a session.
  */
 
 /**
@@ -85,8 +86,11 @@ export function looksLikeSessionToken(token: string): boolean {
   return TOKEN_SHAPE.test(token);
 }
 
-/** What `/` should render for this request. */
-export type Surface = "marketing" | "app" | "demo" | "resume";
+/**
+ * What `/` should render for this request. `sign-out` is not rendered here: `middleware.ts` answers it
+ * with a redirect to the sign-in page, which finishes the sign-out behind its form.
+ */
+export type Surface = "marketing" | "app" | "demo" | "resume" | "sign-out";
 
 export interface GateInput {
   /** The raw `tf_session` cookie value, or null when the browser sent none. */
@@ -119,8 +123,9 @@ export interface GateInput {
   throttled?: boolean;
   /**
    * `tf_owner` says `signed_out_pending`: this browser asked to sign out and the server never
-   * confirmed it. Such a browser is sent to the splash, which finishes the sign-out at the door; it
-   * is never served the app (every request refused there) and never resumed (the person said no).
+   * confirmed it. Such a browser is sent to the sign-in page, which finishes the sign-out at the
+   * door behind its form; it is never served the app (every request refused there) and never
+   * resumed (the person said no).
    */
   signOutPending?: boolean;
   /** Injectable so the tests can assert the ZERO-fetch branches by counting calls. */
@@ -164,10 +169,10 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   const token = input.sessionToken?.trim();
   const resumable = input.resumeMarker === true && input.apiOrigin !== null;
 
-  // 2a. A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED: the splash finishes it.
-  //     Before the probe and the throttle, because the answer does not depend on the session.
+  // 2a. A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED: the sign-in page finishes
+  //     it. Before the probe and the throttle, because the answer does not depend on the session.
   if (input.signOutPending === true && input.apiOrigin !== null && (token || input.resumeMarker === true)) {
-    return "resume";
+    return "sign-out";
   }
   if (!token) return resumable ? "resume" : "marketing";
 

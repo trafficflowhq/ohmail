@@ -8,17 +8,19 @@
  * door's three refusals go to `/login` with the sentence that names which; a fault — a busy database, a
  * 429, no response — retries here with the jar untouched and ends on "could not be reached", never on
  * a sign-in. It RELOADS rather than navigating: `location.replace("/" + hash)` is a fragment change.
+ * Its card paints from the first frame, server-rendered: the wait for the door is never a blank page.
+ * It never finishes a sign-out: see {@link signOutPending}.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { REFRESH_ENDPOINT, lastRefreshReport, resumeSession, type RefreshReport } from "../../session-refresh";
-import { OWNER_SIGNED_OUT, readOwnerCookie } from "../../shell/owner-cookie";
-import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
+import { readOwnerCookie, readOwnerMarker } from "../../shell/owner-cookie";
 import { storageOwner } from "../../shell/storage-owner";
 import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
+import { useLoadingGrace } from "../../shell/loading-grace";
 import { REASON_BODY, isSignedOutReason, leaveSignedOutNote, type SignedOutReason } from "./signed-out-note";
 
 /**
@@ -115,17 +117,23 @@ function countPass(): number {
   return pass.n;
 }
 
-type View =
-  | { kind: "working" } | { kind: "busy" } | { kind: "signedOut"; reason: SignedOutReason }
-  | { kind: "signOut"; said: SignOutTrouble };
+/**
+ * A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED, read off the jar itself. The edge
+ * sends such a browser to `/login`, which finishes it; but `tf_owner` is `SameSite=Strict`, so a
+ * navigation from another site reaches the edge without it and lands here. Such a jar is never
+ * resumed: the splash asks no door and leaves for `/login`.
+ */
+function signOutPending(): boolean {
+  return readOwnerMarker().kind === "signed-out";
+}
+
+type View = { kind: "working" } | { kind: "busy" } | { kind: "signedOut"; reason: SignedOutReason };
 
 export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | null }) {
   const t = useTranslations("resume");
-  /* The account pane's sentences for a sign-out that did not finish: one taxonomy, one set of words. */
-  const ta = useTranslations("account");
-  /** The edge chose this splash for a sign-out the server never confirmed: it is finished, not resumed. */
-  const finishing = initialOwner === OWNER_SIGNED_OUT;
   const [view, setView] = useState<View>({ kind: "working" });
+  /** Past the loading grace the card says what it waits for; below it, the card alone. */
+  const slow = useLoadingGrace(view.kind === "working");
   /** React 18 StrictMode double-invokes effects in dev; the refresh must fire once. */
   const started = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,12 +144,19 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
    * else's jar rotates THEIR session from a window that is not theirs. `null` means the edge saw no
    * marker — a cross-site navigation that withheld the cookies — and nothing is compared. Raw against
    * raw: the parsed reading is null for `signed_out_pending` and for any malformed value, so it never
-   * matched the edge's and every pass reloaded.
+   * matched the edge's and every pass reloaded. A pending sign-out in the jar is never this splash's,
+   * whatever the edge saw.
    */
   const stillMine = useCallback(
-    (): boolean => initialOwner === null || readOwnerCookie() === initialOwner,
+    (): boolean => !signOutPending() && (initialOwner === null || readOwnerCookie() === initialOwner),
     [initialOwner],
   );
+
+  /** The jar is not this splash's: a pending sign-out goes to `/login`, anything else to the edge again. */
+  const leave = useCallback((): void => {
+    if (signOutPending()) { window.location.replace("/login"); return; }
+    window.location.reload();
+  }, []);
 
   /**
    * One pass of the ladder: ask, then act on the answer. `resumeSession` consults `stillMine` inside
@@ -150,8 +165,8 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
    */
   const attempt = useCallback(async (n: number): Promise<void> => {
     const ok = await resumeSession({ mayProceed: stillMine, landing: true }) === "resumed";
-    // The jar changed while this waited for the lock: the browser holds somebody else's session.
-    if (!ok && !stillMine()) { window.location.reload(); return; }
+    // The jar changed while this waited for the lock: somebody else's session, or its own sign-out.
+    if (!ok && !stillMine()) { leave(); return; }
     const report = lastRefreshReport();
     const answer = answerOf(ok, report);
     if (answer === "minted") {
@@ -170,31 +185,14 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
     }
     if (n >= CONFIRM_ATTEMPTS) { setView({ kind: "busy" }); return; }
     timer.current = setTimeout(() => void attempt(n + 1), nextConfirmDelay(n, report?.retryAfterMs ?? null));
-  }, [stillMine]);
-
-  /**
-   * FINISH THE SIGN-OUT THIS BROWSER ASKED FOR. Its server half went unconfirmed, so the session may
-   * still be live: it is presented at the sign-out door, never the refresh door, and the local half
-   * runs again. Confirmed lands on /login; a fault walks the confirm ladder, then says so. No reload.
-   */
-  const finish = useCallback(async (n: number): Promise<void> => {
-    // Another tab signed in since the edge chose this page: that jar is not this splash's to end.
-    if (!stillMine()) { window.location.reload(); return; }
-    const { signOut } = await import("../../sign-out");
-    const said = signOutTrouble(await signOut());
-    if (said === null) { window.location.replace("/login"); return; }
-    if (said.key === "signOutServerRefused" && n < CONFIRM_ATTEMPTS) {
-      timer.current = setTimeout(() => void finish(n + 1), nextConfirmDelay(n, null));
-      return;
-    }
-    setView({ kind: "signOut", said });
-  }, [stillMine]);
+  }, [leave, stillMine]);
 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    // Before anything is asked: a sign-out this browser asked for is finished at `/login`.
+    if (signOutPending()) { leave(); return; }
     if (countPass() > RESUME_PASS_LIMIT) { setView({ kind: "busy" }); return; }
-    if (finishing) { void finish(1); return; }
     const prev = readStamp();
     const looping = prev !== null && Date.now() - prev.at < LOOP_WINDOW_MS;
     if (looping && prev.answer !== null && isSignedOutReason(prev.answer)) {
@@ -212,7 +210,7 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
       return;
     }
     void attempt(1);
-  }, [attempt, finish, finishing]);
+  }, [attempt, leave]);
 
   useEffect(() => () => { if (timer.current !== null) clearTimeout(timer.current); }, []);
 
@@ -220,39 +218,29 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
     // A person asked: the pass count starts again from here.
     durableSessionRemove(RESUME_PASSES_KEY, "resume.passes");
     setView({ kind: "working" });
-    void (finishing ? finish(1) : attempt(1));
-  }, [attempt, finish, finishing]);
+    void attempt(1);
+  }, [attempt]);
 
-  // Deliberately silent while it works: a sentence that flashes for a third of a second is worse
-  // than a quiet frame — the same call `EngineProvider`'s "resolving" state makes.
-  if (view.kind === "working") return <div className="gate" aria-busy="true" aria-live="polite" />;
-
+  // The card from the first frame. While it works, one line once the wait outlasts the grace: a
+  // sentence that flashes is worse than a quiet card, and a bare page for the door's whole wait
+  // reads as broken (measured: 20 s of nothing behind a slow refresh door).
+  const working = view.kind === "working";
   return (
-    <div className="gate">
+    <div className="gate" aria-busy={working ? "true" : undefined} aria-live={working ? "polite" : undefined}>
       <div className="gate-card">
         <span className="wordmark">
           <b>
             <em>oh</em>mail
           </b>
         </span>
-        {view.kind === "busy" ? (
+        {view.kind === "working" ? (
+          slow ? <p>{t("workingBody")}</p> : null
+        ) : view.kind === "busy" ? (
           <>
             <h1>{t("busyTitle")}</h1>
             <p>{t("busyBody")}</p>
             <div className="gate-actions">
               <button type="button" className="btn primary" onClick={tryAgain}>{t("tryAgain")}</button>
-            </div>
-          </>
-        ) : view.kind === "signOut" ? (
-          <>
-            <h1>{ta("signOutTitle")}</h1>
-            <p role="alert">
-              {view.said.key === "signOutServerRefused"
-                ? ta(view.said.key, { reason: view.said.reason })
-                : ta(view.said.key)}
-            </p>
-            <div className="gate-actions">
-              <button type="button" className="btn primary" onClick={tryAgain}>{ta("signOut")}</button>
             </div>
           </>
         ) : (

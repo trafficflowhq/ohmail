@@ -3109,6 +3109,8 @@
     "revokedBody": "Du wurdest in diesem Browser abgemeldet.",
     "expiredBody": "Deine Anmeldung in diesem Browser ist abgelaufen.",
     "absentBody": "In diesem Browser ist keine Anmeldung gespeichert.",
+    "pendingBody": "Du hast dich in diesem Browser abgemeldet.",
+    "workingBody": "Deine Anmeldung wird geprüft …",
     "busyTitle": "ohmail ist gerade nicht erreichbar",
     "busyBody": "Der Server ist ausgelastet. Dieser Browser wurde nicht abgemeldet.",
     "tryAgain": "Erneut versuchen",

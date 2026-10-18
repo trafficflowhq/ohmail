@@ -13,7 +13,7 @@ export const FIRST_SCREEN: Readonly<Record<string, true | readonly string[]>> = 
   // The credential screens, every state of each.
   login: true, join: true, joinInvite: true, approve: true, verify: true, setup: true,
   linkDesktop: true, authorizeDesktop: true, resume: true, session: true, appError: true,
-  account: ["signOutUnverified", "signOutBlocked", "signOutServerRefused", "signOutBusy"],
+  account: ["signOutUnverified", "signOutBlocked", "signOutServerRefused", "signOutBusy", "signOut"],
   // The shell's frame: rail, dock, palette, list chrome, the key table it registers.
   rail: true, dock: true, palette: true, ribbon: true, reader: true, shortcuts: true,
   triage: true, message: true, tag: true, trash: true,

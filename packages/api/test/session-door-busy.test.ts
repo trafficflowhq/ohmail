@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, withSessionAcquireCeiling } from "@trafficflow/api";
 import { DbAcquireTimeoutError } from "@trafficflow/db/cloud";
 import { refreshTokens } from "@trafficflow/db";
@@ -15,11 +16,13 @@ import { makeDeps, req, seedSession, FIXED_NOW } from "./helpers.js";
    a door there moves; the shape `reads-list.mjs` exists for. */
 
 /**
- * A BUSY DATABASE IS A RETRY, NEVER A SIGN-OUT. The two session doors answer a starved pool with
+ * A BUSY DATABASE IS A RETRY, NEVER A SIGN-OUT. The session doors answer a starved pool with
  * 503 `db_busy`, `Retry-After` and no `Set-Cookie`, on the host's shorter-ceiling handle; and no
- * fault arm in this package can reach a path that clears the jar. The behaviour is driven through
- * the real route table; the census below it reads the source, with a planted control for each
- * half so a census that stopped seeing anything would say so.
+ * fault arm in this package can reach a path that clears the jar. The sign-out door joined them: on
+ * the write ceiling a starved pool held it past the client's 10 s deadline, the sign-out went
+ * unconfirmed and the browser was left marked pending. The behaviour is driven through the real
+ * route table; the census below it reads the source, with a planted control for each half so a
+ * census that stopped seeing anything would say so.
  */
 
 /** A handle whose every access throws the pool's refusal — the shape a saturated pool presents. */
@@ -43,12 +46,35 @@ async function seedRefresh(
 const app = createApp(apiRoutes);
 
 describe("the session doors under a busy pool", () => {
-  it("exactly the two session doors carry the shorter ceiling", () => {
+  it("exactly the three session doors carry the shorter ceiling, the sign-out door among them", () => {
     const carrying = apiRoutes
       .filter((r) => (r.options?.middleware ?? []).includes(withSessionAcquireCeiling))
       .map((r) => `${r.method} ${r.pattern}`)
       .sort();
-    expect(carrying).toEqual(["GET /auth/session", "POST /auth/refresh"]);
+    expect(carrying).toEqual(["GET /auth/session", "POST /auth/refresh", "POST /auth/refresh/logout"]);
+  });
+
+  it("the sign-out door answers 503 db_busy, Retry-After, sets no cookie, and ends the family on the next ask", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const refresh = await seedRefresh(db, s);
+    let asked = 0;
+    const busy = await app.handle(
+      req("POST", "/auth/refresh/logout", { cookie: `tf_refresh=${refresh}` }),
+      { ...deps, sessionDb: () => { asked++; return busyHandle(); } },
+    );
+    expect(asked, "the sign-out door must ask the host for its session handle").toBe(1);
+    expect(busy.status).toBe(503);
+    expect(busy.headers.get("Retry-After")).toBe("5");
+    expect(busy.headers.getSetCookie(), "a fault must never clear the token the retry presents").toEqual([]);
+    expect(((await busy.json()) as { error: { code: string } }).error.code).toBe("db_busy");
+    const [row] = await db.select({ revokedAt: refreshTokens.revokedAt }).from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, hashToken(refresh)));
+    expect(row?.revokedAt, "a refused door ended the family anyway").toBeNull();
+    // The pool frees: the same jar's next ask ends it and clears the jar.
+    const done = await app.handle(req("POST", "/auth/refresh/logout", { cookie: `tf_refresh=${refresh}` }), deps);
+    expect(done.status).toBe(204);
+    expect(done.headers.getSetCookie().some((c) => /^tf_refresh=;/.test(c))).toBe(true);
   });
 
   it("GET /auth/session answers 503 db_busy, Retry-After, retryable, and sets no cookie", async () => {
@@ -181,11 +207,12 @@ describe("census — a fault never reaches a session-clearing path", () => {
     // on the erased account's 410, which is that same refusal told apart (the case below) — and
     // the resume marker alone on the coded 401 `refresh_missing`. The sign-out door clears on its
     // 204 after the call returned and on that same refusal, every other failure rethrown first
-    // (driven in `sign-out-door.test.ts`). `cookies.ts` is the composition.
+    // (driven in `sign-out-door.test.ts`). `cookies.ts` is the composition: the whole clear, and
+    // the enrollment mint's expiry of an earlier family, which only a minted session answers with.
     expect(calls.map((c) => c.at.replace(/:\d+$/, "")).sort()).toEqual([
-      "cookies.ts", "routes/account.ts", "routes/session-lifecycle.ts", "routes/session-lifecycle.ts",
+      "cookies.ts", "cookies.ts", "routes/account.ts", "routes/session-lifecycle.ts",
       "routes/session-lifecycle.ts", "routes/session-lifecycle.ts", "routes/session-lifecycle.ts",
-      "routes/session-lifecycle.ts",
+      "routes/session-lifecycle.ts", "routes/session-lifecycle.ts",
     ]);
     const refresh = calls.filter((c) => c.line.includes("failure"));
     expect(refresh.map((c) => c.line)).toEqual([

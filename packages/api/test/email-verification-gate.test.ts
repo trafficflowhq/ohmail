@@ -5,7 +5,7 @@ import { loginTokens, authThrottle } from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
 import { makeAuthService, makeMailService, makeTestAuthDeps, throttleKeysFor } from "@trafficflow/services";
 import {
-  makeDeps, seedSession, req, setCookieMap, FIXED_NOW,
+  makeDeps, seedSession, req, setCookieMap, cookieMaxAge, FIXED_NOW,
 } from "./helpers.js";
 
 /**
@@ -166,8 +166,10 @@ describe("the token: single-use, expiring, hashed at rest, and bound to the pass
     expect(out.enrollmentToken).toBeTruthy();
     const cookies = setCookieMap(res);
     expect(cookies.tf_session).toBeTruthy();
-    // Still an enrollment session: no refresh cookie, so it cannot be extended (#7).
-    expect(cookies.tf_refresh).toBeUndefined();
+    // Still an enrollment session: no refresh token, so it cannot be extended (#7). The one
+    // tf_refresh line expires an earlier family's.
+    expect(cookies.tf_refresh).toBe("");
+    expect(cookieMaxAge(res, "tf_refresh")).toBe(0);
 
     const [user] = await db.select().from(users).where(eq(users.email, "fresh@example.com"));
     expect(user!.emailVerifiedAt).not.toBeNull();

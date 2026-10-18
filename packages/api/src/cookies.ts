@@ -107,20 +107,30 @@ export function ownerCookie(owner: string | null, cfg: AuthConfig): string[] {
   return [`${OWNER_COOKIE}=${ownerId}; SameSite=Strict; Secure; Path=/; Max-Age=${seconds(cfg.refreshTtlMs)}`];
 }
 
+/** The refresh cookie's clear, at the path it is set on: one spelling for both answers that expire it. */
+const REFRESH_CLEAR = "tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=0";
+
 /**
- * The web cookies for an ENROLLMENT-scoped session. Two, not three, and
+ * The web cookies for an ENROLLMENT-scoped session. Two set, not three, and
  * short-lived: `tf_session` carries the enrollment token so the browser's enrollment
  * POSTs authenticate exactly like any other cookie request, `tf_csrf` keeps the
  * double-submit guard in force (CSRF semantics are unchanged), and there is
  * deliberately NO `tf_refresh` — no refresh token exists for an enrollment session,
  * so nothing can extend it past `loginTokenTtlMs`. Attributes are byte-for-byte the
  * ones {@link sessionCookies} uses; only the lifetime differs.
+ *
+ * AND THE JAR'S EARLIER FAMILY GOES: its `tf_refresh` and `tf_resume`, expired as the sign-out
+ * door expires them. Left beside the enrollment session, they sent the browser to the resume
+ * splash once it lapsed, and the splash renewed that family — another account's mailbox on a
+ * shared computer, after a sign-out the server never confirmed. A full sign-in replaces both.
  */
 export function enrollmentCookies(enrollmentToken: string, csrfToken: string, cfg: AuthConfig): string[] {
   const max = seconds(cfg.loginTokenTtlMs);
   return [
     `tf_session=${enrollmentToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${max}`,
     `tf_csrf=${csrfToken}; SameSite=Strict; Secure; Path=/; Max-Age=${max}`,
+    REFRESH_CLEAR,
+    ...clearResumeCookie(),
   ];
 }
 
@@ -137,7 +147,7 @@ export function enrollmentCookies(enrollmentToken: string, csrfToken: string, cf
 export function clearSessionCookies(): string[] {
   return [
     "tf_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0",
-    "tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=0",
+    REFRESH_CLEAR,
     "tf_csrf=; SameSite=Strict; Secure; Path=/; Max-Age=0",
     ...clearResumeCookie(),
     `${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`,

@@ -122,10 +122,10 @@ export function AccountSection() {
    * get back by signing in again, and a password prompt in front of "get me off this machine" is
    * exactly backwards on the shared computer this exists for. The failure path matters more:
    * `signOut` wipes the local mirror whatever the server said, so an unreachable server still clears
-   * the mail from this browser, and the press leaves for `/`, whose front door finishes the server
-   * half (`ResumeScreen`) and says so if it cannot. `location.assign` rather than a
-   * router push: the cookie is gone, so the shell must be re-decided by the server — a client-side
-   * navigation would keep the signed-in React tree alive on a dead session.
+   * the mail from this browser, and the press leaves for `/`, which sends it to the sign-in page, which
+   * finishes the server half behind its form and says so if it cannot (`login/finish-sign-out.ts`).
+   * `location.assign` rather than a router push: the cookie is gone, so the shell must be re-decided by
+   * the server — a client-side navigation would keep the signed-in React tree alive on a dead session.
    */
   const doSignOut = useCallback(async (owner: string) => {
     setSigningOut(true);
@@ -135,7 +135,8 @@ export function AccountSection() {
     /* If the mail is still here this does not leave: an IndexedDB delete is BLOCKED while another
        tab holds the database open, and leaving would be a silent false promise about mail on a
        borrowed machine. A server half that went unconfirmed DOES leave, for `/`: the browser is
-       wiped and marked, and the front door finishes the sign-out at the door (`session-gate.ts`). */
+       wiped and marked, and the front door sends it to the sign-in page, which finishes it
+       (`session-gate.ts`). */
     const said = signOutTrouble(outcome);
     if (said !== null && said.key !== "signOutServerRefused") {
       if (alive.current) {

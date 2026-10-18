@@ -297,7 +297,9 @@ export const auth: {
         user: SessionUser;
         scope: "full" | "enrollment";
     }>;
-    logout: () => Promise<void>;
+    logout: (opts?: {
+        mayProceed?: () => boolean;
+    }) => Promise<void>;
     webauthnRegisterOptions: () => Promise<{
         options: PublicKeyCredentialCreationOptionsJSON;
     }>;

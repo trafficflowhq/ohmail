@@ -44,6 +44,8 @@ import { confirmAccountReturn } from "../../account-return";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 import { gatedRefusal } from "../mailbox/gated-refusal";
 import { PLAN_NAMES, forgetPlanHint, recalledPlanHint, rememberPlanHint, type PlanHint } from "../../plan-hint";
+import { readOwnerMarker } from "../../shell/owner-cookie";
+import { PendingSignOutSaid, usePendingSignOut } from "../login/pending-sign-out";
 import { registerRefusal, totpRefusal } from "./signup-refusals";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
@@ -326,7 +328,25 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
     }
   }, [landEntitled]);
 
-  useEffect(() => { void bootstrap(); }, [bootstrap]);
+  /**
+   * A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED (`login/pending-sign-out.tsx`). The jar
+   * still carries the previous person's cookies, so the session is not read here at all: its answer is that
+   * person's account, and its 401 path refreshes the family they ended. The sign-out is finished at the door
+   * behind the form instead, as on the sign-in page one link away, and asked once more before a registration
+   * (`submitAccount`). `stopFinish` is how a registration stops the ladder's next attempt.
+   */
+  const pending = usePendingSignOut();
+  const stopFinish = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (apiConfigured() && readOwnerMarker().kind === "signed-out") {
+      let cancelled = false;
+      stopFinish.current = () => { cancelled = true; };
+      void pending.finish(() => cancelled);
+      return () => { cancelled = true; };
+    }
+    void bootstrap();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `pending.finish` is the page's for its life
+  }, [bootstrap]);
 
   /**
    * MINT THE LINK to the page that takes the plan, and — while this step is on screen — keep asking whether the
@@ -481,6 +501,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   const submitAccount = (e: React.FormEvent) => {
     e.preventDefault();
     void run(async () => {
+      // No account is made beside a sign-out the server has not confirmed: its family is still live in
+      // this jar, and the registration's session would leave it so. Its attempt still out ends first,
+      // then the door is asked once more; anything short of a finished sign-out is said.
+      stopFinish.current?.();
+      if (!await pending.settle()) return;
       // The invite is validated by the SERVER, inside the transaction that creates the
       // account. There is no client-side pre-check, deliberately: a code this component
       // considered valid and the server refused would be two sources of truth about the
@@ -806,6 +831,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       rail={needsInvite ? RAIL_BASE : step === "verify" ? RAIL_OPEN_LATE_VERIFY : RAIL_OPEN}
     >
       {error && step !== "mailbox" && !totpOpen && <p className="join-error" role="alert">{error}</p>}
+      {/* A sign-out this browser asked for that ended unconfirmed here, and Sign out to ask again. */}
+      <PendingSignOutSaid pending={pending} busy={busy} />
 
       {step === "invite" && (
         <form onSubmit={submitInvite}>
@@ -891,7 +918,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
             {needsInvite && (
               <button type="button" className="join-alt" onClick={() => setStep("invite")}>{t("back")}</button>
             )}
-            <Button variant="primary" type="submit" disabled={busy}>
+            <Button variant="primary" type="submit" disabled={busy || pending.signingOut}>
               {busy ? t("working") : t("createAccount")}
             </Button>
           </div>

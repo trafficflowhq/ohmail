@@ -67,8 +67,8 @@ describe("webapp wordmarks", () => {
       // the same `.gate-card` shell as the lock beside it; reached by the erased door, never a mount.
       "apps/webapp/app/(product)/mailbox/ErasedWall.tsx",
       "apps/webapp/app/(product)/mailbox/page.tsx",
-      // The session-resume splash paints the mark in its failure state, for the same reason
-      // the others do: no mount reaches it, so a rename would break it silently.
+      // The session-resume splash paints the mark in every state, its wait included, for the same
+      // reason the others do: no mount reaches it, so a rename would break it silently.
       "apps/webapp/app/(product)/resume/ResumeScreen.tsx",
       // The self-host FIRST-RUN ceremony — an operator's very first sight of the brand on
       // their own box, which makes a broken mark here a first impression rather than a typo.

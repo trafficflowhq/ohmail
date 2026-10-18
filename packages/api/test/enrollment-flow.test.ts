@@ -104,8 +104,8 @@ describe("HTTP-only onboarding: register → enrollment session → passkey → 
     const { deps, clock } = await makeDeps();
 
     // 1 ── register mints the enrollment session: token in the body (native) AND in
-    // tf_session (browser), tf_csrf for the double-submit guard, and NO tf_refresh —
-    // nothing may extend an enrollment session.
+    // tf_session (browser), tf_csrf for the double-submit guard, and NO refresh token —
+    // nothing may extend an enrollment session. Its one tf_refresh line expires an earlier one.
     const e = await register(deps, "gil@x.example");
     const registered = await e.res.json();
     expect(registered.status).toBe("enrollment");
@@ -116,7 +116,8 @@ describe("HTTP-only onboarding: register → enrollment session → passkey → 
     const regCookies = setCookieMap(e.res);
     expect(regCookies.tf_session).toBe(e.token);
     expect(regCookies.tf_csrf).toBeTruthy();
-    expect(regCookies.tf_refresh).toBeUndefined();
+    expect(regCookies.tf_refresh).toBe("");
+    expect(cookieMaxAge(e.res, "tf_refresh")).toBe(0);
     expect(cookieMaxAge(e.res, "tf_session")).toBe(FIVE_MIN / 1000);
 
     // 2 ── /auth/session introspects it: a resuming client learns it is mid-enrollment.
@@ -475,7 +476,9 @@ describe("re-entry: a registered-but-unenrolled user resumes through login", () 
     expect(body.enrollmentToken).not.toBe(first.token);
     const c = setCookieMap(login);
     expect(c.tf_session).toBe(body.enrollmentToken);
-    expect(c.tf_refresh).toBeUndefined();
+    // No refresh token: the one tf_refresh line expires an earlier family's.
+    expect(c.tf_refresh).toBe("");
+    expect(cookieMaxAge(login, "tf_refresh")).toBe(0);
 
     // The resumed session finishes onboarding.
     const { res: verify } = await enrollPasskey(deps, {

@@ -10,7 +10,8 @@ import { ResumeScreen } from "./ResumeScreen";
  * URL. The gate sends a browser here when it holds the `tf_resume` marker but no usable access
  * cookie: the fifteen-minute access token lapsed, or `SameSite=Strict` withheld it on a cross-site
  * navigation — either way a ninety-day rolling refresh token is probably still in the jar, and
- * only the browser can spend it (see `ResumeScreen`).
+ * only the browser can spend it (see `ResumeScreen`). Never for a sign-out this browser asked for:
+ * the gate sends that to the sign-in page, which finishes it.
  */
 export default async function Page() {
   /*
@@ -20,7 +21,9 @@ export default async function Page() {
    * refresh token from a window that was never theirs. A client-side read cannot see that gap,
    * because it happens after it. So the account is read where the choice was made and handed down;
    * the screen compares it against the jar at the moment the request leaves. `tf_owner` is a marker
-   * and authorises nothing, so reading it here costs nothing and reveals nothing.
+   * and authorises nothing, so reading it here costs nothing and reveals nothing. A marker that turns
+   * `signed_out_pending` after the edge chose this page fails that compare, and the screen leaves for
+   * the sign-in page.
    */
   const owner = cookieFromStore(await cookies(), OWNER_COOKIE);
   return <ResumeScreen initialOwner={owner} />;

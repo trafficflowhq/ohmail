@@ -32,8 +32,8 @@ export default function ProductError({ error }: { error: Error & { digest?: stri
   useEffect(() => { setSignedIn(readOwner() !== null); }, []);
 
   /* The outcomes and their order are `signOutTrouble`'s. A finished sign-out leaves for the sign-in
-     page; a server half that went unconfirmed leaves for `/`, whose front door finishes it; a wipe
-     that did not land stays and says so. Pressing again is safe. */
+     page; a server half that went unconfirmed leaves for `/`, which sends it to the sign-in page,
+     which finishes it; a wipe that did not land stays and says so. Pressing again is safe. */
   const doSignOut = useCallback(async () => {
     setSigningOut(true);
     setTrouble(null);

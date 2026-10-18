@@ -11,14 +11,19 @@ import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
 
 const NOTE_KEY = "ohmail.signed-out-reason";
 
-/** The three refusals the refresh door names (`refresh_revoked` / `_expired` / `_missing`). */
-export type SignedOutReason = "revoked" | "expired" | "absent";
+/**
+ * The three refusals the refresh door names (`refresh_revoked` / `_expired` / `_missing`), and
+ * `pending`: a sign-out this browser asked for that the server never confirmed, which `/login` reads
+ * off `tf_owner` itself and never from a note.
+ */
+export type SignedOutReason = "revoked" | "expired" | "absent" | "pending";
 
+/** The reasons a note may carry: the refresh door's three. */
 const REASONS: readonly SignedOutReason[] = ["revoked", "expired", "absent"];
 
-/** The `resume.*` sentence each refusal is told with, on the splash card and on `/login`. */
-export const REASON_BODY: Record<SignedOutReason, "revokedBody" | "expiredBody" | "absentBody"> = {
-  revoked: "revokedBody", expired: "expiredBody", absent: "absentBody",
+/** The `resume.*` sentence each reason is told with, on the splash card and on `/login`. */
+export const REASON_BODY: Record<SignedOutReason, "revokedBody" | "expiredBody" | "absentBody" | "pendingBody"> = {
+  revoked: "revokedBody", expired: "expiredBody", absent: "absentBody", pending: "pendingBody",
 };
 
 export function isSignedOutReason(v: unknown): v is SignedOutReason {

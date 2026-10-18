@@ -318,6 +318,18 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     env: { NEXT_PUBLIC_DEMO: process.env.NEXT_PUBLIC_DEMO },
   });
 
+  // A SIGN-OUT THE SERVER NEVER CONFIRMED goes to the sign-in page, on both builds: it paints at once
+  // and finishes the sign-out behind its form (the splash did it behind a blank page). Nothing is
+  // fetched here. A 307 for `DOOR_ROUTE`'s reason, the query dropped.
+  if (surface === "sign-out") {
+    const door = request.nextUrl.clone();
+    door.pathname = DOOR_ROUTE;
+    door.search = "";
+    const response = NextResponse.redirect(door, 307);
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
+  }
+
   // THERE IS NO MARKETING SITE ON A SELF-HOST INSTALL — self-host builds only
   // (SELF_HOST_BUILD is compiled; this branch does not exist in the managed middleware).
   // "Not signed in, nothing to resume" means a STRANGER on `ohmail.app`, and the landing is

@@ -131,10 +131,10 @@ describe("the two writers of a sign-in verdict, and only those", () => {
       'apps/webapp/app/(product)/error.tsx []',
       // …and the lock screen's, the same door past the same one reader.
       'apps/webapp/app/(product)/mailbox/AccessLock.tsx []',
+      // A jar holding this browser's own unfinished sign-out, met by the splash: no door asked, the
+      // sign-in page finishes it (`resume-never-loops`, `login-finishes-sign-out`). Not a verdict.
+      "apps/webapp/app/(product)/resume/ResumeScreen.tsx [signOutPending()]",
       'apps/webapp/app/(product)/resume/ResumeScreen.tsx [answer !== "unavailable"]',
-      // After this browser's own unfinished sign-out was finished at the sign-out door: the first
-      // door again, reached from the front door instead of from the button (`resume-never-loops`).
-      "apps/webapp/app/(product)/resume/ResumeScreen.tsx [said === null]",
     ]);
     for (const file of ["apps/webapp/app/(product)/error.tsx", "apps/webapp/app/(product)/mailbox/AccessLock.tsx"]) {
       const src = scan.withoutComments(readFileSync(resolve(file), "utf8"));

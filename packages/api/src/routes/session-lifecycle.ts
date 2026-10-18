@@ -71,11 +71,13 @@ export const sessionLifecycleRoutes: Route[] = [
     // bearer client. The jar is cleared on the 204 and on the door's own 401, never on a fault: the
     // retry needs the cookie the fault left in place. A token tells its holder one thing here —
     // whether it was ever minted (204 in any state, 401 never) — and presenting it ends its family.
+    // A busy pool answers it fast, as the refresh door's: held past the client's deadline, the
+    // sign-out went unconfirmed and the browser was left marked pending (`withSessionAcquireCeiling`).
     method: "POST",
     pattern: "/auth/refresh/logout",
     relay: false,  /* resolves a credential from the request */
     cost: "ceremony",
-    options: { public: true, enrollmentOk: true },
+    options: { public: true, enrollmentOk: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
       let presented = presentedRefreshCookie(parseCookies(req.headers.get("cookie")), deps);
       if (presented === undefined) {

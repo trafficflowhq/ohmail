@@ -713,7 +713,7 @@ export interface ApiDeps {
   db: Db;
   /**
    * The same pool behind the SESSION wait-to-begin ceiling, which `withSessionAcquireCeiling` puts
-   * in place of {@link db} on the two session doors. A port for {@link ApiFaultLogPort}'s reason:
+   * in place of {@link db} on the session doors. A port for {@link ApiFaultLogPort}'s reason:
    * the ceiling's number lives in `@trafficflow/db/cloud`, which this file may not name. Absent ⇒
    * the doors keep `db` — PGlite hosts, the desktop door, every local install.
    */

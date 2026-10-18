@@ -290,7 +290,18 @@ function sweepFor(owner: string | null, list: readonly string[]) {
         : key.startsWith(p)));
 }
 
-export async function signOut(owner?: string): Promise<SignOutResult> {
+/**
+ * `mayProceed` is the pending sign-out's finisher's (`login/finish-sign-out.ts`) and nobody else's: may
+ * this call still end the jar it started on? Asked inside the cookie lock before the door is asked,
+ * and after a refusal before anything local is touched. False means another tab signed in (or
+ * finished this sign-out) meanwhile; the answer is then `null`, and neither half has run.
+ */
+export function signOut(owner?: string): Promise<SignOutResult>;
+export function signOut(owner: string | undefined, opts: { mayProceed: () => boolean }): Promise<SignOutResult | null>;
+export async function signOut(
+  owner?: string,
+  opts: { mayProceed?: () => boolean } = {},
+): Promise<SignOutResult | null> {
   // NEVER THROWS, and the refusal rides the result instead. A `return` inside a `finally`
   // would have silently swallowed this exception, which is the same shape of quiet loss the
   // rest of this file exists to stop; and throwing would throw away `remaining`, which is the
@@ -308,7 +319,7 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
    */
   await revokeWakeRegistration();
   try {
-    await auth.logout();
+    await auth.logout({ mayProceed: opts.mayProceed });
   } catch (err) {
     /**
      * THE DOOR'S ANSWER IS THE VERDICT. A 204, or a 401 in OUR envelope: the sign-out door read
@@ -324,6 +335,10 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
     const status = (err as { status?: unknown } | null)?.status;
     const coded = (err as { wire?: { coded?: unknown } } | null)?.wire?.coded === true;
     const alreadyGone = status === 401 && coded;
+    // NOT THIS CALL'S JAR ANY MORE. A refusal leaves the jar as it was (the door clears it only when
+    // it answers), so a predicate that stopped holding means somebody else wrote it: marking it
+    // pending and wiping it would end the other tab's sign-in. Only a caller with one exits here.
+    if (!alreadyGone && opts.mayProceed !== undefined && !opts.mayProceed()) return null;
     serverRefused = alreadyGone ? null : err instanceof Error ? err.message : String(err);
   }
   {

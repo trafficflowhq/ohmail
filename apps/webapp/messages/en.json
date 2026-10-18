@@ -3109,6 +3109,8 @@
     "revokedBody": "You were signed out on this browser.",
     "expiredBody": "Your sign-in on this browser has expired.",
     "absentBody": "This browser holds no sign-in.",
+    "pendingBody": "You signed out on this browser.",
+    "workingBody": "Checking your sign-in…",
     "busyTitle": "ohmail could not be reached",
     "busyBody": "The server is busy right now. This browser has not been signed out.",
     "tryAgain": "Try again",

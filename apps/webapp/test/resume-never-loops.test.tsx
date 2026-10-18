@@ -23,12 +23,10 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), push: 
 
 const PENDING = "signed_out_pending";
 const R = messages.resume;
-const A = messages.account;
 
 const json = (body: unknown, status: number): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const noContent = (): Response => new Response(null, { status: 204 });
-const coded401 = (code: string) => (): Response => json({ error: { code, message: "no" } }, 401);
 const db503 = (): Response => json({ error: { code: "db_busy", retryable: true, message: "busy" } }, 503);
 
 /** What each door answers, in order; the last answer repeats. */
@@ -128,49 +126,51 @@ const signOuts = (): number => asked.filter((u) => u.endsWith("/auth/refresh/log
 const refreshes = (): number => asked.filter((u) => u.endsWith("/auth/refresh")).length;
 const text = (el: HTMLElement): string => el.textContent ?? "";
 
-describe("a sign-out the server never confirmed is finished, never resumed and never reloaded", () => {
-  it("THE STUCK JAR — the marker beside a live family: the door is asked once, then /login", async () => {
+describe("a sign-out the server never confirmed is never resumed here, and never finished here", () => {
+  // The front door sends such a jar to /login, which finishes it behind its form
+  // (`login-finishes-sign-out`); a splash that meets it anyway asks no door and goes there.
+  it("THE STUCK JAR — the marker beside a live family: no door asked, /login at once", async () => {
     setOwner(PENDING);
     await mountSplash(PENDING);
     await tick(2_000);
     expect(reloads, "the splash reloaded itself — the loop measured on ohmail.app").toBe(0);
     expect(refreshes(), "a browser that asked to be signed out was resumed").toBe(0);
-    expect(signOuts(), "the unfinished sign-out was not presented at the sign-out door").toBe(1);
-    expect(replaced, "a finished sign-out did not land on the sign-in page").toEqual(["/login"]);
+    expect(signOuts(), "the splash finished the sign-out behind a page with nothing on it").toBe(0);
+    expect(replaced, "the splash did not hand the sign-out to the sign-in page").toEqual(["/login"]);
   });
 
-  it("the family already ended (the door's coded 401): the jar is cleared and it lands on /login", async () => {
-    doors.signOut = [coded401("refresh_revoked")];
+  it("A CROSS-SITE ARRIVAL — the edge saw no marker, the jar holds it: never resumed", async () => {
+    // `tf_owner` is SameSite=Strict, so a link from another site reaches the edge without it and the
+    // splash is chosen with no marker to compare. The jar it runs in still says the sign-out is pending.
+    doors.refresh = [noContent];
     setOwner(PENDING);
-    await mountSplash(PENDING);
+    await mountSplash(null);
     await tick(2_000);
-    expect(reloads).toBe(0);
-    expect(refreshes()).toBe(0);
+    expect(refreshes(), "a sign-out the person asked for was undone by a resume").toBe(0);
+    expect(signOuts()).toBe(0);
     expect(replaced).toEqual(["/login"]);
+    expect(reloads).toBe(0);
   });
 
-  it("a door that keeps faulting ends on a card that says so — no reload, no resume", async () => {
-    doors.signOut = [db503];
+  it("THE MARKER LANDS MID-LADDER — another tab's sign-out went unconfirmed: the next ask never leaves", async () => {
+    doors.refresh = [db503, noContent];
+    setOwner("acct_A");
+    await mountSplash("acct_A");
+    expect(refreshes()).toBe(1);
     setOwner(PENDING);
-    const el = await mountSplash(PENDING);
-    await tick(60_000);
-    expect(reloads, "a fault turned into a reload").toBe(0);
-    expect(refreshes()).toBe(0);
-    expect(replaced, "an unconfirmed sign-out was reported as done").toEqual([]);
-    expect(signOuts(), "the ladder is bounded and was walked").toBeGreaterThan(1);
-    const asks = signOuts();
-    await tick(120_000);
-    expect(signOuts(), "the ladder kept asking after it ended").toBe(asks);
-    expect(text(el), "the card does not say the server half is unconfirmed")
-      .toContain(A.signOutServerRefused.split("{reason}")[0]!.trim());
+    await tick(10_000);
+    expect(refreshes(), "the ladder resumed a session the browser had asked to end").toBe(1);
+    expect(signOuts()).toBe(0);
+    expect(replaced).toEqual(["/login"]);
+    expect(reloads).toBe(0);
   });
 });
 
-describe("the like-with-like compare ships only with the finishing step", () => {
+describe("the like-with-like compare never resumes a pending sign-out", () => {
   it("THE PAIR — the refresh door would mint, and a browser that asked to sign out is still never resumed", async () => {
-    // Compared like with like, the reserved marker now MATCHES the edge's reading. Without the
-    // finishing step beside it, the splash would spend the refresh token and sign the person back
-    // in to the session they asked to leave. Remove `finish` and this goes red.
+    // Compared like with like, the reserved marker MATCHES the edge's reading, so the compare alone
+    // would let the splash spend the refresh token and sign the person back in to the session they
+    // asked to leave. Remove the splash's marker check and this goes red.
     doors.refresh = [noContent];
     doors.signOut = [db503];
     setOwner(PENDING);

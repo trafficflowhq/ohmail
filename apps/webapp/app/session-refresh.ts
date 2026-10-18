@@ -13,7 +13,7 @@ import { CREDENTIAL_REFUSED, isSessionRefusal } from "@ohmail/client-engine";
 import { csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
-import { readOwner } from "./shell/owner-cookie";
+import { readOwner, readOwnerMarker } from "./shell/owner-cookie";
 import { isDemoOwned, storageOwner } from "./shell/storage-owner";
 import {
   ERASED_DECLARATION, clearAccountErased, erasedAnswerOf, erasedCapture, hearAccountErased,
@@ -28,9 +28,9 @@ export const REFRESH_ENDPOINT = "/auth/refresh";
 
 /**
  * WHAT ONE RESUME ANSWERS. `resumed` is a 204; `refused` is a verdict or a resume this caller may
- * not make (the refresh door's coded refusal, an erased account, a jar that moved); `unavailable`
- * is a fault that learned nothing about the session — a 5xx, the network — which a press waits
- * out as the desktop's door does, instead of being refused.
+ * not make (the refresh door's coded refusal, an erased account, a jar that moved, a sign-out still
+ * pending); `unavailable` is a fault that learned nothing about the session — a 5xx, the network —
+ * which a press waits out as the desktop's door does, instead of being refused.
  */
 export type ResumeAnswer = "resumed" | "refused" | "unavailable";
 
@@ -497,6 +497,9 @@ function settleAttempt(): void {
  */
 let inFlightRepair: { answer: Promise<ResumeAnswer>; asked: { refused: boolean } } | null = null;
 
+/** The jar says this browser's sign-out went unconfirmed (`OWNER_SIGNED_OUT`): its family is never rotated. */
+const pendingSignOut = (): boolean => readOwnerMarker().kind === "signed-out";
+
 export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAnswer> {
   const repair = inFlightRepair;
   if (repair !== null) {
@@ -524,6 +527,14 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // left the module's dedupe holding a settled promise for the life of the page and every
       // later resume — including `api()`'s recovery — answered `false` without asking anything.
       // Found by running the cases in file order rather than one at a time.
+      /*
+       * A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED is finished at the sign-out door,
+       * never rotated: the refresh cookie still in the jar names the family the person asked to end. Asked
+       * here, inside the lock and before any caller's own question, because no caller may resume it: not
+       * `api()`'s recovery on a page that never binds the client (`/join` read the previous person's
+       * account through it), not the renewal, the splash or the late-answer repair.
+       */
+      if (pendingSignOut()) return "refused";
       if (opts.mayProceed && !opts.mayProceed()) {
         asked.refused = true;
         return "refused";
@@ -534,6 +545,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         const out = presentationOut();
         if (out !== null) {
           const landed = await presentationLanded(out);
+          if (pendingSignOut()) return "refused";
           if (opts.mayProceed && !opts.mayProceed()) {
             asked.refused = true;
             return "refused";

@@ -124,7 +124,7 @@ export function AccessLock(
     const said = signOutTrouble(await signOut(readOwner() ?? undefined));
     /* A wipe that did not land keeps the button and says why under it; a finished sign-out leaves
        for the sign-in page, as the error page's does; a server half that went unconfirmed leaves
-       for `/`, whose front door finishes it at the sign-out door. */
+       for `/`, which sends it to the sign-in page, which finishes it at the sign-out door. */
     if (said !== null && said.key !== "signOutServerRefused") {
       setSignOutSaid(said);
       setSigningOut(false);

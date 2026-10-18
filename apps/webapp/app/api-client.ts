@@ -134,6 +134,12 @@ interface RequestOptions {
    * other account's answer. A flag is something a caller asks for by name and a reviewer can grep for.
    */
   ceremony?: boolean;
+  /**
+   * Asked inside the session-cookie lock, the moment before a cookie-writing request leaves; `false`
+   * refuses it unsent (`owner_mismatch`). The sign-out door's, from the pending sign-out's finisher: a jar
+   * another tab signed in to while the door waited is not that sign-out's to present.
+   */
+  mayProceed?: () => boolean;
 }
 
 /**
@@ -211,7 +217,8 @@ const OWNER_FREE_PREFIXES = [
 /**
  * What this client is speaking for — a single nullable `expectedOwner`
  * conflated states needing opposite defaults. `public`: marketing pages,
- * /login, unasking tests — every request goes. `pending`: a shell is up and
+ * /login, unasking tests — every request goes, but for an account request
+ * under a sign-out the server never confirmed. `pending`: a shell is up and
  * the server has not answered; `null` said this too, so a deep-linked pane
  * over a warm mirror for A passed every check while another tab established
  * B. `bound`: the server named the account. `blocked`: a sign-out the
@@ -271,7 +278,8 @@ export function apiOwnerBinding(): OwnerBinding {
 /**
  * Does the browser still hold the session this client is speaking for?
  *
- * `absent` and `signed-out` both answer NO for anything but `public`, and that is the correction
+ * `absent` and `signed-out` both answer NO for anything but `public` (which answers NO to
+ * `signed-out` alone: the jar's reserved word needs no binding to mean it), and that is the correction
  * review forced twice: absence used to read as silence everywhere, and a sign-out whose server
  * call failed erased the marker while leaving the session alive. A client that has been told
  * there is an account here — confirmed or not — and cannot see it named is a client that can no
@@ -297,7 +305,14 @@ export function apiOwnerVerdict(path: string, opts: { ceremony?: boolean } = {})
   if (opts.ceremony === true) return "holds";
   if (OWNER_FREE_EXACT.some((p) => path === p)) return "holds";
   if (OWNER_FREE_PREFIXES.some((p) => path.startsWith(p))) return "holds";
-  if (binding.kind === "public") return "holds";
+  /*
+   * A PAGE THAT NEVER BINDS THE CLIENT, OVER A SIGN-OUT THE SERVER NEVER CONFIRMED. The jar still carries
+   * the previous person's cookies, and an account request from here answers for them: `/join`, one link
+   * from the sign-in page that finishes such a sign-out, read their session and mailboxes and generated
+   * their recovery codes. Under the reserved word only the two lists above (the sign-out door, sign-in,
+   * registration, the address confirmation) and the front door's ceremony still leave.
+   */
+  if (binding.kind === "public") return readOwnerMarker().kind === "signed-out" ? "signed-out" : "holds";
   // The binding's own name for a sign-out the server did not confirm — the same state the
   // reserved cookie word carries, reached from this module instead of from the jar.
   if (binding.kind === "blocked") return "signed-out";
@@ -543,6 +558,8 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 
   if (writesSessionCookies(path)) {
     return withSessionCookieLock(async () => {
+      // The caller's own question, asked once the wait is over: the jar may have changed hands in it.
+      if (opts.mayProceed !== undefined && !opts.mayProceed()) throw ownerRefusal("mismatch");
       const seen: { account?: string | null } = {};
       const answer = await hearing<T>(path, opts, seen);
       answerHolds();
@@ -1493,12 +1510,13 @@ export const auth = {
   /**
    * The sign-out door: it revokes the family this jar's refresh cookie names, which survives a
    * renewal in another tab whose answer never arrived. No body, the refresh request's own shape.
+   * `mayProceed` is asked inside the cookie lock before the request leaves (see `RequestOptions`).
    */
-  logout: async (): Promise<void> => {
+  logout: async (opts: { mayProceed?: () => boolean } = {}): Promise<void> => {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), SIGN_OUT_DEADLINE_MS);
     try {
-      return await api<void>(SIGN_OUT_PATH, { method: "POST", signal: deadline.signal });
+      return await api<void>(SIGN_OUT_PATH, { method: "POST", signal: deadline.signal, mayProceed: opts.mayProceed });
     } finally {
       clearTimeout(timer);
     }
