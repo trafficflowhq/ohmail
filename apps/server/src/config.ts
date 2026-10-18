@@ -7,7 +7,7 @@ import { aiProviderEnv, type AiProviderEnv } from "@trafficflow/core/ai-provider
 import { transactionPoolerReason, providerFamily } from "@trafficflow/db";
 import { pgTransportReason } from "@trafficflow/db/cloud";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
-import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
+import { makeAuthConfig, normalizeRecipient, type AuthConfig } from "@trafficflow/services";
 import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
 import { parseTlsTerminatorList, parseTrustedProxyEntry, splitTrustedProxyList, type TlsTerminatorRefusal } from "./http.js";
 
@@ -133,6 +133,16 @@ export interface SmtpConfig {
   replyTo: string | null;
 }
 
+/** The API alert arm's secret and channels — parsed by {@link loadAlertsEnv}. */
+export interface AlertsEnv {
+  secret: string;
+  webhookUrl: string | null;
+  /** `TF_ALERT_EMAIL`: the one operator address the alert mail goes to, over {@link SmtpConfig}. */
+  email: string | null;
+  /** `TF_ALERT_TELEGRAM_BOT_TOKEN` + `TF_ALERT_TELEGRAM_CHAT_ID`; a half-set pair is the sink's to refuse. */
+  telegram: { botToken: string | null; chatId: string | null };
+}
+
 /**
  * Object storage — parsed by {@link loadStorageConfig}, wired through the env-kind factory
  * (`stagingStorageFor` in `deps.ts`) into the bag's `attachmentStaging` member. When this is
@@ -184,7 +194,12 @@ export interface ServerConfig {
   ai: AiProviderEnv | null;
   /** `TF_AI_TIMEOUT_MS`, or `null` for the per-call defaults in `deps.ts`. */
   aiTimeoutMs: number | null;
-  alerts: { secret: string; webhookUrl: string | null } | null;
+  /**
+   * The API alert arm, armed by `TF_ALERT_SECRET` (24+ chars) alone: the intake routes and the
+   * in-process pass (`alert-clock.ts`). Its channels use the organizer's spellings; `email` mails
+   * through {@link smtp}, so it needs that block. `null` ⇒ the routes answer 404 and no pass runs.
+   */
+  alerts: AlertsEnv | null;
   msOAuth: MsOAuthBootstrap;
   /**
    * `MS_DEVICE_CLIENT_ID` (+ optional `MS_DEVICE_TENANT`) — the PUBLIC application the device-code
@@ -415,6 +430,37 @@ function loadSmtpConfig(env: NodeJS.ProcessEnv): SmtpConfig | null {
   return { url, from, replyTo: trimmed(env, "MAIL_REPLY_TO") || null };
 }
 
+/**
+ * The API alert arm, or null. The managed host's grammar for the secret: a short one arms NOTHING
+ * (an endpoint whose authentication is four characters is worse than no endpoint), and absence
+ * means the `/internal/alerts` routes answer 404 and no pass runs here — the channels are then
+ * not read. `TF_ALERT_EMAIL` mails through this server's SMTP block, so set without one, or not
+ * one plain address, it refuses the boot: a mail arm that silently is not there, or refuses every
+ * page, is a pager that looks configured and reaches nobody.
+ */
+function loadAlertsEnv(env: NodeJS.ProcessEnv, smtp: SmtpConfig | null): AlertsEnv | null {
+  const secret = trimmed(env, "TF_ALERT_SECRET");
+  if (secret.length < 24) return null;
+  const email = trimmed(env, "TF_ALERT_EMAIL") || null;
+  if (email !== null && !smtp) {
+    throw new Error(
+      "TF_ALERT_EMAIL is set but this server has no mailer: set SMTP_URL and MAIL_FROM, or unset TF_ALERT_EMAIL",
+    );
+  }
+  if (email !== null && normalizeRecipient(email) === null) {
+    throw new Error("TF_ALERT_EMAIL must be one plain email address — no display name, quotes or list");
+  }
+  return {
+    secret,
+    webhookUrl: trimmed(env, "TF_ALERT_WEBHOOK_URL") || null,
+    email,
+    telegram: {
+      botToken: trimmed(env, "TF_ALERT_TELEGRAM_BOT_TOKEN") || null,
+      chatId: trimmed(env, "TF_ALERT_TELEGRAM_CHAT_ID") || null,
+    },
+  };
+}
+
 const SUPABASE_STORAGE_VARS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "TF_ATTACHMENT_STAGING_BUCKET"] as const;
 const S3_STORAGE_VARS = ["S3_ENDPOINT", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"] as const;
 
@@ -573,10 +619,10 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     throw new Error("TF_AI_TIMEOUT_MS must be a non-negative integer of milliseconds");
   }
 
-  const alertSecret = trimmed(env, "TF_ALERT_SECRET");
-
   // Resolved once, at boot, like everything else here — /health publishes all three.
   const build = buildIdentityOf(env);
+  // Read before the alert arm, whose mail channel needs it.
+  const smtp = loadSmtpConfig(env);
 
   return {
     origin,
@@ -592,7 +638,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     buildSource: build.source,
     buildError: buildIdentityError(build.source),
     sse: SELF_HOST_SSE,
-    smtp: loadSmtpConfig(env),
+    smtp,
     storage: loadStorageConfig(env, origin),
     // The worker's own reader, so the two processes take one spelling of one choice. A key that
     // is not shaped like its vendor's, or a model server it may not reach, refuses the boot here,
@@ -600,12 +646,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     // every draft says "try again later"). Only ANTHROPIC_API_KEY is the Anthropic branch as before.
     ai: aiProviderEnv(env),
     aiTimeoutMs,
-    // The managed host's exact grammar: a short secret arms NOTHING (an endpoint whose
-    // authentication is four characters is worse than no endpoint), and absence means the two
-    // /internal/alerts routes answer 404.
-    alerts: alertSecret.length >= 24
-      ? { secret: alertSecret, webhookUrl: trimmed(env, "TF_ALERT_WEBHOOK_URL") || null }
-      : null,
+    // See loadAlertsEnv: the secret arms the routes and the in-process pass, or nothing.
+    alerts: loadAlertsEnv(env, smtp),
     // The SAME resolver the worker and the managed host call, so the three cannot accept
     // different variable sets (MS_OAUTH_* canonical, MICROSOFT_* aliases).
     msOAuth: msOAuthEnv(env),

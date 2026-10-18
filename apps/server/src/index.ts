@@ -9,7 +9,8 @@ import {
   type AuthService,
 } from "@trafficflow/services";
 import { COLLAPSED_SENTENCE, PROXY_PEER_HEADER, loadServerConfig } from "./config.js";
-import { buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
+import { alertSinksFor, buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
+import { alertClockFor } from "./alert-clock.js";
 import { handleServerRequest } from "./handler.js";
 import { makeHttpServer, makeTrustedProxies, systemLookup } from "./http.js";
 import { mintFirstRunSetupToken, printSetupToken } from "./setup-token.js";
@@ -99,6 +100,9 @@ async function main(): Promise<void> {
       printSetupToken(t, (line) => { console.log(line); });
     },
     logger,
+    // The API alert arm: its sinks, built once, and its handle — this pool, the one role there is.
+    alertSinks: alertSinksFor(cfg, logger, owned.db),
+    alertDb: () => Promise.resolve(owned.db as unknown as Tx),
   };
 
   // WHOSE `x-forwarded-for` NAMES THE CLIENT (`TF_TRUSTED_PROXIES`; the bundled compose names its
@@ -299,20 +303,26 @@ async function main(): Promise<void> {
   };
   armSendClock(SCHEDULED_SEND_FIRST_DELAY_MS);
 
+  // THE API ALERT PASS, on its own clock (alert-clock.ts): armed by TF_ALERT_SECRET, as the routes are.
+  const alertClock = alertClockFor(rt);
+
   let stopping = false;
   const shutdown = (signal: string): void => {
     if (stopping) return;
     stopping = true;
-    // The clock first: a pass that has not started must not start over a closing pool. One
+    // The clocks first: a pass that has not started must not start over a closing pool. One
     // already in flight finishes — its claim is small and the pool closes after `close()`.
     sendClockStopped = true;
     if (sendClock !== null) clearTimeout(sendClock);
+    const alertPassSettled = alertClock ? alertClock.stop() : Promise.resolve();
     logger.info("shutdown_begin", { signal });
     server.close(() => {
       void (async () => {
         // A send mid-flight finishes BEFORE the database goes: the finalize is what records
         // a delivered message as delivered, and the pool must outlive it.
         if (sendPassInFlight) await sendPassInFlight.catch(() => { /* its own catch logged */ });
+        // So does an alert pass: a pool closed under it logs `alert_pass_failed` at every restart.
+        await alertPassSettled;
         // The send door's kept IMAP connections: closed here, never left to their idle clock.
         await sendConnections.closeAll();
         await hub.end();

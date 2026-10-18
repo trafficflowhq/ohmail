@@ -550,6 +550,9 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── alerting (the worker's alert loop and the API's internal alert route) ──
   "alertKey", "alertKeys", "alertSinks", "alertIntervalMs", "rosterIntervalMs",
   "pollIntervalMs", "firing", "delivered", "failedSinks", "oldestSeconds",
+  // The self-host server's alert clock cadence (`alert_clock_armed`), added WITH its call site: a
+  // constant count of milliseconds.
+  "everyMs",
   // WHY a sink refused, and how long it has been refusing. `failedSinks` above names the sink
   // and nothing else, which is what let a configured-and-permanently-broken webhook read as
   // routine noise. `sinkErrors` is a flat ARRAY of `"<sink>: <reason>"` strings and not a

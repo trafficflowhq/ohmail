@@ -28,7 +28,9 @@
 #   · RustFS's object-storage port is published on loopback so the smoke can exercise the presigned
 #     upload/download round-trip from outside the network (the presigned URL names
 #     `rustfs:9000`, so the smoke dials the published port while preserving that Host);
-#   · the organizer polls fast, so "seeded mail appears in /sync" is seconds, not minutes.
+#   · the organizer polls fast, so "seeded mail appears in /sync" is seconds, not minutes;
+#   · the api's pager runs armed, on a TF_ALERT_SECRET the env file must carry (minted per run),
+#     so the smoke can read the api's own alert pass through GET /internal/alerts.
 
 services:
   proxy:
@@ -58,6 +60,10 @@ services:
       # rightly refuses by default. Relaxing it is exactly the documented LAN-mail-server
       # operator decision, made here for a mail server that exists only inside this compose.
       TF_PROBE_ALLOW_PRIVATE: "1"
+      # THE SMOKE RUNS THE PAGER ARMED: it reads GET /internal/alerts for the api's own alert pass.
+      # Mint the value into the env file per run (`openssl rand -hex 24`), never write one here —
+      # boot-smoke.mjs reads it back from the same file.
+      TF_ALERT_SECRET: ${TF_ALERT_SECRET:?set TF_ALERT_SECRET in the env file — 24+ characters minted for this run, e.g. `openssl rand -hex 24`}
 
   organizer:
     build:

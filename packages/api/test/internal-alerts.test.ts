@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, apiAlertSinkSummary, type ApiDeps } from "@trafficflow/api";
 import { alertState, type Alert, type AlertSink } from "@trafficflow/db/cloud";
+import type { Tx } from "@trafficflow/db";
 import type { AdminDb } from "@trafficflow/services";
 import { createLogger } from "@trafficflow/core";
 import { makeDeps, req } from "./helpers.js";
@@ -445,6 +446,75 @@ describe("the three routes when the pager is DARK — 503 alerts_db_unarmed, nev
     const { deps } = await makeDeps();
     const res = await H(post(SECRET), dark(deps));
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+/**
+ * A HOST WITH NO CONTENT-BLIND ROLE RUNS THE PASS ON ITS OWN HANDLE (`AlertsConfig.db`).
+ *
+ * The self-host server has one database role and it reads mail, so it can never hold the blind
+ * factory, and every route above answered 503 there for good. The blind factory still wins
+ * wherever it exists: a managed host that set `db` by mistake keeps running on the blind role.
+ */
+describe("the host's own handle arms the three routes where no blind factory exists", () => {
+  /** `dark` above plus the host's own handle — the self-host composition's shape. */
+  const ownHandle = (deps: ApiDeps, handle: () => Promise<Tx>): ApiDeps => {
+    const { adminDb: _gone, ...rest } = deps;
+    return {
+      ...rest, alerts: { secret: SECRET, cronSecret: CRON_SECRET, sinks: [], db: handle },
+    } as ApiDeps;
+  };
+
+  it("answers 200 on all three, where the same deps without the handle answer 503", async () => {
+    // Red mutation: drop `cfg.db` from the gate (`const db = staff`) — all three answer 503.
+    const { db, deps } = await makeDeps();
+    for (const request of [post(SECRET), run(CRON_SECRET), get(SECRET)]) {
+      const res = await H(request, ownHandle(deps, () => Promise.resolve(db as unknown as Tx)));
+      expect(res.status, request.url).toBe(200);
+    }
+  });
+
+  it("the pass on that handle is the api driver's, and the read lists it", async () => {
+    const { db, deps } = await makeDeps();
+    const own = ownHandle(deps, () => Promise.resolve(db as unknown as Tx));
+    const pass = await H(run(CRON_SECRET), own);
+    expect((await pass.json()).firing.map((a: { key: string }) => a.key)).toContain("worker_down:0");
+    const body = await (await H(get(SECRET), own)).json();
+    const api = (body.drivers as Array<{ driver: string; ranAt: string | null }>).find((d) => d.driver === "api");
+    expect(api?.ranAt, "the read must show the pass that just ran on the host's handle").not.toBeNull();
+  });
+
+  it("the blind factory wins when both are present — the host's handle is never asked", async () => {
+    // Red mutation: flip the precedence (`cfg.db ?? staff`) — `own` counts 3 and `blind` 0.
+    const { db, deps } = await makeDeps();
+    let blind = 0;
+    let own = 0;
+    const both = {
+      ...deps,
+      adminDb: () => { blind++; return Promise.resolve(db as unknown as AdminDb); },
+      alerts: {
+        secret: SECRET, sinks: [],
+        db: () => { own++; return Promise.resolve(db as unknown as Tx); },
+      },
+    } as ApiDeps;
+    for (const request of [post(SECRET), run(SECRET), get(SECRET)]) {
+      expect((await H(request, both)).status, request.url).toBe(200);
+    }
+    expect(blind, "every route ran on the blind factory").toBe(3);
+    expect(own, "the host's own handle was never asked for").toBe(0);
+  });
+
+  it("keeps the 401 for a wrong credential, and a handle without a secret is still 404", async () => {
+    const { db, deps } = await makeDeps();
+    const handle = (): Promise<Tx> => Promise.resolve(db as unknown as Tx);
+    for (const request of [post("wrong"), run("wrong"), get("wrong")]) {
+      expect((await H(request, ownHandle(deps, handle))).status, request.url).toBe(401);
+    }
+    const { adminDb: _gone, ...noStaff } = deps;
+    const blankSecret = { ...noStaff, alerts: { secret: "  ", db: handle } } as ApiDeps;
+    for (const request of [post(SECRET), run(SECRET), get(SECRET)]) {
+      expect((await H(request, blankSecret)).status, request.url).toBe(404);
+    }
   });
 });
 

@@ -34,6 +34,13 @@ longer says it will when none of your mailboxes is at either.
 "Act on confident suggestions for me" no longer keeps every sender it would let through waiting because some
 other held message claims a company it does not come from. Each sender is judged by their own messages.
 
+### A self-hosted server pages you when the organizer stops
+
+With `TF_ALERT_SECRET` set, the api now runs its own alert pass every minute, so a stopped organizer pages you
+within about three minutes, and `/internal/alerts` answers instead of 503. The api pages on the webhook, on
+Telegram, and by mail to `TF_ALERT_EMAIL` through your SMTP settings; `/health` lists the channels it pages on,
+and `deploy/selfhost/.env.example` says which service pages on which.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

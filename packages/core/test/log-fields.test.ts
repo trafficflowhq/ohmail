@@ -618,3 +618,21 @@ describe("the AI choice's boot line reaches the drain whole", () => {
     expect(JSON.stringify(out)).not.toContain("push.example");
   });
 });
+
+/**
+ * The self-host server's alert clock says at boot how often it runs and which arms it pages on
+ * (`alert_clock_armed`, apps/server/src/alert-clock.ts). A dropped `everyMs` leaves the drill
+ * reading a clock line with no cadence on it.
+ */
+describe("the self-host alert clock's boot line reaches the drain whole", () => {
+  const parse = (out: string): Record<string, unknown> => JSON.parse(out) as Record<string, unknown>;
+
+  it("alert_clock_armed carries the cadence and the arms, and drops nothing", () => {
+    // Red mutation: drop `everyMs` from ALLOWED_FIELDS — droppedFields names it.
+    const out = parse(capture((log) => {
+      log.info("alert_clock_armed", { everyMs: 60_000, alertSinks: ["webhook", "telegram", "mail"] });
+    }));
+    expect(out.droppedFields, JSON.stringify(out)).toBeUndefined();
+    expect([out.everyMs, out.alertSinks]).toEqual([60_000, ["webhook", "telegram", "mail"]]);
+  });
+});

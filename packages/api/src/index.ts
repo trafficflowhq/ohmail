@@ -52,8 +52,9 @@ export {
 
 // The pager's standing per-arm health, for the host to inject as `HealthConfig.alertSinks`. It
 // lives beside the alert driver because it reads that driver's own delivery streak, which is
-// module-scoped memory and must not be handed out mutable.
-export { apiAlertSinkSummary } from "./routes/internal.js";
+// module-scoped memory and must not be handed out mutable. `runApiAlertPass` is that driver's
+// pass for a host that keeps its own clock (the self-host server), on the same streak.
+export { apiAlertSinkSummary, runApiAlertPass } from "./routes/internal.js";
 
 // On-demand attachment adapter factory (decrypt mailbox creds → connected ImapAdapter).
 export { makeOpenAdapter } from "./attachments-adapter.js";

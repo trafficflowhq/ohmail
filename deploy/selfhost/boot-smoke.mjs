@@ -601,7 +601,46 @@ async function main() {
     ok(`/version is ${versionBody.trim()}; the unmatched-Host arm needs the http door, and ${BASE} is https`);
   }
 
-  // [15] SIGNING OUT THROUGH THE FRONT DOOR. The web client signs out at the door below the
+  // [15] THE API'S OWN ALERT PASS. Nothing outside a self-hosted api calls its alert routes, and its
+  // pass is the only one that sees a stopped organizer, so TF_ALERT_SECRET arms the routes AND a
+  // pass inside the api every minute. The secret is read where compose read it — the shell first,
+  // then the env file — and never written here. Unarmed, the documented answer is 404.
+  const alertSecret = (process.env.TF_ALERT_SECRET || envValues.TF_ALERT_SECRET || "")
+    .trim().replace(/^(["'])(.*)\1$/, "$2");
+  if (alertSecret.length >= 24) {
+    step("the api's alert pass: GET /internal/alerts shows the api driver's last pass (up to 90s), /health no alertsFault");
+    const wrongBearer = await fetch(`${BASE}/internal/alerts`, { headers: { authorization: `Bearer ${randomUUID()}` } });
+    assert(wrongBearer.status === 401, `a wrong bearer must answer 401 (got ${wrongBearer.status})`);
+    const alertDeadline = Date.now() + 90_000;
+    let alertRead = null;
+    let apiDriver = null;
+    while (Date.now() < alertDeadline) {
+      const res = await fetch(`${BASE}/internal/alerts`, { headers: { authorization: `Bearer ${alertSecret}` } });
+      await expectStatus(res, 200,
+        "GET /internal/alerts with the stack's secret (503 alerts_db_unarmed: the api composed no handle for its pass)");
+      alertRead = await res.json();
+      const api = (alertRead.drivers ?? []).find((d) => d.driver === "api");
+      if (api?.ranAt && Date.parse(alertRead.now) - Date.parse(api.ranAt) <= 90_000) { apiDriver = api; break; }
+      await sleep(5000);
+    }
+    assert(apiDriver !== null,
+      "the api's alert pass has not run in the last 90s — read: docker compose logs api (alert_clock_armed, alert_pass_failed)",
+      alertRead);
+    const healthRes = await fetch(`${BASE}/health`);
+    await expectStatus(healthRes, 200, "GET /health");
+    const health = await healthRes.json();
+    assert(!("alertsFault" in health), "an armed pager must leave /health without alertsFault", health.alertsFault);
+    assert(Array.isArray(health.alertSinks), "/health must publish the api's alert arms as alertSinks", health);
+    ok(`the api driver last ran at ${apiDriver.ranAt}; /health arms ${JSON.stringify(health.alertSinks.map((a) => a.name))}, ` +
+       `${health.alertPasses} pass(es) on this api`);
+  } else {
+    step("the pager is unarmed (no TF_ALERT_SECRET of 24+ characters): the alert endpoint answers 404");
+    const res = await fetch(`${BASE}/internal/alerts`);
+    assert(res.status === 404, `with no TF_ALERT_SECRET, GET /internal/alerts must answer 404 (got ${res.status})`);
+    ok("no secret, no alert endpoint and no api alert pass — the documented unarmed state");
+  }
+
+  // [16] SIGNING OUT THROUGH THE FRONT DOOR. The web client signs out at the door below the
   // refresh cookie's path, the one path a browser sends `tf_refresh` to, so the proxy has to carry
   // it to the API. Last, because it ends the session every step above used.
   step("sign out at the refresh path's door: 204, the five session cookies expired, the refresh refused after");

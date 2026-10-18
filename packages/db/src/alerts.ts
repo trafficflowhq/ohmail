@@ -1740,7 +1740,8 @@ export async function evaluateAlertsWithScope(
             `${opts.driver} driver because no process can testify to its own death. ` +
             (other === "api"
               ? "The API driver is the ONLY observer of worker_down — while it is dark, a dead " +
-                "sync worker pages nobody. Check the external scheduler and TF_ALERT_SECRET."
+                "sync worker pages nobody. Check the external scheduler (on a self-hosted " +
+                "server, the api service's own alert clock) and TF_ALERT_SECRET."
               : "The worker driver is the fast arm (one pass a minute); while it is dark, every " +
                 "alert's detection latency is the API scheduler's cadence instead. Check the " +
                 "worker's leader lock.") +

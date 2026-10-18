@@ -33,9 +33,11 @@ import { learnMissingSmtpSizes } from "../smtp-size.js";
  * reading the same Postgres: `worker_down`, `worker_degraded`, `alert_driver_dark`,
  * `schema_behind` (the count lives in `AlertKind`). Two clocks — Vercel Cron (primary) and the
  * scheduled CI workflow (a failed run mails the operator). A shared secret in constant time; no
- * `deps.alerts` ⇒ 404. POST: it writes and can send mail. The pass runs on the blind handle,
- * writing `alert_state` and `alert_pass_runs`; the mail sink's limiter is the one non-blind
- * piece. Dark pager 503; absent 404.
+ * `deps.alerts` ⇒ 404. POST: it writes and can send mail. The pass runs on the blind handle
+ * where one exists, else the host's own (`AlertsConfig.db`, the self-host server), writing
+ * `alert_state` and `alert_pass_runs`; the mail sink's limiter is the one non-blind piece. Dark
+ * pager 503; absent 404. The self-host server also runs this pass on its own clock
+ * ({@link runApiAlertPass}).
  */
 
 /*
@@ -270,7 +272,7 @@ function scrubError(err: unknown): string {
  * answers are the whole point — see the header.
  */
 type AlertGate =
-  | { armed: true; cfg: AlertsConfig; staff: () => Promise<AdminDb> }
+  | { armed: true; cfg: AlertsConfig; db: () => Promise<Tx> }
   | { armed: false; res: Response };
 
 function alertsArmed(
@@ -280,14 +282,16 @@ function alertsArmed(
   if (!cfg || cfg.secret.trim().length === 0) {
     return { armed: false, res: json(404, { error: { code: "not_found" } }) };
   }
-  // Configured, and no content-blind connection to run on. 503 — and it is answered BEFORE
-  // authentication on purpose: `/health` already publishes `alertsFault` to anyone who asks, so
-  // there is nothing here a 401 would keep back, and both schedulers must see the fault even if
-  // the credential they hold has also drifted.
-  if (!staff) {
+  // The blind factory FIRST; the host's own handle only where none exists (`AlertsConfig.db`).
+  const db = staff ?? cfg.db;
+  // Configured, and no connection to run on. 503 — and it is answered BEFORE authentication on
+  // purpose: `/health` already publishes `alertsFault` to anyone who asks, so there is nothing
+  // here a 401 would keep back, and both schedulers must see the fault even if the credential
+  // they hold has also drifted.
+  if (!db) {
     return { armed: false, res: json(503, { error: { code: "alerts_db_unarmed" } }) };
   }
-  return { armed: true, cfg, staff };
+  return { armed: true, cfg, db };
 }
 
 /**
@@ -346,17 +350,17 @@ export function apiAlertSinkSummary(sinks: readonly AlertSink[]): AlertSinkSumma
 }
 
 async function alertPass(
-  cfg: AlertsConfig, log: Logger, now: () => Date, staffDb: () => Promise<AdminDb>,
+  cfg: AlertsConfig, log: Logger, now: () => Date, handle: () => Promise<Tx>,
 ): Promise<Response> {
   try {
-    const staff = await staffDb();
+    const staff = await handle();
     // Counted the instant the pass can touch the streak; the placement is the field's
     // correctness. Counting after `runAlertPass` returned was false in a supported state: the
     // streak is mutated by `deliver()` and only then are the claims settled, so a settle UPDATE
     // that fails throws after the per-arm counters advanced — fresh attempts beside `passes: 0`,
     // the qualifier calling its own neighbours cold. Counting on entry makes the two inseparable;
-    // an invocation that cannot mutate the streak (no staff handle — the await above rejects
-    // first) is not counted. The number means "passes RUN", not "completed": a failing pass
+    // an invocation that cannot mutate the streak (no handle — the await above rejects first)
+    // is not counted. The number means "passes RUN", not "completed": a failing pass
     // answers 503 and logs `alert_pass_failed`, which is where it is diagnosed. The one thing
     // this field must never do is call warm counters cold.
     apiAlertPasses++;
@@ -466,6 +470,16 @@ async function alertPass(
     return json(503, { error: { code: "alert_pass_failed" } });
   }
 }
+
+/**
+ * The API driver's pass for a host that keeps its own clock — the self-host server, where nothing
+ * outside the process calls the routes. The routes' own pass, so the clock and the routes share
+ * one streak, one firing log and one `passes` count, and `runAlertPass` keeps exactly two
+ * production callers. Never throws; a failed pass answers 503 and logs `alert_pass_failed`.
+ */
+export const runApiAlertPass: (
+  cfg: AlertsConfig, log: Logger, now: () => Date, handle: () => Promise<Tx>,
+) => Promise<Response> = alertPass;
 
 /**
  * One platform-signal poll, `platformCostPass`'s shape — 404 unarmed, either secret in constant
@@ -592,7 +606,7 @@ export const internalRoutes: Route[] = [
         log.warn("alerts_unauthorized", {});
         return json(401, { error: { code: "unauthorized" } });
       }
-      return alertPass(gate.cfg, log, deps.now, gate.staff);
+      return alertPass(gate.cfg, log, deps.now, gate.db);
     },
   },
   {
@@ -623,7 +637,7 @@ export const internalRoutes: Route[] = [
         log.warn("alerts_unauthorized", {});
         return json(401, { error: { code: "unauthorized" } });
       }
-      return alertPass(gate.cfg, log, deps.now, gate.staff);
+      return alertPass(gate.cfg, log, deps.now, gate.db);
     },
   },
   {
@@ -644,11 +658,11 @@ export const internalRoutes: Route[] = [
         return json(401, { error: { code: "unauthorized" } });
       }
       try {
-        const staff = await gate.staff();
+        const db = await gate.db();
         const now = deps.now();
-        const open = await listOpenAlerts(staff);
+        const open = await listOpenAlerts(db);
         // Both arms' last pass and their longest 30-day gap: self-host has no console to read it.
-        const drivers = (await alertDriverStatuses(staff, now)).map((d) => ({
+        const drivers = (await alertDriverStatuses(db, now)).map((d) => ({
           driver: d.driver, ranAt: d.ranAt?.toISOString() ?? null, longestGap30dS: d.longestGap30dS,
         }));
         return json(200, { now: now.toISOString(), open, drivers });

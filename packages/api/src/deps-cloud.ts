@@ -5,6 +5,7 @@ import type {
   AlertSink, AlertThresholds, EvaluateOptions, MsOAuthBootstrap,
 } from "@trafficflow/db/cloud";
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
+import type { Tx } from "@trafficflow/db";
 import type { StaffSigningKey } from "./staff-assertion.js";
 
 /**
@@ -73,7 +74,8 @@ declare module "./deps.js" {
      * structurally unable to read mail content, not merely trusted not to. A factory, not a
      * handle: minting one is an `await` (`adminDbFor` requires `SELECT subject FROM messages
      * WHERE false` to raise 42501 before branding it), cached per cold instance. Absent ⇒
-     * `/admin/*` answers 404 and `/internal/alerts*` answers 503 `alerts_db_unarmed` —
+     * `/admin/*` answers 404 and `/internal/alerts*` answers 503 `alerts_db_unarmed` unless the
+     * host composed its own pass handle (`AlertsConfig.db`, the self-host server only) —
      * different on purpose: an unarmed console is intentionally absent, a configured pager
      * that cannot reach its database is broken. Deliberately no fallback to
      * {@link ApiDeps.db} — that handle can read every account's mail. A rejected promise ⇒ 503.
@@ -207,4 +209,12 @@ export interface AlertsConfig {
   parkedAccounts?: EvaluateOptions["parkedAccounts"];
   accountsAtCap?: EvaluateOptions["accountsAtCap"];
   repeatMs?: number;
+  /**
+   * The handle the pass and the reads run on where the host has NO content-blind role: set by
+   * `apps/server` only, never by `apps/api-vercel`. {@link ApiDeps.adminDb} wins whenever it is
+   * present, so a managed host that set this by mistake still runs on the blind role. A self-host
+   * has one role and it can read mail; the pass reads no content column, and the routes are
+   * secret-guarded. Absent with no blind factory ⇒ the routes answer 503 `alerts_db_unarmed`.
+   */
+  db?: () => Promise<Tx>;
 }

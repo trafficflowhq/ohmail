@@ -164,6 +164,9 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
       oauth: oauthProviderFor(cfg, owned.db),
       onSetupTokenMinted: (m) => { midlifeMints.push(m.token); },
       logger: createLogger({ service: "server", level: "error", sink: () => {} }),
+      // No TF_ALERT_SECRET here: no pager, so no arms and no pass handle.
+      alertSinks: [],
+      alertDb: null,
     };
     server = makeHttpServer((req) => handleServerRequest(req, rt), {
       bodyMaxBytes: cfg.bodyMaxBytes,

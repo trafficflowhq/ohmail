@@ -130,6 +130,7 @@ describe("the session door under a held pool", () => {
       cfg, db: owned.db, services: buildServerServices(cfg, owned.db), changeWake: null,
       oauth: oauthProviderFor(cfg, owned.db), onSetupTokenMinted: () => {},
       logger: createLogger({ service: "server", level: "error", sink: () => {} }),
+      alertSinks: [], alertDb: null,
     };
 
     for (let i = 0; i < WORKER_POOL_MAX; i++) owned.db.execute(sql`select 1`).catch(() => {});

@@ -1,7 +1,7 @@
 import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, parkedAccountsOf, type Tx } from "@trafficflow/db";
 import { readDbTls } from "@trafficflow/db/cloud";
 import {
-  acquireImapSlot, releaseImapSlot, webhookAlertSink,
+  acquireImapSlot, releaseImapSlot, webhookAlertSink, telegramAlertSink,
   recordApiFault, accountsAtCapOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   makeSupabaseStagingStorage, makeS3StagingStorage,
@@ -29,19 +29,19 @@ import {
   attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
   FolderOpsService, scheduleService,
   workflowsService, proposalsService, redeemInviteGrant,
-  makeAttachmentStagingPort, MailService, SmtpMailer,
+  makeAttachmentStagingPort, MailService, SmtpMailer, mailAlertSink, dbRecipientLimiter,
 } from "@trafficflow/services";
 // The policy TYPE lives on the mail entry (the sidecar imports it there too); the full barrel
 // above is still loaded by this app — which is exactly why the explicit allowance below exists.
 import type { MailboxAllowancePolicy } from "@trafficflow/services/mail";
 import type { PairingTokenMinted } from "@trafficflow/services";
-import { makeProbeHostGuard, ALLOW_ANY_PROBE_HOST } from "@trafficflow/api";
+import { makeProbeHostGuard, ALLOW_ANY_PROBE_HOST, apiAlertSinkSummary } from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { schema } from "@trafficflow/db/cloud";
 import {
   allowCookieAuthForRequest, SELF_HOST_SEND_MAX_TOTAL_BYTES,
-  type ServerConfig, type StorageConfig,
+  type ServerConfig, type SmtpConfig, type StorageConfig,
 } from "./config.js";
 import { ensureSetupTokenInvariant } from "./setup-token.js";
 
@@ -144,25 +144,9 @@ const bareAddress = (from: string): string => {
 export function customerMailerFor(cfg: ServerConfig): MailService | null {
   if (!cfg.smtp) return null;
   try {
-    return new MailService({
-      mailer: new SmtpMailer({
-        url: cfg.smtp.url,
-        from: cfg.smtp.from,
-        replyTo: cfg.smtp.replyTo ?? undefined,
-      }),
-      config: {
-        appUrl: cfg.origin,
-        siteUrl: cfg.origin,
-        supportEmail: cfg.smtp.replyTo ?? bareAddress(cfg.smtp.from),
-        // The operator origin must be NAMED as a permitted link base — the default list is the
-        // managed product's own origins, and "mail links wherever an env var points" must stay
-        // a property nobody acquires by accident (mail-service.ts states the rule).
-        allowedOrigins: [cfg.origin],
-        // No `operatorEmail`: this instance exists to reach the box's users, and without the
-        // address `sendOperatorAlert` skips — the alert path stays webhook-only for now (see
-        // alertSinksFor).
-      },
-    });
+    // No `operatorEmail`: this instance exists to reach the box's users, and without the address
+    // `sendOperatorAlert` skips. The pager's mail arm is a SECOND instance (alertSinksFor).
+    return smtpMailServiceFor(cfg, cfg.smtp);
   } catch (err) {
     // Boot refusal, config.ts's grammar: the variable, the rule, never the value. The inner
     // message is one of our own fixed sentences (SmtpMailer/assertUsableFrom echo nothing).
@@ -170,6 +154,27 @@ export function customerMailerFor(cfg: ServerConfig): MailService | null {
       `SMTP is configured but not usable — check SMTP_URL and MAIL_FROM: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * A `MailService` over this server's SMTP block: the customer instance, or with `operatorEmail`
+ * the pager's mail arm. One construction, two instances — sharing one object would put two threat
+ * models in one configuration. Throws on an unusable block (its callers' contracts differ).
+ */
+function smtpMailServiceFor(cfg: ServerConfig, smtp: SmtpConfig, operatorEmail?: string): MailService {
+  return new MailService({
+    mailer: new SmtpMailer({ url: smtp.url, from: smtp.from, replyTo: smtp.replyTo ?? undefined }),
+    config: {
+      appUrl: cfg.origin,
+      siteUrl: cfg.origin,
+      supportEmail: smtp.replyTo ?? bareAddress(smtp.from),
+      // The operator origin must be NAMED as a permitted link base — the default list is the
+      // managed product's own origins, and "mail links wherever an env var points" must stay
+      // a property nobody acquires by accident (mail-service.ts states the rule).
+      allowedOrigins: [cfg.origin],
+      ...(operatorEmail ? { operatorEmail } : {}),
+    },
+  });
 }
 
 /** Everything with process lifetime, built once by `index.ts` and handed to every request. */
@@ -183,6 +188,14 @@ export interface ServerRuntime {
   /** Where a setup token minted OUTSIDE boot gets printed — see {@link needsSetupFor}. */
   onSetupTokenMinted: (minted: PairingTokenMinted) => void;
   logger: Logger;
+  /** The API alert arm's sinks ({@link alertSinksFor}), built once: the routes and the clock share them. */
+  alertSinks: AlertSink[];
+  /**
+   * The handle the API alert pass and its reads run on: this process's pool. This host has one
+   * role and no content-blind one, so it is `AlertsConfig.db`. Null only where a test stubs it
+   * absent — `/health` then names `alertsFault`, as the routes answer 503.
+   */
+  alertDb: (() => Promise<Tx>) | null;
 }
 
 /**
@@ -395,25 +408,38 @@ export function serverAiPorts(
 }
 
 /**
- * The alert sinks this host can reach: the JSON webhook, when the operator configured one. The
- * MAIL sink is still deliberately absent even now that `SmtpMailer` exists, because it needs the
- * one thing this host's config does not yet name: an OPERATOR ADDRESS (`MailService` refuses to
- * take a recipient as an argument — the anti-mail-bomb rule — and `operatorEmail` is unset on
- * the customer instance on purpose). Wiring it is an env-vocabulary decision, not an adapter
- * gap; named follow-up. Cannot throw — an observability feature must never cause the outage it
- * exists to report.
+ * The API alert arm's sinks, the organizer's three by the organizer's names: the JSON webhook,
+ * the Telegram push (a half-set pair is an arm that refuses every page naming the missing
+ * variable), and operator mail over this server's own SMTP block — a SECOND `MailService` carrying
+ * `operatorEmail` (`TF_ALERT_EMAIL`), the managed host's shape. Its one write, the per-recipient
+ * limiter's `auth_throttle` slot, goes through `db`. Built once at boot. Cannot throw — an
+ * observability feature must never cause the outage it exists to report.
  */
-export function alertSinksFor(cfg: ServerConfig, logger: Logger): AlertSink[] {
+export function alertSinksFor(cfg: ServerConfig, logger: Logger, db: Db): AlertSink[] {
+  const alerts = cfg.alerts;
+  if (!alerts) return [];
   const sinks: AlertSink[] = [];
-  if (cfg.alerts?.webhookUrl) {
+  const add = (name: string, build: () => AlertSink | null): void => {
     try {
-      const hook = webhookAlertSink(cfg.alerts.webhookUrl);
-      if (hook) sinks.push(hook);
+      const sink = build();
+      if (sink) sinks.push(sink);
     } catch (err) {
       logger.error("alert_sink_unavailable", {
-        err, reason: "the webhook alert sink could not be constructed; the pass will report undeliverable",
+        err, sink: name, reason: "an alert sink could not be constructed; the pass will not deliver to it",
       });
     }
+  };
+  add("webhook", () => webhookAlertSink(alerts.webhookUrl ?? undefined));
+  add("telegram", () => telegramAlertSink({
+    botToken: alerts.telegram.botToken ?? undefined, chatId: alerts.telegram.chatId ?? undefined,
+  }));
+  // `config.ts` refused TF_ALERT_EMAIL without an SMTP block, so both are here or the arm is off.
+  const { email } = alerts;
+  const { smtp } = cfg;
+  if (email && smtp) {
+    add("mail", () => mailAlertSink(smtpMailServiceFor(cfg, smtp, email), {
+      limiter: dbRecipientLimiter(db), now: () => new Date(),
+    }));
   }
   return sinks;
 }
@@ -560,6 +586,16 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
       dbProvider: providerFamily(cfg.databaseUrl),
       // Both transport hops; on an operator's own Postgres beside the server, false is the documented default.
       dbTls: (reached: boolean) => readDbTls(cfg.databaseUrl, rt.db, reached),
+      // The contract with the managed host: `alertsFault` present ⇔ the routes answer 503. It reads
+      // the member the gate runs on (`alerts.db` below), and index.ts always builds that handle, so
+      // this is null by construction here; `alertSinks` with no arms is this host's loud signal.
+      alertsError: cfg.alerts && !rt.alertDb
+        ? "alerting is configured but DARK: no handle for the pass — /internal/alerts* answer 503 " +
+          "alerts_db_unarmed and no alert pass runs"
+        : null,
+      // The arms the pass delivers to and their standing health. Absent with no TF_ALERT_SECRET:
+      // no pager by construction (`HealthConfig.alertSinks`); armed with no arm, it reads `[]`.
+      alertSinks: cfg.alerts ? () => apiAlertSinkSummary(rt.alertSinks) : null,
     },
     /**
      * What `GET /push/vapid-key` answers. The PUBLIC half only — see config.ts: this process never
@@ -613,22 +649,26 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         await recordApiFault(rt.db as unknown as Tx, { ...fault, arm: "api" });
       },
     },
-    // Armed by TF_ALERT_SECRET (≥ 24 chars); absent ⇒ both /internal/alerts routes answer 404,
-    // which is the correct surface for a box nobody armed a pager on.
+    // Armed by TF_ALERT_SECRET (≥ 24 chars); absent ⇒ the /internal/alerts routes answer 404 and
+    // no alert clock runs, which is the correct surface for a box nobody armed a pager on.
     alerts: cfg.alerts
       ? {
         secret: cfg.alerts.secret,
-        sinks: alertSinksFor(cfg, rt.logger),
+        sinks: rt.alertSinks,
         environment: cfg.environment,
         // `null`: the bag's port is UNMETERED, so this server parks nobody and every stale
         // mailbox is on duty — the page may say its owner is not receiving mail. For the same
         // reason nobody here has a storage cap, and the rule says so rather than "no reader".
         parkedAccounts: parkedAccountsOf(UNMETERED),
         accountsAtCap: accountsAtCapOf(UNMETERED),
+        // The pass's handle: this host has no content-blind role (`AlertsConfig.db`).
+        db: rt.alertDb ?? undefined,
       }
       : undefined,
-    // NO admin, NO adminDb: selfHostRoutes carries no admin group at all — account isolation on
-    // this server is absolute, and the operator's observability is /health + /internal/alerts.
+    // NO admin and NO adminDb: selfHostRoutes carries no admin group, so no route reads across
+    // accounts for a person. The one cross-account reader is the alert pass (it reads no content
+    // column) on `alerts.db` above, behind TF_ALERT_SECRET. The operator's observability is
+    // /health + /internal/alerts.
     msOAuth: cfg.msOAuth,
     /*
      * THE PUBLIC CLIENT — the field that arms the device-code routes this table mounts, and the only

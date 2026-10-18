@@ -219,8 +219,14 @@ services:
       # holds only the public half" is the kind of property that is true until somebody tidies the
       # two blocks into a shared anchor.
       TF_VAPID_PUBLIC_KEY: ${TF_VAPID_PUBLIC_KEY:-}
+      # THE PAGER (.env.example says which service pages on which). TF_ALERT_SECRET arms the
+      # alert endpoints and this service's own alert pass, every minute — the one that sees a
+      # stopped organizer. TF_ALERT_EMAIL is this service's alone: it mails through SMTP_URL above.
       TF_ALERT_SECRET: ${TF_ALERT_SECRET:-}
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
+      TF_ALERT_TELEGRAM_BOT_TOKEN: ${TF_ALERT_TELEGRAM_BOT_TOKEN:-}
+      TF_ALERT_TELEGRAM_CHAT_ID: ${TF_ALERT_TELEGRAM_CHAT_ID:-}
+      TF_ALERT_EMAIL: ${TF_ALERT_EMAIL:-}
       # WHO MAY TELL THE api WHO THE CLIENT IS: `proxy`, on both doors, and nobody else. The name is
       # resolved inside the api when the proxy first calls, so start order does not matter. Without
       # it every visitor shares the proxy's address: one wrong-password lockout and one signup limit
@@ -359,7 +365,12 @@ services:
       # the operator about a misbehaving sender. Omitted from the signed token when unset, which is
       # conformant — the spec says SHOULD, and a made-up address would be a wrong fact in a token.
       TF_VAPID_SUBJECT: ${TF_VAPID_SUBJECT:-}
+      # This service's own alert pass pages on the webhook and the Telegram pair, as the api does.
+      # NOT TF_ALERT_EMAIL: this process's mail arm is not wired to SMTP, and set here it would
+      # refuse every page. Nor TF_ALERT_SECRET: nothing in this process reads it.
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
+      TF_ALERT_TELEGRAM_BOT_TOKEN: ${TF_ALERT_TELEGRAM_BOT_TOKEN:-}
+      TF_ALERT_TELEGRAM_CHAT_ID: ${TF_ALERT_TELEGRAM_CHAT_ID:-}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
       MS_OAUTH_TENANT: ${MS_OAUTH_TENANT:-}
