@@ -33,6 +33,7 @@
 import { memo, useState, type ReactNode } from "react";
 import { BODY_PAGE_CHARS, pageEnd, pageEnds } from "@ohmail/ui";
 import { liveCopy } from "./locale";
+import { RenderedLinks } from "./rendered-links";
 
 /**
  * Leading email quote markers — up to a little indent, then one or more `>` each optionally
@@ -421,8 +422,11 @@ export function anchorFor(candidate: string): { href: string; label: string } | 
   return { href: url.href, label: labelOf(url) };
 }
 
-/** One paragraph's worth of text, with its safe URLs turned into anchors. */
-function linkify(block: string, keyBase: string): ReactNode[] {
+/**
+ * One paragraph's worth of text, with its safe URLs turned into anchors. Every href drawn goes into
+ * `links`, which the body reports as on screen (`rendered-links.ts`).
+ */
+function linkify(block: string, keyBase: string, links: string[]): ReactNode[] {
   const out: ReactNode[] = [];
   let cursor = 0;
   let n = 0;
@@ -438,6 +442,7 @@ function linkify(block: string, keyBase: string): ReactNode[] {
     if (!anchor) continue;
 
     if (start > cursor) out.push(block.slice(cursor, start));
+    links.push(anchor.href);
     out.push(
       <a
         key={`l${keyBase}-${n++}`}
@@ -472,19 +477,20 @@ function linkify(block: string, keyBase: string): ReactNode[] {
  * than the destination ({@link LinkRun.elsewhere}), the real host is printed beside it — the
  * framed path's anti-phishing marker, carried natively.
  */
-function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<string>): ReactNode[] {
+function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<string>, links: string[]): ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyBase}i${i}`;
     switch (node.kind) {
       case "text": return node.text;
       case "break": return <br key={key} />;
-      case "strong": return <strong key={key}>{renderInline(node.children, key, own)}</strong>;
-      case "em": return <em key={key}>{renderInline(node.children, key, own)}</em>;
-      case "underline": return <u key={key}>{renderInline(node.children, key, own)}</u>;
+      case "strong": return <strong key={key}>{renderInline(node.children, key, own, links)}</strong>;
+      case "em": return <em key={key}>{renderInline(node.children, key, own, links)}</em>;
+      case "underline": return <u key={key}>{renderInline(node.children, key, own, links)}</u>;
       // Literal characters inside a sentence. Faint tint, no border, no highlighting — this is
       // received mail, and the app is not pretending to be an editor for somebody else's source.
-      case "code": return <code className="msg-code" key={key}>{renderInline(node.children, key, own)}</code>;
+      case "code": return <code className="msg-code" key={key}>{renderInline(node.children, key, own, links)}</code>;
       case "link":
+        links.push(node.href);
         return (
           <a
             key={key}
@@ -494,7 +500,7 @@ function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<str
             rel="noopener noreferrer"
             title={COPY.linkTitle(node.host)}
           >
-            {renderInline(node.children, key, own)}
+            {renderInline(node.children, key, own, links)}
             {node.elsewhere ? <span className="msg-link-host"> ({node.host})</span> : null}
           </a>
         );
@@ -510,7 +516,8 @@ function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<str
   });
 }
 
-function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<string>): ReactNode[] {
+/** `links` collects every href the nodes draw, for the body to report as on screen. */
+function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<string>, links: string[]): ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyPrefix}${i}`;
     switch (node.kind) {
@@ -521,7 +528,7 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
         // MAX_QUOTE_DEPTH, enforced where the tree is built.
         return (
           <div className="msg-quote" data-quote-depth={node.depth} key={key}>
-            {renderNodes(node.children, `${key}-`, own)}
+            {renderNodes(node.children, `${key}-`, own, links)}
           </div>
         );
       case "para":
@@ -532,7 +539,7 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
            Plain path only — a `rich` run's text nodes are markup whitespace and must collapse. */
         return (
           <p className={node.block.attribution ? "msg-attribution msg-plain" : "msg-p msg-plain"} key={key}>
-            {linkify(node.block.text, key)}
+            {linkify(node.block.text, key, links)}
           </p>
         );
       case "rich":
@@ -547,14 +554,14 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
             }
             key={key}
           >
-            {renderInline(node.children, key, own)}
+            {renderInline(node.children, key, own, links)}
           </p>
         );
       case "heading": {
         // The app's scale, not the sender's: `.msg-h` caps the size (message-body.css), so a
         // newsletter-sized h1 reads as a letter's heading rather than a shout.
         const H = `h${node.level}` as "h1";
-        return <H className="msg-h" key={key}>{renderInline(node.children, key, own)}</H>;
+        return <H className="msg-h" key={key}>{renderInline(node.children, key, own, links)}</H>;
       }
       case "rule":
         return <hr className="msg-hr" key={key} />;
@@ -572,7 +579,7 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
         );
       case "list": {
         const items = node.items.map((item, j) => (
-          <li key={`${key}-${j}`}>{renderNodes(item, `${key}-${j}-`, own)}</li>
+          <li key={`${key}-${j}`}>{renderNodes(item, `${key}-${j}-`, own, links)}</li>
         ));
         return node.ordered
           ? <ol className="msg-list" key={key}>{items}</ol>
@@ -596,7 +603,7 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
                           colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
                           rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
                         >
-                          {renderNodes(cell.children, `${key}-${r}-${c}-`, own)}
+                          {renderNodes(cell.children, `${key}-${r}-${c}-`, own, links)}
                         </Cell>
                       );
                     })}
@@ -623,9 +630,14 @@ function parsePlain(text: string): BodyNode[] {
   return toTree(toBlocks(text.replace(/\r\n?/g, "\n").split("\n").map(classifyLine)));
 }
 
-/** One page of a long body. Memoised on its own text, so a further page parses and lays out alone. */
+/**
+ * One page of a long body. Memoised on its own text, so a further page parses and lays out alone;
+ * it reports its own links, as a surface of its own, once it is drawn.
+ */
 const BodyPage = memo(function BodyPage({ text, index }: { text: string; index: number }) {
-  return <div className="msg-page">{renderNodes(parsePlain(text), `p${index}-`, NO_OWN_IMAGES)}</div>;
+  const links: string[] = [];
+  const drawn = renderNodes(parsePlain(text), `p${index}-`, NO_OWN_IMAGES, links);
+  return <div className="msg-page">{drawn}<RenderedLinks hrefs={links} /></div>;
 });
 
 /**
@@ -672,11 +684,19 @@ export function BodyText({ text, rich, ownImages = NO_OWN_IMAGES }: {
   // blank line is `\r\n\r\n` and every paragraph boundary is missed.
   const nodes = useRich ? rich : parsePlain(text ?? "");
   const split = splitTrailingHistory(nodes);
-  if (split === null) return <>{renderNodes(nodes, "b", ownImages)}</>;
+  // Every href drawn below, reported as on screen (`rendered-links.ts`): a folded history draws
+  // nothing, so it reports nothing until it is open.
+  const links: string[] = [];
+  if (split === null) {
+    const drawn = renderNodes(nodes, "b", ownImages, links);
+    return <>{drawn}<RenderedLinks hrefs={links} /></>;
+  }
   const open = openedFor === text;
+  const lead = renderNodes(split.lead, "b", ownImages, links);
+  const history = open ? renderNodes(split.history, "h", ownImages, links) : null;
   return (
     <>
-      {renderNodes(split.lead, "b", ownImages)}
+      {lead}
       {/* A real <button> — Enter and Space come with the element; `aria-expanded` reports the
           fold. Collapsed history is NOT RENDERED rather than hidden: nothing in it (including
           its anchors) exists until the reader asks. */}
@@ -688,7 +708,8 @@ export function BodyText({ text, rich, ownImages = NO_OWN_IMAGES }: {
       >
         {open ? COPY.hide : COPY.show}
       </button>
-      {open ? renderNodes(split.history, "h", ownImages) : null}
+      {history}
+      <RenderedLinks hrefs={links} />
     </>
   );
 }

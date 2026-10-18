@@ -67,8 +67,9 @@ pub fn dev_origin(configured: Option<&Url>, debug_build: bool) -> Option<Url> {
 
 /// WKWebView asks the navigation handler about a new-window request before it raises one (wry 0.55
 /// passes every `decidePolicyForNavigationAction` through), so on macOS a refusal alone would eat
-/// every link in a message. WebKitGTK and WebView2 raise the request without asking. The door adds
-/// no reach: a script in the window can already pass any web address to `open_external`.
+/// every link in a message. WebKitGTK and WebView2 raise the request without asking. The door
+/// opens only what `open_external` would: a link the window's renderers reported on screen, or
+/// one of the shell's own constant links (`rendered_links.rs`).
 pub const ASKED_ABOUT_NEW_WINDOWS: bool = cfg!(target_os = "macos");
 
 /// A window's link door: offered an address the guard refused, `true` when it took it.
@@ -108,7 +109,7 @@ fn scheme_class(url: &Url) -> &'static str {
     NAMED.into_iter().find(|named| *named == url.scheme()).unwrap_or("other")
 }
 
-fn host_class(url: &Url) -> &'static str {
+pub(crate) fn host_class(url: &Url) -> &'static str {
     let Some(host) = url.host_str().map(|h| h.trim_end_matches('.')).filter(|h| !h.is_empty()) else {
         return "none";
     };

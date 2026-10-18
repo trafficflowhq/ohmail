@@ -4261,7 +4261,7 @@ fn every_command_the_window_calls_is_granted_to_it() {
 
     for command in [
         "engine-status", "engine-request", "engine-configure", "engine-logout",
-        "notify", "set-badge", "open-link", "open-external", "save-attachment",
+        "notify", "set-badge", "open-link", "rendered-links", "open-external", "save-attachment",
         "stage-attachment-preview", "release-attachment-preview", "mailto-claim", "default-mail-status", "default-mail-request", "window-ready",
     ] {
         let permission = format!("allow-{command}");
@@ -6549,12 +6549,18 @@ fn the_diagnostic_save_writes_the_builders_file_and_nothing_else() {
     assert_eq!(fs::read_to_string(&path).expect("read back"), second, "a refusal touched the last good file");
 }
 
-/// THE ROUTE TABLE for a new-window request, the one door a message frame's links have.
-/// Mutations watched: route `mailto:` to the browser → the Compose rows go red; drop the own-host
-/// arm → the `tauri.localhost` rows go red. The first rows are the positive control.
-fn popup_rows() -> Vec<(String, PopupRoute)> {
-    let browser = |u: &str| (u.to_string(), PopupRoute::Browser(u.to_string()));
-    let ignored = |u: &str| (u.to_string(), PopupRoute::Ignored);
+/// THE ROUTE TABLE for a new-window request, the one door a message frame's links have. Each row is
+/// the address, whether a renderer reported it, and its route. Mutations watched: route `mailto:`
+/// to the browser → the Compose rows go red; drop the own-host arm → the `tauri.localhost` rows go
+/// red (they are reported, so the set alone would open them); skip the set → the unreported rows go
+/// red. The first rows are the positive control.
+fn popup_rows() -> Vec<(String, bool, PopupRoute)> {
+    use crate::rendered_links::Why;
+    let browser = |u: &str| (u.to_string(), true, PopupRoute::Browser(u.to_string()));
+    let unreported = |u: &str| (u.to_string(), false, PopupRoute::Refused { url: u.to_string(), why: Why::Unrendered });
+    let ignored = |u: &str| (u.to_string(), false, PopupRoute::Ignored);
+    let own = |u: &str| (u.to_string(), true, PopupRoute::Ignored);
+    let shape = |u: &str| (u.to_string(), false, PopupRoute::Refused { url: u.to_string(), why: Why::Shape });
     let long = format!("https://example.test/{}", "a".repeat(EXTERNAL_URL_MAX));
     let bidi = "https://example.test/\u{202e}txt.exe".to_string();
     vec![
@@ -6565,8 +6571,13 @@ fn popup_rows() -> Vec<(String, PopupRoute)> {
         // A host that only CONTAINS an own-origin name is somebody else's.
         browser("https://tauri.localhost.example.test/"),
         browser("https://nottauri.localhost/"),
-        ("mailto:x@y.test?subject=A%26B".into(), PopupRoute::Compose("mailto:x@y.test?subject=A%26B".into())),
-        ("MAILTO:x@y.test".into(), PopupRoute::Compose("MAILTO:x@y.test".into())),
+        // A shape the gate admits and no renderer drew: the row's probe, and a reported link's
+        // neighbours.
+        unreported("https://example.invalid/?data=walk-1"),
+        unreported("https://example.test/deactivate?then=more"),
+        unreported("https://elsewhere.test/path"),
+        ("mailto:x@y.test?subject=A%26B".into(), false, PopupRoute::Compose("mailto:x@y.test?subject=A%26B".into())),
+        ("MAILTO:x@y.test".into(), false, PopupRoute::Compose("MAILTO:x@y.test".into())),
         ignored("mailto:x@y.test?subject=a\u{0}b"),
         ignored("tel:+41000000000"),
         ignored("cid:part1@fixture.test"),
@@ -6579,24 +6590,34 @@ fn popup_rows() -> Vec<(String, PopupRoute)> {
         ignored("tauri://localhost/x"),
         ignored("ipc://localhost/x"),
         ignored("asset://localhost/x"),
-        ignored("http://tauri.localhost/x"),
-        ignored("https://TAURI.localhost/#/settings"),
-        ignored("http://ipc.localhost/"),
-        ignored("http://asset.localhost/x"),
-        ignored("http://someone@tauri.localhost:80/x"),
+        // The app's own origin stays ignored even when a renderer reported it.
+        own("http://tauri.localhost/x"),
+        own("https://TAURI.localhost/#/settings"),
+        own("http://ipc.localhost/"),
+        own("http://asset.localhost/x"),
+        own("http://someone@tauri.localhost:80/x"),
         ignored("no-scheme-at-all"),
-        (long.clone(), PopupRoute::Refused(long)),
-        (bidi.clone(), PopupRoute::Refused(bidi)),
-        ("https:///no-host".into(), PopupRoute::Refused("https:///no-host".into())),
+        shape(&long),
+        shape(&bidi),
+        shape("https:///no-host"),
     ]
+}
+
+/// The links a table's reported rows put on screen.
+fn reported_rows(rows: &[(String, bool, PopupRoute)]) -> crate::rendered_links::Rendered {
+    let mut set = crate::rendered_links::Rendered::default();
+    let urls: Vec<String> = rows.iter().filter(|(_, reported, _)| *reported).map(|(url, _, _)| url.clone()).collect();
+    set.report("rows", &urls).expect("the table's links were refused");
+    set
 }
 
 #[test]
 fn a_new_window_request_is_routed_by_the_one_table() {
     let rows = popup_rows();
     assert!(rows.len() >= 18, "the table lost rows: {}", rows.len());
-    for (url, want) in rows {
-        assert_eq!(popup_route(&url), want, "popup_route({url:?})");
+    let set = reported_rows(&rows);
+    for (url, _, want) in rows {
+        assert_eq!(popup_route(&url, Some(&set)), want, "popup_route({url:?})");
     }
 }
 
@@ -6605,9 +6626,11 @@ fn a_new_window_request_is_routed_by_the_one_table() {
 #[test]
 fn every_new_window_request_is_denied_and_routed_links_leave_once() {
     use std::cell::RefCell;
-    for (url, want) in popup_rows() {
+    let rows = popup_rows();
+    let set = reported_rows(&rows);
+    for (url, _, want) in rows {
         let jobs = RefCell::new(Vec::new());
-        let response = answer::<tauri::Wry>(&url, |route| jobs.borrow_mut().push(route));
+        let response = answer::<tauri::Wry>(&url, Some(&set), |route| jobs.borrow_mut().push(route));
         assert!(matches!(response, tauri::webview::NewWindowResponse::Deny), "{url:?} was not denied");
         let jobs = jobs.into_inner();
         if want == PopupRoute::Ignored {

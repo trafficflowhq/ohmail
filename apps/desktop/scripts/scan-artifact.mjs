@@ -113,15 +113,17 @@ const absent = MARKERS.filter((m) => !present.includes(m));
 const HOSTED_SUGGEST_MARKER = "SuggestRefused";
 
 /**
- * THE SHELL COMMANDS THIS BUNDLE CAN NAME. Both are armed from the window entry
+ * THE SHELL COMMANDS THIS BUNDLE CAN NAME. Each is armed from the window entry
  * (`src/main.tsx`); the served client's entry never arms them, and a phone page that could name
- * a shell command would be a page claiming a channel it does not have.
+ * a shell command would be a page claiming a channel it does not have. `rendered_links` is how
+ * the window's renderers report the links they draw — the only addresses `open_external` takes
+ * besides the shell's own — so a window bundle without it has links that will not open.
  *
  * `open_attachment` is NOT in this list: it wrote bytes the window chose and launched them, had
  * no caller, and the shell no longer carries it. The window SAVES by id and
  * stages a PREVIEW by id; neither sends an attachment's bytes.
  */
-const SHELL_COMMAND_MARKERS = ["open_external", "save_attachment", "stage_attachment_preview"];
+const SHELL_COMMAND_MARKERS = ["open_external", "rendered_links", "save_attachment", "stage_attachment_preview"];
 
 /**
  * WHICH SYNC CLIENT IS IN THIS BUNDLE — the check that would have caught the blank window.

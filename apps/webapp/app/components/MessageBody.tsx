@@ -31,6 +31,7 @@ import {
   type TableRowNode,
 } from "../shell/BodyText";
 import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
+import { linkHref, useRenderedLinks } from "../shell/rendered-links";
 import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
@@ -2215,6 +2216,12 @@ export interface SanitizedMail {
    */
   cids: string[];
   /**
+   * The http(s) links the document keeps, in `URL.href` form — distinct, in document order. What
+   * the frame reports as on screen (`rendered-links.ts`): the desktop shell opens a frame's link
+   * only when it is here.
+   */
+  links: string[];
+  /**
    * The html part was past {@link MAX_HTML_CHARS} and was not rendered at all. Present only
    * in that case, so an ordinary message carries no flag to test.
    */
@@ -2283,6 +2290,15 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     cidsSeen.add(cid);
     cids.push(cid);
   };
+  // The http(s) links the frame keeps — distinct, in document order. See {@link SanitizedMail.links}.
+  const links: string[] = [];
+  const linksSeen = new Set<string>();
+  const recordLink = (href: string): void => {
+    const link = linkHref(href);
+    if (link === null || linksSeen.has(link)) return;
+    linksSeen.add(link);
+    links.push(link);
+  };
 
   // `light: true`, `reflow: false` and `prose: false` on both refusals are not readings of
   // anything — neither path renders a frame, so nothing consults any of them. They are stated
@@ -2290,10 +2306,10 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // conservative side: these branches produce no document to have read, and a `true` here would
   // send an unparseable message down the frameless path on the strength of nothing.
   if (!sanitizerAvailable()) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links };
   }
   if (html.length > MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, oversize: true };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, oversize: true };
   }
 
   const seen = new Set<string>();
@@ -2492,6 +2508,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       // top-navigation permission, so the app would look like it had eaten itself.
       node.setAttribute("target", "_blank");
       node.setAttribute("rel", "noopener noreferrer nofollow");
+      recordLink(href);
       const host = REMOTE_URL.test(href) ? hostOfUrl(href) : "";
       if (host) {
         node.setAttribute("data-ohmail-host", host);
@@ -2619,7 +2636,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     }) as unknown as HTMLElement | null;
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
-  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids };
+  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links };
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
@@ -2656,6 +2673,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     rich: designed ? null : buildRichNodes(sanitized, ownImages),
     background,
     cids,
+    links,
   };
 }
 
@@ -3289,6 +3307,7 @@ function sayBlocked(t: {
 /** Stable empties for the renders where there is no sanitized document to read them from. */
 const NO_ASSETS: readonly BlockedAsset[] = [];
 const NO_SHEETS: readonly string[] = [];
+const NO_LINKS: readonly string[] = [];
 
 // ── the component ──────────────────────────────────────────────────────────────────────
 
@@ -3538,7 +3557,7 @@ export function MessageBody({
     if (html.length > MAX_HTML_CHARS || !treeWithin(html, { elements: MAX_PARSE_ELEMENTS }).fits) {
       return { state: "oversize" as const };
     }
-    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids } =
+    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids, links } =
       sanitizeMailHtml(html, {
         imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels,
       });
@@ -3602,6 +3621,8 @@ export function MessageBody({
       sheets,
       /** The unresolved `cid:` references — what the request effect below reports upward. */
       cids,
+      /** The frame's http(s) links, reported while the frame is on screen. */
+      links,
     };
     // `darkWanted` is intentionally omitted — it is applied live via toggleAttribute, never by
     // rebuilding the frame; see the note on `doc` above. `cidImages` IS a dep: an arrived
@@ -3828,6 +3849,13 @@ export function MessageBody({
   useEffect(() => {
     onRenderMode?.(framelessView ? "prose" : "framed");
   }, [framelessView, onRenderMode]);
+
+  /**
+   * THE FRAME'S LINKS, ON THE SHELL'S LIST WHILE THE FRAME IS ON SCREEN (`rendered-links.ts`): the
+   * desktop shell opens a frame's link only when it is reported. The frameless path draws its own
+   * anchors through `BodyText`, which reports those, so a message is one surface either way.
+   */
+  useRenderedLinks(mail?.state === "ok" && !framelessView ? mail.links : NO_LINKS);
 
   /**
    * ── ASK FOR THE EMBEDDED IMAGES THIS RENDERING IS SHOWING BLANKED — see {@link MessageBodyProps.onCidImages}

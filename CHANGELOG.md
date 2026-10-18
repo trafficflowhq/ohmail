@@ -13,6 +13,12 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Narrower link opening on the desktop
+
+A web address now goes to your browser only when the window reported it as a link it draws — in a message,
+a draft or a signature — or it is one of the app's own help links. This limits what a bug in the window can
+open; it does not stop a script already running in the window. The links you click open as before.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

@@ -65,9 +65,13 @@ const WINDOW_COMMANDS: &[&str] = &[
     // takes a key and `engine.rs`'s table decides which of a handful of ohmail.app pages
     // that means.
     "open_link",
-    // The one place the window may hand this process an address of its own — an http/https
-    // link a person clicked inside a message, opened in the user's browser, never in the
-    // webview. `engine.rs` validates the URL; this line is what makes the command reachable.
+    // THE LINKS ON SCREEN (`src/rendered_links.rs`): the window's renderers report the http/https
+    // links a surface draws, and the shell keeps them in a bounded list. It opens nothing.
+    "rendered_links",
+    // The one place the window may hand this process an address to open in the user's browser,
+    // never in the webview: refused unless it is a link reported above or one of the shell's own
+    // constant links. The list is the renderer's report, so it narrows what a door can be handed;
+    // it does not stop a script already running in the window from reporting first.
     "open_external",
     // One attachment, named by its id with a display name, saved into the PERSON'S Downloads
     // folder — the desktop's answer to the `<a download>` a webview cancels. The engine streams

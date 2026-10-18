@@ -669,6 +669,45 @@ describe("links look like links and say where they go", () => {
     expect(textDisagreesWithHref("Manage usage credits", "url8792.mail.wolkenmail.example")).toBe(false);
     expect(textDisagreesWithHref("Read more →", "example.com")).toBe(false);
   });
+
+  it("`links` is exactly the http(s) anchors the frame keeps, as `URL.href`", async () => {
+    // What the desktop shell may open for this frame (`rendered-links.ts`). Mutations: report the
+    // raw href → the spelling rows go red; report every anchor → the mailto/tel/cid/inert rows go
+    // red; skip the anchor branch → the list is empty.
+    const { html, links } = await clean([
+      '<a href="https://example.test/a?b=1&amp;c=2#f">one</a>',
+      '<a href="HTTP://EXAMPLE.TEST/Path">two</a>',
+      '<a href="https://bücher.example/ü">three</a>',
+      '<a href=" https://example.test/x y ">four</a>',
+      '<a href="https://example.test/?ids=1|2">five</a>',
+      '<a href="https:example.test/no-slashes">six</a>',
+      '<a href="https://example.test/a?b=1&amp;c=2#f">one again</a>',
+      '<a href="/relative">rel</a>',
+      '<a href="//example.test/protocol-relative">pr</a>',
+      '<a href="mailto:x@y.test">mail</a>',
+      '<a href="tel:+41000000000">tel</a>',
+      '<a href="cid:part1@x.test">cid</a>',
+      '<a href="javascript:alert(1)">js</a>',
+      '<a href="https://">no host</a>',
+    ].join(" "));
+    expect(links).toEqual([
+      "https://example.test/a?b=1&c=2#f",
+      "http://example.test/Path",
+      "https://xn--bcher-kva.example/%C3%BC",
+      "https://example.test/x%20y",
+      "https://example.test/?ids=1|2",
+      "https://example.test/no-slashes",
+    ]);
+    // Every http(s) anchor the frame keeps resolves to an entry, and no entry is anything else.
+    const kept = new DOMParser().parseFromString(html, "text/html");
+    const resolved = [...kept.querySelectorAll("a[href]")]
+      .map((a) => { try { return new URL(a.getAttribute("href")!); } catch { return null; } })
+      .filter((u): u is URL => u !== null && (u.protocol === "http:" || u.protocol === "https:"))
+      .map((u) => u.href);
+    expect(new Set(resolved)).toEqual(new Set(links));
+    // A message with no html to sanitize has nothing to report.
+    expect((await clean("")).links).toEqual([]);
+  });
 });
 
 // ══ 5. the surface ═════════════════════════════════════════════════════════════════════

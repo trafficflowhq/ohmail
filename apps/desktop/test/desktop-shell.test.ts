@@ -642,7 +642,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these forty-one files and no others", () => {
+  it("is these forty-three files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -739,6 +739,13 @@ describe("the Rust side", () => {
       // reddens on were not the same. It declares a constant and nothing else: no capability, no
       // syscall, no Tauri. Gated with `vitals.rs`, its only reader, so the preview carries neither.
       "perf_budgets.rs",
+      // THE LINKS ON SCREEN: the bounded per-surface list of http(s) links the window's renderers
+      // report, the shell's own constant links, and the one predicate `open_external` and the
+      // new-window door ask before they open anything. The `rendered_links` command keeps a list
+      // and opens nothing; a refusal is one log line with the host's class. Compiled only under
+      // `local-engine`, like `engine.rs`, whose doors are its only readers.
+      "rendered_links.rs",
+      "rendered_links_tests.rs",
       // A WEB PROCESS THAT DIES IS RELOADED ONCE, THEN OFFERED A RELAUNCH. ALWAYS compiled: every
       // build opens the same window, and a dead renderer left as a frame is an app that looks open
       // and answers nothing. It listens to the webview's own termination signal, loads the page's
@@ -894,6 +901,9 @@ describe("the Rust side", () => {
     // `attachment_preview.rs` too: a scheme that serves files the shell staged, and the preview
     // has no engine to stage them with.
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod attachment_preview;/);
+    // `rendered_links.rs` too: the list the two doors that open an address read, and the preview
+    // opens no address at all.
+    expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod rendered_links;/);
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
@@ -1032,6 +1042,8 @@ describe("the Rust side", () => {
     const textScaleModule = read("src-tauri/src/text_scale.rs");
     // …and the preview's two beside the scheme they feed.
     const previewModule = read("src-tauri/src/attachment_preview.rs");
+    // …and the links on screen beside the predicate that reads them.
+    const renderedLinksModule = read("src-tauri/src/rendered_links.rs");
     const COMMANDS = [
       "engine_status",
       "engine_request",
@@ -1079,12 +1091,15 @@ describe("the Rust side", () => {
       // mean anything that got a string into the page could open an arbitrary address in the
       // user's real browser.
       "open_link",
-      // The one place the window DOES hand this process an address of its own: an http/https link
-      // a person pressed inside a message, opened in their browser and never in the webview.
-      // `engine.rs` validates the URL. These two were granted to the window without being declared
-      // here, which resolved to nothing at window creation and aborted the process on launch —
-      // 0.9.7 shipped that way, so the set equality below is the guard that was missing, not a
-      // hypothetical one.
+      // The links a surface draws, reported by the window's renderers as they draw them: a list
+      // the shell keeps, bounded, and opens nothing for (`rendered_links.rs`).
+      "rendered_links",
+      // The one place the window DOES hand this process an address of its own, opened in the
+      // person's browser and never in the webview — and only when it is a link reported above or
+      // one of the shell's own constant links, after `external_url`'s shape. This and its sibling
+      // were once granted to the window without being declared here, which resolved to nothing at
+      // window creation and aborted the process on launch — 0.9.7 shipped that way, so the set
+      // equality below is the guard that was missing, not a hypothetical one.
       "open_external",
       // One attachment, by id, saved into the PERSON'S Downloads folder, which is what a button
       // that says Download has always promised. The shell picks the folder, sanitises the name,
@@ -1187,7 +1202,8 @@ describe("the Rust side", () => {
       // `[<(]` because several are generic over the runtime: a command taking an `AppHandle`
       // has to name the runtime it belongs to, or the handler cannot be built for one.
       expect(
-        engine + hostModule + defaultMailModule + omarchyModule + updaterModule + launchModule + textScaleModule + previewModule,
+        engine + hostModule + defaultMailModule + omarchyModule + updaterModule + launchModule + textScaleModule + previewModule +
+          renderedLinksModule,
         `${command} is not defined`,
       ).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(

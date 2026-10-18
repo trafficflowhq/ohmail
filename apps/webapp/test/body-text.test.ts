@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -521,5 +521,104 @@ describe("the trailing quoted history folds behind a toggle", () => {
     expect(el.textContent).toContain("Fine by me.");
     expect(el.textContent).not.toContain("completely different history");
     expect(el.querySelector(".msg-history-toggle")!.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("the links it draws are the links it reports", () => {
+  /**
+   * The desktop shell opens an address only when a renderer reported it as a link on screen
+   * (`rendered-links.ts`), so what this component reports must be exactly what its anchors carry:
+   * a link drawn and not reported is a link that will not open, one reported and not drawn widens
+   * the list. Mutations: drop the collector from `linkify` → the plain rows go red; from the
+   * `link` case of `renderInline` → the rich rows go red; collect the history before it is open →
+   * the fold row goes red.
+   */
+  type Mod = typeof import("../app/shell/rendered-links.js");
+  let links: Mod;
+  /** Every report, in order; `onScreen` folds them into what the shell would hold now. */
+  const reports: Array<{ surface: string; hrefs: string[] }> = [];
+  const onScreen = (): Map<string, string[]> => {
+    const held = new Map<string, string[]>();
+    for (const r of reports) {
+      if (r.hrefs.length === 0) held.delete(r.surface);
+      else held.set(r.surface, r.hrefs);
+    }
+    return held;
+  };
+  const reported = (): string[] => [...onScreen().values()].flat().sort();
+  const drawn = (el: HTMLElement): string[] =>
+    [...el.querySelectorAll<HTMLAnchorElement>("a")].map((a) => a.getAttribute("href")!).sort();
+
+  beforeEach(async () => {
+    reports.length = 0;
+    links = await import("../app/shell/rendered-links.js");
+    links.setRenderedLinksSink((surface, hrefs) => reports.push({ surface, hrefs: [...hrefs] }));
+  });
+  afterEach(() => links.setRenderedLinksSink(null));
+
+  it("the plain path reports exactly the hrefs its anchors carry, and takes them back at unmount", async () => {
+    const el = await render(
+      "Read https://example.test/a?b=1&c=2. Not javascript:alert(1) though.\n\n" +
+        "Also <https://bücher.example/ü> and https://example.test/a?b=1&c=2 again.",
+    );
+    expect(drawn(el).length).toBe(3);
+    expect(reported()).toEqual([...new Set(drawn(el))].sort());
+    expect(reported()).toContain("https://xn--bcher-kva.example/%C3%BC");
+    expect(onScreen().size, "one surface per mounted body").toBe(1);
+    await unmount();
+    expect(onScreen().size, "the unmount left its links on the list").toBe(0);
+  });
+
+  it("the rich path reports the hrefs of its link runs", async () => {
+    const { BodyText } = await import("../app/shell/BodyText.js");
+    const link = (href: string, text: string) => ({
+      kind: "link" as const, href, host: new URL(href).host, elsewhere: false,
+      children: [{ kind: "text" as const, text }],
+    });
+    const rich = [
+      { kind: "rich" as const, attribution: false, spacing: "paragraph" as const,
+        children: [link("https://example.test/one", "one"), { kind: "text" as const, text: " and " },
+          link("https://elsewhere.test/two?x=1", "two")] },
+      { kind: "list" as const, ordered: false, items: [[
+        { kind: "rich" as const, attribution: false, spacing: "line" as const, children: [link("http://example.test/three", "three")] },
+      ]] },
+    ];
+    await unmount();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(h(BodyText, { text: "fallback", rich })); });
+    expect(drawn(host)).toEqual(["http://example.test/three", "https://elsewhere.test/two?x=1", "https://example.test/one"]);
+    expect(reported()).toEqual(drawn(host));
+  });
+
+  it("a folded history's links are reported once it is open, and taken back when it folds", async () => {
+    const el = await render(
+      "See https://example.test/lead.\n\nOn Mon, Alice wrote:\n> the old link https://example.test/history",
+    );
+    expect(reported()).toEqual(["https://example.test/lead"]);
+    await expandHistory(el);
+    expect(reported()).toEqual(["https://example.test/history", "https://example.test/lead"]);
+    await expandHistory(el);
+    expect(reported()).toEqual(["https://example.test/lead"]);
+  });
+
+  it("a long body reports a page's links when the page is drawn", async () => {
+    const lines = Array.from({ length: 2100 }, (_, i) => `line ${i}`);
+    lines[0] = "first https://example.test/page-one";
+    lines[2099] = "last https://example.test/page-two";
+    const el = await render(lines.join("\n"));
+    expect(reported()).toEqual(["https://example.test/page-one"]);
+    const more = el.querySelector<HTMLButtonElement>("button.msg-page-more");
+    expect(more, "the body did not page").not.toBeNull();
+    await act(async () => { more!.click(); });
+    expect(reported()).toEqual(["https://example.test/page-one", "https://example.test/page-two"]);
+  });
+
+  it("with no sink there is nowhere to report, and nothing breaks", async () => {
+    links.setRenderedLinksSink(null);
+    const el = await render("https://example.test/x");
+    expect(drawn(el)).toEqual(["https://example.test/x"]);
+    expect(reports).toEqual([]);
   });
 });

@@ -73,6 +73,7 @@ const DEFAULT_MAIL_REQUEST_COMMAND = "default_mail_request";
 const UI_VITALS_COMMAND = "ui_vitals";
 const WINDOW_READY_COMMAND = "window_ready";
 const TEXT_SIZE_COMMAND = "set_text_size";
+const RENDERED_LINKS_COMMAND = "rendered_links";
 
 /**
  * The places on the web this app can open, named as PLACES and never as addresses. A hosted
@@ -517,6 +518,25 @@ export function reportWindowReady(canvas: string | null = frameCanvas()): void {
     void shell.invoke(WINDOW_READY_COMMAND, { canvas }).catch(() => undefined);
   } catch {
     /* the shell shows the window at its bound */
+  }
+}
+
+/**
+ * THE LINKS A SURFACE DRAWS, TO THE SHELL (`rendered_links.rs`): besides the shell's own, the only
+ * addresses its opener and its new-window door will open. `main.tsx` arms this as the shared
+ * renderers' sink (`rendered-links.ts`); an empty list takes the surface away. Not awaited — the
+ * shell applies a report in order, before a later open — and a refused one is said in the log,
+ * because it shows up later as a link that will not open.
+ */
+export function reportRenderedLinksToShell(surface: string, urls: readonly string[]): void {
+  const shell = internals();
+  if (!shell) return;
+  try {
+    void shell.invoke(RENDERED_LINKS_COMMAND, { surface, urls: [...urls] }).catch((err: unknown) => {
+      console.error("ohmail: the shell did not take the links on screen", err);
+    });
+  } catch (err) {
+    console.error("ohmail: the shell did not take the links on screen", err);
   }
 }
 

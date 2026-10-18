@@ -61,6 +61,7 @@ import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden, watchNarrow } from "../shell/narrow";
 import { useRowMenuFit } from "../shell/row-menu-fit";
 import { useListWindow } from "../shell/list-window";
+import { linkHref, useRenderedLinks } from "../shell/rendered-links";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
@@ -2029,6 +2030,10 @@ export function HeldUnsubscribe({
   const [busy, setBusy] = useState(false);
   // `again`: whether the press stays — only where pressing again can go through.
   const [result, setResult] = useState<{ text: string; link: string | null; again: boolean } | null>(null);
+  // The one link this draws, below, reported as on screen while it is (`rendered-links.ts`).
+  const drawn = state === "not_one_click" ? url : state === "one_click" ? (result?.link ?? null) : null;
+  const href = drawn === null ? null : linkHref(drawn);
+  useRenderedLinks(href === null ? [] : [href]);
 
   if (state === "no_header") return null;
 

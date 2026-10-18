@@ -102,17 +102,25 @@ processes around it:**
   by the render check's offline audit); and its whole reach is a small named
   list of shell commands (`WINDOW_COMMANDS` in
   `apps/desktop/src-tauri/build.rs`). None of those commands takes a filesystem
-  path, and exactly one takes a URL: `open_external`, which hands a link found
-  in a message to your browser only after the shell's own vetting
-  (`external_url` in `engine.rs`) accepts it — every other outbound address the
-  shell can open is a named constant. Beside the three, every window the shell
-  builds is locked to the app's own pages: a navigation to any other address is
-  refused (`apps/desktop/src-tauri/src/navigation.rs`), so a script that got
-  into the page cannot take the window to a page none of the three governs.
-  On macOS, where the webview asks about a message link before opening it, a
-  refused web address goes to the same door such a link uses; that adds
-  nothing, since a script in the page can already pass any web address to
-  `open_external`. What connects is the mail **engine** — to
+  path, and two take URLs. `rendered_links` lets the window's renderers report
+  the http(s) links they draw (a message's links, a draft's or a signature's,
+  the Screener's unsubscribe link, the account page the service named); the
+  shell keeps them in a bounded list and opens nothing for them.
+  `open_external` hands an address to your
+  browser only when it passes the shell's own vetting (`external_url` in
+  `engine.rs`) and is one of those reported links or one of the shell's own
+  constant links (`apps/desktop/src-tauri/src/rendered_links.rs`) — every other
+  outbound address the shell can open is a named constant. The list is what the
+  renderers report, so a script already running in the page could report an
+  address before opening it; what it closes is an address reaching the opener
+  that nothing on screen showed as a link. Beside the three, every window the
+  shell builds is locked to the app's own pages: a navigation to any other
+  address is refused (`apps/desktop/src-tauri/src/navigation.rs`), so a script
+  that got into the page cannot take the window to a page none of the three
+  governs. On macOS, where the webview asks about a message link before opening
+  it, a refused web address goes to the same door such a link uses, and that
+  door opens only what `open_external` would. What connects is the mail
+  **engine** — to
   your own mail server, and on
   the hosted door to your account — and the Rust shell's updater, to its one
   pinned signed feed. One other window has a grant — the transient one shown

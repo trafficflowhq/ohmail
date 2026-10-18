@@ -15,6 +15,7 @@ import { SettingsRow, SettingsSection } from "@ohmail/ui";
 
 import { ACCESS_REFUSED_STATUS, ACCOUNT_ACCESS_PATH, bridgeFetch } from "./bridge-fetch.js";
 import { useAccessSchedule } from "../../webapp/app/shell/wall-lift.js";
+import { linkHref, reportRenderedLinks } from "../../webapp/app/shell/rendered-links";
 
 /**
  * The hosted route this pane addresses, root-relative like every path in this window.
@@ -36,6 +37,9 @@ export const MANAGE_LINK_PATH = "/account/manage-link";
  * DOOR and re-exported here — the suggest transport asks it too, and one route spelled twice drifts.
  */
 export { ACCOUNT_ACCESS_PATH };
+
+/** The surface the minted account page is reported under: one link, replaced by the next press. */
+export const ACCOUNT_PAGE_SURFACE = "account-manage";
 
 /** What the entitlements lock answers a refused account. See {@link useDesktopManageOffer}. */
 const ACCESS_REFUSED = ACCESS_REFUSED_STATUS;
@@ -112,8 +116,14 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
  * are the ones the rendered anchor carried, so the build without that interceptor (the preview,
  * which is granted no command) does what it did before: nothing, rather than taking the app's
  * own window to a page it cannot come back from.
+ *
+ * The address is a link this window draws for one press, so it is reported as on screen first, in
+ * a surface of its own that the next press replaces (`rendered-links.ts`): the shell's opener takes
+ * only a reported link or one of its own.
  */
 export function leaveForAccountPage(url: string): void {
+  const href = linkHref(url);
+  if (href !== null) reportRenderedLinks(ACCOUNT_PAGE_SURFACE, [href]);
   const a = document.createElement("a");
   a.href = url;
   a.target = "_blank";

@@ -9,9 +9,10 @@ import {
 import StarterKit from "@tiptap/starter-kit";
 import { NodeSelection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { AutolinkPunctuation, CodeMark, LinkMark, MarkBoundaries, nextMarks } from "./rich-editor-marks";
-import type { ResolvedPos } from "@tiptap/pm/model";
+import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import { LinkPopover } from "./LinkPopover";
+import { linkHref, useRenderedLinks } from "./rendered-links";
 import {
   EMPTY_RICH, escapeAsParagraphs, isRichEmpty, richToHtml, type RichValue,
 } from "./rich-text";
@@ -117,6 +118,25 @@ const EXTENSIONS = [
   MarkBoundaries,
   AutolinkPunctuation,
 ];
+
+const NO_LINKS: readonly string[] = [];
+
+/**
+ * The http(s) links a document draws: each link mark's href in `URL.href` form, distinct, in
+ * document order. A link mark is a live `<a href>` in the app's document, so on the desktop a
+ * click on it reaches the shell's opener, which opens only a reported link (`rendered-links.ts`).
+ */
+export function linksIn(doc: ProseMirrorNode): string[] {
+  const seen = new Set<string>();
+  doc.descendants((node) => {
+    for (const mark of node.marks) {
+      if (mark.type.name !== "link") continue;
+      const href = linkHref(String(mark.attrs.href ?? ""));
+      if (href !== null) seen.add(href);
+    }
+  });
+  return [...seen];
+}
 
 export interface RichEditorProps {
   id?: string;
@@ -265,6 +285,31 @@ export function RichEditor({
     },
     onUpdate: ({ editor: e }) => emit(e),
   }, []);
+
+  /**
+   * THE LINKS THIS DOCUMENT DRAWS, ON THE SHELL'S LIST WHILE IT IS MOUNTED — a signature's, a
+   * draft's (`rendered-links.ts`). Read when the editor arrives and after every transaction that
+   * changed the document: `transaction` and not `update`, because content replaced from outside
+   * (`setContent` with `emitUpdate: false`, below) emits no update. A change that keeps the same
+   * links keeps the same array, so a keystroke reports nothing.
+   */
+  const [links, setLinks] = useState<readonly string[]>(NO_LINKS);
+  useEffect(() => {
+    if (!editor) return undefined;
+    let read: ProseMirrorNode | null = null;
+    const look = (): void => {
+      if (editor.state.doc === read) return;
+      read = editor.state.doc;
+      const next = linksIn(read);
+      setLinks((prev) => (prev.length === next.length && prev.every((l, i) => l === next[i]) ? prev : next));
+    };
+    look();
+    editor.on("transaction", look);
+    return () => {
+      editor.off("transaction", look);
+    };
+  }, [editor]);
+  useRenderedLinks(links);
 
   /**
    * Content replaced from OUTSIDE — a scratch buffer restored, or a generated draft landing.

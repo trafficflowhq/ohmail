@@ -15,6 +15,7 @@ import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+import { setRenderedLinksSink } from "../../webapp/app/shell/rendered-links";
 import { stampColumns } from "../../webapp/app/shell/column-store";
 import { installTextSizeApplier } from "../../webapp/app/shell/text-size";
 import { applyDesktopTextSize } from "./text-zoom.js";
@@ -37,7 +38,7 @@ import { DOOR_COPY } from "./door-copy.js";
 import { errorSentence, GateBoundary } from "./GateBoundary.js";
 import { GateNotice } from "./GateNotice.js";
 import { installOfflineGuard } from "./offline-guard.js";
-import { reportUiVitals, reportWindowReady, watchWindowCanvas } from "./native.js";
+import { reportRenderedLinksToShell, reportUiVitals, reportWindowReady, watchWindowCanvas } from "./native.js";
 
 installOfflineGuard();
 
@@ -115,6 +116,11 @@ function BootFailure({ error }: { error: unknown }) {
    arms find no shell and refuse per their own contracts. */
 enableExternalLinks();
 interceptLinkClicks(document, { trustSameOrigin: true });
+/* …AND THE LINKS ON SCREEN GO TO THE SHELL AS THEY ARE DRAWN. The shell's opener and its
+   new-window door open only a link a renderer reported, or one of the shell's own
+   (`rendered-links.ts`). Armed here, before the first render, so a message's links are on the
+   shell's list before anybody can press one. */
+setRenderedLinksSink(reportRenderedLinksToShell);
 enableDesktopAttachments();
 
 /* THE OMARCHY THEME FEED, armed here for the same reason the two arms above are: it is a
