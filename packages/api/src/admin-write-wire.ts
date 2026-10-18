@@ -36,6 +36,40 @@ export interface MailboxResyncAnswer {
   at: string;
 }
 
+/**
+ * `POST /admin/accounts/:id/billing-link`, 200: the mail left. `audit` is the `staff_audit_events`
+ * row the claim wrote, whose action this names (no `audit_log` row is written); the recipient is
+ * never on the wire (the console names the account).
+ */
+export interface BillingLinkAnswer {
+  ok: true;
+  action: "write.billing_link";
+  accountId: string;
+  sent: true;
+  /** Which of the account's sends in the last 24 hours this was, and the cap on them. */
+  sendsToday: number;
+  limit: number;
+  audit: { id: string; at: string };
+  actor: string;
+  at: string;
+}
+
+export function billingLinkAnswer(input: {
+  accountId: string; sendsToday: number; limit: number; auditId: string; auditAt: Date; actor: string; at: Date;
+}): BillingLinkAnswer {
+  return {
+    ok: true,
+    action: "write.billing_link",
+    accountId: input.accountId,
+    sent: true,
+    sendsToday: input.sendsToday,
+    limit: input.limit,
+    audit: { id: input.auditId, at: input.auditAt.toISOString() },
+    actor: input.actor,
+    at: input.at.toISOString(),
+  };
+}
+
 export function mailboxResyncAnswer(input: {
   mailboxId: string;
   accountId: string;

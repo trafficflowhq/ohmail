@@ -105,6 +105,13 @@ const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
     accountUrl: "https://app.ohmail.app/settings/account",
     supportEmail: "support@ohmail.app",
   },
+  // The billing link a staff member sends: a language, the app's own billing door, the support
+  // address. No recipient (that is the envelope), no account id, no token.
+  billing_link: {
+    locale: "en",
+    billingUrl: "https://ohmail.app/account/manage",
+    supportEmail: "support@ohmail.app",
+  },
 };
 
 const ALL = TEMPLATE_NAMES;
@@ -115,7 +122,7 @@ const ALL = TEMPLATE_NAMES;
 const ALLOWED_HOSTS = new Set(["ohmail.app", "app.ohmail.app", "admin.ohmail.app", "localhost"]);
 
 describe("templates — the set is closed and complete", () => {
-  it("is exactly the nine templates — seven customer mails and two operator mails", () => {
+  it("is exactly the ten templates — eight customer mails and two operator mails", () => {
     expect(ALL).toEqual([
       "waitlist_confirmation", "invite", "new_device_signin",
       // The sign-in throttle's notices, argued at the definition: a closed kind, a time and the
@@ -139,6 +146,9 @@ describe("templates — the set is closed and complete", () => {
       // the copy follows the account's locale because these reach people who stopped paying
       // attention. No price and no plan name; a census below pins that.
       "lifecycle_notice",
+      // The one mail staff send by hand (`POST /admin/accounts/:id/billing-link`): a language,
+      // the app's billing door and the support address; capped per account by the route.
+      "billing_link",
     ]);
   });
 
@@ -461,5 +471,48 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
       ...FIXTURES.lifecycle_notice, kind: "closed", erasureDate: null,
     });
     expect(rendered.text).not.toMatch(/erased on|gelöscht/);
+  });
+});
+
+describe("the billing link — the app's billing door, support's address, and nothing else", () => {
+  const DOOR = FIXTURES.billing_link.billingUrl;
+  const URL_RE = /https?:\/\/[^\s"'<>]+/g;
+  const ADDRESS_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+
+  for (const locale of ["en", "de"] as const) {
+    it(`${locale}: links only to the billing door and names no address but support's, no id and no money word`, () => {
+      const out = renderTemplate("billing_link", { ...FIXTURES.billing_link, locale });
+      expect(out.text, `${locale}: the text part carries the door`).toContain(DOOR);
+      expect(out.html).toContain(`lang="${locale}"`);
+      for (const part of [out.subject, out.text, out.html]) {
+        for (const url of part.match(URL_RE) ?? []) expect(url, `${locale}: another link`).toBe(DOOR);
+        for (const a of part.match(ADDRESS_RE) ?? []) expect(a, `${locale}: another address`).toBe("support@ohmail.app");
+        expect(part).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+        expect(part).not.toMatch(/\b(cus|sub|in|ch|pi|price|prod|cs)_[A-Za-z0-9]{6,}/);
+        // Nothing of payments, credits or the billing service: the copy says "billing page".
+        for (const word of [/stripe/i, /\bplane\b/i, /credit/i, /payment|zahlung/i, /\bprice|preis/i,
+          /invoice|\bRechnung/i, /\bcard\b|karte/i, /\$\s?\d|€|CHF/]) {
+          expect(part, `${locale} names ${word}`).not.toMatch(word);
+        }
+      }
+    });
+  }
+
+  it("German says Mail and Account, as the app does", () => {
+    const { subject, text } = renderTemplate("billing_link", { ...FIXTURES.billing_link, locale: "de" });
+    expect(text).toMatch(/\bMail\b/);
+    for (const part of [subject, text]) expect(part).not.toMatch(/E-Mail|Konto|\bPost\b/);
+    expect(subject).not.toBe(renderTemplate("billing_link", FIXTURES.billing_link).subject);
+  });
+
+  it("an unknown locale is English, and the data carries no recipient, id or free text", () => {
+    const odd = renderTemplate("billing_link", { ...FIXTURES.billing_link, locale: "fr" as never });
+    expect(odd.subject).toBe(renderTemplate("billing_link", FIXTURES.billing_link).subject);
+    expect(Object.keys(FIXTURES.billing_link).sort()).toEqual(["billingUrl", "locale", "supportEmail"]);
+  });
+
+  it("refuses a door that is not https before anything renders", () => {
+    expect(() => renderTemplate("billing_link", { ...FIXTURES.billing_link, billingUrl: "javascript:alert(1)" }))
+      .toThrow(/non-https/);
   });
 });

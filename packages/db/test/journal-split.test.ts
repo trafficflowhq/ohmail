@@ -3097,6 +3097,13 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0049_alert_driver_gaps_staff_grant": [
     "73836bf7c0d8d72d",   // DO … REVOKE ALL, then GRANT SELECT/INSERT/UPDATE (five columns) TO ohmail_admin
   ],
+  // CLOUD 0050 — the staff billing link joins the notice ledger: the kind CHECK redefined with a
+  // fifth word in 0044's drop-then-add NOT VALID shape. The DROP is new (0040 only created the
+  // constraint), so both statements are named. No DML.
+  "0050_billing_link_notices": [
+    "fadf3cda18b3d0cd",   // ALTER TABLE account_lifecycle_notices DROP CONSTRAINT IF EXISTS …_kind_closed
+    "90bd859867744d8f",   // ADD CONSTRAINT account_lifecycle_notices_kind_closed … 'billing_link' … NOT VALID
+  ],
 };
 
 /** Short, stable identity for one normalized statement. */
@@ -3988,7 +3995,8 @@ describe("the two journals are well-formed", () => {
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
-  it.each([["mail", MAIL_DIR, 154], ["cloud", CLOUD_DIR, 35]] as const)(
+  // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
+  it.each([["mail", MAIL_DIR, 154], ["cloud", CLOUD_DIR, 36]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

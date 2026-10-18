@@ -239,12 +239,16 @@ const ADMIN_ROUTE_CLASS: Readonly<Record<string, "identity" | "read" | "write">>
   "POST /admin/staff/whoami": "identity",
   "POST /admin/staff/sign-out": "identity",
   "POST /admin/mailboxes/resync": "write",
+  // Mails the account's owner a link to the app's billing page: a customer mail sent by staff.
+  "POST /admin/accounts/:id/billing-link": "write",
   "POST /admin/oauth/microsoft": "read",
   "POST /admin/oauth/microsoft/save": "write",
 };
 
 const adminRoutesInTable = apiRoutes.filter((r) => r.pattern.startsWith("/admin/"));
 const keyOf = (r: { method: string; pattern: string }): string => `${r.method} ${r.pattern}`;
+/** A route's path with every parameter a well-formed id: the app's edge refuses `:id` itself. */
+const pathOf = (pattern: string): string => pattern.replace(/:[A-Za-z]+/g, "0b6e1f3c-5d2a-4c8e-9f70-1a2b3c4d5e6f");
 /** Does this route CARRY the control? Identity, not a name: a look-alike would not enforce. */
 const carriesStepUp = (r: { options?: { middleware?: readonly unknown[] } }): boolean =>
   (r.options?.middleware ?? []).includes(withStaffStepUp);
@@ -277,7 +281,7 @@ describe("every staff WRITE is behind the step-up, and the set is enumerated", (
 
     const admitted: string[] = [];
     for (const route of flagged) {
-      const res = await H(post(route.pattern, { sessionToken: w.token }, { bearer: SECRET }), deps);
+      const res = await H(post(pathOf(route.pattern), { sessionToken: w.token }, { bearer: SECRET }), deps);
       const body = await res.json().catch(() => ({}));
       if (res.status !== 403 || code(body) !== "step_up_required") {
         admitted.push(`${keyOf(route)} → ${res.status} ${code(body) ?? "(no code)"}`);
@@ -293,7 +297,7 @@ describe("every staff WRITE is behind the step-up, and the set is enumerated", (
 
     const refused: string[] = [];
     for (const route of adminRoutesInTable.filter(carriesStepUp)) {
-      const res = await H(post(route.pattern, { sessionToken: w.token }, { bearer: SECRET }), deps);
+      const res = await H(post(pathOf(route.pattern), { sessionToken: w.token }, { bearer: SECRET }), deps);
       if (res.status !== 403) continue;
       if (code(await res.json().catch(() => ({}))) === "step_up_required") refused.push(keyOf(route));
     }

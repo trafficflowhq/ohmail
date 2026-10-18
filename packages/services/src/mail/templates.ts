@@ -8,7 +8,8 @@ import { renderAlertMail, renderDigestMail, type AlertDigest } from "@trafficflo
  * is TEXT. (2) Text AND html for every one — the text part is the real message, not a stub. (3)
  * Every interpolation is escaped (`esc`) and every URL validated (`safeUrl`), because template
  * data carries user-controlled strings. (4) Factual microcopy — receipts and security signals, no
- * slogans. English for beta, except the lifecycle notices, which follow the account's locale.
+ * slogans. English for beta, except the lifecycle notices and the billing link, which follow the
+ * account's locale.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -730,6 +731,77 @@ function lifecycleNotice(d: LifecycleNoticeData): RenderedEmail {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Template 8 — the billing link, the one customer mail staff send by hand.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sent from the staff console (`POST /admin/accounts/:id/billing-link`, three per account a day)
+ * to the account's owner. The data is a language, the app's own billing door and the support
+ * address: no recipient (the envelope), no id, no token. The door asks for sign-in and only then
+ * mints the billing page's link, so a forwarded mail opens nothing.
+ */
+export interface BillingLinkData {
+  /** The account's own (`account_settings.locale`), English when unset. */
+  locale: MailLocale;
+  /** `<app>/account/manage` — built from config by `MailService`, never by a caller. */
+  billingUrl: string;
+  supportEmail: string;
+}
+
+/** The page is named as the app names it (Settings → Subscription, Einstellungen → Abo). */
+const BILLING_LINK_COPY: Record<MailLocale, {
+  subject: string; lines: string[]; never: string; action: string; human: string;
+}> = {
+  en: {
+    subject: "Your ohmail subscription page",
+    lines: [
+      "ohmail support sent you this link to the subscription page of your ohmail account.",
+      "The page opens once you are signed in to ohmail. The link alone signs nobody in.",
+      "You can also open it yourself: in ohmail, Settings → Subscription.",
+      "If you did not expect this mail, you can ignore it; nothing changes by itself.",
+    ],
+    never: "We will never ask you for a code, a password, or a recovery code by email.",
+    action: "Open the subscription page",
+    human: VERIFY_COPY.en.human,
+  },
+  de: {
+    subject: "Deine ohmail-Abo-Seite",
+    lines: [
+      "Der ohmail-Support hat dir diesen Link zur Abo-Seite deines ohmail-Accounts geschickt.",
+      "Die Seite öffnet sich, sobald du bei ohmail angemeldet bist. Der Link allein meldet niemanden an.",
+      "Du kannst sie auch selbst öffnen: in ohmail unter Einstellungen → Abo.",
+      "Wenn du diese Mail nicht erwartet hast, kannst du sie ignorieren; von selbst ändert sich nichts.",
+    ],
+    never: "Wir fragen dich nie per Mail nach einem Code, einem Passwort oder einem Wiederherstellungscode.",
+    action: "Abo-Seite öffnen",
+    human: VERIFY_COPY.de.human,
+  },
+};
+
+function billingLink(d: BillingLinkData): RenderedEmail {
+  const url = safeUrl(d.billingUrl);
+  const locale = mailLocaleOf(d.locale) ?? "en";
+  const c = BILLING_LINK_COPY[locale];
+  return {
+    subject: c.subject,
+    text: textShell(c.subject, [...c.lines, c.never, url], [
+      `${c.human} ${d.supportEmail}`,
+      "TrafficFlow GmbH, Zürich, Switzerland",
+    ]),
+    html: shell({
+      lang: locale,
+      title: c.subject,
+      blocks: [...c.lines.map(esc), `<strong style="color:${INK};font-weight:600;">${esc(c.never)}</strong>`],
+      action: { label: c.action, url },
+      footer: [
+        `${esc(c.human)} <a href="mailto:${esc(d.supportEmail)}" style="color:${ACCENT};">${esc(d.supportEmail)}</a>`,
+        "TrafficFlow GmbH, Zürich, Switzerland",
+      ],
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The registry — the single place the set is enumerated.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -752,6 +824,7 @@ export interface TemplateDataMap {
   operator_digest: OperatorDigestData;
   account_exists: AccountExistsData;
   lifecycle_notice: LifecycleNoticeData;
+  billing_link: BillingLinkData;
 }
 
 export type TemplateName = keyof TemplateDataMap;
@@ -766,6 +839,7 @@ const RENDERERS: { [K in TemplateName]: (data: TemplateDataMap[K]) => RenderedEm
   operator_digest: operatorDigest,
   account_exists: accountExists,
   lifecycle_notice: lifecycleNotice,
+  billing_link: billingLink,
 };
 
 export const TEMPLATE_NAMES = Object.keys(RENDERERS) as TemplateName[];

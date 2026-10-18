@@ -153,13 +153,12 @@ export const adminRoutesGroup: Route[] = adminRoutes;
 export const adminStaffRoutesGroup: Route[] = adminStaffRoutes;
 
 /**
- * The admin writes (3): suspend, resume, and the mailbox resync release. A separate group from
+ * The admin writes (2): the mailbox resync release and the billing link. A separate group from
  * the reads and the staff sign-in because it is the only surface authorised by the shared secret
  * plus a live staff session together: the secret proves the proxy, the session names the actor an
- * `audit_log` row blames. All `unauthenticated` (the anonymous pipeline resolves no customer
- * session); all idempotent. The third (mail 0039) clears a quarantined mailbox's durable retry
- * backoff and is the first to target a mailbox rather than an account — its body id is
- * `mailboxId` for that reason.
+ * audit row blames. Both `unauthenticated` (the anonymous pipeline resolves no customer session)
+ * and step-up gated. The release (mail 0039) clears a quarantined mailbox's retry backoff; the
+ * billing link (cloud 0050) mails an account's owner the app's billing door, three a day at most.
  */
 export const adminActionRoutesGroup: Route[] = adminActionRoutes;
 

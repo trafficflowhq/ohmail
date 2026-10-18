@@ -14,7 +14,7 @@ export const STAFF_AUDIT_ACTIONS = [
   "read.sync_roster", "read.funnel", "read.worker", "read.actions",
   "read.engagement", "read.storage", "read.staff_activity", "read.staff_list", "read.alerts_history",
   "read.oauth_provider", "assert.external", "write.mailbox.resync", "write.oauth_provider",
-  "staff.signin", "staff.signin_failed", "staff.stepup", "staff.stepup_failed",
+  "write.billing_link", "staff.signin", "staff.signin_failed", "staff.stepup", "staff.stepup_failed",
   "staff.signout", "staff.role_grant", "staff.role_revoke", "staff.totp_reset",
 ] as const satisfies readonly StaffAuditAction[];
 
@@ -60,6 +60,8 @@ const DETAIL: Record<StaffAuditAction, Readonly<Record<string, Check>>> = {
     tier: (v) => v === 0 || v === 1 || v === 2, index: count,
   },
   "write.mailbox.resync": { changed: flag },
+  // Which of the day's three this send was (1..3). The mailer's answer is the outcome and its code.
+  "write.billing_link": { sendsToday: count },
   "read.oauth_provider": {},
   "write.oauth_provider": {},
   "staff.signin": {},

@@ -55,6 +55,13 @@ The admin API already showed staff whose only role is operations an account's lo
 The mailboxes on an account's page, the worker's list of mailboxes and the mailboxes offered for a release are now
 masked the same way for them.
 
+### Staff can send an account's owner a link to the subscription page
+
+Staff with the support, billing or owner role can mail an account's owner a link to the app's subscription page,
+at most three times per account in any 24 hours. The mail goes to the account's own login address in the
+account's language, and the link carries no sign-in: the page opens only after signing in to ohmail. Each send
+is recorded in the staff audit before the mail leaves.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

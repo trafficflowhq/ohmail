@@ -166,6 +166,23 @@ describe("MailService — the four beta sends", () => {
     expect(formatUtc(new Date("2026-01-09T23:04:00.000Z"))).toBe("9 January 2026, 23:04 UTC");
     expect(formatUtc(new Date("2026-12-31T00:00:00.000Z"))).toBe("31 December 2026, 00:00 UTC");
   });
+
+  it("the billing link points at the app's own /account/manage door, in the account's language", async () => {
+    // The door mints the billing page's link after sign-in; the mail itself carries no credential.
+    const h = await harness();
+    const res = await h.svc.sendBillingLink(h.ctx, { to: " Owner@Example.COM ", locale: "de", anchor: START });
+    expect(res.status).toBe("sent");
+    const send = h.spy.only("billing_link");
+    expect(send.to).toBe("owner@example.com");
+    expect(send.data).toEqual({
+      locale: "de", billingUrl: "https://app.ohmail.app/account/manage", supportEmail: "support@ohmail.app",
+    });
+    expect(send.idempotencyKey).toBe(`billing:${hashToken(`owner@example.com|${START.toISOString()}`)}`);
+    // The transactional budget: the per-recipient limiter is the same one the notices spend.
+    const [slot] = await h.db.select().from(authThrottle)
+      .where(eq(authThrottle.key, `mail:transactional:${hashToken("owner@example.com")}`));
+    expect(slot?.failures).toBe(1);
+  });
 });
 
 describe("MailService — recipient hygiene", () => {

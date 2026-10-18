@@ -305,6 +305,12 @@ export {
   resyncMailbox, type MailboxResyncWrite, type MailboxResyncOutcome,
 } from "./mailbox-resync.js";
 
+/** The staff billing link's claim and its hand-back (cloud 0050): the notice ledger and the staff audit. */
+export {
+  claimBillingLink, handBackBillingLink, BillingLinkAuditError, BILLING_LINK_CAP, BILLING_LINK_WINDOW_MS,
+  type BillingLinkClaim, type BillingLinkClaimInput,
+} from "./billing-link.js";
+
 /* THE SPEND VOCABULARY IS NOT RE-EXPORTED HERE, and the absence is load-bearing.
  *
  * `ledger-source.ts` and `ai-gate-port.ts` are leaves the DESKTOP ENGINE compiles, and the

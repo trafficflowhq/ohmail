@@ -490,6 +490,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "POST /admin/staff/assertion": { bounds: [STAFF_ASSERTION_MAX_REQUESTS] },
   "POST /admin/staff/roles": { scalarsOnly: true },
   "POST /admin/mailboxes/resync": { door: "`note` is an operator's free text, stored on one audit row" },
+  // A staff token, a reason code from its closed set and a ticket reference refused past 64.
+  "POST /admin/accounts/:id/billing-link": { scalarsOnly: true },
   "POST /admin/oauth/microsoft": { door: "tenant/client identifiers, stored as columns" },
   "POST /admin/oauth/microsoft/save": { door: "tenant/client identifiers and a secret, stored as columns" },
   // The one field with a character ceiling here is `metric` (refused above 64, a literal in the

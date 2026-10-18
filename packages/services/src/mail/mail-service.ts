@@ -505,6 +505,25 @@ export class MailService {
       }));
   }
 
+  /**
+   * The billing link staff send (`POST /admin/accounts/:id/billing-link`); the route owns the cap
+   * and the audit. The link is the app's own `/account/manage` door, which mints the billing
+   * page's link only after sign-in. `transactional`: the recipient is the account's owner, read
+   * from `users`. Keyed on (recipient, the claim's anchor), so a re-driven send is one mail.
+   */
+  async sendBillingLink(
+    ctx: MailContext, input: { to: string; locale: MailLocale; anchor: Date },
+  ): Promise<MailSendResult> {
+    return this.guarded(ctx, input.to, "transactional", (to) =>
+      this.deps.mailer.send(to, "billing_link", {
+        locale: input.locale,
+        billingUrl: `${trimSlash(this.cfg.appUrl)}/account/manage`,
+        supportEmail: this.cfg.supportEmail,
+      }, {
+        idempotencyKey: `billing:${hashToken(`${to}|${input.anchor.toISOString()}`)}`,
+      }));
+  }
+
   async sendAccountExists(ctx: MailContext, input: { to: string; locale?: MailLocale }): Promise<MailSendResult> {
     const locale = mailLocaleOf(input.locale);
     return this.guarded(ctx, input.to, "unsolicited", (to) =>

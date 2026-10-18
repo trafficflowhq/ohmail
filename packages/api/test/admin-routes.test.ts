@@ -184,6 +184,8 @@ describe("admin reads — registration and shape", () => {
         && !r.pattern.startsWith("/admin/staff/"),
     );
     expect(writes.map((r) => `${r.method} ${r.pattern}`).sort()).toEqual([
+      // The billing link: a customer mail to the account's own login, capped per account.
+      "POST /admin/accounts/:id/billing-link",
       "POST /admin/mailboxes/resync",
       "POST /admin/oauth/microsoft",
       "POST /admin/oauth/microsoft/save",
@@ -194,7 +196,9 @@ describe("admin reads — registration and shape", () => {
     // which asks that session for a second factor proved inside the window. The Entra READ does
     // not, and the split is asserted by name here rather than by counting options, because "which
     // of these changes state" is the decision somebody has to make when they add the fourth.
-    const STEP_UP_REQUIRED = new Set(["/admin/mailboxes/resync", "/admin/oauth/microsoft/save"]);
+    const STEP_UP_REQUIRED = new Set([
+      "/admin/mailboxes/resync", "/admin/oauth/microsoft/save", "/admin/accounts/:id/billing-link",
+    ]);
     for (const route of writes) {
       expect(route.options, route.pattern).toEqual({
         public: true, anonymous: true, raw: true,

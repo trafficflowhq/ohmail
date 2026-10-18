@@ -292,6 +292,14 @@ export interface ApiServices {
         erasureAt: Date | null;
       },
     ): Promise<{ status: "sent" | "skipped" | "failed" }>;
+    /**
+     * The staff billing link (`POST /admin/accounts/:id/billing-link`). Optional: a bag without it
+     * answers `mailer_unconfigured`. `reason` is read only to say why a send was declined.
+     */
+    sendBillingLink?(
+      ctx: { db: unknown; now: () => Date },
+      input: { to: string; locale: "en" | "de"; anchor: Date },
+    ): Promise<{ status: "sent" | "skipped" | "failed"; reason?: string }>;
   };
   /**
    * This host's platform ceiling on total attachment bytes in one send — or `null` for a host

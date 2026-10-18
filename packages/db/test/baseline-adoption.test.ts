@@ -274,7 +274,9 @@ describe("the baseline cutoff is frozen", () => {
     // empty, adopting nothing.
     // `- 28` → `- 29`: cloud 0049_alert_driver_gaps_staff_grant — ONE entry above the cutoff, a
     // role-guarded grant on 0048's table, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 29);
+    // `- 29` → `- 30`: cloud 0050_billing_link_notices — ONE entry above the cutoff, a CHECK
+    // redefined on an existing table, adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 30);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -951,6 +953,9 @@ describe("the baseline cutoff is frozen", () => {
       // The staff role's grant on that table: REVOKE ALL then three column grants, only where
       // `ohmail_admin` exists. Re-runnable, so safe over any history.
       "0049_alert_driver_gaps_staff_grant",
+      // The notice kind CHECK redefined to admit `billing_link`. Safe over any history: every
+      // stored kind is one of the four it keeps.
+      "0050_billing_link_notices",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by

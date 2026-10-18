@@ -231,6 +231,9 @@ const UNAUTHENTICATED = [
   // which is where the session's account is asserted to be the ceremony's account.
   // Sorted here by the whole string: `GET /internal/…` < `GET /mailboxes/…`.
   "GET /mailboxes/oauth/microsoft/callback",
+  // The billing link: a staff member mails an account's owner the app's billing door. The same
+  // two credentials in series as the release below; no customer session, so no verified address.
+  "POST /admin/accounts/:id/billing-link",
   // the admin console's ONE write pair (suspend/resume). `unauthenticated` for the same
   // reason as the reads: ANONYMOUS_PIPELINE resolves no customer session. Their authority is the
   // shared secret PLUS a live staff session inside the handler; the gate cookie / secret alone is
@@ -915,7 +918,8 @@ describe("the route table declares what every handler causes", () => {
     // 241 -> 246: the console's five reads (four GETs and the staff list), each
     // `unauthenticated` on the `/admin/*` table's terms, so they join the exempt list and this
     // total together and the gated remainder is unchanged.
-    expect(apiRoutes).toHaveLength(246);
+    // 246 -> 247: the billing link, `unauthenticated` like the release; the remainder is unchanged.
+    expect(apiRoutes).toHaveLength(247);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1138,7 +1142,8 @@ describe("the route table declares what every handler causes", () => {
     // remainder does not move.
     // 241 -> 246 with the console's five reads, `unauthenticated`: the total and `UNAUTHENTICATED`
     // grow by five each, the remainder does not move.
-    expect(gated.length).toBe(246 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 246 -> 247 with the billing link, `unauthenticated`: the remainder does not move.
+    expect(gated.length).toBe(247 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

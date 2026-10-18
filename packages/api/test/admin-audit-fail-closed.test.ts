@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
-import { accounts, auditLog, mailboxes } from "@trafficflow/db";
-import { staffAuditEvents, STAFF_ROLES } from "@trafficflow/db/cloud";
-import { checkedDetail, StaffAuditDetailError, type AdminDb, type StaffActivityPage } from "@trafficflow/services";
+import { accounts, auditLog, mailboxes, users, type AccessVerdict, type EntitlementsPort } from "@trafficflow/db";
+import { accountLifecycleNotices, staffAuditEvents, STAFF_ROLES } from "@trafficflow/db/cloud";
+import { checkedDetail, StaffAuditDetailError, type AdminDb, type StaffActivityPage, type StaffRole } from "@trafficflow/services";
 import type { ApiDeps } from "@trafficflow/api";
 import { STAFF_SESSION_HEADER } from "../src/routes/admin.js";
-import { FIXED_NOW } from "./helpers.js";
+import { FIXED_NOW, makeDeps } from "./helpers.js";
 import {
-  H, get, post, seedStaff, staffDeps, auditRows, auditRowsFor, failingInsertInto,
+  ADMIN, H, get, post, seedStaff, staffDeps, auditRows, auditRowsFor, failingInsertInto,
 } from "./_staff-fixtures.js";
 
 /**
@@ -312,6 +312,56 @@ describe("the staff identity routes record their refusals fail-closed, and a sig
     expect(broken.faults.count).toBe(1);
     const who = await H(post("/admin/staff/whoami", { token: s.token }), deps);
     expect(who.status).toBe(401);
+  });
+});
+
+describe("the billing link is recorded before it mails, and every refusal is recorded", () => {
+  const OPEN: AccessVerdict = { ok: true, limits: { mailboxes: 5, storageBytes: null, canAddMailbox: true, aiEnabled: true } };
+  const port: EntitlementsPort = {
+    access: async () => OPEN, accessOrFault: async () => OPEN,
+    spend: async (_a, _b, key) => ({ verdict: "ok", charged: true, attempt: key }),
+    release: async () => "settled" as const, manageLink: async () => null, releaseAccount: async () => "none",
+  };
+  async function linked(roles: StaffRole[] = ["support"]) {
+    const made = await makeDeps();
+    const deps = {
+      ...made.deps, admin: ADMIN,
+      services: { ...made.deps.services, customerMail: made.mail, entitlementsPort: port },
+    } as ApiDeps;
+    await deps.db.insert(accounts).values({ id: ACCOUNT_ID, name: "Acme Ltd" });
+    await deps.db.insert(users).values({ accountId: ACCOUNT_ID, email: "owner@acme.example" });
+    const staff = await seedStaff(deps, { roles });
+    const send = (d: ApiDeps): Promise<Response> =>
+      H(post(`/admin/accounts/${ACCOUNT_ID}/billing-link`, { sessionToken: staff.token, reasonCode: "customer_request" }), d);
+    return { deps, mailer: made.mailer, send };
+  }
+  const claims = (deps: ApiDeps) => deps.db.select().from(accountLifecycleNotices).where(eq(accountLifecycleNotices.accountId, ACCOUNT_ID));
+
+  it("a claim whose row cannot be written sends nothing and leaves no claim behind", async () => {
+    const { deps, mailer, send } = await linked();
+    const broken = failingInsertInto(deps.db, staffAuditEvents);
+    const res = await send({ ...deps, db: broken.db } as ApiDeps);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: { code: "audit_failed" } });
+    expect(broken.faults.count, "the fault was reached inside the claim").toBe(1);
+    expect(await claims(deps), "the claim rolled back with its row").toEqual([]);
+    expect(mailer.ofTemplate("billing_link")).toEqual([]);
+  });
+
+  it.each([
+    ["a role refusal", ["ops"] as StaffRole[], 0],
+    ["the cap's refusal", ["support"] as StaffRole[], 3],
+  ] as const)("%s whose row cannot be written answers audit_failed", async (_label, roles, seeded) => {
+    const { deps, mailer, send } = await linked([...roles]);
+    for (let i = 0; i < seeded; i += 1) {
+      await deps.db.insert(accountLifecycleNotices).values({ accountId: ACCOUNT_ID, kind: "billing_link", anchor: new Date(FIXED_NOW.getTime() - i - 1) });
+    }
+    const broken = failingInsertInto(deps.db, staffAuditEvents);
+    const res = await send({ ...deps, db: broken.db } as ApiDeps);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: { code: "audit_failed" } });
+    expect(broken.faults.count).toBe(1);
+    expect(mailer.ofTemplate("billing_link")).toEqual([]);
   });
 });
 

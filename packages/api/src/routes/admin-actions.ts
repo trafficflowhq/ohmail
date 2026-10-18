@@ -1,11 +1,14 @@
 import { silentLogger } from "@trafficflow/core";
-import { resyncMailbox } from "@trafficflow/db/cloud";
+import {
+  BILLING_LINK_CAP, BillingLinkAuditError, claimBillingLink, handBackBillingLink, resyncMailbox,
+} from "@trafficflow/db/cloud";
 import { actorOf, resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
 import { recordStaffEvents, adoptRequestId, rolesAdmit, staffEventRow, StaffAuditWriteError } from "../staff-audit.js";
-import type { StaffRole } from "@trafficflow/services";
-import { mailboxResyncAnswer } from "../admin-write-wire.js";
+import { isUuid, STAFF_REASON_CODES, type StaffReasonCode, type StaffRole } from "@trafficflow/services";
+import { billingLinkAnswer, mailboxResyncAnswer } from "../admin-write-wire.js";
 import { withStaffStepUp } from "../staff-step-up.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
+import { entitlementsPort } from "./shared.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route } from "../router.js";
 
@@ -138,6 +141,117 @@ async function resync(
 }
 
 
+/** Who may mail an owner the billing link: support answers the customer; billing and owner too. */
+const BILLING_LINK_ROLES: readonly StaffRole[] = ["support", "billing", "owner"];
+/** `staff_audit_events.ticket_ref`'s own CHECK, asked before an insert would refuse it. */
+const TICKET_RE = /^[A-Za-z0-9#._:-]{1,64}$/;
+
+/** A send the mailer did not take: the answer, and whether its claim goes back (no mail left). */
+function notSent(r: { status: string; reason?: string }): { status: number; code: string; handBack: boolean } {
+  if (r.status === "failed") return { status: 502, code: "mail_failed", handBack: false };
+  if (r.reason === "rate_limited") return { status: 429, code: "mail_throttled", handBack: true };
+  if (r.reason === "mailer_disabled") return { status: 503, code: "mailer_unconfigured", handBack: true };
+  return { status: 502, code: "recipient_refused", handBack: true };
+}
+
+/**
+ * `POST /admin/accounts/:id/billing-link` (cloud 0050) — mails the account's owner the app's
+ * billing door. The shared secret, a live staff session holding support, billing or owner, and a
+ * fresh second factor (`withStaffStepUp`). The claim (three per account in any 24 hours) and its
+ * `ok` row commit before the mail leaves; every refusal is recorded or the answer is 503.
+ */
+const billingLink: Handler = async (req, deps, params) => {
+  const cfg = deps.admin;
+  const log = (deps.logger ?? silentLogger).child({ route: "/admin/accounts/:id/billing-link" });
+  if (!cfg || cfg.secret.trim().length === 0) return json(404, { error: { code: "not_found" } });
+  if (!presentsSecret(req, cfg.secret)) {
+    log.warn("admin_write_unauthorized", {});
+    return json(401, { error: { code: "unauthorized" } });
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return json(400, { error: { code: "bad_request" } });
+  }
+  if (body === null || typeof body !== "object") return json(400, { error: { code: "bad_request" } });
+  const staff = await resolveStaffSession(deps.db, staffTokenOf(body), deps.now());
+  if (!staff) {
+    log.warn("admin_write_no_staff_session", {});
+    return json(401, { error: { code: "staff_session_required" } });
+  }
+
+  const accountId = isUuid(params.id) ? params.id.toLowerCase() : null;
+  const event = { requestId: adoptRequestId(req, deps), actor: actorOf(staff), action: "write.billing_link" as const, targetAccountId: accountId };
+  let why: { reasonCode?: StaffReasonCode; ticketRef?: string | null } = {};
+  const refuse = async (status: number, code: string, outcome: "refused" | "failed" = "refused", extra: object = {}) => {
+    try {
+      await recordStaffEvents(deps.db, [{ ...event, ...why, at: deps.now(), outcome, refusalCode: code }]);
+    } catch (err) {
+      log.error("admin_audit_failed", { err });
+      return json(503, { error: { code: "audit_failed" } });
+    }
+    return json(status, { error: { code }, ...extra });
+  };
+
+  if (!rolesAdmit(staff.roles, BILLING_LINK_ROLES)) return refuse(403, "role_required");
+  const reasonCode = STAFF_REASON_CODES.find((c) => c === body.reasonCode);
+  if (!reasonCode) return json(400, { error: { code: "reason_required" } });
+  const ticket = body.ticketRef ?? null;
+  if (ticket !== null && (typeof ticket !== "string" || !TICKET_RE.test(ticket))) {
+    return json(400, { error: { code: "bad_ticket" } });
+  }
+  why = { reasonCode, ticketRef: ticket as string | null };
+  if (accountId === null) return refuse(404, "account_not_found");
+  const mail = deps.services?.customerMail;
+  if (!mail?.sendBillingLink) return refuse(503, "mailer_unconfigured", "failed");
+  if (!entitlementsPort(deps)) return refuse(404, "no_billing_page");
+
+  let claim: Awaited<ReturnType<typeof claimBillingLink>>;
+  try {
+    claim = await claimBillingLink(deps.db, {
+      accountId, now: deps.now(),
+      staffEvent: (o) => staffEventRow({
+        ...event, ...why, at: deps.now(), outcome: "ok", targetUserId: o.userId, detail: { sendsToday: o.sendsToday },
+      }),
+    });
+  } catch (err) {
+    const audit = err instanceof BillingLinkAuditError;
+    log.error(audit ? "admin_audit_failed" : "admin_write_failed", { err: audit ? err.cause : err });
+    return json(503, { error: { code: audit ? "audit_failed" : "admin_write_failed" } });
+  }
+  if (claim.kind === "refused") {
+    return refuse(claim.code === "rate_limited" ? 429 : 404, claim.code, "refused",
+      claim.retryAt ? { retryAt: claim.retryAt.toISOString() } : {});
+  }
+
+  let sent: { status: string; reason?: string };
+  try {
+    sent = await mail.sendBillingLink({ db: deps.db, now: deps.now }, { to: claim.to, locale: claim.locale, anchor: claim.anchor });
+  } catch (err) {
+    // A mailer that throws instead of answering is read as a transport failure: the claim stays.
+    log.error("billing_link_mailer_threw", { err });
+    sent = { status: "failed" };
+  }
+  if (sent.status === "sent") {
+    return json(200, billingLinkAnswer({
+      accountId, sendsToday: claim.sendsToday, limit: BILLING_LINK_CAP,
+      auditId: claim.auditId, auditAt: claim.auditAt, actor: staff.email, at: claim.anchor,
+    }));
+  }
+  const miss = notSent(sent);
+  const failure = { ...event, ...why, at: deps.now(), outcome: "failed" as const, refusalCode: miss.code, targetUserId: claim.userId };
+  try {
+    if (miss.handBack) await handBackBillingLink(deps.db, { accountId, anchor: claim.anchor, staffEvent: staffEventRow(failure) });
+    else await recordStaffEvents(deps.db, [failure]);
+  } catch (err) {
+    log.error("admin_audit_failed", { err });
+    return json(503, { error: { code: "audit_failed" } });
+  }
+  log.warn("billing_link_not_sent", { accountId, code: miss.code });
+  return json(miss.status, { error: { code: miss.code } });
+};
+
 /**
  * `public + anonymous + raw`, exactly as the reads and the staff sign-in routes, and for the same
  * reason: ANONYMOUS_PIPELINE resolves no customer session, so there is no `users` row whose state
@@ -156,4 +270,5 @@ const COST = "unauthenticated" as const;
  * install's relay. Declared per route because the field has no default. */
 export const adminActionRoutes: Route[] = [
   { method: "POST", pattern: "/admin/mailboxes/resync", relay: false, cost: COST, options: OPTIONS, handler: staffMailboxWriteRoute("resync", resync) },
+  { method: "POST", pattern: "/admin/accounts/:id/billing-link", relay: false, cost: COST, options: OPTIONS, handler: billingLink },
 ];

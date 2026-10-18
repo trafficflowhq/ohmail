@@ -508,6 +508,7 @@ export type StaffAuditAction =
   | "read.sync_roster" | "read.funnel" | "read.worker" | "read.actions"
   | "read.engagement" | "read.storage" | "read.staff_activity" | "read.staff_list" | "read.alerts_history"
   | "read.oauth_provider" | "assert.external" | "write.mailbox.resync" | "write.oauth_provider"
+  | "write.billing_link"
   | "staff.signin" | "staff.signin_failed" | "staff.stepup" | "staff.stepup_failed"
   | "staff.signout" | "staff.role_grant" | "staff.role_revoke" | "staff.totp_reset";
 
@@ -744,7 +745,8 @@ export interface AdminMailboxDetail extends MailboxHealth {
 }
 
 export interface AdminLifecycleNotice {
-  kind: "trial_two_days" | "closed" | "erasure_week" | "reopened";
+  /** `billing_link`: a link to the billing page that staff mailed (cloud 0050). */
+  kind: "trial_two_days" | "closed" | "erasure_week" | "reopened" | "billing_link";
   anchor: string;
   sentAt: string;
 }
