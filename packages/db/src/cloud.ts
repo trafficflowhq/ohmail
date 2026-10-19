@@ -123,6 +123,7 @@ export {
   SIGNAL_BUCKET_MS,
   DEFAULT_CLAIM_TTL_MS,
   DEFAULT_SINK_FAILURE_ESCALATION, UNDELIVERABLE_REPEAT_MS, pagerVerdictOf, refusingAlertSink,
+  planeOpsStateLine, type PlaneOpsState, type PlaneOpsFault,
   type PagerVerdict, type SinkStreakReading, type ApiCronReading,
   type Alert, type AlertKind, type AlertSeverity, type AlertThresholds, type AlertSink,
   type AlertNotifyContext, type AlertPassOptions, type AlertPassResult, type EvaluateOptions,
@@ -141,6 +142,14 @@ export {
   accountsAtCapOf, alertReadersOf, AT_CAP_READ_LIMIT, AT_CAP_READ_BOUND, ALERT_PARKED_READ_BOUND,
   type AlertReaders,
 } from "./at-cap-reader.js";
+
+/* The billing plane's own failures (`POST /v1/ops`): the reader the alert drivers run and the parser
+ * that holds its answer to the wire contract. CLOUD-ONLY: the reader dials the program. */
+export {
+  parsePlaneOps, planeOpsReaderOf,
+  type PlaneOpsAlert, type PlaneOpsAnswer, type PlaneOpsPass, type PlaneOpsReader, type PlaneOpsReading,
+  type PlaneOpsSeverity, type PlaneOpsVerdict,
+} from "./plane-ops.js";
 
 export {
   resendAlertSink, RESEND_EMAILS_URL, type ResendAlertSinkConfig,

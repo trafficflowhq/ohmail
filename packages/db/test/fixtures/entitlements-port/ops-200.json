@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "observedAt": "2026-10-19T12:00:00.000Z",
+  "passes": [
+    { "name": "reconcile", "stale": false, "severity": "warning", "ageSeconds": 1260, "staleAfterSeconds": 21600,
+      "lastDoneAt": "2026-10-19T11:39:00.000Z", "lastOutcome": "done", "lastOutcomeAt": "2026-10-19T11:39:00.000Z",
+      "failureStreak": 0, "lastErrorClass": null, "recorded": true }
+  ],
+  "alerts": [
+    { "key": "events_failed", "severity": "critical", "count": 1,
+      "firstAt": "2026-10-18T09:12:00.000Z", "lastAt": "2026-10-18T09:12:00.000Z", "eventType": null },
+    { "key": "apply:BillingApplyError:unknown_price", "severity": "critical", "count": 3,
+      "firstAt": "2026-10-19T08:00:00.000Z", "lastAt": "2026-10-19T10:00:00.000Z", "eventType": "invoice.paid" }
+  ],
+  "alertsTruncated": false
+}

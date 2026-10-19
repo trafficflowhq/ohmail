@@ -40,7 +40,7 @@ describe("storage_at_cap is read by the drivers' reader, and says when it is not
     expect(none.scope.unreadReasons.get("storage_at_cap")).toBe("no_reader");
     expect(none.alerts.some((a) => a.kind === "storage_at_cap")).toBe(false);
     expect(accountsAtCapOf(UNMETERED), "an unmetered host caps nobody and says so").toBeNull();
-    expect(alertReadersOf(UNMETERED)).toEqual({ parkedAccounts: null, accountsAtCap: null });
+    expect(alertReadersOf(UNMETERED)).toEqual({ parkedAccounts: null, accountsAtCap: null, planeOps: null });
     const stated = await evaluateAlertsWithScope(db, { now: NOW, accountsAtCap: null });
     expect(stated.scope.unread.has("storage_at_cap")).toBe(false);
   });

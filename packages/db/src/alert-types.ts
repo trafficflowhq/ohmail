@@ -4,7 +4,7 @@
  * reads them here, which keeps alert-mail-policy.ts and alerts.ts out of an import cycle.
  */
 
-/** The conditions, twenty-one of them. Stable strings — they are the alert identity in `alert_state`. */
+/** The conditions, twenty-four of them. Stable strings — they are the alert identity in `alert_state`. */
 export type AlertKind =
   /** No leader heartbeat for a shard within the threshold: nothing is syncing. */
   | "worker_down"
@@ -153,7 +153,25 @@ export type AlertKind =
    * project is older than the threshold. `api_5xx_rate` reads that table and says "not measured"
    * when it is empty; this says that the measuring stopped.
    */
-  | "signal_source_dark";
+  | "signal_source_dark"
+  /**
+   * One of the billing plane's cron passes has not completed within its bound, as the plane states
+   * it on `POST /v1/ops` (`stale`, trusted as sent). Keyed by the pass's name. The plane has no
+   * pager of its own; it states facts and the alert pass decides what pages.
+   */
+  | "plane_pass_stale"
+  /**
+   * A billing alert the plane holds active on `POST /v1/ops`: `events_failed`, `unrecorded`, or a
+   * `<stage>:<code>` raised in the last day, keyed by that key. Closed strings only: the reader
+   * refuses an answer that could carry an account or event id, so none reaches a row or a sink.
+   */
+  | "billing_alert"
+  /**
+   * THIS DRIVER could not read the plane's `POST /v1/ops`: refused, unreachable, or an answer the
+   * reader refused whole. Keyed by the driver, like `schema_behind`: one host failing to reach the
+   * plane is not the other's to clear. A signal until several reads in a row have failed.
+   */
+  | "plane_ops_unreadable";
 
 export type AlertSeverity = "critical" | "warning";
 

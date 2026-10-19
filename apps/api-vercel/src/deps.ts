@@ -3,10 +3,10 @@ import {
   type AccessPort, type AiPricingMarker, type EntitlementsComposition, type ParkedAccountsReader,
   type SpendPort, type Tx,
 } from "@trafficflow/db";
-import type { AccountsAtCapReader } from "@trafficflow/db/cloud";
+import type { AccountsAtCapReader, PlaneOpsReader } from "@trafficflow/db/cloud";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRecorder, accountsAtCapOf,
-  ALERT_PARKED_READ_BOUND,
+  ALERT_PARKED_READ_BOUND, planeOpsReaderOf,
   makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS, readDbTls,
   type EntitlementsClient,
 } from "@trafficflow/db/cloud";
@@ -72,15 +72,6 @@ function wakeHubFor(cfg: HostConfig): ChangeWakeHub {
   return hub;
 }
 
-/**
- * Where a billing failure becomes something a human can find: the webhook's failure path is
- * correct and silent (500, `billing_events.status = 'failed'`, retried by Stripe, then
- * nothing), and this is the one place that turns it into an external signal. `console.error`
- * is the log stream the platform indexes, so a single greppable token (`billing_alert`) with
- * a fixed shape is what a log-drain rule needs. What it may carry is bounded by the
- * `BillingAlert` type — a code, an event id, a type, an account id — never a payload or
- * anything that could quote a connection string.
- */
 /**
  * The service bag. Keyed on the config object so a test that loads a different environment
  * gets a different bag, while production — one config per cold instance — builds it once.
@@ -503,14 +494,15 @@ let sinksCache: { key: object; sinks: AlertSink[] } | null = null;
 
 /**
  * THIS HOST'S ONE ALERT READER BAG, over its memoised client and built once per config: the parked
- * reader the alert route AND the console read (one instance), and the at-cap reader the route
- * alone takes, because a pass is periodic and a console request is not. `null` members without
- * a meter; lazy, so a request that never evaluates never composes the client.
+ * reader the alert route AND the console read (one instance), and the at-cap and plane-ops readers
+ * the route alone takes, because a pass is periodic and a console request is not. `null` members
+ * without a meter; lazy, so a request that never evaluates never composes the client.
  */
 let readersCache: { key: object; readers: HostAlertReaders } | null = null;
 interface HostAlertReaders {
   parkedAccounts: ParkedAccountsReader | null;
   accountsAtCap: AccountsAtCapReader | null;
+  planeOps: PlaneOpsReader | null;
 }
 function alertReadersFor(cfg: HostConfig): HostAlertReaders {
   if (readersCache && readersCache.key === cfg) return readersCache.readers;
@@ -527,8 +519,17 @@ function alertReadersFor(cfg: HostConfig): HostAlertReaders {
         const read = accountsAtCapOf(port());
         return read ? read(db, now) : Promise.resolve({ atCap: [], read: 0, total: 0 });
       },
+      // The plane's own failures, one read per pass, over the same client; never recorded as a fault.
+      planeOps: () => {
+        const read = planeOpsReaderOf(port());
+        return read ? read() : Promise.resolve({ state: "unsupported" as const });
+      },
     }
-    : { parkedAccounts: null, accountsAtCap: null };
+    : { parkedAccounts: null, accountsAtCap: null, planeOps: null };
+  // Once per instance: whether this host's alert route reads the plane at all.
+  hostLogger(cfg).info("plane_ops_watch", cfg.entitlements
+    ? { state: "on" }
+    : { state: "off", reason: "no ENTITLEMENTS_URL: this host reads no billing plane" });
   readersCache = { key: cfg, readers };
   return readers;
 }
@@ -783,6 +784,7 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         environment: cfg.environment,
         parkedAccounts: alertReadersFor(cfg).parkedAccounts,
         accountsAtCap: alertReadersFor(cfg).accountsAtCap,
+        planeOps: alertReadersFor(cfg).planeOps,
       }
       : undefined,
     // ABSENT ⇒ every `GET /admin/*` answers 404 — a deployment with no

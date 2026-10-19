@@ -10,7 +10,9 @@ import {
 } from "../src/alerts.js";
 import { resendAlertSink } from "../src/alert-mail.js";
 import { telegramAlertSink } from "../src/alert-push.js";
-import { renderDigestInput, type AlertDigest } from "../src/alert-mail-policy.js";
+import {
+  renderDigestInput, mailVerdictOf, mailCooldownMs, MAIL_COOLDOWN_MS, MAIL_POLICY, type AlertDigest,
+} from "../src/alert-mail-policy.js";
 
 /**
  * THE OPERATOR'S MAIL CARRIES WHAT MATTERS (2026-10-05). A PAGE kind mails at most once per
@@ -532,5 +534,28 @@ describe("LOW 4 — a refused digest moves the sink's streak", () => {
     }
     expect(streak.sinks.mail?.consecutiveFailures).toBe(3);
     expect(escalated?.sinks).toEqual(["mail"]);
+  });
+});
+
+describe("the billing plane's three kinds page: money, and the watch on it", () => {
+  const alertOf = (kind: Alert["kind"], key: string): Alert => ({
+    key, kind, severity: "warning", title: "t", detail: "d", count: 1, oldestSeconds: null,
+  });
+
+  it("a stalled pass, a billing alert and an unreadable plane are each a page", () => {
+    // Stated, not the unknown-kind default, which also reads "page".
+    for (const kind of ["plane_pass_stale", "billing_alert", "plane_ops_unreadable"]) {
+      expect(Object.prototype.hasOwnProperty.call(MAIL_POLICY, kind), kind).toBe(true);
+    }
+    expect(mailVerdictOf(alertOf("plane_pass_stale", "plane_pass_stale:reconcile"))).toBe("page");
+    expect(mailVerdictOf(alertOf("billing_alert", "billing_alert:events_failed"))).toBe("page");
+    expect(mailVerdictOf(alertOf("plane_ops_unreadable", "plane_ops_unreadable:worker"))).toBe("page");
+  });
+
+  it("the facts share the ordinary window; the reader's own failure asks daily, as the alerting's own do", () => {
+    expect(mailCooldownMs("plane_pass_stale")).toBe(MAIL_COOLDOWN_MS);
+    expect(mailCooldownMs("billing_alert")).toBe(MAIL_COOLDOWN_MS);
+    expect(mailCooldownMs("plane_ops_unreadable")).toBe(mailCooldownMs("alert_driver_dark"));
+    expect(mailCooldownMs("plane_ops_unreadable")).toBeGreaterThan(MAIL_COOLDOWN_MS);
   });
 });

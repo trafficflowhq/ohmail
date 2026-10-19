@@ -12,7 +12,7 @@ import {
 import type { Tx } from "./change-log.js";
 import type { Alert, AlertClass, AlertKind, AlertSeverity } from "./alert-types.js";
 import type {
-  AccountsAtCapReader, AtCapAccount, ParkedAccountsReader,
+  AccountsAtCapReader, AtCapAccount, ParkedAccountsReader, PlaneOpsReader, PlaneOpsReading,
 } from "./entitlements-port.js";
 import {
   DIGEST_INTERVAL_MS, DIGEST_POLICY_KEY, MAIL_CLOCK_SKEW_MS, MAIL_POLICY_ROW_KIND,
@@ -217,6 +217,14 @@ export interface AlertThresholds {
    */
   signalSourceDarkMs: number;
   /**
+   * Failed reads of the billing plane's `/v1/ops` in a row, per driver, before `plane_ops_unreadable`
+   * pages; below it the row is a signal. Five: a restart or a deploy swap fails a read or two, and
+   * five is about five minutes on the worker's clock and ten on the API's. Counted in the row itself,
+   * because the API arm's memory dies with its instance; a good read resolves the row, so a flap
+   * starts again from one.
+   */
+  planeOpsUnreadableReads: number;
+  /**
    * Distinct accounts with a reuse revocation inside {@link reuseRevokedWindowMs} before the
    * per-account signals escalate to a `credential_replay_wide` incident. Three: one account is a
    * client bug or one stolen token, and three separate accounts in a day is a pattern that is
@@ -272,6 +280,7 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   driverUndeliverableStreak: 3,
   apiCronStaleFloorMs: 15 * 60 * 1000,
   signalSourceDarkMs: 30 * 60 * 1000,
+  planeOpsUnreadableReads: 5,
   reuseWideAccounts: 3,
   refreshReplayedWindowMs: 60 * 60 * 1000,
   refreshReplayedThreshold: 5,
@@ -474,6 +483,21 @@ export interface EvaluateOptions {
    * nothing. Absent ⇒ armed, the reading every caller before this field had.
    */
   usableSinks?: number;
+  /**
+   * The billing plane's own failures (`POST /v1/ops`), read through the host's entitlements client
+   * (`planeOpsReaderOf`), once per evaluation. `null` or absent ⇒ the plane rules are unread: a host
+   * with no program, the console, a shard > 0 and every one-shot caller read nothing and clear nothing.
+   */
+  planeOps?: PlaneOpsReader | null;
+}
+
+/** What one pass's read of the billing plane's `/v1/ops` came to; `off`: the host stated no reader. */
+export type PlaneOpsState = "off" | PlaneOpsReading["state"];
+
+/** A failed read by its closed facts: the status a refusal answered, the path an answer broke at. */
+export interface PlaneOpsFault {
+  status: number | null;
+  field: string | null;
 }
 
 /** One driver's arms and their streaks — see {@link EvaluateOptions.sinkStreaks}. */
@@ -538,6 +562,8 @@ export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   "imap_admission_refused",
   // Keyed by the OTHER driver, by this driver's own arm, and read from the worker's schedule.
   "alert_driver_undeliverable", "alert_sink_degraded", "api_cron_stale",
+  // Keyed by the driver whose plane read failed: the other one may read the plane fine.
+  "plane_ops_unreadable",
 ]);
 
 /**
@@ -564,6 +590,10 @@ export interface EvaluationScope {
    * its own `alert_driver_undeliverable` row once it is due, which is how a repaired arm proves it.
    */
   selfPagerRefusing?: boolean;
+  /** What this evaluation's read of the plane's `/v1/ops` came to; absent reads as `off`. */
+  planeOps?: PlaneOpsState;
+  /** That read's refused status or unreadable field path; never a value from the answer. */
+  planeOpsFault?: PlaneOpsFault | null;
 }
 
 /**
@@ -650,6 +680,16 @@ export const ALERT_KIND_ARMS: { readonly [K in AlertKind]: AlertKindArms } = {
     unconfirmedAfterMs: UNCONFIRMED_AFTER,
   },
   signal_source_dark: readHere("signal_source_dark"),
+  // The plane's facts, read where the host's reader read them whole: a refused, partial or absent
+  // reading clears nothing, and a 404 (no route) states no reader.
+  plane_pass_stale: readHere("plane_pass_stale"),
+  billing_alert: readHere("billing_alert"),
+  // The reading driver's own key only; a failed read fires it, so only a read clears it.
+  plane_ops_unreadable: {
+    evaluated: (key, s) => s.driver !== undefined && !s.unread.has("plane_ops_unreadable")
+      && key === `plane_ops_unreadable:${s.driver}`,
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
 };
 
 /** A row whose kind this build does not know: nothing here can clear it, so only the clock can. */
@@ -872,6 +912,12 @@ export async function evaluateAlertsWithScope(
   // out of `information_schema`, and return it ALONE — there is nothing else worth reading.
   const behind = await schemaBehindAlert(db, opts);
   if (behind) return { alerts: [behind], scope: nothingRead(opts) };
+
+  // Rule 20's one read of the plane, started here so its dial overlaps the reads below. A reader
+  // that throws reads as unreachable, the direction that pages.
+  const planeRead: Promise<PlaneOpsReading> | null = opts.planeOps
+    ? (async () => opts.planeOps!())().catch((): PlaneOpsReading => ({ state: "unreachable" }))
+    : null;
 
   /** Rules 4 and 5's parked set, from the host's reader. One place, so the two rules cannot
    *  disagree about what "on duty" means; `known` is false when no reader was stated or it threw. */
@@ -2124,9 +2170,152 @@ export async function evaluateAlertsWithScope(
     markUnread("signal_source_dark", "refused");
   }
 
+  // 20. The billing plane's own failures, as `POST /v1/ops` states them: a cron pass past its bound,
+  // each billing alert, and this driver failing to read either. The plane judges `stale` and the
+  // severity; both are taken as sent. A reading that did not look clears nothing: a refused or
+  // unreachable plane leaves its fact rows open (an unpaged one is still claimed) until the
+  // unconfirmed clock, a plane without the route states no reader, and a truncated list is partial.
+  let planeOps: PlaneOpsState = "off";
+  let planeOpsFault: PlaneOpsFault | null = null;
+  if (planeRead === null) {
+    markUnread("plane_pass_stale", "no_reader");
+    markUnread("billing_alert", "no_reader");
+    markUnread("plane_ops_unreadable", "no_reader");
+  } else {
+    const reading = await planeRead;
+    planeOps = reading.state;
+    if (reading.state === "read") {
+      for (const p of reading.answer.passes) {
+        if (!p.stale) continue;
+        const lastDone = p.lastDoneAt === null ? null : secondsBetween(now, new Date(p.lastDoneAt));
+        const lastRun = p.lastOutcomeAt === null ? null : secondsBetween(now, new Date(p.lastOutcomeAt));
+        alerts.push({
+          key: `plane_pass_stale:${p.name}`,
+          kind: "plane_pass_stale",
+          severity: p.severity === "critical" ? "critical" : "warning",
+          title: `The billing plane's ${p.name} pass has not completed in ${humanAge(p.ageSeconds)}`,
+          detail:
+            `The billing plane's ${p.name} pass last completed ` +
+            (lastDone !== null ? `${humanAge(lastDone)} ago`
+              : p.recorded ? "never since the plane began watching it"
+              : "never since the plane started (it holds no state for this pass)") +
+            `, past its bound of ${humanAge(p.staleAfterSeconds)}: two scheduled runs are missing. ` +
+            (p.lastOutcome === null
+              ? "It has not run since then."
+              : `Its last run ended '${p.lastOutcome}' ${humanAge(lastRun)} ago` +
+                (p.failureStreak > 0 ? `, ${p.failureStreak} failure(s) in a row since its last completion` : "") +
+                (p.lastErrorClass !== null ? `, last error class ${p.lastErrorClass}` : "") + ".") +
+            " skipped_locked is another plane instance holding the pass's lock; failed and timed_out " +
+            "are the pass itself. The plane's own log lines carry the rest.",
+          count: 1,
+          oldestSeconds: p.ageSeconds,
+          cls: p.severity === "signal" ? "signal" : "incident",
+          affectedAccounts: null,
+          fixHref: "/reliability",
+          signature: `stale|${p.lastOutcome ?? "none"}`,
+        });
+      }
+      for (const a of reading.answer.alerts) {
+        const first = secondsBetween(now, new Date(a.firstAt));
+        const newest = `the newest ${humanAge(secondsBetween(now, new Date(a.lastAt)))} ago`;
+        alerts.push({
+          key: `billing_alert:${a.key}`,
+          kind: "billing_alert",
+          // `signal` is shown and never paged: recorded at warning, delivered to nobody.
+          severity: a.severity === "critical" ? "critical" : "warning",
+          ...(a.key === "events_failed"
+            ? {
+              title: a.count === 1
+                ? "1 billing delivery failed to apply and is still failed"
+                : `${a.count} billing deliveries failed to apply and are still failed`,
+              detail: `${a.count} billing deliveries received in the last 30 days failed to apply and are ` +
+                `still failed (the first ${humanAge(first)} ago, ${newest}). The money they carry is not ` +
+                `applied until they are, whether or not Stripe has stopped retrying.`,
+            }
+            : a.key === "unrecorded"
+            ? {
+              title: `The billing plane could not record ${a.count} billing alert(s)`,
+              detail: `A billing plane process could not record ${a.count} billing alert(s) in the last 24h ` +
+                `(${newest}), so their own entries are missing from this list. The plane's log lines name them.`,
+            }
+            : {
+              title: `Billing alert ${a.key}, raised ${a.count} time(s)`,
+              detail: `The billing plane raised ${a.key} ${a.count} time(s) in this episode, the first ` +
+                `${humanAge(first)} ago and ${newest}` +
+                (a.eventType !== null ? `, last on a ${a.eventType} event` : "") +
+                ". A raise more than 24h after the previous one starts a new episode. The plane's " +
+                "billing_alert log lines carry the ids; this alert carries none.",
+            }),
+          count: a.count,
+          oldestSeconds: first,
+          cls: a.severity === "signal" ? "signal" : "incident",
+          affectedAccounts: null,
+          fixHref: "/billing",
+          signature: `billing|${a.severity}`,
+          // A count that grows is the same incident; only a severity rise pages again.
+          levels: [],
+        });
+      }
+      if (reading.answer.alertsTruncated) markUnread("billing_alert", "partial");
+    } else if (reading.state === "unsupported") {
+      markUnread("plane_pass_stale", "no_reader");
+      markUnread("billing_alert", "no_reader");
+    } else {
+      planeOpsFault = {
+        status: reading.state === "refused" ? reading.status : null,
+        field: reading.state === "unreadable" ? reading.field : null,
+      };
+      markUnread("plane_pass_stale", "refused");
+      markUnread("billing_alert", "refused");
+      if (opts.driver) {
+        // THE COUNT LIVES IN THE ROW: the API arm is serverless and its memory dies with the
+        // instance. A good read resolves the row, so a flap starts again from one.
+        const key = `plane_ops_unreadable:${opts.driver}`;
+        const [open] = await selectOpenAlerts(db, { count: alertState.count }, eq(alertState.alertKey, key));
+        const reads = Number(open?.count ?? 0) + 1;
+        const what = reading.state === "refused"
+          ? `POST /v1/ops answered ${reading.status}`
+          : reading.state === "unreachable"
+          ? "POST /v1/ops did not answer inside its budget"
+          : `POST /v1/ops answered with an answer the reader refused whole at ${reading.field}`;
+        const why = reading.state === "refused"
+          ? (reading.status === 401 ? " 401 is a BILLING_PLANE_SECRET the plane does not accept."
+            : reading.status === 503 ? " 503 is a plane whose database did not answer, or that runs without one."
+            : "")
+          : reading.state === "unreachable"
+          ? " The plane is down, or this host cannot reach ENTITLEMENTS_URL."
+          : " The plane sent something outside its wire contract, or an identifier where a closed code " +
+            "belongs; nothing from the answer was kept.";
+        alerts.push({
+          key,
+          kind: "plane_ops_unreadable",
+          severity: reading.state === "unreadable" ? "warning" : "critical",
+          title: reading.state === "unreadable"
+            ? `The billing plane's ops answer is unreadable at ${reading.field}`
+            : `The ${opts.driver} alert driver cannot read the billing plane's failures`,
+          detail: `${what} to the ${opts.driver} alert driver, ${reads} read(s) in a row (it pages from ` +
+            `${t.planeOpsUnreadableReads}).${why} Meanwhile plane_pass_stale and billing_alert are not read: ` +
+            `their open rows stay open and close unconfirmed after ${humanAge(Math.round(UNCONFIRMED_AFTER(t) / 1000))}.`,
+          count: reads,
+          oldestSeconds: null,
+          cls: reads >= t.planeOpsUnreadableReads ? "incident" : "signal",
+          affectedAccounts: null,
+          fixHref: "/reliability",
+          signature: `${reading.state}|${reading.state === "refused" ? reading.status
+            : reading.state === "unreadable" ? reading.field : "none"}`,
+          levels: [],
+        });
+      }
+    }
+    if (!opts.driver) markUnread("plane_ops_unreadable", "no_reader");
+  }
+
   return {
     alerts,
-    scope: { driver: opts.driver, shards, measuredWindows, unread, unreadReasons, withheld, selfPagerRefusing },
+    scope: {
+      driver: opts.driver, shards, measuredWindows, unread, unreadReasons, withheld, selfPagerRefusing,
+      planeOps, planeOpsFault,
+    },
   };
 }
 
@@ -2820,6 +3009,31 @@ export interface AlertPassResult {
   sinkHealth: AlertSinkHealth[];
   /** The rules this pass did not read and why, sorted: a rule listed here cleared nothing. */
   unread: Array<{ kind: AlertKind; reason: UnreadReason }>;
+  /** What this pass's read of the billing plane's `/v1/ops` came to (`off`: no reader stated). */
+  planeOps: PlaneOpsState;
+  /** The failed read's status or field path, for the host's `plane_ops_state` line; else null. */
+  planeOpsFault: PlaneOpsFault | null;
+}
+
+/**
+ * The `plane_ops_state` line a host writes when its driver's reading changed (`last` is the host's
+ * own memory, updated here): info for a read, warn for anything else. `off` writes nothing, since
+ * the host's boot line said so. Closed fields only: a state, a status, a field path.
+ */
+export function planeOpsStateLine(
+  last: { key: string | null },
+  result: Pick<AlertPassResult, "planeOps" | "planeOpsFault">,
+): { level: "info" | "warn"; fields: { state: string; status?: number; reason?: string } } | null {
+  if (result.planeOps === "off") return null;
+  const status = result.planeOpsFault?.status ?? null;
+  const field = result.planeOpsFault?.field ?? null;
+  const key = `${result.planeOps}|${status ?? ""}|${field ?? ""}`;
+  if (last.key === key) return null;
+  last.key = key;
+  return {
+    level: result.planeOps === "read" ? "info" : "warn",
+    fields: { state: result.planeOps, ...(status !== null ? { status } : {}), ...(field !== null ? { reason: field } : {}) },
+  };
 }
 
 /** An evaluation's unread rules as a closed, sorted list. */
@@ -3407,6 +3621,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       sinkDegraded: behindAcct.sinkDegraded,
       sinkHealth: sinkHealthOf(sinks, behindStreak),
       unread: unreadListOf(scope),
+      // Not asked: the pass stopped at the preflight.
+      planeOps: "off",
+      planeOpsFault: null,
     };
   }
 
@@ -3819,6 +4036,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       // what the last ATTEMPT established, and a quiet pass neither confirms nor disturbs it.
       sinkHealth: sinkHealthOf(sinks, streak),
       unread: unreadListOf(scope),
+      planeOps: scope.planeOps ?? "off",
+      planeOpsFault: scope.planeOpsFault ?? null,
     };
   }
 
@@ -3920,6 +4139,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     sinkDegraded: [...sinkDegraded, ...digestRun.sinkDegraded],
     sinkHealth: sinkHealthOf(sinks, streak),
     unread: unreadListOf(scope),
+    planeOps: scope.planeOps ?? "off",
+    planeOpsFault: scope.planeOpsFault ?? null,
   };
 }
 

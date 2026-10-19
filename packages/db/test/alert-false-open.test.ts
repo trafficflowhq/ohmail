@@ -8,6 +8,7 @@ import {
   alertPassRuns, alertState, platformSignals, writeHeartbeat,
   runAlertPass, newDeliveryStreak, type AlertKind, type AlertPassOptions, type AlertSink,
 } from "../src/cloud.js";
+import type { PlaneOpsReading } from "../src/entitlements-port.js";
 /* @reads: packages/db/src/alert-types.ts */
 
 /**
@@ -130,6 +131,19 @@ interface KindCase {
 const W: AlertPassOptions = { now: NOW, sinks: [], driver: "worker", shards: [] };
 const A: AlertPassOptions = { now: NOW, sinks: [], driver: "api", shards: [0] };
 
+/** A plane whose passes all ran and that has no billing alert: every plane rule reads clear. */
+const healthyPlane = async (): Promise<PlaneOpsReading> => ({
+  state: "read",
+  answer: {
+    v: 1, observedAt: NOW.toISOString(), alertsTruncated: false, alerts: [],
+    passes: [{
+      name: "reconcile", stale: false, severity: "warning", ageSeconds: 60, staleAfterSeconds: 21_600,
+      lastDoneAt: ago(MIN).toISOString(), lastOutcome: "done", lastOutcomeAt: ago(MIN).toISOString(),
+      failureStreak: 0, lastErrorClass: null, recorded: true,
+    }],
+  },
+});
+
 /** Every kind in the union; the first case below asserts this list IS the union. */
 const KIND_CASES: readonly KindCase[] = [
   { kind: "worker_down", key: "worker_down:0", notEvaluated: { pass: W }, evaluatedClear: { pass: A } },
@@ -176,6 +190,20 @@ const KIND_CASES: readonly KindCase[] = [
     ] } } },
   },
   { kind: "signal_source_dark", key: "signal_source_dark:vercel:ohmail-api", notEvaluated: null, evaluatedClear: { pass: W, world: measuredWindow } },
+  // No reader stated is unread, never "the plane is fine"; a reader that read clears.
+  {
+    kind: "plane_pass_stale", key: "plane_pass_stale:reconcile",
+    notEvaluated: { pass: W }, evaluatedClear: { pass: { ...W, planeOps: healthyPlane } },
+  },
+  {
+    kind: "billing_alert", key: "billing_alert:events_failed",
+    notEvaluated: { pass: W }, evaluatedClear: { pass: { ...W, planeOps: healthyPlane } },
+  },
+  // Keyed by the reading driver: the API arm never evaluates the worker's own failed reads.
+  {
+    kind: "plane_ops_unreadable", key: "plane_ops_unreadable:worker",
+    notEvaluated: { pass: A }, evaluatedClear: { pass: { ...W, planeOps: healthyPlane } },
+  },
 ];
 
 async function passOver(c: KindCase, sc: Scenario, seenAgo: number) {

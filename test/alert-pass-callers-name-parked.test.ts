@@ -75,6 +75,24 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
     expect(missing, "the at-cap reader is the drivers' to run").toEqual([]);
   });
 
+  it("each call names planeOps — a pass without it reads the plane's own failures as unread", () => {
+    const missing = calls.filter((c) => !/\bplaneOps\b\s*:/.test(c.args)).map((c) => c.file);
+    expect(missing, "the plane's ops reader is the drivers' to run").toEqual([]);
+    const worker = calls.find((c) => c.file === "apps/worker/src/index.ts")!;
+    expect(worker.args, "shard 0 alone reads the plane: deployment-wide facts, one read a minute")
+      .toMatch(/\bplaneOps\b\s*:\s*shardIndex === 0 \?/);
+  });
+
+  it("the console never dials the plane: it names no ops reader, and the managed host hands it none", () => {
+    const board = withoutComments(readFileSync(join(ROOT, "packages/services/src/admin-service.ts"), "utf8"));
+    expect(board).not.toMatch(/\bplaneOps\b/);
+    const host = withoutComments(readFileSync(join(ROOT, "apps/api-vercel/src/deps.ts"), "utf8"));
+    const start = host.indexOf("admin: cfg.admin");
+    const block = host.slice(start, host.indexOf("adminDb:", start));
+    expect(block, "the admin block was found").toContain("parkedAccounts");
+    expect(block).not.toMatch(/\bplaneOps\b/);
+  });
+
   it("the worker's call names apiCron — without it api_cron_stale is unread on every pass", () => {
     const worker = calls.filter((c) => c.file === "apps/worker/src/index.ts");
     expect(worker).toHaveLength(1);
@@ -102,6 +120,8 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
     expect(missing, "the route forwards cfg.parkedAccounts; nothing else supplies it").toEqual([]);
     const noCap = hosts.filter((h) => !/\baccountsAtCap\b\s*:/.test(h.block)).map((h) => h.file);
     expect(noCap, "the route forwards cfg.accountsAtCap; a host that states none leaves the rule unread").toEqual([]);
+    const noOps = hosts.filter((h) => !/\bplaneOps\b\s*:/.test(h.block)).map((h) => h.file);
+    expect(noOps, "the route forwards cfg.planeOps; a host that states none leaves the plane rules unread").toEqual([]);
   });
 
   it("the managed host hands its console the SAME parked reader its alert route reads", () => {

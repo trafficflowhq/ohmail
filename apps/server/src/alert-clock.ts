@@ -73,6 +73,8 @@ export function alertClockFor(
   timing: { everyMs?: number; firstDelayMs?: number } = {},
 ): AlertClock | null {
   const { cfg, logger } = rt;
+  // This server reaches no entitlements program, so no billing plane is read: said once at boot.
+  logger.info("plane_ops_watch", { state: "off", reason: "this server reaches no billing plane" });
   if (!cfg.alerts) {
     logger.info("alert_clock_unarmed", { configVar: "TF_ALERT_SECRET" });
     return null;

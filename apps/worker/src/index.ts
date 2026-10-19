@@ -13,7 +13,7 @@ import {
   markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
   pruneErasedBearers, pruneAuthThrottle, plantReopenedCatchUp, dropUntoldCatchUps } from "@trafficflow/db/cloud";
 import {
-  runAlertPass, firingToLog,
+  runAlertPass, firingToLog, planeOpsStateLine,
   webhookAlertSink,
   resendAlertSink,
   telegramAlertSink,
@@ -1299,6 +1299,12 @@ export async function startWorkerWithLock(
      */
     const alertReaders = alertReadersOf(entitlements);
     const parkedAccountsReader: ParkedAccountsReader | null = alertReaders.parkedAccounts;
+    // The plane's own failures are deployment-wide facts: shard 0's leader reads them, one read a
+    // minute whatever the shard count (the apiCron rule). Said once, so an operator sees the watch.
+    log.info("plane_ops_watch", alertReaders.planeOps === null
+      ? { state: "off", reason: "no ENTITLEMENTS_URL: this worker reads no billing plane" }
+      : shardIndex === 0 ? { state: "on" }
+      : { state: "off", shard: shardIndex, reason: "the plane is read by shard 0's leader alone" });
 
     // The LIVE classifier, behind a per-process circuit breaker. ONE circuit for the process, because
     // the failure domain is the shared API key and endpoint — per-mailbox circuits would each burn
@@ -5965,6 +5971,8 @@ export async function startWorkerWithLock(
 
     /** What this process last logged per firing alert — see `firingToLog`. */
     const alertFiringLogged = new Map<string, string>();
+    /** The plane read this process last logged — see `planeOpsStateLine`. */
+    const planeOpsLogged: { key: string | null } = { key: null };
     /**
      * One alert pass, from the WORKER side. It covers the DB-visible rules (stuck sends, sync lag and
      * their neighbours) and deliberately does NOT include itself: `shards: []` skips the leader-
@@ -5999,7 +6007,12 @@ export async function startWorkerWithLock(
           // The schedule this leader holds, for `api_cron_stale`. `null` on shards > 0, on the
           // self-hosted organizer and after quiescing: unread, so it clears none of shard 0's rows.
           apiCron: apiCron ? { since: apiCron.since(), targets: apiCron.health() } : null,
+          // The billing plane's own failures (`/v1/ops`), shard 0 only; `null` reads nothing.
+          planeOps: shardIndex === 0 ? alertReaders.planeOps : null,
         });
+        const planeLine = planeOpsStateLine(planeOpsLogged, result);
+        if (planeLine?.level === "warn") log.warn("plane_ops_state", planeLine.fields);
+        else if (planeLine) log.info("plane_ops_state", planeLine.fields);
         for (const alert of firingToLog(alertFiringLogged, result.firing)) {
           log.warn("alert_firing", {
             alertKey: alert.key, kind: alert.kind, severity: alert.severity,

@@ -3,10 +3,11 @@ import {
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type UsageReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
-  type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf,
+  type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf, type PlaneOpsReading,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
 import { SPEND_ACTIONS, assertAttemptKey } from "./ledger-source.js";
+import { parsePlaneOps } from "./plane-ops.js";
 
 /**
  * The HTTP client of an entitlements program, implementing {@link EntitlementsPort} over that
@@ -33,7 +34,7 @@ export const ENTITLEMENTS_CALL_BUDGET_MS = 5_000;
 /** The program's paths — a closed union, so `post` cannot be sent one nobody has priced. */
 export type EntitlementsPath =
   | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release"
-  | "/v1/checkout/confirm" | "/v1/usage";
+  | "/v1/checkout/confirm" | "/v1/usage" | "/v1/ops";
 
 /** How long an `access` verdict is reused before it is re-read. */
 export const ACCESS_TTL_MS = 60_000;
@@ -78,6 +79,7 @@ export const PRICE_PROBE_BUDGET_MS = 1_500;
 export type EntitlementsClient = EntitlementsPort & {
   /** `plane` once any access answer carried a readable card, else `unpriced`. Never throws. */
   aiPricing(): Promise<"plane" | "unpriced">;
+  readOps(): Promise<PlaneOpsReading>;
 };
 
 /** The slice of `fetch` this client needs — injectable so no test opens a socket. */
@@ -440,9 +442,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
    * One bounded exchange. The clock covers the WHOLE call including the body parse, so a peer
    * that answers headers and then stalls still returns at the ceiling. Never throws: every
    * caller here has a degrade arm and a rejection would only move the mapping outwards.
+   * `record: false` reports no call fault: the caller's answer is the record (`readOps`).
    */
   const post = async (
-    path: EntitlementsPath, payload: unknown, flight?: Flight,
+    path: EntitlementsPath, payload: unknown, flight?: Flight, record = true,
   ): Promise<Exchange | null> => {
     // `Date.now()`, not the injected clock: a frozen test clock would report every call as
     // instant and switch the whole line off silently.
@@ -476,10 +479,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         // A non-JSON body is a fact the caller reads: `bodyIsJson` stays false, the status decides.
         body = undefined;
       }
-      if (res.status !== 200) await callFault(path, res.status, startedAt, flight);
+      if (record && res.status !== 200) await callFault(path, res.status, startedAt, flight);
       return { status: res.status, body, bodyIsJson };
     } catch {
-      await callFault(path, null, startedAt, flight);
+      if (record) await callFault(path, null, startedAt, flight);
       return null;
     } finally {
       clearTimeout(timer);
@@ -704,6 +707,19 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       }
       named("/v1/checkout/confirm", res.status, "state");
       return "fault";
+    },
+
+    async readOps(): Promise<PlaneOpsReading> {
+      // NOT RECORDED: an `api_faults` row would page the outage a second time beside the pass's own
+      // `plane_ops_unreadable`, and would count a plane older than the route (404) as a 502. No
+      // retry either: the next pass is the retry. No cache, hold or flight is touched.
+      const res = await post("/v1/ops", {}, undefined, false);
+      if (res === null) return { state: "unreachable" };
+      if (res.status === 404) return { state: "unsupported" };
+      if (res.status !== 200) return { state: "refused", status: res.status };
+      if (!res.bodyIsJson) return { state: "unreadable", field: "body" };
+      const read = parsePlaneOps(res.body, new Date(clock()));
+      return "bad" in read ? { state: "unreadable", field: read.bad } : { state: "read", answer: read };
     },
 
     async aiPricing(): Promise<"plane" | "unpriced"> {

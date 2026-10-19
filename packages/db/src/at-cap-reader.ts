@@ -4,8 +4,9 @@ import type { Tx } from "./change-log.js";
 import {
   inPlaneRounds, isMetered, parkedAccountsOf, PARKED_READ_CONCURRENCY, UNMETERED_ACCESS,
   type AccountsAtCapReader, type AtCapAccount, type EntitlementsComposition,
-  type ParkedAccountsReader, type PlaneReadBound,
+  type ParkedAccountsReader, type PlaneOpsReader, type PlaneReadBound,
 } from "./entitlements-port.js";
+import { planeOpsReaderOf } from "./plane-ops.js";
 
 /**
  * How many accounts one reading asks about, largest stored bytes first. A bound on the pass, and a
@@ -58,9 +59,15 @@ export function accountsAtCapOf(
 export interface AlertReaders {
   parkedAccounts: ParkedAccountsReader | null;
   accountsAtCap: AccountsAtCapReader | null;
+  /** The program's own failures (`/v1/ops`): `null` where nothing meters or the port cannot ask. */
+  planeOps: PlaneOpsReader | null;
 }
 
 /** One bag per host, from the host's one entitlements composition, for both alert drivers. */
 export function alertReadersOf(entitlements: EntitlementsComposition): AlertReaders {
-  return { parkedAccounts: parkedAccountsOf(entitlements), accountsAtCap: accountsAtCapOf(entitlements) };
+  return {
+    parkedAccounts: parkedAccountsOf(entitlements),
+    accountsAtCap: accountsAtCapOf(entitlements),
+    planeOps: planeOpsReaderOf(entitlements),
+  };
 }

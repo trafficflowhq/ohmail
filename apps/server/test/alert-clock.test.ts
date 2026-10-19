@@ -4,7 +4,7 @@ import { createLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { loadServerConfig, type ServerConfig } from "../src/config.js";
-import { alertSinksFor, type ServerRuntime } from "../src/deps.js";
+import { alertSinksFor, buildDeps, type ServerRuntime } from "../src/deps.js";
 import { handleServerRequest } from "../src/handler.js";
 import {
   alertClockFor, startAlertClock, ALERT_PASS_EVERY_MS, ALERT_PASS_FIRST_DELAY_MS,
@@ -177,6 +177,26 @@ describe("alertClockFor — armed by TF_ALERT_SECRET, and only by it", () => {
     expect(lines.filter((l) => String(l.event).startsWith("alert_clock_"))).toEqual([
       expect.objectContaining({ event: "alert_clock_unarmed", configVar: "TF_ALERT_SECRET" }),
     ]);
+  });
+
+  it("no entitlements program here: the pass gets no plane reader, and the boot says the watch is off, once", async () => {
+    // Red mutation: drop `planeOps:` from buildDeps' alerts block — the pass reads it as absent.
+    vi.useFakeTimers();
+    for (const extra of [{}, { TF_ALERT_SECRET: SECRET }]) {
+      const { lines, logger } = captured();
+      const rt = runtime(cfgWith(extra), logger);
+      const clock = alertClockFor(rt);
+      expect(lines.filter((l) => l.event === "plane_ops_watch")).toEqual([
+        expect.objectContaining({ level: "info", state: "off" }),
+      ]);
+      expect(lines.filter((l) => "droppedFields" in l), "the logger census refused a field").toEqual([]);
+      if (extra.TF_ALERT_SECRET) {
+        const alerts = buildDeps(new Request(rt.cfg.origin), rt).alerts;
+        expect(alerts).toBeDefined();
+        expect(alerts!.planeOps, "null, never absent: this server reads no plane").toBeNull();
+      }
+      await clock?.stop();
+    }
   });
 
   it("armed: one boot line names the cadence and the arms, and the census drops none of it", async () => {

@@ -50,6 +50,10 @@ export const MAIL_POLICY: { readonly [K in AlertKind]: (a: Alert) => MailVerdict
   alert_sink_degraded: page,
   api_cron_stale: page,
   signal_source_dark: page,
+  // Money, and the watch on it.
+  plane_pass_stale: page,
+  billing_alert: page,
+  plane_ops_unreadable: page,
   api_fault_rate: (a) => (isEntitlements(a) || onPageRoute(a) ? "page" : "digest"),
   sync_lag: (a) =>
     a.severity === "critical" && (a.affectedAccounts ?? 0) >= SYNC_LAG_PAGE_ACCOUNTS ? "page" : "digest",
@@ -73,6 +77,7 @@ export const MAIL_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const DAILY_MAIL_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   "alert_driver_dark", "alert_driver_undeliverable", "alert_sink_degraded", "signal_source_dark",
+  "plane_ops_unreadable",
 ]);
 
 export function mailCooldownMs(kind: string): number {

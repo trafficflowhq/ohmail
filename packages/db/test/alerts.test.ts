@@ -398,6 +398,7 @@ describe("evaluateAlerts — the original rules, against seeded failure states",
       driverUndeliverableStreak: 3,       // passes refused by every arm: a 502 is a blip, three is not
       apiCronStaleFloorMs: 15 * 60 * 1000, // under twice a clocked pass's cadence, so a minute clock needs misses
       signalSourceDarkMs: 30 * 60 * 1000, // the poller runs every five; the widest gap measured was ten
+      planeOpsUnreadableReads: 5,         // failed plane reads in a row: a restart is a signal, five a page
       reuseWideAccounts: 3,               // one account is a client bug; three is a pattern
       refreshReplayedWindowMs: 60 * 60 * 1000, // a client rotates ~4x an hour at the access window
       refreshReplayedThreshold: 5,        // …so five replays in one is replaying more than rotating

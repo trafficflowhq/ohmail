@@ -1871,3 +1871,116 @@ describe("access — the refresh behind a read is handed to the host", () => {
     await expect(marker).resolves.toBe("plane");
   });
 });
+
+/**
+ * `readOps` — THE PROGRAM'S OWN FAILURES, READ FOR THE ALERT PASS AND NEVER RECORDED AS A FAULT.
+ * Its outage is the pass's own `plane_ops_unreadable`: a recorded call fault would page the same
+ * outage twice, and would read a plane older than the route (404) as a 502 row.
+ */
+describe("readOps — /v1/ops, mapped to a reading and never to a call fault", () => {
+  const OBSERVED = Date.parse("2026-10-19T12:00:00.000Z");
+  const opsClient = (answers: Array<{ status: number; body?: unknown; throws?: boolean }>) =>
+    client(answers, { now: () => OBSERVED });
+
+  it("asks POST /v1/ops with an empty object, JSON and the bearer", async () => {
+    const seen: Array<{ url: string; method: string; headers: Record<string, string>; body: string }> = [];
+    const port = makeEntitlementsClient({
+      baseUrl: "https://entitlements.example/", secret: "x".repeat(24), now: () => OBSERVED,
+      onCallFault: "unrecorded",
+      fetchImpl: async (url, init) => {
+        seen.push({ url, method: init.method, headers: init.headers, body: init.body });
+        return { status: 200, json: async () => wire("ops-200") };
+      },
+    });
+    await port.readOps!();
+    expect(seen).toHaveLength(1);
+    expect(new URL(seen[0]!.url).pathname).toBe("/v1/ops");
+    expect(seen[0]!.method).toBe("POST");
+    expect(JSON.parse(seen[0]!.body)).toEqual({});
+    expect(seen[0]!.headers["content-type"]).toBe("application/json");
+    expect(seen[0]!.headers.authorization).toBe(`Bearer ${"x".repeat(24)}`);
+  });
+
+  it("200 with the contract's example is a reading of it", async () => {
+    const c = opsClient([{ status: 200, body: wire("ops-200") }]);
+    await expect(c.port.readOps!()).resolves.toEqual({ state: "read", answer: wire("ops-200") });
+    expect(c.calls).toEqual([]);
+    expect(c.faults).toEqual([]);
+  });
+
+  it("404 is a program older than the route: unsupported", async () => {
+    const c = opsClient([{ status: 404, body: { error: "not_found" } }]);
+    await expect(c.port.readOps!()).resolves.toEqual({ state: "unsupported" });
+  });
+
+  it("401 and 503 are refused readings, with the status", async () => {
+    await expect(opsClient([{ status: 401, body: { error: "unauthorized" } }]).port.readOps!())
+      .resolves.toEqual({ state: "refused", status: 401 });
+    await expect(opsClient([{ status: 503, body: { error: "db_unavailable" } }]).port.readOps!())
+      .resolves.toEqual({ state: "refused", status: 503 });
+  });
+
+  it("a fetch that throws is unreachable", async () => {
+    await expect(opsClient([{ status: 0, throws: true }]).port.readOps!()).resolves.toEqual({ state: "unreachable" });
+  });
+
+  it("a hang past the path's budget is unreachable", async () => {
+    fakeClock();
+    const calls: CallFault[] = [];
+    const port = makeEntitlementsClient({
+      baseUrl: "https://e.example", secret: "x".repeat(24),
+      fetchImpl: slowPlane(5_000, 200, wire("ops-200")),
+      budgetsMs: { "/v1/ops": 120 }, onCallFault: (f) => { calls.push(f); },
+    });
+    const reading = port.readOps!();
+    await vi.advanceTimersByTimeAsync(120);
+    await expect(reading).resolves.toEqual({ state: "unreachable" });
+    expect(calls, "no call fault for /v1/ops").toEqual([]);
+  });
+
+  it("a 200 that is not JSON is unreadable at the body", async () => {
+    const port = makeEntitlementsClient({
+      baseUrl: "https://e.example", secret: "x".repeat(24), onCallFault: "unrecorded",
+      fetchImpl: async () => ({ status: 200, json: async () => { throw new Error("<html>gateway</html>"); } }),
+    });
+    await expect(port.readOps!()).resolves.toEqual({ state: "unreadable", field: "body" });
+  });
+
+  it("a 200 the contract refuses is unreadable at its path, no value and no drift report", async () => {
+    const body = wire("ops-200") as { alerts: Array<{ key: string }> };
+    body.alerts[1]!.key = "apply:BillingApplyError:cus_ab12";
+    const c = opsClient([{ status: 200, body }]);
+    const reading = await c.port.readOps!();
+    expect(reading).toEqual({ state: "unreadable", field: "alerts[1].key" });
+    expect(JSON.stringify(reading)).not.toContain("cus_ab12");
+    expect(c.faults, "an ops refusal is the pass's to state, never onContractFault").toEqual([]);
+  });
+
+  it("the ops answer is read against the client's clock: an hour-old observedAt is unreadable", async () => {
+    const c = client([{ status: 200, body: wire("ops-200") }], { now: () => OBSERVED + 60 * 60_000 });
+    await expect(c.port.readOps!()).resolves.toEqual({ state: "unreadable", field: "observedAt" });
+  });
+
+  it("onCallFault is never called for /v1/ops, and accessFaults() does not move", async () => {
+    const c = opsClient([
+      { status: 503 }, { status: 401 }, { status: 404 }, { status: 0, throws: true }, { status: 500 },
+    ]);
+    for (let i = 0; i < 5; i++) await c.port.readOps!();
+    expect(c.calls, "no /v1/ops call is a recorded fault").toEqual([]);
+    expect(c.port.accessFaults!()).toBe(0);
+  });
+
+  it("CONTROL: a 503 on /v1/access is one call fault, and one access fault", async () => {
+    const c = opsClient([{ status: 503 }]);
+    await c.port.access(ACC);
+    expect(c.calls.map((f) => [f.path, f.status])).toEqual([["/v1/access", 503]]);
+    expect(c.port.accessFaults!()).toBe(1);
+  });
+
+  it("an ops read neither fills nor consults the access cache", async () => {
+    const c = opsClient([{ status: 200, body: wire("ops-200") }, { status: 200, body: wire("access-200-active") }]);
+    await c.port.readOps!();
+    await c.port.access(ACC);
+    expect(c.paths).toEqual(["/v1/ops", "/v1/access"]);
+  });
+});

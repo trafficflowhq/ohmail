@@ -361,6 +361,66 @@ export type AccessReadOpts =
   | { staleAllow: true; fresh?: never; askedAfter?: never }
   | { askedAfter: number; fresh?: never; staleAllow?: never };
 
+/**
+ * THE PROGRAM'S OWN FAILURES, as `POST /v1/ops` states them (wire contract v1, 2026-10-19): facts,
+ * never a verdict. The alert pass decides what pages through its own `alert_state`. Types only:
+ * the reader that dials and the parser that refuses an answer live on the hosted barrel.
+ */
+export type PlaneOpsSeverity = "critical" | "warning" | "signal";
+export type PlaneOpsVerdict = "done" | "failed" | "timed_out" | "skipped_locked";
+
+/** One cron pass the program runs: its newest verdict, and whether it is past its bound. */
+export interface PlaneOpsPass {
+  name: string;
+  /** Past `staleAfterSeconds` since its last completion, as the program judged it. */
+  stale: boolean;
+  severity: PlaneOpsSeverity;
+  ageSeconds: number;
+  staleAfterSeconds: number;
+  lastDoneAt: string | null;
+  lastOutcome: PlaneOpsVerdict | null;
+  lastOutcomeAt: string | null;
+  /** Failures and time-outs since the last `done`. */
+  failureStreak: number;
+  lastErrorClass: string | null;
+  /** False: the program holds no state for this pass, and its age runs from the program's start. */
+  recorded: boolean;
+}
+
+/** One active billing alert: `events_failed`, `unrecorded` or `<stage>:<code>`. */
+export interface PlaneOpsAlert {
+  key: string;
+  severity: PlaneOpsSeverity;
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  eventType: string | null;
+}
+
+export interface PlaneOpsAnswer {
+  v: 1;
+  observedAt: string;
+  passes: PlaneOpsPass[];
+  alerts: PlaneOpsAlert[];
+  /** More alerts were active than the answer carries: a partial reading, which clears nothing. */
+  alertsTruncated: boolean;
+}
+
+/**
+ * ONE READ OF `/v1/ops`. `unsupported` is a program older than the route (404): no reader, never a
+ * fault and never "all clear". `refused` is any other non-200, `unreachable` no answer inside the
+ * budget, `unreadable` a 200 refused whole, named by its field path and never by a value.
+ */
+export type PlaneOpsReading =
+  | { state: "read"; answer: PlaneOpsAnswer }
+  | { state: "unsupported" }
+  | { state: "refused"; status: number }
+  | { state: "unreachable" }
+  | { state: "unreadable"; field: string };
+
+/** One read of the program's own failures. Never throws. */
+export type PlaneOpsReader = () => Promise<PlaneOpsReading>;
+
 export interface EntitlementsPort {
   /**
    * NEVER THROWS: a transport fault answers with the last verdict this process saw for the
@@ -432,6 +492,12 @@ export interface EntitlementsPort {
    * Never throws. Optional: a program without the door answers `not_found` at the route.
    */
   confirmReturn?(accountId: string, sessionId: string): Promise<ReturnConfirmOutcome>;
+  /**
+   * The program's own failures (`POST /v1/ops`), for the alert pass. Never throws, never retries
+   * and records no call fault: the pass's own `plane_ops_unreadable` is the outage's record.
+   * Optional: a port without it states nothing, and the pass reads the plane rules as unread.
+   */
+  readOps?(): Promise<PlaneOpsReading>;
 }
 
 /**

@@ -1,6 +1,6 @@
 import {
   runAlertPass, listOpenAlerts, alertDriverStatuses, newDeliveryStreak, firingToLog,
-  sinkHealthOf, pagerVerdictOf,
+  sinkHealthOf, pagerVerdictOf, planeOpsStateLine,
   type AlertSink,
 } from "@trafficflow/db/cloud";
 import { sql } from "drizzle-orm";
@@ -315,6 +315,8 @@ function alertsArmed(
 const apiDeliveryStreak = newDeliveryStreak();
 /** What this warm instance last logged per firing alert — see {@link firingToLog}. */
 const apiFiringLogged = new Map<string, string>();
+/** The plane read this warm instance last logged — see {@link planeOpsStateLine}. */
+const apiPlaneOpsLogged: { key: string | null } = { key: null };
 
 /**
  * How many passes this instance has completed, and the only reason it is counted:
@@ -376,6 +378,8 @@ async function alertPass(
       // dropped `null` read as no reader, so the at-cap rule said "unread" on a host with no caps.
       parkedAccounts: cfg.parkedAccounts,
       accountsAtCap: cfg.accountsAtCap,
+      // The plane's own failures, read once per pass; `null` (a self-hosted server) reads nothing.
+      planeOps: cfg.planeOps,
       repeatMs: cfg.repeatMs,
       source: "api",
       environment: cfg.environment ?? "production",
@@ -402,6 +406,10 @@ async function alertPass(
     if (result.resolutionsTold.length > 0) {
       log.info("alert_resolutions_told", { alertKeys: result.resolutionsTold });
     }
+    // Named calls, never `log[level](…)`: the cookie-writer census refuses a computed-key call in a route file.
+    const planeLine = planeOpsStateLine(apiPlaneOpsLogged, result);
+    if (planeLine?.level === "warn") log.warn("plane_ops_state", planeLine.fields);
+    else if (planeLine) log.info("plane_ops_state", planeLine.fields);
     if (result.notified.length > 0) {
       log.warn("alert_notified", {
         alertKeys: result.notified.map((a) => a.key),
@@ -465,6 +473,8 @@ async function alertPass(
       sinkHealth: result.sinkHealth,
       // The rules this pass did not read, with why: a partial storage reading is named here.
       unread: result.unread,
+      // What the billing plane's `/v1/ops` read came to: `off`, `read`, `unsupported`, or a failure.
+      planeOps: result.planeOps,
     });
   } catch (err) {
     // `raw` means there is no error envelope above this handler, so it must never throw.

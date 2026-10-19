@@ -208,6 +208,13 @@ export interface AlertsConfig {
    */
   parkedAccounts?: EvaluateOptions["parkedAccounts"];
   accountsAtCap?: EvaluateOptions["accountsAtCap"];
+  /**
+   * The billing plane's own failures (`POST /v1/ops`), read once per pass through the host's
+   * entitlements client. `null` states that this host reads no plane (a self-hosted server); absent
+   * is unstated; either way the plane rules are unread, never clear. Never on {@link AdminConfig}:
+   * the console is a pure read and never dials the plane.
+   */
+  planeOps?: EvaluateOptions["planeOps"];
   repeatMs?: number;
   /**
    * The handle the pass and the reads run on where the host has NO content-blind role: set by

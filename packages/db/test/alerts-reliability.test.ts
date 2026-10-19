@@ -1577,7 +1577,8 @@ describe("a pass resolves ONLY what it evaluated", () => {
     // from the set flaps, and the flap is invisible in any single-driver test.
     expect([...SCOPED_ALERT_KINDS].sort()).toEqual([
       "ai_provider_down", "alert_driver_dark", "alert_driver_undeliverable", "alert_sink_degraded",
-      "api_cron_stale", "imap_admission_refused", "schema_behind", "worker_degraded", "worker_down",
+      "api_cron_stale", "imap_admission_refused", "plane_ops_unreadable", "schema_behind",
+      "worker_degraded", "worker_down",
     ]);
   });
 });
@@ -1750,6 +1751,9 @@ describe("the rule census", () => {
     // The alerting's own reach, rules 16-19, each driven firing and clear in
     // `alert-reach.test.ts` and `alert-driver-gaps.pg.test.ts`.
     "alert_driver_undeliverable", "alert_sink_degraded", "api_cron_stale", "signal_source_dark",
+    // The billing plane's own failures, rule 20, driven firing, clear and unread on real Postgres
+    // in `alert-plane-ops.pg.test.ts`.
+    "plane_pass_stale", "billing_alert", "plane_ops_unreadable",
   ];
 
   it("every kind in the union is EMITTED by a branch of evaluateAlerts", async () => {

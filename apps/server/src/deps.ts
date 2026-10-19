@@ -2,7 +2,7 @@ import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, parkedAccountsOf, t
 import { readDbTls } from "@trafficflow/db/cloud";
 import {
   acquireImapSlot, releaseImapSlot, webhookAlertSink, telegramAlertSink, refusingAlertSink,
-  recordApiFault, accountsAtCapOf,
+  recordApiFault, accountsAtCapOf, planeOpsReaderOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   makeSupabaseStagingStorage, makeS3StagingStorage,
   // The organizer's last completed pass, for the filing strip (mail 0097).
@@ -663,6 +663,8 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         // reason nobody here has a storage cap, and the rule says so rather than "no reader".
         parkedAccounts: parkedAccountsOf(UNMETERED),
         accountsAtCap: accountsAtCapOf(UNMETERED),
+        // And no billing plane to read: `null`, so the plane rules are unread, never clear.
+        planeOps: planeOpsReaderOf(UNMETERED),
         // The pass's handle: this host has no content-blind role (`AlertsConfig.db`).
         db: rt.alertDb ?? undefined,
       }

@@ -31,7 +31,10 @@ export type AdminAlertKind =
   | "api_fault_rate" | "pooler_refusals"
   // The alerting's own reach: a driver that can page nobody, one arm of a pager refusing, a
   // clocked API pass gone stale, the platform-signals poller gone dark.
-  | "alert_driver_undeliverable" | "alert_sink_degraded" | "api_cron_stale" | "signal_source_dark";
+  | "alert_driver_undeliverable" | "alert_sink_degraded" | "api_cron_stale" | "signal_source_dark"
+  // The billing plane's own failures, read from its `/v1/ops`: a stalled pass, a billing alert, and
+  // a driver that cannot read the plane.
+  | "plane_pass_stale" | "billing_alert" | "plane_ops_unreadable";
 /**
  * INCIDENT or SIGNAL — the class that decided whether this row went to a sink.
  *
