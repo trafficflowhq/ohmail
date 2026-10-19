@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, fenceErased,
@@ -619,12 +619,47 @@ export interface JunkSweepMailbox {
   pending: boolean;
 }
 
+/** The most held ids one preview answers — the newest; `truncated` says when there were more. */
+export const JUNK_HELD_MAX = 500;
+
+/**
+ * The mirror letters sitting in `ohmail/Quarantine` that are desired there: what the Screener's
+ * shelf lists beside the Junk window. A letter filed into the provider's Junk keeps its place in
+ * the Spam pile and its `folder` on the wire, so the client cannot tell the two apart itself.
+ */
+export interface JunkHeld { ids: string[]; truncated: boolean }
+
 export interface JunkSweepPreview {
   mailboxes: JunkSweepMailbox[];
   /** Candidates across the mailboxes that CAN move (have a junk folder) — the offer's number. */
   movable: number;
   /** Any mailbox has a press outstanding. */
   pending: boolean;
+  /** Every mailbox not stood down, opted-out and Junk-less ones included, newest first. */
+  held: JunkHeld;
+}
+
+/**
+ * The held ids over the sweep's own predicate, per mailbox, merged newest first and capped. Newest
+ * by the store's arrival key (the order the client mirror is cut by), never `created_at`: an
+ * imported pile is ingested newest first, so ingest time runs opposite to the letters' dates.
+ */
+async function heldInQuarantine(deps: ApiDeps, accountId: string): Promise<JunkHeld> {
+  const boxes = await junkMailboxesOf(deps, accountId);
+  const key = dialect(deps.db).arrivalKey(sql`${messages.date}`, sql`${messages.arrivedAt}`).mapWith(messages.date) as SQL<Date>;
+  const found: Array<{ id: string; at: number }> = [];
+  for (const b of boxes) {
+    const rows = await deps.db
+      .select({ id: messages.id, at: key })
+      .from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(junkSweepCandidateWhere(accountId, b.id))
+      .orderBy(desc(key), desc(messages.id))
+      .limit(JUNK_HELD_MAX + 1);
+    for (const r of rows) found.push({ id: r.id, at: new Date(r.at).getTime() });
+  }
+  found.sort((x, y) => y.at - x.at || (x.id < y.id ? 1 : x.id > y.id ? -1 : 0));
+  return { ids: found.slice(0, JUNK_HELD_MAX).map((r) => r.id), truncated: found.length > JUNK_HELD_MAX };
 }
 
 /**
@@ -648,7 +683,9 @@ export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promis
       ne(mailboxes.status, "disabled"),
       isNull(mailboxes.foldersDisabledAt),
     ));
-  if (boxes.length === 0) return { mailboxes: [], movable: 0, pending: false };
+  // Before the early return: a mailbox opted out of folders still holds its letters.
+  const held = await heldInQuarantine(deps, accountId);
+  if (boxes.length === 0) return { mailboxes: [], movable: 0, pending: false, held };
   const countOf = new Map<string, number>();
   for (const b of boxes) {
     const [row] = await deps.db
@@ -668,6 +705,7 @@ export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promis
     mailboxes: out,
     movable: out.filter((m) => m.hasJunkFolder).reduce((n, m) => n + m.candidates, 0),
     pending: out.some((m) => m.pending),
+    held,
   };
 }
 

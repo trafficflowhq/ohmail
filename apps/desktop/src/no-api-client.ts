@@ -947,6 +947,10 @@ export interface JunkSweepWire {
     mailboxes: JunkSweepMailboxWire[];
     movable: number;
     pending: boolean;
+    held?: {
+        ids: string[];
+        truncated: boolean;
+    };
 }
 
 export interface JunkItemWire {

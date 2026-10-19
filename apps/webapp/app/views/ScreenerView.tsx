@@ -53,6 +53,7 @@ import { PILE_KEY, usePileNames, useDecisionBarCopy } from "../shell/decision-co
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { avatarHue, displayTime } from "../shell/format";
 import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
+import { quarantineShelf, shelfRowMatches } from "../shell/quarantine-shelf";
 import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "../shell/idn";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
@@ -839,14 +840,20 @@ export function ScreenerView({
 
   /**
    * THE THIRD SEGMENT'S TWO FACES. With the junk control present the segment is the LIVE
-   * window — `items` is deliberately EMPTY so none of the mirror-row machinery below (the row
-   * renderer, `current`, `decidable`) ever sees a junk row, and the junk list drives j/k
-   * through `ids` alone. Without it, `state.spam` exactly as before the window existed.
+   * window, and `items` is the QUARANTINE SHELF under it: the mirror's spam rows cut to the
+   * letters the server says sit in ohmail/Quarantine, filtered by the typed Junk query. No junk
+   * row ever reaches the mirror-row machinery below (the row renderer, `current`,
+   * `decidable`); j/k walk the window's keys, then the shelf's ids. Without the control,
+   * `state.spam` exactly as before the window existed.
    */
   const junkActive = segment === "spam" && junk !== undefined;
   // `visible`, not `items`: with a search typed this is the locally-kept rows plus the server's
   // appended hits, and selection / body-on-open / the rescue all address rows from it.
   const junkItems: JunkItemWire[] = junkActive ? junk!.visible : [];
+  const shelfHeld = junkActive ? junk!.held : null;
+  const shelf: SpamRow[] = shelfHeld === null
+    ? []
+    : quarantineShelf(state.spam, shelfHeld.ids).filter((r) => shelfRowMatches(r, junk!.search.query));
   const items: Array<ScreenerSenderDTO | SpamRow> =
     segment === "waiting"
       ? activeFilter === null
@@ -858,7 +865,7 @@ export function ScreenerView({
       : segment === "screened"
         ? state.screenedOut
         : junkActive
-          ? []
+          ? shelf
           : state.spam;
 
   /** The Waiting list reads the store's facts when the store has answered (`waitingSurfaceInput`). */
@@ -892,7 +899,7 @@ export function ScreenerView({
    * Empty in every mode but `pending`, so this is the queue's own list everywhere else.
    */
   const ids = junkActive
-    ? junkItems.map(junkKeyOf)
+    ? [...junkItems.map(junkKeyOf), ...items.map(idOf)]
     : segment === "waiting"
       ? [...items.map(idOf), ...state.decided.map((d) => d.sender.id)]
       : items.map(idOf);
@@ -951,7 +958,7 @@ export function ScreenerView({
    * resolves, and handed back on that same condition, whichever way the sender left (this
    * decision, another surface, an emptied segment). Undo returns the sender to the list only.
    */
-  const fullShown = full && (junkActive ? junkCurrent !== null : current !== null);
+  const fullShown = full && (junkCurrent !== null || current !== null);
   useEffect(() => {
     if (full && !fullShown) onFull(false);
   }, [full, fullShown, onFull]);
@@ -1786,12 +1793,20 @@ export function ScreenerView({
             narrow viewport the read column is hidden until `onFull(true)`, so a tap that only
             changed the selection would open nothing (review finding on this commit). */}
         {junkActive ? <JunkRows junk={junk!} activeKey={activeId} onSelect={selectRow} /> : null}
-        <ListRows ariaLabel={t("title")}>
+        {/* THE QUARANTINE SHELF'S HEADING: what ohmail keeps itself, beside the provider's Junk.
+            A cut answer says so in a sentence, never as a count of what is missing. */}
+        {junkActive && items.length > 0 ? (
+          <p className="scn-junk-note">
+            <b>{t("quarantineShelf")}</b> {t("quarantineShelfNote")}
+            {shelfHeld?.truncated ? <> {t("quarantineShelfTruncated")}</> : null}
+          </p>
+        ) : null}
+        <ListRows ariaLabel={junkActive && items.length > 0 ? t("quarantineShelf") : t("title")}>
           <div aria-hidden data-window-top="" style={{ height: win.padTop }} />
-          {junkActive ? null : items.length ? (
+          {items.length ? (
             items.slice(itemsFrom, itemsTo).map((x, k) =>
               row(x, itemsFrom + k, { size: items.length + decidedRows.length, position: itemsFrom + k + 1 }))
-          ) : state.decided.length === 0 ? (
+          ) : junkActive ? null : state.decided.length === 0 ? (
             <Empty segment={segment} surface={emptySurface(items.length)}
               why={segment === "waiting" ? waitingInput(items.length).why : "importing"} notYet={notOrganizingYet} />
           ) : null}
@@ -1845,12 +1860,13 @@ export function ScreenerView({
       </ListPane>
 
       <div className="read-col scn-read">
-        {junkActive ? (
-          // The live window's preview. Nothing to select — the list already says why (loading,
-          // failed, empty) — leaves the column empty, exactly as the mirror segments do.
-          junkCurrent ? (
-            <JunkPreview item={junkCurrent} junk={junk!} onBack={() => onFull(false)} />
-          ) : null
+        {junkCurrent ? (
+          // The live window's preview; a selected shelf row falls through to the Spam preview.
+          <JunkPreview item={junkCurrent} junk={junk!} onBack={() => onFull(false)} />
+        ) : junkActive && !current ? (
+          // Nothing to select — the list already says why (loading, failed, empty) — leaves the
+          // column empty, exactly as the mirror segments do.
+          null
         ) : !current ? (
           // SHOW THE EMPTY STATE ONCE. When the segment holds nothing, the list pane already
           // renders `<Empty>` at `ListRows` above — and on mobile the list is the only pane

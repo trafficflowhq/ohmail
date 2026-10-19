@@ -685,3 +685,124 @@ describe("useJunkWindow — returning to a PENDING term (review round 5)", () =>
     expect(control!.search.phase).toBe("local");
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   RE-ENTRY (JUNK-WINDOW-FIRST-PAGE-ONCE-PER-SESSION): coming back to the segment re-reads the
+   first page and the preview once they are older than JUNK_FIRST_PAGE_FRESH_MS. No timers.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+describe("useJunkWindow — re-entry re-reads a page past its age", () => {
+  const START = Date.UTC(2026, 9, 19, 12, 0, 0);
+  let nowMs = START;
+  let clock: { mockRestore: () => void } | null = null;
+  beforeEach(() => {
+    nowMs = START;
+    clock = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+  });
+  afterEach(() => { clock?.mockRestore(); clock = null; vi.useRealTimers(); });
+
+  const reenter = async (advanceMs: number): Promise<void> => {
+    await act(async () => { setActive!(false); });
+    nowMs += advanceMs;
+    await act(async () => { setActive!(true); });
+    await settle(6);
+  };
+  const two = [item(2, "7", "2026-10-19T11:02:00.000Z"), item(1, "7", "2026-10-19T11:01:00.000Z")];
+
+  it("re-entry at the age reads the list again and shows what was filed since", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockResolvedValueOnce(pageWire([], null)).mockResolvedValue(pageWire(two, null));
+    await mountHook();
+    expect(junkList).toHaveBeenCalledTimes(1);
+    expect(control!.visible).toHaveLength(0);
+    await reenter(JUNK_FIRST_PAGE_FRESH_MS);
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(control!.phase).toBe("ready");
+    expect(control!.visible).toHaveLength(2);
+  });
+
+  it("re-entry inside the age, and ten flips, read once", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockResolvedValue(pageWire([], null));
+    await mountHook();
+    await reenter(JUNK_FIRST_PAGE_FRESH_MS - 1);
+    for (let i = 0; i < 10; i++) await reenter(0);
+    expect(junkList).toHaveBeenCalledTimes(1);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("after a failed read, re-entry past the age retries once; inside the age it does not", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockRejectedValueOnce(new Error("503")).mockResolvedValue(pageWire(two, null));
+    await mountHook();
+    expect(control!.phase).toBe("failed");
+    await reenter(1_000);
+    expect(junkList).toHaveBeenCalledTimes(1);
+    expect(control!.phase).toBe("failed");
+    await reenter(JUNK_FIRST_PAGE_FRESH_MS);
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(control!.phase).toBe("ready");
+  });
+
+  it("the preview is re-read on entry past the age; `held` is a Set, kept over a failed read, null without it", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockResolvedValue(pageWire([], null));
+    junkSweepPreview
+      .mockResolvedValueOnce({ ...NO_SWEEP, held: { ids: ["q1", "q2"], truncated: true } })
+      .mockRejectedValueOnce(new Error("503"))
+      .mockResolvedValueOnce(NO_SWEEP);
+    await mountHook();
+    expect(control!.held?.ids).toBeInstanceOf(Set);
+    expect([...control!.held!.ids]).toEqual(["q1", "q2"]);
+    expect(control!.held!.truncated).toBe(true);
+    await reenter(JUNK_FIRST_PAGE_FRESH_MS);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(2);
+    expect([...control!.held!.ids], "a failed read keeps the last answer").toEqual(["q1", "q2"]);
+    await reenter(JUNK_FIRST_PAGE_FRESH_MS);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(3);
+    expect(control!.held).toBeNull();
+  });
+
+  it("after a press, the first preview no longer pending re-reads the page exactly once", async () => {
+    const { JUNK_SWEEP_POLL_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const box = { id: "mb1", address: "a@example.invalid", candidates: 2, hasJunkFolder: true, pending: false };
+    const pending: JunkSweepWire = { mailboxes: [{ ...box, pending: true }], movable: 2, pending: true };
+    const emptied: JunkSweepWire = { mailboxes: [{ ...box, candidates: 0 }], movable: 0, pending: false };
+    junkList.mockResolvedValue(pageWire([], null));
+    junkSweepPreview
+      .mockResolvedValueOnce({ mailboxes: [box], movable: 2, pending: false })
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValue(emptied);
+    junkSweepRequest.mockResolvedValueOnce(pending);
+    await mountHook();
+    expect(control!.sweep.phase).toBe("offer");
+    await act(async () => { control!.sweep.request(); });
+    await settle();
+    expect(control!.sweep.phase).toBe("pending");
+    expect(junkList).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(JUNK_SWEEP_POLL_MS); });
+    await settle();
+    expect(junkList, "still pending: no re-read").toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(JUNK_SWEEP_POLL_MS); });
+    await settle();
+    expect(control!.sweep.phase).toBe("done");
+    expect(junkList).toHaveBeenCalledTimes(2);
+    await act(async () => { vi.advanceTimersByTime(JUNK_SWEEP_POLL_MS * 3); });
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(2);
+  });
+
+  it("staying on the segment for ten times the age makes no extra read", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockResolvedValue(pageWire(two, null));
+    await mountHook();
+    for (let i = 0; i < 10; i++) {
+      nowMs += JUNK_FIRST_PAGE_FRESH_MS;
+      await act(async () => { control!.search.setQuery(i % 2 === 0 ? "junk" : ""); });
+      await settle();
+    }
+    expect(junkList).toHaveBeenCalledTimes(1);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(1);
+  });
+});

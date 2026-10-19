@@ -106,6 +106,7 @@ function control(over: Partial<JunkWindowControl> = {}): JunkWindowControl {
       query: "", setQuery: vi.fn(), phase: "idle", hits: [], localCount: 0, mailboxes: [], truncated: false, searchServer: vi.fn(),
     },
     sweep: { phase: "none", preview: null, requesting: false, request: vi.fn(), dismiss: vi.fn() },
+    held: null,
     ...over,
   };
 }

@@ -10,7 +10,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { and, eq, sql } from "drizzle-orm";
 import {
   listJunk, junkBody, rescueJunk, searchJunk, junkSweepPreview, requestJunkSweep,
-  JUNK_SEARCH_MAX_CHARS,
+  JUNK_HELD_MAX, JUNK_SEARCH_MAX_CHARS,
 } from "../src/junk-window.js";
 import type { ApiDeps } from "../src/deps.js";
 
@@ -803,6 +803,131 @@ describe("the one-time sweep offer", () => {
     const connect = vi.spyOn(ImapAdapter.prototype, "connect");
     await expect(junkSweepPreview(off.deps, off.accountId)).rejects.toMatchObject({ code: "folders_disabled" });
     await expect(requestJunkSweep(off.deps, ctxOf(off.accountId))).rejects.toMatchObject({ code: "folders_disabled" });
+    expect(connect).not.toHaveBeenCalled();
+  });
+});
+
+describe("the held list", () => {
+  /** One mirror letter with its locator, desired folder and reconcile state. */
+  async function letter(
+    db: Seeded["db"], accountId: string, mailboxId: string, tag: string,
+    at: { loc: string; desired: string; status?: string; deleted?: boolean; date?: Date; createdAt?: Date },
+  ): Promise<string> {
+    const [m] = await db.insert(messages).values({
+      accountId, mailboxId, messageIdHeader: `<h-${tag}@x>`, bodyHash: `h-${tag}`, dedupKey: `h-${tag}`,
+      subject: tag, fromAddress: "spammer@example.invalid",
+      nativeLocator: { folder: at.loc, ref: "7:1" }, snippet: "", unread: false,
+      ...(at.deleted ? { deletedAt: NOW } : {}),
+      ...(at.date ? { date: at.date, arrivedAt: at.date } : {}),
+      ...(at.createdAt ? { createdAt: at.createdAt } : {}),
+    }).returning({ id: messages.id });
+    await db.insert(folderState).values({
+      messageId: m!.id, desiredFolder: at.desired, observedFolder: at.loc, lastSetBy: "us",
+      reconcileStatus: at.status ?? "reconciled",
+    });
+    return m!.id;
+  }
+  const Q = "ohmail/Quarantine";
+
+  it("lists the letter sitting in Quarantine, not one filed to Junk, on its way, moved by the user or deleted", async () => {
+    const a = await seed();
+    const held = await letter(a.db, a.accountId, a.mailboxId, "held", { loc: Q, desired: Q });
+    await letter(a.db, a.accountId, a.mailboxId, "filed", { loc: JUNK_PATH, desired: Q });
+    await letter(a.db, a.accountId, a.mailboxId, "transit", { loc: "INBOX", desired: Q, status: "pending" });
+    await letter(a.db, a.accountId, a.mailboxId, "moved", { loc: Q, desired: "INBOX", status: "pending" });
+    await letter(a.db, a.accountId, a.mailboxId, "gone", { loc: Q, desired: Q, deleted: true });
+    const pv = await junkSweepPreview(a.deps, a.accountId);
+    expect(pv.held).toEqual({ ids: [held], truncated: false });
+  });
+
+  it("a mailbox with no Junk folder and an opted-out one are included; a stood-down one is not; the offer is unchanged", async () => {
+    const a = await seed();
+    const noJunk = await seed({ db: a.db, accountId: a.accountId, junkFolder: null });
+    const off = await seed({ db: a.db, accountId: a.accountId, foldersDisabled: true });
+    const down = await seed({ db: a.db, accountId: a.accountId, status: "disabled" });
+    const t0 = Date.UTC(2026, 7, 1);
+    // Ingest time runs opposite to the letters' dates, as on an imported pile.
+    const at = (s: number) => ({ date: new Date(t0 + s * 1_000), createdAt: new Date(t0 + (10 - s) * 1_000) });
+    const ha = await letter(a.db, a.accountId, a.mailboxId, "a", { loc: Q, desired: Q, ...at(3) });
+    const hb = await letter(a.db, a.accountId, noJunk.mailboxId, "b", { loc: Q, desired: Q, ...at(2) });
+    const hc = await letter(a.db, a.accountId, off.mailboxId, "c", { loc: Q, desired: Q, ...at(1) });
+    await letter(a.db, a.accountId, down.mailboxId, "d", { loc: Q, desired: Q, ...at(4) });
+    const pv = await junkSweepPreview(a.deps, a.accountId);
+    // Newest first across mailboxes, by arrival key.
+    expect(pv.held).toEqual({ ids: [ha, hb, hc], truncated: false });
+    expect(pv.mailboxes.map((m) => m.id).sort()).toEqual([a.mailboxId, noJunk.mailboxId].sort());
+    expect(pv.movable).toBe(1);
+  });
+
+  it("two accounts each see only their own ids", async () => {
+    const a = await seed();
+    const b = await seed({ db: a.db });
+    const ha = await letter(a.db, a.accountId, a.mailboxId, "mine", { loc: Q, desired: Q });
+    const hb = await letter(a.db, b.accountId, b.mailboxId, "theirs", { loc: Q, desired: Q });
+    expect((await junkSweepPreview(a.deps, a.accountId)).held.ids).toEqual([ha]);
+    expect((await junkSweepPreview(b.deps, b.accountId)).held.ids).toEqual([hb]);
+  });
+
+  it("501 held letters answer the 500 newest, cut; exactly 500 is not cut", async () => {
+    const a = await seed();
+    const t0 = Date.UTC(2026, 7, 1);
+    const values = Array.from({ length: 501 }, (_, i) => ({
+      accountId: a.accountId, mailboxId: a.mailboxId, messageIdHeader: `<bulk-${i}@x>`, bodyHash: `b${i}`,
+      dedupKey: `bulk-${i}`, subject: `bulk ${i}`, fromAddress: "spammer@example.invalid",
+      nativeLocator: { folder: Q, ref: `7:${i + 1}` }, snippet: "", unread: false,
+      date: new Date(t0 + i * 1_000), arrivedAt: new Date(t0 + i * 1_000),
+    }));
+    const rows = await a.db.insert(messages).values(values).returning({ id: messages.id, subject: messages.subject });
+    await a.db.insert(folderState).values(rows.map((r) => ({
+      messageId: r.id, desiredFolder: Q, observedFolder: Q, lastSetBy: "us" as const, reconcileStatus: "reconciled" as const,
+    })));
+    const oldest = rows.find((r) => r.subject === "bulk 0")!.id;
+    const newest = rows.find((r) => r.subject === "bulk 500")!.id;
+    const cut = await junkSweepPreview(a.deps, a.accountId);
+    expect(cut.held.ids).toHaveLength(JUNK_HELD_MAX);
+    expect(cut.held.truncated).toBe(true);
+    expect(cut.held.ids[0]).toBe(newest);
+    expect(cut.held.ids).not.toContain(oldest);
+    await a.db.update(messages).set({ deletedAt: NOW }).where(eq(messages.id, oldest));
+    const whole = await junkSweepPreview(a.deps, a.accountId);
+    expect(whole.held.ids).toHaveLength(500);
+    expect(whole.held.truncated).toBe(false);
+  });
+
+  it("an imported pile over 500 keeps its 500 newest-dated letters, whatever order it was ingested in", async () => {
+    const a = await seed();
+    const t0 = Date.UTC(2026, 7, 1);
+    // A first sync reads newest first: letter i is dated i days back and ingested i seconds in.
+    const values = Array.from({ length: 600 }, (_, i) => ({
+      accountId: a.accountId, mailboxId: a.mailboxId, messageIdHeader: `<pile-${i}@x>`, bodyHash: `p${i}`,
+      dedupKey: `pile-${i}`, subject: `pile ${i}`, fromAddress: "spammer@example.invalid",
+      nativeLocator: { folder: Q, ref: `7:${600 - i}` }, snippet: "", unread: false,
+      date: new Date(t0 - i * 86_400_000), arrivedAt: new Date(t0 - i * 86_400_000), createdAt: new Date(t0 + i * 1_000),
+    }));
+    const rows = await a.db.insert(messages).values(values).returning({ id: messages.id, subject: messages.subject });
+    await a.db.insert(folderState).values(rows.map((r) => ({
+      messageId: r.id, desiredFolder: Q, observedFolder: Q, lastSetBy: "us" as const, reconcileStatus: "reconciled" as const,
+    })));
+    const idOf = (i: number) => rows.find((r) => r.subject === `pile ${i}`)!.id;
+    const pv = await junkSweepPreview(a.deps, a.accountId);
+    expect(pv.held.truncated).toBe(true);
+    expect(pv.held.ids).toEqual(Array.from({ length: JUNK_HELD_MAX }, (_, i) => idOf(i)));
+  });
+
+  it("the press answers the held list too; folders off is still 409 and never dials", async () => {
+    const a = await seed();
+    const held = await letter(a.db, a.accountId, a.mailboxId, "pressed", { loc: Q, desired: Q });
+    const after = await requestJunkSweep(a.deps, ctxOf(a.accountId));
+    expect(after.held).toEqual({ ids: [held], truncated: false });
+    // No participating mailbox still carries the list (a mailbox opted out keeps its letters held).
+    const off = await seed({ foldersDisabled: true });
+    const offHeld = await letter(off.db, off.accountId, off.mailboxId, "opted-out", { loc: Q, desired: Q });
+    const pv = await junkSweepPreview(off.deps, off.accountId);
+    expect(pv.mailboxes).toEqual([]);
+    expect(pv.held).toEqual({ ids: [offHeld], truncated: false });
+    const flagOff = await seed({ foldersOn: false });
+    const connect = vi.spyOn(ImapAdapter.prototype, "connect");
+    await expect(junkSweepPreview(flagOff.deps, flagOff.accountId)).rejects.toMatchObject({ code: "folders_disabled", httpStatus: 409 });
     expect(connect).not.toHaveBeenCalled();
   });
 });

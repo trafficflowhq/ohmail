@@ -3406,6 +3406,8 @@ export interface JunkSweepWire {
   /** Candidates across the mailboxes that CAN move — the offer's number. */
   movable: number;
   pending: boolean;
+  /** Mirror letters held in ohmail/Quarantine, newest first; absent from an older server. */
+  held?: { ids: string[]; truncated: boolean };
 }
 
 /** One row of the live Junk window — a header fact, never a mirror entity. */

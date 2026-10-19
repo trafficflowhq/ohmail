@@ -185,7 +185,15 @@ export interface JunkWindowControl {
   dismissRescue: (item: JunkItemWire) => void;
   search: JunkSearchControl;
   sweep: JunkSweepControl;
+  /**
+   * The mirror letters sitting in ohmail/Quarantine, from the last preview that answered. `null`
+   * when the server sent no list (an older server): no shelf, never a guess.
+   */
+  held: JunkHeldControl | null;
 }
+
+/** The held ids as the shelf reads them; `truncated` when the server cut the list at its cap. */
+export interface JunkHeldControl { ids: ReadonlySet<string>; truncated: boolean }
 
 /** Case-folded substring over subject, sender name and address — the local filter's whole rule. */
 export function junkRowMatches(item: JunkItemWire, query: string): boolean {
@@ -196,6 +204,11 @@ export function junkRowMatches(item: JunkItemWire, query: string): boolean {
     || (item.from.name?.toLowerCase().includes(q) ?? false);
 }
 
+/**
+ * How old the first page and the preview may be before an entry into the segment reads them
+ * again. Only an entry re-reads; staying on the segment never does.
+ */
+export const JUNK_FIRST_PAGE_FRESH_MS = 30_000;
 /** How long a typed query rests before the server is asked for it. */
 export const JUNK_SEARCH_DEBOUNCE_MS = 450;
 /** How often the queued sweep re-reads its preview, and for how long, before it stops asking. */
@@ -223,8 +236,9 @@ function readDismissed(key: string): number {
 
 /**
  * The window's state machine. `active` is "the Junk segment is on screen AND the feature is on":
- * the first page loads lazily on entry and stays for the session; nothing is fetched while the
- * flag is off or the view is elsewhere.
+ * the first page loads lazily on entry, and a later entry reads it again once it is
+ * {@link JUNK_FIRST_PAGE_FRESH_MS} old; nothing is fetched while the flag is off or the view is
+ * elsewhere.
  */
 export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWire): JunkWindowControl {
   const t = useTranslations("screener");
@@ -250,8 +264,9 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     createSessionBodyDoor<JunkBodyWireAnswer>({ onChange: setBodies, reopenFailed: true }),
   );
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
-  /** Has THIS session read page one yet? Lazily, once, on segment entry. */
-  const asked = useRef(false);
+  /** When page one was last asked for (null: never), and whether that ask is still out. */
+  const listAskedAt = useRef<number | null>(null);
+  const listInFlight = useRef(false);
   /** A stale page must not land over a newer reload's answer. */
   const generation = useRef(0);
 
@@ -263,10 +278,13 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       return;
     }
     const gen = ++generation.current;
+    listAskedAt.current = Date.now();
+    listInFlight.current = true;
     setPhase("loading");
     void wire.list().then(
       (page) => {
         if (generation.current !== gen) return;
+        listInFlight.current = false;
         setItems(page.items);
         setBoxes(page.mailboxes);
         setNextCursor(page.nextCursor);
@@ -274,20 +292,14 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       },
       () => {
         if (generation.current !== gen) return;
-        // FAILED, not empty — the §16.2 rule. The retry is the human's, not a loop's.
+        listInFlight.current = false;
+        // FAILED, not empty — the §16.2 rule. The retry is the human's or the next entry's.
         setPhase("failed");
       },
     );
   }, [supported, wire]);
 
-  useEffect(() => {
-    if (!active || asked.current) return;
-    asked.current = true;
-    fetchFirst();
-  }, [active, fetchFirst]);
-
   const reload = useCallback(() => {
-    asked.current = true;
     fetchFirst();
   }, [fetchFirst]);
 
@@ -505,12 +517,21 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   const [sweepPhase, setSweepPhase] = useState<JunkSweepControl["phase"]>("unknown");
   const [sweepPreview, setSweepPreview] = useState<JunkSweepWire | null>(null);
   const [requesting, setRequesting] = useState(false);
-  const sweepAsked = useRef(false);
+  const [held, setHeld] = useState<JunkHeldControl | null>(null);
+  const previewAskedAt = useRef<number | null>(null);
+  const previewInFlight = useRef(false);
   /** Set once the human pressed THIS session — what turns an emptied pile into "done". */
   const pressed = useRef(false);
+  /** A press waits for its sweep to finish, then the page is read once: the moved mail is in Junk now. */
+  const rereadAfterSweep = useRef(false);
 
   const absorbPreview = useCallback((pv: JunkSweepWire) => {
     setSweepPreview(pv);
+    setHeld(pv.held ? { ids: new Set(pv.held.ids), truncated: pv.held.truncated } : null);
+    if (rereadAfterSweep.current && !pv.pending) {
+      rereadAfterSweep.current = false;
+      fetchFirst();
+    }
     const total = pv.mailboxes.reduce((n, m) => n + m.candidates, 0);
     if (total === 0) {
       // Genuinely empty — "done" only after a press THIS session, else nothing to say.
@@ -525,16 +546,32 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       // Offered only when the pile has GROWN past the size it was dismissed at — per account.
       setSweepPhase(pv.movable > readDismissed(dismissKeyOf(pv)) ? "offer" : "none");
     }
-  }, []);
+  }, [fetchFirst]);
 
+  const readPreview = useCallback(() => {
+    previewAskedAt.current = Date.now();
+    previewInFlight.current = true;
+    void wire.sweepPreview().then(
+      (pv) => { previewInFlight.current = false; absorbPreview(pv); },
+      // A failed read makes NO offer: a first one stays `unknown`, a later one keeps what it had.
+      () => { previewInFlight.current = false; },
+    );
+  }, [wire, absorbPreview]);
+
+  /* ENTRY: on each rising edge of `active`, the page and the preview are read if never asked, or
+     if the last ask is at least the age old and none is out. An edge, never a timer: staying on
+     the segment, or a tab coming back into view, reads nothing. */
+  const wasActive = useRef(false);
   useEffect(() => {
-    if (!active || !supported || sweepAsked.current) return;
-    sweepAsked.current = true;
-    void wire.sweepPreview().then(absorbPreview, () => {
-      // A failed read makes NO offer — `unknown` renders nothing rather than a guess.
-      setSweepPhase("unknown");
-    });
-  }, [active, supported, wire, absorbPreview]);
+    const entered = active && !wasActive.current;
+    wasActive.current = active;
+    if (!entered) return;
+    const now = Date.now();
+    const due = (at: number | null, inFlight: boolean): boolean =>
+      at === null || (!inFlight && now - at >= JUNK_FIRST_PAGE_FRESH_MS);
+    if (due(listAskedAt.current, listInFlight.current)) fetchFirst();
+    if (supported && due(previewAskedAt.current, previewInFlight.current)) readPreview();
+  }, [active, supported, fetchFirst, readPreview]);
 
   // While a press is outstanding, re-read the preview on a slow beat until the pile is empty
   // (or the beat runs out — the offer then keeps saying "queued", which is still true).
@@ -554,9 +591,10 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     if (requesting) return;
     setRequesting(true);
     pressed.current = true;
+    rereadAfterSweep.current = true;
     void wire.sweepRequest().then(
       (pv) => { setRequesting(false); absorbPreview(pv); },
-      () => { setRequesting(false); setSweepPhase("failed"); },
+      () => { setRequesting(false); rereadAfterSweep.current = false; setSweepPhase("failed"); },
     );
   }, [requesting, wire, absorbPreview]);
 
@@ -578,5 +616,6 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       searchServer: () => searchServer(),
     },
     sweep: { phase: sweepPhase, preview: sweepPreview, requesting, request, dismiss },
+    held,
   };
 }
