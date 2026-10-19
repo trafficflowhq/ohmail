@@ -1403,6 +1403,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * read.
    */
   private closing = false;
+  /**
+   * Rejects the dial in flight (the auth fetch, then imapflow's `connect()`). imapflow's `close()`
+   * before its socket's `connect` event, or inside the TLS handshake, clears its own connect timer
+   * and settles nothing, so a closed dial would otherwise stay pending for ever.
+   */
+  private abortDial: ((err: Error) => void) | null = null;
 
   /** The organizer io's resolved `ohmail/_meta` path on THIS login, so a pass costs no LIST; cleared at every dial. */
   private organizerMetaPath: string | null = null;
@@ -1622,23 +1628,34 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // no-op; for an OAuth config it awaits `fetchAccessToken()` into a literal token. Doing it here
     // — above the injected-client branch too — is what makes "connect() fetches a token, and a
     // re-dial fetches a FRESH one" true regardless of how the client was constructed.
-    const resolvedAuth = await resolveImapAuth(this.config.auth);
-    if (this.opts.client) {
-      this.client = this.opts.client as ImapFlow;
-      sliceRowStreams(this.client);
-      answerForTheAskedMessage(this.client);
-      this.guardAsyncErrors();
-    } else {
-      this.client = new ImapFlow(imapFlowOptions({ ...this.config, auth: resolvedAuth }, { logger: this.opts.logger }));
-      sliceRowStreams(this.client);
-      answerForTheAskedMessage(this.client);
-      // BEFORE the dial, not after, and the ordering is the whole point. imapflow's own
-      // `emitError` routes to `initialReject` only while the connect promise is pending; the
-      // moment it resolves, every later failure is a plain `emit("error")`. `connect()` is
-      // followed here by `list()`, so "after `await connect()`" already has a window in which
-      // a dead socket would emit into nothing.
-      this.guardAsyncErrors();
-      await this.client.connect();
+    // A close from here until the dial is up rejects this call (see `abortDial`).
+    let abort!: (err: Error) => void;
+    const aborted = new Promise<never>((_, reject) => { abort = reject; });
+    aborted.catch(() => { /* raced below */ });
+    this.abortDial = abort;
+    try {
+      const resolvedAuth = await Promise.race([resolveImapAuth(this.config.auth), aborted]);
+      if (this.opts.client) {
+        this.client = this.opts.client as ImapFlow;
+        sliceRowStreams(this.client);
+        answerForTheAskedMessage(this.client);
+        this.guardAsyncErrors();
+      } else {
+        this.client = new ImapFlow(imapFlowOptions({ ...this.config, auth: resolvedAuth }, { logger: this.opts.logger }));
+        sliceRowStreams(this.client);
+        answerForTheAskedMessage(this.client);
+        // BEFORE the dial, not after, and the ordering is the whole point. imapflow's own
+        // `emitError` routes to `initialReject` only while the connect promise is pending; the
+        // moment it resolves, every later failure is a plain `emit("error")`. `connect()` is
+        // followed here by `list()`, so "after `await connect()`" already has a window in which
+        // a dead socket would emit into nothing.
+        this.guardAsyncErrors();
+        const dial = this.client.connect();
+        dial.catch(() => { /* abandoned once aborted: its socket is already destroyed */ });
+        await Promise.race([dial, aborted]);
+      }
+    } finally {
+      if (this.abortDial === abort) this.abortDial = null;
     }
     withholdUidExpunge(this.client);
     const list = await this.listBounded();
@@ -1717,6 +1734,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   async close(): Promise<void> {
+    // A dial still in flight has no session to log out of; LOGOUT would wait on the handshake.
+    if (this.abortDial !== null) { this.forceClose(); return; }
     // BEFORE the logout, because `logout()` itself emits `close` — see {@link closing}.
     this.closing = true;
     // A RETIRED adapter is already destroyed, and its LOGOUT would queue behind the very command
@@ -1740,6 +1759,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   forceClose(): void {
     this.closing = true;
     try { this.client?.close(); } catch { /* already down */ }
+    const abort = this.abortDial;
+    this.abortDial = null;
+    abort?.(Object.assign(new Error("the connection was closed while it was being dialled"), { code: "NoConnection" }));
     this.transporter?.close();
     this.established = false;
   }

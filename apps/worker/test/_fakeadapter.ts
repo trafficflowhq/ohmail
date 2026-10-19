@@ -87,6 +87,16 @@ export interface FakeControl {
   }>;
   /** `connect()` awaits this before proceeding (a takeover barrier). */
   gate?: Promise<void>;
+  /**
+   * `connect()` never settles, not even on a close or a force-close: a dial stuck in its TCP
+   * connect or TLS handshake, which imapflow's `close()` does not end. Only the attach's own abort
+   * (its deadline, or a stop) can let the attach go.
+   */
+  hangConnect?: boolean;
+  /** Every `_meta` read of the lease hangs the same way, after a clean connect. */
+  hangMeta?: boolean;
+  /** `watch()` awaits this — parks an attach after its lease and folders, before IDLE. */
+  watchGate?: Promise<void>;
   /** `changesSince` awaits this — parks a cycle IN FLIGHT so a stop() can land on it. */
   syncGate?: Promise<void>;
   /**
@@ -375,6 +385,8 @@ export class FakeMetaFolder implements LeaseIo, ProfileIo {
  */
 export type FakeEvent =
   | "connect" | "close" | "ensure_folders" | "lease_organize"
+  /** `connect()` was entered (before any gate), and `forceClose()` was called. */
+  | "connect_start" | "force_close"
   | "sync_start" | "sync_end" | "watch" | "rearm" | "move"
   /** A targeted re-read by UID — the retry's and the junk restore's door into the folder. */
   | "fetch_by_uid";
@@ -489,6 +501,11 @@ export class FakeAdapterFleet {
   syncs = 0;
   /** Sync calls currently parked inside `changesSince` (see `syncGate`). */
   syncInFlight = 0;
+  /** `connect()` calls entered and not yet returned, and the most there ever were at once. */
+  connectInFlight = 0;
+  connectPeak = 0;
+  /** `forceClose()` calls, in total. */
+  forceCloses = 0;
   /** mailboxId → currently-open adapter instances. A leak shows up as a lingering entry. */
   readonly open = new Map<string, number>();
   /** mailboxId → fire an IDLE signal into the worker (set once watch() succeeds). */
@@ -580,9 +597,42 @@ export class FakeAdapterFleet {
     const ctl = (): FakeControl => this.control.get(id) ?? {};
     let connected = false;
     const fleet = this;
+    /** Resolved by this adapter's own close or force-close: what a hung `_meta` read waits on. */
+    let closedNow!: () => void;
+    const closedSignal = new Promise<void>((r) => { closedNow = r; });
+    const noConnection = (): Error => Object.assign(new Error("imap connection is closed"), { code: "NoConnection" });
+    /** A lease io over `meta` whose every read hangs until this adapter closes (see `hangMeta`). */
+    const leaseIoFor = (meta: FakeMetaFolder): LeaseIo => {
+      const hang = async <T>(): Promise<T> => { await closedSignal; throw noConnection(); };
+      return {
+        ensureMetaFolder: () => hang(),
+        listClaims: () => hang(),
+        findOwnRecords: () => hang(),
+        appendClaim: () => hang(),
+        removeClaims: () => hang(),
+        stampMeta: () => hang(),
+        uidValidity: () => meta.uidValidity(),
+      } as LeaseIo;
+    };
 
     const cursor: ChangeBatch = {
       creates: [], moves: [], flagChanges: [], deletes: [], newCursor: { folders: {} },
+    };
+
+    const connectBody = async (): Promise<void> => {
+      const gate = ctl().gate;
+      if (gate) await gate;
+      if (ctl().hangConnect) await new Promise<never>(() => { /* see `hangConnect` */ });
+      // `!== undefined` and not `in`, so `behave(id, { connectError: undefined })` CLEARS the
+      // seam the way `failConnect: false` does — `behave` merges, so an `in` test would leave a
+      // recovered mailbox throwing `undefined` for ever.
+      const connectError = ctl().connectError;
+      if (connectError !== undefined) throw connectError;
+      if (ctl().failConnect) throw new Error(`fake connect refused (${id})`);
+      fleet.connects++;
+      connected = true;
+      fleet.open.set(id, (fleet.open.get(id) ?? 0) + 1);
+      fleet.note(id, "connect");
     };
 
     return {
@@ -600,7 +650,8 @@ export class FakeAdapterFleet {
        * models correctly. */
       leaseIo(identity: { installId: string; mailboxId: string }): LeaseIo {
         assertMetaIdentity("fake leaseIo", identity);
-        return fleet.metaFor(id);
+        // The real folder unless this adapter's `_meta` is to hang: identity is kept for every other case.
+        return ctl().hangMeta ? leaseIoFor(fleet.metaFor(id)) : fleet.metaFor(id);
       },
       /* The READ side of the same folder, narrow as the product's (`LeasePeekIo` is one method).
          `refreshReaderHolder` probes for it by name, so an absent one is a silent skip. */
@@ -623,22 +674,28 @@ export class FakeAdapterFleet {
         return fleet.metaFor(id);
       },
       async connect(): Promise<void> {
-        const gate = ctl().gate;
-        if (gate) await gate;
-        // `!== undefined` and not `in`, so `behave(id, { connectError: undefined })` CLEARS the
-        // seam the way `failConnect: false` does — `behave` merges, so an `in` test would leave a
-        // recovered mailbox throwing `undefined` for ever.
-        const connectError = ctl().connectError;
-        if (connectError !== undefined) throw connectError;
-        if (ctl().failConnect) throw new Error(`fake connect refused (${id})`);
-        fleet.connects++;
-        connected = true;
-        fleet.open.set(id, (fleet.open.get(id) ?? 0) + 1);
-        fleet.note(id, "connect");
+        fleet.note(id, "connect_start");
+        fleet.connectInFlight++;
+        fleet.connectPeak = Math.max(fleet.connectPeak, fleet.connectInFlight);
+        try {
+          await connectBody();
+        } finally {
+          fleet.connectInFlight--;
+        }
+      },
+      forceClose(): void {
+        fleet.forceCloses++;
+        fleet.note(id, "force_close");
+        closedNow();
+        if (connected) {
+          connected = false;
+          fleet.open.set(id, Math.max(0, (fleet.open.get(id) ?? 0) - 1));
+        }
       },
       async close(): Promise<void> {
         fleet.closes++;
         fleet.note(id, "close");
+        closedNow();
         if (connected) {
           connected = false;
           fleet.open.set(id, Math.max(0, (fleet.open.get(id) ?? 0) - 1));
@@ -776,6 +833,8 @@ export class FakeAdapterFleet {
         return limit === undefined ? [...all] : all.slice(0, limit);
       },
       async watch(onSignal: () => void): Promise<() => Promise<void>> {
+        const watchGate = ctl().watchGate;
+        if (watchGate) await watchGate;
         if (ctl().failWatch) throw new Error(`fake watch failed (${id})`);
         fleet.note(id, "watch");
         fleet.signal.set(id, onSignal);

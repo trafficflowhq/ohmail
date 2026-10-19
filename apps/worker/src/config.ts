@@ -57,6 +57,24 @@ export const MAX_CYCLE_LANES = WORKER_POOL_MAX - CYCLE_LANE_POOL_RESERVE;
  */
 export const CYCLE_FAST_LANES = 1;
 /**
+ * How many mailboxes a roster pass may be ATTACHING at once (CLOUD-ROSTER-REATTACH-IS-SERIAL). A pass
+ * attached one at a time, so one provider's slow dial (107 s on 2026-10-09) held every mailbox behind
+ * it unconnected. Never more than one per provider host, so no provider sees a burst from us.
+ */
+export const DEFAULT_ATTACH_CONCURRENCY = 4;
+/**
+ * The ceiling on {@link DEFAULT_ATTACH_CONCURRENCY}. An attach is about ten short queries, so eight
+ * keeps the expected pool share under one connection beside the lanes and the pulse.
+ */
+export const MAX_ATTACH_CONCURRENCY = 8;
+/**
+ * One attach's deadline, from its start. Above one full transport stall (connect + greeting + socket
+ * inactivity, 150 s) so it never cuts a single command short of the transport's own timeout, and
+ * below {@link DEFAULT_SYNC_BLOCK_GRACE_MS}. Past it the connection is force-closed and the mailbox
+ * backs off as a `timeout`. A constant, not an environment variable.
+ */
+export const ATTACH_DEADLINE_MS = 180_000;
+/**
  * How many extra turns one mailbox may earn inside a single cycle by being woken. Lanes shorten a
  * rotation, not a CYCLE: one `cycle()` entry runs until every mailbox has had its turn, so a mailbox
  * whose doorbell rings after its turn waits for the slowest lane (~254 s) — a large improvement on
@@ -231,6 +249,13 @@ export interface WorkerConfig {
    * `loadConfig` refuses an out-of-range `TF_CYCLE_LANES` outright.
    */
   cycleLanes?: number;
+  /**
+   * How many mailboxes may be attaching at once. Default {@link DEFAULT_ATTACH_CONCURRENCY}, clamped
+   * by {@link resolveAttachConcurrency}; `loadConfig` refuses an out-of-range `TF_ATTACH_CONCURRENCY`.
+   */
+  attachConcurrency?: number;
+  /** TEST SEAM (never populated by `loadConfig`): one attach's deadline, {@link ATTACH_DEADLINE_MS}. */
+  attachDeadlineMs?: number;
   /** Shard seam: total shards, and which one this process is. Defaults 1 / 0. */
   shards?: number;
   shardIndex?: number;
@@ -556,6 +581,24 @@ export function resolveCycleLanes(requested: number | undefined): number {
   const want = requested ?? DEFAULT_CYCLE_LANES;
   if (!Number.isInteger(want) || want < 1) return 1;
   return Math.min(want, MAX_CYCLE_LANES);
+}
+
+/** The attach pool's width, clamped like {@link resolveCycleLanes} and for its reason. */
+export function resolveAttachConcurrency(requested: number | undefined): number {
+  const want = requested ?? DEFAULT_ATTACH_CONCURRENCY;
+  if (!Number.isInteger(want) || want < 1) return 1;
+  return Math.min(want, MAX_ATTACH_CONCURRENCY);
+}
+
+/** `TF_ATTACH_CONCURRENCY`, refused by name outside 1 to {@link MAX_ATTACH_CONCURRENCY}. */
+function attachConcurrencyFrom(env: NodeJS.ProcessEnv): number {
+  const n = optInt(env, "TF_ATTACH_CONCURRENCY", DEFAULT_ATTACH_CONCURRENCY);
+  if (n < 1 || n > MAX_ATTACH_CONCURRENCY) {
+    throw new WorkerConfigError("TF_ATTACH_CONCURRENCY",
+      `TF_ATTACH_CONCURRENCY must be between 1 and ${MAX_ATTACH_CONCURRENCY} — how many mailboxes ` +
+      `connect at once, never more than one per mail server (got ${n})`);
+  }
+  return n;
 }
 
 /**
@@ -948,6 +991,7 @@ export function loadConfig(
     sentDomain: env.TF_SENT_DOMAIN ?? "trafficflow.ch",
     maxMailboxes: optInt(env, "TF_MAX_MAILBOXES", DEFAULT_MAX_MAILBOXES),
     cycleLanes: cycleLanesFrom(env),
+    attachConcurrency: attachConcurrencyFrom(env),
     shards,
     shardIndex,
     healthPort: optInt(env, "PORT", DEFAULT_HEALTH_PORT),

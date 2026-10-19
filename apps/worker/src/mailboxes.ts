@@ -480,6 +480,26 @@ async function toTransport(
 }
 
 /**
+ * Each mailbox's IMAP host, from the non-secret `meta` of its `imap` row: what the attach pool keys
+ * "one attach per provider host" on. One query, run only when a roster pass has attaches to
+ * schedule. A mailbox with no row is absent from the map. Nothing is decrypted, and the hosts are
+ * never logged.
+ */
+export async function loadAttachHosts(db: WorkerDb, mailboxIds: readonly string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (mailboxIds.length === 0) return out;
+  const rows = await db
+    .select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
+    .from(mailboxCredentials)
+    .where(and(inArray(mailboxCredentials.mailboxId, [...mailboxIds]), eq(mailboxCredentials.transport, "imap")));
+  for (const r of rows) {
+    const host = (r.meta as { host?: unknown } | null)?.host;
+    if (typeof host === "string") out.set(r.mailboxId, host);
+  }
+  return out;
+}
+
+/**
  * Load + decrypt a mailbox's credentials. Reads its `mailbox_credentials` rows,
  * decrypts each `secret_enc` via the KeyProvider (KEK version per-row, so rotation
  * works), and merges with the non-secret `meta`. Returns null when there is no

@@ -23,6 +23,14 @@ several times a minute and 'Apply to existing mail' could start over each time. 
 Address view: 'To them' and 'All' now reach the whole archive, not only this device's mail. On a server
 that has not upgraded yet, the view still says the archive can only be searched by sender.
 
+### A slow mail server no longer holds up the other mailboxes
+
+For operators. The organizer now reconnects up to four mailboxes at once, one per mail server at a time, and
+gives up on a connection attempt after three minutes, then retries on its usual backoff. A slow mail server
+delays only its own mailboxes; the others reconnect at once. `TF_ATTACH_CONCURRENCY` (1 to 8, default 4) sets
+how many connect at once. A restart still connects every mailbox before its first round, now several at a time.
+Stopping the organizer no longer hangs on a connection that is still being set up.
+
 ### The first decision waits for the Screener
 
 After you agree, setup now waits a few seconds for the senders it will hold in the Screener before it says

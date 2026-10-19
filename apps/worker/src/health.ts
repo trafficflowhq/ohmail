@@ -251,10 +251,11 @@ export interface UnservedBreakdown {
    */
   leaseUnreadable: number;
   /**
-   * In no bucket at all. Mid-attach when read during a roster pass, which is why this ALONE does
-   * not raise `duty_gap`: the durable verdict is the end-of-pass invariant check in `index.ts`
-   * (`roster_invariant_violated`), and a mailbox that is three seconds into its connect must not
-   * page anybody. It still counts toward the shortfall, because it is one.
+   * In no bucket at all: a mailbox whose attach is queued or running in the attach pool, which is
+   * why this ALONE does not raise `duty_gap`. The durable verdict is the end-of-pass invariant check
+   * in `index.ts` (`roster_invariant_violated`, which counts the pool as accounted for), and a
+   * mailbox that is three seconds into its connect must not page anybody. It still counts toward
+   * the shortfall, because it is one.
    */
   unaccounted: number;
 }

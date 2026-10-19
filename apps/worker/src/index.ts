@@ -53,9 +53,12 @@ import {
   DEFAULT_LOCK_HEARTBEAT_MS, DEFAULT_MAILBOX_RETRY_MS, DEFAULT_MAX_SYNC_FAILURES,
   DEFAULT_ALERT_INTERVAL_MS, DEFAULT_SYNC_BLOCK_GRACE_MS,
   DEFAULT_LEASE_UNAVAILABLE_DETACH_MS, resolveCycleLanes, CYCLE_FAST_LANES, CYCLE_WAKE_REVISITS,
-  resolveTailTurn, TAIL_SLICE_BUDGET_MS,
+  resolveTailTurn, TAIL_SLICE_BUDGET_MS, resolveAttachConcurrency, ATTACH_DEADLINE_MS,
   type WorkerConfig,
 } from "./config.js";
+import {
+  AttachAbortedError, AttachDeadlineError, AttachPool, hostKeyOf, type AttachTicket,
+} from "./attach-pool.js";
 import { TAIL_SECTION_PLAN, type TailSectionName } from "./cycle-tail-plan.js";
 import {
   anyDegradedCause, type DegradedCauses, type UnservedBreakdown,
@@ -131,7 +134,7 @@ import {
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, isProviderRefusal, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, stampImportProgress, makeSyncWriteFence, type LeaderFence,
-  accountsOf, organizedMailboxIdsOf, accountInShard, accountShardFilter, shardFilter,
+  accountsOf, organizedMailboxIdsOf, accountInShard, accountShardFilter, shardFilter, loadAttachHosts,
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason, type ParkedAccountsReader,
 } from "./mailboxes.js";
@@ -580,6 +583,8 @@ export async function startWorkerWithLock(
   // closes the IMAP connections it already opened — a leaked login is exactly what gets a
   // provider to throttle the user's mailbox.
   const runtimes = new Map<string, MailboxRuntime>();
+  /** The attaches in flight, for the same reason: the startup catch must stop and await them. */
+  let attachPoolRef: AttachPool | null = null;
   /** The same, for the timers: the startup catch must be able to disarm them (see below). */
   let stopTimers: (() => void) | null = null;
 
@@ -1138,7 +1143,9 @@ export async function startWorkerWithLock(
     //
     //    ONE QUEUE, AND A CYCLE IS TWO ENTRIES: the rotation, which serves a roster pass it is
     //    holding up BETWEEN two mailboxes (`yieldToRoster`), and the per-account tail behind it
-    //    (`cycleTail`), which yields between slices. Nothing ever runs concurrently.
+    //    (`cycleTail`), which yields between slices. No two entries ever run concurrently. The
+    //    attaches a pass schedules run beside them in `attachPool`; a mailbox joins `runtimes`, and
+    //    so becomes visible to any entry, only once its attach has finished.
     let tail: Promise<unknown> = Promise.resolve();
     function serialize<T>(fn: () => Promise<T>): Promise<T> {
       const run = tail.then(fn, fn);
@@ -1161,6 +1168,35 @@ export async function startWorkerWithLock(
     const laneBusy = new Set<string>();
     /** Runtimes a roster pass wanted to detach while a lane held them; drained by `cycle()`. */
     const deferredLeaves: Array<{ rt: MailboxRuntime; release: boolean; reason: string }> = [];
+
+    /**
+     * THE ATTACHES, OFF THE QUEUE (CLOUD-ROSTER-REATTACH-IS-SERIAL). A roster pass schedules its
+     * attaches here and returns; at most `attachConcurrency` run at once, one per provider host, each
+     * under `attachDeadlineMs`. An attach joins `runtimes` only once it has finished, which is what
+     * lets it run beside a cycle: nothing reads a mailbox before its attach is done.
+     */
+    const attachDeadlineMs = config.attachDeadlineMs ?? ATTACH_DEADLINE_MS;
+    const attachPool = new AttachPool({
+      concurrency: resolveAttachConcurrency(config.attachConcurrency),
+      deadlineMs: attachDeadlineMs,
+      onDeadline: (j) => {
+        log.warn("mailbox_attach_deadline", {
+          mailboxId: j.mailboxId, accountId: j.accountId, latencyMs: attachDeadlineMs,
+          reason: "the attach did not finish within its deadline; its connection is closed and the " +
+            "mailbox backs off as a timeout",
+        });
+      },
+      onFault: (err) => {
+        // Today's "the pass fails and the next pass retries": nothing queued behind a shared fault runs.
+        const dropped = attachPool.dropQueued();
+        log.error("roster_attach_faulted", {
+          err, queued: dropped,
+          reason: "an attach met a shared database fault; the attaches still queued are dropped and the " +
+            "next roster pass schedules them again",
+        });
+      },
+    });
+    attachPoolRef = attachPool;
 
     /**
      * THIS mailbox is owed a visit — its IDLE fired, or the enforced-sync scan named it. Keeps the
@@ -2265,7 +2301,7 @@ export async function startWorkerWithLock(
      * that merely ENDED: imapflow calls `close()` on `_socketClose`/a failed IDLE recovery, which
      * emits `close`, never `error` — nothing listened, so a total outage had zero connection events.
      * The two shapes are separated BY CLASS (never a driver string): ERRORED → detach AND quarantine;
-     * merely ENDED → DETACH ONLY (no `error`, no backoff), so the next roster pass re-dials in 30 s rather than waiting out `retryBaseMs`. ON THE QUEUE, so a detach never closes an adapter a cycle is using and an error during `attach()` lands after that attach's own catch.
+     * merely ENDED → DETACH ONLY (no `error`, no backoff), so the next roster pass re-dials in 30 s rather than waiting out `retryBaseMs`. ON THE QUEUE, so a detach never closes an adapter a cycle is using. An error on a connection whose attach is still running goes to that attach (`AttachPool.noteLost`), never to the rotation.
      */
     /* THE CYCLE'S OWN VERDICT on a breach it ended on, keyed on the error object: the connection
        handler runs later on the queue, and by then another cycle's `beginCycle` may have cleared
@@ -2282,10 +2318,25 @@ export async function startWorkerWithLock(
     const closedOwed = new Map<string, MailboxRuntime>();
     const CLOSED_DETACH_REASON = "the provider connection closed — the next roster pass re-attaches it on a fresh one";
 
-    function handleConnectionError(mailboxId: string, accountId: string, err: unknown): void {
+    function handleConnectionError(
+      mailboxId: string, accountId: string, err: unknown, raisedOn: MailboxAdapter | null = null,
+    ): void {
       if (stopped) return;
       const ended = err instanceof ImapConnectionClosedError;
-      const atError = runtimes.get(mailboxId);
+      const current = runtimes.get(mailboxId);
+      // ROUTED BY ADAPTER. Attaches run beside the queue now, so an error can come from a connection
+      // whose attach has not finished (it is not in `runtimes` yet): that attach is told, and throws at
+      // its next checkpoint. One from a connection no longer in the rotation is about nothing current.
+      if (raisedOn !== null && current?.adapter !== raisedOn) {
+        attachPool.noteLost(mailboxId, raisedOn, err);
+        log.error("mailbox_connection_error", {
+          mailboxId, accountId, err,
+          reason: "a connection that is not in the rotation failed; an attach still using it gives up " +
+            "at its next step, and nothing in the rotation is touched",
+        });
+        return;
+      }
+      const atError = current;
       if (ended && atError) { closedOwed.set(mailboxId, atError); nudgeCycle(); }
       log.error("mailbox_connection_error", {
         mailboxId, accountId, err,
@@ -2327,7 +2378,8 @@ export async function startWorkerWithLock(
 
     /** Unwatch + CLOSE a mailbox's connection and drop it from the rotation. */
     async function detach(rt: MailboxRuntime, reason: string): Promise<void> {
-      runtimes.delete(rt.mailboxId);
+      // Only THIS runtime: a re-attach may already have put a new one in its place.
+      if (runtimes.get(rt.mailboxId) === rt) runtimes.delete(rt.mailboxId);
       // THE KNOWN-SET MEMO DIES WITH THE ATTACHMENT. Dropping the runtime already makes it
       // unreachable, so this is belt AND braces — but it is the braces that state the invariant:
       // an in-memory copy of a mailbox's known UIDs may never outlive this process's claim on that
@@ -2346,8 +2398,11 @@ export async function startWorkerWithLock(
      * roster was not dialled until it returned. EVERY failure path closes the adapter it just opened —
      * previously a throw from `ensureFolders()` or the inline drain leaked the connection, because the
      * adapter had not been pushed onto the tracked list yet.
+     *
+     * It runs in the attach pool, beside the queue, so it checks its `ticket` after every awaited
+     * phase (a deadline or a stop ends it there) and joins `runtimes` LAST, once IDLE is up.
      */
-    async function attach(mb: EnabledMailbox): Promise<void> {
+    async function attach(mb: EnabledMailbox, ticket: AttachTicket): Promise<void> {
       // The setup is INSIDE the boundary. `loadMailboxCreds` and `makeAdapter` used to run ABOVE the
       // `try` below — a shard-wide outage waiting for one corrupt row. A credential envelope that
       // cannot be decrypted (bad ciphertext, a key version this deployment no longer carries), or an
@@ -2361,6 +2416,7 @@ export async function startWorkerWithLock(
       let unwatch: (() => Promise<void>) | null = null;
       try {
         const creds = await loadMailboxCreds(db, mb.mailboxId, keyProvider, oauthTokenProvider);
+        ticket.checkpoint();
         if (!creds) {
           // RECORD ONLY. The log below still announces once ever — that is a log-noise control and
           // it is correct — but it is no longer the ONLY record, which is what made this the most
@@ -2422,6 +2478,7 @@ export async function startWorkerWithLock(
             mailboxId: mb.mailboxId, accountId: mb.accountId, code: "unknown",
           });
         }
+        ticket.checkpoint();
 
         /**
          * THE DIAL'S OWN CHECK, at the moment of the dial: host, port and the address it pins. Under
@@ -2431,6 +2488,8 @@ export async function startWorkerWithLock(
          * NO submission leg: a sending server's host or port can never stop receiving. The SIZE dial
          * above asks its own check, and a send meets its refusal at the API's door.
          */
+        /** The adapter an error was raised on, so `handleConnectionError` can route it. */
+        const dialled: { adapter: MailboxAdapter | null } = { adapter: null };
         adapter = makeAdapter({
           host: creds.imap.host, port: creds.imap.port, secure: creds.imap.secure,
           // The row's plaintext consent reaches the adapter only through the check, which admits
@@ -2449,14 +2508,19 @@ export async function startWorkerWithLock(
           timeouts: WORKER_NET_TIMEOUTS,
         }, {
           accountId: mb.accountId, mailboxId: mb.mailboxId,
-          onConnectionError: (err) => handleConnectionError(mb.mailboxId, mb.accountId, err),
+          onConnectionError: (err) => handleConnectionError(mb.mailboxId, mb.accountId, err, dialled.adapter),
         });
+        dialled.adapter = adapter;
+        ticket.bind(adapter);
         // Said BEFORE the dial, because everything after it can still be slow: a hung provider,
         // a lease gate over four IMAP round-trips, a first `ensureFolders` against a real
         // server. Without this line an attach that never returns looks exactly like a worker
         // that never tried — which is precisely how a boot-time outage once read. It names the
         // mailbox, never the stored server.
-        log.info("mailbox_attach_started", { mailboxId: mb.mailboxId, accountId: mb.accountId });
+        // `latencyMs`: how long this attach waited in the pool for a slot and its host.
+        log.info("mailbox_attach_started", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId, latencyMs: attachPool.queuedMs(mb.mailboxId),
+        });
 
         // ── EVERY PHASE IS TIMED, BECAUSE "WHICH PHASE DOMINATES" WAS UNANSWERABLE ─────────
         //
@@ -2469,7 +2533,9 @@ export async function startWorkerWithLock(
         // inline sync cycles, and that is gone from this path entirely. A field reporting 0 for
         // a phase that no longer exists is worse than its absence — it reads as a fast drain.
         const tAttach = Date.now();
-        await adapter.connect();
+        // Raced, so a deadline or a stop settles the attach even if the dial ignores the close.
+        await ticket.abortable(adapter.connect());
+        ticket.checkpoint();
         const connectMs = Date.now() - tAttach;
 
         // The organizer lease, before the first move. Here and not below `ensureFolders()`: every line
@@ -2526,6 +2592,7 @@ export async function startWorkerWithLock(
         const role: OrganizerRole =
           (await mayOrganize(mb, leaseRow, leaseState, adapter, "attach",
             deriveRequestKey({ auth: creds.imap.auth, address: mb.address }))) ? "organizer" : "reader";
+        ticket.checkpoint();
         const leaseMs = Date.now() - tLease;
         if (role === "organizer") {
           leaseBlocked.delete(mb.mailboxId);
@@ -2539,6 +2606,7 @@ export async function startWorkerWithLock(
           // claim; this covers the OTHER arm — a consent-less reader, whose refusal never read the
           // folder at all, so without this its banner would have nothing to say.
           await refreshReaderHolder(mb, adapter, holderSeen);
+          ticket.checkpoint();
         }
         const tFolders = Date.now();
         /* -- `ohmail/*` IS CREATED BY AN ORGANIZER AND BY NOTHING ELSE ------------------------
@@ -2550,6 +2618,7 @@ export async function startWorkerWithLock(
          * client the person owns, and in the folder list of whoever does hold it.
          */
         if (role === "organizer") await adapter.ensureFolders(writeDoorOf({ lease: leaseState.leasePermit }));
+        ticket.checkpoint();
         const foldersMs = Date.now() - tFolders;
         // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
         //
@@ -2566,6 +2635,7 @@ export async function startWorkerWithLock(
         } catch (err) {
           log.warn("special_folder_discovery_failed", { mailboxId: mb.mailboxId, err });
         }
+        ticket.checkpoint();
         // accountId comes from the MAILBOX ROW, not from config: one process, many accounts.
         // The spend gate is built from that same accountId for exactly that reason.
         // The narrowed handle the sweep port's closures capture — `adapter` is a `let` above,
@@ -2732,16 +2802,11 @@ export async function startWorkerWithLock(
           },
         };
 
-        // Registering the mailbox IS what attach is for. This line used to be a fix for a reporting
-        // bug — `reconcileOnRestart` drained inline below it, `runtimes` stayed empty for that drain,
-        // and `stats()` plus every heartbeat said `mailboxes: 0` while the process did the busiest
-        // thing it ever does (a first import ingested thousands of messages over most of an hour while
-        // the heartbeat reported zero). Now the drain is gone from this function and this line is the
-        // POINT of it: attach connects, proves the lease, ensures folders, joins the rotation and
-        // establishes IDLE, and everything that reads mail rides `cycle()`. `unwatch` is null until
-        // IDLE is established and is patched onto the same object; the serial queue guarantees no cycle
-        // or roster pass interleaves with a mid-flight attach. The failure path is unchanged: the catch
-        // deletes the runtime and quarantines.
+        ticket.checkpoint();
+        // The runtime is BUILT here and joins `runtimes` only at the end, once IDLE is up. Attaches run
+        // beside the queue now (the pool), so a cycle may be running while this one works: a mailbox in
+        // the rotation is one whose attach has finished, and nothing reads it before that. `unwatch`
+        // is patched onto this object when IDLE is established.
         const rt: MailboxRuntime = {
           accountId: mb.accountId, mailboxId: mb.mailboxId, adapter, deps, unwatch: null,
           requestKey: deriveRequestKey({ auth: creds.imap.auth, address: mb.address }),
@@ -2782,8 +2847,6 @@ export async function startWorkerWithLock(
           wokenAt: null,
           lastVisitEndedAt: null,
         };
-        runtimes.set(mb.mailboxId, rt);
-        await beat();
 
         // Arm the profile hold before the first routing decision (TAKEOVER-RESCREEN). A mailbox taken
         // over from another organizer arrives CARRYING its decisions — the travelling profile in
@@ -2807,15 +2870,15 @@ export async function startWorkerWithLock(
         // A promotion at attach (the press landed while this process was down) owes the same sweep.
         if (role === "organizer" && leaseState.agreeStamp) await agreeSweepAfterPromotion(rt, leaseState.agreeStamp);
         leaseState.agreeStamp = null;
+        ticket.checkpoint();
 
         // Make the mailbox Screener-shaped, once, before the first drain. Here and not in `cycle()`:
         // it is a once-per-mailbox pass (`mailboxes.kickstart_at`, mail 0025) that must run BEFORE the
         // first drain — import the Sent folder's recipients into `contacts` first and the very first
         // routing decision already knows the user's correspondents; import them afterwards and hundreds
-        // of messages have been filed into the Screener and need re-routing. Moving the drain onto the
-        // cycle loop left the ordering intact: the first cycle is queued behind the roster pass this
-        // attach belongs to, so it cannot begin until every attach — hence this kickstart — has
-        // returned (a mid-cycle pass is AWAITED, from inside the cycle's own entry). It stays here
+        // of messages have been filed into the Screener and need re-routing. The ordering holds because
+        // the mailbox joins `runtimes` only at the end of this function, so no cycle can visit it before
+        // this kickstart has returned. It stays here
         // because it is once-per-mailbox and marker-gated, and a virgin Screener backlog is empty. A
         // FAILURE MUST NOT FAIL THE ATTACH — the marker is written only on success, so the next attach retries.
         const tKickstart = Date.now();
@@ -2847,6 +2910,7 @@ export async function startWorkerWithLock(
         }
 
         const kickstartMs = Date.now() - tKickstart;
+        ticket.checkpoint();
 
         // Nothing that drains runs here — a rule now applied to the drain itself. Two changes deleted
         // work from this line for the same reason. The first ran `runThreadBackfill` here: minutes of
@@ -2868,6 +2932,21 @@ export async function startWorkerWithLock(
         // still the thing that makes a cycle happen at all.
         unwatch = await adapter.watch(() => { noteWake(mb.mailboxId); kickCycle(); });
         rt.unwatch = unwatch;
+        ticket.checkpoint();
+        if (stopped) throw new AttachAbortedError("stop");
+        // Unreachable by construction (the pool keys the mailbox, the roster skips an attached one),
+        // and checked rather than trusted: two runtimes of one mailbox would be two organizers.
+        if (runtimes.has(mb.mailboxId)) {
+          log.error("mailbox_attach_duplicate", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId,
+            reason: "the mailbox was already in the rotation when this attach finished; this " +
+              "connection is closed and the one in the rotation keeps serving",
+          });
+          throw new AttachAbortedError("stop");
+        }
+        // JOIN THE ROTATION LAST, then make it heard: the kick queues a cycle, and the nudge wakes one
+        // already blocked on its lanes, whose dispatcher admits a never-synced mailbox at the front.
+        runtimes.set(mb.mailboxId, rt);
         // The quarantine entry is NOT cleared here. It moved with the drain.
         // `quarantine.delete(mb.mailboxId)` was the last line of this function, and its reason was
         // exact: the entry carries the exponential backoff's attempt count, and clearing it BEFORE the
@@ -2892,6 +2971,8 @@ export async function startWorkerWithLock(
           connectMs, leaseMs, foldersMs, kickstartMs, watchMs: Date.now() - tWatch,
           attachMs: Date.now() - tAttach,
         });
+        kickCycle();
+        nudgeCycle();
         // Beat per attach, so a roster of several real mailboxes reports progress while it is
         // still working through them rather than only once the last one is up.
         await beat();
@@ -2907,14 +2988,15 @@ export async function startWorkerWithLock(
       } catch (err) {
         if (unwatch) { try { await unwatch(); } catch { /* ignore */ } }
         /* A `_meta` too full to read is swept on the login that met it, before it closes: the
-           attach refuses every pass otherwise, and nothing else would ever make it smaller. */
-        if (adapter) {
+           attach refuses every pass otherwise, and nothing else would ever make it smaller. Not over
+           a connection a deadline or a stop closed, or one reported lost: there is no login left. */
+        if (adapter && ticket.aborted === null && ticket.lost === null) {
           await shrinkMetaOnRefusal(err, {
             mailboxId: mb.mailboxId, accountId: mb.accountId, installId: organizerInstallId, adapter,
           }, new Date(), (event, detail) => { log.info(event, detail); });
         }
         if (adapter) { try { await adapter.close(); } catch { /* ignore */ } }  // never leak a half-open login
-        runtimes.delete(mb.mailboxId);
+        // Nothing to take out of `runtimes`: the mailbox joins it only as the last step of a success.
         // A shared-service fault is not this mailbox's fault. The credential read moved inside this
         // `try`, and that read is a DATABASE read. Left unexempted, one database blip would quarantine
         // every mailbox of the shard in turn and write `status='error'` on each — "the database was
@@ -2931,6 +3013,23 @@ export async function startWorkerWithLock(
               "fails without marking any mailbox at fault, and the next pass retries",
           });
           throw err;
+        }
+        // A STOP is not the mailbox's fault either: the process is going down, or lost its lock, and
+        // the next leader attaches it. No row is written and no backoff is earned.
+        const aborted = ticket.aborted ?? (err instanceof AttachAbortedError ? err.why : null);
+        if (aborted === "stop") {
+          log.info("mailbox_attach_stopped", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId,
+            reason: "the worker stopped while this mailbox was attaching; its connection is closed",
+          });
+          return;
+        }
+        // A DEADLINE IS the mailbox's provider: it backs off as a timeout. Before the lease arm, because a
+        // connection force-closed inside the lease gate surfaces as `LeaseUnavailableError`, and that arm
+        // would re-dial a hung provider every pass with no backoff.
+        if (aborted === "deadline") {
+          await quarantineMailbox(mb.mailboxId, mb.accountId, new AttachDeadlineError(attachDeadlineMs), "attach");
+          return;
         }
         // A lease we could not read is not a broken mailbox, and must not be quarantined into an
         // exponential backoff. Exempted BY CLASS, the pattern `ClassifierFaultError` establishes below:
@@ -2964,7 +3063,7 @@ export async function startWorkerWithLock(
      * mailboxes, detach ones that were disabled/deleted/evicted by the cap, recompute the
      * per-account duty and the capacity counters.
      */
-    async function reconcileRoster(): Promise<void> {
+    async function reconcileRoster(opts: { awaitAttaches?: boolean } = {}): Promise<void> {
       if (stopped) return;
 
       // Say something before the first attach, and leave durable evidence. A boot-time outage was once
@@ -3181,100 +3280,118 @@ export async function startWorkerWithLock(
       for (const id of [...awaitingCreds.keys()]) if (!desired.has(id)) awaitingCreds.delete(id);
       for (const id of [...quarantine.keys()]) if (!desired.has(id)) quarantine.delete(id);
       for (const id of [...leaseBlocked.keys()]) if (!desired.has(id)) leaseBlocked.delete(id);
+      // An attach still waiting for its slot is dropped with its duty; one already running finishes,
+      // and if it adds a mailbox that has left, the next pass detaches it and releases the claim.
+      attachPool.dropQueued((id) => !desired.has(id));
 
-      // Attach what is missing, then kick a cycle if anything new came up. `attach()` syncs nothing,
-      // so a mailbox that joins the rotation here has no mail processed until a cycle runs — and
-      // `setInterval` fires for the FIRST time only after a full period (60 s in production), the same
-      // dead window the takeover kick was measured against, reopened per mailbox at every roster pass.
-      // Nothing fails and NOTHING LOGS if this kick is forgotten, which is why it is guarded
-      // (`attach-nonblocking.e2e.test.ts`, claim 7). In a `finally`, so an `attach` that rethrows a
-      // shared-database fault mid-loop still kicks for the mailboxes it did bring up; `kickCycle` is
-      // idempotent (`cycleQueued`), checks `stopped` itself, and queues behind this pass.
+      // Schedule what is missing. The pass does not wait for the attaches (except at boot): each one
+      // kicks and nudges a cycle as it joins the rotation (`attach-nonblocking.e2e.test.ts`, claim 7),
+      // because `attach()` syncs nothing and the poll timer's first tick is a full period away.
       const now = Date.now();
-      let newlyAttached = 0;
-      try {
-        for (const mb of served) {
-          if (stopped) return;
-          const attached = runtimes.get(mb.mailboxId);
-          if (attached) {
-            // Refresh the lease-relevant columns from the row we just read, so a takeover
-            // authorized by the connect flow while this mailbox was already serving reaches the
-            // next cycle's gate instead of waiting for a restart.
-            attached.lease = {
-              // Mail 0104 — the verb moves with the stamp on every refresh, for the same reason.
-              takeoverAuthorizedAt: mb.takeoverAuthorizedAt, takeoverIntent: mb.takeoverIntent,
-              disabledReason: mb.disabledReason,
-              // Mail 0083, refreshed with the other two: a promotion or demotion written by
-              // another process (the connect flow, the reconcile backstop) is a fact about this
-              // row, and a value captured at attach would leave this gate deciding against it.
-              organizerRole: mb.organizerRole,
-              // Mail 0083. Refreshed for `takeover_authorized_at`'s exact reason: `organizeHere`
-              // stamps CONSENT from another process while this one is already reading the mailbox,
-              // and a value captured at attach would leave a person's "organize here" doing
-              // nothing until the worker happened to restart. The two columns are written in one
-              // transaction, so refreshing them together is also what keeps them consistent here.
-              organizeConsentedAt: mb.organizeConsentedAt,
-              // Mail 0088. Refreshed with the pair above and for the identical reason: "stop
-              // organizing this mailbox" is written by ANOTHER process while this one is already
-              // organizing it, and a value captured at attach would leave the person's press
-              // doing nothing until the worker happened to restart.
-              releaseRequestedAt: mb.releaseRequestedAt,
-            };
-            // Converge the row onto reality — but only about a mailbox that has actually SYNCED. This
-            // mailbox is attached; if its row still says `error` the recovery write failed or was
-            // fenced, and until this line NOTHING retried it (the old comment claimed "the next roster
-            // pass writes it" and this loop's `continue` was the proof it did not — the mailbox synced
-            // perfectly while Settings and the admin console called it broken). `mb.status` is re-read
-            // every pass, so this is a no-op the moment the write lands. `lastSuccessAt !== null` is the
-            // non-blocking-attach half: "attached" no longer implies "drained twice", so without this
-            // clause a mailbox whose login works and whose every cycle throws would be converged to
-            // `connected` 30 s later — resurrecting the "connected flashes on a never-synced mailbox".
-            if (mb.status !== "connected" && attached.lastSuccessAt !== null) await markRecovered(mb);
-            continue;
-          }
-          // The backoff gate, and since mail 0039 the row can overrule the map. Three cases, and the
-          // ORDER of the first two is the whole of the release path: (1) an entry whose durable write
-          // LANDED (`persisted`) is governed by `mb.retryAfter`, re-read from the database this pass,
-          // so `retry_after IS NULL` means "somebody cleared it" (the admin release) and the mailbox
-          // is attached NOW — the map entry is NOT deleted, since `attempts` is the ladder's input and
-          // resetting it hands a struggling provider a fresh minimum-interval loop (a release buys one
-          // attempt, not a clean slate); (2) an entry whose write did NOT land falls back to
-          // `q.retryAt`, the pre-0039 behaviour; (3) no map entry but a future `retry_after` on the row
-          // is a mailbox this NEW process never quarantined, SEEDED below rather than attached.
-          const q = quarantine.get(mb.mailboxId);
-          if (q) {
-            const until = q.persisted ? (mb.retryAfter?.getTime() ?? null) : q.retryAt;
-            if (until !== null && now < until) continue;
-          } else if (mb.retryAfter && now < mb.retryAfter.getTime()) {
-            // The restart seed. Without this a fresh leader forgets every backoff and re-dials every
-            // parked mailbox at once — the gap this column was added to close, and a way to turn a
-            // deploy during a provider outage into a burst of retries. Two details are load-bearing:
-            // `attempts` is floored at the row's `retry_count`, so the ladder resumes where the outage
-            // is instead of the base delay (the two counters may disagree, and this is the one place
-            // the durable one is the better estimate); and `persisted: true`, because this entry was
-            // READ from the column, so it is governed by the column and an operator's release reaches
-            // it next pass. Seeding also keeps the roster invariant honest — a mailbox skipped on the
-            // row alone would log `roster_invariant_violated` every 30 s about correct behaviour.
-            quarantine.set(mb.mailboxId, {
-              attempts: Math.max(1, mb.retryCount),
-              retryAt: mb.retryAfter.getTime(),
-              reason: "recovered from mailboxes.retry_after on takeover",
-              persisted: true,
-            });
-            log.info("mailbox_quarantine_restored", {
-              mailboxId: mb.mailboxId, accountId: mb.accountId,
-              retryInMs: mb.retryAfter.getTime() - now, attempts: Math.max(1, mb.retryCount),
-              reason: "a durable backoff outlived the process that set it",
-            });
-            continue;
-          }
-          await attach(mb);
-          // `attach` returns normally for a mailbox it declined (no credentials, lease held
-          // elsewhere), so the rotation is asked rather than the call's return value.
-          if (runtimes.has(mb.mailboxId)) newlyAttached++;
+      const toSchedule: EnabledMailbox[] = [];
+      for (const mb of served) {
+        if (stopped) return;
+        const attached = runtimes.get(mb.mailboxId);
+        if (attached) {
+          // Refresh the lease-relevant columns from the row we just read, so a takeover
+          // authorized by the connect flow while this mailbox was already serving reaches the
+          // next cycle's gate instead of waiting for a restart.
+          attached.lease = {
+            // Mail 0104 — the verb moves with the stamp on every refresh, for the same reason.
+            takeoverAuthorizedAt: mb.takeoverAuthorizedAt, takeoverIntent: mb.takeoverIntent,
+            disabledReason: mb.disabledReason,
+            // Mail 0083, refreshed with the other two: a promotion or demotion written by
+            // another process (the connect flow, the reconcile backstop) is a fact about this
+            // row, and a value captured at attach would leave this gate deciding against it.
+            organizerRole: mb.organizerRole,
+            // Mail 0083. Refreshed for `takeover_authorized_at`'s exact reason: `organizeHere`
+            // stamps CONSENT from another process while this one is already reading the mailbox,
+            // and a value captured at attach would leave a person's "organize here" doing
+            // nothing until the worker happened to restart. The two columns are written in one
+            // transaction, so refreshing them together is also what keeps them consistent here.
+            organizeConsentedAt: mb.organizeConsentedAt,
+            // Mail 0088. Refreshed with the pair above and for the identical reason: "stop
+            // organizing this mailbox" is written by ANOTHER process while this one is already
+            // organizing it, and a value captured at attach would leave the person's press
+            // doing nothing until the worker happened to restart.
+            releaseRequestedAt: mb.releaseRequestedAt,
+          };
+          // Converge the row onto reality — but only about a mailbox that has actually SYNCED. This
+          // mailbox is attached; if its row still says `error` the recovery write failed or was
+          // fenced, and until this line NOTHING retried it (the old comment claimed "the next roster
+          // pass writes it" and this loop's `continue` was the proof it did not — the mailbox synced
+          // perfectly while Settings and the admin console called it broken). `mb.status` is re-read
+          // every pass, so this is a no-op the moment the write lands. `lastSuccessAt !== null` is the
+          // non-blocking-attach half: "attached" no longer implies "drained twice", so without this
+          // clause a mailbox whose login works and whose every cycle throws would be converged to
+          // `connected` 30 s later — resurrecting the "connected flashes on a never-synced mailbox".
+          if (mb.status !== "connected" && attached.lastSuccessAt !== null) await markRecovered(mb);
+          continue;
         }
-      } finally {
-        if (newlyAttached > 0) kickCycle();
+        // Already in the pool: a queued attach takes this pass's row, a running one keeps its own.
+        const inPool = attachPool.state(mb.mailboxId);
+        if (inPool === "queued") { attachPool.replaceQueued(mb.mailboxId, (t) => attach(mb, t)); continue; }
+        if (inPool === "running") continue;
+        // The backoff gate, and since mail 0039 the row can overrule the map. Three cases, and the
+        // ORDER of the first two is the whole of the release path: (1) an entry whose durable write
+        // LANDED (`persisted`) is governed by `mb.retryAfter`, re-read from the database this pass,
+        // so `retry_after IS NULL` means "somebody cleared it" (the admin release) and the mailbox
+        // is attached NOW — the map entry is NOT deleted, since `attempts` is the ladder's input and
+        // resetting it hands a struggling provider a fresh minimum-interval loop (a release buys one
+        // attempt, not a clean slate); (2) an entry whose write did NOT land falls back to
+        // `q.retryAt`, the pre-0039 behaviour; (3) no map entry but a future `retry_after` on the row
+        // is a mailbox this NEW process never quarantined, SEEDED below rather than attached.
+        const q = quarantine.get(mb.mailboxId);
+        if (q) {
+          const until = q.persisted ? (mb.retryAfter?.getTime() ?? null) : q.retryAt;
+          if (until !== null && now < until) continue;
+        } else if (mb.retryAfter && now < mb.retryAfter.getTime()) {
+          // The restart seed. Without this a fresh leader forgets every backoff and re-dials every
+          // parked mailbox at once — the gap this column was added to close, and a way to turn a
+          // deploy during a provider outage into a burst of retries. Two details are load-bearing:
+          // `attempts` is floored at the row's `retry_count`, so the ladder resumes where the outage
+          // is instead of the base delay (the two counters may disagree, and this is the one place
+          // the durable one is the better estimate); and `persisted: true`, because this entry was
+          // READ from the column, so it is governed by the column and an operator's release reaches
+          // it next pass. Seeding also keeps the roster invariant honest — a mailbox skipped on the
+          // row alone would log `roster_invariant_violated` every 30 s about correct behaviour.
+          quarantine.set(mb.mailboxId, {
+            attempts: Math.max(1, mb.retryCount),
+            retryAt: mb.retryAfter.getTime(),
+            reason: "recovered from mailboxes.retry_after on takeover",
+            persisted: true,
+          });
+          log.info("mailbox_quarantine_restored", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId,
+            retryInMs: mb.retryAfter.getTime() - now, attempts: Math.max(1, mb.retryCount),
+            reason: "a durable backoff outlived the process that set it",
+          });
+          continue;
+        }
+        toSchedule.push(mb);
+      }
+      const scheduled: string[] = [];
+      if (toSchedule.length > 0) {
+        // One read of the hosts, only when there is something to schedule.
+        const hosts = await loadAttachHosts(db, toSchedule.map((m) => m.mailboxId));
+        if (stopped) return;
+        for (const mb of toSchedule) {
+          const queued = attachPool.enqueue({
+            mailboxId: mb.mailboxId, accountId: mb.accountId,
+            hostKey: hostKeyOf(hosts.get(mb.mailboxId), mb.mailboxId),
+            run: (t) => attach(mb, t),
+          });
+          if (queued) scheduled.push(mb.mailboxId);
+        }
+        const c = attachPool.counts();
+        log.info("roster_attach_scheduled", { queued: c.queued, inFlight: c.running });
+      }
+      // THE BOOT CONTRACT: startup resolves only once every boot attach has settled, no cycle runs
+      // before it (this pass holds the queue), and a shared fault in one rejects the start.
+      if (opts.awaitAttaches && scheduled.length > 0) {
+        const { fault } = await attachPool.settled(scheduled);
+        if (fault !== null) throw fault;
+        if (stopped) return;
       }
 
       dutyAccounts = accountsOf(served);
@@ -3282,11 +3399,13 @@ export async function startWorkerWithLock(
 
       // The roster invariant, checking what is actually SERVED rather than what was selected.
       // Every mailbox of the shard's duty must be in exactly one accounted-for bucket:
-      // attached, awaiting credentials, or quarantined with a retry scheduled. Anything else
-      // is a paying customer whose mail silently never syncs, i.e. a bug in this file.
+      // attached, being attached, awaiting credentials, or quarantined with a retry scheduled.
+      // Anything else is a paying customer whose mail silently never syncs, i.e. a bug in this file.
+      // No await since the enqueue above, so a scheduled attach is still in the pool here.
       const unexplained = served.filter(
         (m) => !runtimes.has(m.mailboxId) && !awaitingCreds.has(m.mailboxId)
-          && !quarantine.has(m.mailboxId) && !leaseBlocked.has(m.mailboxId),
+          && !quarantine.has(m.mailboxId) && !leaseBlocked.has(m.mailboxId)
+          && attachPool.state(m.mailboxId) === null,
       );
       dutyGap = unexplained.length > 0;
       if (dutyGap) {
@@ -6033,6 +6152,7 @@ export async function startWorkerWithLock(
       if (lockLost || stopped) return;
       lockLost = true;
       stopped = true;                              // stop triggering any new work immediately
+      attachPool.abortAll();                       // and end every attach in flight, at its next step
       // SYNCHRONOUSLY, beside the tripwire and not on the queue. The detach below runs on the
       // serial queue and may wait out a `changesSince` already in flight; the known-set memo must
       // stop being servable at the INSTANT loss is observed, exactly as `lockLost` stops the next
@@ -6054,6 +6174,7 @@ export async function startWorkerWithLock(
       // is the non-writing phase of the cycle (a `changesSince` fetch already in flight), which
       // may hold this entry up but can no longer persist anything.
       void serialize(async () => {
+        await attachPool.settled();
         for (const rt of [...runtimes.values()]) await detach(rt, "leader lock lost");
         // Surrender the heartbeat too. Leaving the last beat behind would keep the shard
         // looking alive for the whole `leaderStaleMs` window while nothing is syncing —
@@ -6085,8 +6206,9 @@ export async function startWorkerWithLock(
       })();
     }, heartbeatMs);
 
-    // ── Initial roster (inside the queue, so the first timer tick cannot overlap it).
-    await serialize(reconcileRoster);
+    // ── Initial roster (inside the queue, so the first timer tick cannot overlap it). The boot pass
+    //    alone waits for its attaches, which run in parallel (see `reconcileRoster`).
+    await serialize(() => reconcileRoster({ awaitAttaches: true }));
     // Beat again now the roster is known: a leader that takes 60 s to write its first real
     // heartbeat is a leader the alerter reports as down for the first minute of every
     // deploy, which is how a real alert becomes noise on day one.
@@ -6298,6 +6420,8 @@ export async function startWorkerWithLock(
         // Idempotent (SIGINT + SIGTERM, or a supervisor stop racing a fatal path).
         teardown ??= (async () => {
           stopped = true;
+          // The attaches in flight are force-closed now and awaited below, before anything closes.
+          attachPool.abortAll();
           // FIRST, and before `clearHeartbeat` below: the pulse runs off the serial queue, so
           // a timer left armed here could land its refresh after the surrender. The guarded
           // UPDATE would refuse it anyway (`leader = true` is false by then) — this is the
@@ -6308,6 +6432,7 @@ export async function startWorkerWithLock(
           // after it. A `flushExit(1)` fatal path flushes nothing; the daily reconcile shows it.
           await usageBuffer?.flush();
           await drain();                   // let the in-flight cycle/roster pass finish
+          await attachPool.settled();      // and every attach, which unwinds without a row write
           await usageBuffer?.flush();
           usageBuffer?.stop();
           try {
@@ -6334,6 +6459,9 @@ export async function startWorkerWithLock(
     // failure after that point leaves an armed timer holding the event loop open and writing
     // to a pool that is about to close. `stopTimers` is set once they exist.
     stopTimers?.();
+    // An attach still running holds a connection and may still write: end it before closing anything.
+    attachPoolRef?.abortAll();
+    try { await attachPoolRef?.settled(); } catch { /* the pool never rejects */ }
     for (const rt of runtimes.values()) {
       if (rt.unwatch) { try { await rt.unwatch(); } catch { /* ignore */ } }
       try { await rt.adapter.close(); } catch { /* ignore */ }

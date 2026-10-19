@@ -45,8 +45,9 @@ import { FakeAdapterFleet } from "./_fakeadapter.js";
  * interval — and the dual-organizer price is not paid, because the danger was two things
  * organizing ONE mailbox and a mailbox being attached has no lane. Two claims below changed with
  * it, each saying so at its own site: the first now asserts adoption WHILE the batch is parked,
- * and `roster_pass_delayed` is driven by the window that still produces it (a hung provider dial
- * inside `attach`, which nothing preempts) rather than by a suspended batch, which no longer does.
+ * and `roster_pass_delayed` is driven by the window that still produces it (a parked slice of the
+ * cycle tail, which nothing preempts) rather than by a suspended batch or a hung provider dial,
+ * neither of which holds the queue any more.
  */
 
 type Db = ReturnType<typeof makeDb>;
@@ -279,12 +280,24 @@ describe("the roster pass is not starved by the cycle it shares a queue with", (
     const db = makeDb(DB);
     const fleet = new FakeAdapterFleet();
     const lines: Array<Record<string, unknown>> = [];
-    const b = await seedMailbox(db);
+    await seedMailbox(db);
     await seedMailbox(db);
     await seedMailbox(db);
 
+    // A tail slice parks on this gate once `parkNext` is set.
+    let parkNext = false;
+    let parked = false;
+    let releaseSlice = (): void => { /* replaced below */ };
+    const sliceGate = new Promise<void>((r) => { releaseSlice = () => { r(); }; });
+    releases.push(() => { releaseSlice(); });
     const worker = await startWorker({
       ...cfgFor(fleet),
+      tailSliceHook: async () => {
+        if (!parkNext) return;
+        parkNext = false;
+        parked = true;
+        await sliceGate;
+      },
       // `logger`, not `log`. `apps/worker` does not typecheck its tests, so the wrong key is a
       // silently absent logger and an assertion that can only ever time out — which is how this
       // test first "failed".
@@ -305,28 +318,17 @@ describe("the roster pass is not starved by the cycle it shares a queue with", (
     // which is the point of the slice and would make this guard permanently green if it kept
     // asserting the old shape.
     //
-    // The WARN is not dead, and this is the window that remains: `attach` runs INSIDE the roster
-    // pass, holds the one queue for a provider dial, and nothing preempts it. A hung `connect()`
-    // is therefore still exactly what it always was — mailboxes connected in that window are not
-    // adopted until it returns — and it is the shape the line has to keep explaining, because an
-    // operator reading `roster_pass_delayed` needs it to mean something.
-    //
-    // B is detached by a connection close and its RE-attach is the thing that hangs, so the gate
-    // is armed before the close and there is no race with a pass that might have attached it
-    // first.
-    let releaseConnect = (): void => { /* replaced below */ };
-    const dialGate = new Promise<void>((r) => { releaseConnect = () => { r(); }; });
-    fleet.behave(b.mailboxId, { gate: dialGate });
-    releases.push(() => { releaseConnect(); });
-    fleet.closeConnection(b.mailboxId);
-    await waitFor(() => worker.stats().mailboxes === 2, 8000, "B detached by its connection close");
-    await waitFor(
-      () => fleet.indicesOf(b.mailboxId, "connect").length === 1, 8000,
-      "a roster pass to reach B's re-dial and hang in it",
-    );
+    // The WARN is not dead, and this is the window that remains: the cycle TAIL is its own queue
+    // entry and yields only between slices, so one slow slice holds every owed pass behind it. A hung
+    // provider dial no longer does: attaches run in their own pool beside the queue
+    // (CLOUD-ROSTER-REATTACH-IS-SERIAL), so the window this case used to park was closed. A parked
+    // slice is the shape the line has to keep explaining, because an operator reading
+    // `roster_pass_delayed` needs it to mean something.
+    parkNext = true;
+    await waitFor(() => parked, 8000, "a tail slice to park on its gate");
 
     await new Promise((r) => setTimeout(r, ROSTER_MS * 6));
-    releaseConnect();
+    releaseSlice();
 
     const delayed = (): Array<Record<string, unknown>> =>
       lines.filter((l) => l.event === "roster_pass_delayed");
