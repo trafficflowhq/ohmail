@@ -66,7 +66,7 @@ and on `main`: on macOS, Windows and Linux it typechecks the window, builds the 
 packages the app and opens what it built; its engine job bundles the engine on its own. `android.yml` builds the
 phone app. On a pull request the platform jobs and the phone build run only when it changes what they build
 (`.github/scripts/pr-build-scope.sh`); the engine jobs always run. `dco.yml` checks sign-offs and `guard.yml` refuses a fork's change to the workflows,
-their tools or the push gate's baseline. Tests sit beside the code they cover: `apps/desktop/test`, and the
+their tools or the push gate's baseline. A fork's pull request runs every job on GitHub's runners. Tests sit beside the code they cover: `apps/desktop/test`, and the
 `*_tests.rs` files in `apps/desktop/src-tauri/src`. Add or extend a test for behaviour you change.
 
 The phone app (`apps/mobile`) has two root commands: `npm run typecheck:mobile` and `npm run test:mobile`

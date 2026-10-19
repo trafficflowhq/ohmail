@@ -47,7 +47,8 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   opens the artifact it just built to check the engine is inside and starts. The
   engine job typechecks and bundles the engine source on its own. All must pass;
   the smoke is what catches a view that lays out but draws nothing, and the
-  artifact inspection is what catches a build that grew a network call.
+  artifact inspection is what catches a build that grew a network call. A pull
+  request from a fork runs every job on GitHub's runners.
 - On a pull request the platform jobs (macOS, Windows, both Linux
   architectures, the rpm install and the flatpak) and the Android APK build run
   only when the pull request changes something they build: the desktop app or

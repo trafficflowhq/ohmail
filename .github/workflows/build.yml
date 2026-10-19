@@ -3779,9 +3779,10 @@ jobs:
   # engine compiles and bundles on a clean machine — not merely that a packager
   # ran over source no job ever read.
   # ==========================================================================
+  # Where it runs: as ci.yml's jobs do (its header says when that is the maintainers' own runners).
   engine:
     name: engine · typecheck · build
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -3917,7 +3918,7 @@ jobs:
   # ==========================================================================
   engine-ui-smoke:
     name: engine-bearing UI · scan · smoke
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
 
     steps:

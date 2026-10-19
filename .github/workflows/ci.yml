@@ -11,6 +11,14 @@ name: ci
 #
 # The hosted runners are one pool for the whole organisation, so each matrix bounds how many of its
 # jobs run at once (max-parallel): three suite shards, one alone file, one SQLite shard.
+#
+# Where the jobs run. Every job here, and build.yml's two engine jobs, run on the maintainers' own self-hosted
+# runners when the repository variable OHMAIL_LINUX_RUNNER reads `zorin`, and then only for the nightly schedule, a
+# push to main and a maintainer's pull request (a `pr/` branch of this repository, opened by a person who is its
+# owner, a member or a collaborator, as guard.yml's door reads one), never for a run a bot started; each job runs in
+# a fresh virtual machine of its own, with the same services. A fork's pull request, every other pull request, and
+# every run while the variable is unset or reads `hosted`, runs on GitHub's ubuntu-latest
+# (test/workflows-route-linux-jobs.test.ts).
 
 on:
   pull_request:
@@ -31,7 +39,7 @@ env:
 jobs:
   plan:
     name: suite · plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
@@ -65,7 +73,7 @@ jobs:
   suite:
     name: suite (${{ matrix.shard }})
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -212,7 +220,7 @@ jobs:
     name: suite alone (${{ matrix.file }})
     needs: plan
     if: needs.plan.outputs.alone != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -286,7 +294,7 @@ jobs:
   sqlite:
     name: suite · sqlite (${{ matrix.shard }})
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -377,7 +385,7 @@ jobs:
   proxy-e2e:
     name: suite · proxy e2e
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
     services:
       postgres:
@@ -433,7 +441,7 @@ jobs:
   webapp-build:
     name: suite · webapp next build
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
     env:
       NODE_OPTIONS: --max-old-space-size=4096
@@ -477,7 +485,7 @@ jobs:
   # The required check's name is this job's name, "typecheck": it is read by the repository's ruleset.
   typecheck:
     name: typecheck
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -510,7 +518,7 @@ jobs:
   desktop:
     name: suite · desktop
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
