@@ -5176,8 +5176,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 .set({ releaseRefusal: "sibling_lapse" })
                 .where(and(
                   eq(mailboxes.id, mb.id),
-                  sql`${mailboxes.takeoverAuthorizedAt} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}`,
-                  sql`${mailboxes.releaseRequestedAt} is not distinct from ${dialect(db).tsOrNull(releaseRequested)}`,
+                  sql`${dialect(db).truncMs(mailboxes.takeoverAuthorizedAt)} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}`,
+                  sql`${dialect(db).truncMs(mailboxes.releaseRequestedAt)} is not distinct from ${dialect(db).tsOrNull(releaseRequested)}`,
                 ));
             } catch (err) {
               log("organizer_release_write_failed", {
@@ -5296,10 +5296,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   and ${mailboxes.organizedByInstallId} is null then ${mailboxes.releaseRequestedAt} end,
                   ${dialect(db).now()})`,
               })
+              // At the reading's precision: the store keeps microseconds, the pass read a `Date`.
               .where(and(
                 eq(mailboxes.id, mb.id),
-                sql`${mailboxes.takeoverAuthorizedAt} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}`,
-                sql`${mailboxes.releaseRequestedAt} is not distinct from ${dialect(db).tsOrNull(releaseRequested)}`,
+                sql`${dialect(db).truncMs(mailboxes.takeoverAuthorizedAt)} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}`,
+                sql`${dialect(db).truncMs(mailboxes.releaseRequestedAt)} is not distinct from ${dialect(db).tsOrNull(releaseRequested)}`,
               ))
               .returning({ id: mailboxes.id });
               if (rows.length > 0) await recordMailboxProfileChange(tx as unknown as LedgerTx, world.accountId, mb.id);
@@ -5818,8 +5819,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  FROM` rather than `=` so the ordinary case (both NULL) matches: SQL equality on two
                  NULLs is NULL, which would make this a no-op on every stand-down that had no stamp
                  and leave the column's own value untouched — harmless there, and the wrong shape to
-                 rely on. */
-              takeoverAuthorizedAt: sql`case when ${mailboxes.takeoverAuthorizedAt} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}
+                 rely on. The column is compared at the reading's precision (`truncMs`): the store
+                 keeps microseconds, the pass read a millisecond `Date`, and an exact compare never
+                 spent a stamp the store's clock wrote. Same rule as the two compare-and-sets above. */
+              takeoverAuthorizedAt: sql`case when ${dialect(db).truncMs(mailboxes.takeoverAuthorizedAt)} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}
                 then null else ${mailboxes.takeoverAuthorizedAt} end`,
               // Mail 0088 — the demotion half, and the fifth writer of the triple. Stamped in the
               // same statement as the role and the holder columns it is announcing.

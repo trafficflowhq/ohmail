@@ -210,3 +210,100 @@ describe.skipIf(!AVAILABLE)("a role change spends only the one-shots it read", (
       "a null reading was treated as permission to clear").toBe(PRESSED_DURING.toISOString());
   });
 });
+
+/**
+ * ═══ A STAMP THE DATABASE CLOCK WROTE IS SPENT ON ITS FIRST ROLE CHANGE ═══════════════════════
+ *
+ * Postgres keeps microseconds; the reading arrives as a JavaScript `Date`, which keeps
+ * milliseconds. `stamp <= asRead` was false for any stamp with digits past its millisecond, so a
+ * stamp `now()` wrote was never spent: every visit promoted again, rang the arrangement and restarted
+ * the retro jobs. The comparison is at the reading's precision; a press from the next millisecond
+ * on is still newer than the reading and survives.
+ */
+describe.skipIf(!AVAILABLE)("a one-shot the database clock wrote", () => {
+  let db: ReturnType<typeof drizzle<typeof schema>>;
+  let sql: ReturnType<typeof postgres>;
+  type Col = "takeover_authorized_at" | "release_requested_at";
+
+  beforeAll(async () => {
+    await runMigrations(PG_TEST_URL);
+    sql = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
+    db = brandDialect(drizzle(sql, { schema }), "pg");
+  }, 60_000);
+
+  const seed = async (organizerRole: "organizer" | "reader"): Promise<string> => {
+    const accountId = randomUUID();
+    await db.insert(accounts).values({ id: accountId, name: `oneshot-us-${accountId.slice(0, 8)}` });
+    const [mb] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `oneshot-us-${accountId.slice(0, 8)}@example.test`, organizerRole,
+    }).returning();
+    return mb!.id;
+  };
+
+  /** 407 µs past a millisecond: under 500, so red whether the parser truncates or rounds. */
+  const plant = async (id: string, col: Col): Promise<void> => {
+    await sql`update mailboxes set ${sql(col)} = date_trunc('milliseconds', now()) + interval '407 microseconds'
+      where id = ${id}`;
+    expect(await textOf(id, col), "the plant carries no microseconds").toMatch(/\.\d{3}407\b/);
+  };
+
+  const textOf = async (id: string, col: Col): Promise<string | null> =>
+    (await sql<Array<{ t: string | null }>>`select ${sql(col)}::text as t from mailboxes where id = ${id}`)[0]!.t;
+
+  const read = async (id: string): Promise<OneShotsAsRead> => {
+    const [r] = await db.select({
+      releaseRequestedAt: mailboxes.releaseRequestedAt, takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+    }).from(mailboxes).where(eq(mailboxes.id, id));
+    return r!;
+  };
+
+  const by = { installId: "laptop-7", kind: "local" as const, displayName: "kitchen mac", state: "held" as const };
+
+  it("a PROMOTION spends a takeover stamp it read", async () => {
+    const id = await seed("reader");
+    await plant(id, "takeover_authorized_at");
+    expect(await clearOrganizerStandDown(db as never, id, { now: WROTE_AT, asRead: await read(id) })).toBe(true);
+    expect(await textOf(id, "takeover_authorized_at"), "the press the promotion read is still standing")
+      .toBeNull();
+  });
+
+  it("a PROMOTION spends a release stamp it read", async () => {
+    const id = await seed("reader");
+    await plant(id, "release_requested_at");
+    expect(await clearOrganizerStandDown(db as never, id, { now: WROTE_AT, asRead: await read(id) })).toBe(true);
+    expect(await textOf(id, "release_requested_at"), "the stop the promotion read is still standing").toBeNull();
+  });
+
+  it("a DEMOTION spends both stamps it read", async () => {
+    const id = await seed("organizer");
+    await plant(id, "takeover_authorized_at");
+    await plant(id, "release_requested_at");
+    expect(await markMailboxStoodDown(db as never, id, "organized_elsewhere:local", {
+      now: WROTE_AT, asRead: await read(id), by,
+    })).toBe(true);
+    expect(await textOf(id, "takeover_authorized_at"), "the demotion left the press it read").toBeNull();
+    expect(await textOf(id, "release_requested_at"), "the demotion left the stop it read").toBeNull();
+  });
+
+  it("CONTROL: a Stop written as a Date 1 ms after the read survives the promotion", async () => {
+    const id = await seed("reader");
+    await plant(id, "release_requested_at");
+    const asRead = await read(id);
+    await db.update(mailboxes)
+      .set({ releaseRequestedAt: new Date(asRead.releaseRequestedAt!.getTime() + 1) })
+      .where(eq(mailboxes.id, id));
+    await clearOrganizerStandDown(db as never, id, { now: WROTE_AT, asRead });
+    expect(await textOf(id, "release_requested_at"), "a newer Stop was spent by an older read").not.toBeNull();
+  });
+
+  it("CONTROL: a press the database wrote at read + 1001 µs survives the demotion", async () => {
+    const id = await seed("organizer");
+    await plant(id, "takeover_authorized_at");
+    const asRead = await read(id);
+    await sql`update mailboxes set takeover_authorized_at =
+      ${asRead.takeoverAuthorizedAt!.toISOString()}::timestamptz + interval '1001 microseconds' where id = ${id}`;
+    await markMailboxStoodDown(db as never, id, "organized_elsewhere:local", { now: WROTE_AT, asRead, by });
+    expect(await textOf(id, "takeover_authorized_at"), "a press from the next millisecond was spent")
+      .not.toBeNull();
+  });
+});

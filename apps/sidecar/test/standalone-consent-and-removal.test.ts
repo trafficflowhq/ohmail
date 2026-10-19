@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
@@ -1285,6 +1285,53 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
        unchanged count is the whole of "the release did not renew the claim it was giving up" —
        which the arm's ordering exists for and which an occupancy count cannot say. */
     expect(meta.appends, "the release renewed a claim it had been told to give up").toBe(appendsBefore);
+  });
+
+  /* A ONE-SHOT THE STORE'S CLOCK WROTE. The store keeps microseconds and the pass reads a
+     millisecond `Date`, so an exact compare never matched it: the Stop was never recorded (every
+     poll yielded "to the press") and a stand-down never spent the press it read. 407 µs is under
+     500, so these are red whether the parser truncates or rounds. Postgres-only planting SQL. */
+  it("a Stop the store's clock wrote is recorded on the next pass", async () => {
+    const meta = new MemoryMeta();
+    const { sidecar } = await boot([41], meta);
+    await agree(sidecar);
+    await sidecar.syncUntilQuiet();
+    expect(meta.count, "the precondition: this install holds the claim").toBe(1);
+    await sidecar.db.execute(sql`update mailboxes set release_requested_at =
+      date_trunc('milliseconds', now()) + interval '407 microseconds' where id = ${sidecar.world.mailboxId}`);
+    meta.expungeEveryClaim();
+    await sidecar.syncUntilQuiet();
+
+    const done = await row(sidecar);
+    expect(events.map((e) => e.event), "the release yielded to the very press it was answering")
+      .not.toContain("organizer_claim_release_yielded_to_press");
+    expect(done.organizerReleasedAt, "the release was not recorded").not.toBeNull();
+    expect(done.releaseRequestedAt, "the honoured request was not spent").toBeNull();
+  });
+
+  it("a stand-down spends a press the store's clock wrote, and later polls ring nothing", async () => {
+    const meta = new MemoryMeta();
+    const { sidecar } = await boot([41], meta);
+    await agree(sidecar);
+    await sidecar.syncUntilQuiet();
+    expect((await row(sidecar)).organizerRole).toBe("organizer");
+    // An older press of ours, then a holder pressed for later takes the mailbox.
+    await sidecar.db.execute(sql`update mailboxes set takeover_authorized_at =
+      date_trunc('milliseconds', now()) - interval '1 hour' + interval '407 microseconds'
+      where id = ${sidecar.world.mailboxId}`);
+    await meta.seedForeignClaim(new Date());
+    await sidecar.syncUntilQuiet();
+
+    const after = await row(sidecar);
+    expect(after.organizerRole, "the precondition: the later press won").toBe("reader");
+    expect(after.takeoverAuthorizedAt, "the stand-down left the press it read standing").toBeNull();
+    const rings = async (): Promise<number> => (await sidecar.db.select({ seq: changeLog.seq }).from(changeLog)
+      .where(and(eq(changeLog.entityType, "mailbox_profile"), eq(changeLog.entityId, sidecar.world.mailboxId))))
+      .length;
+    const settled = await rings();
+    await sidecar.syncUntilQuiet();
+    await sidecar.syncUntilQuiet();
+    expect(await rings(), "a later poll stood the mailbox down again and rang").toBe(settled);
   });
 
   it("A RELEASE THE SERVER NEVER CONFIRMS ENDS AT THE LAPSE — the idle is bounded, not for ever", async () => {

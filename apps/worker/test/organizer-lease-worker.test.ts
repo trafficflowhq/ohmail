@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
-  accounts, drafts, folderState, mailboxes, mailboxCredentials, messages, organizerRequests,
+  accounts, changeLog, drafts, folderState, mailboxes, mailboxCredentials, messages, organizerRequests,
   rules, threads, STAND_DOWN_SEND_SENTENCES,
 } from "@trafficflow/db";
 import { makeDb, workerHeartbeats } from "@trafficflow/db/cloud";
@@ -1617,6 +1617,40 @@ describe("the worker's organizer lease: the states two healthy workers never rea
     // One-shot, as every becoming is.
     expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).takeoverAuthorizedAt === null))
       .toBe(true);
+  }, 60_000);
+
+  /**
+   * The same press, written by the DATABASE clock (microseconds; the roster reads it back as a
+   * millisecond `Date`). It was never spent: every roster pass reloaded it, and every visit promoted
+   * again and rang the arrangement — measured on Cloud at ~7,600 change rows a day for one account.
+   */
+  it("…and a press the database clock wrote is spent once: later visits ring nothing", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db, undefined, { consented: true, role: "reader" });
+    await db.update(mailboxes).set({ takeoverIntent: "takeover" }).where(eq(mailboxes.id, mb.mailboxId));
+    await db.execute(sql`update mailboxes set takeover_authorized_at =
+      date_trunc('milliseconds', now()) + interval '407 microseconds' where id = ${mb.mailboxId}`);
+    const rings = async (): Promise<number> => (await db.select({ seq: changeLog.seq }).from(changeLog).where(and(
+      eq(changeLog.entityType, "mailbox_profile"), eq(changeLog.entityId, mb.mailboxId)))).length;
+
+    const worker = await startWorker({
+      databaseUrl: DB, keyProvider: KP, pollIntervalMs: 200, rosterIntervalMs: 200,
+      sentDomain: "trafficflow.test", adapterFactory: fleet.factory,
+      organizer: { installId: "cloud-test", displayName: "Cloud", staleAfterMs: 60_000 },
+    });
+    closers.push(() => worker.stop());
+
+    expect(await waitFor(async () => {
+      const r = await rowOf(db, mb.mailboxId);
+      return r.organizerRole === "organizer" && r.takeoverAuthorizedAt === null;
+    }), "the press the promotion read was never spent").toBe(true);
+    const settled = await rings();
+    // Three more organize verdicts — each one a gate visit that reread the roster's row.
+    const visits = fleet.metaFor(mb.mailboxId).appends;
+    expect(await waitFor(async () => fleet.metaFor(mb.mailboxId).appends >= visits + 3),
+      "the gate stopped visiting").toBe(true);
+    expect(await rings(), "a later visit promoted again and rang the arrangement").toBe(settled);
   }, 60_000);
 
   /**

@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { freshDataDir } from "./_datadir.js";
-import { eq, isNull } from "drizzle-orm";
+import { eq, isNull, sql } from "drizzle-orm";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
@@ -196,6 +196,26 @@ describe("the sibling-lapse refusal on the row", () => {
     const again = await mailboxRow(sidecar);
     expect(again.releaseRefusal).toBe("sibling_lapse");
     expect(again.releaseRequestedAt).not.toBeNull();
+  }, 60_000);
+
+  it("a Stop the store's clock wrote (microseconds) records the refusal too", async () => {
+    /* The pass reads a millisecond `Date`; the compare-and-set compares at that precision, or a
+       stamp with digits past its millisecond never matched and the refusal never reached the row.
+       407 µs: red whether the parser truncates or rounds. */
+    const lines: { event: string }[] = [];
+    const meta = new MemoryMetaFolder();
+    const sidecar = await boot(await dataDir(), quietMailbox(meta), lines);
+    await sidecar.start();
+    expect(meta.count, "the first pass did not claim the mailbox").toBe(1);
+
+    await meta.replaceWithSibling(meta.ownInstallId(), new Date());
+    await sidecar.db.execute(sql`update mailboxes set release_requested_at =
+      date_trunc('milliseconds', now()) + interval '407 microseconds' where id = ${sidecar.world.mailboxId}`);
+    await sidecar.syncUntilQuiet();
+
+    const row = await mailboxRow(sidecar);
+    expect(row.releaseRefusal, "the refusal never reached the row").toBe("sibling_lapse");
+    expect(row.releaseRequestedAt, "the request was spent over a release that never happened").not.toBeNull();
   }, 60_000);
 
   it("a COULD-NOT-LOOK writes NO refusal — the field appears on the sibling refusal alone", async () => {

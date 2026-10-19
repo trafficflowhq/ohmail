@@ -1050,11 +1050,18 @@ export interface OneShotsAsRead {
  * `asRead` is the value at the decision's START, so `<=` keeps anything newer and clears exactly
  * what the decision judged. `null` read ⇒ clear nothing (nothing standing now is ours to spend).
  * `undefined` ⇒ no reading named, the unconditional clear, as `fence` treats its own absence.
+ *
+ * AT THE READING'S PRECISION. The column keeps microseconds and `asRead` is a `Date`, which keeps
+ * milliseconds, so a stamp the database clock wrote never compared `<=` its own reading and was
+ * never spent: every visit promoted again. The column is truncated for the compare only (never
+ * written back); a press counts as newer from the next millisecond on. Every product writer stamps
+ * a JavaScript `Date`, so two of its presses inside one millisecond are already one value.
  */
-function spendOneShot(column: AnyPgColumn, asRead: Date | null | undefined): SQL | null {
+function spendOneShot(db: unknown, column: AnyPgColumn, asRead: Date | null | undefined): SQL | null {
   if (asRead === undefined) return null;
   if (asRead === null) return sql`${column}`;
-  return sql`case when ${column} <= ${asRead.toISOString()}::timestamptz then null else ${column} end`;
+  const d = dialect(db);
+  return sql`case when ${d.truncMs(column)} <= ${d.ts(asRead)} then null else ${column} end`;
 }
 
 /**
@@ -1149,7 +1156,7 @@ export async function markMailboxStoodDown(
      * Every writer that makes the statement untrue clears it in the same statement — the one it
      * READ, and not one pressed while this gate ran, which is the person's latest word and outlives
      * a demotion decided before it. Literally the same function as the promotion's. */
-    releaseRequestedAt: spendOneShot(mailboxes.releaseRequestedAt, opts.asRead?.releaseRequestedAt),
+    releaseRequestedAt: spendOneShot(db, mailboxes.releaseRequestedAt, opts.asRead?.releaseRequestedAt),
     organizedByKind: kind,
     // Mail 0092 — WHICH install, beside WHAT kind. See `StandDownHolder.installId`.
     organizedByInstallId: installId,
@@ -1183,7 +1190,7 @@ export async function markMailboxStoodDown(
     // gate READ, on the promotion's rule: "Organize here", pressed while the gate was losing the
     // election, asks for a becoming this demotion never weighed, and clearing it would spend a
     // press on its own refusal — the same defect wearing the other column's name.
-    takeoverAuthorizedAt: spendOneShot(mailboxes.takeoverAuthorizedAt, opts.asRead?.takeoverAuthorizedAt),
+    takeoverAuthorizedAt: spendOneShot(db, mailboxes.takeoverAuthorizedAt, opts.asRead?.takeoverAuthorizedAt),
     // Mail 0088 — and BEING BEATEN IS NOT RELEASING. A row that carried both would report the
     // quieter of the two events to a person whose mailbox somebody else has just taken, and the
     // claim-back screen would name no previous holder on the one occasion there is one.
@@ -1487,11 +1494,11 @@ export async function clearOrganizerStandDown(
       // The authorization is spent by this one becoming. See the header — and only the one this
       // gate READ: a press that arrived while the gate ran authorises a becoming this promotion
       // is not, and spending it would make the next press pay for the last one.
-      takeoverAuthorizedAt: spendOneShot(mailboxes.takeoverAuthorizedAt, opts.asRead?.takeoverAuthorizedAt),
+      takeoverAuthorizedAt: spendOneShot(db, mailboxes.takeoverAuthorizedAt, opts.asRead?.takeoverAuthorizedAt),
       /* And the OTHER one-shot: a promotion must not inherit a stop somebody asked of the role
          this row used to hold — but it must not erase one asked DURING it either. Same rule as
          the demotion's, and literally the same function — see `markMailboxStoodDown`. */
-      releaseRequestedAt: spendOneShot(mailboxes.releaseRequestedAt, opts.asRead?.releaseRequestedAt),
+      releaseRequestedAt: spendOneShot(db, mailboxes.releaseRequestedAt, opts.asRead?.releaseRequestedAt),
       // Mail 0088 — a mailbox organized here again is not a released one. NOT a one-shot ask: a
       // marker of the CURRENT state, which the flip in this statement makes untrue outright, so it
       // is cleared unconditionally. Left standing it would make the next claim-back report "you
