@@ -80,9 +80,10 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       accountId, provider: "imap", address: `lo-act-${tag}@example.test`, status: "connected",
     }).returning();
     await base.db.insert(accountSettings).values({ accountId, screenerAutoActAt: NOW, screeningScope: "all_time" });
+    // Confirmed by the provider (`pass`), so the act writes the rule the erasure must take with it.
     const [m] = await base.db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: `lo-${tag}`, dedupKey: `lo:${tag}`, subject: "offer",
-      fromAddress: `held-${tag}@spam.test`, nativeLocator: { folder: SCREENER, ref: "1:200" },
+      fromAddress: `held-${tag}@spam.test`, authVerdict: "pass", nativeLocator: { folder: SCREENER, ref: "1:200" },
     }).returning();
     await base.db.insert(folderState).values({
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
@@ -142,7 +143,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     for (const i of [1, 2]) {
       const [m] = await base.db.insert(messages).values({
         accountId, mailboxId: mb!.id, bodyHash: `gone-${tag}-${i}`, dedupKey: `gone:${tag}:${i}`, subject: "offer",
-        fromAddress: `held${i}-${tag}@spam.test`, nativeLocator: { folder: SCREENER, ref: `1:${300 + i}` },
+        fromAddress: `held${i}-${tag}@spam.test`, authVerdict: "pass", nativeLocator: { folder: SCREENER, ref: `1:${300 + i}` },
       }).returning();
       await base.db.insert(folderState).values({
         messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
@@ -160,6 +161,128 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const events = log.lines.map((l) => l.event).filter((e) => e.startsWith("screener_auto_act"));
     expect(events).toEqual(["screener_auto_act_account_erased"]);
     expect(out).toMatchObject({ examined: 2, filed: 0, failed: 0 });
+  }, 60_000);
+
+  /**
+   * A sender with a genuine letter (`pass`, backdated by its Date) and a newer one its provider did
+   * not confirm, advised to Spam: the act files the unconfirmed letter alone and writes no rule, on
+   * the decision's own order (the fence, `account_settings`, the rule-key lock, the mailbox row
+   * FOR SHARE, `folder_state`, the counter). A person's admission of the same sender is the other side.
+   * Unlike the pairs above, these two never deadlocked at a base: the door is new, and they hold that
+   * it queues behind and ahead of the press in that order, and reads the press's rule once it waited.
+   */
+  async function unconfirmedWorld(prefix: string) {
+    const accountId = randomUUID();
+    const tag = accountId.slice(0, 8);
+    await base.db.insert(accounts).values({ id: accountId, name: `${prefix}-${tag}` });
+    const [mb] = await base.db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `${prefix}-${tag}@example.test`, status: "connected",
+    }).returning();
+    await base.db.insert(accountSettings).values({ accountId, screenerAutoActAt: NOW, screeningScope: "all_time" });
+    await base.db.insert(accountSyncState).values({ accountId, nextSeq: 0n }).onConflictDoNothing();
+    const sender = `held-${tag}@spam.test`;
+    const letter = async (ref: number, authVerdict: string, date: Date): Promise<string> => {
+      const [m] = await base.db.insert(messages).values({
+        accountId, mailboxId: mb!.id, bodyHash: `${prefix}-${tag}-${ref}`, dedupKey: `${prefix}:${tag}:${ref}`,
+        subject: "offer", fromAddress: sender, authVerdict, senderCheck: "none", date,
+        nativeLocator: { folder: SCREENER, ref: `1:${ref}` },
+      }).returning();
+      await base.db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+        lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      });
+      return m!.id;
+    };
+    const genuine = await letter(400, "pass", new Date("2020-01-01T00:00:00.000Z"));
+    const forged = await letter(401, "unavailable", NOW);
+    await base.db.insert(routingDecisions).values({
+      accountId, messageId: forged, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
+      destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS,
+    });
+    const desiredOf = async (id: string): Promise<string> =>
+      (await base.db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
+    const senderRules = () => base.db.select({ destination: rules.destination, personDecidedAt: rules.personDecidedAt })
+      .from(rules).where(and(eq(rules.accountId, accountId), eq(rules.match, sender)));
+    /** The person's admission, as the press runs it: the settings row stamped, then the rule-key lock. */
+    const admit = (name: string) => {
+      const decideDb = open(name).db;
+      return decideDb.transaction(async (raw) => applyScreenerDecision(carryDialect(decideDb, raw as object) as unknown as Tx, {
+        accountId, scope: "sender", address: sender, appliedFolder: "INBOX", decision: "yes",
+        triggeringActionId: `screener:${name}`, now: NOW, overExisting: "converge", decidedBy: "person",
+      }));
+    };
+    return { accountId, tag, genuine, forged, desiredOf, senderRules, admit };
+  }
+
+  it("the act's filing of an unconfirmed letter and a person's admission of the sender, the act first: both commit", async () => {
+    const w = await unconfirmedWorld("lo-unc");
+    // The act parks at its per-sender consent ask, holding the fence and the settings row.
+    let asked = 0;
+    let parked!: () => void;
+    const isParked = new Promise<void>((r) => { parked = r; });
+    let resume!: () => void;
+    const resumed = new Promise<void>((r) => { resume = r; });
+    const consent: ScreenerActConsent = {
+      async stillGiven() {
+        asked += 1;
+        if (asked === 2) { parked(); await resumed; }
+        return true;
+      },
+    };
+    const log = capture();
+    const actName = `lo-unc-act-${w.tag}`;
+    const admitName = `lo-unc-admit-${w.tag}`;
+    const act = screenerAutoActPass(open(actName).db as unknown as Tx, { accountId: w.accountId, consent, log, now: () => NOW });
+    await isParked;
+    const admit = w.admit(admitName);
+    await untilWaiting(admitName);
+    resume();
+    const settled = await Promise.allSettled([act, admit]);
+    const codes = settled.map((x) => (x.status === "rejected" ? codeOf(x.reason) ?? String(x.reason) : "ok"));
+    expect(codes, "a writer failed").toEqual(["ok", "ok"]);
+    const failed = log.lines.filter((l) => l.event === "screener_auto_act_failed").map((l) => codeOf(l.fields.err) ?? String(l.fields.err));
+    expect(failed, "the act failed").toEqual([]);
+    expect(settled[0].status === "fulfilled" ? settled[0].value : null).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1 });
+    expect(await w.desiredOf(w.forged)).toBe(SPAM);
+    expect(await w.desiredOf(w.genuine)).toBe("INBOX");
+    expect(await w.senderRules()).toEqual([{ destination: "INBOX", personDecidedAt: NOW }]);
+  }, 60_000);
+
+  it("a person's admission of the sender and the act's filing of an unconfirmed letter, the press first: both commit, the act files nothing", async () => {
+    const w = await unconfirmedWorld("lo-unc2");
+    // The gate holds the change-log counter: the admission parks at its first delta, holding the
+    // settings row and the rule-key lock; the act then waits at the settings row.
+    const gate = open(`lo-unc2-gate-${w.tag}`);
+    let held!: () => void;
+    const holding = new Promise<void>((r) => { held = r; });
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const gated = gate.db.transaction(async (tx) => {
+      await tx.execute(sql`select 1 from account_sync_state where account_id = ${w.accountId} for update`);
+      held();
+      await released;
+      throw new Error("gate rolled back");
+    }).catch(() => undefined);
+    await holding;
+    const admitName = `lo-unc2-admit-${w.tag}`;
+    const actName = `lo-unc2-act-${w.tag}`;
+    const admit = w.admit(admitName);
+    await untilWaiting(admitName);
+    const log = capture();
+    const act = screenerAutoActPass(open(actName).db as unknown as Tx, {
+      accountId: w.accountId, consent: { stillGiven: async () => true }, log, now: () => NOW,
+    });
+    await untilWaiting(actName);
+    release();
+    await gated;
+    const settled = await Promise.allSettled([admit, act]);
+    const codes = settled.map((x) => (x.status === "rejected" ? codeOf(x.reason) ?? String(x.reason) : "ok"));
+    expect(codes, "a writer failed").toEqual(["ok", "ok"]);
+    expect(await w.desiredOf(w.forged)).toBe("INBOX");
+    expect(await w.desiredOf(w.genuine)).toBe("INBOX");
+    expect(await w.senderRules()).toEqual([{ destination: "INBOX", personDecidedAt: NOW }]);
+    expect(settled[1].status === "fulfilled" ? settled[1].value : null, "the act filed over the person's rule")
+      .toMatchObject({ filed: 0, kept: 1, failed: 0, unconfirmedDenies: 0 });
   }, 60_000);
 
   it("the correspondent retro's release and a Screener decision on one sender: both commit", async () => {

@@ -100,10 +100,10 @@ export {
 // services too, because it needs `@trafficflow/core`'s `effectForDestination`).
 export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, DECISION_BATCH_MAX, admitsDestination, domainOf,
-  heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag, heldRowMovesOnPress,
+  heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag, rerouteUnconfirmedHeld, heldRowMovesOnPress,
   applyScreenerDecision, validateRequestPayload,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
-  type HeldElsewhereMailbox, type ValidatedRequestPayload,
+  type HeldElsewhereMailbox, type UnconfirmedRerouteResult, type ValidatedRequestPayload,
 } from "./screener-apply.js";
 
 // `organizer_requests` — the reader's own bookkeeping. See the module's own header for why it is
@@ -437,7 +437,7 @@ export {
 } from "./own-mail.js";
 
 /** The gate's authentication verdicts, this package's pinned copy of core's (`screening-verdicts.ts`). */
-export { GATE_SCREENING_AUTH_VERDICTS, storedAuthScreens, authScreensSql } from "./screening-verdicts.js";
+export { GATE_SCREENING_AUTH_VERDICTS, storedAuthScreens, authScreensSql, unconfirmedSql } from "./screening-verdicts.js";
 
 /**
  * The portable profile's import markers — the found-document record the organizer writes and

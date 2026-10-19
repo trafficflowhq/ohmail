@@ -6,7 +6,9 @@ import {
   accountSettings, accounts, folderState, mailboxes, messages, routingDecisions, rules,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
-import { applyScreenerDecision, changeLog, contacts } from "@trafficflow/db";
+import { applyScreenerDecision, changeLog, contacts, learningSignals } from "@trafficflow/db";
+import { CAP_CONFIDENCE, createLogger } from "@trafficflow/core/mail";
+import { autoFiledSummary, undoAutoFiled, type ServiceContext } from "@trafficflow/services";
 import {
   plannedDecision, screenerActConsentFrom, screenerAutoActPass,
   SCREENER_ACT_ADMIT_BAR, SCREENER_ACT_DENY_BAR, type ScreenerActConsent,
@@ -30,6 +32,14 @@ import { repoWithFailingMethod } from "./_fault.js";
  *       an erased account is one line about the account, never a failure per sender.
  *   (e) the consent is the column read with the account's AI switch, on this store.
  *   (f) a refused act is recorded on the suggestion row, on this store, and a filing clears it.
+ *   (j) a deny that meets a letter its provider did not confirm writes no rule: a promoted deny
+ *       rule wins before authentication is read, so one bought on a forgery's advice would screen
+ *       out the real address it names. Advice bought on such a letter files that letter alone,
+ *       never the address's other or later mail, and every filing without a rule is listed under
+ *       Filed automatically, where Put back returns it for good.
+ *
+ * The held fixture carries the provider's `pass`, as a Gmail-held mailbox's letter would; the
+ * cases about an unconfirmed letter say so, and one says NULL.
  */
 
 const SCREENER = "ohmail/Screener";
@@ -67,11 +77,11 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     });
   }
 
-  /** One message held at the gate. */
+  /** One message held at the gate, its sender confirmed by the provider (`pass`). */
   async function held(w: World, from: string): Promise<string> {
     const [m] = await db.insert(messages).values({
       accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "h", dedupKey: `act:${randomUUID()}`,
-      subject: "hello there", fromAddress: from,
+      subject: "hello there", fromAddress: from, authVerdict: "pass",
       nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await db.insert(folderState).values({
@@ -464,14 +474,15 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(await desiredOf(m)).toBe(SCREENER);
   });
 
-  it("(h) a denying plan needs no identity: an unconfirmed brand sender is still filed to Spam", async () => {
+  it("(h) a denying plan on an unconfirmed brand sender files the letter to Spam and writes no rule", async () => {
     const w = await newWorld();
     await settingsRow(w, false);
     const m = await heldWithVerdict(w, "service@paypal.com", "unavailable");
     await suggest(w, m, SPAM, 0.95);
     const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
-    expect(r).toMatchObject({ filed: 1, unverified: 0 });
     expect(await desiredOf(m)).toBe(SPAM);
+    expect(await rulesFor(w, "service@paypal.com"), "a rule was written on an unconfirmed letter").toHaveLength(0);
+    expect(r).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1, unverified: 0 });
   });
 
   it("(h) a sender at no brand's domain is filed on advice as before, confirmed or not", async () => {
@@ -578,6 +589,335 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(await desiredOf(claim)).toBe(SCREENER);
     expect(await rulesFor(w, phish)).toHaveLength(0);
   });
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  (j) A DENY ON A LETTER ITS PROVIDER DID NOT CONFIRM — nothing standing is written. A promoted
+  //      deny rule wins before authentication is read, so a rule bought on a forgery's advice would
+  //      send the real address's mail to Spam. Advice bought on such a letter files that letter
+  //      alone; advice on a confirmed letter files the unconfirmed letters held beside it first. The
+  //      rule needs advice on a confirmed letter AND every held letter it would move confirmed.
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+
+  /** A genuine letter (`pass`) backdated by its own Date, and a newer one of the same address. */
+  async function genuineAndForged(
+    w: World, sender: string, forgedVerdict: string | null,
+  ): Promise<{ genuine: string; forged: string }> {
+    const genuine = await held(w, sender);
+    await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, genuine));
+    const forged = await heldWithVerdict(w, sender, forgedVerdict);
+    await db.update(messages).set({ date: new Date(Date.now() + 60_000) }).where(eq(messages.id, forged));
+    return { genuine, forged };
+  }
+  const accountRules = (w: World) => db.select().from(rules).where(eq(rules.accountId, w.accountId));
+  const accountContacts = (w: World) => db.select().from(contacts).where(eq(contacts.accountId, w.accountId));
+  const accountSignals = (w: World) => db.select().from(learningSignals).where(eq(learningSignals.accountId, w.accountId));
+  const movedIds = async (w: World): Promise<string[]> => (await db.select({ id: changeLog.entityId }).from(changeLog)
+    .where(and(eq(changeLog.accountId, w.accountId), eq(changeLog.entityType, "message"), eq(changeLog.op, "move"))))
+    .map((r) => r.id);
+  const unreadOf = async (id: string): Promise<boolean> =>
+    (await db.select({ u: messages.unread }).from(messages).where(eq(messages.id, id)))[0]!.u;
+  const act = (w: World) => screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+  /** The person's own request, for Put back. */
+  const ctxOf = (w: World): ServiceContext =>
+    ({ db: db as never, accountId: w.accountId, userId: null, now: () => new Date(), requestId: "act-put-back" });
+
+  it("MUTATION-WATCH (j): a Spam deny bought on a forged letter files that letter alone and writes no rule", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "service@paypal.com";
+    const { genuine, forged } = await genuineAndForged(w, sender, "unavailable");
+    await suggest(w, forged, SPAM, 0.95);
+    const r = await act(w);
+    expect(await desiredOf(genuine), "the genuine letter rode the forgery's deny").toBe(SCREENER);
+    expect(await accountRules(w), "a standing rule was written on a forgery's advice").toEqual([]);
+    expect(await desiredOf(forged)).toBe(SPAM);
+    expect(await unreadOf(forged), "the filed letter is marked read, as a press marks it").toBe(false);
+    expect(await accountContacts(w)).toEqual([]);
+    expect(await accountSignals(w), "the act taught a pattern from a forgery").toEqual([]);
+    expect(await movedIds(w)).toEqual([forged]);
+    expect(r).toMatchObject({ ran: true, examined: 1, filed: 0, kept: 1, failed: 0, unconfirmedDenies: 1 });
+  });
+
+  it("MUTATION-WATCH (j): the next pass on the same advice writes no rule either, and the genuine letter waits", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
+    await suggest(w, forged, SPAM, 0.95);
+    await act(w);
+    // Every held letter is confirmed now, and the stored advice is still the forgery's.
+    const again = await act(w);
+    expect(await desiredOf(genuine), "the stale advice filed the genuine letter").toBe(SCREENER);
+    expect(await accountRules(w), "the stale advice wrote the rule one pass later").toEqual([]);
+    expect(await movedIds(w)).toEqual([forged]);
+    expect(again).toMatchObject({ examined: 1, filed: 0, kept: 1, unconfirmedDenies: 1 });
+  });
+
+  it("(j) a failed letter's advice, capped to Spam, files that letter alone beside a genuine one", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "fail");
+    // `capSuggestion` states a failed letter's advice as Spam at CAP_CONFIDENCE, which meets the bar.
+    await suggest(w, forged, SPAM, CAP_CONFIDENCE);
+    const r = await act(w);
+    expect(await desiredOf(genuine), "the genuine letter rode a failed letter's deny").toBe(SCREENER);
+    expect(await accountRules(w)).toEqual([]);
+    expect(await desiredOf(forged)).toBe(SPAM);
+    expect(r).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1 });
+  });
+
+  it("MUTATION-WATCH (j): the same at an address no company owns, screened out", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { genuine, forged } = await genuineAndForged(w, "anna@studio-nord.example", "unavailable");
+    await suggest(w, forged, "ohmail/Screened", 0.95);
+    const r = await act(w);
+    expect(await desiredOf(genuine), "the genuine letter rode the forgery's screen-out").toBe(SCREENER);
+    expect(await accountRules(w), "a screen-out rule was written on a forgery's advice").toEqual([]);
+    expect(await desiredOf(forged)).toBe("ohmail/Screened");
+    expect(r).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1, unverified: 0 });
+  });
+
+  it("MUTATION-WATCH (j): NULL confirms nothing: a letter older than the column is filed alone", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { genuine, forged } = await genuineAndForged(w, "offers@shop.test", null);
+    await suggest(w, forged, SPAM, 0.95);
+    const r = await act(w);
+    expect(await desiredOf(forged), "a NULL letter read as confirmed").toBe(SPAM);
+    expect(await desiredOf(genuine)).toBe(SCREENER);
+    expect(await accountRules(w)).toEqual([]);
+    expect(r).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1 });
+  });
+
+  it("CONTROL (j): advice on a confirmed letter, every held letter confirmed, files the sender under the act's rule", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "service@paypal.com";
+    const older = await held(w, sender);
+    await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, older));
+    const newer = await held(w, sender);
+    await suggest(w, newer, SPAM, 0.95);
+    const r = await act(w);
+    expect(await desiredOf(older)).toBe(SPAM);
+    expect(await desiredOf(newer)).toBe(SPAM);
+    const written = await accountRules(w);
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({
+      kind: "sender", match: sender, destination: SPAM, provenance: "promoted", enabled: true, personDecidedAt: null,
+    });
+    expect(r).toMatchObject({ filed: 1, kept: 0, unconfirmedDenies: 0 });
+  });
+
+  it("MUTATION-WATCH (j): every letter unconfirmed, as at a provider whose word ohmail does not read: a forgery's advice files the forgery alone, never the address's other or later mail", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "anna@studio-nord.example";
+    const first = await heldWithVerdict(w, sender, "unavailable");
+    await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, first));
+    const forged = await heldWithVerdict(w, sender, "unavailable");
+    await db.update(messages).set({ date: new Date(Date.now() + 60_000) }).where(eq(messages.id, forged));
+    await suggest(w, forged, SPAM, 0.95);
+    expect(await act(w)).toMatchObject({ examined: 1, filed: 0, kept: 1, unconfirmedDenies: 1 });
+    expect(await desiredOf(forged)).toBe(SPAM);
+    expect(await desiredOf(first), "a letter rode advice bought on another letter").toBe(SCREENER);
+    // Later letters, one per pass: the stored advice is the forgery's, which is gone, so it files none of them.
+    const later: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      later.push(await heldWithVerdict(w, sender, "unavailable"));
+      expect(await act(w)).toMatchObject({ examined: 1, filed: 0, kept: 1, unconfirmedDenies: 1 });
+    }
+    for (const id of [first, ...later]) {
+      expect(await desiredOf(id), "the forgery's advice filed the address's other mail").toBe(SCREENER);
+      expect(await unreadOf(id)).toBe(true);
+    }
+    expect(await movedIds(w)).toEqual([forged]);
+    expect(await accountRules(w)).toEqual([]);
+  });
+
+  it("MUTATION-WATCH (j): advice on a confirmed letter files every unconfirmed letter held beside it first, then the sender under the act's rule", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "service@paypal.com";
+    const genuine = await held(w, sender);
+    const unconfirmed = [await heldWithVerdict(w, sender, "unavailable"), await heldWithVerdict(w, sender, null)];
+    await suggest(w, genuine, SPAM, 0.95);
+    expect(await act(w)).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1 });
+    for (const id of unconfirmed) expect(await desiredOf(id), "an unconfirmed letter beside confirmed advice waited").toBe(SPAM);
+    expect(await desiredOf(genuine)).toBe(SCREENER);
+    expect(await accountRules(w)).toEqual([]);
+    // Every held letter confirmed now, and the advice the sender's own: the rule.
+    expect(await act(w)).toMatchObject({ filed: 1, unconfirmedDenies: 0 });
+    expect(await desiredOf(genuine)).toBe(SPAM);
+    expect(await accountRules(w)).toMatchObject([{ kind: "sender", match: sender, destination: SPAM, provenance: "promoted" }]);
+  });
+
+  it("MUTATION-WATCH (j): a letter filed with no rule is listed under Filed automatically, and put back it is never filed again", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { genuine, forged } = await genuineAndForged(w, "anna@studio-nord.example", "unavailable");
+    await suggest(w, forged, SPAM, 0.95);
+    await act(w);
+    expect((await autoFiledSummary(db, w.accountId)).items.map((i) => [i.messageId, i.to]),
+      "the filing is not listed, so nothing puts it back").toEqual([[forged, SPAM]]);
+    expect(await undoAutoFiled(ctxOf(w), { messageIds: [forged] })).toEqual({ putBack: [forged], requested: [] });
+    expect(await desiredOf(forged)).toBe(SCREENER);
+    expect((await autoFiledSummary(db, w.accountId)).items).toEqual([]);
+    expect(await act(w)).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1 });
+    expect(await desiredOf(forged), "the act filed a letter the person put back").toBe(SCREENER);
+    expect(await desiredOf(genuine)).toBe(SCREENER);
+    expect(await accountRules(w)).toEqual([]);
+  });
+
+  it("(j) a sender whose advised letter the person put back takes no turn under the clock", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const putBack = await heldWithVerdict(w, "anna@studio-nord.example", "unavailable");
+    await db.update(folderState).set({ autoFilingUndoneAt: new Date() }).where(eq(folderState.messageId, putBack));
+    await suggest(w, putBack, SPAM, 0.95);
+    // Waiting since later, so walked second.
+    const later = await held(w, "deals@shop.test");
+    await db.update(messages).set({ createdAt: new Date(Date.now() + 60_000) }).where(eq(messages.id, later));
+    await suggest(w, later, SPAM, 0.95);
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, until: () => true, consent: GIVEN });
+    expect(await desiredOf(putBack)).toBe(SCREENER);
+    expect(await desiredOf(later), "the put-back sender took the clock's one turn").toBe(SPAM);
+    expect(r).toMatchObject({ examined: 2, filed: 1, capped: false, unconfirmedDenies: 1 });
+  });
+
+  it("(j) advice on a confirmed letter whose unconfirmed neighbour the person put back files the sender under the rule, and that letter stays", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "service@paypal.com";
+    const genuine = await held(w, sender);
+    const putBack = await heldWithVerdict(w, sender, "unavailable");
+    await db.update(folderState).set({ autoFilingUndoneAt: new Date() }).where(eq(folderState.messageId, putBack));
+    await suggest(w, genuine, SPAM, 0.95);
+    expect(await act(w)).toMatchObject({ filed: 1, kept: 0, unconfirmedDenies: 0 });
+    expect(await desiredOf(genuine)).toBe(SPAM);
+    expect(await desiredOf(putBack), "an automatic decision filed a letter the person put back").toBe(SCREENER);
+    expect(await rulesFor(w, sender)).toHaveLength(1);
+  });
+
+  it("MUTATION-WATCH (j): another sender's unconfirmed letter leaves a confirmed sender's deny whole; the same address's does not", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    // Confirmed, every held letter confirmed: filed under the act's rule, whoever else waits.
+    const whole = "deals@shop.test";
+    const wholeOld = await held(w, whole);
+    await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, wholeOld));
+    const wholeNew = await held(w, whole);
+    await suggest(w, wholeNew, SPAM, 0.95);
+    // A stranger, unconfirmed, no advice: waits, and decides nothing for anybody else.
+    const stranger = await heldWithVerdict(w, "anna@studio-nord.example", "unavailable");
+    // CONTROL in the same account: an address with an unconfirmed letter of its own is filed in part.
+    const mixed = "service@paypal.com";
+    const { genuine, forged } = await genuineAndForged(w, mixed, "unavailable");
+    await suggest(w, forged, SPAM, 0.95);
+
+    const r = await act(w);
+    expect(await rulesFor(w, whole), "a confirmed sender's deny was cut for another sender's letter").toHaveLength(1);
+    expect(await desiredOf(wholeOld)).toBe(SPAM);
+    expect(await desiredOf(wholeNew)).toBe(SPAM);
+    expect(await desiredOf(stranger)).toBe(SCREENER);
+    expect(await desiredOf(genuine)).toBe(SCREENER);
+    expect(await desiredOf(forged)).toBe(SPAM);
+    expect(await rulesFor(w, mixed)).toHaveLength(0);
+    expect(r).toMatchObject({ examined: 3, filed: 1, kept: 2, unconfirmedDenies: 1 });
+  });
+
+  it("(j) a letter the person put back stays where they put it; the unconfirmed one beside it is filed", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
+    const putBack = await heldWithVerdict(w, "service@paypal.com", "unavailable");
+    await db.update(folderState).set({ autoFilingUndoneAt: new Date() }).where(eq(folderState.messageId, putBack));
+    await suggest(w, forged, SPAM, 0.95);
+    const r = await act(w);
+    expect(await desiredOf(putBack), "an automatic filing moved a letter the person put back").toBe(SCREENER);
+    expect(await desiredOf(forged)).toBe(SPAM);
+    expect(await desiredOf(genuine)).toBe(SCREENER);
+    expect(await accountRules(w)).toEqual([]);
+    expect(r).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1 });
+  });
+
+  it("(j) a forged letter in the account's other mailbox is filed; the genuine one waits, and no rule is written", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const [other] = await db.insert(mailboxes).values({
+      accountId: w.accountId, provider: "imap", address: `two-${w.accountId.slice(0, 8)}@example.test`,
+    }).returning();
+    const sender = "noreply@post.ch";
+    const genuine = await held(w, sender);
+    await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, genuine));
+    const forged = await heldWithVerdict({ accountId: w.accountId, mailboxId: other!.id }, sender, "unavailable");
+    await suggest(w, forged, SPAM, 0.95);
+    const r = await act(w);
+    expect(await desiredOf(forged)).toBe(SPAM);
+    expect(await desiredOf(genuine), "the genuine letter rode the other mailbox's forgery").toBe(SCREENER);
+    expect(await accountRules(w)).toEqual([]);
+    expect(r).toMatchObject({ filed: 0, kept: 1, unconfirmedDenies: 1 });
+  });
+
+  it("(j) a refused filing of unconfirmed letters is counted failed and recorded, and moves nothing", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
+    await suggest(w, forged, SPAM, 0.95);
+    // A store fault at every held letter's move, on both stores; nothing else throws.
+    type Fn = (...a: unknown[]) => unknown;
+    const moveFault = <H extends object>(h: H): H => new Proxy(h, {
+      get(t, prop, recv) {
+        const v = Reflect.get(t, prop, recv) as unknown;
+        if (typeof v !== "function") return v;
+        if (prop === "insert") {
+          return (table: unknown, ...a: unknown[]) => {
+            if (table === folderState) throw new Error("injected store fault");
+            return (v as Fn).call(t, table, ...a);
+          };
+        }
+        if (prop === "transaction") return (fn: Fn, ...a: unknown[]) => (v as Fn).call(t, (tx: H) => fn(moveFault(tx)), ...a);
+        return (v as Fn).bind(t);
+      },
+    }) as H;
+    const r = await screenerAutoActPass(moveFault(db), { accountId: w.accountId, consent: GIVEN });
+    expect(await desiredOf(forged), "a refused filing moved a letter").toBe(SCREENER);
+    expect(await desiredOf(genuine)).toBe(SCREENER);
+    expect(await accountRules(w)).toEqual([]);
+    const refusals = await db.select({ why: routingDecisions.actRefusal }).from(routingDecisions)
+      .where(eq(routingDecisions.accountId, w.accountId));
+    expect(refusals.map((x) => x.why)).toEqual(["store_fault"]);
+    expect(r).toMatchObject({ ran: true, filed: 0, failed: 1, unconfirmedDenies: 0 });
+  });
+
+  it("(j) stale advice, about a letter no longer held, is decided before the clock and takes no turn", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
+    await suggest(w, forged, SPAM, 0.95);
+    await act(w);
+    // Waiting since earlier, so walked first: the stored advice is the forgery's, and only the genuine letter is held.
+    const later = await held(w, "deals@shop.test");
+    await db.update(messages).set({ createdAt: new Date(Date.now() + 60_000) }).where(eq(messages.id, later));
+    await suggest(w, later, SPAM, 0.95);
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, until: () => true, consent: GIVEN });
+    expect(await desiredOf(later), "the stale sender took the clock's one turn").toBe(SPAM);
+    expect(await desiredOf(genuine)).toBe(SCREENER);
+    expect(r).toMatchObject({ examined: 2, filed: 1, capped: false, unconfirmedDenies: 1 });
+  });
+
+  it("(j) the line says how many senders and letters, and the real logger keeps both numbers", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const { forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
+    await suggest(w, forged, SPAM, 0.95);
+    const lines: string[] = [];
+    const log = createLogger({ service: "worker", level: "info", sink: (line) => { lines.push(line); } });
+    await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN, log });
+    const line = lines.find((l) => l.includes("screener_auto_act_unconfirmed_denied"));
+    expect(line, "the pass said nothing about the senders it filed in part").toBeDefined();
+    expect(line, "the logger's census refused a field the line passed").not.toContain("droppedFields");
+    expect(JSON.parse(line!)).toMatchObject({ accountId: w.accountId, skipped: 1, moved: 1 });
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -586,8 +926,15 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
 describe("plannedDecision — advice becomes the decision a press would make, or nothing", () => {
   const bars = { deny: SCREENER_ACT_DENY_BAR, admit: SCREENER_ACT_ADMIT_BAR };
-  const plan = (destination: string, confidence: number | null) =>
-    plannedDecision("who@x.test", { id: "s1", messageId: "m1", destination, confidence }, bars);
+  const plan = (destination: string, confidence: number | null, authVerdict: string | null = "pass") =>
+    plannedDecision("who@x.test", { id: "s1", messageId: "m1", destination, confidence, authVerdict }, bars);
+
+  it("the advice is confirmed only when its letter's provider said pass", () => {
+    expect(plan(SPAM, 0.95)).toMatchObject({ decision: "no", confirmed: true });
+    for (const verdict of ["unavailable", "unauthenticated", "fail", null]) {
+      expect(plan(SPAM, 0.95, verdict), String(verdict)).toMatchObject({ decision: "no", confirmed: false });
+    }
+  });
 
   it("a denying pile becomes decision 'no', an admitting pile becomes 'yes'", () => {
     expect(plan(SPAM, 0.95)).toMatchObject({ decision: "no", appliedFolder: SPAM });

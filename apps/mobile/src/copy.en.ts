@@ -1207,7 +1207,7 @@ const TABLE = {
   /** Settings → the act on suggestions — the webapp catalogue's `screener.suggest.act*`. */
   autoActTitle: "Act on confident suggestions for me",
   autoActDescription:
-    "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to, and sensitive mail, are never filed this way. Off by default.",
+    "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to, and sensitive mail, are never filed this way. If a Screened or Spam suggestion is about a message your mail provider did not confirm came from its sender, ohmail files only that message, writes no rule, and lists it under Filed automatically, where you can put it back. Off by default.",
   autoActNeedsSuggest: "Needs automatic suggestions",
   autoActReader: "Set this on the install that organizes your mail.",
   /* What the Screener filed on its own, and Put back — the web Settings row's words (row 140). */

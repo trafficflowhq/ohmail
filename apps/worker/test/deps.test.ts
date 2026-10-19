@@ -489,6 +489,9 @@ describe("worker dependency boundary", () => {
       // is what that press sends, and a hand-written trigger would test a copy. The import boundary still holds.
       "screen-out-unsubscribes-once.e2e.test.ts",
       "screener-auto-act.pg.test.ts",
+      // The act's filing with no rule is listed and put back through the services' own Filed
+      // automatically doors, on `screener-auto-put-back.test.ts`'s argument. The import boundary still holds.
+      "screener-auto-act.test.ts",
       // Put back is the services' own move door, and the claim is that this pass then leaves the
       // row: a hand-written undo would test a copy. The import boundary still holds.
       "screener-auto-put-back.test.ts",

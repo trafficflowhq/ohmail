@@ -756,6 +756,23 @@ describe("every writer under a sender's key takes one lock order", () => {
     expect([...seen]).toEqual(expect.arrayContaining([SETTINGS, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER]));
     expect([...out]).toEqual([]);
   });
+
+  /* THE ACT'S FILING OF UNCONFIRMED LETTERS writes nothing standing: no rule, no contact, no settings
+     row, the decision's own order for what it does take. Helpers followed, as for the writers. */
+  it("the act's filing of unconfirmed letters keeps the order and writes no rule, contact or setting", () => {
+    const decl = declsOf("packages/db/src/screener-apply.ts").get("rerouteUnconfirmedHeld");
+    expect(decl, "rerouteUnconfirmedHeld is gone").toBeDefined();
+    const out = new Set<string>();
+    const seen = new Set<number>();
+    const took: string[] = [];
+    fn(decl!.body!, single(start([ACCOUNT])), {
+      file: "packages/db/src/screener-apply.ts", stack: ["rerouteUnconfirmedHeld"], off: new Set(), out, seen, took,
+    });
+    expect([...out]).toEqual([]);
+    expect([...seen]).toEqual(expect.arrayContaining([RULE_KEY, FOLDER_STATE, COUNTER]));
+    expect([...seen].filter((c) => c === CONTACTS || c === SETTINGS || c === GRADUATION).map((c) => CHAIN[c])).toEqual([]);
+    expect(took.filter((l) => /\brules\b|rulesTbl|writeRuleUnderKey|convergeRuleKey/.test(l)), "it writes a rule").toEqual([]);
+  });
 });
 
 describe("the census's own controls", () => {

@@ -12,7 +12,7 @@ import {
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import {
-  ScreenerService, materialize, setAutoAct, setAutoSuggest, type ServiceContext,
+  ScreenerService, autoFiledSummary, materialize, setAutoAct, setAutoSuggest, type ServiceContext,
 } from "@trafficflow/services";
 import {
   screenerActConsentFrom, screenerAutoActPass, type ScreenerActConsent,
@@ -21,10 +21,16 @@ import { newScreenerAutoWalk, screenerAutoApplyPass } from "../src/screener-auto
 import { repoWithFailingMethod } from "./_fault.js";
 
 /**
- * ═══ THE ACT FILES A SENDER EXACTLY AS THE PRESS FILES THEM, AND ONLY ON ITS OWN CONSENT ═════
+ * ═══ THE ACT FILES A SENDER AS THE PRESS FILES THEM, BUT FOR TWO NAMED DIVERGENCES, AND ONLY ON ITS
+ *     OWN CONSENT ════════════════════════════════════════════════════════════════════════════════
  *
  * The act is the account's own Apply, taken for them. The control is `ScreenerService`'s `decide` —
- * the function behind the button — on a twin account seeded identically, rows compared. The last
+ * the function behind the button — on a twin account seeded identically, rows compared. The two
+ * divergences, each asserted where it shows: the act stamps no screening baseline; and a deny bought
+ * on a letter its provider did not confirm files that letter alone, with no rule and listed under
+ * Filed automatically to put back, where the press, a person deciding about the address, files every
+ * held letter under their rule. The seeded letters carry the provider's `pass`, as a Gmail-held
+ * mailbox's would. The last
  * two arms hold the consent: the no-AI switch (`screener_auto_apply_at`) arms only the
  * deterministic pass, driven on the lane's real Postgres as the worker's cycle tail drives both.
  *
@@ -84,7 +90,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
       const from = `held${i}-${tag}@spam.test`;
       const [m] = await db.insert(messages).values({
         accountId, mailboxId: mb!.id, bodyHash: `act-h-${tag}-${i}`, dedupKey: `act:${tag}:${i}`,
-        subject: `offer ${i}`, fromAddress: from,
+        subject: `offer ${i}`, fromAddress: from, authVerdict: "pass",
         nativeLocator: { folder: SCREENER, ref: `1:${200 + i}` },
       }).returning();
       await db.insert(folderState).values({
@@ -155,7 +161,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     expect(actedRule).toEqual(await ruleOf(pressed.accountId, pressed.senders[0]!));
     expect(actedRule).toMatchObject({ kind: "sender", destination: SPAM, provenance: "promoted", enabled: true });
 
-    // THE ONE DIVERGENCE, NAMED: the press is a person answering, so it stamps the screening
+    // THE ONE DIVERGENCE HERE, NAMED: the press is a person answering, so it stamps the screening
     // baseline the window is measured back from; the act is not a press and must not move an
     // account-wide cutoff nobody asked about. The drain reads `stampBaseline` the same way.
     expect(await baselineOf(pressed.accountId), "the press stopped stamping the baseline").toEqual(NOW);
@@ -429,5 +435,65 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     expect(r, "a sender was held for another sender's claim").toMatchObject({ filed: 1, identity: 0 });
     expect((await intentOf(w.id)).desired).toBe("INBOX");
     expect((await intentOf(phish)).desired).toBe(SCREENER);
+  }, 60_000);
+
+  /** A genuine letter (`pass`, backdated by its Date) and a newer one its provider did not confirm, advised to Spam. */
+  async function genuineAndForged(): Promise<{
+    accountId: string; mailboxId: string; genuine: string; forged: string; sender: string;
+  }> {
+    const w = await seed(0, { noAiSwitch: false });
+    const sender = "service@paypal.com";
+    const letter = async (ref: number, authVerdict: string, date: Date): Promise<string> => {
+      const [m] = await db.insert(messages).values({
+        accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `mixed-${ref}-${w.accountId}`,
+        dedupKey: `mixed:${ref}:${w.accountId}`, subject: "Your receipt", fromAddress: sender, authVerdict, date,
+        nativeLocator: { folder: SCREENER, ref: `1:${ref}` },
+      }).returning();
+      await db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+        lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      });
+      return m!.id;
+    };
+    const genuine = await letter(910, "pass", new Date("2020-01-01T00:00:00Z"));
+    const forged = await letter(911, "unavailable", NOW);
+    await db.insert(routingDecisions).values({
+      accountId: w.accountId, messageId: forged, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
+      destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS,
+    });
+    return { accountId: w.accountId, mailboxId: w.mailboxId, genuine, forged, sender };
+  }
+
+  it("a deny on a forged letter: the act files that letter as the press does, and diverges on the rest", async () => {
+    const acted = await genuineAndForged();
+    const pressed = await genuineAndForged();
+    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: acted.accountId, consent: GIVEN }, NOW);
+    expect(r).toMatchObject({ ran: true, filed: 0, kept: 1, failed: 0, unconfirmedDenies: 1 });
+    await new ScreenerService({}).decide(ctxOf(pressed.accountId), pressed.forged, { decision: "no", dest: SPAM });
+
+    expect(await intentOf(acted.forged)).toEqual(await intentOf(pressed.forged));
+    expect(await intentOf(acted.forged)).toMatchObject({ desired: SPAM, lastSetBy: "us", status: "pending" });
+    // THE DIVERGENCE, NAMED: the press is a person deciding about the address, so every held letter
+    // moves under their rule; the act's advice may be about a forgery of it, so the genuine letter
+    // waits for a person and no rule is written.
+    expect((await intentOf(pressed.genuine)).desired).toBe(SPAM);
+    expect(await personDecidedOf(pressed.accountId, pressed.sender)).toEqual(NOW);
+    expect((await intentOf(acted.genuine)).desired, "the act filed the genuine letter on a forgery's advice").toBe(SCREENER);
+    expect(await ruleOf(acted.accountId, acted.sender), "the act wrote a rule on a forgery's advice").toBeNull();
+    // With no rule to undo, the act's filing is listed to put back; the press's undo is its rule.
+    expect((await autoFiledSummary(db as unknown as Tx, acted.accountId)).items.map((i) => [i.messageId, i.to]))
+      .toEqual([[acted.forged, SPAM]]);
+    expect((await autoFiledSummary(db as unknown as Tx, pressed.accountId)).items).toEqual([]);
+  }, 60_000);
+
+  it("each sender's own letters: another sender's unconfirmed letter leaves a confirmed sender's deny whole", async () => {
+    const w = await seed(1, { noAiSwitch: false });
+    const stranger = await heldBeside(w, "anna@studio-nord.example", 904, { authVerdict: "unavailable" });
+    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
+    expect(await ruleOf(w.accountId, w.senders[0]!), "a confirmed sender's deny was cut for another sender's letter")
+      .toMatchObject({ destination: SPAM, provenance: "promoted" });
+    expect((await intentOf(w.ids[0]!)).desired).toBe(SPAM);
+    expect((await intentOf(stranger)).desired).toBe(SCREENER);
+    expect(r).toMatchObject({ filed: 1, unconfirmedDenies: 0 });
   }, 60_000);
 });

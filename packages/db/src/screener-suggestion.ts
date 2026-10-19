@@ -149,6 +149,8 @@ export interface StoredSenderSuggestion {
   spam: boolean;
   /** Why the act on suggestions could not file this sender, or `null`. */
   actRefusal: string | null;
+  /** The advised message's `auth_verdict`: whether its provider confirmed the sender (`pass`), or NULL. */
+  authVerdict: string | null;
 }
 
 /**
@@ -182,6 +184,7 @@ export async function screenerSuggestionsBySender(
     rationale: routingDecisions.rationale,
     spam: routingDecisions.spam,
     actRefusal: routingDecisions.actRefusal,
+    authVerdict: messages.authVerdict,
     rank: sql<number>`row_number() over (
       partition by ${sender}
       order by ${routingDecisions.createdAt} desc, ${routingDecisions.id} desc
@@ -209,6 +212,7 @@ export async function screenerSuggestionsBySender(
     rationale: ranked.rationale,
     spam: ranked.spam,
     actRefusal: ranked.actRefusal,
+    authVerdict: ranked.authVerdict,
   }).from(ranked).where(eq(ranked.rank, 1));
 
   for (const r of rows) {
@@ -220,6 +224,7 @@ export async function screenerSuggestionsBySender(
       rationale: r.rationale,
       spam: r.spam,
       actRefusal: r.actRefusal ?? null,
+      authVerdict: r.authVerdict ?? null,
     });
   }
   return out;

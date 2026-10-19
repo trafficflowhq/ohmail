@@ -49,6 +49,18 @@ either, nothing new is listed.
 Staff whose only role is operations no longer see a mailbox's sender name, and the account list's search matches
 only what they are shown of a login (its domain). Owners, support and billing see both as before.
 
+### No automatic screen-out or spam rule from an unconfirmed message
+
+"Act on confident suggestions for me" could screen out a sender, or file them to Spam, on advice about a message
+that only claimed to come from them, and then write a rule that kept filing that address's real mail there. When
+the advice is about a message your mail provider did not confirm came from its sender, it now files only that
+message and writes no rule; the sender's other and later mail waits in the Screener for you. When the advice is
+about a confirmed message, the unconfirmed messages beside it are filed on their own first, then the rule is
+written. A message filed without a rule is listed under Filed automatically, where Put back returns it to the
+Screener and it is not filed automatically again. ohmail reads this confirmation from Gmail and Microsoft
+mailboxes only, so for mail at other providers the act no longer writes such a rule at all. Your own Screen out
+or Spam press still writes the rule.
+
 ### Forwarding right after opening a message
 
 Forwarding a message with an attachment could fail with "Sending didn't work" and go through on the next press,

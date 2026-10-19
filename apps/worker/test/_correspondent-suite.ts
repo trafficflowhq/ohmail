@@ -93,11 +93,14 @@ export function defineCorrespondentSuite(
       return m!.id;
     }
 
-    /** One message held at the gate from `from`, optionally naming a message id it answers. */
+    /**
+     * One message held at the gate from `from`, optionally naming a message id it answers; its sender
+     * confirmed by the provider (`pass`), as a Gmail-held mailbox's would be.
+     */
     async function held(w: World, from: string, inReplyTo?: string): Promise<string> {
       const [m] = await db.insert(messages).values({
         accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "h", dedupKey: `held:${randomUUID()}`,
-        subject: "Re: the north elevation", fromAddress: from, date: WROTE,
+        subject: "Re: the north elevation", fromAddress: from, date: WROTE, authVerdict: "pass",
         nativeLocator: { folder: SCREENER, ref: `9:${uid++}` },
       }).returning();
       await db.insert(folderState).values({
@@ -457,9 +460,15 @@ export function defineCorrespondentSuite(
         .where(eq(messages.id, forged));
       await db.update(messages).set({ date: new Date("2026-09-23T09:00:00.000Z") }).where(eq(messages.id, newer));
       await suggest(w, newer, SPAM, 0.99);
-      const r = await screenerAutoActPass(db, {
+      const pass = () => screenerAutoActPass(db, {
         accountId: w.accountId, log: logger(), consent: { stillGiven: async () => true },
       });
+      // The act acts: a deny that meets a letter its provider did not confirm files that letter
+      // alone first and writes no rule; with every held letter confirmed, the next pass files the sender.
+      expect(await pass()).toMatchObject({ filed: 0, correspondents: 0, unconfirmedDenies: 1 });
+      expect(await desiredOf(forged)).toBe(SPAM);
+      expect(await desiredOf(newer)).toBe(SCREENER);
+      const r = await pass();
       expect(await desiredOf(newer), "the provider said the answer is not theirs").toBe(SPAM);
       expect(r).toMatchObject({ filed: 1, correspondents: 0 });
     });

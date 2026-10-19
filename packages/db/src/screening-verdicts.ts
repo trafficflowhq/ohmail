@@ -17,3 +17,11 @@ export function storedAuthScreens(auth: string | null | undefined): boolean {
 export function authScreensSql(auth: SQL): SQL {
   return sql`(coalesce(${auth}, '') in (${sql.join(GATE_SCREENING_AUTH_VERDICTS.map((v) => sql`${v}`), sql`, `)}))`;
 }
+
+/**
+ * A letter its provider did not confirm: any stored verdict but `pass`, NULL included. Never the
+ * gate's question, which only demotes; asked by an automatic act before it decides for a person.
+ */
+export function unconfirmedSql(auth: SQL): SQL {
+  return sql`(coalesce(${auth}, '') <> 'pass')`;
+}

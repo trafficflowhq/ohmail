@@ -43,10 +43,11 @@ describe.skipIf(!AVAILABLE)("the auto-act pass on real Postgres: a store that ra
       accountId, provider: "imap", address: `actpg-${accountId.slice(0, 8)}@example.test`,
     }).returning();
     await db.insert(accountSettings).values({ accountId, screenerAutoApplyAt: null, screeningScope: "all_time" });
+    // Confirmed by the provider (`pass`): a deny on any other letter writes no rule to fault.
     const held = async (from: string): Promise<string> => {
       const [m] = await db.insert(messages).values({
         accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `actpg:${randomUUID()}`,
-        subject: "hello there", fromAddress: from,
+        subject: "hello there", fromAddress: from, authVerdict: "pass",
         nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
       }).returning();
       await db.insert(folderState).values({

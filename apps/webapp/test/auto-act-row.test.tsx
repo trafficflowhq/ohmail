@@ -28,7 +28,9 @@ const TITLE = "Act on confident suggestions for me";
 const DESCRIPTION = "When a suggestion about a waiting sender is at least 90% sure, ohmail files that "
   + "sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule "
   + "for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you "
-  + "have written to, and sensitive mail, are never filed this way. Off by default.";
+  + "have written to, and sensitive mail, are never filed this way. If a Screened or Spam suggestion is "
+  + "about a message your mail provider did not confirm came from its sender, ohmail files only that "
+  + "message, writes no rule, and lists it under Filed automatically, where you can put it back. Off by default.";
 /** Where the Rules pane reads a copy without the mark (the desktop's hosted door). */
 const UNMARKED = DESCRIPTION.replace(
   "is marked as ohmail's and you can undo it in Settings → Rules.",

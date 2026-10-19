@@ -300,7 +300,11 @@ describe("every rules writer takes the rule-key lock first", () => {
  * such opener is refused by name: the list names rules writers.
  */
 const OPENER_CALLS = new Set(["withAccountTx", "fencedAccountWrite", "transaction"]);
-const LOCKS = new Set(["lockAccountRuleKeys", "allowSender", "applyScreenerDecision", "writeRuleUnderKey", "convergeRuleKey", "applyOrganizerProfile"]);
+const LOCKS = new Set([
+  "lockAccountRuleKeys", "allowSender", "applyScreenerDecision", "writeRuleUnderKey", "convergeRuleKey", "applyOrganizerProfile",
+  // Writes no rule, but takes the rule-key lock before the bag's mailbox locks, as the decision does.
+  "rerouteUnconfirmedHeld",
+]);
 const MAILBOX_ARM = new Set(["fenceErasedMailbox", "readMailboxErasedAt", "readOrganizerRole", "assertOrganizerRole"]);
 
 /** The violations of one opener's source, by name; the planted controls below drive it too. */

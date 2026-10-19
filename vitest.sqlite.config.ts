@@ -116,6 +116,8 @@ export default defineConfig({
       // `applyScreenerDecision` on this store, so its UPDATE runs here as well as on the server.
       "packages/db/test/screener-apply-twins-dialect.test.ts",
       "packages/db/test/screener-apply-batches.test.ts",
+      // The act's filing of letters their provider did not confirm, which the local engine runs too.
+      "packages/db/test/screener-unconfirmed-reroute.test.ts",
       /* Retention's mail half: the local engine's drain-end upkeep runs it on the device store too. */
       "packages/db/test/change-log-retention-dialect.test.ts",
       // The ingest's FIRST write. It failed on this store before any message could land —

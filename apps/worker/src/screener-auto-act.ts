@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "d
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, accounts, folderState, messages, routingDecisions,
-  applyScreenerDecision, recordChanges, fencedAccountWrite,
+  applyScreenerDecision, rerouteUnconfirmedHeld, unconfirmedSql, recordChanges, fencedAccountWrite,
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
   screenerSuggestionsBySender, resolveCutline, senderIsActiveSql, senderIsDecidedSql, heldSortKey,
@@ -23,8 +23,11 @@ import {
  * it (no model, no spend, no claim), and files through `applyScreenerDecision` — the manual Apply's
  * and the reader drain's one implementation — so the promoted rule the person undoes, the held-bag
  * re-route that empties the Waiting count, the mark-read and the learning signal cannot drift from
- * the press. Its sibling `screener-auto.ts` decides for ITSELF (the strong-bulk floor, News and
- * Receipts only) and reads no suggestion at all, which is why a Spam verdict waited for ever. */
+ * the press. One exception: a deny that meets a letter its provider did not confirm writes no rule
+ * and files only such letters (`rerouteUnconfirmedHeld`), advice bought on one that letter alone,
+ * each listed under Filed automatically to put back. Its sibling `screener-auto.ts` decides for
+ * ITSELF (the strong-bulk floor, News and Receipts only) and reads no suggestion at all, which is why
+ * a Spam verdict waited for ever. */
 
 /**
  * The bar a DENYING suggestion (Spam, Screened) must meet. RULED 2026-09-22: a spam verdict is
@@ -138,20 +141,31 @@ export interface ScreenerAutoActResult {
   /**
    * Senders left waiting because a held message of theirs claims a brand its address does not own
    * (`messages.sender_check`, mail 0148) while the advice would let them through — counted inside
-   * {@link kept}. A denying plan still files.
+   * {@link kept}. A denying plan is not held here: it files, and one that meets a letter its
+   * provider did not confirm writes no rule ({@link unconfirmedDenies}).
    */
   identity: number;
   /**
    * Senders left waiting because their address is at a brand's own domain and a held message of
    * theirs is one their provider did not confirm (`auth_verdict` not `pass`) while the advice would
-   * let them through — counted inside {@link kept}. A denying plan still files.
+   * let them through — counted inside {@link kept}. A denying plan is not held here
+   * ({@link unconfirmedDenies}).
    */
   unverified: number;
+  /**
+   * Senders whose denying advice met a letter their provider did not confirm, filed with no rule —
+   * counted inside {@link kept}. Advice bought on such a letter files that letter alone while it is
+   * held, and nothing once it is gone or put back; advice on a confirmed letter files the unconfirmed
+   * letters held beside it first, and a later pass writes the rule. Each filing is listed under Filed
+   * automatically. At a mailbox whose provider's word ohmail does not read every letter is
+   * unconfirmed. A sender a rule decides, or whose filing refused, is not counted here.
+   */
+  unconfirmedDenies: number;
 }
 
 const EMPTY = (): ScreenerAutoActResult => ({
   ran: false, examined: 0, filed: 0, kept: 0, failed: 0, destinations: {}, capped: false,
-  revoked: false, correspondents: 0, identity: 0, unverified: 0,
+  revoked: false, correspondents: 0, identity: 0, unverified: 0, unconfirmedDenies: 0,
 });
 
 /** A waiting sender and the decision their stored advice amounts to. */
@@ -165,6 +179,8 @@ interface ActPlan {
   suggestionId: string;
   /** Whether that row already carries a refusal, so a filing clears it. */
   refused: boolean;
+  /** The advised message's provider confirmed its sender (`pass`). NULL and every other verdict do not. */
+  confirmed: boolean;
 }
 
 /**
@@ -178,6 +194,8 @@ export function plannedDecision(
   advice: {
     id: string; messageId: string; destination: string; confidence: number | null;
     actRefusal?: string | null;
+    /** Required: an advice shape without the verdict must not read as confirmed. */
+    authVerdict: string | null;
   } | undefined,
   bars: { deny: number; admit: number },
 ): ActPlan | null {
@@ -195,6 +213,7 @@ export function plannedDecision(
     messageId: advice.messageId,
     suggestionId: advice.id,
     refused: advice.actRefusal != null,
+    confirmed: advice.authVerdict === "pass",
   };
 }
 
@@ -259,15 +278,25 @@ export async function screenerAutoActPass(
   const answering = await sendersAnsweringOwnWriting(
     db, accountId, waiting.map((w) => w.address).filter((a) => !correspondents.has(a)),
   );
+  const plans = new Map(waiting.map((w) => [w.address, plannedDecision(w.address, advice.get(w.address), bars)]));
+  // A deny bought on an unconfirmed letter files that letter alone, so whether it can still be filed
+  // decides, before the clock, whether its sender takes a turn. One read, only when such advice is here.
+  const advisedHeld = await advisedLettersFileable(db, accountId, waiting.flatMap((w) => {
+    const p = plans.get(w.address);
+    return p && p.decision === "no" && !p.confirmed && !correspondents.has(w.address) && !answering.has(w.address)
+      ? [p.messageId] : [];
+  }));
 
   let planned = 0;
+  /** Letters filed by denies that met an unconfirmed letter, for the line below. */
+  let unconfirmedFiled = 0;
   for (const sender of waiting) {
     if (correspondents.has(sender.address) || answering.has(sender.address)) {
       result.kept++;
       result.correspondents++;
       continue;
     }
-    const plan = plannedDecision(sender.address, advice.get(sender.address), bars);
+    const plan = plans.get(sender.address) ?? null;
     if (!plan) { result.kept++; continue; }
     /* THE IDENTITY FACT, ABOVE THE BARS: advice bought on a benign message never lets through a
        sender whose other held mail claims a brand from an address the brand does not own. The
@@ -284,6 +313,18 @@ export async function screenerAutoActPass(
     if (plan.decision === "yes" && sender.unconfirmedHeld && ownedBrand(sender.address) !== undefined) {
       result.kept++;
       result.unverified++;
+      continue;
+    }
+    /* A DENY THAT MEETS A LETTER ITS PROVIDER DID NOT CONFIRM WRITES NOTHING STANDING. A promoted
+       deny rule wins before authentication is read, so one written on a forgery's advice would file
+       the real address's mail from then on. Advice bought on such a letter is about that letter: it
+       files it while it is held, and nothing once it is gone or put back, never the address's other
+       or later mail. Advice on a confirmed letter files the unconfirmed letters held beside it first,
+       a put-back one being no automatic filing's; the rule follows, the sender's own. */
+    const unconfirmedDeny = plan.decision === "no" && (!plan.confirmed || sender.unconfirmedFileable);
+    if (unconfirmedDeny && !plan.confirmed && !advisedHeld.has(plan.messageId)) {
+      result.kept++;
+      result.unconfirmedDenies++;
       continue;
     }
     if (planned++ > 0 && deps.until?.()) { result.capped = true; break; }
@@ -303,7 +344,7 @@ export async function screenerAutoActPass(
       // THE FENCE FIRST, then the settings row: the account's erasure takes `accounts` and then
       // `account_settings`, so a pass holding the settings row while it waits on the fence inside
       // the decision is a deadlock the erasure can lose (AUTO-ACT-TAKES-SETTINGS-BEFORE-THE-FENCE).
-      const applied = await fencedAccountWrite(db, { accountId }, async (tx) => {
+      const outcome = await fencedAccountWrite(db, { accountId }, async (tx) => {
         // THE REVOKE CHECK, PER SENDER UNDER THE ACCOUNT'S SETTINGS ROW LOCK, `screener-auto.ts`'s
         // shape: a consent withdrawn mid-page leaves the rest waiting. The lock also serializes a
         // cycle tail against a failover driver.
@@ -312,6 +353,14 @@ export async function screenerAutoActPass(
             .where(eq(accountSettings.accountId, accountId)).limit(1),
         );
         if (!(await consent.stillGiven(tx))) return null;
+        if (unconfirmedDeny) {
+          const filed = await rerouteUnconfirmedHeld(tx, {
+            accountId, address: plan.address, appliedFolder: plan.appliedFolder, now: now(),
+            ...(plan.confirmed ? {} : { only: plan.messageId }),
+          });
+          if (plan.refused && filed.skipped === undefined) await clearActRefusal(tx, accountId, plan.suggestionId, now());
+          return { door: "unconfirmed" as const, filed };
+        }
         const applied = await applyScreenerDecision(tx, {
           accountId, scope: "sender", address: plan.address,
           appliedFolder: plan.appliedFolder, decision: plan.decision,
@@ -333,9 +382,9 @@ export async function screenerAutoActPass(
           decidedBy: "pass",
         });
         if (plan.refused && applied.skipped === undefined) await clearActRefusal(tx, accountId, plan.suggestionId, now());
-        return applied;
+        return { door: "decision" as const, applied };
       });
-      if (applied === null) {
+      if (outcome === null) {
         result.revoked = true;
         log.info("screener_auto_act_revoked", {
           accountId, examined: result.examined, applied: result.filed,
@@ -343,6 +392,15 @@ export async function screenerAutoActPass(
         });
         break;
       }
+      if (outcome.door === "unconfirmed") {
+        // The sender stays in the Screener whatever was filed; a rule under their key decides them.
+        result.kept++;
+        if (outcome.filed.skipped === "ruled") continue;
+        result.unconfirmedDenies++;
+        unconfirmedFiled += outcome.filed.rerouted.length;
+        continue;
+      }
+      const applied = outcome.applied;
       // A sender who has a rule under their key is not this pass's: nothing was written or filed.
       if (applied.skipped === "ruled") { result.kept++; continue; }
       // The door's own refusal of a marked sender — the belt under the selection's flag above.
@@ -394,6 +452,15 @@ export async function screenerAutoActPass(
       accountId, skipped: result.unverified,
       reason: "these senders were not let through: their address is a company's own and their mail "
         + "provider did not confirm the mail came from it, and only a person's press admits that",
+    });
+  }
+  // `skipped` and `moved` are names the hardened logger keeps; any other count would be dropped.
+  if (result.unconfirmedDenies > 0) {
+    log.info("screener_auto_act_unconfirmed_denied", {
+      accountId, skipped: result.unconfirmedDenies, moved: unconfirmedFiled,
+      reason: "these senders were not screened out by rule: their advice met a letter their mail "
+        + "provider did not confirm, so no rule was written and only such letters were filed, each "
+        + "listed under Filed automatically to put back",
     });
   }
   // FIELD NAMES THE HARDENED LOGGER KEEPS, asked of it rather than guessed: `filed`, `kept` and
@@ -497,6 +564,25 @@ async function checkUncheckedHeld(db: Tx, accountId: string, senders: readonly s
   return out;
 }
 
+/**
+ * Which of these advised letters the deny's door would still file: held, not deleted, not put back,
+ * not confirmed — `rerouteUnconfirmedHeld`'s bag for one letter, read once per page.
+ */
+async function advisedLettersFileable(db: Tx, accountId: string, ids: readonly string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = await db.select({ id: messages.id }).from(messages)
+    .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    .where(and(
+      eq(messages.accountId, accountId),
+      inArray(messages.id, [...ids]),
+      eq(folderState.desiredFolder, SCREENER_FOLDER),
+      isNull(messages.deletedAt),
+      isNull(folderState.autoFilingUndoneAt),
+      unconfirmedSql(sql`${messages.authVerdict}`),
+    ));
+  return new Set(rows.map((r) => r.id));
+}
+
 interface WaitingSender {
   address: string;
   mailboxId: string;
@@ -504,6 +590,8 @@ interface WaitingSender {
   identityHeld: boolean;
   /** A non-deleted held message of this sender is one its provider did not confirm (`auth_verdict` not `pass`, NULL included). */
   unconfirmedHeld: boolean;
+  /** As {@link unconfirmedHeld}, of the held messages an automatic filing may move: none the person put back. */
+  unconfirmedFileable: boolean;
 }
 
 /**
@@ -566,7 +654,8 @@ async function selectWaitingSenders(
          and im.deleted_at is null
          and im.sender_check = 'impersonation'
     )`,
-    // The same reach for the provider's word, in every mailbox of the account: the door moves them all.
+    // The same reach for the provider's word, in every mailbox of the account: the decision's door
+    // moves them all.
     unconfirmedHeld: sql<boolean | number>`exists (
       select 1 from ${messages} um
         join ${folderState} ufs on ufs.message_id = um.id
@@ -574,7 +663,19 @@ async function selectWaitingSenders(
          and lower(um.from_address) = ${repSender}
          and ufs.desired_folder = ${SCREENER_FOLDER}
          and um.deleted_at is null
-         and coalesce(um.auth_verdict, '') <> 'pass'
+         and ${unconfirmedSql(sql`um.auth_verdict`)}
+    )`,
+    // The deny's reach: only letters an automatic filing may move, so a put-back one neither takes a
+    // turn to file nothing nor holds back the rule of advice on a confirmed letter.
+    unconfirmedFileable: sql<boolean | number>`exists (
+      select 1 from ${messages} pm
+        join ${folderState} pfs on pfs.message_id = pm.id
+       where pm.account_id = ${opts.accountId}
+         and lower(pm.from_address) = ${repSender}
+         and pfs.desired_folder = ${SCREENER_FOLDER}
+         and pm.deleted_at is null
+         and pfs.auto_filing_undone_at is null
+         and ${unconfirmedSql(sql`pm.auth_verdict`)}
     )`,
   }).from(reps)
     .where(and(
@@ -592,5 +693,6 @@ async function selectWaitingSenders(
     // Both stores' spellings of true: a pg boolean, a sqlite integer.
     identityHeld: r.identityHeld === true || r.identityHeld === 1,
     unconfirmedHeld: r.unconfirmedHeld === true || r.unconfirmedHeld === 1,
+    unconfirmedFileable: r.unconfirmedFileable === true || r.unconfirmedFileable === 1,
   }));
 }

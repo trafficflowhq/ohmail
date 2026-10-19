@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
+import { accountSettings, auditLog, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
 import { recordChanges, type ChangeInput, type LedgerTx, type Tx } from "./change-log.js";
 import { upgradeContactsToPerson } from "./contact-source.js";
 import { consentListBrands, lockListAddress } from "./list-addresses.js";
@@ -9,8 +9,9 @@ import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeenMany } from "./flag-intent.js";
 import { ruleMatchKey, ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
-import { keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
-import { storedAuthScreens } from "./screening-verdicts.js";
+import { findRulesByKey, keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
+import { storedAuthScreens, unconfirmedSql } from "./screening-verdicts.js";
+import { auditAction } from "./staff-channels.js";
 
 /**
  * `@trafficflow/core/rule-order#RULE_PRIORITY_MAX`, copied: this package does not import core.
@@ -346,6 +347,57 @@ export async function rerouteOwnHeldBag(
   const held = await heldRows(tx, input.accountId, and(claims, eq(folderState.lastSetBy, "us")));
   const moved = await rerouteHeldBag(tx, input.accountId, held, input.appliedFolder, input.now);
   return { rerouted: moved.rerouted.length, lastSeq: moved.lastSeq };
+}
+
+/** What {@link rerouteUnconfirmedHeld} did. */
+export interface UnconfirmedRerouteResult {
+  /** `ruled`: the sender's key has a rule, enabled or paused, and nothing was filed. */
+  skipped?: "ruled";
+  /** The held letters it filed: only ones their provider did not confirm. */
+  rerouted: AppliedScreenerRow[];
+  /** Mailboxes holding such letters that this install does not organize; nothing was written there. */
+  heldElsewhere: HeldElsewhereMailbox[];
+  lastSeq: bigint | null;
+}
+
+/**
+ * A PASS'S DENY THAT MEETS A LETTER ITS PROVIDER DID NOT CONFIRM (the act on suggestions): files the
+ * sender's held letters whose `auth_verdict` is not `pass`, NULL included (only the letter `only`
+ * names, when given), and writes nothing standing: no rule, contact, learning signal, baseline, retro
+ * or list brand. A promoted deny rule wins before authentication is read, so one written on a
+ * forgery's advice would file the real address's mail. With no rule to undo, each letter filed gets
+ * the automatic filing's audit row and its inverse (`screener-auto.ts`'s), which Filed automatically
+ * lists and Put back reads. A put-back letter stays; a key with any rule is not this pass's (`skip`).
+ * Fences as the decision does: the erased account, then the rule-key lock before the bag's mailbox
+ * locks. Files only to a deny destination; anything else throws before a statement.
+ */
+export async function rerouteUnconfirmedHeld(
+  tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date; only?: string },
+): Promise<UnconfirmedRerouteResult> {
+  const { accountId, appliedFolder, now } = input;
+  if (!DECIDABLE_FOLDERS.has(appliedFolder) || admitsDestination(appliedFolder)) {
+    throw new Error(`rerouteUnconfirmedHeld files only to a deny destination, not ${appliedFolder}`);
+  }
+  const address = input.address.toLowerCase();
+  if (await readAccountErasedAt(tx, dialect(tx), accountId) != null) throw new AccountErasedError(accountId);
+  await lockAccountRuleKeys(tx, accountId);
+  const ruled = await findRulesByKey(tx, accountId, {
+    kind: "sender", match: ruleMatchKey(address), subjectContains: null, bodyContains: null,
+  });
+  if (ruled.length > 0) return { skipped: "ruled", rerouted: [], heldElsewhere: [], lastSeq: null };
+  const unconfirmed = unconfirmedSql(sql`${messages.authVerdict}`);
+  const held = await heldRowsForSender(tx, accountId, address, undefined, {
+    skipPutBack: true, within: input.only === undefined ? unconfirmed : and(unconfirmed, eq(messages.id, input.only))!,
+  });
+  const { rerouted, heldElsewhere, lastSeq } = await rerouteHeldBag(tx, accountId, held, appliedFolder, now);
+  for (let i = 0; i < rerouted.length; i += DECISION_BATCH_MAX) {
+    await tx.insert(auditLog).values(rerouted.slice(i, i + DECISION_BATCH_MAX).map((m) => ({
+      accountId, action: auditAction("screener_auto_apply_move"),
+      payload: { mailboxId: m.mailboxId, messageId: m.messageId, from: SCREENER_FOLDER, to: appliedFolder },
+      inverse: { messageId: m.messageId, from: appliedFolder, to: SCREENER_FOLDER },
+    })));
+  }
+  return { rerouted, heldElsewhere, lastSeq };
 }
 
 /** One held message by id, scoped to the account. `null` when it is not currently held. */
