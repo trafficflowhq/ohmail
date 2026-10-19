@@ -942,9 +942,29 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
   return plan;
 }
 
+/**
+ * A create whose source is EMPTY: no message at all, and never one to store
+ * (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS). Parsed, it was a message with no Message-ID, From or
+ * Subject that took a letter's place and moved the letter out of INBOX. The adapter reads only rows
+ * carrying the source it asked for; this refusal stands behind it. Not deterministic in the bytes —
+ * the next read of the UID brings the letter — so the worker retries it as an unclassified fault.
+ */
+export class EmptySourceError extends Error {
+  readonly name = "EmptySourceError";
+  constructor(readonly uid: number) {
+    super(`the create for UID ${uid} carried an empty source, which is no message`);
+  }
+}
+
 async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> {
   if (!change.raw) {
     throw new Error("planChange requires change.raw (a content-bearing 'create')");
+  }
+  // Before the parse, so nothing is read, classified or written for it.
+  if (change.raw.length === 0) {
+    const uid = Number(change.locator.ref.split(":").pop());
+    deps.log?.warn("ingest_empty_source_refused", { uid });
+    throw new EmptySourceError(uid);
   }
   const { repo, accountId, mailboxId, classifier, routing, credits } = deps;
   const trustedAuthservIds = deps.trustedAuthservIds ?? NO_TRUSTED_AUTHSERV_IDS;

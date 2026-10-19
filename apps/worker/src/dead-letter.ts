@@ -1,5 +1,6 @@
 import {
-  MimeParseError, MimeTooLargeError, StoreStatementFaultError, storeFaultOf, type NativeLocator, type StoreFaultName,
+  EmptySourceError, MimeParseError, MimeTooLargeError, StoreStatementFaultError, storeFaultOf,
+  type NativeLocator, type StoreFaultName,
 } from "@trafficflow/core/mail";
 import { epochOf, isImapBoundExceeded, parseRef, sameEpoch } from "@trafficflow/core/adapters/imap";
 
@@ -278,6 +279,11 @@ export function classifyIngestFault(err: unknown): IngestFault {
     return err.reason === "parse_timeout"
       ? { domain: "message", code: "unclassified", deterministic: false }
       : { domain: "message", code: "mime_unparseable", deterministic: true };
+  }
+  // An empty source is a read that brought nothing, not the letter's bytes: deferred, and the next
+  // read of the UID brings the letter. Named, so the arm is a decision rather than the fall-through.
+  if (err instanceof EmptySourceError) {
+    return { domain: "message", code: "unclassified", deterministic: false };
   }
 
   // The device store's one driver code says nothing; its SQLite class does.

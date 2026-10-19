@@ -394,6 +394,9 @@ export default defineConfig({
       // the mail. Here for `phone-engine-boot.test.ts`'s reason — the whole engine over the device
       // store — and it carries the same premise case for the default project.
       "apps/sidecar/test/phone-first-sync-unreadable.imap.test.ts",
+      // A letter marked read elsewhere during the import is stored whole, never as an empty message,
+      // on the engine over the device store (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS).
+      "apps/sidecar/test/phone-sync-flag-race.imap.test.ts",
       // The import's clock the phone's engine writes (`stampSynced`), whose instant this store spells
       // as an integer: search reads it past a first import's first day.
       "apps/sidecar/test/sync-stamp-progress.test.ts",

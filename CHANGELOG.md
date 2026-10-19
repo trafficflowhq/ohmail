@@ -13,6 +13,17 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A letter you read elsewhere during an import is now imported
+
+If you read or flagged a message in another app while ohmail was importing your mail, ohmail could store an empty
+message in that letter's place and never import the letter. ohmail now ignores such updates while it reads your
+mail and no longer stores an empty message in a letter's place. Every install that organizes the mailbox (Cloud,
+your own server, the desktop or the phone app) has to run this version to be protected.
+
+A letter this already happened to is still on your mail server, in the folder it was in or in the ohmail Screener
+folder, and ohmail shows a message with no sender or subject in its place until a later version puts it back.
+Leave that message alone: deleting or moving it moves real letters, and deleting it puts them in the Trash.
+
 ### Fewer background refreshes
 
 Cloud could confirm a mailbox it already organizes on every pass, so the web app reloaded that mailbox's setup

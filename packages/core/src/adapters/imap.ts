@@ -1265,6 +1265,52 @@ export function answerFor(
   return merged as unknown as FetchMessageObject;
 }
 
+/** What a FETCH row must carry to answer its reader — see {@link askedRow}. */
+export type AskedItem = "source" | "headers" | "envelope" | "size" | "date" | "uid";
+
+/** The UIDs a command named. A `ReadonlySet<number>` is one; {@link ANY_UID} names a whole range. */
+export interface AskedUids { has(uid: number): boolean }
+
+/** The asked set of `1:*` or a sequence window: every message of the folder. */
+export const ANY_UID: AskedUids = { has: () => true };
+
+/**
+ * IS THIS ROW AN ANSWER TO WHAT ITS FETCH ASKED? imapflow's `fetch()` yields every untagged FETCH
+ * its command receives, and a server sends another session's flag change during any command (RFC
+ * 3501 §5.2): `* 4 FETCH (UID 9 FLAGS (\Seen))` reads as an answer that carries nothing. Taken as
+ * one, a letter marked read in another app during an import was stored as an empty message in its
+ * own place, never imported, and moved to the Screener on the server
+ * (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS). A row answers when it names a UID the command
+ * asked for and carries the item its reader needs: `source` a non-empty Buffer, `headers` a Buffer
+ * (GreenMail answers a header field the letter lacks with an empty one; a flag change carries
+ * none), `size` a finite number, `date` an INTERNALDATE or an ENVELOPE, `uid` nothing more. Every
+ * reader asks it after its own clock, row and byte accounting, so a stray row still counts against
+ * every ceiling; `imap-answer-census.test.ts` holds every read of this file to it.
+ */
+export function askedRow(m: FetchMessageObject, asked: AskedUids, carries: AskedItem): boolean {
+  if (typeof m.uid !== "number" || !Number.isInteger(m.uid) || m.uid <= 0 || !asked.has(m.uid)) return false;
+  switch (carries) {
+    case "source": return Buffer.isBuffer(m.source) && m.source.length > 0;
+    case "headers": return Buffer.isBuffer(m.headers);
+    case "envelope": return typeof m.envelope === "object" && m.envelope !== null;
+    case "size": return typeof m.size === "number" && Number.isFinite(m.size);
+    case "date": return m.internalDate !== undefined || (typeof m.envelope === "object" && m.envelope !== null);
+    case "uid": return true;
+  }
+}
+
+const NO_SOURCE = Buffer.alloc(0);
+
+/** A row's source as the byte accounting counts it: a Buffer, or none — never `false` or `undefined`. */
+function sourceBytes(m: FetchMessageObject): Buffer {
+  return Buffer.isBuffer(m.source) ? m.source : NO_SOURCE;
+}
+
+/** An enumeration's UIDs, each once and in order: a flag change on a listed letter is a second row for it. */
+function eachUidOnce(uids: readonly number[]): number[] {
+  return [...new Set(uids.filter((u) => u > 0))];
+}
+
 export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private client!: ImapFlow;
   private transporter: Transporter | null = null;
@@ -2265,18 +2311,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // over-answering a bounded page. Rows past it are declined rather than retained — the page
       // is `limit` items by contract either way, so nothing honest is lost.
       const pageDeadline = this.readDeadline();
+      let examined = 0;
       for await (const m of this.client.fetch(
         `${start}:${end}`, { uid: true, envelope: true, flags: true, internalDate: true },
       )) {
         pageDeadline.check(folder);
         // Reached only when the server answers a bounded range with MORE rows than it names;
         // the FETCH is still running, so the connection is retired rather than reused.
-        if (rows.length >= limit) {
+        if (examined >= limit) {
           this.retireConnection(
-            new ImapBoundExceeded("page_rows", limit, rows.length + 1, folder),
+            new ImapBoundExceeded("page_rows", limit, examined + 1, folder),
           );
           break;
         }
+        examined++;
+        // Counted above; another session's flag change carries no envelope and is no item.
+        if (!askedRow(m, ANY_UID, "envelope")) continue;
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
         rows.push({
@@ -2352,18 +2402,23 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // `wanted` names at most `limit` UIDs; a longer answer is the server over-answering. Same
       // rule as {@link listFolderPage}.
       const pageDeadline = this.readDeadline();
+      const asked = new Set(wanted);
+      let examined = 0;
       for await (const m of this.client.fetch(
         wanted, { uid: true, envelope: true, flags: true, internalDate: true }, { uid: true },
       )) {
         pageDeadline.check(folder);
         // Reached only when the server answers a bounded range with MORE rows than it names;
         // the FETCH is still running, so the connection is retired rather than reused.
-        if (rows.length >= limit) {
+        if (examined >= limit) {
           this.retireConnection(
-            new ImapBoundExceeded("page_rows", limit, rows.length + 1, folder),
+            new ImapBoundExceeded("page_rows", limit, examined + 1, folder),
           );
           break;
         }
+        examined++;
+        // Counted above; a flag change, or a row for a UID the search did not find, is no item.
+        if (!askedRow(m, asked, "envelope")) continue;
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
         rows.push({
@@ -2762,13 +2817,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private async enumerateUids(folder?: string): Promise<number[]> {
     const mb = this.client.mailbox as MailboxObject | false;
     if (!mb || mb.exists === 0) return [];
-    return boundedCollect(this.client.fetch("1:*", { uid: true }), {
+    return eachUidOnce(await boundedCollect(this.client.fetch("1:*", { uid: true }), {
       max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
       deadline: this.readDeadline(), folder,
       // `notify` is true only for the non-throwing ("stop") disposition.
       onAbandon: (_notify, because) => this.retireConnection(because),
-      map: (m) => m.uid,
-    });
+      // Every row counts against the ceiling; a row naming no UID names nothing.
+      map: (m) => (askedRow(m, ANY_UID, "uid") ? m.uid : 0),
+    }));
   }
 
   /**
@@ -2784,13 +2840,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const start = mb.exists > count ? mb.exists - count + 1 : 1;
     // The sequence range asks for `count`; the SERVER decides what it actually sends back, and a
     // range is not a promise. Same ceiling and same clock as {@link enumerateUids}.
-    return boundedCollect(this.client.fetch(`${start}:*`, { uid: true }), {
+    return eachUidOnce(await boundedCollect(this.client.fetch(`${start}:*`, { uid: true }), {
       max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
       deadline: this.readDeadline(), folder,
       // `notify` is true only for the non-throwing ("stop") disposition.
       onAbandon: (_notify, because) => this.retireConnection(because),
-      map: (m) => m.uid,
-    });
+      map: (m) => (askedRow(m, ANY_UID, "uid") ? m.uid : 0),
+    }));
   }
 
   /**
@@ -2817,7 +2873,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       onAbandon: (_notify, because) => this.retireConnection(because),
       map: (m) => { if (m.uid >= fromUid) kept.push(m.uid); return 0; },
     });
-    return kept;
+    return eachUidOnce(kept);
   }
 
   /**
@@ -2851,9 +2907,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       if (commands > 0 && this.dateLookupSpent()) break;
       if (dated >= want && this.now() - startedMs >= ImapAdapter.DATE_READ_PASS_MS) break;
       commands += 1;
+      const asked = new Set(chunk.uids);
       for await (const m of this.client.fetch(
         chunk.set, { uid: true, internalDate: true, envelope: true }, { uid: true },
       )) {
+        // A flag change carries no date: it neither dates nor undates a candidate.
+        if (!askedRow(m, asked, "date")) continue;
         entry.dates.set(m.uid, arrivalKey(m.internalDate, m.envelope?.date));
       }
       // A UID the server did not answer for (expunged between enumeration and now) is recorded
@@ -2966,8 +3025,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // RFC822.SIZE first: bytes are the budget that actually protects the container, and
     // learning them costs one metadata fetch over an already count-capped list.
     const sizes = new Map<number, number>();
+    const sliced = new Set(slice);
     for await (const m of this.client.fetch(slice, { uid: true, size: true }, { uid: true })) {
-      sizes.set(m.uid, typeof m.size === "number" ? m.size : 0);
+      if (!askedRow(m, sliced, "uid")) continue;
+      // A stated size is never overwritten by a flag change, which states none; no size reads 0.
+      if (askedRow(m, sliced, "size")) sizes.set(m.uid, m.size as number);
+      else if (!sizes.has(m.uid)) sizes.set(m.uid, 0);
     }
 
     const take: number[] = [];
@@ -3046,11 +3109,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
          nothing, so a slow server imported nothing at all. Only this pre-fetch check is soft. */
       if (deadline.remainingMs() < ImapAdapter.UNSIZED_FETCH_MARGIN_MS) return { truncated: true, unanswered };
       const uid = unsized[i]!;
+      const asked = new Set([uid]);
       let got = undefined as InternalCreate | undefined;
       let streamed = 0;
       const row = (m: FetchMessageObject, envelope: boolean): void => {
         deadline.check(folder);
-        const raw = (m.source ?? Buffer.alloc(0)) as Buffer;
+        const raw = sourceBytes(m);
         if (raw.length > messageOverrunCeiling(undefined)) {
           const because = new ImapBoundExceeded(
             "body_overrun", messageOverrunCeiling(undefined), raw.length, folder,
@@ -3065,7 +3129,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           this.retireConnection(because);
           throw because;
         }
-        if (m.uid !== uid || got !== undefined) return;
+        // Counted above; only this letter's own reply, with its bytes, claims the slot.
+        if (got !== undefined || !askedRow(m, asked, "source")) return;
         got = {
           folder, uidValidity: curUidValidity, uid, raw,
           seen: m.flags?.has("\\Seen") ?? false,
@@ -3115,6 +3180,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const declaredTotal = take.reduce((sum, uid) => sum + (sizes.get(uid) ?? 0), 0);
     const batchCeiling = bodyOverrunCeiling(declaredTotal);
     let streamedBytes = 0;
+    /** The UIDs a create was made for: the first reply with its bytes wins, nothing else does. */
+    const answered = new Set<number>();
+    const asked = new Set(take);
 
     for await (const m of this.client.fetch(
       take,
@@ -3122,7 +3190,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       { uid: true },
     )) {
       bodyDeadline.check(folder);
-      const arrived = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
+      const arrived = sourceBytes(m).length;
       const declared = sizes.get(m.uid);
       // Throwing out of a `for await` leaves the FETCH outstanding — see `retireConnection`.
       if (arrived > messageOverrunCeiling(declared)) {
@@ -3139,9 +3207,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         this.retireConnection(because);
         throw because;
       }
+      // Counted above. Another session's flag change, a row for a UID nobody asked, or a second
+      // reply is no create: an empty one took the letter's place for good.
+      if (!askedRow(m, asked, "source") || answered.has(m.uid)) continue;
+      answered.add(m.uid);
       fetched.push({
         folder, uidValidity: curUidValidity, uid: m.uid,
-        raw: (m.source ?? Buffer.alloc(0)) as Buffer,
+        raw: sourceBytes(m),
         seen: m.flags?.has("\\Seen") ?? false,
         messageId: normalizeMessageId(m.envelope?.messageId ?? null),
         // The fetch already asks for `internalDate` (it is in the field list above, for the
@@ -3186,10 +3258,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // envelope is wanted for one value, the Message-ID, and the raw source carries it. A UID
     // still absent after that is returned to the caller, which must record it durably BEFORE the
     // cursor crosses it (`ChangeBatch.unanswered`).
-    const answered = new Set(fetched.map((f) => f.uid));
     const withheld = take.filter((u) => !answered.has(u));
     let unanswered: number[] = [];
     if (withheld.length > 0) {
+      const again = new Set(withheld);
       const retried = (m: FetchMessageObject): void => {
         // ── THE RETRY IS A BODY FETCH TOO, AND IT WAS THE HOLE IN THE ACCOUNTING ────────────
         //
@@ -3200,7 +3272,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // large body here, past every size ceiling. Same per-message and batch-total rules, same
         // clock, for both retries.
         bodyDeadline.check(folder);
-        const arrivedRetry = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
+        const arrivedRetry = sourceBytes(m).length;
         const declaredRetry = sizes.get(m.uid);
         if (arrivedRetry > messageOverrunCeiling(declaredRetry)) {
           const becauseRetry = new ImapBoundExceeded(
@@ -3216,7 +3288,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           this.retireConnection(becauseBatch);
           throw becauseBatch;
         }
-        const raw = (m.source ?? Buffer.alloc(0)) as Buffer;
+        // The first fetch's rule: only a withheld letter's own reply, with its bytes, once.
+        if (!askedRow(m, again, "source") || answered.has(m.uid)) return;
+        const raw = sourceBytes(m);
         answered.add(m.uid);
         fetched.push({
           folder, uidValidity: curUidValidity, uid: m.uid,
@@ -3453,12 +3527,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids", deadline: this.readDeadline(), folder,
         bytes: { max: uids.size * MESSAGE_ID_FIELD_MAX_BYTES, of: (m) => m.headers?.length ?? 0 },
         onAbandon: (_notify, because) => this.retireConnection(because),
-        map: (m) => ({ uid: m.uid, id: m.headers ? messageIdFromRaw(m.headers) : null }),
+        // Counted above; a row without the header (a flag change) answers for no letter.
+        map: (m) => (askedRow(m, ANY_UID, "headers") ? { uid: m.uid, id: messageIdFromRaw(m.headers as Buffer) } : null),
       },
     );
-    const answered = new Set(items.map((r) => r.uid));
+    const rows = items.filter((r): r is { uid: number; id: string | null } => r !== null);
+    const answered = new Set(rows.map((r) => r.uid));
     for (const u of uids) if (!answered.has(u)) return null;
-    return new Set(items.flatMap((r) => (r.id === null ? [] : [messageIdKey(r.id)])));
+    return new Set(rows.flatMap((r) => (r.id === null ? [] : [messageIdKey(r.id)])));
   }
 
   /**
@@ -4164,21 +4240,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const take: number[] = [];
       const seen = new Set<number>();
       const sizes = new Map<number, number>();
+      const asked = new Set(wanted);
       for await (const m of this.client.fetch(
         [...wanted], { uid: true, size: true }, { uid: true },
       )) {
+        // Existence only: a server that states no size keeps its letters. A stated size is never
+        // overwritten by a flag change, which states none.
+        if (!askedRow(m, asked, "uid")) continue;
         seen.add(m.uid);
-        const size = typeof m.size === "number" ? m.size : 0;
-        sizes.set(m.uid, size);
-        if (opts.maxBytes !== undefined && size > opts.maxBytes) oversize.push(m.uid);
-        else take.push(m.uid);
+        if (askedRow(m, asked, "size")) sizes.set(m.uid, m.size as number);
+        else if (!sizes.has(m.uid)) sizes.set(m.uid, 0);
+      }
+      for (const uid of wanted) {
+        if (!seen.has(uid)) continue;
+        if (opts.maxBytes !== undefined && (sizes.get(uid) ?? 0) > opts.maxBytes) oversize.push(uid);
+        else take.push(uid);
       }
 
       const creates: Change[] = [];
       /* THE RE-READ IS BYTE-ACCOUNTED AS THE PASS IS: a body past its own declared size's
          ceiling retires the connection and names its message, in both body loops below. */
       const overrunGuard = (m: FetchMessageObject): void => {
-        const arrived = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
+        const arrived = sourceBytes(m).length;
         const ceiling = messageOverrunCeiling(sizes.get(m.uid));
         if (arrived <= ceiling) return;
         const because = new ImapBoundExceeded(
@@ -4187,17 +4270,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         this.retireConnection(because);
         throw because;
       };
+      /** The UIDs a create was made for — `fetchSized`'s rule: the first reply with its bytes. */
+      const answered = new Set<number>();
       if (take.length > 0) {
+        const taken = new Set(take);
         for await (const m of this.client.fetch(
           take,
           { uid: true, flags: true, envelope: true, source: true, internalDate: true, bodyStructure: true },
           { uid: true },
         )) {
           overrunGuard(m);
+          if (!askedRow(m, taken, "source") || answered.has(m.uid)) continue;
+          answered.add(m.uid);
           creates.push({
             type: "create",
             locator: { folder, ref: makeRef(curUidValidity, m.uid) },
-            raw: (m.source ?? Buffer.alloc(0)) as Buffer,
+            raw: sourceBytes(m),
             seen: m.flags?.has("\\Seen") ?? false,
             // Same stamp, same guard as `changesSince` — a re-read must reach the gate with the
             // same age evidence the first read did, or a retry would route differently.
@@ -4220,16 +4308,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // message from any fetch requesting ENVELOPE. So ask again without the field, as the batch
       // path does; only a UID still missing after the envelope-free retry is treated as gone — it
       // failed two different commands, the strongest evidence this protocol offers.
-      const answered = new Set(creates.map((c) => parseRef(c.locator.ref).uid));
       const withheld = take.filter((u) => !answered.has(u));
       if (withheld.length > 0) {
+        const again = new Set(withheld);
         const retried = (m: FetchMessageObject): void => {
           overrunGuard(m);
+          if (!askedRow(m, again, "source") || answered.has(m.uid)) return;
           answered.add(m.uid);
           creates.push({
             type: "create",
             locator: { folder, ref: makeRef(curUidValidity, m.uid) },
-            raw: (m.source ?? Buffer.alloc(0)) as Buffer,
+            raw: sourceBytes(m),
             seen: m.flags?.has("\\Seen") ?? false,
             ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
               ? { internalDate: m.internalDate }
@@ -4675,10 +4764,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         const rows = await this.client.fetchAll(
           [...wanted.keys()].join(","), { uid: true, envelope: true }, { uid: true },
         );
+        /** Wanted UIDs seen only through rows without an envelope (another session's flag change). */
+        const unread = new Set<number>();
         for (const r of rows) {
-          if (!wanted.has(r.uid)) continue;         // a server answering outside the set it was asked
+          if (!askedRow(r, wanted, "uid")) continue;         // a server answering outside the set it was asked
+          // A flag change never writes the Message-ID the destination check below searches for.
+          if (!askedRow(r, wanted, "envelope")) { if (!present.has(r.uid)) unread.add(r.uid); continue; }
+          unread.delete(r.uid);
           present.set(r.uid, r.envelope?.messageId ?? null);
         }
+        // Here, but under which Message-ID is unread: the per-message path answers for it.
+        if (unread.size > 0) return empty;
       } finally {
         lock.release();
       }

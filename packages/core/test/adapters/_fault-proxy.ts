@@ -18,7 +18,8 @@ export type ExpungeFault = "pass" | "no" | "drop" | "drop-after";
 
 /** A one-shot park: the first command `when` matches waits, with the bytes behind it, for `run`. */
 export interface CommandHold {
-  when: (command: string, args: string) => boolean;
+  /** `mailbox` is the one selected when the command was sent, as the proxy read it off SELECT. */
+  when: (command: string, args: string, mailbox: string | null) => boolean;
   run: () => Promise<void>;
   /**
    * Deliver the parked command's untagged flags-only FETCH answers (the server telling this
@@ -40,6 +41,8 @@ export interface FaultProxy {
   hold: CommandHold | null;
   /** Flag updates an `unsolicitedFirst` hold moved ahead of the reply they followed. */
   readonly reordered: number;
+  /** Flags-only answers (UID, FLAGS, MODSEQ and nothing else) inside a held command's reply, in either order. */
+  readonly unsolicited: number;
   /** Commands seen, by name, with the mailbox selected when each was sent. */
   readonly log: ReadonlyArray<{ command: string; mailbox: string | null; faulted: boolean }>;
   count(command: string, mailbox?: string): number;
@@ -96,6 +99,9 @@ function frame(
   }
 }
 
+/** An untagged FETCH carrying nothing but UID, FLAGS and MODSEQ: another session's flag change. */
+const FLAGS_ONLY = /^\* \d+ FETCH \((?:(?:UID \d+|FLAGS \([^)]*\)|MODSEQ \(\d+\))\s*)+\)$/i;
+
 function unquote(word: string): string {
   return word.startsWith("\"") && word.endsWith("\"") ? word.slice(1, -1).replace(/\\(.)/g, "$1") : word;
 }
@@ -109,7 +115,7 @@ export async function startFaultProxy(
   const sockets = new Set<net.Socket>();
   const state = {
     fault: opts.fault ?? "pass" as ExpungeFault, onlyMailbox: opts.onlyMailbox ?? null, hold: null as CommandHold | null,
-    reordered: 0,
+    reordered: 0, unsolicited: 0,
   };
 
   const stripCaps = (text: string): string => {
@@ -136,6 +142,8 @@ export async function startFaultProxy(
      * with the flags-only answers first and the rest in the order the server sent them.
      */
     let reordering: { tag: string; units: Array<{ head: string; bytes: Buffer[] }> } | null = null;
+    /** A held command's tag while its reply passes in the server's own order, for `unsolicited`. */
+    let watching: string | null = null;
     const toClient = (b: Buffer): void => {
       const unit = reordering?.units.at(-1);
       if (unit) unit.bytes.push(b); else client.write(b);
@@ -157,12 +165,13 @@ export async function startFaultProxy(
         && (state.onlyMailbox === null || state.onlyMailbox === selected);
       log.push({ command, mailbox: selected, faulted });
       const hold = state.hold;
-      if (hold && !parked && hold.when(command, m[4] ?? "")) {
+      if (hold && !parked && hold.when(command, m[4] ?? "", selected)) {
         state.hold = null;
         parked = [raw];
         void hold.run().finally(() => {
           // Armed BEFORE the parked bytes go out, so the reply cannot arrive ahead of it.
           if (hold.unsolicitedFirst) reordering = { tag, units: [] };
+          else watching = tag;
           const q = parked ?? []; parked = null; for (const b of q) upstream.write(b);
         });
         return null;
@@ -184,6 +193,7 @@ export async function startFaultProxy(
           reordering = null;
           const first = units.filter(flagsOnly);
           state.reordered += first.filter((u) => units.slice(0, units.indexOf(u)).some((v) => !flagsOnly(v))).length;
+          state.unsolicited += units.filter((u) => u.bytes.length === 1 && FLAGS_ONLY.test(u.head)).length;
           for (const u of [...first, ...units.filter((u) => !flagsOnly(u))]) for (const b of u.bytes) client.write(b);
           return raw;
         }
@@ -192,6 +202,10 @@ export async function startFaultProxy(
         return null;
       }
       if (!atStart) return raw;
+      if (watching !== null) {
+        if (text.startsWith(`${watching} `)) watching = null;
+        else if (FLAGS_ONLY.test(text)) state.unsolicited++;
+      }
       if (swallowTag !== null && text.startsWith(`${swallowTag} `)) { kill(); return "halt"; }
       if (pendingSelect && text.startsWith(`${pendingSelect.tag} `)) {
         selected = /^\S+ OK/i.test(text) ? pendingSelect.mailbox : null;
@@ -219,6 +233,7 @@ export async function startFaultProxy(
     get hold() { return state.hold; },
     set hold(h: CommandHold | null) { state.hold = h; },
     get reordered() { return state.reordered; },
+    get unsolicited() { return state.unsolicited; },
     log,
     count(command, mailbox) {
       return log.filter((e) => e.command === command && (mailbox === undefined || e.mailbox === mailbox)).length;
