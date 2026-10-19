@@ -473,6 +473,8 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // are the unnamed remainder, a reading rather than a guess. All five are `Date.now()` deltas
   // naming no mailbox, no address and no path.
   "pgliteOpenMs", "adoptBaselineMs", "migrateMs", "worldMs", "totalReadyMs",
+  // …and `treeSyncMs`: a new store's one sync of its files, a `Date.now()` delta (0 on a reopen).
+  "treeSyncMs",
   // The engine's own memory — `process.memoryUsage()`'s three numbers, as `engine_vitals` reports
   // them on a timer beside `boot_phases`. Integers from the runtime, naming nothing a person
   // wrote. `external` matters most on this door and is why all three are named rather than

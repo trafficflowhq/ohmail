@@ -1,4 +1,10 @@
-import fs, { readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import fs, { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { PGlite as PGliteClass } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+import { migrate } from "drizzle-orm/pglite/migrator";
+import { mailSchema } from "@trafficflow/db/mail";
+import { MAIL_JOURNAL, readJournalOf } from "@trafficflow/db/journal";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
@@ -359,4 +365,90 @@ describe("a store whose fsync fails", () => {
     expect(read(new Error("duplicate key value violates unique constraint"))).toBe(false);
     expect(read(undefined)).toBe(false);
   });
+});
+
+/**
+ * ═══ A STORE THIS START IS MAKING SYNCS ONCE, AT THE END ══════════════════════════════════════
+ *
+ * Until the tree sync has put every file of a new store on the disk, the start marker stands and
+ * a cut sets the store aside; so the schema pass's own syncs (about 240 on 155 migrations, one
+ * device flush each on macOS and Windows) bought nothing and cost the first start its seconds.
+ * Counted at the `node:fs` seam on this thread, where the store's fsync runs (the tree sync's
+ * threads have their own).
+ */
+describe("a store this start is making", () => {
+  it("holds the schema pass's syncs for the tree sync, and syncs every commit after it", async () => {
+    // EMPTY, never the template (`_datadir.ts`): the subject is the store this start makes.
+    const dir = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-fsync-first-start-"));
+    dirs.push(dir);
+    const marker = join(dir, store.STORE_UNFINISHED_FILE);
+    const f = fs as unknown as Record<string, (...a: unknown[]) => unknown>;
+    const fsync = f.fsyncSync!;
+    let inPass = false;
+    const files = { start: 0, pass: 0, after: 0 };
+    f.fsyncSync = function (this: unknown, ...a: unknown[]) {
+      const out = fsync.apply(this, a);
+      if (!fs.fstatSync(a[0] as number).isDirectory()) {
+        if (!inPass) files.start += 1;
+        else if (existsSync(marker)) files.pass += 1;
+        else files.after += 1;
+      }
+      return out;
+    };
+    try {
+      const h = await openLocalDb(dir, { onPhase: (p) => { if (p === "migrating") inPass = true; } });
+      open.push(h);
+      expect(files.start, "the start synced no file before the schema pass — the route is unproven").toBeGreaterThan(0);
+      expect(files.pass, `the schema pass synced ${files.pass} files itself while the marker stood`).toBe(0);
+      const before = files.after;
+      await h.db.execute(sql.raw("CREATE TABLE first_start_probe (n int)"));
+      await h.db.execute(sql.raw("INSERT INTO first_start_probe VALUES (1)"));
+      expect(files.after - before, "a commit after the first start synced nothing — the hold outlived the tree sync")
+        .toBeGreaterThan(0);
+    } finally {
+      f.fsyncSync = fsync;
+    }
+  }, 120_000);
+});
+
+describe("a store an earlier start made", () => {
+  /* An older install's store: migrated through a prefix of the journal by drizzle's own migrator,
+     so this open is an upgrade over a store that may hold somebody's mail. */
+  async function oldInstall(dataDir: string, owed: number): Promise<void> {
+    const entries = readJournalOf(MAIL_JOURNAL);
+    const folder = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-fsync-journal-"));
+    dirs.push(folder);
+    cpSync(MAIL_JOURNAL.dir, folder, { recursive: true });
+    const path = join(folder, "meta", "_journal.json");
+    const journal = JSON.parse(readFileSync(path, "utf8")) as { entries: unknown[] };
+    journal.entries = entries.slice(0, entries.length - owed);
+    writeFileSync(path, JSON.stringify(journal));
+    const client = new PGliteClass(join(dataDir, PGDATA_SUBDIR));
+    await client.waitReady;
+    await migrate(drizzle(client, { schema: mailSchema }), { migrationsFolder: folder, migrationsSchema: MAIL_JOURNAL.migrationsSchema });
+    await client.close();
+  }
+
+  it("syncs every migration its upgrade commits — the hold is a new store's alone", async () => {
+    const dir = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-fsync-upgrade-"));
+    dirs.push(dir);
+    await oldInstall(dir, 6);
+    const f = fs as unknown as Record<string, (...a: unknown[]) => unknown>;
+    const fsync = f.fsyncSync!;
+    let inPass = false;
+    let pass = 0;
+    f.fsyncSync = function (this: unknown, ...a: unknown[]) {
+      const out = fsync.apply(this, a);
+      if (inPass && !fs.fstatSync(a[0] as number).isDirectory()) pass += 1;
+      return out;
+    };
+    try {
+      const h = await openLocalDb(dir, { onPhase: (p, at) => { if (p === "migrating") inPass = at === undefined || at.applied < at.pending; } });
+      open.push(h);
+      expect(h.migrations?.applied, "the fixture owed nothing, so this is no upgrade").toBe(6);
+      expect(pass, "an upgrade of a store that may hold mail committed its migrations unsynced").toBeGreaterThan(0);
+    } finally {
+      f.fsyncSync = fsync;
+    }
+  }, 180_000);
 });

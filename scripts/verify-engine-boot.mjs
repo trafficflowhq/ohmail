@@ -20,6 +20,12 @@ const engineRoot = resolve(process.argv[2] ?? join(ROOT, "build", "engine"));
 const bundle = join(engineRoot, "bin", "ohmail-engine.mjs");
 const journal = join(engineRoot, "drizzle");
 
+/* A LAYOUT CHECK, NOT A TIMING GATE: healthy first starts on the Windows runner read up to 14.6 s,
+ * so the old 15 s kill failed slow runners with the store half made. The timing is the perf
+ * smoke's to judge (`perf-smoke-check.mjs --boot`); this only bounds an engine that never serves.
+ * OHMAIL_VERIFY_BOOT_BOUND_MS shortens it for the script's own test. */
+const BOOT_BOUND_MS = Number(process.env.OHMAIL_VERIFY_BOOT_BOUND_MS) || 60_000;
+
 if (!existsSync(bundle)) fail(`no engine bundle at ${bundle} — run scripts/build-engine.mjs first`);
 if (!existsSync(journal)) fail(`no journal at ${journal} — the layout is already wrong`);
 
@@ -41,7 +47,12 @@ function boot() {
     },
   });
   let err = "";
-  child.stderr.on("data", (b) => { err += b.toString("utf8"); });
+  // The engine serves and then waits on stdin: close it, its documented graceful stop, once it
+  // has said so. The kill is the bound for one that never does.
+  child.stderr.on("data", (b) => {
+    err += b.toString("utf8");
+    if (!child.stdin.writableEnded && /"event":"serving"/.test(err)) child.stdin.end();
+  });
 
   return new Promise((res) => {
     const done = (exitCode) => {
@@ -53,11 +64,8 @@ function boot() {
       rmSync(dataDir, { recursive: true, force: true });
       res({ err, exitCode, pgdataEntries, listing });
     };
-    // The engine serves and then waits on stdin. Give it a window to migrate and announce, then
-    // close stdin — its documented graceful stop — and read what it said.
-    const closeStdin = setTimeout(() => child.stdin.end(), 6000);
-    const kill = setTimeout(() => child.kill("SIGKILL"), 15000);
-    child.on("exit", (code) => { clearTimeout(closeStdin); clearTimeout(kill); done(code); });
+    const kill = setTimeout(() => child.kill("SIGKILL"), BOOT_BOUND_MS);
+    child.on("exit", (code) => { clearTimeout(kill); done(code); });
   });
 }
 

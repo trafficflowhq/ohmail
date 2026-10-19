@@ -42,7 +42,9 @@ const LOGGER_OWNED = ["ts", "level", "service", "event"];
 // table is exactly the launch whose minutes this line has to attribute.
 // `searchSetupMs` joined with the search extensions (`setUpLocalSearch`): the one launch that
 // builds the trigram indexes on an existing store pays seconds there, every later one a catalog read.
-const PHASES = ["pgliteOpenMs", "adoptBaselineMs", "migrateMs", "compactMs", "searchSetupMs", "worldMs", "totalReadyMs"] as const;
+// `treeSyncMs` joined when a new store stopped syncing per index: its one tree sync, named apart
+// from `migrateMs` (0 on every start that did not make the store).
+const PHASES = ["pgliteOpenMs", "adoptBaselineMs", "migrateMs", "treeSyncMs", "compactMs", "searchSetupMs", "worldMs", "totalReadyMs"] as const;
 
 /**
  * The schema upgrade, named beside the time it took. `migrateMs` alone read minutes on a large
@@ -130,6 +132,7 @@ function assertShape(door: string, line: Record<string, unknown>): void {
   const named = line.pgliteOpenMs as number
     + (line.adoptBaselineMs as number)
     + (line.migrateMs as number)
+    + (line.treeSyncMs as number)
     + (line.worldMs as number);
   expect(line.totalReadyMs as number, `${door}: the phases do not fit inside the total`)
     .toBeGreaterThanOrEqual(named);
@@ -149,7 +152,10 @@ describe("boot_phases — the constructor the window waits on says which phase i
     });
     local.push(sidecar);
 
-    assertShape("local", bootLine("local", c.lines));
+    const line = bootLine("local", c.lines);
+    assertShape("local", line);
+    // This start made the store, so its one tree sync is on the line.
+    expect(line.treeSyncMs as number, "a first start named no tree sync").toBeGreaterThan(0);
 
     // The line is a timing, so it must name no mailbox and no machine. `serving` dropped `dataDir`
     // for exactly this reason: a data directory is a path under the user's home and carries the OS
@@ -204,5 +210,6 @@ describe("boot_phases — the constructor the window waits on says which phase i
     // Nothing to replay, but the migrator still reads the journal and the ledger table, so this is
     // a bound on the phase rather than an assertion that it is free.
     expect(line.migrateMs as number).toBeLessThan(line.totalReadyMs as number);
+    expect(line.treeSyncMs, "a reopen synced a tree it did not make").toBe(0);
   }, 240_000);
 });

@@ -155,7 +155,7 @@ export function deriveTiming(readings = TIMING_READINGS, rule = CEILING_RULE) {
 
 /* The boot line's phases, in the order the engine runs them; whatever the total holds beyond
  * their sum is printed as `unattributed`, so the phases always add up to the reading. */
-export const PHASE_FIELDS = ["pgliteOpenMs", "adoptBaselineMs", "migrateMs", "compactMs", "searchSetupMs", "worldMs"];
+export const PHASE_FIELDS = ["pgliteOpenMs", "adoptBaselineMs", "migrateMs", "treeSyncMs", "compactMs", "searchSetupMs", "worldMs"];
 
 export const PLATFORM_TIMING = deriveTiming();
 

@@ -93,3 +93,47 @@ describe("a power cut on a store's first start, after the marker cleared", () =>
     expect(await firstStartCut("windows")).toBe("KEPT 10/10");
   }, 180_000);
 });
+
+/* A cut INSIDE the held window: the image is taken as the tree sync starts, before it syncs a
+   byte, so nothing the schema pass wrote is on the disk. The marker stands, so the next start
+   sets that store aside and makes a new one; nothing of the person's was in it yet. */
+async function cutBeforeTheTreeSync(): Promise<string> {
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-first-cut-held-"));
+  dirs.push(dir);
+  const disk = new Disk(join(dir, PGDATA_SUBDIR));
+  let image: string | null = null;
+  class CutAtTreeSync extends SeamWorker {
+    constructor(code: string, opts: { workerData?: { paths?: unknown } } & Record<string, unknown>) {
+      if (Array.isArray(opts.workerData?.paths) && image === null) { image = disk.image(dir); dirs.push(image); }
+      super(code, opts);
+    }
+  }
+  let h: OpenLocalDb | null = null;
+  disk.install();
+  (wt as unknown as { Worker: unknown }).Worker = CutAtTreeSync;
+  try {
+    h = await openLocalDb(dir);
+  } finally {
+    (wt as unknown as { Worker: unknown }).Worker = RealWorker;
+    disk.restore();
+  }
+  await h?.close();
+  if (image === null) return "NO TREE SYNC RAN";
+  if (!existsSync(join(image, STORE_UNFINISHED_FILE))) return "THE MARKER WAS GONE BEFORE THE TREE SYNC";
+  const events: string[] = [];
+  let after: OpenLocalDb;
+  try {
+    after = await openLocalDb(image, { log: (event, d) => { if (event === "store_set_aside") events.push(String((d as { kind?: unknown }).kind)); } });
+  } catch (err) {
+    return `UNOPENABLE ${(err as Error).name}`;
+  }
+  const n = Number(rowsOf(await after.db.execute(sql.raw("SELECT count(*)::int AS c FROM accounts")))[0]!.c);
+  await after.close();
+  return `SET ASIDE ${events.join(",")}; ${n} accounts`;
+}
+
+describe("a power cut on a store's first start, before the tree sync", () => {
+  it("sets the half-made store aside and opens a new one", async () => {
+    expect(await cutBeforeTheTreeSync()).toBe("SET ASIDE unfinished; 0 accounts");
+  }, 180_000);
+});

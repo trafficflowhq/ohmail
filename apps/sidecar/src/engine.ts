@@ -8603,6 +8603,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       pgliteOpenMs: opened.timings.pgliteOpenMs,
       adoptBaselineMs: opened.timings.adoptBaselineMs,
       migrateMs: opened.timings.migrateMs,
+      treeSyncMs: opened.timings.treeSyncMs,
       compactMs: opened.timings.compactMs,
       searchSetupMs: opened.timings.searchSetupMs,
       /* WHICH MIGRATION PAID, beside the pass it cost. `migrateMs` alone said 237 834 on a 1.2 GB

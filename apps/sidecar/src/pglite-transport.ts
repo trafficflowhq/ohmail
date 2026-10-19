@@ -149,10 +149,13 @@ export function syncDirectory(path: string): boolean {
  * committed since its open. With this, Postgres' own durability reaches the disk; a failed sync
  * reaches Postgres as its errno. A directory's stream holds no descriptor, so it is opened here.
  */
-function installStoreFsync(FS: EmFs, count: StoreSyncCount): StoreFsyncOp {
+function installStoreFsync(FS: EmFs, count: StoreSyncCount, held: () => boolean): StoreFsyncOp {
   const nodefs = FS.filesystems.NODEFS;
   if (!nodefs) throw new StoreFsyncMissingError("PGlite's node filesystem is not registered");
   const fsync: StoreFsyncOp = (stream) => nodefs.tryFSOperation(() => {
+    /* Held for a new store's tree sync (`holdSyncs`): touches nothing and counts nothing, so a
+       hold placed before the open's commit proof makes the open refuse. */
+    if (held()) return 0;
     if (typeof stream.nfd === "number") {
       fs.fsyncSync(stream.nfd);
       count.files += 1;
@@ -197,13 +200,31 @@ export function storeFsyncFault(installed: unknown, current: unknown, files: num
 export class LocalStoreFs extends NodeFS {
   readonly synced: StoreSyncCount = { files: 0, directories: 0 };
   #fsync: StoreFsyncOp | undefined;
+  #held = false;
 
   override async initialSyncFs(): Promise<void> {
     await super.initialSyncFs();
     if (!this.pg) throw new Error("the store's filesystem was synced before PGlite handed it a module");
     const FS = this.pg.Module.FS as unknown as EmFs;
     keepTransportInMemory(FS, PGDATA);
-    this.#fsync = installStoreFsync(FS, this.synced);
+    this.#fsync = installStoreFsync(FS, this.synced, () => this.#held);
+  }
+
+  /**
+   * Hold every sync Postgres asks for until the returned release (idempotent). ONLY for a store
+   * this start is making, between its commit proof and `syncStoreTree`: the start marker stands
+   * until that tree sync has put every file on the disk, so a cut in between sets the store aside,
+   * and each held sync would have bought nothing but a device flush (241 on a first start's schema
+   * pass; F_FULLFSYNC on macOS, FlushFileBuffers on Windows).
+   */
+  holdSyncs(): () => void {
+    this.#held = true;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#held = false;
+    };
   }
 
   /** After `waitReady`: throw {@link StoreFsyncMissingError} unless the start synced through this fsync. */

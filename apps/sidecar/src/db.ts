@@ -587,6 +587,11 @@ export interface OpenTimings {
   adoptBaselineMs: number;
   /** The migrator. Zero new migrations still costs a read of the journal and of the ledger table. */
   migrateMs: number;
+  /**
+   * {@link syncStoreTree} — the one sync of a store this start made, every file and directory.
+   * 0 on every start that did not make the store; not part of `migrateMs`.
+   */
+  treeSyncMs: number;
   /** {@link reclaimBodyBloat} — one catalog read on a healthy store, minutes ONCE on a bloated one. */
   compactMs: number;
   /** {@link setUpLocalSearch} — the extensions plus any trigram index not built yet; once per index. */
@@ -1958,6 +1963,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   writeStoreGeneration(dataDir, storeGeneration, true);
   const pgDataDir = join(dataDir, PGDATA_SUBDIR);
   let client: PGlite;
+  let releaseSyncs: (() => void) | null = null;
   try {
     /* A store the last start never finished is set aside BEFORE anything opens it: PGlite would
        resume its half catalog. See {@link STORE_UNFINISHED_FILE}. */
@@ -2018,6 +2024,11 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
        back and then one commit's record seen reaching the disk. See {@link WAL_SYNC_METHOD}. */
     await assertWalSyncMethod(client);
     await assertCommitSynced(client, started.storeFs.synced);
+    /* A STORE THIS START IS MAKING SYNCS ONCE, in `syncStoreTree` below: its marker stands until
+       then, so a cut before it sets the store aside, and the schema pass's own syncs (241, one
+       device flush each) bought nothing. After the commit proof, which a hold would refuse;
+       released before the tree sync, never later. */
+    if (fresh) releaseSyncs = started.storeFs.holdSyncs();
     /**
      * THE FAIR SHARE, IN FRONT OF THE HANDLE AND BEFORE ANYTHING ELSE HOLDS IT.
      *
@@ -2061,11 +2072,15 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // population too, and the journal README names the local engine as a first-class consumer.
     // A no-op everywhere else (`REISSUED_ORIGINALS`, packages/db/src/baseline.ts).
     await adoptReissuedOriginals(db, MAIL_JOURNAL);
+    const migrateMs = Date.now() - tMigrate;
+    releaseSyncs?.();
     /* LAST OF WHAT A FIRST START MAKES: the schema has committed, and everything after this is
        redone by every open. Nothing of the person's is in the store before this line, and the
        catalog is synced first, so a cleared marker never stands over files still in the cache. */
+    const tTreeSync = Date.now();
     if (fresh) { await syncStoreTree(pgDataDir); markStoreFinished(dataDir); }
-    const migrateMs = Date.now() - tMigrate;
+    // At least 1 on the start that made the store, so the boot line tells it from a reopen.
+    const treeSyncMs = fresh ? Math.max(1, Date.now() - tTreeSync) : 0;
     /* THE STORE'S MARK, OUTERMOST — above the close door, so a call it refuses is the store's — and
        after the migrator, whose refusal names its own statement. See {@link markStoreStatements}. */
     const statementMark = markStoreStatements(client, latch);
@@ -2204,7 +2219,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       db,
       dataDir,
       pgDataDir,
-      timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, compactMs, searchSetupMs },
+      timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, treeSyncMs, compactMs, searchSetupMs },
       migrations,
       checkpoint,
       foldIfLogGrew,
@@ -2241,6 +2256,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       },
     };
   } catch (err) {
+    releaseSyncs?.();
     unlock();
     throw new LocalStoreOpenError(err);
   }

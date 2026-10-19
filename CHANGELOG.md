@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The first start is faster
+
+The desktop app writes its new local store to the disk once, when it is complete, instead of after every index
+it builds. A first start opened the store in 2.2 s instead of 3.7 s on a Linux test machine, and saves more on
+macOS and Windows, where each of those 241 writes waited for the drive. A store that already holds your mail is
+still written to the disk after every change.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

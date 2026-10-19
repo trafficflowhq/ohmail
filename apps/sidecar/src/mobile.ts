@@ -861,7 +861,7 @@ export async function openPhoneStore(
     db: branded,
     dataDir: "",
     pgDataDir: "",
-    timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs, compactMs: 0, searchSetupMs: 0 },
+    timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs, treeSyncMs: 0, compactMs: 0, searchSetupMs: 0 },
     storeWrites: writes.count,
     /* THE DEVICE JOURNAL'S OWN CENSUS — `boot_phases` carries it on the phone as on a computer. */
     migrations: { pending, applied: applied.length, slowest },

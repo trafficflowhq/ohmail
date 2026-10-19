@@ -2079,6 +2079,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       pgliteOpenMs: opened.timings.pgliteOpenMs,
       adoptBaselineMs: opened.timings.adoptBaselineMs,
       migrateMs: opened.timings.migrateMs,
+      treeSyncMs: opened.timings.treeSyncMs,
       compactMs: opened.timings.compactMs,
       searchSetupMs: opened.timings.searchSetupMs,
       // The same four the local door carries, for the reason the line itself is on both doors:
