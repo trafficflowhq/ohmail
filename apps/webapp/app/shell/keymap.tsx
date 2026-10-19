@@ -201,6 +201,18 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return el.isContentEditable === true;
 }
 
+const ACTIVATES_ON_ENTER = "a[href],area[href],button,summary";
+
+/**
+ * A bare ↵ on something the browser activates itself (a link, a button, a summary): the browser's,
+ * never a binding's or the parked walk's. A view's ↵ on such a target cancelled the activation.
+ */
+export function enterActivatesTarget(e: KeyboardEvent): boolean {
+  if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
+  const el = e.target as Element | null;
+  return typeof el?.matches === "function" && el.matches(ACTIVATES_ON_ENTER);
+}
+
 /** The first key of a two-key sequence, or null for a single chord. */
 export function chordPrefix(chord: string): string | null {
   const i = chord.indexOf(" ");
@@ -446,6 +458,10 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
          in flight ends. One rule for every key: Escape closes the innermost open thing (the
          address suggestions, a popover) and only the next Escape reaches the view. */
       if (e.defaultPrevented || e.cancelBubble) {
+        pending.current = null;
+        return;
+      }
+      if (enterActivatesTarget(e)) {
         pending.current = null;
         return;
       }

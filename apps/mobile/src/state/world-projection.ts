@@ -38,6 +38,8 @@ import {
   liveTags,
   liveUnscreened,
   mirrorNewestFirst,
+  OHBOX_VISIT_ID,
+  filedSinceVisit,
   phoneOrganizer,
   presentedOptions,
   presentedWorld,
@@ -110,6 +112,8 @@ export interface ProjectionInputs {
   heldDeletes: ReadonlySet<string>;
   heldPlaces: Parameters<typeof routingReader>[1];
   mailboxes: readonly PhoneMailbox[] | null;
+  /** When the mailbox facts were last read — a stable function over the provider's ref. */
+  mailboxesReadAt: () => number | null;
   ownAddresses: readonly string[];
   walker: StoreTimelineWalker | null;
   searchWalker: StoreSearchWalker | null;
@@ -197,11 +201,17 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
         rows: mailboxes,
         sendingId: kept("sendingId", [base, stamp], () => sendingMailboxId(base)),
         settingsBell: raw.entries("settings")[0]?.seq ?? null,
+        readAt: inp.mailboxesReadAt,
       },
       get ohbox() {
         return kept("ohbox", [pres, v, openHeld, stamp], () => {
           const o = liveOhbox(pres, v, openHeld);
-          return { ...o, meta: Copy.metaUnreadOf(o.unread, o.total), unscreened: liveUnscreened(raw) };
+          /* Where mail went since the Ohbox was left, over the presented reader; a held routing
+             press is the person's own filing. The visit mark moves the stamp, so it is keyed. */
+          const filed = filedSinceVisit(pres, raw.get<{ at: string }>("view_meta", OHBOX_VISIT_ID), {
+            nowMs: v.now.getTime(), exclude: inp.heldPlaces,
+          });
+          return { ...o, meta: Copy.metaUnreadOf(o.unread, o.total), unscreened: liveUnscreened(raw), filed };
         });
       },
       get doorbell() {

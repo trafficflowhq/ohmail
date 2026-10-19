@@ -515,6 +515,9 @@
   },
   "ohbox": {
     "title": "Ohbox",
+    "whereChecked": "Geprüft <time>{when}</time>",
+    "whereSince": "{lead, select, true {Seit deinem letzten Besuch:} other {seit deinem letzten Besuch:}}",
+    "whereTo": "{count, number} in {pile}",
     "meta": "{count, number} ungelesen",
     "newForYou": "Neu",
     "previouslySeen": "Gesehen",

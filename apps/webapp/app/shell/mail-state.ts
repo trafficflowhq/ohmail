@@ -3,7 +3,9 @@
  * "Waiting for first sync" stayed up half an hour while mail arrived).
  * `lastSyncAt` cannot be a progress signal: SHARED (one UPDATE stamps every
  * mailbox a cycle served) and EARLY (stamped per cycle whatever the
- * backlog) — read exactly once, as `=== null`. The growing state keys on
+ * backlog) — the ladder reads it exactly once, as `=== null`. The Ohbox's
+ * "Checked" line (`lastCheckedAt`) reads it as a time, which is safe: it
+ * claims a check, never progress. The growing state keys on
  * the MIRROR GROWING; the one sound server stamp, `initial_import_completed_at`, is read as a bounded floor
  * ({@link importFloorSpeaks}). Pure, run once per shell: three surfaces
  * render its answer, none decides; the growth sampler is stateful.
@@ -746,8 +748,14 @@ export interface MailboxFacts {
   syncBlockedReason: string | null;
   /** When the CURRENT block began. `coalesce`d server-side, so it does not restart per pass. */
   syncBlockedSince: string | null;
-  /** End of a completed worker cycle. Read ONLY as `=== null`. See the header. */
+  /** End of a completed worker cycle. The ladder reads it ONLY as `=== null`. See the header. */
   lastSyncAt: string | null;
+  /**
+   * CLOUD'S OWN SCAN OF THIS MAILBOX, on a Cloud-paired desktop only — there `lastSyncAt` is the
+   * desktop's pull from Cloud. Present on every row of that door, `null` while not known yet;
+   * absent everywhere else. Read by the Ohbox's "Checked" line alone, never by the ladder.
+   */
+  hostedLastSyncAt?: string | null;
   /**
    * When this mailbox's FIRST import finished, or null while it has not (mail 0038). The one
    * server stamp this module reads — per-mailbox, not shared; late, not early — read as a floor

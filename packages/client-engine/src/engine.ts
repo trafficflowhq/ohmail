@@ -28,6 +28,7 @@ import {
   type LocalSearchResult,
 } from "./search.js";
 import { conversationKeyOf, isOwnSent, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
+import { OHBOX_VISIT_ID, ohboxVisitMark, type OhboxVisitMeta } from "./ohbox-where.js";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
@@ -5263,6 +5264,19 @@ export class OhmailEngine {
    */
   read(): EntityReader {
     return this.resolvedView;
+  }
+
+  /**
+   * THE PERSON LEFT THE OHBOX: record where its "since you were here" count starts
+   * ({@link ohboxVisitMark}). A device-local `view_meta` row, never a mutation: no outbox row, no
+   * adapter call, nothing on the wire. An unchanged mark writes nothing, so the mirror's version
+   * stands. Answers whether it wrote.
+   */
+  async markOhboxVisit(): Promise<boolean> {
+    const at = ohboxVisitMark(this.read(), this.now().getTime());
+    if (this.store.get<OhboxVisitMeta>("view_meta", OHBOX_VISIT_ID)?.at === at) return false;
+    await this.store.putLocal("view_meta", OHBOX_VISIT_ID, { at } satisfies OhboxVisitMeta);
+    return true;
   }
 
   /**

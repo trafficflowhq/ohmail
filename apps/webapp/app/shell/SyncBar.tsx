@@ -152,39 +152,12 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
    */
   hostOffline?: boolean;
 }) {
-  const t = useTranslations("sync");
-  // The error TAXONOMY lives with the Settings rows that already own it (`mailboxes.err_*`,
-  // mail 0023). Two copies of seven sentences is how they drift, and one of them then describes
-  // a failure mode the other has renamed.
-  const tm = useTranslations("mailboxes");
-  const { state } = useMailState();
-  /* WHETHER ANYTHING IS ACTUALLY RUNNING — before the early returns, because a hook may not sit
+  const s = useStripSpeech(hostOffline);
+  /* WHETHER ANYTHING IS ACTUALLY RUNNING — before the early return, because a hook may not sit
      behind one. The busy STATES say a sync is outstanding; this says a drain is in flight now,
      and only it may move a mark (`drain-mark.ts`). */
   const draining = useDrainInFlight();
-  // Before the early returns — a hook may not sit behind one.
-  const online = useBrowserOnline();
-  const managed = useManagedService();
-
-  if (!stripSpeaks(state.key)) return null;
-  /* THE ONE ARM THAT YIELDS. Placed before `speech()` rather than inside it so the suppression is
-     visible at the top of the render — a seventh `speech()` arm returning a null title would have
-     to be handled by both shapes below and would read as a state rather than as a withheld
-     sentence. See the `hostOffline` prop. */
-  if (hostOffline && state.key === "stale") return null;
-  // WHICH DOOR this install came in by. `apiConfigured()` is false exactly on the build with no
-  // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
-  // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
-  const cloud = apiConfigured();
-  const spoken = speech(state, t, tm, cloud, managed);
-  /* THE OFFLINE WORD. Both conditions, each necessary: the state must be a fetch-shaped claim —
-     one a dead network makes false — AND the browser must say offline. A failing server is not
-     "offline", and an offline browser over settled content has nothing to correct. The mirror IS
-     usable offline, so the sentence says what the person is looking at, calmly and standing
-     still: nothing is running, so no spinner and no alarm. */
-  const s: Speech = !online && OFFLINE_OUTRANKS.has(state.key)
-    ? { tone: "", role: "status", warn: false, busy: false, title: t("offline"), detail: null, link: null }
-    : spoken;
+  if (s === null) return null;
   /* THE MOVING MARKS — the spinner and the travelling sliver — and the one condition both may
      mean. A busy state with no drain in flight is a sync that is outstanding and not moving:
      it keeps its sentence, its tone and its track, and says so standing still. Both marks are
@@ -247,6 +220,50 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
       {s.tone === "busy" ? <PillReserve /> : null}
     </div>
   );
+}
+
+/**
+ * THE STRIP'S SENTENCE FOR THIS RENDER, or `null` where the strip says nothing — the quiet gate, the
+ * host-offline withholding of `stale` and the offline word, decided once for both shapes.
+ */
+function useStripSpeech(hostOffline: boolean): Speech | null {
+  const t = useTranslations("sync");
+  // The error TAXONOMY lives with the Settings rows that already own it (`mailboxes.err_*`,
+  // mail 0023). Two copies of seven sentences is how they drift, and one of them then describes
+  // a failure mode the other has renamed.
+  const tm = useTranslations("mailboxes");
+  const { state } = useMailState();
+  // Before the early returns — a hook may not sit behind one.
+  const online = useBrowserOnline();
+  const managed = useManagedService();
+
+  if (!stripSpeaks(state.key)) return null;
+  /* THE ONE ARM THAT YIELDS. Placed before `speech()` rather than inside it so the suppression is
+     visible at the top of the render — a seventh `speech()` arm returning a null title would have
+     to be handled by both shapes below and would read as a state rather than as a withheld
+     sentence. See the `hostOffline` prop. */
+  if (hostOffline && state.key === "stale") return null;
+  // WHICH DOOR this install came in by. `apiConfigured()` is false exactly on the build with no
+  // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
+  // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
+  const cloud = apiConfigured();
+  const spoken = speech(state, t, tm, cloud, managed);
+  /* THE OFFLINE WORD. Both conditions, each necessary: the state must be a fetch-shaped claim —
+     one a dead network makes false — AND the browser must say offline. A failing server is not
+     "offline", and an offline browser over settled content has nothing to correct. The mirror IS
+     usable offline, so the sentence says what the person is looking at, calmly and standing
+     still: nothing is running, so no spinner and no alarm. */
+  return !online && OFFLINE_OUTRANKS.has(state.key)
+    ? { tone: "", role: "status", warn: false, busy: false, title: t("offline"), detail: null, link: null }
+    : spoken;
+}
+
+/**
+ * The strip's title — the same string the strip renders in the same state, or `null` where it is
+ * silent. The Ohbox's where-line says it in place of its "Checked" part when the sync is unhealthy.
+ */
+export function useStripTitle(hostOffline = false): string | null {
+  return useStripSpeech(hostOffline)?.title ?? null;
 }
 
 /**

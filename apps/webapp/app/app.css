@@ -1271,6 +1271,35 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* ============ ohbox where-line: when mail was last checked and where it went ============
+   `OhboxWhereLine` under the Ohbox title, in the header meta's own register (`.vhead .meta`):
+   muted ink at the meta size, its left edge on the title's. It wraps and never truncates a count.
+   The counts are links in the quieter ink, underlined on hover and keyboard focus. */
+.ohbox-where {
+  margin: -8px 30px 10px;
+  font-size: calc(12px + var(--type-up));
+  color: var(--ink3);
+  overflow-wrap: break-word;
+}
+.ohbox-where a {
+  color: var(--ink2);
+  text-decoration: none;
+  border-radius: 2px;
+}
+.ohbox-where a:hover,
+.ohbox-where a:focus-visible {
+  text-decoration: underline;
+}
+.ohbox-where a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+@media (max-width: 699.98px) {
+  .ohbox-where {
+    margin: 0 20px 8px;
+  }
+}
+
 /* ============ ohbox away notice: one quiet line ========================================
    The away responder is the only thing this product does that sends mail on its own, and
    this is its tell on the pane its owner actually reads (shell/AwayNotice.tsx). Ambient,

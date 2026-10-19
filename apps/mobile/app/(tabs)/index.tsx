@@ -8,9 +8,9 @@
  * its own. An empty mailbox renders an honest empty state, never sample mail.
  * The rows go through `MailList`, which mounts a window of them, not the mailbox.
  */
-import { useCallback, useRef, useState, useSyncExternalStore } from "react";
-import { View } from "react-native";
-import { useFocusEffect, useIsFocused } from "expo-router";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { AppState, View } from "react-native";
+import { useFocusEffect, useIsFocused, useNavigation } from "expo-router";
 import { Copy } from "../../src/copy";
 import {
   onOrganizerState, organizerStateVersion, readingAtConnectSaid, sayReadingAtConnect,
@@ -19,6 +19,8 @@ import { heldWhileHidden } from "../../src/state/held-while-hidden";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useEngineQueuesAsk, useWorld, type World, type WorldMail, type WorldUnscreened } from "../../src/state/world";
+import { ohboxVisitStep, type FiledSince, type OhboxVisitEvent, type OhboxVisitState } from "../../src/state/live";
+import { OhboxWhere } from "../../src/ui/OhboxWhere";
 import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, StateKnock, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -50,6 +52,7 @@ function OhboxBody() {
   // The offer and the doorbell come from the engine's queue reads, asked when this screen is shown.
   useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
+  useOhboxVisit(w.actions.markOhboxVisit);
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. A press
      opens what the engine's row answers for it (`World.rowOpenTarget`), decided here once: the route
@@ -99,6 +102,7 @@ function OhboxBody() {
               meta={metaWhen(surface, meta)}
               unread={shown.ohbox.unreadIds.length}
               onMarkAll={() => w.actions.markAllSeen(shown.ohbox.unreadIds)}
+              filed={shown.ohbox.filed}
             />
             {reading ? (
               <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
@@ -183,14 +187,45 @@ function UnscreenedOffer({ offer, screen }: { offer: WorldUnscreened | null; scr
   );
 }
 
+/**
+ * THE OHBOX VISIT ENDS when the selected tab leaves the Ohbox or the app goes to the background on
+ * it, after it was active (`live.ts#ohboxVisitStep`); then its mark moves. A pushed reader changes
+ * no tab, so it is not a leave.
+ */
+function useOhboxVisit(mark: () => void): void {
+  const navigation = useNavigation();
+  useEffect(() => {
+    const onOhbox = (): boolean => {
+      const s = navigation.getState();
+      return s?.routes[s.index]?.name === "index";
+    };
+    let v: OhboxVisitState = { onOhbox: onOhbox(), seenActive: onOhbox() && AppState.currentState === "active" };
+    const step = (ev: OhboxVisitEvent): void => {
+      const r = ohboxVisitStep(v, ev);
+      v = r.next;
+      if (r.leave) mark();
+    };
+    const off = navigation.addListener("state", () => {
+      step({ kind: "tab", ohbox: onOhbox(), active: AppState.currentState === "active" });
+    });
+    const sub = AppState.addEventListener("change", (state) => step({ kind: "app", state }));
+    return () => {
+      off();
+      sub.remove();
+    };
+  }, [navigation, mark]);
+}
+
 function ViewHeadOhbox({
   meta,
   unread,
   onMarkAll,
+  filed,
 }: {
   meta: string | undefined;
   unread: number;
   onMarkAll: () => void;
+  filed: FiledSince | null;
 }) {
   return (
     <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 }}>
@@ -204,6 +239,8 @@ function ViewHeadOhbox({
       <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
         {meta ?? " "}
       </Txt>
+      {/* When mail was last checked and where it went — `OhboxWhere`. */}
+      <OhboxWhere filed={filed} />
     </View>
   );
 }

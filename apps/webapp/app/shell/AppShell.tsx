@@ -116,6 +116,8 @@ import { useFolderGoneSays } from "./folder-gone";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
+import { OhboxWhereLine } from "./OhboxWhereLine";
+import { useOhboxVisitMark } from "./ohbox-visit";
 import type { ApplyFaceAllDevices } from "./FaceRow";
 import {
   ProfileImportCard, SavedProfileSection, settingsDoorbell, useProfileImport, type ProfileImportTransport,
@@ -1398,7 +1400,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const {
     ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, consentView, presented, trashPage, trashWindow,
-    older, folderOlder, ohbox, resurfacedRows, partition, receipts, receiptsPartition, piles,
+    older, folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rules, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
     notifications, allOhbox, participantsOf, threadCountOf, threadSubjectOf, fallbackMailboxId,
@@ -1959,6 +1961,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     createTagAlone, onMessageAction, onStreamAction, openSenderMenu, toggleTag,
     replyTo, setReplyTo,
   });
+  useOhboxVisitMark(demo ? null : engine, !demo && effectiveView === "ohbox"); // ohbox-visit.ts
 
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
@@ -2533,9 +2536,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 }
                 noticeSection={
                   (() => {
-                    /* The header slot's one tenant now: the Option B ohmarchy offer. The organizer
-                       notice moved to the rail's foot (`organizerNotice`), so nothing about who
-                       organizes a mailbox stands over the mail; the slot is undefined when the offer is. */
+                    /* The header slot's two tenants: the where-line (when mail was last checked and
+                       where it went, `OhboxWhereLine`) and, under it, the Option B ohmarchy offer. The
+                       organizer notice moved to the rail's foot (`organizerNotice`), so nothing about
+                       who organizes a mailbox stands over the mail. The line renders nothing when it
+                       has nothing to say, so the slot draws nothing then. */
                     /**
                      * ONE ASK AT A TIME ON A FIRST RUN: MEASURED on the released 0.13.7: at +15 s after connecting a
                      * mailbox a person faced THREE asks at once — the setup flow's modal, the OS "Open email links
@@ -2549,7 +2554,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                       && !route.firstRun
                       ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
                       : null;
-                    return offer ?? undefined;
+                    return (
+                      <>
+                        {/* Withheld where the strip is: a refused session's card says it. */}
+                        {sessionRefused ? null : (
+                          <OhboxWhereLine
+                            filed={ohboxFiled}
+                            hostOffline={hostConnection != null}
+                            demo={demo}
+                            /* The Screener's Junk window stands in for the Spam pile: no spam count. */
+                            junkReadable={junkReadable}
+                          />
+                        )}
+                        {offer}
+                      </>
+                    );
                   })()
                 }
                 resurfacedRows={resurfacedRows}

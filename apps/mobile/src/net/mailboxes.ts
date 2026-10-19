@@ -132,7 +132,19 @@ export interface PhoneMailbox {
    * silent, on {@link junkFolder}'s rule.
    */
   firstSyncStopFolder: string | null;
+  /**
+   * THE LAST CHECK — `MailboxDTO.lastSyncAt` (the scan start, stamped on quiet cycles too) and the
+   * current block's start, `MailboxDTO.syncBlockedSince`. The Ohbox's "Checked" line reads them
+   * (`lastCheckedAt`). An empty string lands as `null`; absent where the wire sent no key.
+   */
+  lastSyncAt?: string | null;
+  syncBlockedSince?: string | null;
+  /** Cloud's own scan, from a Cloud-paired desktop host only; forwarded only when the row has the key. */
+  hostedLastSyncAt?: string | null;
 }
+
+/** A non-empty string or `null` — an empty string is not an instant. */
+const instantOf = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 
 /** A `{kind,name}` holder, kept only when the wire really names one. */
 function holderOf(raw: unknown): PhoneMailbox["organizedBy"] {
@@ -244,6 +256,10 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         firstSyncStopFolder: typeof r.firstSyncStopFolder === "string" && r.firstSyncStopFolder !== ""
           ? r.firstSyncStopFolder
           : null,
+        /* Each by the `in` spread: a server that sends no key says nothing about it. */
+        ...("lastSyncAt" in r ? { lastSyncAt: instantOf(r.lastSyncAt) } : {}),
+        ...("syncBlockedSince" in r ? { syncBlockedSince: instantOf(r.syncBlockedSince) } : {}),
+        ...("hostedLastSyncAt" in r ? { hostedLastSyncAt: instantOf(r.hostedLastSyncAt) } : {}),
       });
     }
     return out;

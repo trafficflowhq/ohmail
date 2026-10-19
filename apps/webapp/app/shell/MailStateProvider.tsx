@@ -190,6 +190,13 @@ interface MailStateBinding {
    * rejects: a failed read leaves the published state to say so, as it always did.
    */
   refresh: () => Promise<void>;
+  /**
+   * WHEN THE FACTS WERE LAST READ — `Date.now()` of the last answer this identity accepted, an
+   * unchanged one included; `null` before the first or after an identity change. A stable function
+   * over a ref, so a poll that learned nothing still re-renders nobody. The Ohbox's "Checked" line
+   * reads it to refuse a check stamp from facts a hidden tab has not refreshed.
+   */
+  factsReadAt: () => number | null;
 }
 
 const MailStateContext = createContext<MailStateBinding | null>(null);
@@ -354,7 +361,10 @@ export function MailStateProvider({
    * before the re-ask effect so adoption's own read sees itself.
    */
   const answering = useRef(now);
+  /** See {@link MailStateBinding.factsReadAt}: reset with the identity, set by every accepted answer. */
+  const factsReadAtRef = useRef<number | null>(null);
   useCommitEffect(() => { answering.current = adopted; }, [adopted]);
+  useCommitEffect(() => { factsReadAtRef.current = null; }, [adopted]);
 
   /**
    * WHAT THE NEXT POLL NEEDS IN ORDER TO DECIDE `?counts=1` — the inputs, settled at commit. The
@@ -399,6 +409,7 @@ export function MailStateProvider({
          rows straight back over the clear, indistinguishable from an ordinary poll and caught by
          no timeout. */
       if (alive.current && answering.current === now) {
+        factsReadAtRef.current = Date.now();
         setFacts((prev) => (sameWire(prev, got) ? prev : got));
       }
     } catch {
@@ -498,6 +509,7 @@ export function MailStateProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync.standingDown]);
   const refresh = useCallback(() => readRef.current().catch(() => { /* the state says so */ }), []);
+  const factsReadAt = useCallback(() => factsReadAtRef.current, []);
 
   /* Keyed by the verdicts themselves, so the binding moves only when one of them does and the
      clock that drives the floor release does not re-render every consumer. */
@@ -510,9 +522,9 @@ export function MailStateProvider({
   const binding = useMemo<MailStateBinding>(
     () => ({
       state, mailboxes: facts, rosterProbed: probe !== undefined, mirrored, pulled, freshness,
-      refresh, importOver: importOverById,
+      refresh, importOver: importOverById, factsReadAt,
     }),
-    [state, facts, probe, mirrored, pulled, freshness, refresh, importOverById],
+    [state, facts, probe, mirrored, pulled, freshness, refresh, importOverById, factsReadAt],
   );
 
   return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;

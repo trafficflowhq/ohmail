@@ -114,6 +114,7 @@ import {
   type EntityReader,
   type MutationResult,
   type WorldActions,
+  type FiledSince,
   type WorldHistory,
   type PhoneOrganizer,
   type WorldAttachment,
@@ -290,6 +291,8 @@ export interface World {
      * the found-settings card re-asks on the drain that carries it, not behind its throttle.
      */
     settingsBell: number | null;
+    /** When the mailbox facts were last read this session (`Date.now()`), unchanged answers included. */
+    readAt: () => number | null;
   };
   ohbox: {
     resurfaced: WorldMail[];
@@ -302,6 +305,8 @@ export interface World {
     meta: string;
     /** The web's undecided-sender offer, from the store (`live.ts#liveUnscreened`); `null` is none. */
     unscreened: WorldUnscreened | null;
+    /** Letters filed elsewhere since the person last left the Ohbox (`filedSinceVisit`), or `null`. */
+    filed: FiledSince | null;
   };
   doorbell: { initials: string[]; count: number };
   reads: {
@@ -591,6 +596,7 @@ const NO_ACTIONS: WorldActions = {
   markSeen: () => undefined,
   markGlanced: () => undefined,
   markAllSeen: () => undefined,
+  markOhboxVisit: () => undefined,
   move: () => undefined,
   deleteMessage: () => undefined,
   // The empty world has no reader open to keep, and nothing to delete.
@@ -659,8 +665,10 @@ function emptyWorld(actions: WorldActions): World {
     images: { via: "none" },
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
-    mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [], sendingId: null, settingsBell: null },
-    ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "", unscreened: null },
+    mailboxes: {
+      known: false, ownAddresses: [], organizer: null, rows: [], sendingId: null, settingsBell: null, readAt: () => null,
+    },
+    ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "", unscreened: null, filed: null },
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
@@ -986,6 +994,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * ON SCREEN and not about the raw mirror's folders.
    */
   const presentedNow = useRef<EntityReader | null>(null);
+  /** When the mailbox facts were last read — a ref, so an unchanged answer rebuilds no projection. */
+  const mailboxesReadAt = useRef<number | null>(null);
+  const readMailboxesAt = useCallback(() => mailboxesReadAt.current, []);
   /** The options that projection was partitioned with, for a screening press's forecast. */
   const presentedOptionsNow = useRef<ConsentOptions | null>(null);
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
@@ -1099,7 +1110,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
          engine), and the decisions this phone sent live where its presses land. */
       read: drainReads<FoldersConsent>({
         rest: [
-          () => void boxRead(() => readMailboxes(session)),
+          () => void boxRead(async () => {
+            const ans = await readMailboxes(session);
+            if (ans !== null && current.current === m) mailboxesReadAt.current = Date.now();
+            return ans;
+          }),
           () => void queueRead(() => readScreenerWaiting(session)),
           () => void relayRead(() => readRelayedDecisions(session)),
         ],
@@ -1149,6 +1164,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // account A's addresses must not make account B's reader recognisable, and its holder must
     // not name a banner over B's mail.
     setMailboxes(null);
+    mailboxesReadAt.current = null;
     // And the queue, for the mailboxes' reason exactly: account A's waiting senders are not
     // account B's, and a stale set would name senders whose mail this mirror does not hold.
     setScreenerServer(null);
@@ -1529,6 +1545,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           markSeen: (id, unread, members) => void acts.markSeen(id, unread, members),
           markGlanced: (ids) => void acts.markGlanced(ids),
           markAllSeen: (ids, feed) => void acts.markAllSeen(ids, feed),
+          markOhboxVisit: () => void engine.markOhboxVisit().catch(() => undefined),
           move: (row, dest, members) => void acts.move(row, dest, members),
           deleteMessage: (id, opts) => {
             /* THE WINDOW, NOT THE WIRE (the 0.20 review; the webapp `delete-undo.ts`'s shape): the
@@ -1673,7 +1690,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       folderSummary: (folderId: string) => readFolderSummary(session, folderId),
       signatures, resurfaceTime, rememberResurfaceTime, posture, scopes,
       screenerServer, relayed, leavingWaiting, heldDeletes, heldPlaces,
-      mailboxes, ownAddresses: addressesNow.current,
+      mailboxes, ownAddresses: addressesNow.current, mailboxesReadAt: readMailboxesAt,
       walker, searchWalker, openOffMirror, actions,
       onPresented: (pres, options) => {
         presentedNow.current = pres;

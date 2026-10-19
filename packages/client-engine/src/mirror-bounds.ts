@@ -164,8 +164,9 @@ export const MIRROR_BOUNDS: Record<KnownMirrorEntityType, MirrorBound> = {
   view_meta: {
     by: "ceiling",
     at: "FeedView",
-    why: "one row per reading stream, ids from `waterlineIdOf`, and the device's first-sync stamp "
-      + "(`FEED_SINCE_ID`) — a closed enumeration of three, not a set that grows with anything",
+    why: "one row per reading stream, ids from `waterlineIdOf`, the device's first-sync stamp "
+      + "(`FEED_SINCE_ID`) and the Ohbox visit mark (`OHBOX_VISIT_ID`) — a fixed set of four ids, "
+      + "not a set that grows with anything",
   },
   held_release_group: {
     by: "replaced",

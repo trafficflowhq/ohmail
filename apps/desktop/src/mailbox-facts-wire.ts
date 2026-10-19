@@ -66,6 +66,8 @@ interface MailboxWire {
   hostedMessageCount?: number;
   /** The ACCOUNT's first-import stamp, on the Cloud door only (`MailboxFacts.hostedImportCompletedAt`). */
   hostedImportCompletedAt?: string | null;
+  /** Cloud's own scan of the mailbox, on the Cloud door only (`MailboxFacts.hostedLastSyncAt`). */
+  hostedLastSyncAt?: string | null;
   /**
    * MESSAGES IN THE STORE THIS IMPORT WRITES INTO — `GET /mailboxes?counts=1` only, which is why
    * the read below takes an argument. It is the first sync's true numerator: the renderer's own
@@ -244,6 +246,8 @@ export async function readMailboxFactsVia(
     ...("hostedMessageCount" in m ? { hostedMessageCount: m.hostedMessageCount } : {}),
     // The ACCOUNT's first-import stamp, by the same `in` spread: absent is a door that sent none.
     ...("hostedImportCompletedAt" in m ? { hostedImportCompletedAt: m.hostedImportCompletedAt } : {}),
+    // Cloud's own scan, by the same `in` spread: present-but-null is "not known yet", absent is the local door.
+    ...("hostedLastSyncAt" in m ? { hostedLastSyncAt: m.hostedLastSyncAt } : {}),
     // THE IMPORT'S NUMERATOR, by the same `in` spread and for the same reason: absent means the
     // read did not ask for counts, and a `?? 0` would say the store is empty while it fills.
     ...("messageCount" in m ? { messageCount: m.messageCount } : {}),

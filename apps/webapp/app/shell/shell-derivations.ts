@@ -12,9 +12,11 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  OHBOX_VISIT_ID,
   consentPartition,
   draftsList,
   feedPartition,
+  filedSinceVisit,
   ohboxView,
   parkedMessageIds,
   presentAt,
@@ -37,6 +39,7 @@ import {
   type Folder,
   type FolderEntity,
   type MailboxScreening,
+  type OhboxVisitMeta,
   type OhmailEngine,
   widestWindowOf,
   type TagDTO,
@@ -395,6 +398,15 @@ export function useShellDerivations({
      held id is a key of the memo itself. */
   const openHeld = engine.openRowHeld();
   const ohbox = useMemo(() => ohboxView(presented, openHeld), [presented, derived, openHeld]);
+  /* WHERE THE OHBOX'S MAIL WENT since the person was here (`OhboxWhereLine`): over the presented
+     mirror, so each count is what its pile lists; a held routing press is the person's own filing. */
+  const visitAt = reader.get<OhboxVisitMeta>("view_meta", OHBOX_VISIT_ID)?.at;
+  const ohboxFiled = useMemo(
+    () => filedSinceVisit(presented, visitAt === undefined ? null : { at: visitAt }, {
+      nowMs: now.getTime(), exclude: routing.places,
+    }),
+    [presented, derived, visitAt, routing.places, now],
+  );
   /* One row per resurfaced conversation, and the badge for what arrived since the pin went up —
      the same derivation the phone reads. `ohbox.resurfaced` stays per message and is what
      `held()` inside the selector holds out; this is the shape the list renders. */
@@ -664,6 +676,7 @@ export function useShellDerivations({
     older,
     folderOlder,
     ohbox,
+    ohboxFiled,
     resurfacedRows,
     partition,
     receipts,

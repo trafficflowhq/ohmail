@@ -872,6 +872,7 @@ describe("the actions facade is ONE object delegating per call", () => {
     markSeen: () => calls.push(`${tag}:markSeen`),
     markGlanced: () => calls.push(`${tag}:markGlanced`),
     markAllSeen: () => calls.push(`${tag}:markAllSeen`),
+    markOhboxVisit: () => calls.push(`${tag}:markOhboxVisit`),
     move: () => calls.push(`${tag}:move`),
     deleteMessage: () => calls.push(`${tag}:deleteMessage`),
     // Awaited by their screen, so the recorder answers the empty-world shapes.

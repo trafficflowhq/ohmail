@@ -512,6 +512,13 @@ export const DE: Deck = {
   groupNew: "Neu",
   groupSeen: "Gesehen",
   metaUnreadOf: (unread: number, total: number) => `${unread} ungelesen von ${total}`,
+  whereChecked: (when: string) => `Geprüft ${when}`,
+  whereSince: (lead: boolean) => (lead ? "Seit deinem letzten Besuch:" : "seit deinem letzten Besuch:"),
+  whereTo: (count: number, pile: string) => `${count} in ${pile}`,
+  whereJustNow: "gerade eben",
+  whereMinutesAgo: (n: number) => (n === 1 ? "vor 1 Minute" : `vor ${n} Minuten`),
+  whereHoursAgo: (n: number) => (n === 1 ? "vor 1 Stunde" : `vor ${n} Stunden`),
+  whereDaysAgo: (n: number) => (n === 1 ? "vor 1 Tag" : `vor ${n} Tagen`),
   metaNew: (n: number) => `${n} neu`,
   metaWaiting: (n: number) =>
     `${n} ${n === 1 ? "neuer Absender wartet" : "neue Absender warten"}`,

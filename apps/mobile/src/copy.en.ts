@@ -832,6 +832,14 @@ const TABLE = {
    * here.
    */
   metaUnreadOf: (unread: number, total: number) => `${unread} unread of ${total}`,
+  /** The line under the Ohbox title: when mail was last checked and where it went (`ohboxWhereSaid`). */
+  whereChecked: (when: string) => `Checked ${when}`,
+  whereSince: (lead: boolean): string => (lead ? "Since you were here:" : "since you were here:"),
+  whereTo: (count: number, pile: string) => `${count} to ${pile}`,
+  whereJustNow: "just now",
+  whereMinutesAgo: (n: number) => (n === 1 ? "1 minute ago" : `${n} minutes ago`),
+  whereHoursAgo: (n: number) => (n === 1 ? "1 hour ago" : `${n} hours ago`),
+  whereDaysAgo: (n: number) => (n === 1 ? "1 day ago" : `${n} days ago`),
   metaNew: (n: number) => `${n} new`,
   metaWaiting: (n: number) =>
     `${n} first-time sender${n === 1 ? "" : "s"} waiting`,

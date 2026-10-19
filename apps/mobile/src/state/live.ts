@@ -9,6 +9,7 @@
  * beside a domain rule (`releaseRules`), beside physical `move`s. Mutations read the raw mirror ({@link presentedOf} is for renders); no React, no I/O, no network.
  */
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
+import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
@@ -3098,6 +3099,11 @@ export type { AbandonedMutation, EntityReader, MutationResult, QueuedChange } fr
 export type {
   ConflictGroup, ConsentOptions, PressForecast, RuleDTO as WorldRule, RuleLine, RulesInPlay,
 } from "@ohmail/client-engine";
+/* Where the Ohbox's mail went (`ohbox-where.ts`): the projection and the line read it by this door. */
+export {
+  CHECKED_FACTS_MAX_AGE_MS, FILED_PILES, FILED_SINCE_SCAN_MAX, OHBOX_VISIT_ID, filedSinceVisit, lastCheckedAt,
+} from "@ohmail/client-engine";
+export type { CheckedRow, FiledPile, FiledSince } from "@ohmail/client-engine";
 
 export interface LiveWorldActions {
   /** Opening a message marks it read and asks for its full text + conversation + files. */
@@ -5707,6 +5713,8 @@ export interface WorldActions {
   markGlanced(ids: readonly string[]): void;
   /** Mark all read — see {@link LiveWorldActions.markAllSeen}. */
   markAllSeen(ids: string[], feed?: { place: "reads" | "receipts"; upToId: string }): void;
+  /** The person left the Ohbox: its visit mark moves (`OhmailEngine.markOhboxVisit`). Device-local. */
+  markOhboxVisit(): void;
   /** The row, not an id — see {@link LiveWorldActions.move}. */
   move(row: WorldMail, dest: MoveTarget, members?: readonly string[]): void;
   /**
@@ -5829,6 +5837,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     markSeen: (id, unread, members) => void current().markSeen(id, unread, members),
     markGlanced: (ids) => void current().markGlanced(ids),
     markAllSeen: (ids, feed) => void current().markAllSeen(ids, feed),
+    markOhboxVisit: () => current().markOhboxVisit(),
     move: (row, dest, members) => void current().move(row, dest, members),
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),
@@ -6237,6 +6246,79 @@ export function topLineSaid(o: {
   if (outage !== null) return { text: outage, alert: true };
   if (o.stale !== null) return { text: staleSaid(o.stale, o.draining), alert: false };
   return o.continuing !== null ? { text: o.continuing, alert: false } : null;
+}
+
+/**
+ * WHAT THE LINE UNDER THE OHBOX TITLE SAYS (row OHBOX-QUIET-READS-AS-STALLED): nothing before the
+ * mirror has settled; the top line's own sentence while it has one (the same ranking, without the
+ * first-sync clause); otherwise when the mailboxes were last checked and where mail went since the
+ * person was here. Pure; the screen renders it.
+ */
+export type OhboxWhere =
+  | { kind: "said"; text: string }
+  | { kind: "where"; checked: string | null; piles: ReadonlyArray<{ pile: FiledPile; count: number }> };
+
+export function ohboxWhereSaid(o: {
+  settled: boolean;
+  network: NetworkState;
+  connection: ConnectionSay | null;
+  stale: string | null;
+  draining: boolean;
+  mailboxes: readonly CheckedRow[] | null;
+  mailboxesReadAt: number | null;
+  nowMs: number;
+  filed: FiledSince | null;
+}): OhboxWhere | null {
+  if (!o.settled) return null;
+  const top = topLineSaid({ network: o.network, connection: o.connection, stale: o.stale, draining: o.draining, continuing: null });
+  if (top !== null) return { kind: "said", text: top.text };
+  return {
+    kind: "where",
+    checked: lastCheckedAt(o.mailboxes, o.mailboxesReadAt, o.nowMs),
+    piles: o.filed?.counts ?? [],
+  };
+}
+
+/** "2 minutes ago" from the deck: the phone's engine has no `Intl.RelativeTimeFormat`. */
+export function checkedAgoSaid(iso: string, nowMs: number): string {
+  const at = Date.parse(iso);
+  const secs = Number.isFinite(at) ? Math.max(0, Math.round((nowMs - at) / 1000)) : 0;
+  if (secs < 45) return Copy.whereJustNow;
+  if (secs < 3600) return Copy.whereMinutesAgo(Math.round(secs / 60));
+  if (secs < 86400) return Copy.whereHoursAgo(Math.round(secs / 3600));
+  return Copy.whereDaysAgo(Math.round(secs / 86400));
+}
+
+/** Each pile's tab; the Screener's two segments by its `seg` param. */
+export const FILED_PILE_ROUTE = {
+  reads: { pathname: "/(tabs)/reads" },
+  receipts: { pathname: "/(tabs)/receipts" },
+  screened: { pathname: "/(tabs)/screener", params: { seg: "screened" } },
+  spam: { pathname: "/(tabs)/screener", params: { seg: "spam" } },
+} as const satisfies Record<FiledPile, { pathname: string; params?: { seg: string } }>;
+
+/** The pile's name, from the deck's existing labels. */
+export function filedPileSaid(pile: FiledPile): string {
+  return pile === "reads" ? Copy.reads : pile === "receipts" ? Copy.receipts
+    : pile === "screened" ? Copy.segScreened : Copy.segSpam;
+}
+
+/**
+ * WHEN AN OHBOX VISIT ENDS on the phone: the selected tab moves off the Ohbox, or the app goes to
+ * the background while the Ohbox tab is selected — in both cases only after the app was `active`
+ * during the visit. A pushed reader changes no tab and iOS `inactive` is not a leave.
+ */
+export interface OhboxVisitState { onOhbox: boolean; seenActive: boolean }
+export type OhboxVisitEvent = { kind: "tab"; ohbox: boolean; active: boolean } | { kind: "app"; state: string };
+
+export function ohboxVisitStep(v: OhboxVisitState, ev: OhboxVisitEvent): { next: OhboxVisitState; leave: boolean } {
+  if (ev.kind === "tab") {
+    if (ev.ohbox) return { next: { onOhbox: true, seenActive: v.onOhbox ? v.seenActive || ev.active : ev.active }, leave: false };
+    return { next: { onOhbox: false, seenActive: false }, leave: v.onOhbox && v.seenActive };
+  }
+  if (ev.state === "active") return { next: { onOhbox: v.onOhbox, seenActive: v.onOhbox || v.seenActive }, leave: false };
+  if (ev.state === "background") return { next: { onOhbox: v.onOhbox, seenActive: false }, leave: v.onOhbox && v.seenActive };
+  return { next: v, leave: false };
 }
 
 /** A read the server did not answer, said about its cause: the phone's own network first. */

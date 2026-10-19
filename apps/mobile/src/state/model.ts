@@ -18,6 +18,11 @@ export type Scope = "sender" | "domain";
 export type PileKind = "replyLater" | "setAside" | "resurface";
 export type ScreenerSeg = "waiting" | "screened" | "spam";
 
+/** A `seg` route param as a shelf, or `null` for anything else. */
+export function screenerSegParam(raw: unknown): ScreenerSeg | null {
+  return raw === "waiting" || raw === "screened" || raw === "spam" ? raw : null;
+}
+
 export interface Address {
   name: string;
   address: string;

@@ -8,12 +8,12 @@
  * classifier runs client-side, and a row without a suggestion honestly has
  * none. The shelf's rows go through `MailList`, which mounts a window of them.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
-import { destDone, type ScreenerSeg } from "../../src/state/model";
+import { destDone, screenerSegParam, type ScreenerSeg } from "../../src/state/model";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { relayMarkFor, type RelayMark } from "../../src/state/relay";
@@ -65,9 +65,12 @@ function ScreenerBody() {
   /* The shelf can arrive as a param: the pushed sender route migrates here when the window
      gains a second pane, naming the shelf its selection belongs to. */
   const params = useLocalSearchParams<{ seg?: string }>();
-  const [seg, setSeg] = useState<ScreenerSeg>(
-    params.seg === "screened" || params.seg === "spam" ? params.seg : "waiting",
-  );
+  const asked = screenerSegParam(params.seg);
+  const [seg, setSeg] = useState<ScreenerSeg>(asked ?? "waiting");
+  /* …and while mounted: the Ohbox's where-line links to a shelf by the same param. */
+  useEffect(() => {
+    if (asked !== null) setSeg(asked);
+  }, [asked]);
   /* Two panes: a sender row SELECTS and the decision view opens beside the shelves (the
      prototype's reading slot); one pane: it pushes, as ever. */
   const { open, openRow, close } = useListDetail(

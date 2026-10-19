@@ -328,7 +328,9 @@ describe("the world layer's shape — asserted over source, and said to be", () 
     // One cadence to reason about. The two questions go stale together: another client claiming
     // a mailbox writes into the very delta feed that drain just applied.
     expect(world).toMatch(/const boxRead = freshestRead<readonly PhoneMailbox\[\]>/);
-    expect(world).toContain("() => void boxRead(() => readMailboxes(session)),");
+    expect(world).toMatch(/\(\) => void boxRead\(async \(\) => \{\s*const ans = await readMailboxes\(session\);/);
+    // …and every accepted answer, an unchanged one too, stamps when the facts were read.
+    expect(world).toContain("if (ans !== null && current.current === m) mailboxesReadAt.current = Date.now();");
     // …as one of the drain read's REST reads, which go on every drain (`drain-reads.test.ts`).
     expect(world).toContain("read: drainReads<FoldersConsent>({");
   });
