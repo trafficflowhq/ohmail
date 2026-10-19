@@ -5,7 +5,7 @@ import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { sessions, devices } from "@trafficflow/db";
 import { loginTokens, authEvents } from "@trafficflow/db/cloud";
 import { DESKTOP_LINK_PURPOSE, hashToken } from "@trafficflow/services";
-import { makeDeps, seedSession, req, setCookieMap, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedSessionFor, req, setCookieMap, FIXED_NOW } from "./helpers.js";
 
 /**
  * THE BROWSER SIGN-IN HANDOFF — `POST /auth/desktop-link` → `POST /auth/desktop-claim`.
@@ -486,6 +486,80 @@ describe("a code minted against a CHALLENGE is spendable only by whoever holds t
       expect((await envelope(res)).code).toBe("invalid_code");
     }
     expect((await db.select().from(loginTokens))[0]!.consumedAt).toBeNull();
+  });
+});
+
+describe("signing another session out takes the code it left on screen", () => {
+  /**
+   * A code is a grant that signs in on its own, so a door that signs its session out takes it too:
+   * the HTTP doors, the hosted logout override's own transaction included. A code minted after the
+   * door by a session still live is the control.
+   */
+  const DOORS: Array<[string, (deps: ApiDeps, bearer: string, other: string) => Promise<Response>, boolean]> = [
+    ["POST /auth/logout {allDevices}", (deps, bearer) =>
+      H(req("POST", "/auth/logout", { bearer, body: JSON.stringify({ allDevices: true }) }), deps), true],
+    ["DELETE /devices/:id", (deps, bearer, other) => H(req("DELETE", `/devices/${other}`, { bearer }), deps), false],
+    ["POST /devices/revoke-web-sessions", (deps, bearer) =>
+      H(req("POST", "/devices/revoke-web-sessions", { bearer, body: "{}" }), deps), false],
+  ];
+
+  for (const [door, run, takesCaller] of DOORS) {
+    it(`${door}: the other session's code is refused; a code minted after claims`, async () => {
+      const { db, deps } = await makeDeps();
+      const a = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+      const b = await seedSessionFor(db, { accountId: a.accountId, userId: a.userId, now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+      const { code } = await mint(deps, b.token);
+
+      const res = await run(deps, a.token, b.sessionId);
+      expect(res.status, await res.clone().text()).toBeLessThan(300);
+
+      const refused = await claim(deps, code);
+      expect(refused.status, "the code outlived the sign-out").toBe(400);
+      expect((await envelope(refused)).code).toBe("invalid_code");
+
+      const live = takesCaller
+        ? (await seedSessionFor(db, { accountId: a.accountId, userId: a.userId, now: FIXED_NOW, lastTwofaAt: FIXED_NOW })).token
+        : a.token;
+      expect((await claim(deps, (await mint(deps, live)).code)).status).toBe(200);
+    });
+  }
+});
+
+describe("a claimed desktop keeps the browser's factor time", () => {
+  /**
+   * The claim used to stamp its session's factor time `now`, so a stepped-up session could link a
+   * desktop, that desktop could link the next one inside its fresh window, and so on: step-up never
+   * aged out on one factor. A claim now inherits the factor time of the session that minted the
+   * code, so the chain ages out on the first factor. `POST /pair` is the step-up door it reaches.
+   */
+  it("a chain of claims keeps the first factor's time; past its window the claimed desktop cannot pair", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const stampOf = async (accessToken: string): Promise<string | undefined> =>
+      (await db.select({ at: sessions.lastTwofaAt }).from(sessions)
+        .where(eq(sessions.accessTokenHash, hashToken(accessToken))))[0]?.at?.toISOString();
+    const t0 = FIXED_NOW;
+    const web = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: t0 });
+
+    clock.advance(60_000);
+    const a = await (await claim(deps, (await mint(deps, web.token)).code)).json() as { tokens: { accessToken: string } };
+    expect(await stampOf(a.tokens.accessToken), "the claim stamped its own time").toBe(t0.toISOString());
+
+    clock.advance(2 * 60_000);
+    const b = await (await claim(deps, (await mint(deps, a.tokens.accessToken)).code)).json() as { tokens: { accessToken: string } };
+    expect(await stampOf(b.tokens.accessToken)).toBe(t0.toISOString());
+
+    clock.advance(2 * 60_000 + 1_000); // one second past the window opened by the factor at t0
+    const pairFrom = (bearer: string) => H(req("POST", "/pair", {
+      bearer, body: JSON.stringify({ grant: "device-pair", label: "Phone" }),
+    }), deps);
+    const refused = await pairFrom(b.tokens.accessToken);
+    expect(refused.status).toBe(403);
+    expect((await envelope(refused)).code).toBe("step_up_required");
+
+    // The control: a factor asserted now, linked and claimed inside its window, pairs.
+    const fresh = await seedSessionFor(db, { accountId: web.accountId, userId: web.userId, now: clock.now(), lastTwofaAt: clock.now() });
+    const c = await (await claim(deps, (await mint(deps, fresh.token)).code)).json() as { tokens: { accessToken: string } };
+    expect((await pairFrom(c.tokens.accessToken)).status).toBe(200);
   });
 });
 

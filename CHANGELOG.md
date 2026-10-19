@@ -59,6 +59,15 @@ way. ohmail now reads through such reports, and reads an attachment once more wh
 description of the message says it is the right file. When a forward still cannot go, or your mail server does
 not answer in time, the message now says so instead of "Sending didn't work".
 
+### Signing out cancels sign-ins still waiting
+
+Signing out everywhere, revoking a device or your other web sessions, and removing your authenticator now also
+cancel sign-in codes, desktop links, device-pairing codes and confirmed desktop approvals that were still open.
+When you sign out everywhere, change your password or remove your authenticator, a sign-in already being
+completed with one of them is now signed out as well; signing out your other web sessions does the same for a
+browser sign-in. A desktop signed in from the browser, by a link or by confirming it there, keeps the browser's
+verification time instead of starting a fresh five-minute window.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

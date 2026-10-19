@@ -134,8 +134,11 @@ describe("the auth family's transactions open on the erasure fence", () => {
     const fenced = tree.openers.filter((o) => o.fenced).length;
     const byCreation = tree.openers.filter((o) => !o.fenced && o.key === FENCED_BY_CREATION && o.createsFence).length;
     // 24 -> 25 with `changePassword`: the swap, the revoke, the prune and its audit, fenced.
+    // 25 -> 27 with `approveAuthorize` and `mintPairingToken`: each mint's writes and its session hold.
+    // 27 -> 31 with `claimDesktopLink`, `token`, `totpVerify` and `webauthnAssertVerify`: each redeem's
+    // burn and the session it writes.
     expect({ fenced, byCreation, named: Object.keys(UNFENCED).length, raw: tree.raw.length })
-      .toEqual({ fenced: 25, byCreation: 1, named: 3, raw: 1 });
+      .toEqual({ fenced: 31, byCreation: 1, named: 3, raw: 1 });
   });
 
   it("RED: a planted unfenced opener is named", () => {

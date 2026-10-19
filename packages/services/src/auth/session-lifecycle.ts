@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
-import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
+import { devices, pairingTokens, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import { bridgeTx, runInTransaction, type Db, type ServiceContext, type TransactionFence } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
@@ -30,6 +30,24 @@ export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAcco
       "this browser holds a session for a different account — sign out before using this credential",
     );
   }
+}
+
+/**
+ * A MINT'S LAST STATEMENT: the session that asked for the grant, still live, read FOR SHARE — or 401.
+ * The route checked it when the request came in; a revoke can commit after that and before the mint
+ * does. Last, after the door's own writes, so the two orders against a revoke both end with no grant:
+ * the revoke claimed the session first, and this read finds it revoked and the mint rolls back; or
+ * this read came first, the claim waits for the mint to commit, and the revoke's second void takes
+ * the grant. Taken first, a mint holding the session would wait on a grant row the revoke's first
+ * void holds while the claim waits on the session. SHARE and not KEY SHARE: the claim writes
+ * `revoked_at`, a non-key column, which KEY SHARE would not hold off.
+ */
+export async function holdLiveSession(tx: Tx, ctx: ServiceContext): Promise<{ lastTwofaAt: Date | null }> {
+  if (!ctx.sessionId) throw new ServiceError("unauthorized", 401, "no active session");
+  const [live] = await dialect(ctx.db).forUpdate(tx.select({ lastTwofaAt: sessions.lastTwofaAt }).from(sessions)
+    .where(and(eq(sessions.id, ctx.sessionId), isNull(sessions.revokedAt))).limit(1), { mode: "share" });
+  if (!live) throw new ServiceError("unauthorized", 401, "no active session");
+  return live;
 }
 
 /**
@@ -203,10 +221,11 @@ export class SessionLifecycle {
 
   /**
    * Sign out, and name the families this call revoked (the hosted override prunes by them). Three
-   * arms: every session of the user (`allDevices`), the family a presented REFRESH TOKEN names
-   * (`refreshToken`, the web's door — {@link logoutByRefresh}), or the session this request
-   * resolved. The user refusal lives in the two arms that need a user: the refresh arm serves a
-   * browser whose access token a rotation it never heard about has already replaced.
+   * arms: every session of the user (`allDevices`, which also voids the user's pending grants —
+   * {@link voidPendingGrants}), the family a presented REFRESH TOKEN names (`refreshToken`, the
+   * web's door — {@link logoutByRefresh}), or the session this request resolved. The user refusal
+   * lives in the two arms that need a user: the refresh arm serves a browser whose access token a
+   * rotation it never heard about has already replaced.
    */
   async logout(
     ctx: ServiceContext, b: { allDevices?: boolean; refreshToken?: string } = {},
@@ -225,15 +244,19 @@ export class SessionLifecycle {
       // ungated: taking back your own credential must never be hard, and it can only reduce
       // risk. `allDevices` reduces EVERYBODY's — which is the same act `revokeDevice` gates.
       await this.requireStepUp(ctx);
-      // In id order first, erasure's step-7 order, as `revokeClaimedSessions` takes them.
+      // In id order first, erasure's step-7 order, as `revokeClaimedSessions` takes them; the user
+      // row first and the pending grants voided before the claim and again after it, as there.
       familyIds = await this.inTransaction(ctx, async (txCtx) => {
         const tx = asTx(txCtx);
+        await this.lockUserForRevoke(tx, userId);
+        await this.voidPendingGrants(tx, userId, now);
         const mine = and(eq(sessions.userId, userId), isNull(sessions.revokedAt));
         await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(mine).orderBy(asc(sessions.id)));
         const revoked = await tx.update(sessions).set({ revokedAt: now }).where(mine)
           .returning({ familyId: sessions.familyId });
         await tx.update(refreshTokens).set({ revokedAt: now })
           .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+        await this.voidPendingGrants(tx, userId, now);
         return [...new Set(revoked.map((r) => r.familyId))];
       });
     } else if (ctx.sessionId) {
@@ -420,7 +443,6 @@ export class SessionLifecycle {
   ): Promise<void> {
     const userId = this.requireUser(ctx);
     if (opts.requireStepUp !== false) await this.requireStepUp(ctx);
-    const db = asTx(ctx);
     // The id the list exposed: the device id for a NAMED device, the session's OWN id for a
     // device-less one (`listDevices` has always published `s.deviceId ?? s.id`). The second
     // arm used to be missing, and its absence was a FALSE SUCCESS: revoking a device-less row
@@ -428,16 +450,16 @@ export class SessionLifecycle {
     // session's next request still worked. The session-id arm is narrowed to
     // `isNull(deviceId)` so a session id can never be a side door around the device
     // predicate, and both arms stay user-scoped: nothing of anybody else's is reachable.
-    const rows = await db.select().from(sessions)
-      .where(and(
-        eq(sessions.userId, userId),
-        isNull(sessions.revokedAt),
-        or(
-          eq(sessions.deviceId, deviceId),
-          and(eq(sessions.id, deviceId), isNull(sessions.deviceId)),
-        ),
-      ));
-    for (const s of rows) await this.revokeFamily(db, s.familyId, ctx.now());
+    const preds = [
+      eq(sessions.userId, userId),
+      isNull(sessions.revokedAt),
+      or(eq(sessions.deviceId, deviceId), and(eq(sessions.id, deviceId), isNull(sessions.deviceId)))!,
+    ];
+    // The shared core: fenced, in id order, the pending grants voided around the claim.
+    const { revoked } = await this.revokeClaimedSessions(ctx, userId, preds, ctx.now());
+    if (revoked > 0) return;
+    // The core audits a claim; a revoke that matched nothing is still written down, as it always was.
+    const db = asTx(ctx);
     const u = await this.loadUser(db, userId);
     await this.audit(db, u, "device_revoked", undefined, ctx);
   }
@@ -487,9 +509,12 @@ export class SessionLifecycle {
 
   /**
    * Claim every session matching `preds` and sweep their refresh families, in ONE transaction.
-   * The shared core behind both mass revocations — "sign out all other web sessions" and the
+   * The shared core behind the revocations — a device, "sign out all other web sessions" and the
    * credential-change rule below — because two hand-written claim-and-sweep pairs agree until
    * one is edited. `familyIds` names what was swept, for a hosted caller that prunes by family.
+   * The user row is taken first ({@link lockUserForRevoke}), then the user's pending grants are
+   * voided before the claim and again after it ({@link voidPendingGrants}): a mint that held its
+   * session before the claim commits while the claim waits, and the second void takes what it wrote.
    */
   /*
    * Set-based AND atomic, one measured defect each. Set-based: a per-family loop was 400+ round
@@ -504,6 +529,8 @@ export class SessionLifecycle {
   ): Promise<{ revoked: number; familyIds: string[] }> {
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
+      await this.lockUserForRevoke(tx, userId);
+      await this.voidPendingGrants(tx, userId, now);
       // Locked in id order first, erasure's step-7 order: the claim alone locks in scan order, and
       // the two orders deadlocked over two of one account's sessions.
       await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(and(...preds)).orderBy(asc(sessions.id)));
@@ -520,6 +547,7 @@ export class SessionLifecycle {
             isNull(refreshTokens.revokedAt),
           ));
       }
+      await this.voidPendingGrants(tx, userId, now);
       if (claimed.length > 0) {
         const u = await this.loadUser(tx, userId);
         await this.audit(tx, u, "device_revoked", undefined, txCtx);
@@ -553,6 +581,37 @@ export class SessionLifecycle {
     return this.revokeClaimedSessions(ctx, userId, preds, now);
   }
 
+  /**
+   * A REVOKE'S FIRST LOCK, before its first void: the user row, FOR NO KEY UPDATE — the lock the mints
+   * that supersede a grant (`issueDesktopLink`, `authorize`) take first. The two then wait for each
+   * other whole. Without it a desktop link that had deleted the code before it waited, at its
+   * {@link holdLiveSession}, on the session this revoke claimed, while this revoke's second void waited
+   * on the row it deleted: a deadlock, and the revoke was as likely to be killed as the mint. A writer
+   * that only references the user (a foreign key reads the row FOR KEY SHARE) is not held off.
+   */
+  private async lockUserForRevoke(db: Tx, userId: string): Promise<void> {
+    await dialect(db).forUpdate(db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1),
+      { mode: "no key update" });
+  }
+
+  /**
+   * EVERY LIVE GRANT THAT CAN STILL MINT A SESSION FOR THIS USER, voided: the half of a take-back that
+   * revoking sessions does not reach. Called by every revoke door inside its transaction, before its
+   * session claim and again after it. The lifecycle half mints one such grant, the device-pair code
+   * (its table is on every store), retired the way `revokePairingToken` retires one; `AuthService`
+   * adds the Cloud half's. User-wide, never narrowed to the session that minted a grant: most rows
+   * do not record one.
+   */
+  protected async voidPendingGrants(db: Tx, userId: string, now: Date): Promise<void> {
+    await db.update(pairingTokens).set({ revokedAt: now }).where(and(
+      eq(pairingTokens.createdByUserId, userId),
+      eq(pairingTokens.grant, "device-pair"),
+      isNull(pairingTokens.consumedAt),
+      isNull(pairingTokens.revokedAt),
+      gt(pairingTokens.expiresAt, now),
+    ));
+  }
+
   /** Throws `step_up_required` unless the current session had a 2FA assertion
    *  within the step-up window. An ENROLLMENT-scoped session can
    *  never satisfy it — asserted on the scope, not merely implied by its NULL
@@ -576,10 +635,10 @@ export class SessionLifecycle {
    * arguing a full session only comes from completed 2FA "(or the PKCE code that one produced)" —
    * and the parenthesis broke it: the PKCE exchange asserts no factor. No safe default, so no
    * default; every call site says which ceremony it is: a factor asserted HERE — `ctx.now()`; an
-   * INHERITED authorization (PKCE) — the authorizing session's real `last_twofa_at`, carried on
-   * the code row; `claimDesktopLink` passes `ctx.now()` because its mint is step-up gated and the
-   * code lives two minutes. NULL fails step-up closed. Nothing rotates the stamp forward — a
-   * session ages out of step-up on its factor's schedule.
+   * INHERITED authorization (PKCE, the desktop link, the desktop approval) — the minting or confirming
+   * session's real `last_twofa_at`, carried on the row, so a chain of claims cannot renew step-up.
+   * NULL fails step-up closed.
+   * Nothing rotates the stamp forward — a session ages out of step-up on its factor's schedule.
    */
   protected async establish(
     ctx: ServiceContext, user: typeof users.$inferSelect,

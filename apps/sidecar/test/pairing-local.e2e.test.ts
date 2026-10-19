@@ -184,6 +184,55 @@ describe("the paired-device lifecycle, end to end on PGlite", () => {
     expect(webWindow).toBe(makeAuthConfig({ rpID: "localhost", origin: "http://localhost" }).nativeRefreshTtlMs);
   });
 
+  /*
+   * A TAKE-BACK ON THE WINDOW TAKES THE CODES STILL WAITING. The bare lifecycle can mint one grant, the
+   * device-pair code, and its sign-out-everywhere and device revoke now void it with the sessions, on
+   * the desktop's own store (no Cloud table exists here to void). The window's mint carries the launch
+   * session, as the stdio door's request does, and proves it live last.
+   */
+  it("revoking a device voids the codes still waiting; a code minted after works", async () => {
+    const { db, world, lifecycle } = await freshWorld();
+    const launch = await mintLaunchSession(db, world, AT);
+    const windowCtx: ServiceContext = {
+      ...ctxFor(db, world, at(1_000)), sessionId: (await resolveSession(db, launch.token, at(1_000)))!.sessionId,
+    };
+    const first = await mintPairingToken(windowCtx, { grant: "device-pair", label: "Pixel in the kitchen" });
+    const { tokens } = await redeemDevicePair(ctxFor(db, world, at(1_500)), lifecycle, { token: first.token });
+    const phone = (await resolveSession(db, tokens.accessToken, at(2_000)))!;
+    const [row] = await db.select({ deviceId: sessions.deviceId }).from(sessions).where(eq(sessions.id, phone.sessionId));
+    const waiting = await mintPairingToken(windowCtx, { grant: "device-pair", label: "The tablet" });
+
+    await lifecycle.revokeDevice(windowCtx, row!.deviceId!, { requireStepUp: false });
+
+    await expect(redeemDevicePair(ctxFor(db, world, at(3_000)), lifecycle, { token: waiting.token }))
+      .rejects.toMatchObject({ code: "pairing_invalid" });
+    expect(await resolveSession(db, tokens.accessToken, at(3_000))).toBeNull();
+    const next = await mintPairingToken(windowCtx, { grant: "device-pair", label: "The tablet" });
+    await expect(redeemDevicePair(ctxFor(db, world, at(4_000)), lifecycle, { token: next.token })).resolves.toBeTruthy();
+  });
+
+  it("signing out everywhere voids the codes still waiting, and a mint on the signed-out launch session is refused", async () => {
+    const { db, world, lifecycle } = await freshWorld();
+    const launch = await mintLaunchSession(db, world, AT);
+    const windowCtx: ServiceContext = {
+      ...ctxFor(db, world, at(1_000)), sessionId: (await resolveSession(db, launch.token, at(1_000)))!.sessionId,
+    };
+    const waiting = await mintPairingToken(windowCtx, { grant: "device-pair", label: "The tablet" });
+
+    await lifecycle.logout(windowCtx, { allDevices: true });
+
+    await expect(redeemDevicePair(ctxFor(db, world, at(2_000)), lifecycle, { token: waiting.token }))
+      .rejects.toMatchObject({ code: "pairing_invalid" });
+    await expect(mintPairingToken(windowCtx, { grant: "device-pair", label: "Too late" }))
+      .rejects.toMatchObject({ code: "unauthorized", httpStatus: 401 });
+    // The next launch mints again.
+    const relaunch = await mintLaunchSession(db, world, at(5_000));
+    const next = await mintPairingToken({
+      ...ctxFor(db, world, at(6_000)), sessionId: (await resolveSession(db, relaunch.token, at(6_000)))!.sessionId,
+    }, { grant: "device-pair", label: "The tablet" });
+    await expect(redeemDevicePair(ctxFor(db, world, at(7_000)), lifecycle, { token: next.token })).resolves.toBeTruthy();
+  });
+
   it("`kind` is the redeemer's declaration: absent means web, macos is accepted, junk refuses WITHOUT burning", async () => {
     const { db, world, lifecycle } = await freshWorld();
     const ctx = ctxFor(db, world, AT);

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, csrfTokenFor, type ApiDeps } from "@trafficflow/api";
 import { sessions, devices, refreshTokens } from "@trafficflow/db";
 import { loginTokens, authEvents } from "@trafficflow/db/cloud";
-import { DESKTOP_APPROVAL_PURPOSE } from "@trafficflow/services";
+import { DESKTOP_APPROVAL_PURPOSE, hashToken } from "@trafficflow/services";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
 /**
@@ -295,5 +295,60 @@ describe("the desktop's claim: pending, then the pair ONCE, and every refusal by
       expect(res.status).toBe(410);
     }
     expect((await claim(deps, { approvalId: randomUUID(), verifier: "x" })).status).toBe(429);
+  });
+});
+
+describe("a desktop signed in from the browser keeps the browser's factor time", () => {
+  /**
+   * The approval's claim stamped its session with the confirm's own time, so a desktop signed in
+   * this way could confirm the next request inside a fresh window, and step-up never aged out on one
+   * factor. It now inherits the confirming session's factor time, as a desktop link's claim does.
+   * `POST /pair` is the step-up door the chain reaches.
+   */
+  it("a link, then a chain of approvals, keeps the first factor's time; past its window the last desktop cannot pair", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const stampOf = async (accessToken: string): Promise<string | undefined> =>
+      (await db.select({ at: sessions.lastTwofaAt }).from(sessions)
+        .where(eq(sessions.accessTokenHash, hashToken(accessToken))))[0]?.at?.toISOString();
+    const tokensOf = async (res: Response): Promise<string> => {
+      expect(res.status, await res.clone().text()).toBe(200);
+      return ((await res.json()) as { tokens: { accessToken: string } }).tokens.accessToken;
+    };
+    const linkHop = async (bearer: string): Promise<string> => {
+      const minted = await H(req("POST", "/auth/desktop-link", { bearer, body: "{}" }), deps);
+      expect(minted.status, await minted.clone().text()).toBe(200);
+      const { code: linkCode } = (await minted.json()) as { code: string };
+      return tokensOf(await H(req("POST", "/auth/desktop-claim", {
+        headers: { "x-vercel-forwarded-for": IP }, body: JSON.stringify({ code: linkCode }),
+      }), deps));
+    };
+    const approvalHop = async (bearer: string): Promise<string> => {
+      const { id, verifier } = await request(deps);
+      expect((await confirm(deps, id, bearer)).status).toBe(200);
+      return tokensOf(await claim(deps, { approvalId: id, verifier, kind: "desktop-linux" }));
+    };
+    const pairFrom = (bearer: string): Promise<Response> => H(req("POST", "/pair", {
+      bearer, body: JSON.stringify({ grant: "device-pair", label: "Phone" }),
+    }), deps);
+    const t0 = FIXED_NOW;
+    const web = await signedIn({ db });
+
+    clock.advance(60_000);
+    const linked = await linkHop(web.token);
+    clock.advance(60_000);
+    const a = await approvalHop(linked);
+    expect(await stampOf(a), "the claim stamped the confirm's time").toBe(t0.toISOString());
+    clock.advance(2 * 60_000);
+    const b = await approvalHop(a);
+    expect(await stampOf(b)).toBe(t0.toISOString());
+
+    clock.advance(60_000 + 1_000); // one second past the window opened by the factor at t0
+    const refused = await pairFrom(b);
+    expect(refused.status).toBe(403);
+    expect(await code(refused)).toBe("step_up_required");
+
+    // The control: a factor asserted now, approved and claimed inside its window, pairs.
+    const fresh = await seedSession(db, { now: clock.now(), lastTwofaAt: clock.now() });
+    expect((await pairFrom(await approvalHop(fresh.token))).status).toBe(200);
   });
 });

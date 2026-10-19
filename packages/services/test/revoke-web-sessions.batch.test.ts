@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, getTableName, isNull, type Table } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, users, devices, sessions, refreshTokens, type Tx } from "@trafficflow/db";
 import { makeSessionLifecycle, makeTestAuthDeps, type ServiceContext } from "../src/index.js";
@@ -16,16 +16,16 @@ import { makeSessionLifecycle, makeTestAuthDeps, type ServiceContext } from "../
  * ONE guarded UPDATE and sweeps the refresh families in bounded IN-chunks, so the statement
  * count is O(1 + n/500), not O(2n).
  *
- * Pinned by counting the UPDATE statements the verb issues against an account of many sessions —
- * the loop shape fails this at 240+, the set shape passes at ≤3 — AND by the completeness
- * facts the count exists to protect: every plain session revoked, every family swept, the
- * caller and the paired device untouched.
+ * Pinned by counting the UPDATE statements the verb issues against an account of many sessions,
+ * per table — the loop shape fails this at 240+, the set shape claims once and sweeps in one
+ * chunk — AND by the completeness facts the count exists to protect: every plain session revoked,
+ * every family swept, the caller and the paired device untouched.
  */
 
 const NOW = new Date("2026-08-21T12:00:00.000Z");
 
 describe("revokeWebSessions — set-based, complete, bounded", () => {
-  it("revokes 120 sessions + families in ≤3 UPDATE statements, sparing caller and paired", async () => {
+  it("revokes 120 sessions + families in one claim and one token chunk, sparing caller and paired", async () => {
     const db = (await makeTestDb()) as unknown as Tx;
     const [acct] = await db.insert(accounts).values({ name: "batch" }).returning();
     const [user] = await db.insert(users)
@@ -53,16 +53,17 @@ describe("revokeWebSessions — set-based, complete, bounded", () => {
     const plain: string[] = [];
     for (let i = 0; i < 120; i++) plain.push((await mkSession()).id);
 
-    // Counts UPDATE statements through the transaction boundary too: the verb now runs its
-    // claim + sweeps inside one tx, so the counter follows the tx handle it hands out.
-    let updates = 0;
+    // Counts UPDATE statements per table through the transaction boundary too: the verb runs its
+    // claim, sweeps and voids inside one tx, so the counter follows the tx handle it hands out.
+    const updates: Record<string, number> = {};
     const countWrap = (handle: object): object =>
       new Proxy(handle, {
         get(t, p, r) {
           const v = Reflect.get(t, p, r);
           if (p === "update") {
             return (...a: unknown[]) => {
-              updates++;
+              const table = getTableName(a[0] as Table);
+              updates[table] = (updates[table] ?? 0) + 1;
               return (t as Tx).update(...(a as [never]));
             };
           }
@@ -85,10 +86,10 @@ describe("revokeWebSessions — set-based, complete, bounded", () => {
 
     const { revoked } = await svc.revokeWebSessions(ctx);
     expect(revoked).toBe(120);
-    // The whole verb in ≤3 UPDATEs: one session claim + one token chunk (+ the pre-fix loop
-    // shape spends 240 here, which is what the hosted 60-second ceiling turns into a PARTIAL
-    // sign-out).
-    expect(updates).toBeLessThanOrEqual(3);
+    // The whole verb in a fixed count: one session claim + one token chunk (the pre-fix loop
+    // shape spends 240 on these two, which is what the hosted 60-second ceiling turns into a
+    // PARTIAL sign-out), and the pending device-pair codes voided before the claim and after it.
+    expect(updates).toEqual({ sessions: 1, refresh_tokens: 1, pairing_tokens: 2 });
 
     // Completeness — the count is only honest if nothing was left half-done.
     const live = await db.select({ id: sessions.id }).from(sessions)
@@ -132,17 +133,18 @@ describe("revokeWebSessions — set-based, complete, bounded", () => {
     const caller = await mkSession({ lastTwofaAt: NOW });
     for (let i = 0; i < 3; i++) await mkSession();
 
-    // A handle whose SECOND update statement dies — the refresh sweep, wherever it runs
-    // (autocommit or inside a transaction: `transaction` is intercepted so the tx handle is
-    // wrapped the same way).
+    // A handle whose FIRST refresh-token update dies — the refresh sweep, after the claim,
+    // wherever it runs (autocommit or inside a transaction: `transaction` is intercepted so the
+    // tx handle is wrapped the same way).
     const failingWrap = (handle: object, state: { updates: number }): object =>
       new Proxy(handle, {
         get(t, p, r) {
           const v = Reflect.get(t, p, r);
           if (p === "update") {
             return (...a: unknown[]) => {
-              state.updates++;
-              if (state.updates === 2) throw new Error("chunk killed mid-sweep (test)");
+              if (getTableName(a[0] as Table) === "refresh_tokens" && ++state.updates === 1) {
+                throw new Error("chunk killed mid-sweep (test)");
+              }
               return (t as Tx).update(...(a as [never]));
             };
           }

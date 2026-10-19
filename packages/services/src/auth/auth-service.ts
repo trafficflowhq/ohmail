@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from "node:crypto";
 // login-token row, and the shadowing turns a comparison into "call an object".
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
-  accounts, users, devices, sessions, pairingTokens, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
+  accounts, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
   markFenced, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -58,7 +58,7 @@ import {
   allowedOrigins, assertOriginConfig, resolveCeremonyOrigin, tryNormalizeOrigin,
 } from "./origins.js";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp.js";
-import { SessionLifecycle, refuseCrossAccountCredential } from "./session-lifecycle.js";
+import { SessionLifecycle, holdLiveSession, refuseCrossAccountCredential } from "./session-lifecycle.js";
 
 type Method = "webauthn" | "totp" | "recovery_code";
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
@@ -205,6 +205,40 @@ function readAuthorizeMeta(raw: unknown): AuthorizeRequestMeta | null {
     sessionId: str(m.sessionId),
     twofaAt: str(m.twofaAt),
   };
+}
+
+/**
+ * What a desktop link row, or a confirmed desktop approval row, carries: the session that minted or
+ * confirmed it, and that session's factor time.
+ */
+interface DesktopGrantMeta {
+  sessionId: string | null;
+  /** ISO, for `AuthorizeRequestMeta.twofaAt`'s reason. */
+  twofaAt: string | null;
+}
+
+/**
+ * Read a desktop link's or approval's meta back, or answer `null`. A row written before the factor
+ * time was carried has none, and a value that is not a time reads as absent: the claim then stamps NULL.
+ */
+function readDesktopGrantMeta(raw: unknown): DesktopGrantMeta | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const at = typeof m.twofaAt === "string" && !Number.isNaN(Date.parse(m.twofaAt)) ? m.twofaAt : null;
+  return { sessionId: typeof m.sessionId === "string" ? m.sessionId : null, twofaAt: at };
+}
+
+/**
+ * The meta a desktop grant is written with: the asking session and its factor time, read plainly
+ * (the mint proves the session live last). The claim inherits that time, so a desktop signed in from
+ * this session ages out of step-up on this session's factor, never on the claim's clock.
+ */
+async function desktopGrantMeta(db: Tx, ctx: ServiceContext): Promise<DesktopGrantMeta> {
+  const [asking] = ctx.sessionId
+    ? await db.select({ lastTwofaAt: sessions.lastTwofaAt }).from(sessions)
+      .where(eq(sessions.id, ctx.sessionId)).limit(1)
+    : [];
+  return { sessionId: ctx.sessionId ?? null, twofaAt: asking?.lastTwofaAt ? asking.lastTwofaAt.toISOString() : null };
 }
 
 /**
@@ -417,6 +451,17 @@ const invalidDesktopChallenge = (): ServiceError => new ServiceError(
 const refusedSignIn = (): never => {
   throw credentialRefused("invalid email or password");
 };
+
+/**
+ * THE SECOND FACTOR'S SIGN-IN, FENCED: the first step burned and the session written in ONE
+ * transaction on the user's account, as the recovery code's spend has always been. Committed apart, a
+ * revoke landing between the two found the first step spent and no session yet, and the session
+ * written after it outlived the revoke ({@link AuthService.voidPendingGrants}). An account erased
+ * under the sign-in answers what a spent first step answers.
+ */
+const firstStepFence = (accountId: string) => ({
+  accountId, onErased: (): never => { throw credentialRefused("login session expired"); },
+});
 
 /**
  * The `purpose` a desktop APPROVAL request is stored under — the fourth value, mutually invisible
@@ -1136,15 +1181,19 @@ export class AuthService extends SessionLifecycle {
     // "show me another code" must kill the one on screen (most likely shown on a shared screen).
     // Growth — `login_tokens` has no reaper and this route has no throttle, so DELETE rather than
     // mark-consumed bounds the rows at one per user; nothing is lost, the history is in
-    // `auth_events`. `FOR UPDATE` on the OWNER row, exactly as {@link generateRecoveryCodes}:
+    // `auth_events`. The OWNER row is locked, as {@link generateRecoveryCodes} does:
     // delete-then-insert is not a supersede under READ COMMITTED — two concurrent mints both
     // delete then both insert and BOTH codes survive; the lock serializes them, and the `users`
-    // row is locked because `FOR UPDATE` can only lock rows that EXIST (a first mint has no token
+    // row is locked because a lock can only take rows that EXIST (a first mint has no token
     // row). A racing claim of the old code is correct in both orders: claim then delete, or
-    // delete then `invalid_code`.
+    // delete then `invalid_code`. NO KEY UPDATE, the lock every revoke takes first
+    // (`lockUserForRevoke`): two mints, or a mint and a revoke, wait for each other whole, and a
+    // writer that only references the user (a foreign key reads it FOR KEY SHARE) is not held off.
     await this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
-      await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("update");
+      await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("no key update");
+      // The minting session's factor time, carried for the claim.
+      const meta = await desktopGrantMeta(db, ctx);
       await db.delete(loginTokens).where(and(
         eq(loginTokens.userId, userId),
         eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
@@ -1159,6 +1208,7 @@ export class AuthService extends SessionLifecycle {
         // to hash twice, and sealing it would be a key version carried for a value the client
         // already published.
         challengeHash,
+        oauthMeta: meta,
         expiresAt: new Date(now.getTime() + this.cfg.desktopLinkTtlMs),
       });
       // Recorded on the account's own audit trail, INSIDE the transaction: a code that exists
@@ -1167,6 +1217,7 @@ export class AuthService extends SessionLifecycle {
       // needs, and the claim's own `login` row lands later and from a different address — so
       // without this line the first sign of a second machine is the machine.
       await this.audit(db, await this.loadUser(db, userId), "desktop_link_issued", undefined, ctx);
+      await holdLiveSession(db, txCtx);
     }, { fence: { accountId } });
     return { code, expiresIn: Math.floor(this.cfg.desktopLinkTtlMs / 1000) };
   }
@@ -1179,7 +1230,9 @@ export class AuthService extends SessionLifecycle {
    * space is a 128-bit two-minute secret. `verifier` completes the mint's commitment, one more
    * conjunct of the SAME UPDATE. An absent verifier means `challenge_hash IS NULL`, never "no
    * condition"; a presented verifier requires an EXACT bound match — an unbound row admitted is
-   * session fixation. A failed binding matches no row, so it does not burn the code.
+   * session fixation. A failed binding matches no row, so it does not burn the code. The burn and
+   * the session it buys are ONE transaction, opened on the code's account ({@link voidPendingGrants}
+   * says what a revoke running beside it then does).
    */
   async claimDesktopLink(
     ctx: ServiceContext, b: { code?: unknown; verifier?: unknown; kind?: unknown },
@@ -1213,29 +1266,28 @@ export class AuthService extends SessionLifecycle {
     // costs a real client nothing.
     if (verifier.length > 512) throw invalidDesktopCode();
 
-    // ONE predicate either way — see the header. `presented` is never "no condition".
+    // ONE predicate either way — see the header. `presented` is never "no condition". The peek and
+    // the burn below ask the same live code.
     const binding = verifier.length > 0
       ? eq(loginTokens.challengeHash, hashToken(verifier))
       : isNull(loginTokens.challengeHash);
+    const liveCode = () => and(
+      eq(loginTokens.tokenHash, hashToken(raw)),
+      eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
+      isNull(loginTokens.consumedAt),
+      gt(loginTokens.expiresAt, now),
+      binding,
+    );
 
-    // BEFORE THE BURN, and only when there is something to compare. This door consumes its code
-    // in the same statement that resolves it, so the cross-account refusal cannot live at
-    // `establish` — by the time that runs the code is spent, and a 409 would leave the claimant
-    // unable to retry after signing out. The extra read costs a lookup on the token hash and
-    // happens only for a caller who already holds a session; the sessionless claim, which is
-    // every shipped desktop's, is untouched. A row consumed between this read and the write
-    // below still loses there, on `consumed_at IS NULL`.
-    if (ctx.accountId) {
-      const [peek] = await db.select({ userId: loginTokens.userId }).from(loginTokens)
-        .where(and(
-          eq(loginTokens.tokenHash, hashToken(raw)),
-          eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
-          isNull(loginTokens.consumedAt),
-          gt(loginTokens.expiresAt, now),
-          binding,
-        )).limit(1);
-      if (peek) refuseCrossAccountCredential(ctx, (await this.loadUser(db, boundUserId(peek.userId))).accountId);
-    }
+    // THE OWNER AND ITS ACCOUNT, read BEFORE THE BURN: the transaction below opens on that account,
+    // and the fence has to be its first statement. A lookup on the token hash. It also carries the
+    // cross-account refusal, which cannot live at `establish`: by the time that runs the code is
+    // spent, and a 409 would leave the claimant unable to retry after signing out. A row consumed
+    // between this read and the burn still loses there, on `consumed_at IS NULL`.
+    const [owner] = await db.select({ userId: users.id, accountId: users.accountId })
+      .from(loginTokens).innerJoin(users, eq(users.id, loginTokens.userId))
+      .where(liveCode()).limit(1);
+    if (owner) refuseCrossAccountCredential(ctx, owner.accountId);
 
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
@@ -1248,34 +1300,40 @@ export class AuthService extends SessionLifecycle {
       });
       if (!claimed) throw desktopClaimRateLimited();
     }
+    // No live code: the burn's own answer, given after the slot as it always was.
+    if (!owner) throw invalidDesktopCode();
 
-    const [row] = await db.update(loginTokens)
-      .set({ consumedAt: now })
-      .where(and(
-        eq(loginTokens.tokenHash, hashToken(raw)),
-        eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
-        isNull(loginTokens.consumedAt),
-        gt(loginTokens.expiresAt, now),
-        binding,
-      ))
-      .returning({ userId: loginTokens.userId });
-    if (!row) throw invalidDesktopCode();
+    // THE BURN AND THE SESSION IT BUYS, ONE TRANSACTION. Committed apart, a revoke landing between
+    // them found the code spent and no session yet, and the session written after it outlived the
+    // revoke. An account erased under the claim answers what its code answers once it is gone.
+    return this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      const [row] = await tx.update(loginTokens)
+        .set({ consumedAt: now })
+        .where(liveCode())
+        .returning({ userId: loginTokens.userId, oauthMeta: loginTokens.oauthMeta });
+      if (!row || row.userId !== owner.userId) throw invalidDesktopCode();
 
-    const user = await this.loadUser(db, boundUserId(row.userId));
-    // The device row is labelled for the app — the claimant's declared kind, or legacy `"macos"`
-    // when it said nothing — so `GET /devices` shows the machine and `DELETE /devices/:id` can
-    // take it away; that revocation path is what makes the handoff safe to offer. `surface:
-    // "native"` is PINNED, not derived, which makes the declaration privilege-free: every
-    // admissible kind mints the identical credential, and the kind selects a device row's
-    // spelling and nothing else. No `method`, so no `2fa_verified` row: no factor was asserted
-    // HERE. `twofaAt: ctx.now()` is honest — the mint side cleared `withStepUp` less than
-    // `desktopLinkTtlMs` ago, on the browser that produced this code.
-    const established = await this.establish(ctx, user, { kind, twofaAt: ctx.now(), surface: "native" });
-    // The pair and nothing else, the shape `POST /auth/refresh`'s native branch answers with.
-    // The claimant is a desktop install; a `user` object it does not read, and a `Set-Cookie`
-    // that would turn a code displayed on a screen into a browser session, are both things
-    // this route deliberately does not hand back. The route sets no cookies either.
-    return { tokens: established.tokens! };
+      const user = await this.loadUser(tx, owner.userId);
+      // The device row is labelled for the app — the claimant's declared kind, or legacy `"macos"`
+      // when it said nothing — so `GET /devices` shows the machine and `DELETE /devices/:id` can
+      // take it away; that revocation path is what makes the handoff safe to offer. `surface:
+      // "native"` is PINNED, not derived, which makes the declaration privilege-free: every
+      // admissible kind mints the identical credential, and the kind selects a device row's
+      // spelling and nothing else. No `method`, so no `2fa_verified` row: no factor was asserted
+      // HERE. `twofaAt` INHERITS the minting session's factor time off the row, the PKCE exchange's
+      // rule: stamped `now`, a claimed desktop could link the next one and step-up never aged out.
+      // A row that carries none claims into NULL, which fails step-up closed.
+      const meta = readDesktopGrantMeta(row.oauthMeta);
+      const established = await this.establish(txCtx, user, {
+        kind, twofaAt: meta?.twofaAt ? new Date(meta.twofaAt) : null, surface: "native",
+      });
+      // The pair and nothing else, the shape `POST /auth/refresh`'s native branch answers with.
+      // The claimant is a desktop install; a `user` object it does not read, and a `Set-Cookie`
+      // that would turn a code displayed on a screen into a browser session, are both things
+      // this route deliberately does not hand back. The route sets no cookies either.
+      return { tokens: established.tokens! };
+    }, { fence: { accountId: owner.accountId, onErased: () => { throw invalidDesktopCode(); } } });
   }
 
   // ── Signing a desktop in by confirming in the browser ───────────────────────
@@ -1358,9 +1416,10 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * The confirm — the route carries `stepUp: true`. One guarded UPDATE binds the row to this user
-   * and stamps `approved_at`; a second press by the same user is the same answer. Nothing is
-   * minted here: the desktop's claim, holding the verifier, is what spends the approval.
+   * The confirm — the route carries `stepUp: true`. One guarded UPDATE binds the row to this user,
+   * stamps `approved_at` and carries the confirming session's factor time for the claim; a second
+   * press by the same user is the same answer. Nothing is minted here: the desktop's claim, holding
+   * the verifier, is what spends the approval.
    */
   async confirmDesktopApproval(ctx: ServiceContext, approvalId: string): Promise<{ approved: true }> {
     const userId = this.requireUser(ctx);
@@ -1369,8 +1428,11 @@ export class AuthService extends SessionLifecycle {
     // The bind gives the row to this user, a row the erasure deletes: opened on the account row.
     return this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
+      // The confirming session's factor time, for the claim to inherit as a desktop link's does:
+      // stamped `approved_at`, a desktop signed in here could confirm the next one into a fresh window.
+      const meta = await desktopGrantMeta(db, ctx);
       const [bound] = await db.update(loginTokens)
-        .set({ userId, approvedAt: now })
+        .set({ userId, approvedAt: now, oauthMeta: meta })
         .where(and(
           eq(loginTokens.id, approvalId),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
@@ -1389,6 +1451,8 @@ export class AuthService extends SessionLifecycle {
         return { approved: true as const };
       }
       await this.audit(db, await this.loadUser(db, userId), "desktop_approval_confirmed", undefined, txCtx);
+      // A confirm is a grant: only while the session that pressed it is live ({@link holdLiveSession}).
+      await holdLiveSession(db, txCtx);
       return { approved: true as const };
     }, { fence: { accountId: ctx.accountId } });
   }
@@ -1427,8 +1491,8 @@ export class AuthService extends SessionLifecycle {
    * an unknown request or a wrong verifier costs an IP slot, and the fifth wrong verifier kills the
    * row. Approved: ONE guarded UPDATE is the burn (`approved_at IS NOT NULL` is the confirm, the
    * challenge the binding), then a device row named by the label and a native session, all in one
-   * transaction. `twofaAt` is the confirm's stamp: the factor was asserted within the step-up
-   * window before it, on the browser that pressed.
+   * transaction. `twofaAt` INHERITS the confirming session's factor time off the row, as a desktop
+   * link's claim does; a row that carries none claims into NULL, which fails step-up closed.
    */
   async claimDesktopApproval(
     ctx: ServiceContext, b: { approvalId?: unknown; verifier?: unknown; kind?: unknown },
@@ -1500,7 +1564,7 @@ export class AuthService extends SessionLifecycle {
           isNull(loginTokens.revokedAt),
           gt(loginTokens.expiresAt, now),
         ))
-        .returning({ label: loginTokens.label, approvedAt: loginTokens.approvedAt });
+        .returning({ label: loginTokens.label, oauthMeta: loginTokens.oauthMeta });
       if (!spent) {
         const again = await this.approvalRow(tx, approvalId);
         if (!again) throw approvalExpired();
@@ -1513,8 +1577,9 @@ export class AuthService extends SessionLifecycle {
         accountId: user.accountId, userId: user.id, kind,
         label: spent.label || (APPROVAL_DEVICE_LABELS[kind] ?? "ohmail for desktop"), ip: txCtx.ip ?? "",
       }).returning();
+      const meta = readDesktopGrantMeta(spent.oauthMeta);
       const established = await this.establish(txCtx, user, {
-        kind, deviceId: dev!.id, twofaAt: spent.approvedAt, surface: "native",
+        kind, deviceId: dev!.id, twofaAt: meta?.twofaAt ? new Date(meta.twofaAt) : null, surface: "native",
       });
       return { tokens: established.tokens! };
     }, { fence: { accountId: owner.accountId } });
@@ -1644,10 +1709,14 @@ export class AuthService extends SessionLifecycle {
     await db.update(webauthnCredentials)
       .set({ counter: result.newCounter, lastUsedAt: ctx.now() })
       .where(eq(webauthnCredentials.credentialId, stored.credentialId));
-    await this.consumeLoginToken(db, lt.id, ctx.now());
+    // The first step's burn and the session, one transaction ({@link firstStepFence}). A WebAuthn
+    // assertion just succeeded, here. `now` is the factor's real time.
+    const est = await this.inTransaction(ctx, async (txCtx) => {
+      await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
+      return this.establish(txCtx, user, { method: "webauthn", kind: "web", twofaAt: ctx.now() });
+    }, { fence: firstStepFence(user.accountId) });
     await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
-    // A WebAuthn assertion just succeeded, here. `now` is the factor's real time.
-    return this.establish(ctx, user, { method: "webauthn", kind: "web", twofaAt: ctx.now() });
+    return est;
   }
 
   // ── TOTP (fallback 2FA) ─────────────────────────────────────────────────────
@@ -1827,12 +1896,16 @@ export class AuthService extends SessionLifecycle {
       await this.twofaRefused(db, user, ctx, true, true);
       throw credentialRefused("two-factor verification failed");
     }
-    await this.consumeLoginToken(db, lt.id, ctx.now());
+    // The first step's burn and the session, one transaction ({@link firstStepFence}). A TOTP code
+    // was just verified, here. `now` is the factor's real time. `kind` is the caller's declaration
+    // or `"web"` — either way it derives the cookie window (see the header), so the declaration
+    // reaches the device row and nothing else.
+    const est = await this.inTransaction(ctx, async (txCtx) => {
+      await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
+      return this.establish(txCtx, user, { method: "totp", kind, twofaAt: ctx.now() });
+    }, { fence: firstStepFence(user.accountId) });
     await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
-    // A TOTP code was just verified, here. `now` is the factor's real time. `kind` is the
-    // caller's declaration or `"web"` — either way it derives the cookie window (see the
-    // header), so the declaration reaches the device row and nothing else.
-    return this.establish(ctx, user, { method: "totp", kind, twofaAt: ctx.now() });
+    return est;
   }
 
   // ONE TRANSACTION: factor removal is a compromise ceremony, so it takes the credential-change
@@ -1912,8 +1985,7 @@ export class AuthService extends SessionLifecycle {
       if (swapped.length === 0) {
         throw new ServiceError("conflict", 409, "the password was changed by another request");
       }
-      // Before the sessions: a redeem racing this then loses its burn or has its session claimed.
-      await this.voidPendingGrants(tx, user.id, txCtx.now());
+      // The revoke voids the pending grants around its claim ({@link revokeClaimedSessions}).
       const { revoked, familyIds } = await this.revokeOtherSessions(txCtx, user.id);
       await this.pruneWakeRegistrations(tx, familyIds);
       await this.audit(tx, user, "password_changed", "password", txCtx);
@@ -2264,11 +2336,12 @@ export class AuthService extends SessionLifecycle {
     // A mint SUPERSEDES, exactly as {@link issueDesktopLink} does and for its reasons: at most one
     // open authorization request per user, so a second link clicked cannot leave a first one
     // confirmable behind it, and `login_tokens` — which has no reaper — stays bounded by users
-    // rather than by clicks. `FOR UPDATE` on the OWNER row because delete-then-insert is not a
-    // supersede under READ COMMITTED, and the `users` row is what is certain to exist.
+    // rather than by clicks. The OWNER row is locked because delete-then-insert is not a
+    // supersede under READ COMMITTED, and the `users` row is what is certain to exist; NO KEY
+    // UPDATE, for {@link issueDesktopLink}'s reason (the lock every revoke takes first).
     await this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
-      await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("update");
+      await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("no key update");
       // The authorizing session's REAL factor time, read here because this is the only point where
       // the browser session and the native one are both in scope. NULL resolves to a session that
       // cannot clear step-up, which is the closed side.
@@ -2300,6 +2373,7 @@ export class AuthService extends SessionLifecycle {
         },
         expiresAt: new Date(now.getTime() + this.cfg.oauthAuthorizeRequestTtlMs),
       });
+      await holdLiveSession(db, txCtx);
     }, { fence: { accountId } });
     return { request: handle, expiresIn: Math.floor(this.cfg.oauthAuthorizeRequestTtlMs / 1000) };
   }
@@ -2339,43 +2413,48 @@ export class AuthService extends SessionLifecycle {
    */
   async approveAuthorize(ctx: ServiceContext, b: { request?: unknown }): Promise<{ redirect: string }> {
     const userId = this.requireUser(ctx);
-    const db = asTx(ctx);
     const now = ctx.now();
     const handle = typeof b?.request === "string" ? b.request.trim() : "";
     // Bounded before `hashToken` runs over it, for `claimDesktopLink`'s reason: an unbounded body
     // is free work, and a real handle is nowhere near 512.
     if (handle.length === 0 || handle.length > 512) throw invalidAuthorizeRequest();
 
-    const [row] = await db.update(loginTokens)
-      .set({ consumedAt: now })
-      .where(and(
-        eq(loginTokens.tokenHash, hashToken(handle)),
-        eq(loginTokens.purpose, OAUTH_AUTHORIZE_PURPOSE),
-        eq(loginTokens.userId, userId),
-        isNull(loginTokens.consumedAt),
-        gt(loginTokens.expiresAt, now),
-      ))
-      .returning({ oauthMeta: loginTokens.oauthMeta });
-    if (!row) throw invalidAuthorizeRequest();
-    const meta = readAuthorizeMeta(row.oauthMeta);
-    // THE SESSION BINDING, checked after the burn on purpose: a handle presented by the wrong
-    // session is spent rather than left for a further attempt, and the caller learns only that
-    // this request is over. A request that recorded NO session is refused rather than admitted
-    // — "nobody in particular opened this" and "this session opened it" are different states,
-    // and only the second is a binding. The route makes the first unreachable (`stepUp` reads a
-    // session row), so this is the arm that keeps it that way if a caller ever appears.
-    if (!meta || meta.sessionId === null || meta.sessionId !== (ctx.sessionId ?? null)) {
-      throw invalidAuthorizeRequest();
-    }
-
     const rawCode = generateToken();
-    await db.insert(oauthAuthCodes).values({
-      userId, clientId: meta.clientId, codeHash: hashToken(rawCode),
-      codeChallenge: meta.codeChallenge, codeChallengeMethod: "S256",
-      redirectUri: meta.redirectUri, scope: meta.scope,
-      twofaAt: meta.twofaAt === null ? null : new Date(meta.twofaAt),
-      expiresAt: new Date(now.getTime() + this.cfg.oauthCodeTtlMs),
-    });
+    // ONE TRANSACTION, the burn, the code and the confirming session's hold: a code is minted only
+    // while that session is live ({@link holdLiveSession}). A refusal of the binding RETURNS, so its
+    // burn commits.
+    const meta = await this.inTransaction(ctx, async (txCtx) => {
+      const db = asTx(txCtx);
+      const [row] = await db.update(loginTokens)
+        .set({ consumedAt: now })
+        .where(and(
+          eq(loginTokens.tokenHash, hashToken(handle)),
+          eq(loginTokens.purpose, OAUTH_AUTHORIZE_PURPOSE),
+          eq(loginTokens.userId, userId),
+          isNull(loginTokens.consumedAt),
+          gt(loginTokens.expiresAt, now),
+        ))
+        .returning({ oauthMeta: loginTokens.oauthMeta });
+      if (!row) return null;
+      const stored = readAuthorizeMeta(row.oauthMeta);
+      // THE SESSION BINDING, checked after the burn on purpose: a handle presented by the wrong
+      // session is spent rather than left for a further attempt, and the caller learns only that
+      // this request is over. A request that recorded NO session is refused rather than admitted
+      // — "nobody in particular opened this" and "this session opened it" are different states,
+      // and only the second is a binding. The route makes the first unreachable (`stepUp` reads a
+      // session row), so this is the arm that keeps it that way if a caller ever appears.
+      if (!stored || stored.sessionId === null || stored.sessionId !== (ctx.sessionId ?? null)) return null;
+      await db.insert(oauthAuthCodes).values({
+        userId, clientId: stored.clientId, codeHash: hashToken(rawCode),
+        codeChallenge: stored.codeChallenge, codeChallengeMethod: "S256",
+        redirectUri: stored.redirectUri, scope: stored.scope,
+        twofaAt: stored.twofaAt === null ? null : new Date(stored.twofaAt),
+        expiresAt: new Date(now.getTime() + this.cfg.oauthCodeTtlMs),
+      });
+      await holdLiveSession(db, txCtx);
+      return stored;
+    }, { fence: { accountId: ctx.accountId } });
+    if (!meta) throw invalidAuthorizeRequest();
     const sep = meta.redirectUri.includes("?") ? "&" : "?";
     return {
       redirect: `${meta.redirectUri}${sep}code=${encodeURIComponent(rawCode)}&state=${encodeURIComponent(meta.state)}`,
@@ -2487,39 +2566,53 @@ export class AuthService extends SessionLifecycle {
     if (computed !== row.codeChallenge) {
       throw new ServiceError("invalid_grant", 400, "PKCE verification failed");
     }
-    // BEFORE THE BURN, for the reason the verify ceremonies give: a cross-account exchange must
-    // not spend the code on its way to a 409. The row is already read above, so this costs one
-    // user lookup and only for a caller who holds a session — a native exchange, which is every
-    // real one, carries none.
-    if (ctx.accountId) refuseCrossAccountCredential(ctx, (await this.loadUser(db, row.userId)).accountId);
+    // THE OWNER'S ACCOUNT, read BEFORE THE BURN: the transaction below opens on it, and the fence
+    // has to be its first statement. It also carries the cross-account refusal, for the reason the
+    // verify ceremonies give: a cross-account exchange must not spend the code on its way to a 409.
+    // A user gone under the code is the burn's own answer.
+    const [owner] = await db.select({ accountId: users.accountId }).from(users)
+      .where(eq(users.id, row.userId)).limit(1);
+    if (!owner) throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code");
+    refuseCrossAccountCredential(ctx, owner.accountId);
 
-    // Single-use, and the predicate is the enforcement. The `row.consumedAt` check
-    // twenty lines up is a READ; without repeating the condition in the write, two token
-    // exchanges carrying one authorization code both pass it and both get a full native
-    // session. RFC 6749 §4.1.2 requires a used code to be rejected AND to revoke what it
-    // issued precisely because these codes travel through a redirect URI where a second
-    // party can see them.
-    const burned = await db.update(oauthAuthCodes)
-      .set({ consumedAt: ctx.now() })
-      .where(and(eq(oauthAuthCodes.id, row.id), isNull(oauthAuthCodes.consumedAt)))
-      .returning({ id: oauthAuthCodes.id });
-    if (burned.length === 0) {
-      throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code");
-    }
+    // THE BURN AND THE SESSION IT BUYS, ONE TRANSACTION, `claimDesktopLink`'s reason: committed
+    // apart, a revoke landing between them found the code spent and no session yet. An account
+    // erased under the exchange answers what its code answers once it is gone.
+    return this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      // Single-use, and the predicate is the enforcement. The `row.consumedAt` check
+      // twenty lines up is a READ; without repeating the condition in the write, two token
+      // exchanges carrying one authorization code both pass it and both get a full native
+      // session. RFC 6749 §4.1.2 requires a used code to be rejected AND to revoke what it
+      // issued precisely because these codes travel through a redirect URI where a second
+      // party can see them.
+      const burned = await tx.update(oauthAuthCodes)
+        .set({ consumedAt: txCtx.now() })
+        .where(and(eq(oauthAuthCodes.id, row.id), isNull(oauthAuthCodes.consumedAt)))
+        .returning({ id: oauthAuthCodes.id });
+      if (burned.length === 0) {
+        throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code");
+      }
 
-    const user = await this.loadUser(db, row.userId);
-    // NO `method`, so no `2fa_verified` row: no factor was asserted HERE, and a code plus a PKCE
-    // verifier is not one. `twofaAt` therefore INHERITS the authorizing session's real
-    // `last_twofa_at` off the code row instead of stamping `now`, so the session this mints ages
-    // out of step-up on the schedule of the factor it descends from. NULL fails step-up closed.
-    //
-    // `familyId` IS THE CODE ROW'S ID, and that is the whole linkage a replay needs: without it
-    // "revoke what this code issued" had nothing to name. A family id is an internal grouping key,
-    // never presented as a credential, so it costs nothing and makes the revocation exact.
-    const est = await this.establish(ctx, user, {
-      method: undefined, kind: "macos", ip: ctx.ip, twofaAt: row.twofaAt, familyId: row.id,
+      const user = await this.loadUser(tx, row.userId);
+      // NO `method`, so no `2fa_verified` row: no factor was asserted HERE, and a code plus a PKCE
+      // verifier is not one. `twofaAt` therefore INHERITS the authorizing session's real
+      // `last_twofa_at` off the code row instead of stamping `now`, so the session this mints ages
+      // out of step-up on the schedule of the factor it descends from. NULL fails step-up closed.
+      //
+      // `familyId` IS THE CODE ROW'S ID, and that is the whole linkage a replay needs: without it
+      // "revoke what this code issued" had nothing to name. A family id is an internal grouping key,
+      // never presented as a credential, so it costs nothing and makes the revocation exact.
+      const est = await this.establish(txCtx, user, {
+        method: undefined, kind: "macos", ip: txCtx.ip, twofaAt: row.twofaAt, familyId: row.id,
+      });
+      return est.tokens!;
+    }, {
+      fence: {
+        accountId: owner.accountId,
+        onErased: () => { throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code"); },
+      },
     });
-    return est.tokens!;
   }
 
   // ── The audit read (the lifecycle's device list/revoke moved to the base class) ──
@@ -2682,7 +2775,8 @@ export class AuthService extends SessionLifecycle {
    * pair a read-modify-write — two racing presentations both peek unconsumed, both verify, both
    * get a session from a single-use token. The `consumed_at IS NULL` predicate makes the write
    * the arbiter (as in `consumeInvite`); the loser is told what a stale token is always told.
-   * Every caller awaits this BEFORE `establish`, so the loser never reaches a session.
+   * Every caller awaits this BEFORE `establish`, in the transaction that writes the session, so the
+   * loser never reaches a session and the winner's session commits with its burn.
    */
   private async consumeLoginToken(db: Tx, id: string, now: Date): Promise<void> {
     const claimed = await db.update(loginTokens)
@@ -3297,17 +3391,22 @@ export class AuthService extends SessionLifecycle {
    * exchanged each redeem into a fresh session (the pair code into a 400-day one) without asking
    * for the credential again, so a revoke that leaves them signs out whoever holds one only until
    * they spend it. Each is retired the way its own door retires it, and its redeem answers what a
-   * spent or taken-back one gets. The caller's own grants go too: no row records which session
-   * minted it. Left on purpose: an open OAuth authorization request, which only the session that
-   * opened it can confirm (the revoke takes that session); a mail-verification link, which mints no
-   * session for an account with a factor; an invite-grant pairing token, which opens somebody
-   * else's new account and never a session of this one.
+   * spent or taken-back one gets. The caller's own grants go too: most rows record no minting
+   * session, and a desktop link's or approval's, which do, must not narrow this. Left on purpose: an open
+   * OAuth authorization request, which only the session that opened it can confirm (the revoke takes
+   * that session); a mail-verification link, which mints no session for an account with a factor; an
+   * invite-grant pairing token, which opens somebody else's new account and never a session of this one.
    *
-   * Inside the revoke's transaction and BEFORE its session claim: a redeem that burns its grant and
-   * mints in one transaction either commits first, and the claim then takes its session, or waits
-   * on the row voided here and finds it spent. The password change is the one caller so far.
+   * Every revoke door runs it inside its transaction BEFORE its session claim and again AFTER it.
+   * Before: every redeem burns its grant and writes its session in one transaction — both factor
+   * verifies, the recovery code, the desktop link and approval claims, the OAuth exchange and the
+   * pairing redeem — so a redeem holding its burn makes this wait, commits, and the claim then takes
+   * the session it wrote; one that comes second waits on the row voided here and finds it spent.
+   * After: a mint that proved its session live before the claim made the claim wait, and its grant
+   * is taken here. The device-pair arm is the lifecycle's own, run first.
    */
-  protected async voidPendingGrants(db: Tx, userId: string, now: Date): Promise<void> {
+  protected override async voidPendingGrants(db: Tx, userId: string, now: Date): Promise<void> {
+    await super.voidPendingGrants(db, userId, now);
     await db.update(loginTokens).set({ consumedAt: now }).where(and(
       eq(loginTokens.userId, userId),
       inArray(loginTokens.purpose, ["login", DESKTOP_LINK_PURPOSE]),
@@ -3322,14 +3421,6 @@ export class AuthService extends SessionLifecycle {
       isNull(loginTokens.consumedAt),
       isNull(loginTokens.revokedAt),
       gt(loginTokens.expiresAt, now),
-    ));
-    // `revokePairingToken`'s write, over every live device-pair code this user minted.
-    await db.update(pairingTokens).set({ revokedAt: now }).where(and(
-      eq(pairingTokens.createdByUserId, userId),
-      eq(pairingTokens.grant, "device-pair"),
-      isNull(pairingTokens.consumedAt),
-      isNull(pairingTokens.revokedAt),
-      gt(pairingTokens.expiresAt, now),
     ));
     // DELETED, not marked consumed: the exchange reads a consumed code as a replay and withdraws
     // what it issued, and a code voided here issued nothing. A spent code stays for that check.

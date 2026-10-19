@@ -129,7 +129,11 @@ function pausingUpdatesOf(target: object, table: object, gate: Promise<void>, re
   return wrap(target) as typeof db;
 }
 
-/** A handle whose TRANSACTIONS stop at their `sessions` insert until `gate` settles (after the supersede). */
+/**
+ * A handle whose TRANSACTIONS stop at their `sessions` insert until `gate` settles (after the supersede).
+ * A transaction opened inside one stops the same way: the sign-in burns its first step and writes its
+ * session in one transaction, and the supersede and the mint open theirs inside it.
+ */
 function mintPausedAtSessionInsert(target: typeof db, gate: Promise<void>, reached: () => void): typeof db {
   const bind = (o: object, p: string | symbol): unknown => {
     const v = Reflect.get(o, p) as unknown;
@@ -137,6 +141,10 @@ function mintPausedAtSessionInsert(target: typeof db, gate: Promise<void>, reach
   };
   const txProxy = (tx: object): object => new Proxy(tx, {
     get(t, p) {
+      if (p === "transaction") {
+        const transaction = Reflect.get(t, p) as (f: (inner: object) => Promise<unknown>) => Promise<unknown>;
+        return (fn: (inner: object) => Promise<unknown>) => transaction.call(t, (inner) => fn(txProxy(inner)));
+      }
       if (p !== "insert") return bind(t, p);
       const insert = Reflect.get(t, p) as (tbl: object) => { values: (r: unknown) => { returning: () => Promise<unknown> } };
       return (tbl: object) => (tbl !== sessions ? insert.call(t, tbl) : {

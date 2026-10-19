@@ -3,7 +3,7 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { type Tx } from "@trafficflow/db";
 import { pairingTokens, users } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
-import { PAIRED_DEVICE_KINDS, type PairedDeviceKind } from "./auth/session-lifecycle.js";
+import { PAIRED_DEVICE_KINDS, holdLiveSession, type PairedDeviceKind } from "./auth/session-lifecycle.js";
 import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
@@ -128,7 +128,24 @@ export async function mintPairingToken(
   }
 
   const now = ctx.now();
-  const tx = asTx(ctx);
+  const mint = { createdByUserId, grant, label, ttlMs, now };
+  // The first-boot mint carries no session and writes as it always has.
+  if (!ctx.sessionId) return writePairingToken(asTx(ctx), mint);
+  // A session's mint lands only while that session is live, proved last ({@link holdLiveSession}):
+  // a revoke that commits after the route's check takes the code with it.
+  return runInTransaction(ctx, async (txCtx) => {
+    const tx = asTx(txCtx);
+    const minted = await writePairingToken(tx, mint);
+    await holdLiveSession(tx, txCtx);
+    return minted;
+  }, { fence: ctx.accountId ? { accountId: ctx.accountId } : undefined });
+}
+
+/** {@link mintPairingToken}'s writes: the growth bound, then the row. */
+async function writePairingToken(
+  tx: Tx, o: { createdByUserId: string | null; grant: PairingGrant; label: string; ttlMs: number; now: Date },
+): Promise<PairingTokenMinted> {
+  const { createdByUserId, grant, label, ttlMs, now } = o;
 
   // The growth bound. A soft read (READ COMMITTED lets two concurrent mints both see cap-1),
   // which is the register capacity valve's own documented posture: the number is a rough limit

@@ -5,12 +5,13 @@ import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
 import {
-  authEvents, authThrottle, credentials, loginTokens, pushSubscriptions, recoveryCodes, totpSecrets,
+  authEvents, authThrottle, credentials, loginTokens, oauthAuthCodes, pushSubscriptions, recoveryCodes, totpSecrets,
 } from "@trafficflow/db/cloud";
 import {
   AuthService, makeTestAuthDeps, ServiceError, resolveSession, generateToken, hashToken,
   classifyRefreshFailure, throttleKeysFor, mintPairingToken, redeemDevicePair, OAuthCodeReplayed,
-  type AuthDeps, type SessionUser, type SessionEstablished, type ServiceContext,
+  makeSessionLifecycle, DESKTOP_LINK_PURPOSE,
+  type AuthDeps, type SessionUser, type SessionEstablished, type ServiceContext, type SessionLifecycle,
 } from "../src/index.js";
 import { SoftwareAuthenticator } from "./webauthn-authenticator.js";
 
@@ -1702,24 +1703,41 @@ describe("AuthService — step-up & last-factor guard", () => {
   });
 });
 
+/** The password `register` gives every user here. */
+const REGISTERED_PASSWORD = "pw-correct-horse-password-password";
+
+/** A full sign-in through TOTP, so the session carries a refresh family. Returns its id. */
+async function signIn(h: Harness, user: SessionUser, secret: string): Promise<string> {
+  h.clock.advance(31_000); // a fresh timestep: codes are single-use
+  const ch = await h.svc.login(h.ctxFor(), { email: user.email, password: REGISTERED_PASSWORD }) as { loginToken: string };
+  const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
+  await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
+  return latestSessionId(h, user.userId);
+}
+
+/** The session a leaked credential signed in, and the one the person takes it back from. */
+async function twoSessions(h: Harness) {
+  const user = await register(h);
+  const secret = await enrollTotp(h, user);
+  const other = sessionCtx(h, user, await signIn(h, user, secret));
+  const caller = sessionCtx(h, user, await signIn(h, user, secret));
+  return { user, secret, other, caller };
+}
+const liveSessions = async (h: Harness, userId: string): Promise<string[]> =>
+  (await h.db.select({ id: sessions.id }).from(sessions)
+    .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)))).map((r) => r.id);
+const totpCode = (h: Harness, secret: string): string =>
+  generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
+
 /**
  * Changing the password: the current one plus a fresh second factor, the sign-up rule for the new
  * one, and the credential-change rule. Somebody told their password is known has no other way to
  * take it back, and whoever holds it keeps every session it minted unless they all go.
  */
 describe("AuthService — changing the password", () => {
-  const OLD = "pw-correct-horse-password-password";
+  const OLD = REGISTERED_PASSWORD;
   const NEW = "new-battery-staple-password";
   const WRONG = "wrong-guess-password";
-
-  /** A full sign-in through TOTP, so the session carries a refresh family. Returns its id. */
-  async function signIn(h: Harness, user: SessionUser, secret: string): Promise<string> {
-    h.clock.advance(31_000); // a fresh timestep: codes are single-use
-    const ch = await h.svc.login(h.ctxFor(), { email: user.email, password: OLD }) as { loginToken: string };
-    const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
-    await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
-    return latestSessionId(h, user.userId);
-  }
 
   const storedHash = async (h: Harness, userId: string): Promise<string> =>
     (await h.db.select({ hash: credentials.passwordHash }).from(credentials).where(eq(credentials.userId, userId)))[0]!.hash;
@@ -1957,20 +1975,6 @@ describe("AuthService — changing the password", () => {
    * minted by the OTHER session, the one the change signs out, and presented after the change; the
    * caller's session is the only one left, and what the caller mints afterwards still works.
    */
-
-  /** The session a leaked password signed in, and the one the person changes it from. */
-  async function twoSessions(h: Harness) {
-    const user = await register(h);
-    const secret = await enrollTotp(h, user);
-    const other = sessionCtx(h, user, await signIn(h, user, secret));
-    const caller = sessionCtx(h, user, await signIn(h, user, secret));
-    return { user, secret, other, caller };
-  }
-  const liveSessions = async (h: Harness, userId: string): Promise<string[]> =>
-    (await h.db.select({ id: sessions.id }).from(sessions)
-      .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)))).map((r) => r.id);
-  const totpCode = (h: Harness, secret: string): string =>
-    generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
 
   it("a first step taken with the old password before the change is refused at the factor", async () => {
     const h = await harness();
@@ -2221,6 +2225,483 @@ describe("AuthService — changing the password", () => {
   });
 });
 
+/*
+ * EVERY TAKE-BACK, NOT ONLY THE PASSWORD CHANGE. Signing out everywhere, revoking a device, signing
+ * out the other web sessions and removing the authenticator each sign the other session out, and
+ * whatever it minted that still signs somebody in goes with it. Each cell: a grant minted by the OTHER
+ * session before the door is refused after it; the same grant minted after the door by a session
+ * still live (a fresh sign-in, where the door took them all) works.
+ */
+describe("AuthService — every revoke door voids what could still sign somebody in", () => {
+  type People = Awaited<ReturnType<typeof twoSessions>> & { passkey?: SoftwareAuthenticator };
+  type Redeem = () => Promise<unknown>;
+  const s256 = (v: string) => createHash("sha256").update(v).digest("base64url");
+
+  const DOORS: Array<{
+    door: string;
+    run: (h: Harness, p: People) => Promise<unknown>;
+    /** A session live after the door, for the control. */
+    after: (h: Harness, p: People) => Promise<ServiceContext>;
+    /** The door removes TOTP, so a held first step is spent through the passkey that remains. */
+    passkey?: true;
+  }> = [
+    { door: "sign out everywhere", run: (h, p) => h.svc.logout(p.caller, { allDevices: true }),
+      after: async (h, p) => sessionCtx(h, p.user, await signIn(h, p.user, p.secret)) },
+    { door: "revoke the other session's device row", run: (h, p) => h.svc.revokeDevice(p.caller, p.other.sessionId!),
+      after: async (_h, p) => p.caller },
+    { door: "sign out the other web sessions", run: (h, p) => h.svc.revokeWebSessions(p.caller),
+      after: async (_h, p) => p.caller },
+    { door: "remove the authenticator", run: (h, p) => h.svc.totpRemove(p.caller),
+      after: async (_h, p) => p.caller, passkey: true },
+  ];
+
+  const GRANTS: Array<{
+    grant: string;
+    mint: (h: Harness, p: People, by: ServiceContext) => Promise<Redeem>;
+    refusal: { code: string; httpStatus: number };
+  }> = [
+    {
+      grant: "a first step held at its factor",
+      mint: async (h, p) => {
+        const held = await h.svc.login(h.ctxFor(), { email: p.user.email, password: REGISTERED_PASSWORD }) as { loginToken: string };
+        return async () => {
+          h.clock.advance(31_000); // a fresh timestep: codes are single-use
+          if (!p.passkey) return h.svc.totpVerify(h.ctxFor(), { loginToken: held.loginToken, code: totpCode(h, p.secret) });
+          const { options } = await h.svc.webauthnAssertOptions(h.ctxFor(), { loginToken: held.loginToken });
+          const credential = p.passkey.assert({ rpID: RPID, challenge: (options as { challenge: string }).challenge, origin: ORIGIN });
+          return h.svc.webauthnAssertVerify(h.ctxFor(), { loginToken: held.loginToken, credential });
+        };
+      },
+      refusal: { code: "credential_refused", httpStatus: 401 },
+    },
+    {
+      grant: "a desktop link code",
+      mint: async (h, _p, by) => {
+        const { code } = await h.svc.issueDesktopLink(by);
+        return () => h.svc.claimDesktopLink(h.ctxFor(), { code });
+      },
+      refusal: { code: "invalid_code", httpStatus: 400 },
+    },
+    {
+      grant: "a device-pair code",
+      mint: async (h, _p, by) => {
+        const { token } = await mintPairingToken(by, { grant: "device-pair", label: "Phone" });
+        return () => redeemDevicePair(h.ctxFor(), h.svc, { token });
+      },
+      refusal: { code: "pairing_invalid", httpStatus: 400 },
+    },
+    {
+      grant: "a confirmed desktop approval",
+      mint: async (h, _p, by) => {
+        const verifier = generateToken();
+        const kind = "desktop-linux" as const;
+        const { approvalId } = await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(verifier), kind });
+        await h.svc.confirmDesktopApproval(by, approvalId);
+        return () => h.svc.claimDesktopApproval(h.ctxFor(), { approvalId, verifier, kind });
+      },
+      refusal: { code: "approval_denied", httpStatus: 410 },
+    },
+    {
+      grant: "an OAuth code",
+      mint: async (h, _p, by) => {
+        const verifier = generateToken();
+        const { request } = await h.svc.authorize(by, {
+          response_type: "code", client_id: "tf-macos", redirect_uri: "trafficflow://auth",
+          code_challenge: s256(verifier), code_challenge_method: `S${"256"}` as const, state: "s", scope: "full",
+        });
+        const { redirect } = await h.svc.approveAuthorize(by, { request });
+        const code = new URL(redirect).searchParams.get("code")!;
+        return () => h.svc.token(h.ctxFor(), {
+          grant_type: "authorization_code", code, redirect_uri: "trafficflow://auth",
+          client_id: "tf-macos", code_verifier: verifier,
+        });
+      },
+      refusal: { code: "invalid_grant", httpStatus: 400 },
+    },
+  ];
+
+  for (const d of DOORS) {
+    for (const g of GRANTS) {
+      it(`${d.door}: ${g.grant} the other session minted is refused; one minted after works`, async () => {
+        const h = await harness();
+        const base = await twoSessions(h);
+        const p: People = d.passkey ? { ...base, passkey: await enrollWebauthn(h, base.user) } : base;
+        const held = await g.mint(h, p, p.other);
+
+        await d.run(h, p);
+
+        const refused = await held().then(() => null, (e: unknown) => e);
+        expect(refused, `${g.grant} outlived the door`).toMatchObject(g.refusal);
+        // A voided OAuth code issued nothing: refused, never read as a replay.
+        expect(refused).not.toBeInstanceOf(OAuthCodeReplayed);
+        expect(await liveSessions(h, p.user.userId)).not.toContain(p.other.sessionId);
+
+        const control = await g.mint(h, p, await d.after(h, p));
+        await expect(control()).resolves.toBeTruthy();
+      });
+    }
+  }
+
+  /** The desktop host runs the bare lifecycle: the device-pair code is the grant it can mint. */
+  type BareDoor = (bare: SessionLifecycle, caller: ServiceContext, other: string) => Promise<unknown>;
+  const BARE_DOORS: Array<[string, BareDoor]> = [
+    ["sign out everywhere", (bare, caller) => bare.logout(caller, { allDevices: true })],
+    ["revoke the other session", (bare, caller, other) => bare.revokeDevice(caller, other)],
+  ];
+  for (const [door, run] of BARE_DOORS) {
+    it(`the bare lifecycle, ${door}: a device-pair code the other session minted is refused; one minted after works`, async () => {
+      const h = await harness();
+      const bare = makeSessionLifecycle({ config: h.deps.config });
+      const user = await register(h);
+      const other = await stepUppedCtx(h, user);
+      const caller = await stepUppedCtx(h, user);
+      const pair = await mintPairingToken(other, { grant: "device-pair", label: "Phone" });
+
+      await run(bare, caller, other.sessionId!);
+
+      await expect(redeemDevicePair(h.ctxFor(), bare, { token: pair.token }))
+        .rejects.toMatchObject({ code: "pairing_invalid", httpStatus: 400 });
+      const live = door === "sign out everywhere" ? await stepUppedCtx(h, user) : caller;
+      const next = await mintPairingToken(live, { grant: "device-pair", label: "My phone" });
+      await expect(redeemDevicePair(h.ctxFor(), bare, { token: next.token }))
+        .resolves.toMatchObject({ tokens: { tokenType: "Bearer" } });
+    });
+  }
+});
+
+/*
+ * A MINT ASKS ITS OWN SESSION LAST. The route checked the session when the request came in; a revoke
+ * that lands after that check and before the mint commits must still win. Driven here with the
+ * session already revoked under a context that still names it, which is the state a mint in flight
+ * meets; `revoke-grants-race.pg.test.ts` drives the interleavings on Postgres.
+ */
+describe("AuthService — a mint on a revoked session writes nothing", () => {
+  const s256 = (v: string) => createHash("sha256").update(v).digest("base64url");
+  const query = (verifier: string) => ({
+    response_type: "code" as const, client_id: "tf-macos", redirect_uri: "trafficflow://auth",
+    code_challenge: s256(verifier), code_challenge_method: `S${"256"}` as const, state: "s", scope: "full",
+  });
+  const revoke = (h: Harness, sessionId: string) =>
+    h.db.update(sessions).set({ revokedAt: h.clock.now() }).where(eq(sessions.id, sessionId));
+  const grantsOf = async (h: Harness, userId: string) => ({
+    tokens: (await h.db.select({ purpose: loginTokens.purpose, approvedAt: loginTokens.approvedAt })
+      .from(loginTokens).where(eq(loginTokens.userId, userId))).map((r) => `${r.purpose}${r.approvedAt ? " approved" : ""}`),
+    pairs: (await h.db.select({ id: pairingTokens.id }).from(pairingTokens).where(eq(pairingTokens.createdByUserId, userId))).length,
+    codes: (await h.db.select({ id: oauthAuthCodes.id }).from(oauthAuthCodes).where(eq(oauthAuthCodes.userId, userId))).length,
+  });
+
+  const MINTS: Array<[string, (h: Harness, ctx: ServiceContext) => Promise<unknown>]> = [
+    ["a desktop link", (h, ctx) => h.svc.issueDesktopLink(ctx)],
+    ["a device-pair code", (_h, ctx) => mintPairingToken(ctx, { grant: "device-pair", label: "Phone" })],
+    ["a desktop approval's confirm", async (h, ctx) => {
+      const { approvalId } = await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(generateToken()) });
+      return h.svc.confirmDesktopApproval(ctx, approvalId);
+    }],
+    ["an OAuth request", (h, ctx) => h.svc.authorize(ctx, query(generateToken()))],
+  ];
+
+  for (const [mint, run] of MINTS) {
+    it(`${mint} on a session revoked after its route admitted it is refused 401`, async () => {
+      const h = await harness();
+      const user = await register(h);
+      const ctx = await stepUppedCtx(h, user);
+      await revoke(h, ctx.sessionId!);
+
+      await expect(run(h, ctx)).rejects.toMatchObject({ code: "unauthorized", httpStatus: 401 });
+      expect(await grantsOf(h, user.userId)).toEqual({ tokens: [], pairs: 0, codes: 0 });
+
+      // The control: a live session mints.
+      await expect(run(h, await stepUppedCtx(h, user))).resolves.toBeTruthy();
+    });
+  }
+
+  it("an OAuth request confirmed after its session was revoked mints no code", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const ctx = await stepUppedCtx(h, user);
+    const { request } = await h.svc.authorize(ctx, query(generateToken()));
+    await revoke(h, ctx.sessionId!);
+
+    await expect(h.svc.approveAuthorize(ctx, { request })).rejects.toMatchObject({ code: "unauthorized", httpStatus: 401 });
+    expect((await grantsOf(h, user.userId)).codes).toBe(0);
+  });
+});
+
+/*
+ * A SIGN-IN COMPLETING WHILE A REVOKE RUNS IS SIGNED OUT BY IT. A redeem burns its grant and writes
+ * its session; committed apart, a revoke landing between the two found the grant spent and no session
+ * yet, and the session written after it was never signed out. Each redeem here spends a grant made
+ * before the door and is held after its burn, before its session, while the door runs. PGlite runs one
+ * transaction at a time, so a redeem holding its burn and its session in one transaction makes the
+ * door wait for all of it; `revoke-grants-race.pg.test.ts` shows the row each door waits on, on Postgres.
+ */
+describe("AuthService — a sign-in completing while a revoke runs is signed out by it", () => {
+  type People = Awaited<ReturnType<typeof twoSessions>> & { passkey?: SoftwareAuthenticator };
+  type Tokens = { accessToken: string; refreshToken: string };
+  const s256 = (v: string) => createHash("sha256").update(v).digest("base64url");
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  /** The native renewal: the refresh family of what the redeem minted. */
+  const renew = (h: Harness, t: Tokens) =>
+    h.svc.token(h.ctxFor(), { grant_type: "refresh_token", refresh_token: t.refreshToken, client_id: "tf-macos" });
+
+  /** Holds `establish` on this instance: a redeem stops there with its grant burned and no session written. */
+  function holdAtMint(h: Harness): { at: Promise<void>; release: () => void } {
+    const svc = h.svc as unknown as { establish: (...a: unknown[]) => Promise<unknown> };
+    const mint = svc.establish;
+    let open!: () => void; let reached!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    const at = new Promise<void>((r) => { reached = r; });
+    svc.establish = async function (this: unknown, ...a: unknown[]) { reached(); await gate; return mint.apply(this, a); };
+    return { at, release: () => { delete (h.svc as unknown as { establish?: unknown }).establish; open(); } };
+  }
+
+  const DOORS: Record<string, {
+    run: (h: Harness, p: People) => Promise<unknown>;
+    /** The sessions the door leaves. */
+    keeps: (p: People) => string[];
+    passkey?: true;
+  }> = {
+    "signs out everywhere": { run: (h, p) => h.svc.logout(p.caller, { allDevices: true }), keeps: () => [] },
+    "changes the password": {
+      run: (h, p) => h.svc.changePassword(p.caller, { currentPassword: REGISTERED_PASSWORD, newPassword: "new-battery-staple-password" }),
+      keeps: (p) => [p.caller.sessionId!],
+    },
+    "removes the authenticator": { run: (h, p) => h.svc.totpRemove(p.caller), keeps: (p) => [p.caller.sessionId!], passkey: true },
+  };
+
+  /** Each redeem, armed: its grant minted by the other session (or its first step taken); the call spends it. */
+  const REDEEMS: Record<string, (h: Harness, p: People) => Promise<() => Promise<Tokens>>> = {
+    "a desktop link claim": async (h, p) => {
+      const { code } = await h.svc.issueDesktopLink(p.other);
+      return async () => (await h.svc.claimDesktopLink(h.ctxFor(), { code })).tokens;
+    },
+    "an OAuth code exchange": async (h, p) => {
+      const verifier = generateToken();
+      const { request } = await h.svc.authorize(p.other, {
+        response_type: "code", client_id: "tf-macos", redirect_uri: "trafficflow://auth",
+        code_challenge: s256(verifier), code_challenge_method: `S${"256"}` as const, state: "s", scope: "full",
+      });
+      const code = new URL((await h.svc.approveAuthorize(p.other, { request })).redirect).searchParams.get("code")!;
+      return () => h.svc.token(h.ctxFor(), {
+        grant_type: "authorization_code", code, redirect_uri: "trafficflow://auth", client_id: "tf-macos", code_verifier: verifier,
+      });
+    },
+    "a TOTP sign-in": async (h, p) => {
+      h.clock.advance(31_000); // a fresh timestep: codes are single-use
+      const held = await h.svc.login(h.ctxFor(), { email: p.user.email, password: REGISTERED_PASSWORD }) as { loginToken: string };
+      const code = totpCode(h, p.secret);
+      return async () => (await h.svc.totpVerify(h.ctxFor(), { loginToken: held.loginToken, code })).tokens!;
+    },
+    "a passkey sign-in": async (h, p) => {
+      const held = await h.svc.login(h.ctxFor(), { email: p.user.email, password: REGISTERED_PASSWORD }) as { loginToken: string };
+      const { options } = await h.svc.webauthnAssertOptions(h.ctxFor(), { loginToken: held.loginToken });
+      const credential = p.passkey!.assert({ rpID: RPID, challenge: (options as { challenge: string }).challenge, origin: ORIGIN });
+      return async () => (await h.svc.webauthnAssertVerify(h.ctxFor(), { loginToken: held.loginToken, credential })).tokens!;
+    },
+  };
+
+  const CELLS: Array<[string, string]> = [
+    ["a desktop link claim", "signs out everywhere"], ["an OAuth code exchange", "signs out everywhere"],
+    ["a desktop link claim", "changes the password"], ["an OAuth code exchange", "changes the password"],
+    ["a desktop link claim", "removes the authenticator"], ["an OAuth code exchange", "removes the authenticator"],
+    ["a TOTP sign-in", "changes the password"], ["a passkey sign-in", "removes the authenticator"],
+  ];
+
+  for (const [redeem, door] of CELLS) {
+    it(`${redeem} held between its burn and its session while the person ${door} ends signed out`, async () => {
+      const h = await harness();
+      const d = DOORS[door]!;
+      const base = await twoSessions(h);
+      const p: People = d.passkey ? { ...base, passkey: await enrollWebauthn(h, base.user) } : base;
+      const spend = await REDEEMS[redeem]!(h, p);
+      const held = holdAtMint(h);
+      const inFlight = spend();
+      await held.at;
+
+      const revoke = d.run(h, p);
+      // A redeem that committed its burn alone leaves the door nothing to wait for, and it finishes here.
+      await Promise.race([revoke, sleep(250)]);
+      held.release();
+      const [tokens] = await Promise.all([inFlight, revoke]);
+
+      expect(await resolveSession(h.db, tokens.accessToken, h.clock.now()), `the session ${redeem} wrote outlived the door`).toBeNull();
+      await expect(renew(h, tokens)).rejects.toMatchObject({ httpStatus: 401 });
+      expect((await liveSessions(h, p.user.userId)).sort()).toEqual(d.keeps(p).sort());
+    });
+  }
+
+  it("CONTROL: a desktop link claimed before the person signs out everywhere is signed out", async () => {
+    const h = await harness();
+    const p = await twoSessions(h);
+    const tokens = await (await REDEEMS["a desktop link claim"]!(h, p))();
+    await h.svc.logout(p.caller, { allDevices: true });
+
+    expect(await resolveSession(h.db, tokens.accessToken, h.clock.now())).toBeNull();
+    await expect(renew(h, tokens)).rejects.toMatchObject({ httpStatus: 401 });
+  });
+
+  it("CONTROL: a desktop approval claim, held the same way, was already one transaction and is signed out", async () => {
+    const h = await harness();
+    const p = await twoSessions(h);
+    const verifier = generateToken();
+    const kind = "desktop-linux" as const;
+    const { approvalId } = await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(verifier), kind });
+    await h.svc.confirmDesktopApproval(p.other, approvalId);
+    const held = holdAtMint(h);
+    const inFlight = h.svc.claimDesktopApproval(h.ctxFor(), { approvalId, verifier, kind });
+    await held.at;
+
+    const revoke = h.svc.logout(p.caller, { allDevices: true });
+    await Promise.race([revoke, sleep(250)]);
+    held.release();
+    const [claimed] = await Promise.all([inFlight, revoke]);
+
+    if (!("tokens" in claimed)) throw new Error("the approval is still pending");
+    expect(await resolveSession(h.db, claimed.tokens.accessToken, h.clock.now())).toBeNull();
+    expect(await liveSessions(h, p.user.userId)).toEqual([]);
+  });
+});
+
+/** The session row a claimed desktop's access token resolves to. */
+const claimedRow = async (h: Harness, accessToken: string) => {
+  const s = await resolveSession(h.db, accessToken, h.clock.now());
+  return (await h.db.select().from(sessions).where(eq(sessions.id, s!.sessionId)))[0]!;
+};
+
+/*
+ * THE DESKTOP LINK CARRIES ITS SESSION'S FACTOR TIME. The claim minted its session stamped `now`, so a
+ * stepped-up session could link a desktop, that desktop link the next, and step-up never aged out on
+ * one factor. The claimed session now ages out on the schedule of the factor it descends from, as the
+ * PKCE exchange's does; a row that carries no factor time claims into a session that cannot step up.
+ */
+describe("AuthService — a desktop link inherits the factor time", () => {
+  it("a chain of link claims keeps the first factor's time, and ages out of step-up on it", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const web = await stepUppedCtx(h, user);
+    const t0 = h.clock.now();
+
+    h.clock.advance(60_000);
+    const first = await h.svc.issueDesktopLink(web);
+    const a = await h.svc.claimDesktopLink(h.ctxFor(), { code: first.code });
+    const rowA = await claimedRow(h, a.tokens.accessToken);
+    expect(rowA.lastTwofaAt?.toISOString(), "the claim stamped its own time").toBe(t0.toISOString());
+
+    h.clock.advance(2 * 60_000);
+    const fromA = sessionCtx(h, user, rowA.id);
+    await h.svc.requireStepUp(fromA);
+    const second = await h.svc.issueDesktopLink(fromA);
+    const b = await h.svc.claimDesktopLink(h.ctxFor({ ip: "5.6.7.8" }), { code: second.code });
+    const rowB = await claimedRow(h, b.tokens.accessToken);
+    expect(rowB.lastTwofaAt?.toISOString()).toBe(t0.toISOString());
+
+    h.clock.t = new Date(t0.getTime() + h.deps.config.stepUpWindowMs + 1_000);
+    await expect(h.svc.requireStepUp(sessionCtx(h, user, rowB.id)))
+      .rejects.toMatchObject({ code: "step_up_required", httpStatus: 403 });
+
+    // The control: a fresh factor's link claims into a session that steps up.
+    const fresh = await stepUppedCtx(h, user);
+    const c = await h.svc.claimDesktopLink(h.ctxFor({ ip: "9.9.9.9" }), { code: (await h.svc.issueDesktopLink(fresh)).code });
+    await expect(h.svc.requireStepUp(sessionCtx(h, user, (await claimedRow(h, c.tokens.accessToken)).id))).resolves.toBeUndefined();
+  });
+
+  it("a link row without a factor time claims into a session that cannot step up", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const code = generateToken();
+    await h.db.insert(loginTokens).values({
+      userId: user.userId, tokenHash: hashToken(code), methods: [], purpose: DESKTOP_LINK_PURPOSE,
+      expiresAt: new Date(h.clock.now().getTime() + 120_000),
+    });
+
+    const { tokens } = await h.svc.claimDesktopLink(h.ctxFor(), { code });
+    const row = await claimedRow(h, tokens.accessToken);
+    expect(row.lastTwofaAt).toBeNull();
+    await expect(h.svc.requireStepUp(sessionCtx(h, user, row.id)))
+      .rejects.toMatchObject({ code: "step_up_required", httpStatus: 403 });
+  });
+});
+
+/*
+ * THE DESKTOP APPROVAL CARRIES THE CONFIRMING SESSION'S FACTOR TIME, the link's rule on the door the
+ * desktop app signs in through. The claim stamped its session with the confirm's own time, so a desktop
+ * signed in by one approval could confirm the next inside a fresh window, and step-up never aged out.
+ */
+describe("AuthService — a desktop approval inherits the factor time", () => {
+  /** A desktop asks from `ip`, `by` confirms, the desktop claims: the claimed session's row. */
+  const approvalHop = async (h: Harness, by: ServiceContext, ip: string) => {
+    const verifier = generateToken();
+    const kind = "desktop-linux" as const;
+    const { approvalId } = await h.svc.issueDesktopApproval(h.ctxFor({ ip }), { challenge: hashToken(verifier), kind });
+    await h.svc.confirmDesktopApproval(by, approvalId);
+    const claimed = await h.svc.claimDesktopApproval(h.ctxFor({ ip }), { approvalId, verifier, kind });
+    if (!("tokens" in claimed)) throw new Error("the approval is still pending");
+    return claimedRow(h, claimed.tokens.accessToken);
+  };
+
+  it("a chain of approvals keeps the first factor's time, and ages out of step-up on it", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const web = await stepUppedCtx(h, user);
+    const t0 = h.clock.now();
+
+    h.clock.advance(60_000);
+    const rowA = await approvalHop(h, web, "5.6.7.1");
+    expect(rowA.lastTwofaAt?.toISOString(), "the claim stamped the confirm's time").toBe(t0.toISOString());
+
+    h.clock.advance(2 * 60_000);
+    const fromA = sessionCtx(h, user, rowA.id);
+    await h.svc.requireStepUp(fromA);
+    const rowB = await approvalHop(h, fromA, "5.6.7.2");
+    expect(rowB.lastTwofaAt?.toISOString()).toBe(t0.toISOString());
+
+    h.clock.t = new Date(t0.getTime() + h.deps.config.stepUpWindowMs + 1_000);
+    await expect(h.svc.requireStepUp(sessionCtx(h, user, rowB.id)))
+      .rejects.toMatchObject({ code: "step_up_required", httpStatus: 403 });
+
+    // The control: a fresh factor's approval claims into a session that steps up.
+    const rowC = await approvalHop(h, await stepUppedCtx(h, user), "5.6.7.3");
+    await expect(h.svc.requireStepUp(sessionCtx(h, user, rowC.id))).resolves.toBeUndefined();
+  });
+
+  it("a desktop linked from the browser confirms the next one on the browser's factor time", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const web = await stepUppedCtx(h, user);
+    const t0 = h.clock.now();
+
+    h.clock.advance(60_000);
+    const linked = await h.svc.claimDesktopLink(h.ctxFor(), { code: (await h.svc.issueDesktopLink(web)).code });
+    const rowA = await claimedRow(h, linked.tokens.accessToken);
+
+    h.clock.advance(3 * 60_000);
+    const rowD = await approvalHop(h, sessionCtx(h, user, rowA.id), "5.6.7.4");
+    expect(rowD.lastTwofaAt?.toISOString(), "the approval restarted the window").toBe(t0.toISOString());
+
+    h.clock.t = new Date(t0.getTime() + h.deps.config.stepUpWindowMs + 1_000);
+    await expect(h.svc.requireStepUp(sessionCtx(h, user, rowD.id)))
+      .rejects.toMatchObject({ code: "step_up_required", httpStatus: 403 });
+  });
+
+  it("an approval confirmed without a factor time claims into a session that cannot step up", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const verifier = generateToken();
+    const kind = "desktop-linux" as const;
+    const { approvalId } = await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(verifier), kind });
+    // Confirmed by hand, the way a row confirmed before the factor time was carried looks.
+    await h.db.update(loginTokens).set({ userId: user.userId, approvedAt: h.clock.now() })
+      .where(eq(loginTokens.id, approvalId));
+
+    const claimed = await h.svc.claimDesktopApproval(h.ctxFor(), { approvalId, verifier, kind });
+    if (!("tokens" in claimed)) throw new Error("the approval is still pending");
+    const row = await claimedRow(h, claimed.tokens.accessToken);
+    expect(row.lastTwofaAt).toBeNull();
+    await expect(h.svc.requireStepUp(sessionCtx(h, user, row.id)))
+      .rejects.toMatchObject({ code: "step_up_required", httpStatus: 403 });
+  });
+});
+
 describe("AuthService — recovery codes", () => {
   it("codes are single-use; a used code is refused, an unused one works", async () => {
     const h = await harness();
@@ -2402,14 +2883,39 @@ describe("AuthService — OAuth2 Authorization-Code + PKCE", () => {
     const user = await register(h);
     const verifier = "c".repeat(48);
     const unbound = h.ctxFor({ userId: user.userId, accountId: user.accountId });
-    const { request } = await h.svc.authorize(unbound, {
+    // The opener proves its own session live, so a caller with none opens nothing.
+    await expect(h.svc.authorize(unbound, {
       response_type: "code", client_id: "tf-macos", redirect_uri: "trafficflow://auth",
       code_challenge: s256(verifier), code_challenge_method: `S${"256"}` as const, state: "s", scope: "full",
+    })).rejects.toMatchObject({ code: "unauthorized", httpStatus: 401 });
+    // A request on file that names no session, planted.
+    const request = generateToken();
+    await h.db.insert(loginTokens).values({
+      userId: user.userId, tokenHash: hashToken(request), methods: [], purpose: "oauth_authorize",
+      oauthMeta: {
+        clientId: "tf-macos", redirectUri: "trafficflow://auth", codeChallenge: s256(verifier),
+        scope: "full", state: "s", sessionId: null, twofaAt: null,
+      },
+      expiresAt: new Date(h.clock.now().getTime() + 60_000),
     });
     // Neither the ctx that opened it nor a real session may spend it.
     await expect(h.svc.approveAuthorize(unbound, { request }))
       .rejects.toMatchObject({ code: "invalid_grant", httpStatus: 400 });
     await expect(h.svc.approveAuthorize(await authedCtx(h, user), { request }))
+      .rejects.toMatchObject({ code: "invalid_grant", httpStatus: 400 });
+  });
+
+  it("a request another session presented is spent: the session that opened it cannot confirm it after", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const opener = await authedCtx(h, user);
+    const { request } = await h.svc.authorize(opener, {
+      response_type: "code", client_id: "tf-macos", redirect_uri: "trafficflow://auth",
+      code_challenge: s256("d".repeat(48)), code_challenge_method: `S${"256"}` as const, state: "s", scope: "full",
+    });
+    await expect(h.svc.approveAuthorize(await authedCtx(h, user), { request }))
+      .rejects.toMatchObject({ code: "invalid_grant", httpStatus: 400 });
+    await expect(h.svc.approveAuthorize(opener, { request }))
       .rejects.toMatchObject({ code: "invalid_grant", httpStatus: 400 });
   });
 
