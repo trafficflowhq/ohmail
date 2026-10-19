@@ -52,6 +52,18 @@ Whichever path you take, read [BACKUP.md](./BACKUP.md) once the stack is up.
 The nightly backup is part of setup, not an appendix: it is one cron line,
 and the day it matters it is the only thing that does.
 
+**Or no server at all.** If the machine you would run it on is the desktop in
+front of you, the desktop app's host mode may be enough: it serves your own
+mailbox to your other devices over Tailscale.
+[host-mode.md](./host-mode.md) has what it does and what it leaves out.
+
+**The images are built here.** This repository's release workflow
+(`.github/workflows/ghcr-images.yml`) builds them on public runners whose logs
+anyone can read, from the recipes in this tree (`apps/server/Dockerfile`,
+`apps/worker/Dockerfile.selfhost`, `apps/webapp/Dockerfile`) against the
+committed lockfile, so what an image contains is checkable against the recipe
+and the source beside it.
+
 **Two stacks on one box.** Compose identifies an install by its project name,
 and every container, volume and network is named after it. Two ohmail stacks
 that share that name are one project, so the second `docker compose up` adopts

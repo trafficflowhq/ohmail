@@ -470,15 +470,17 @@ describe("the job that builds the Flatpak gives the builder a session bus", () =
       .toMatch(/FLATPAK: FAILED/);
   });
 
-  it("installs the same way the README tells a reader to", () => {
-    /* The README publishes this build to anyone with the repository, and its install has no
-     * `--user` — the system installation, which is flatpak's default and the one that works. A
-     * job and a README that install into different places cannot both be describing what builds. */
-    const readme = read(publicRel("README.md"));
-    const recipe = readme.slice(readme.indexOf("#### Flatpak"));
-    const install = recipe.split("\n").find((l) => l.includes("flatpak install"));
-    expect(install, "the README no longer shows how to install the runtimes").toBeDefined();
-    expect(install, "the README installs per-user while the job installs system-wide")
+  it("installs the same way the install guide tells a reader to", () => {
+    /* The install guide (docs/install.md, where the README's Flatpak recipe moved) publishes this
+     * build to anyone with the repository, and its install has no `--user` — the system
+     * installation, which is flatpak's default and the one that works. A job and a guide that
+     * install into different places cannot both be describing what builds. */
+    const guide = read(publicRel("docs/install.md"));
+    const at = guide.indexOf("### Flatpak");
+    expect(at, "docs/install.md has no Flatpak section").toBeGreaterThan(-1);
+    const install = guide.slice(at).split("\n").find((l) => l.includes("flatpak install"));
+    expect(install, "the guide no longer shows how to install the runtimes").toBeDefined();
+    expect(install, "the guide installs per-user while the job installs system-wide")
       .not.toContain("--user");
   });
 });

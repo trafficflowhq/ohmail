@@ -9,7 +9,7 @@ you can read in `git log`.
 
 A note on what a version means here: **0.x is a preview.** From 0.4.0 the macOS build
 was a working mail client that connects to your mailbox; from 0.7.0 every build is.
-See [Status](README.md#status--read-this-first).
+See the [README](README.md).
 
 ## [Unreleased]
 

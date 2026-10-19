@@ -283,12 +283,24 @@ describe("the published images are multi-arch, and stay that way", () => {
       ["docs/self-host/README.md", selfhostReadme, /only ever booted on amd64/],
       ["docs/self-host/VPS.md", vps, /earlier ones were only built/],
       ["docs/self-host/UMBREL.md", umbrel, /booted only the amd64 stack/],
-      [publicRel("README.md"), projectReadme, /only ever booted on amd64/],
     ] as const) {
       const t = flow(text);
       expect(t, `${name} claims the double boot without dating it`)
         .toMatch(/from 0\.\d+\.\d+ on/i);
       expect(t, `${name} does not say what earlier releases were`).toMatch(before);
+    }
+  });
+
+  it("the project README leaves the double boot to the self-host guide, or dates it too", () => {
+    // The short README names the images' architectures and links docs/self-host/README.md, which
+    // carries the dated claim above. Should the boot claim come back to the README, the same two
+    // halves come with it.
+    const t = flow(projectReadme);
+    expect(t, "the README no longer names both image architectures").toMatch(/amd64 and arm64/);
+    expect(t).toContain("docs/self-host/README.md");
+    if (/boots? the whole stack|once per architecture/i.test(t)) {
+      expect(t, `${publicRel("README.md")} claims the double boot without dating it`).toMatch(/from 0\.\d+\.\d+ on/i);
+      expect(t, `${publicRel("README.md")} does not say what earlier releases were`).toMatch(/only ever booted on amd64/);
     }
   });
 });

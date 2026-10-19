@@ -6,7 +6,7 @@ import { publicPath } from "./support/public-root.mjs";
  * ══ THE PUBLIC README'S RECORDINGS EXIST, AND THEY ARE THE ONES IT NAMES ══════════════════════
  *
  * The README is published to the open repository verbatim (at the root; `public/ohmail/` where it was authored); its
- * feature wall is a column of `<img>` tags pointing at GIFs under `docs/assets/feature-wall/`.
+ * feature wall is a gallery of `<img>` tags pointing at GIFs under `docs/assets/feature-wall/`.
  *
  * AN `<img>` WHOSE FILE IS MISSING FAILS NOTHING. GitHub renders the alt text, the publish gate
  * copies whatever the template directory contains, and nobody local runs a link checker — so a
@@ -54,8 +54,10 @@ describe("the public README's feature wall", () => {
     }
   });
 
-  it("the picture-quality recording is the one this section added", () => {
+  it("the picture-quality recording is there, and the feature it shows is named", () => {
     expect(referenced).toContain("docs/assets/feature-wall/08-picture-quality.gif");
-    expect(readme).toMatch(/## Photos are compressed before they are sent/);
+    // The section became one line of the feature list when the README was shortened; the claim
+    // stays, as that line's bold lead.
+    expect(readme).toMatch(/\*\*Photos are compressed before they are sent\*\*/);
   });
 });
