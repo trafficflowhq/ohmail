@@ -32,6 +32,7 @@ import {
 import { displayAddress } from "./idn";
 import { useBodyStalled, useMessageChrome, useWithheldSentence } from "./message-chrome";
 import { useDrawnBody } from "./body-slice";
+import { InvitationNote } from "./InvitationNote";
 import { MessageRecipients } from "./MessageRecipients";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { useSenderCheckWords } from "./sender-check";
@@ -387,6 +388,8 @@ export function MessageCard({
     <article className="pm" data-conv-id={message.id} data-unseen={message.unread ? "" : undefined}>
       <div className="pm-in">
         <MessageHeader message={message} now={now} notice={notice} unreadDot />
+        {/* Above and outside `.pm-body`, as in the focused pane (`InvitationNote`). */}
+        <InvitationNote message={message} text={body.text} full={body.state === "full"} className="hm-state" />
         <div className="pm-body">
           <MessageBody
             messageId={message.id}

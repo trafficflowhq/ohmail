@@ -1807,7 +1807,10 @@
     "withheldJunkLoading": "Diese Nachricht wird von deinem Mailserver geladen…",
     "withheldExpunged": "Der Text dieser Nachricht ist hier nicht mehr gespeichert: Jede Kopie davon ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest, dort gelöscht oder von einer anderen Mail-App verschoben. Bis du das Postfach entfernst oder deinen Account löschst, bleiben Header, diese Vorschau und die Wörter ihres Textes gespeichert.",
     "withheldTooLarge": "Nicht heruntergeladen — diese Nachricht ist größer als 64 MB, mehr lädt ohmail nicht herunter. Text und Dateien werden hier deshalb nicht gezeigt. Öffne sie bei deinem Mailanbieter.",
-    "invitationWithoutEvent": "Das ist eine Besprechungseinladung; das Mailsystem des Absenders hat den Termin nicht angehängt."
+    "invitationWithoutEvent": "Das ist eine Besprechungseinladung, aber der Termin selbst ist nicht angehängt.",
+    "invitationOwaLink": "Diese Besprechungseinladung kam als Outlook-Web-App-Link statt als Termin an.",
+    "invitationOwaRemedy": "Damit Einladungen mit angehängtem Termin ankommen, lass dir in Outlook im Web unter POP und IMAP Besprechungseinladungen im iCalendar-Format senden, oder frag deine Administration.",
+    "invitationOwaOpenSetting": "Einstellung in Outlook im Web öffnen"
   },
   "message": {
     "toLabel": "An",

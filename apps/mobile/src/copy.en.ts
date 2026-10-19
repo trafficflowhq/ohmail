@@ -1728,6 +1728,15 @@ const TABLE = {
   liveBodyWithheldTooLarge:
     "Not downloaded — this message is larger than 64 MB, the most ohmail downloads, so its text and files are not shown here. Open it in your mail provider.",
   liveBodyJunkLoading: "Loading this message from your mail server…",
+  /**
+   * A meeting invitation whose event cannot be shown: the web reader's generic sentence word for
+   * word; the web-link stub's sentences name no provider, as nothing in this deck does.
+   */
+  invitationWithoutEvent: "This is a meeting invitation, but the event itself is not attached.",
+  invitationOwaLink: "This meeting invitation arrived as a web link instead of the event.",
+  invitationOwaRemedy:
+    "To receive invitations with the event attached, choose “Send meeting invitations in iCalendar format” in your mail account’s web settings under POP and IMAP, or ask your administrator.",
+  invitationOwaOpenSetting: "Open the setting in your browser",
 
   /* ------------------------------------------------- the mail body's frame */
 

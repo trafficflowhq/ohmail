@@ -1807,7 +1807,10 @@
     "withheldJunkLoading": "Loading this message from your mail server…",
     "withheldExpunged": "Its text is no longer stored here — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. Until you remove the mailbox or delete your account, its headers, this preview and the words of its text are kept.",
     "withheldTooLarge": "Not downloaded — this message is larger than 64 MB, the most ohmail downloads, so its text and files are not shown here. Open it in your mail provider.",
-    "invitationWithoutEvent": "This is a meeting invitation; the sender’s mail system did not attach the event."
+    "invitationWithoutEvent": "This is a meeting invitation, but the event itself is not attached.",
+    "invitationOwaLink": "This meeting invitation arrived as an Outlook Web App link instead of the event.",
+    "invitationOwaRemedy": "To receive invitations with the event attached, choose “Send meeting invitations in iCalendar format” in Outlook on the web under POP and IMAP, or ask your administrator.",
+    "invitationOwaOpenSetting": "Open the setting in Outlook on the web"
   },
   "message": {
     "toLabel": "To",

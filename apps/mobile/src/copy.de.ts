@@ -1116,6 +1116,11 @@ export const DE: Deck = {
   liveBodyWithheldTooLarge:
     "Nicht heruntergeladen — diese Nachricht ist größer als 64 MB, mehr lädt ohmail nicht herunter. Text und Dateien werden hier deshalb nicht gezeigt. Öffne sie bei deinem Mailanbieter.",
   liveBodyJunkLoading: "Diese Nachricht wird von deinem Mailserver geladen…",
+  invitationWithoutEvent: "Das ist eine Besprechungseinladung, aber der Termin selbst ist nicht angehängt.",
+  invitationOwaLink: "Diese Besprechungseinladung kam als Weblink statt als Termin an.",
+  invitationOwaRemedy:
+    "Damit Einladungen mit angehängtem Termin ankommen, lass dir in den Web-Einstellungen deines Mailanbieters unter POP und IMAP Besprechungseinladungen im iCalendar-Format senden, oder frag deine Administration.",
+  invitationOwaOpenSetting: "Einstellung im Browser öffnen",
 
   /* ------------------------------------------------- the mail body's frame */
 

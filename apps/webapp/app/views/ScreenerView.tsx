@@ -68,6 +68,7 @@ import { linkHref, useRenderedLinks } from "../shell/rendered-links";
 import { useBodyStalled, type BodyTarget } from "../shell/message-chrome";
 import { MessageFiles } from "../shell/MessageFiles";
 import { useDrawnBody, useDrawnStates } from "../shell/body-slice";
+import { InvitationNote } from "../shell/InvitationNote";
 import { goFirstRun, goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
@@ -2334,6 +2335,14 @@ export function HeldMail({
           on the person's own server, so hiding this copy hid it from the one person entitled to
           read it. Body withholding was withdrawn (`isProtectedMessage` is a constant false) and
           the branch that stood here rendered for nobody. */}
+      {/* Above and outside `.hm-body`: a held row carries no header fact, so only the body
+          text's Outlook Web App stub speaks here (`InvitationNote`); a dull preview offers no link. */}
+      <InvitationNote
+        text={body}
+        full={bodyState === undefined || bodyState === "full"}
+        className="hm-state"
+        offerLink={!dull}
+      />
       <div className="hm-body">
         <MessageBody
           text={body}

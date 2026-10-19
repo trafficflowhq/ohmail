@@ -8,7 +8,7 @@
  * doctrine); the release family rewrites the sender's own holding rule, or writes an address rule
  * beside a domain rule (`releaseRules`), beside physical `move`s. Mutations read the raw mirror ({@link presentedOf} is for renders); no React, no I/O, no network.
  */
-import { firstContactTime, isSharedProviderDomain } from "@ohmail/client-engine";
+import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
@@ -494,6 +494,11 @@ export type WorldMail = Omit<Mail, "earlier"> & {
   /** The body was stored with its remote content already loaded (the account's own switch). */
   loadedRemoteContent?: boolean;
   /**
+   * The full body text is an OWA invitation stub (core's `owaInvitationStub`), with its constant
+   * options link. Attached by {@link liveMessage} alone; absent on every other message.
+   */
+  owaInvitation?: OwaInvitationStub;
+  /**
    * The engine's minted embedded images, `contentId → data: URI` — identity-stable between
    * mints, so the reader's sanitize memo keys on it. Attached by {@link liveMessage} alone.
    */
@@ -757,6 +762,7 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     ...((): { sentTo?: string } => { const f = sentFaceOf(m, v.ownAddresses); return f === null ? {} : { sentTo: f }; })(),
     ...(ownMailOf(m, physical, v.ownAddresses) ? { ownMail: true as const } : {}),
     ...senderCheckOf(m),
+    ...(m.invitationWithoutEvent === true ? { invitationWithoutEvent: true as const } : {}),
     subject: m.subject,
     time: messageDisplayTime(m, v.now, v.zone, v.locale ?? "en"),
     body: body.text,
@@ -1957,9 +1963,16 @@ export function liveMessage(
   const hydrated = bodyOf(pres, m);
   row.html = hydrated.html;
   row.loadedRemoteContent = hydrated.loadedRemoteContent;
+  const owa = owaInvitationOf(hydrated);
+  if (owa !== undefined) row.owaInvitation = owa;
   row.inlineImages = engine.inlineImagesOf(id);
   Object.assign(row, filesField(engine, id));
   return row;
+}
+
+/** An OWA invitation stub in a FULL body's text; a snippet or a loading body is never read. */
+export function owaInvitationOf(body: Pick<MessageBody, "state" | "text">): OwaInvitationStub | undefined {
+  return body.state === "full" && body.text ? owaInvitationStub(body.text) ?? undefined : undefined;
 }
 
 /** One message's files for a screen that draws them beside a row it holds (the Screener's held mail). */

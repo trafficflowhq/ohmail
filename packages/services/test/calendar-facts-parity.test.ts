@@ -41,6 +41,25 @@ const SHAPES: readonly Shape[] = [
     headers: { "content-class": ["  URN:Content-Classes:CalendarMessage "] },
     parts: [], invitation: true, itipReply: false,
   },
+  {
+    what: "OWA stub over IMAP (2026-10-19): Content-class, an Exchange calendar header, text/plain, NO part",
+    headers: {
+      "content-class": ["urn:content-classes:calendarmessage"],
+      "x-ms-exchange-calendar-originator-id": ["00000000-0000-0000-0000-000000000000"],
+      "content-type": ['text/plain; charset="us-ascii"'],
+    },
+    parts: [], invitation: true, itipReply: false,
+  },
+  {
+    // No header arm for X-MS-Exchange-Calendar-*: it rides replies too. The body text's stub decides
+    // this shape on the reader (`owaInvitationStub`).
+    what: "the same stub WITHOUT Content-class says nothing from headers",
+    headers: {
+      "x-ms-exchange-calendar-originator-id": ["00000000-0000-0000-0000-000000000000"],
+      "content-type": ['text/plain; charset="us-ascii"'],
+    },
+    parts: [], invitation: false, itipReply: false,
+  },
   // ── the positive control on the other arm: a real event, so no line ─────────────────────────
   {
     what: "a real invitation WITH its text/calendar part says nothing",

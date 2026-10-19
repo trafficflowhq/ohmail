@@ -10,12 +10,13 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { JUNK_REFILL_BOUND_MS, type WorldAttachment } from "../state/live";
-import { junkLeaving, withheldNote } from "./body-note";
+import { invitationNote, junkLeaving, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
-import { ActivityIndicator, AppState, Platform, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { ActivityIndicator, AppState, Linking, Platform, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
-import { useBodyStamp, useWorld } from "../state/world";
+import { useBodyStamp, useWorld, useWorldToast } from "../state/world";
+import { openConfirmedLink } from "../mail/frame-nav";
 import { endMark } from "../engine/ui-marks";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
@@ -61,6 +62,7 @@ export function MessageReader({
   const bare = inPane || railBack;
   /** "Show as text" — this reading's own choice, per message; a new open renders rich again. */
   const [textFor, setTextFor] = useState<string | null>(null);
+  const toast = useWorldToast();
 
   // The open: mark read (watched — the engine owns the overlay and the rollback),
   // hydrate the full text + conversation + file list.
@@ -158,6 +160,9 @@ export function MessageReader({
         : !m.protected && m.bodyState === "failed"
           ? Copy.liveBodyFailed
           : null;
+
+  // A meeting invitation whose event cannot be shown — an OWA stub, or the header fact.
+  const invitation = invitationNote(m);
 
   /** Continuity: the offset survives the remounts a posture change forces (`pane-memory`). */
   const scrollKey = `msg:${m.id}`;
@@ -285,6 +290,27 @@ export function MessageReader({
               {bodyNote ? (
                 <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }}>
                   {bodyNote}
+                </Txt>
+              ) : null}
+              {invitation ? (
+                <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }} testID="reader-invitation-note">
+                  {invitation.line}
+                  {invitation.href !== null ? (
+                    <>
+                      {" "}
+                      <Txt
+                        variant="caption"
+                        tone="accent"
+                        accessibilityRole="link"
+                        onPress={() => {
+                          const href = invitation.href;
+                          if (href !== null) void openConfirmedLink(href, { openURL: (u) => Linking.openURL(u), say: toast.say });
+                        }}
+                      >
+                        {Copy.invitationOwaOpenSetting}
+                      </Txt>
+                    </>
+                  ) : null}
                 </Txt>
               ) : null}
               {/* The html part renders in the frame (the web's rules, `MailBodyFrame`); the

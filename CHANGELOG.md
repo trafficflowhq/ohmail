@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A meeting invitation that arrives as an Outlook link says so
+
+When a Microsoft 365 or Exchange server delivers a meeting invitation as an Outlook Web App link instead of
+the event, ohmail now says so above the message on the desktop, the web and the phone. It names the Outlook
+setting that makes future invitations arrive with the event and, on Microsoft 365, links to Microsoft's own
+settings page (never to an address taken from the message). A desktop signed in to Cloud showed nothing for
+these invitations before.
+
 ### The first start is faster
 
 The desktop app writes its new local store to the disk once, when it is complete, instead of after every index

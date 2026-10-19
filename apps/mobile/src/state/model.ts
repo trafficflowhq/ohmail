@@ -70,6 +70,11 @@ export interface Mail {
    * `unverified`): the reader's line only. No chip, nothing spoken on the row, no pictures held.
    */
   senderUnverified?: { brand: string };
+  /**
+   * A meeting invitation whose event ohmail cannot show, by its stored headers
+   * (`MessageDTO.invitationWithoutEvent`). Absent on every other message.
+   */
+  invitationWithoutEvent?: true;
   subject: string;
   time: string;
   body: string;

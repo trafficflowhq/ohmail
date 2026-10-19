@@ -23,3 +23,18 @@ export function withheldNote(m: Row, refillExpired: boolean): string {
     default: return Copy.liveBodyWithheld;
   }
 }
+
+/**
+ * A MEETING INVITATION THE PHONE CANNOT SHOW SAYS SO — the web reader's `InvitationNote`. An OWA
+ * stub in the full body text (`owaInvitationOf`, decided in the state layer) names the setting,
+ * with core's options link (built from constants, Microsoft 365 hosts only, never the message's URL);
+ * otherwise the header fact says the generic line.
+ */
+export function invitationNote(
+  m: Pick<WorldMail, "bodyState" | "owaInvitation" | "invitationWithoutEvent">,
+): { line: string; href: string | null } | null {
+  const stub = m.bodyState === "full" ? m.owaInvitation : undefined;
+  if (stub !== undefined) return { line: `${Copy.invitationOwaLink} ${Copy.invitationOwaRemedy}`, href: stub.optionsHref };
+  if (m.invitationWithoutEvent === true) return { line: Copy.invitationWithoutEvent, href: null };
+  return null;
+}

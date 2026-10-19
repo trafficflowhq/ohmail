@@ -312,6 +312,8 @@ describe("the wiring, from source", () => {
       "apps/desktop/src/main.tsx",
       "apps/webapp/app/components/MessageBody.tsx",
       "apps/webapp/app/shell/BodyText.tsx",
+      // The meeting-invitation note's one link: core's rebuilt Microsoft 365 options page.
+      "apps/webapp/app/shell/InvitationNote.tsx",
       "apps/webapp/app/shell/RichEditor.tsx",
       "apps/webapp/app/views/ScreenerView.tsx",
     ]);

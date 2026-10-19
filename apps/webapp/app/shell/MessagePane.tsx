@@ -10,6 +10,7 @@ import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, forwardOffered, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane, cssRect } from "@ohmail/ui";
 import { MessageFiles } from "./MessageFiles";
+import { InvitationNote } from "./InvitationNote";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
@@ -1706,14 +1707,10 @@ export function MessagePane({
 
   const focusedBody = (
     <>
-      {/* WHERE OHMAIL KNOWS IT CANNOT SHOW THE EVENT, IT SAYS SO. An Outlook Web Access
-          invitation sends the event as a LINK, so there is no calendar part and no card — and
-          the body is OWA's boilerplate about the invitation, which without this line a reader
-          takes for the message. OUTSIDE `.msg-body` on purpose: that element holds the mail and
-          nothing else. One fact, no verb, no link followed — see `EngineMessage.invitationWithoutEvent`. */}
-      {message.invitationWithoutEvent === true ? (
-        <p className="msg-body-state" role="note">{tb("invitationWithoutEvent")}</p>
-      ) : null}
+      {/* WHERE OHMAIL KNOWS IT CANNOT SHOW THE EVENT, IT SAYS SO — an Outlook Web App stub from the
+          body text, else the stored-header fact. OUTSIDE `.msg-body` on purpose: that element holds
+          the mail and nothing else. See `InvitationNote`. */}
+      <InvitationNote message={message} text={body.text} full={body.state === "full"} className="msg-body-state" />
       {/* A `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
           now and a `<p>` may not contain one. `.msg-body` is unchanged and stays the one element
           that holds the mail and nothing else, which is what `test/conversation.test.ts` and

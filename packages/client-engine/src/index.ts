@@ -88,6 +88,9 @@ export type { ListSurface, ListSurfaceInput, MirrorCountFacts, WaitingSurfaceFac
  */
 export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 
+/** The Outlook Web App invitation stub, read from body text: both readers, the phone and the web, ask core. */
+export { owaInvitationStub, type OwaInvitationStub } from "@trafficflow/core/ics";
+
 /**
  * WHICH OF A SENDER'S MAIL A SCREENING PRESS MAY MOVE ITSELF — re-exported from core so the two
  * client planners (the webapp shell's `sender-screening.ts`, the phone's `live.ts`) ask ONE

@@ -115,6 +115,110 @@ export const ICS_PARSE_MAX_CHARS = 512 * 1024;
  */
 export const CALENDAR_MESSAGE_CONTENT_CLASS = "urn:content-classes:calendarmessage";
 
+/* ── the Outlook Web App invitation stub ───────────────────────────────────────────────────── */
+
+/**
+ * An Exchange or Microsoft 365 meeting invitation the reader's own server served over IMAP as an
+ * Outlook Web App LINK instead of the event. `optionsHref` is Microsoft 365's "POP and IMAP" options
+ * page, built from constants (host and the bare `/owa/`), never from the message's path; `null` on
+ * any other server.
+ */
+export interface OwaInvitationStub {
+  readonly optionsHref: string | null;
+}
+
+/** How much of the body text is read: the stub's two links open it. */
+const OWA_STUB_HEAD_CHARS = 2048;
+const OWA_STUB_LABEL_MAX = 80;
+const OWA_URL_TOKEN = /https?:\/\/[^\s<>"'[\]]+/gi;
+const OWA_URL_TRAILING = /[.,;:!?)\]}>]+$/;
+const M365_HOSTS: ReadonlySet<string> = new Set(["outlook.office365.com", "outlook.office.com"]);
+const M365_OWA_PATH = /^\/owa(\/[A-Za-z0-9.-]{1,253})?\/?$/;
+
+interface OwaUrl {
+  readonly scheme: string;
+  readonly host: string;
+  readonly path: string;
+  readonly params: ReadonlyMap<string, string>;
+  readonly at: number;
+}
+
+/** A decoded query, keys lowercased; `null` on bad percent-encoding. By hand: RN's URL is unreliable. */
+function owaQuery(query: string): Map<string, string> | null {
+  const out = new Map<string, string>();
+  for (const pair of query.split("&")) {
+    if (pair === "") continue;
+    const eq = pair.indexOf("=");
+    try {
+      const key = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq)).toLowerCase();
+      const value = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1));
+      if (!out.has(key)) out.set(key, value);
+    } catch {
+      return null;
+    }
+  }
+  return out;
+}
+
+/** Scheme, host, path and query of one URL token; `null` for userinfo, a port or bad encoding. */
+function owaUrl(raw: string, at: number): OwaUrl | null {
+  const sep = raw.indexOf("://");
+  const scheme = raw.slice(0, sep).toLowerCase();
+  const rest = raw.slice(sep + 3);
+  const hostEnd = rest.search(/[/?#]/);
+  const host = (hostEnd < 0 ? rest : rest.slice(0, hostEnd)).toLowerCase();
+  if (host === "" || host.includes("@") || host.includes(":")) return null;
+  const tail = hostEnd < 0 ? "" : rest.slice(hostEnd);
+  const hash = tail.indexOf("#");
+  const beforeHash = hash < 0 ? tail : tail.slice(0, hash);
+  const q = beforeHash.indexOf("?");
+  const path = q < 0 ? beforeHash : beforeHash.slice(0, q);
+  const params = owaQuery(q < 0 ? "" : beforeHash.slice(q + 1));
+  return params === null ? null : { scheme, host, path, params, at };
+}
+
+const isOwaPath = (u: OwaUrl): boolean => {
+  const p = u.path.toLowerCase();
+  return p === "/owa" || p.startsWith("/owa/");
+};
+const owaPathParam = (u: OwaUrl): string => (u.params.get("path") ?? "").toLowerCase();
+
+/**
+ * Is this body text an Outlook Web App invitation stub? Read from the first
+ * {@link OWA_STUB_HEAD_CHARS} of the TEXT part only. The text's first URL is the calendar item link
+ * (`/owa…?itemid=…&path=/calendar/item`), on its first line or under a short label line, and a later
+ * URL on the same origin is the `path=/options/popandimap` page. URLs, not sentences: the sentences
+ * follow the mailbox language. Pure; never throws.
+ */
+export function owaInvitationStub(text: string): OwaInvitationStub | null {
+  const head = text.replace(/^﻿/, "").trimStart().slice(0, OWA_STUB_HEAD_CHARS);
+  const urls: Array<OwaUrl | null> = [];
+  for (const m of head.matchAll(OWA_URL_TOKEN)) {
+    urls.push(owaUrl(m[0].replace(OWA_URL_TRAILING, ""), m.index ?? 0));
+  }
+  const item = urls[0];
+  if (item == null) return null;
+
+  // The item link opens the text: on line one, or on the next non-blank line under a short label.
+  const firstBreak = head.indexOf("\n");
+  const firstLine = (firstBreak < 0 ? head : head.slice(0, firstBreak)).trim();
+  if (firstBreak >= 0 && item.at > firstBreak) {
+    if (!firstLine.endsWith(":") || firstLine.length > OWA_STUB_LABEL_MAX) return null;
+    const itemLineStart = head.lastIndexOf("\n", item.at) + 1;
+    if (head.slice(firstBreak + 1, itemLineStart).trim() !== "") return null;
+  }
+
+  if (!isOwaPath(item) || owaPathParam(item) !== "/calendar/item" || (item.params.get("itemid") ?? "") === "") return null;
+  const options = urls.slice(1).find((u): u is OwaUrl =>
+    u !== null && u.scheme === item.scheme && u.host === item.host && isOwaPath(u)
+    && owaPathParam(u) === "/options/popandimap");
+  if (options === undefined) return null;
+
+  // Constants only: the /owa/<segment>/ names a sign-in realm, and the sender chose it.
+  const linkable = options.scheme === "https" && M365_HOSTS.has(options.host) && M365_OWA_PATH.test(options.path);
+  return { optionsHref: linkable ? `https://${options.host}/owa/?path=/options/popandimap` : null };
+}
+
 /**
  * The `method=` parameter of a Content-Type, uppercased — RFC 6047's iTIP marker
  * (`text/calendar; method=REPLY`). Returns `null` when the parameter is absent.
