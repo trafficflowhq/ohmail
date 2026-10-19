@@ -3,7 +3,7 @@ import {
   adminAccountDetail, adminAccounts, adminActions, adminAlertReading,
   adminAlertDrivers, adminPlatformSignals, adminWorker,
   adminWorkerInstances, adminFunnel, adminAccountsByIds, adminSearch, adminStaffActivity,
-  adminSyncRoster, maskAddress, readerMasksAddresses, isUuid, ADMIN_BATCH_MAX, ADMIN_SYNC_ROSTER_MAX,
+  adminSyncRoster, isUuid, ADMIN_BATCH_MAX, ADMIN_SYNC_ROSTER_MAX,
   adminEngagement, adminStorage, adminStaffFeed, adminLatestResolvedAlerts, STAFF_AUDIT_ACTIONS,
   ADMIN_FUNNEL_WINDOW_MAX_DAYS, ADMIN_STORAGE_MAX, ADMIN_RESOLVED_ALERTS_DEFAULT_DAYS, ADMIN_RESOLVED_ALERTS_MAX_DAYS,
   type AccountQuery, type AdminDb, type AdminViewer, type ApiHealth, type OverviewSnapshot,
@@ -431,10 +431,7 @@ export const adminRoutes: Route[] = [
     handler: adminRoute("accounts", "read.roster", async (req, ctx, _params, reader) => {
       const ids = idsOf(req);
       if (ids !== null) return adminAccountsByIds(ctx.db, ctx.now(), ids.slice(0, ADMIN_BATCH_MAX), reader);
-      const page = await adminAccounts(ctx.db, ctx.now(), accountQueryOf(req));
-      return readerMasksAddresses(reader)
-        ? { ...page, accounts: page.accounts.map((a) => ({ ...a, ownerEmail: a.ownerEmail && maskAddress(a.ownerEmail) })) }
-        : page;
+      return adminAccounts(ctx.db, ctx.now(), accountQueryOf(req), reader);
     }, {
       roles: "any",
       audit: (req): AuditExtra => {

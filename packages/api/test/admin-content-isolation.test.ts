@@ -77,7 +77,7 @@ import {
   makeDeps, seedSession, seedStaffSession, seedMailbox, seedMessage, seedBody,
   seedThread, seedContact, seedRule, seedPendingApproval, req, FIXED_NOW,
 } from "./helpers.js";
-import type { Db } from "@trafficflow/services";
+import type { Db, StaffRole } from "@trafficflow/services";
 
 /**
  * **THE ADMIN CONSOLE CANNOT SEE MAIL**, asserted by taint rather than by a field list.
@@ -159,41 +159,186 @@ const asStaff = {
   bearer: ADMIN_SECRET, headers: { [STAFF_SESSION_HEADER]: STAFF_TOKEN },
 } as const;
 
-/** Every path a holder of a staff credential can reach on this API. */
-const ADMIN_READS = [
-  "/admin/overview", "/admin/accounts", "/admin/worker", "/admin/actions", "/admin/funnel",
-] as const;
-
 const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null });
+
+/* ════════════════════════════════════════════════════════════════════════════════════════
+   The routes: every `/admin/*` route the table mounts, sent or exempt by name
+   ════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * What the sweeps send to each `/admin/*` route, checked against the route table in both
+ * directions: a route the table mounts and this census does not name fails, and so does a name
+ * the table no longer mounts. A `read` is sent by the taint sweep, as an owner-role session, and
+ * by the ops sweep; a `write` by the ops sweep alone, which reads what the write answers ops; `ops`
+ * is the status an ops-only session gets. An `exempt` route says why it can answer no account's data.
+ */
+type RouteSweep =
+  | { send: "read" | "write"; ops: 200 | 403 }
+  | { send: "exempt"; why: string };
+
+const STAFF_IDENTITY = "staff identity (a staff session, its second factor, its roles); reads no account";
+
+const ADMIN_ROUTE_SWEEP: Readonly<Record<string, RouteSweep>> = {
+  "GET /admin/overview": { send: "read", ops: 200 },
+  "GET /admin/accounts": { send: "read", ops: 200 },
+  "GET /admin/accounts/:id": { send: "read", ops: 200 },
+  "GET /admin/accounts/:id/staff-activity": { send: "read", ops: 200 },
+  "GET /admin/search": { send: "read", ops: 200 },
+  "GET /admin/sync-roster": { send: "read", ops: 200 },
+  "GET /admin/funnel": { send: "read", ops: 200 },
+  "GET /admin/worker": { send: "read", ops: 200 },
+  "GET /admin/actions": { send: "read", ops: 200 },
+  "GET /admin/engagement": { send: "read", ops: 200 },
+  "GET /admin/storage": { send: "read", ops: 200 },
+  "GET /admin/staff-activity": { send: "read", ops: 200 },
+  "GET /admin/alerts/history": { send: "read", ops: 200 },
+  // POST reads: the session rides in the header (the staff list) or the body (the registration).
+  "POST /admin/staff/list": { send: "read", ops: 403 },
+  "POST /admin/oauth/microsoft": { send: "read", ops: 200 },
+  // Writes ops may call or is refused; sent last, as ops only.
+  "POST /admin/mailboxes/resync": { send: "write", ops: 200 },
+  "POST /admin/accounts/:id/billing-link": { send: "write", ops: 403 },
+  "POST /admin/staff/session": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/staff/totp/begin": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/staff/totp/confirm": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/staff/step-up": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/staff/totp/reset": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/staff/whoami": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/staff/sign-out": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/staff/assertion": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/staff/roles": { send: "exempt", why: STAFF_IDENTITY },
+  "POST /admin/oauth/microsoft/save": {
+    send: "exempt",
+    why: "writes the deployment's provider registration and answers what POST /admin/oauth/microsoft answers, which both sweeps read",
+  },
+};
+
+const adminRoutesInTable = apiRoutes.filter((r) => r.pattern.startsWith("/admin/"));
+const keyOf = (r: { method: string; pattern: string }): string => `${r.method} ${r.pattern}`;
+
+/** A pattern with each `:param` filled; a parameter the sweep has no value for fails it. */
+function fill(pattern: string, params: Readonly<Record<string, string>>): string {
+  return pattern.replace(/:([A-Za-z]+)/g, (_m, name: string) => {
+    const value: string | undefined = params[name];
+    if (value === undefined) throw new Error(`${pattern}: the sweep has no value for :${name}`);
+    return value;
+  });
+}
+
+/** What the sweeps put in a path or a query: the world's account and mailbox, its login, and a run from inside the login's local part. */
+interface SweepTerms { accountId: string; mailboxId: string; login: string; mailbox: string; loginPart: string }
+
+const DAY_MS = 86_400_000;
+const enc = encodeURIComponent;
+
+/** Each read's query forms, sent beside its bare path. */
+const QUERY_FORMS: Readonly<Record<string, (t: SweepTerms) => string[]>> = {
+  // The batch by id, and the paged roster searched by a run of the login and by its domain.
+  "GET /admin/accounts": (t) => [
+    `ids=${t.accountId}`, `search=${enc(t.loginPart)}`, `search=${enc(t.login.slice(t.login.lastIndexOf("@") + 1))}`,
+  ],
+  "GET /admin/search": (t) => ["q=account", `q=${enc(t.login)}`, `q=${enc(t.mailbox)}`],
+  // Around the wall clock: the seeded accounts take the database's own `now()`.
+  "GET /admin/funnel": () => [
+    `from=${new Date(Date.now() - 30 * DAY_MS).toISOString()}&to=${new Date(Date.now() + DAY_MS).toISOString()}`,
+  ],
+  "GET /admin/staff-activity": () => ["reads=1"],
+};
+
+/** What a POST the sweeps send carries beside the session token. */
+const POST_BODY: Readonly<Record<string, (t: SweepTerms) => Record<string, unknown>>> = {
+  "POST /admin/mailboxes/resync": (t) => ({ mailboxId: t.mailboxId, note: "ops sweep: release the backoff" }),
+};
+
+/** Every GET the table mounts under `/admin/`, bare and in each of its query forms. */
+function adminGets(t: SweepTerms): Array<{ key: string; path: string }> {
+  return adminRoutesInTable.filter((r) => r.method === "GET").flatMap((r) => {
+    const path = fill(r.pattern, { id: t.accountId });
+    const forms = QUERY_FORMS[keyOf(r)]?.(t) ?? [];
+    return [path, ...forms.map((q) => `${path}?${q}`)].map((p) => ({ key: keyOf(r), path: p }));
+  });
+}
+
+interface Answer { path: string; status: number; text: string }
+
+/**
+ * Every census route as one staff session: each GET form, then the POST reads, then (as ops) the
+ * writes. An answer is held to its status: the census's `ops` one for an ops session, else 200.
+ */
+async function sweepRoutes(d: ApiDeps, token: string, t: SweepTerms, o: { ops: boolean }): Promise<Answer[]> {
+  const status = (key: string): number => {
+    const c = ADMIN_ROUTE_SWEEP[key];
+    return o.ops && c !== undefined && c.send !== "exempt" ? c.ops : 200;
+  };
+  const out: Answer[] = [];
+  const keep = async (key: string, path: string, res: Response): Promise<void> => {
+    expect(res.status, `${key} → ${path}`).toBe(status(key));
+    out.push({ path: key.startsWith("GET ") ? path : key, status: res.status, text: await res.text() });
+  };
+  for (const { key, path } of adminGets(t)) {
+    await keep(key, path, await H(req("GET", path, { bearer: ADMIN_SECRET, headers: { [STAFF_SESSION_HEADER]: token } }), d));
+  }
+  for (const send of ["read", "write"] as const) {
+    if (send === "write" && !o.ops) continue;
+    for (const r of adminRoutesInTable.filter((x) => x.method === "POST" && ADMIN_ROUTE_SWEEP[keyOf(x)]?.send === send)) {
+      const path = fill(r.pattern, { id: t.accountId });
+      const body = JSON.stringify({ sessionToken: token, ...(POST_BODY[keyOf(r)]?.(t) ?? {}) });
+      await keep(keyOf(r), path, await H(req("POST", path, {
+        bearer: ADMIN_SECRET, headers: { [STAFF_SESSION_HEADER]: token }, body,
+      }), d));
+    }
+  }
+  return out;
+}
 
 /* ════════════════════════════════════════════════════════════════════════════════════════
    The two censuses
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * `table.column` an operator is SUPPOSED to see, with the DTO field it feeds.
+ * What a reader holding only `ops` is served of a staff-visible column: the value (`whole`), its
+ * domain (`masked`, `•••@domain`), or nothing (`withheld`, null). `ops` reads the platform, not
+ * the people. The ops sweep below plants a marker in every masked or withheld column and reads
+ * every census route as ops, so a field that serves one of them whole fails there.
+ */
+type OpsServed = "whole" | "masked" | "withheld";
+
+interface StaffColumn {
+  /** The DTO field it feeds. */
+  feeds: string;
+  /** What `ops` alone is served of it. */
+  ops: OpsServed;
+  /** Why ops is served that. */
+  why: string;
+}
+
+const PLATFORM = "ours: the platform's own state, composed by this repository's code";
+
+/**
+ * `table.column` an operator is SUPPOSED to see, with the DTO field it feeds and what an ops-only
+ * reader is served of it.
  *
  * Nothing here is mail. An account's own name, its owner's login address and its mailbox's own
  * address are the account's IDENTITY — the ruling behind the account-isolation invariant says in the
  * same breath that "subscription/usage data for user management" is legitimately visible, and
  * an operator who cannot tell one account from another cannot do user management at all.
  */
-const STAFF_VISIBLE: ReadonlySet<string> = new Set([
-  "accounts.name",                       // AccountSummary.name
-  "users.email",                         // AccountSummary.ownerEmail — the LOGIN address
-  "mailboxes.address",                   // MailboxHealth.address — the account's OWN mailbox
-  "mailboxes.display_name",              // MailboxHealth.displayName — user-chosen at connect
-  "mailboxes.provider",                  // MailboxHealth.provider
-  "mailboxes.auth_kind",                 // MailboxHealth.authKind
-  "mailboxes.status",                    // MailboxHealth.status (and the roster's error count)
-  "mailboxes.error_code",                // MailboxHealth.lastError — the 0023 taxonomy
-  "mailboxes.error_detail",              // MailboxHealth.lastError — 0023's CLOSED allowlist
-  "worker_heartbeats.instance_id",       // WorkerInstanceHealth.instanceId
-  "alert_state.alert_key",               // GET /internal/alerts
-  "alert_state.kind",                    // GET /internal/alerts
-  "alert_state.severity",                // GET /internal/alerts
-  "alert_state.detail",                  // GET /internal/alerts — composed from counts and ages
+const STAFF_VISIBLE: ReadonlyMap<string, StaffColumn> = new Map<string, StaffColumn>([
+  ["accounts.name", { feeds: "AccountSummary.name", ops: "whole", why: "the account's own name, how an operator tells accounts apart" }],
+  ["users.email", { feeds: "AccountSummary.ownerEmail — the LOGIN address", ops: "masked", why: "a person's address" }],
+  ["mailboxes.address", { feeds: "MailboxHealth.address — the account's OWN mailbox", ops: "masked", why: "a person's address" }],
+  ["mailboxes.display_name", { feeds: "MailboxHealth.displayName — user-chosen at connect", ops: "withheld", why: "the name a person sends as" }],
+  ["mailboxes.provider", { feeds: "MailboxHealth.provider", ops: "whole", why: "the provider word" }],
+  ["mailboxes.auth_kind", { feeds: "MailboxHealth.authKind", ops: "whole", why: "password or oauth" }],
+  ["mailboxes.status", { feeds: "MailboxHealth.status (and the roster's error count)", ops: "whole", why: "a closed status word" }],
+  ["mailboxes.error_code", { feeds: "MailboxHealth.lastError — the 0023 taxonomy", ops: "whole", why: "a closed fault word" }],
+  ["mailboxes.error_detail", { feeds: "MailboxHealth.lastError — 0023's CLOSED allowlist", ops: "whole", why: "a protocol constant from a closed list" }],
+  ["worker_heartbeats.instance_id", { feeds: "WorkerInstanceHealth.instanceId", ops: "whole", why: PLATFORM }],
+  ["alert_state.alert_key", { feeds: "GET /internal/alerts", ops: "whole", why: PLATFORM }],
+  ["alert_state.kind", { feeds: "GET /internal/alerts", ops: "whole", why: PLATFORM }],
+  ["alert_state.severity", { feeds: "GET /internal/alerts", ops: "whole", why: PLATFORM }],
+  ["alert_state.detail", { feeds: "GET /internal/alerts — composed from counts and ages", ops: "whole", why: PLATFORM }],
   // cloud 0030 — the incident/signal split's two TEXT columns, both echoed by
   // `GET /internal/alerts` and by the console's Reliability page.
   //
@@ -207,7 +352,7 @@ const STAFF_VISIBLE: ReadonlySet<string> = new Set([
   // customer input reaches it, and there is no branch that could put one there.
   //
   // `affected_accounts` is an integer, so it is structurally untaintable and does not appear.
-  "alert_state.fix_href",                // GET /internal/alerts — a literal console path
+  ["alert_state.fix_href", { feeds: "GET /internal/alerts — a literal console path", ops: "whole", why: PLATFORM }],
   // cloud 0030 — `title` is free-form text and IS echoed to a staff surface, so it is classified
   // here rather than refused, on `fix_href`'s exact terms one line up.
   //
@@ -224,7 +369,7 @@ const STAFF_VISIBLE: ReadonlySet<string> = new Set([
   //
   // Its neighbour `count` is an INTEGER and therefore structurally untaintable; it does not
   // appear in this list for the reason `affected_accounts` does not.
-  "alert_state.title",                   // GET /internal/alerts — the rule's own sentence
+  ["alert_state.title", { feeds: "GET /internal/alerts — the rule's own sentence", ops: "whole", why: PLATFORM }],
 ]);
 
 /**
@@ -1707,30 +1852,22 @@ async function seedInfrastructure(db: Db): Promise<void> {
   });
 }
 
-/** Every staff-reachable response, as raw text. */
+/** The sweep's terms for one world: its account and mailbox as stored, and a run from inside the login's local part. */
+async function sweepTerms(db: Db, w: World): Promise<SweepTerms> {
+  const login = rowsOf<{ email: string }>(await db.execute(sql`select email from users where account_id = ${w.accountId}`))[0]!.email;
+  const mailbox = rowsOf<{ address: string }>(await db.execute(sql`select address from mailboxes where id = ${w.mailboxId}`))[0]!.address;
+  return {
+    accountId: w.accountId, mailboxId: w.mailboxId, login, mailbox,
+    loginPart: login.slice(0, login.lastIndexOf("@")).slice(2, -2),
+  };
+}
+
+/** Every staff-reachable response, as raw text: each census read as an owner-role session, then the alert observer's. */
 async function staffResponses(
-  deps: ApiDeps, accountId: string,
+  deps: ApiDeps, t: SweepTerms,
 ): Promise<Array<{ path: string; text: string }>> {
   const d = { ...deps, admin: ADMIN, alerts: ALERTS };
-  const out: Array<{ path: string; text: string }> = [];
-  // The funnel's window is around the wall clock: the seeded accounts take the database's own
-  // `now()` as their creation time.
-  const day = 86_400_000;
-  const window = `from=${new Date(Date.now() - 30 * day).toISOString()}&to=${new Date(Date.now() + day).toISOString()}`;
-  for (const path of [
-    ...ADMIN_READS, `/admin/accounts/${accountId}`, `/admin/accounts/${accountId}/staff-activity`,
-    `/admin/accounts?ids=${accountId}`, "/admin/search?q=account", "/admin/sync-roster",
-    `/admin/funnel?${window}`, "/admin/engagement", "/admin/storage", "/admin/staff-activity?reads=1",
-    "/admin/alerts/history",
-  ]) {
-    const res = await H(req("GET", path, asStaff), d);
-    expect(res.status, path).toBe(200);
-    out.push({ path, text: await res.text() });
-  }
-  // The staff list (owner only): a POST read whose session rides in the same header.
-  const list = await H(req("POST", "/admin/staff/list", { ...asStaff, body: "{}" }), d);
-  expect(list.status).toBe(200);
-  out.push({ path: "POST /admin/staff/list", text: await list.text() });
+  const out = (await sweepRoutes(d, STAFF_TOKEN, t, { ops: false })).map(({ path, text }) => ({ path, text }));
   // The OTHER staff credential: the alert observer. `GET /internal/alerts` is the runbook's
   // documented curl and it whole-row-selects `alert_state`.
   const open = await H(req("GET", "/internal/alerts", { bearer: ALERT_SECRET }), d);
@@ -1791,8 +1928,8 @@ describe("no staff surface carries a marker from ANY column of the schema", () =
   });
 
   it("not one of them appears in any staff response", async () => {
-    const { deps, world, sweep } = await taintedWorld();
-    const responses = await staffResponses(deps, world.accountId);
+    const { db, deps, world, sweep } = await taintedWorld();
+    const responses = await staffResponses(deps, await sweepTerms(db, world));
 
     const leaks: string[] = [];
     for (const { path, text } of responses) {
@@ -2029,7 +2166,9 @@ describe("one account's context never carries another account's mail", () => {
     const proof = await H(req("GET", "/mailboxes", { bearer: "tok-alpha" }), deps);
     expect(proof.status, "the seeded session must genuinely authenticate").toBe(200);
 
-    for (const path of [...ADMIN_READS, `/admin/accounts/${beta.accountId}`]) {
+    const paths = adminRoutesInTable.filter((r) => r.method === "GET").map((r) => fill(r.pattern, { id: beta.accountId }));
+    expect(paths).toContain(`/admin/accounts/${beta.accountId}`);
+    for (const path of paths) {
       const res = await H(req("GET", path, { bearer: "tok-alpha" }), d);
       expect(res.status, path).toBe(401);
       const text = await res.text();
@@ -2040,58 +2179,172 @@ describe("one account's context never carries another account's mail", () => {
 });
 
 /* ════════════════════════════════════════════════════════════════════════════════════════
+   The route census
+   ════════════════════════════════════════════════════════════════════════════════════════ */
+
+describe("the sweeps send every /admin route the table mounts", () => {
+  it("names every /admin route in the table, in both directions", () => {
+    expect(
+      adminRoutesInTable.map(keyOf).sort(),
+      "an /admin route the census does not name, or a name the table no longer mounts: classify it in ADMIN_ROUTE_SWEEP",
+    ).toEqual(Object.keys(ADMIN_ROUTE_SWEEP).sort());
+  });
+
+  it("sends every GET as a read, fills every parameter, and keys each query form and body by a route it sends", () => {
+    const gets = adminRoutesInTable.filter((r) => r.method === "GET");
+    expect(gets.length).toBeGreaterThan(0);
+    for (const r of gets) expect(ADMIN_ROUTE_SWEEP[keyOf(r)]?.send, keyOf(r)).toBe("read");
+    expect(() => fill("/admin/mailboxes/:mailboxId", { id: "x" })).toThrow(/:mailboxId/);
+    const sent = Object.entries(ADMIN_ROUTE_SWEEP).filter(([, c]) => c.send !== "exempt").map(([k]) => k);
+    for (const key of [...Object.keys(QUERY_FORMS), ...Object.keys(POST_BODY)]) expect(sent, key).toContain(key);
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════════════════
    The ops role reads the platform, not the people
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
-describe("an ops-only reader is given no address in full", () => {
+const OPS_DOMAIN = "ops-mask.example";
+const MASKED = `•••@${OPS_DOMAIN}`;
+/** A planted column's marker, lowercase so a case-folded answer cannot hide it. */
+const opsMarker = (column: string): string => `zzopsmask_${column.replace(".", "__")}_`;
+const servedToOps = (p: OpsServed): string[] =>
+  [...STAFF_VISIBLE].filter(([, c]) => c.ops === p).map(([k]) => k).sort();
+
+/**
+ * Each masked or withheld column gets its marker, unique per row through `ctid` (the login and
+ * the active mailbox address are unique indexes); a masked one is an address at OPS_DOMAIN.
+ */
+async function plantOpsMarkers(db: Db): Promise<void> {
+  for (const [key, c] of STAFF_VISIBLE) {
+    if (c.ops === "whole") continue;
+    const [table, column] = key.split(".") as [string, string];
+    const tail = c.ops === "masked" ? ` || '@${OPS_DOMAIN}'` : "";
+    await db.execute(sql.raw(
+      `update "${table}" set "${column}" = '${opsMarker(key)}' || regexp_replace(ctid::text, '[^0-9]+', '_', 'g')${tail}`,
+    ));
+  }
+}
+
+/** The answers the field checks read, as one staff session was served them. */
+interface Served {
+  detail: {
+    account: { ownerEmail: string }; users: Array<{ email: string }>;
+    mailboxes: Array<{ address: string; displayName: string | null }>;
+  };
+  roster: { accounts: Array<{ ownerEmail: string }> };
+  batch: { rows: Array<{ ownerEmail: string }> };
+  worker: { roster: Array<{ address: string; displayName: string | null }> };
+  actions: { actions: Array<{ id: string; target: { options: Array<{ label: string }> } }> };
+  search: { results: Array<{ label: string }> };
+}
+
+/**
+ * The fields each masked or withheld column is served in, so a masked one is read as the mask and
+ * a withheld one as null rather than only as a missing marker. A column moved into either posture
+ * fails the census below until it names its fields here.
+ */
+const SERVED_AT: Readonly<Record<string, (s: Served) => Array<string | null>>> = {
+  "users.email": (s) => [
+    s.detail.account.ownerEmail, ...s.detail.users.map((u) => u.email),
+    ...s.roster.accounts.map((a) => a.ownerEmail), ...s.batch.rows.map((a) => a.ownerEmail),
+  ],
+  "mailboxes.address": (s) => [...s.detail.mailboxes.map((m) => m.address), ...s.worker.roster.map((m) => m.address)],
+  "mailboxes.display_name": (s) => [
+    ...s.detail.mailboxes.map((m) => m.displayName), ...s.worker.roster.map((m) => m.displayName),
+  ],
+};
+
+/** The two labels that name an address beside the account: the release target's and the login's search hit's. */
+const addressLabels = (s: Served): { release: string; hit: string } => ({
+  release: s.actions.actions.find((a) => a.id === "resync_mailbox")?.target.options[0]?.label ?? "",
+  hit: s.search.results[0]?.label ?? "",
+});
+
+describe("an ops-only reader is served no customer address whole and no mailbox's name", () => {
+  it("every staff-visible column says what ops is served, and each masked or withheld one where", () => {
+    expect(servedToOps("masked")).toEqual(["mailboxes.address", "users.email"]);
+    expect(servedToOps("withheld")).toEqual(["mailboxes.display_name"]);
+    expect(Object.keys(SERVED_AT).sort()).toEqual([...servedToOps("masked"), ...servedToOps("withheld")].sort());
+  });
+
   /**
-   * The login was masked to its domain for `ops` on the roster, the batch, search and the account
-   * page; the account page's mailboxes, the worker roster and the action catalog's mailbox labels
-   * still answered full mailbox addresses. Every read, as `ops` alone: no address whole. An owner
-   * reading the same world is the control that the addresses are there to find.
+   * Every census route as `ops` alone, in a world whose masked and withheld columns carry a marker:
+   * no answer carries one, a masked field reads `•••@domain`, a withheld one null, and the roster's
+   * search matches only what ops is shown of a login. The controls read the same world: an
+   * owner-role session is served every marker, and sessions holding owner, support or billing
+   * read each field and label whole.
    */
-  it("no read answers ops a mailbox or login address whole, and an owner still reads them", async () => {
+  it("no route serves ops a planted value, and the people roles read them whole", async () => {
     const { db, deps } = await makeDeps();
     const world = await seedWorld(db, "alpha");
     await seedInfrastructure(db);
-    await seedStaffSession(db, { now: FIXED_NOW, token: STAFF_TOKEN, roles: ["ops"] });
-    const OWNER_TOKEN = "content-isolation-owner-session-fixture-token";
-    await seedStaffSession(db, { now: FIXED_NOW, token: OWNER_TOKEN });
-    const login = rowsOf<{ email: string }>(await db.execute(
-      sql`select email from users where account_id = ${world.accountId}`))[0]!.email;
-    const mailbox = "ops-alpha@example.com";
+    await plantOpsMarkers(db);
+    const token = (role: StaffRole): string => `content-isolation-${role}-session-fixture-token`;
+    for (const role of ["ops", "owner", "support", "billing"] as const) {
+      await seedStaffSession(db, { now: FIXED_NOW, token: token(role), roles: [role] });
+    }
     const d = { ...deps, admin: ADMIN };
-    const as = (token: string, path: string) =>
-      H(req("GET", path, { bearer: ADMIN_SECRET, headers: { [STAFF_SESSION_HEADER]: token } }), d);
-    const paths = [
-      ...ADMIN_READS, `/admin/accounts/${world.accountId}`, `/admin/accounts/${world.accountId}/staff-activity`,
-      `/admin/accounts?ids=${world.accountId}`, "/admin/search?q=account", `/admin/search?q=${mailbox}`,
-      "/admin/sync-roster", "/admin/engagement", "/admin/storage", "/admin/staff-activity?reads=1",
-      "/admin/alerts/history",
-    ];
-    const leaks: string[] = [];
-    for (const path of paths) {
-      const res = await as(STAFF_TOKEN, path);
-      expect(res.status, path).toBe(200);
-      const text = await res.text();
-      for (const address of [mailbox, login]) if (text.includes(address)) leaks.push(`${path} <- ${address}`);
-    }
-    expect(leaks, "an ops-only read answered an address whole").toEqual([]);
+    const t = await sweepTerms(db, world);
+    const planted = [...servedToOps("masked"), ...servedToOps("withheld")];
+    // The run searched for lies inside the planted login's local part and in nothing ops is shown.
+    expect(t.login.startsWith(opsMarker("users.email")) && t.login.endsWith(`@${OPS_DOMAIN}`)).toBe(true);
+    expect(`${MASKED} · account alpha`.includes(t.loginPart)).toBe(false);
 
-    // Masked, not dropped: the domain stays, on each read that carries the field.
-    const detail = await (await as(STAFF_TOKEN, `/admin/accounts/${world.accountId}`)).json() as {
-      mailboxes: Array<{ address: string }>;
+    const read = async <T>(role: StaffRole, path: string): Promise<T> => {
+      const res = await H(req("GET", path, { bearer: ADMIN_SECRET, headers: { [STAFF_SESSION_HEADER]: token(role) } }), d);
+      expect(res.status, `${role} ${path}`).toBe(200);
+      return await res.json() as T;
     };
-    expect(detail.mailboxes.map((m) => m.address)).toEqual(["•••@example.com"]);
-    const worker = await (await as(STAFF_TOKEN, "/admin/worker")).json() as { roster: Array<{ address: string }> };
-    expect(worker.roster.map((m) => m.address)).toEqual(["•••@example.com"]);
-    const catalog = JSON.stringify(await (await as(STAFF_TOKEN, "/admin/actions")).json());
-    expect(catalog).toContain("•••@example.com");
+    const servedTo = async (role: StaffRole): Promise<Served> => ({
+      detail: await read<Served["detail"]>(role, `/admin/accounts/${t.accountId}`),
+      roster: await read<Served["roster"]>(role, "/admin/accounts"),
+      batch: await read<Served["batch"]>(role, `/admin/accounts?ids=${t.accountId}`),
+      worker: await read<Served["worker"]>(role, "/admin/worker"),
+      actions: await read<Served["actions"]>(role, "/admin/actions"),
+      search: await read<Served["search"]>(role, `/admin/search?q=${enc(t.login)}`),
+    });
+    const matched = async (role: StaffRole, term: string): Promise<number> =>
+      (await read<{ matched: number }>(role, `/admin/accounts?search=${enc(term)}`)).matched;
 
-    // CONTROL: an owner reads every one of them whole, and the login on the account page.
-    for (const path of [`/admin/accounts/${world.accountId}`, "/admin/worker", "/admin/actions"]) {
-      expect(await (await as(OWNER_TOKEN, path)).text(), path).toContain(mailbox);
+    // Every census route as ops: no answer carries a planted value, in any case.
+    const leaks: string[] = [];
+    for (const a of await sweepRoutes(d, token("ops"), t, { ops: true })) {
+      for (const key of planted) if (a.text.toLowerCase().includes(opsMarker(key))) leaks.push(`${a.path} ← ${key}`);
     }
-    expect(await (await as(OWNER_TOKEN, `/admin/accounts/${world.accountId}`)).text()).toContain(login);
+    // Soft, so one red run names every ops failure below.
+    expect.soft(leaks, `ops was served a planted column:\n${leaks.join("\n")}`).toEqual([]);
+
+    // Masked, not dropped; withheld as null, not as an empty name.
+    const ops = await servedTo("ops");
+    for (const [key, at] of Object.entries(SERVED_AT)) {
+      const values = at(ops);
+      expect.soft(values.length, key).toBeGreaterThan(0);
+      expect.soft(values, key).toEqual(values.map(() => (STAFF_VISIBLE.get(key)?.ops === "masked" ? MASKED : null)));
+    }
+    expect.soft(addressLabels(ops).release).toContain(MASKED);
+    expect.soft(addressLabels(ops).hit).toContain(MASKED);
+    // The roster's search matches what ops is shown of a login, its domain, and never a run of the rest.
+    expect.soft(await matched("ops", t.loginPart), "ops matched a login by a run it is not shown").toBe(0);
+    expect.soft(await matched("ops", OPS_DOMAIN)).toBe(1);
+
+    // CONTROLS, in the same world: an owner-role session is served every planted value somewhere...
+    const owner = await sweepRoutes(d, token("owner"), t, { ops: false });
+    expect(
+      planted.filter((key) => !owner.some((a) => a.text.includes(opsMarker(key)))),
+      "a planted column reached no owner answer",
+    ).toEqual([]);
+    expect(await matched("owner", t.loginPart)).toBe(1);
+    // ...and owner, support and billing read each field and label whole.
+    for (const role of ["owner", "support", "billing"] as const) {
+      const s = await servedTo(role);
+      for (const [key, at] of Object.entries(SERVED_AT)) {
+        const values = at(s);
+        expect(values.length, `${role} ${key}`).toBeGreaterThan(0);
+        expect(values.filter((v) => !v?.startsWith(opsMarker(key))), `${role} ${key}`).toEqual([]);
+      }
+      expect(addressLabels(s).release, role).toContain(t.mailbox);
+      expect(addressLabels(s).hit, role).toContain(t.login);
+    }
   });
 });

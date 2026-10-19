@@ -499,7 +499,7 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
   it("serves all FIVE admin reads, and the alert pass, as the blind role", async () => {
     const now = new Date();
 
-    const page = await adminAccounts(staff, now, {});
+    const page = await adminAccounts(staff, now, {}, { roles: ["owner"] });
     expect(page.total).toBe(1);
     expect(page.accounts[0]!.id).toBe(seeded.accountId);
     expect(page.accounts[0]!.ownerEmail).toBe("owner@example.test");
@@ -517,7 +517,7 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
     expect(Number(changes?.n), "no change_log row was seeded — the null above proves nothing")
       .toBeGreaterThan(0);
 
-    const detail = await adminAccountDetail(staff, now, seeded.accountId);
+    const detail = await adminAccountDetail(staff, now, seeded.accountId, { roles: ["owner"] });
     expect(detail).not.toBeNull();
     expect(detail!.mailboxes).toHaveLength(1);
     expect(detail!.mailboxes[0]!.hasImapCredential).toBe(true);

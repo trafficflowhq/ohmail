@@ -89,7 +89,7 @@ describe("a block survives the projection even when its reason does not", () => 
     const db = await makeTestDb();
     const { accountId } = await seedBlockedMailbox(db, FUTURE_REASON);
 
-    const detail = await adminAccountDetail(db as unknown as AdminDb, NOW, accountId);
+    const detail = await adminAccountDetail(db as unknown as AdminDb, NOW, accountId, { roles: ["owner"] });
     expect(detail, "the account did not project at all").not.toBeNull();
     const [health] = detail!.mailboxes;
 
@@ -137,7 +137,7 @@ describe("a block survives the projection even when its reason does not", () => 
     const db = await makeTestDb();
     const { accountId } = await seedBlockedMailbox(db, "lease_unreadable");
 
-    const detail = await adminAccountDetail(db as unknown as AdminDb, NOW, accountId);
+    const detail = await adminAccountDetail(db as unknown as AdminDb, NOW, accountId, { roles: ["owner"] });
     expect(detail!.mailboxes[0]!.syncBlockedReason).toBe("lease_unreadable");
 
     const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
@@ -155,7 +155,7 @@ describe("a block survives the projection even when its reason does not", () => 
       accountId: a!.id, provider: "imap", address: "calm@a0e.test", status: "connected",
     });
 
-    const detail = await adminAccountDetail(db as unknown as AdminDb, NOW, a!.id);
+    const detail = await adminAccountDetail(db as unknown as AdminDb, NOW, a!.id, { roles: ["owner"] });
     expect(detail!.mailboxes[0]!.syncBlockedReason).toBeNull();
     expect(detail!.mailboxes[0]!.syncBlockedSince).toBeNull();
 

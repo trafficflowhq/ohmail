@@ -34,6 +34,11 @@ service with no channel that builds counts as having none. On upgrade: where onl
 has a channel, `/internal/alerts` lists the other as a warning signal that pages nobody; with no channel on
 either, nothing new is listed.
 
+### Staff with only the operations role see no mailbox sender name
+
+Staff whose only role is operations no longer see a mailbox's sender name, and the account list's search matches
+only what they are shown of a login (its domain). Owners, support and billing see both as before.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

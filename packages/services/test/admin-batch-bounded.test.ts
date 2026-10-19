@@ -82,7 +82,7 @@ describe("the batch by id and the account page are bounded by the ids asked", ()
 
   it("the account page reads its own account and nobody else's", async () => {
     const db = await world();
-    const { value, statements } = await recorded(db, () => adminAccountDetail(db as unknown as AdminDb, NOW, B));
+    const { value, statements } = await recorded(db, () => adminAccountDetail(db as unknown as AdminDb, NOW, B, { roles: ["owner"] }));
     expect(value?.account.id).toBe(B);
     expect(value?.account.mailboxesInError).toBe(1);
     expect(unbounded(statements, [B])).toEqual([]);
@@ -98,7 +98,7 @@ describe("the batch by id and the account page are bounded by the ids asked", ()
 
   it("answers the rows the paged roster answers for the same accounts", async () => {
     const db = await world();
-    const page = await adminAccounts(db as unknown as AdminDb, NOW, { pageSize: 100 });
+    const page = await adminAccounts(db as unknown as AdminDb, NOW, { pageSize: 100 }, { roles: ["owner"] });
     const batch = await adminAccountsByIds(db as unknown as AdminDb, NOW, [A, B, C], { roles: ["owner"] });
     const byId = new Map(page.accounts.map((a) => [a.id, a]));
     expect(batch.rows).toEqual([A, B, C].map((id) => byId.get(id)));
@@ -106,7 +106,7 @@ describe("the batch by id and the account page are bounded by the ids asked", ()
 
   it("CONTROL: the paged roster ranks every account, and the recorder sees the unbounded read", async () => {
     const db = await world();
-    const { statements } = await recorded(db, () => adminAccounts(db as unknown as AdminDb, NOW, {}));
+    const { statements } = await recorded(db, () => adminAccounts(db as unknown as AdminDb, NOW, {}, { roles: ["owner"] }));
     expect(unbounded(statements, [A, B, C]).some((s) => /from "accounts"/.test(s))).toBe(true);
   });
 });

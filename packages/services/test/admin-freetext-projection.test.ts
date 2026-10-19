@@ -50,7 +50,7 @@ describe("the staff projection reads the closed set, not the column", () => {
     await seed(db as Db, {
       errorCode: PLANTED_CODE, errorDetail: PLANTED_DETAIL, action: PLANTED_ACTION,
     });
-    const detail = await adminAccountDetail(db as never, NOW, ACCT);
+    const detail = await adminAccountDetail(db as never, NOW, ACCT, { roles: ["owner"] });
     expect(detail).not.toBeNull();
 
     const box = detail!.mailboxes[0]!;
@@ -69,7 +69,7 @@ describe("the staff projection reads the closed set, not the column", () => {
     await seed(db as Db, {
       errorCode: "auth", errorDetail: "AUTHENTICATIONFAILED", action: "admin.mailbox.resync",
     });
-    const detail = await adminAccountDetail(db as never, NOW, ACCT);
+    const detail = await adminAccountDetail(db as never, NOW, ACCT, { roles: ["owner"] });
     expect(detail!.mailboxes[0]!.lastError).toBe("auth: AUTHENTICATIONFAILED");
     expect(detail!.audit.map((a) => a.action)).toEqual(["admin.mailbox.resync"]);
   });
@@ -80,7 +80,7 @@ describe("the staff projection reads the closed set, not the column", () => {
       errorCode: null, errorDetail: null, action: "admin.mailbox.resync",
     });
     // `unknown`, not `other`: nothing was recorded, which is not the same as a foreign word.
-    expect((await adminAccountDetail(db as never, NOW, ACCT))!.mailboxes[0]!.lastError)
+    expect((await adminAccountDetail(db as never, NOW, ACCT, { roles: ["owner"] }))!.mailboxes[0]!.lastError)
       .toBe("unknown");
   });
 });

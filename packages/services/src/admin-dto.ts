@@ -291,7 +291,9 @@ export interface AccountPage {
 export interface MailboxHealth {
   id: string;
   accountId: string;
+  /** `•••@domain` for a reader holding no people role (`ops` alone). */
   address: string;
+  /** Null for a reader holding no people role (`ops` alone). */
   displayName: string | null;
   provider: string;
   authKind: "password" | "oauth";
@@ -786,8 +788,9 @@ export interface AdminOwedReversals {
 /**
  * `GET /admin/accounts/:id`. A superset of {@link AccountDetail}: `audit` and
  * `securityEvents` stay so a console reading the older shape keeps working. `staffActions` is
- * the last 20 non-read staff events on this account; `ownerEmail` and every user's `email` are
- * masked for the `ops` role.
+ * the last 20 non-read staff events on this account. For a reader holding no people role (`ops`
+ * alone), `ownerEmail`, every user's `email` and every mailbox's `address` are masked to their
+ * domain and every mailbox's `displayName` is null.
  */
 export interface AccountDetailV2 {
   now: string;

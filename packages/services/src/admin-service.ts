@@ -156,8 +156,11 @@ export function adminAttentionRank(account: AccountSummary): number {
  * Every account's summary, or only the accounts `ids` names (uuid-checked by the caller). The
  * bounded form reads `accounts`, `users` and `mailboxes` by those ids alone: the batch and the
  * account page answer for at most a hundred accounts and must not cost a scan of all of them.
+ * Each account's login (its first user's) is served as `reader` may read it.
  */
-async function loadRoster(db: AdminDb, now: Date, ids: readonly string[] | null = null): Promise<AccountSummary[]> {
+async function loadRoster(
+  db: AdminDb, now: Date, ids: readonly string[] | null, reader: AdminReader,
+): Promise<AccountSummary[]> {
   if (ids !== null && ids.length === 0) return [];
   const accountRows = await db
     .select({ id: accounts.id, name: accounts.name, createdAt: accounts.createdAt })
@@ -218,12 +221,13 @@ async function loadRoster(db: AdminDb, now: Date, ids: readonly string[] | null 
    * information. The way back for change VOLUME: a deployment-wide count with no `account_id`.
    */
 
+  const address = addressFor(reader);
   return accountRows.map((account) => {
     const mb = mailboxByAccount.get(account.id);
     return {
       id: account.id,
       name: account.name,
-      ownerEmail: ownerEmail.get(account.id)?.email ?? "",
+      ownerEmail: address(ownerEmail.get(account.id)?.email ?? ""),
       mailboxCount: int(mb?.total),
       mailboxesInError: int(mb?.inError),
       mailboxesBlocked: int(mb?.blocked),
@@ -239,10 +243,13 @@ async function loadRoster(db: AdminDb, now: Date, ids: readonly string[] | null 
 
 /**
  * `AccountQuery` → `AccountPage`. The predicates, the order and the clamping are the same
- * rules the console's own roster selection applies to fixtures.
+ * rules the console's own roster selection applies to fixtures. The search reads the login as
+ * `reader` is served it, so a masked reader matches its domain and never a run of the rest.
  */
-export async function adminAccounts(db: AdminDb, now: Date, query: AccountQuery = {}): Promise<AccountPage> {
-  const roster = await loadRoster(db, now);
+export async function adminAccounts(
+  db: AdminDb, now: Date, query: AccountQuery, reader: AdminReader,
+): Promise<AccountPage> {
+  const roster = await loadRoster(db, now, null, reader);
   const filter = query.filter ?? "all";
   const search = fold((query.search ?? "").trim());
   const pageSize = Math.min(
@@ -298,7 +305,13 @@ function lastErrorWord(code: string | null, detail: string | null): string {
   return suffix === null ? word : `${word}: ${suffix}`;
 }
 
-async function loadMailboxes(db: AdminDb, now: Date, accountIds: string[] | null): Promise<MailboxHealth[]> {
+/**
+ * The mailboxes of `accountIds`, or the roster's first `ADMIN_ROSTER_LIMIT` when null. A reader
+ * that is served addresses masked gets the address as its domain and no display name.
+ */
+async function loadMailboxes(
+  db: AdminDb, now: Date, accountIds: string[] | null, reader: AdminReader,
+): Promise<MailboxHealth[]> {
   const base = db
     .select({
       id: mailboxes.id,
@@ -333,12 +346,15 @@ async function loadMailboxes(db: AdminDb, now: Date, accountIds: string[] | null
     .where(and(inArray(mailboxCredentials.mailboxId, ids), eq(mailboxCredentials.transport, "imap")));
   const hasCred = new Set(credRows.map((r) => r.mailboxId));
 
+  const address = addressFor(reader);
+  // The name a person sends as goes with the address: withheld where the address is masked.
+  const named = !readerMasksAddresses(reader);
   return rows.map((row) => {
     return {
       id: row.id,
       accountId: row.accountId,
-      address: row.address,
-      displayName: row.displayName,
+      address: address(row.address),
+      displayName: named ? row.displayName : null,
       provider: row.provider,
       authKind: row.authKind === "oauth" ? "oauth" : "password",
       status: row.status === "error" || row.status === "disabled" ? row.status : "connected",
@@ -486,10 +502,21 @@ export interface AdminViewer extends AdminReader {
   staffId: string;
 }
 
-/** `ops` reads the platform, not the people: login addresses are masked to their domain. */
+/** The roles that work with people, and are served a customer's address whole. */
+const PEOPLE_ROLES: readonly StaffRole[] = ["support", "billing", "owner"];
+
+/**
+ * `ops` reads the platform, not the people: a reader holding none of the people roles is served
+ * every customer address (the login and each mailbox) masked to its domain, and no mailbox
+ * display name. Fail closed: a reader with no role, or a role added later, is masked too.
+ */
 export const readerMasksAddresses = (reader: AdminReader): boolean =>
-  !reader.roles.includes("owner") && reader.roles.includes("ops")
-  && !reader.roles.includes("support") && !reader.roles.includes("billing");
+  !reader.roles.some((r) => PEOPLE_ROLES.includes(r));
+
+/** A customer address as `reader` is served it: whole for a people role, else `•••@domain`; empty stays empty. */
+export function addressFor(reader: AdminReader): (raw: string) => string {
+  return readerMasksAddresses(reader) ? (raw) => (raw === "" ? raw : maskAddress(raw)) : (raw) => raw;
+}
 
 /**
  * The roles the entitlements program serves its whole account view to (support, billing,
@@ -649,21 +676,20 @@ async function loadStaffEvents(
  * never read. Sequential reads on the `max: 1` blind pool, like every admin read group.
  */
 export async function adminAccountDetail(
-  db: AdminDb, now: Date, id: string, reader: AdminReader = { roles: ["owner"] },
+  db: AdminDb, now: Date, id: string, reader: AdminReader,
 ): Promise<AccountDetailV2 | null> {
   // A malformed id must be a 404, not a Postgres `invalid input syntax for type uuid` 500 —
   // the path segment is whatever the caller typed.
   if (!UUID_RE.test(id)) return null;
-  const [summary] = await loadRoster(db, now, [id.toLowerCase()]);
+  const [summary] = await loadRoster(db, now, [id.toLowerCase()], reader);
   if (!summary) return null;
-  const mask = readerMasksAddresses(reader);
 
   const [accountRow] = await db
     .select({ erasedAt: accounts.erasedAt }).from(accounts).where(eq(accounts.id, id)).limit(1);
   const userRows = await db
     .select({ id: users.id, email: users.email, createdAt: users.createdAt, emailVerifiedAt: users.emailVerifiedAt })
     .from(users).where(eq(users.accountId, id)).orderBy(users.createdAt);
-  const mailboxList = await loadMailboxes(db, now, [id]);
+  const mailboxList = await loadMailboxes(db, now, [id], reader);
   const organizer = await loadOrganizerFacts(db, id);
   const notices = await db
     .select({ kind: accountLifecycleNotices.kind, anchor: accountLifecycleNotices.anchor, sentAt: accountLifecycleNotices.sentAt })
@@ -703,21 +729,18 @@ export async function adminAccountDetail(
   const audit = await loadAudit(db, id);
   const securityEvents = await loadSecurityEvents(db, id);
 
-  const address = (email: string): string => (mask ? maskAddress(email) : email);
+  const address = addressFor(reader);
   return {
     now: now.toISOString(),
-    account: {
-      ...summary,
-      ownerEmail: summary.ownerEmail ? address(summary.ownerEmail) : "",
-      erasedAt: iso(accountRow?.erasedAt ?? null),
-    },
+    // The roster and the mailboxes arrive served as `reader` may read them.
+    account: { ...summary, erasedAt: iso(accountRow?.erasedAt ?? null) },
     users: userRows.map((u) => ({
       id: u.id, email: address(u.email), createdAt: asDate(u.createdAt).toISOString(),
       emailVerifiedAt: iso(u.emailVerifiedAt), lastLoginAt: null,
     })),
     mailboxes: mailboxList.flatMap((m) => {
       const o = organizer.get(m.id);
-      return o ? [{ ...m, ...o, address: address(m.address) }] : [];
+      return o ? [{ ...m, ...o }] : [];
     }),
     lifecycleNotices: notices.map((n) => ({
       kind: n.kind as AdminLifecycleNotice["kind"], anchor: asDate(n.anchor).toISOString(), sentAt: asDate(n.sentAt).toISOString(),
@@ -835,14 +858,12 @@ export async function adminSearch(db: AdminDb, now: Date, raw: string, reader: A
     .select({ id: accounts.id, name: accounts.name, erasedAt: accounts.erasedAt })
     .from(accounts).where(inArray(accounts.id, hits));
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const owners = await ownerEmails(db, hits);
-  const mask = readerMasksAddresses(reader);
+  const owners = await ownerEmails(db, hits, reader);
   const results = hits
     .filter((id) => byId.has(id))
     .map((id): AdminSearchResult => {
       const row = byId.get(id)!;
-      const owner = owners.get(id) ?? "";
-      const who = mask && owner ? maskAddress(owner) : owner;
+      const who = owners.get(id) ?? "";
       return {
         accountId: id,
         matchedOn: found.get(id)!,
@@ -860,15 +881,14 @@ export async function adminAccountsByIds(
   db: AdminDb, now: Date, ids: readonly string[], reader: AdminReader,
 ): Promise<AccountBatch> {
   const wanted = ids.map((x) => x.trim().toLowerCase());
-  const roster = await loadRoster(db, now, [...new Set(wanted.filter((id) => UUID_RE.test(id)))]);
+  const roster = await loadRoster(db, now, [...new Set(wanted.filter((id) => UUID_RE.test(id)))], reader);
   const byId = new Map(roster.map((a) => [a.id, a]));
-  const mask = readerMasksAddresses(reader);
   const rows: AccountSummary[] = [];
   const unknownIds: string[] = [];
   for (const id of wanted) {
     const a = UUID_RE.test(id) ? byId.get(id) : undefined;
     if (!a) unknownIds.push(id);
-    else rows.push(mask && a.ownerEmail ? { ...a, ownerEmail: maskAddress(a.ownerEmail) } : a);
+    else rows.push(a);
   }
   return { now: now.toISOString(), rows, unknownIds };
 }
@@ -1449,10 +1469,9 @@ export async function adminWorker(
   // blind pool deadlock when one of them opens a transaction. This pair hung /admin/worker
   // for its whole life.
   const instances = await adminWorkerInstances(db, now);
-  const roster = await loadMailboxes(db, now, null);
+  // Served as `reader` may read it: `ops` reads the platform, not the people.
+  const roster = await loadMailboxes(db, now, null, reader);
   const names = await accountNames(db, roster.map((m) => m.accountId));
-  // `ops` reads the platform, not the people: mailbox addresses masked as the login is.
-  const mask = readerMasksAddresses(reader);
 
   /**
    * The population, from SQL — the roster above is capped at `ADMIN_ROSTER_LIMIT`. The verdict
@@ -1482,9 +1501,7 @@ export async function adminWorker(
   return {
     now: now.toISOString(),
     instances,
-    roster: roster.map((m) => ({
-      ...m, address: mask ? maskAddress(m.address) : m.address, accountName: names.get(m.accountId) ?? "",
-    })),
+    roster: roster.map((m) => ({ ...m, accountName: names.get(m.accountId) ?? "" })),
     rosterCounts: {
       total: int(counts?.total),
       inError: int(counts?.inError),
@@ -1585,25 +1602,15 @@ export async function adminActions(
     ADMIN_LIST_LIMIT,
   );
   const names = new Map(accountRows.map((a) => [a.id, a.name]));
-  const owners = await ownerEmails(db, accountRows.map((a) => a.id));
 
-  // An ERASED account (Art. 17 anonymises rather than deletes) has neither a name nor an owner
-  // address, so the fixture-era `name · email` template renders a bare separator. Both halves
-  // are conditional, and the label falls back to the id: an option an operator cannot tell
-  // apart from the next one is not a choice.
-  const accountOptions = accountRows.map((a) => {
-    const owner = owners.get(a.id) ?? "";
-    const parts = [a.name, owner].filter((p) => p.length > 0);
-    return { id: a.id, label: parts.length > 0 ? parts.join(" · ") : `${a.id} (no name or owner on record)` };
-  });
   const withAccount = (head: string, accountId: string): string => {
     const name = names.get(accountId) ?? "";
     return name.length > 0 ? `${head} · ${name}` : head;
   };
-  // `ops` picks a mailbox by its id; the label names the address masked as the login is.
-  const mask = readerMasksAddresses(reader);
+  // A mailbox is picked by its id; the label names its address as `reader` may read it.
+  const address = addressFor(reader);
   const mailboxOptions = mailboxRows.map((m) => ({
-    id: m.id, label: withAccount(mask ? maskAddress(m.address) : m.address, m.accountId),
+    id: m.id, label: withAccount(address(m.address), m.accountId),
   }));
   // The send's own id, never its idempotency key — see `staleSends` in `adminWorker` for why
   // the key does not leave the database. `id` is what `admin.send.retry` targets anyway.
@@ -1680,7 +1687,8 @@ export async function adminActions(
   };
 }
 
-async function ownerEmails(db: AdminDb, accountIds: string[]): Promise<Map<string, string>> {
+/** Each account's owner login (its oldest user), served as `reader` may read it. */
+async function ownerEmails(db: AdminDb, accountIds: string[], reader: AdminReader): Promise<Map<string, string>> {
   if (accountIds.length === 0) return new Map();
   const rows = await db
     .select({ accountId: users.accountId, email: users.email, createdAt: users.createdAt })
@@ -1693,6 +1701,7 @@ async function ownerEmails(db: AdminDb, accountIds: string[]): Promise<Map<strin
       out.set(row.accountId, { email: row.email, createdAt: row.createdAt });
     }
   }
-  return new Map([...out].map(([k, v]) => [k, v.email]));
+  const address = addressFor(reader);
+  return new Map([...out].map(([k, v]) => [k, address(v.email)]));
 }
 
