@@ -2,23 +2,23 @@
 
 /**
  * Everything from and to one address — `#/address/<addr>`: one list, newest first, with a direction toggle. It
- * consumes `shell/address-view.ts` and nothing else; that module's header explains why the halves are unequal (the
- * archive is searchable by SENDER only) — this file is what a person sees.
+ * consumes `shell/address-view.ts` and nothing else; that module's header explains when the halves are unequal (a
+ * server before mail 0154 searches the archive by SENDER only) — this file is what a person sees.
  */
 
 /**
  * The anatomy: the header (name when any mail carries one, address beside it; a long address wraps at 390px); the
  * toggle (All · From them · To them, with live counts); the count line (device first — the number a reader can check
- * by counting — the archive slot filling in beside it, and on To them a NAMED line, never a number that would have to
- * be zero: "the archive cannot be searched by recipient yet", each caveat carrying a Gloss); the list
+ * by counting — the archive slot filling in beside it, and on To them against an older server a NAMED line, never a
+ * number that would have to be zero: "the archive cannot be searched by recipient yet", each caveat carrying a Gloss); the list
  * (`SearchHitRow`, a sent copy reading "Sent" via `placeLabel`); the empty state names the address in the direction's
  * own words, with the count line under it, so an empty list mid-answer never reads as an empty corpus.
  */
 
 /**
- * Which rows the archive may add: it answers ONE direction (`from`), so its rows belong under All
- * and From them, never under To them — mail the address SENT listed as mail sent TO it is the false
- * claim the contract's header warns against. {@link archiveRowsBelong} is that rule, applied twice
+ * Which rows the archive may add: each answer is about ONE direction, so its rows belong under All
+ * and that direction, never another — an older server's `from` rows listed under To them are the
+ * false claim the contract's header warns against. {@link archiveRowsBelong} is that rule, applied twice
  * on purpose (the contract holds rows back; this file applies the same rule to what it renders) and
  * a third time for the toggle's numbers, where it is the only thing deciding them. Keyboard: tab
  * order is the reading order; Escape leaves through `onExit` and is in the `?` sheet; `/` still

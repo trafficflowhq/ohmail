@@ -844,6 +844,9 @@ describe("the baseline cutoff is frozen", () => {
       // The rule key of routing_decisions recreated with ON DELETE SET NULL, NOT VALID: drop-then-add
       // under one name, no data. Safe over any history.
       "0153_rule_revoke_keeps_its_decisions",
+      // The recipient keys: CREATE OR REPLACE FUNCTION and CREATE INDEX IF NOT EXISTS, no column and
+      // no data. Safe over any history.
+      "0154_messages_recipient_keys",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

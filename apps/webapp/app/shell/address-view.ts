@@ -3,12 +3,12 @@
 /**
  * Everything from and to one address. `#/address/<addr>` shows mail the address sent and mail sent to
  * it, newest first, with a direction toggle; this module is the whole of what the view consumes. The
- * halves are unequal: the device answers all directions from the mirror (`SearchIndex.messagesWith`,
- * lowercased postings over `from.address`, `to[]`, `cc[]`); the archive answers only `from` — the
- * recipients are two unindexed JSONB columns, and a recipient index is a migration with a backfill,
- * not this change. So {@link AddressView.coverage} is the field the view must render a sentence from:
- * `senders-only` means mail sent TO the address older than this mirror is missing and we know it. The
- * toggle never reaches the wire — one archive request per opened view, for `from`, whatever it says.
+ * device answers all directions from the mirror (`SearchIndex.messagesWith`, lowercased postings over
+ * `from.address`, `to[]`, `cc[]`); the archive answers all three since mail 0154's recipient index,
+ * and a server before it answers `from` only (the engine re-asks `from` on its refusal). So
+ * {@link AddressView.coverage} is the field the view must render a sentence from: `senders-only` means
+ * mail sent TO the address older than this mirror is missing and we know it. The toggle reaches the
+ * wire: one archive request per (address, direction), and a toggle back re-uses the answer held.
  */
 
 /**
@@ -82,8 +82,8 @@ function passSignal() {
 
 /**
  * Does the archive's answer cover the direction on screen? Derived here rather than worked out by the
- * view, because getting it wrong is silent: the archive answers `from` always, so a view comparing
- * nothing renders the from-half under "To them" and the numbers add up. `complete` — the archive
+ * view, because getting it wrong is silent: a server before mail 0154 answers `from` always, so a view
+ * comparing nothing renders the from-half under "To them" and the numbers add up. `complete` — the archive
  * answered the direction being shown (or is unavailable/failed and the view states that instead).
  * `senders-only` — the archive answered `from` while the view shows "All" or "To them"; the view
  * must say that mail sent TO this address, older than this device's mirror, is not in the list. The
@@ -179,7 +179,10 @@ export function useAddressView({
     [engine, address, direction, version],
   );
 
-  const [pass, setPass] = useState<{ address: string; outcome: AddressArchive } | null>(null);
+  const [pass, setPass] = useState<{ address: string; direction: AddressDirection; outcome: AddressArchive } | null>(null);
+  /** Answers already held for this address, per direction: a toggle back shows one at once, asking nothing. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const held = useMemo(() => new Map<string, AddressArchive>(), [engine, limit, address]);
   /**
    * A human press on a failed pass, and nothing else, re-issues the request. A counter rather than a
    * boolean: two presses on a door that keeps refusing must be two requests — a boolean's second
@@ -200,10 +203,11 @@ export function useAddressView({
     drains: { completed: () => engine.drainsCompleted(), subscribe: (cb) => engine.subscribe(cb) },
   }), [engine, signal]);
   useEffect(() => rule.attach(), [rule]);
-  const put = useCallback((next: { address: string; outcome: AddressArchive }): void => {
+  const put = useCallback((next: { address: string; direction: AddressDirection; outcome: AddressArchive }): void => {
     signal.set(next.outcome);
+    if (next.outcome.state === "ready") held.set(JSON.stringify([next.address, next.direction]), next.outcome);
     setPass(next);
-  }, [signal]);
+  }, [signal, held]);
 
   useEffect(() => {
     if (address.trim() === "") {
@@ -213,25 +217,32 @@ export function useAddressView({
       // branch with an empty segment), which is exactly why it is worth stating rather than
       // leaving to a fallback: this is the shape a reader takes for a guarantee.
       //
-      // `ready` with nothing, and the direction the archive serves — byte for byte what
+      // `ready` with nothing, in the direction on screen — byte for byte what
       // `OhmailEngine.searchAddressServer` itself answers for a blank address, so the contract
       // and the engine cannot disagree about what "nothing to ask" looks like.
-      put({ address, outcome: { state: "ready", items: [], total: 0, direction: "from", importing: false } });
+      put({ address, direction, outcome: { state: "ready", items: [], total: 0, direction, importing: false } });
       return;
     }
     if (!available) {
-      put({ address, outcome: { state: "unavailable" } });
+      put({ address, direction, outcome: { state: "unavailable" } });
+      return;
+    }
+    // Only answers are held, so a failed direction is always asked again.
+    const kept = held.get(JSON.stringify([address, direction]));
+    if (kept) {
+      put({ address, direction, outcome: kept });
       return;
     }
     let live = true;
-    put({ address, outcome: { state: "searching" } });
+    put({ address, direction, outcome: { state: "searching" } });
     // `searchAddressServer` never rejects — the outcome is a value the view renders, so there is
     // no unhandled promise here and no error boundary over somebody's mailbox.
-    void engine.searchAddressServer(address, { ...(limit !== undefined ? { limit } : {}) })
+    void engine.searchAddressServer(address, { direction, ...(limit !== undefined ? { limit } : {}) })
       .then((outcome: ServerAddressOutcome) => {
         if (!live) return;
         put({
           address,
+          direction,
           outcome:
             outcome.state === "ready"
               ? {
@@ -252,28 +263,23 @@ export function useAddressView({
     return () => {
       live = false;
     };
-    // `direction` is DELIBERATELY NOT a dependency: the archive answers `from` whatever the
-    // toggle says, so a toggle press must not re-issue the request. Re-fetching would spend a
-    // round trip to receive the identical rows, and would blank the archive's half of the count
-    // line while it was in flight — a number that flickers on a control that changed nothing
-    // about what was asked.
-  }, [engine, address, available, limit, retryTick, put]);
+  }, [engine, address, direction, available, limit, retryTick, put, held]);
 
-  /** The archive's answer, but only while it still belongs to the address on screen. */
+  /** The archive's answer, but only while it still belongs to the address and direction on screen. */
   const archive: AddressArchive =
-    pass && pass.address === address ? pass.outcome : { state: "searching" };
+    pass && pass.address === address && pass.direction === direction ? pass.outcome
+      : held.get(JSON.stringify([address, direction])) ?? { state: "searching" };
 
   const items = useMemo<AddressHit[]>(() => {
     const rows: AddressHit[] = device.items.map((hit) => ({ hit, archiveOnly: false }));
     if (archive.state !== "ready") return rows;
     /**
-     * The archive's rows only where they answer the question on screen. The archive answers one
+     * The archive's rows only where they answer the question on screen. An answer is about one
      * direction; its rows belong in a list showing everything or exactly that direction — nowhere
-     * else. Appending them under every direction put mail the address SENT into a list titled
-     * "To them": the false claim this module's header warns against, arriving with a 200.
-     * `direction === archive.direction` rather than the literal `"from"`, so the day the recipient
-     * index lands this needs no edit — and it is the conservative side: an archive answering `any`
-     * under a screen showing `from` contributes nothing. The view applies the same rule to what it
+     * else. An older server's `from` rows under "To them" would put mail the address SENT into a
+     * list titled "To them": the false claim this module's header warns against, with a 200.
+     * `direction === archive.direction`, the conservative side: an archive answering `any` under a
+     * screen showing `from` contributes nothing. The view applies the same rule to what it
      * renders; this one decides what the contract yields, and its absence is the silent one.
      */
     if (!(direction === "any" || direction === archive.direction)) return rows;
@@ -290,8 +296,8 @@ export function useAddressView({
   /**
    * `senders-only` exactly when the archive ANSWERED and answered a narrower direction than the
    * one on screen. Keyed on the answer's own `direction` rather than on "the toggle is not
-   * `from`", so the day the recipient index lands and the server answers `any`, this goes
-   * `complete` on its own and the view's caveat disappears without a code change here.
+   * `from`": a server with the recipient index answers the direction asked and this is
+   * `complete`; one before it answers `from` and the caveat stays.
    */
   /**
    * A blank address is not a question, so it has no shortfall — its own case, not folded into "the

@@ -13,6 +13,11 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The address view finds mail sent to someone in your whole mailbox
+
+Address view: 'To them' and 'All' now reach the whole archive, not only this device's mail. On a server
+that has not upgraded yet, the view still says the archive can only be searched by sender.
+
 ### The first decision waits for the Screener
 
 After you agree, setup now waits a few seconds for the senders it will hold in the Screener before it says

@@ -231,6 +231,9 @@ export default defineConfig({
       "packages/services/test/search-punctuation-parity.test.ts",
       // The device answers what the server answers: stems, joined forms, part-words (the census).
       "packages/services/test/search-device-parity.test.ts",
+      /* The address search by recipient: mail 0154's side table on this store. */
+      "packages/services/test/search-address-recipients.test.ts",
+      "packages/db/test/sqlite-recipients.test.ts",
       "packages/services/test/search-page-fused-date.test.ts",
       "packages/services/test/search-eszett-fold.test.ts",
       "packages/api/test/search.test.ts",

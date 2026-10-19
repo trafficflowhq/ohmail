@@ -106,16 +106,27 @@ const isExplain = (st: SQL): boolean => /^\s*explain\b/i.test(textOf(st));
 const aWords = (g: SQL, part: string, count: SQL): SQL =>
   sql`(select string_agg('w' || floor(5000 * power(${draw(A_SALT, g, sql`${part} || i`)}, 4))::int, ' ' order by i) from generate_series(1, ${count}) i)`;
 
+/**
+ * A's recipients, for the address arm by recipient (mail 0154): its own address in To of every
+ * message, a rare contact in To of one in 3083, a mid one in Cc of one in 50.
+ */
+const OWN = "Me@A.example";
+const RARE = "rare@contact.example";
+const MID = "mid@contact.example";
+
 async function seed(acct: string, n: number): Promise<void> {
   const [mb] = await base.insert(mailboxes).values({ accountId: acct, provider: "imap", address: `${acct.slice(0, 8)}@tf.example` }).returning();
   await base.execute(sql`
-    insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator)
+    insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator, to_addresses, cc_addresses)
     select ${idOf(acct, sql`g`)}, ${acct}::uuid, ${mb!.id}::uuid, 'h', 'budget:' || ${acct} || ':' || g,
       case when g % 200 = 0 then 'myAXA Portal ' || (g % 97)
            else ${aWords(sql`g`, "s", sql`3 + (g % 4)`)} end,
       case when g % 333 = 0 then 'news@axa.example' else 'sender' || (g % 2000) || '@dom' || (g % 300) || '.example' end,
       timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g * 97), g % 3 = 0, g % 10 = 0,
-      jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g)
+      jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g),
+      jsonb_build_array(jsonb_build_object('name', null, 'address', ${OWN}::text))
+        || case when g % 3083 = 7 then jsonb_build_array(jsonb_build_object('name', null, 'address', ${RARE}::text)) else '[]'::jsonb end,
+      case when g % 50 = 3 then jsonb_build_array(jsonb_build_object('name', 'Mid', 'address', ${MID}::text)) else '[]'::jsonb end
     from generate_series(1, ${n}) g`);
   await base.execute(sql`
     insert into message_bodies (message_id, text)
@@ -475,6 +486,64 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       for (const st of reads) expect(await seqScans(st, session), h.q).toEqual([]);
     }
   }, 300_000);
+
+  /**
+   * THE ADDRESS ARM BY RECIPIENT (mail 0154) on A's N messages: the own address in To of every
+   * one (the dense walk), a rare contact (the index read), a mid one, `any` over the own address,
+   * and `from` as the control. The whole answer — count, page and its rows — inside the budget at
+   * p95; the same statements a page as `from`; no statement scans a table.
+   */
+  const ADDRESS_CLASSES = [
+    { cls: "to rare", address: RARE, direction: "to", total: 25 },
+    { cls: "to mid", address: MID, direction: "to", total: 1480 },
+    { cls: "to own", address: OWN, direction: "to", total: N },
+    { cls: "any own", address: OWN.toLowerCase(), direction: "any", total: N },
+    { cls: "any rare", address: RARE, direction: "any", total: 25 },
+    { cls: "from", address: "news@axa.example", direction: "from", total: 222 },
+  ] as const;
+
+  it(`the address arm, every direction, answers inside ${BUDGET_MS} ms at p95 and scans no table`, async () => {
+    const svc = new SearchService();
+    const count = { n: 0 };
+    const counting = latent(base as object, 0, count);
+    const at = { ...ctx(), db: counting as never };
+    const statements: Record<string, number> = {};
+    for (const c of ADDRESS_CLASSES) {
+      count.n = 0;
+      const r = await svc.searchByAddress(at, { address: c.address, direction: c.direction });
+      statements[c.cls] = count.n;
+      expect(r.total, c.cls).toBe(c.total);
+      expect(r.items.length, c.cls).toBe(Math.min(50, c.total));
+      expect(r.direction).toBe(c.direction);
+    }
+    // The same round trips a page whatever the direction: begin, settings, count, commit, page, rows.
+    for (const c of ADDRESS_CLASSES) expect(statements[c.cls], `${c.cls} statements`).toBe(statements.from);
+    expect(statements.from).toBeLessThanOrEqual(6);
+    const best = await bestOfRounds("address", async () => {
+      const figures: Record<string, number> = {};
+      for (const c of ADDRESS_CLASSES) {
+        const ms: number[] = [];
+        for (let i = 0; i < 20; i++) {
+          const t = performance.now();
+          await svc.searchByAddress(ctx(), { address: c.address, direction: c.direction });
+          ms.push(Math.round(performance.now() - t));
+        }
+        figures[c.cls] = p95Of(ms);
+      }
+      return figures;
+    });
+    for (const c of ADDRESS_CLASSES) {
+      expect(best[c.cls]!, `${c.cls} p95, the best of ${ROUNDS} rounds; the run's quietest reference ${quietest.toFixed(1)} ms`).toBeLessThanOrEqual(BUDGET_MS);
+    }
+    for (const c of ADDRESS_CLASSES) {
+      seen.length = 0;
+      await svc.searchByAddress(ctx(), { address: c.address, direction: c.direction });
+      const session = seen.filter(isSession);
+      const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
+      expect(reads.length).toBeGreaterThan(0);
+      for (const st of reads) expect(await seqScans(st, session), c.cls).toEqual([]);
+    }
+  }, 600_000);
 
   it("a broad page says its total is a lower bound, and the summary answers it exactly", async () => {
     const svc = new SearchService();

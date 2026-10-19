@@ -340,6 +340,9 @@ export function pgDialect(): Dialect {
             : [],
         };
       },
+      // Textually the index's expression over `m` (mail 0154), or the planner cannot use it.
+      recipient: ({ accountId, address }): SQL =>
+        sql`messages_recipient_keys(m.account_id, m.to_addresses, m.cc_addresses) @> array[${accountId}::text || ':' || lower(${address})]`,
       searchSession: (opts): SQL | null => {
         const sets: SQL[] = [];
         if (opts.typoThreshold !== undefined) {

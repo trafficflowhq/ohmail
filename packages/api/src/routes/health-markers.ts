@@ -897,6 +897,9 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // and a second entry for one index is never found.
   ["message_search_head_tsv_idx", "ON public.message_search USING gin (head_tsv) WITH (gin_pending_list_limit='256')"],
   ["message_search_text_tsv_idx", "ON public.message_search USING gin (text_tsv) WITH (gin_pending_list_limit='256')"],
+  // mail 0154_messages_recipient_keys. NOT silent: the address search's `to` and `any` name its
+  // function, so an API ahead of the migration answers them 42883. Deploy order migration → API.
+  ["messages_recipient_keys_idx", "ON public.messages USING gin (messages_recipient_keys(account_id, to_addresses, cc_addresses))"],
   // mail 0018_login_email_identity, listed last because it was found last. The SILENT kind: the
   // registration's check reads before it inserts, so only this index serializes two registrations
   // of one address, and `register` catches its 23505. Absent, both commit and a login opens

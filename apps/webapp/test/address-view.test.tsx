@@ -17,18 +17,17 @@ import { useAddressView, messagesWith, type AddressView } from "../app/shell/add
 /**
  * ═══ THE ADDRESS VIEW'S CONTRACT — the only thing the view is allowed to consume ═══════════
  *
- * The two halves are unequal and the view must not smooth that over. The DEVICE answers all
- * three directions off the mirror; the ARCHIVE answers `from` and refuses the other two, because
- * the recipients are two unindexed JSONB columns on the server. So the properties under test
- * here are the ones that keep a partial answer from reading as a complete one:
+ * The DEVICE answers all three directions off the mirror; the ARCHIVE answers all three too since
+ * mail 0154, but a server that predates it answers `from` only (the engine falls back), and the
+ * view must not smooth that over. So the properties under test are the ones that keep a partial
+ * answer from reading as a complete one:
  *
  *  1. `coverage` is `senders-only` exactly when the archive answered a NARROWER direction than
  *     the one on screen. This is the field the view renders its caveat from, and getting it
- *     wrong is silent: the archive always answers `from`, so a view comparing nothing renders
- *     the from-half under "To them" and every number adds up.
- *  2. THE TOGGLE NEVER REACHES THE WIRE. One request per opened view, and a direction change
- *     re-filters what is already held. A re-fetch would spend a round trip for identical rows
- *     and blank the archive's half of the count line while it was in flight.
+ *     wrong is silent: a view comparing nothing renders an older server's from-half under
+ *     "To them" and every number adds up.
+ *  2. THE TOGGLE ASKS ITS OWN DIRECTION, once: each direction is one request, and a toggle back
+ *     re-uses the answer it already has instead of blanking the count line while it re-asks.
  *  3. A STALE ANSWER IS DISCARDED. Navigating from one person to another while a pass is open
  *     must not attach the first person's mail to the second person's header.
  *  4. DEVICE ROWS FIRST, and an archive row the mirror already holds is not appended twice.
@@ -41,6 +40,8 @@ let root: Root | null = null;
 let seen: AddressView | null = null;
 /** Every address the transport was asked about, in order. Length is the request count. */
 let asked: string[] = [];
+/** The direction each of those requests carried, in the same order. */
+let directions: string[] = [];
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
@@ -49,6 +50,7 @@ afterEach(async () => {
   host = null;
   seen = null;
   asked = [];
+  directions = [];
   vi.useRealTimers();
 });
 
@@ -91,8 +93,9 @@ function engineWith(
   return new OhmailEngine({
     adapter: new FixturesAdapter(),
     now: () => DEMO_NOW,
-    serverAddressSearch: async (address: string, _opts: ServerAddressOpts) => {
+    serverAddressSearch: async (address: string, opts: ServerAddressOpts) => {
       asked.push(address);
+      directions.push(opts.direction ?? "from");
       if (hold) await hold.promise;
       return answer(address);
     },
@@ -145,25 +148,46 @@ describe("useAddressView — the device half, the archive half, and what covers 
     expect(asked).toHaveLength(0);
   });
 
-  it("changing the toggle does NOT re-issue the archive request", async () => {
+  it("each direction is asked once, on the wire, and a toggle back re-uses its answer", async () => {
     const engine = engineWith(() => ({ items: [], total: 0, direction: "from" }));
     await engine.start();
 
     await mount(engine, JONAS, "any");
     await settle();
-    expect(asked).toEqual([JONAS]);
+    expect(directions).toEqual(["any"]);
 
     await rerender(engine, JONAS, "from");
     await settle();
     await rerender(engine, JONAS, "to");
     await settle();
+    expect(directions).toEqual(["any", "from", "to"]);
+    expect(asked).toEqual([JONAS, JONAS, JONAS]);
+
+    // Back to All: the answer held for it is shown at once, and nothing is asked again.
     await rerender(engine, JONAS, "any");
-    await settle();
-    // STILL ONE. The archive answers `from` whatever the toggle says, so three toggle presses
-    // are three re-filters of what is already held.
-    expect(asked).toEqual([JONAS]);
-    // And the answer survived them rather than being blanked back to `searching`.
     expect(seen!.archive.state).toBe("ready");
+    await settle();
+    expect(directions).toEqual(["any", "from", "to"]);
+    expect(seen!.archive.state).toBe("ready");
+  });
+
+  it("under To them the archive answers `to`: its rows are listed and the coverage is complete", async () => {
+    const engine = new OhmailEngine({
+      adapter: new FixturesAdapter(),
+      now: () => DEMO_NOW,
+      serverAddressSearch: async (address: string, opts: ServerAddressOpts) => {
+        asked.push(address);
+        directions.push(opts.direction ?? "from");
+        return { items: [archiveRow(`to-${opts.direction}`, "mila@lichtgrat.example", "2020-01-01T00:00:00.000Z")] as never, total: 4, direction: opts.direction ?? "from" };
+      },
+    });
+    await engine.start();
+    await mount(engine, JONAS, "to");
+    await settle();
+    expect(directions).toEqual(["to"]);
+    expect(seen!.coverage).toBe("complete");
+    expect(seen!.items.filter((r) => r.archiveOnly).map((r) => r.hit.message.id)).toEqual(["to-to"]);
+    if (seen!.archive.state === "ready") expect(seen!.archive.direction).toBe("to");
   });
 
   it("device rows come first, and an archive row the mirror already holds is not duplicated", async () => {
@@ -224,14 +248,14 @@ describe("useAddressView — the device half, the archive half, and what covers 
     await settle();
     const extras = seen!.items.filter((r) => r.archiveOnly).map((r) => r.hit.message.id);
     expect(extras).toEqual(["sent-by-them"]);
-    expect(asked).toEqual([JONAS]);
+    expect(directions).toEqual(["to", "any"]);
 
     // And under From them, the direction the archive itself answered.
     await rerender(engine, JONAS, "from");
     await settle();
     expect(seen!.items.filter((r) => r.archiveOnly).map((r) => r.hit.message.id))
       .toEqual(["sent-by-them"]);
-    expect(asked).toEqual([JONAS]);
+    expect(directions).toEqual(["to", "any", "from"]);
   });
 
   it("a failed pass carries its own retry, and pressing it asks again", async () => {

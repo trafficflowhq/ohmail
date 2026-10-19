@@ -468,5 +468,17 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"gap_letters\" integer;",
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"gap_pressed_at\" integer;"
     ]
+  },
+  {
+    "name": "0154_messages_recipient_keys.sql",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"message_recipients\" (\n  \"account_id\" text NOT NULL,\n  \"message_id\" text NOT NULL,\n  \"address\" text NOT NULL,\n  PRIMARY KEY (\"message_id\", \"address\")\n);",
+      "CREATE INDEX IF NOT EXISTS \"message_recipients_account_address_idx\" ON \"message_recipients\" (\"account_id\", \"address\", \"message_id\");",
+      "CREATE TRIGGER IF NOT EXISTS messages_recipients_after_insert AFTER INSERT ON messages BEGIN\n  INSERT OR IGNORE INTO message_recipients (account_id, message_id, address)\n    SELECT new.account_id, new.id, lower(je.value ->> '$.address')\n      FROM json_each(CASE WHEN json_valid(new.to_addresses) THEN new.to_addresses ELSE '[]' END) je\n     WHERE je.type = 'object' AND coalesce(je.value ->> '$.address', '') <> '' AND length(je.value ->> '$.address') <= 254;\n  INSERT OR IGNORE INTO message_recipients (account_id, message_id, address)\n    SELECT new.account_id, new.id, lower(je.value ->> '$.address')\n      FROM json_each(CASE WHEN json_valid(new.cc_addresses) THEN new.cc_addresses ELSE '[]' END) je\n     WHERE je.type = 'object' AND coalesce(je.value ->> '$.address', '') <> '' AND length(je.value ->> '$.address') <= 254;\nEND;",
+      "CREATE TRIGGER IF NOT EXISTS messages_recipients_after_update AFTER UPDATE OF to_addresses, cc_addresses, account_id ON messages BEGIN\n  DELETE FROM message_recipients WHERE message_id = old.id;\n  INSERT OR IGNORE INTO message_recipients (account_id, message_id, address)\n    SELECT new.account_id, new.id, lower(je.value ->> '$.address')\n      FROM json_each(CASE WHEN json_valid(new.to_addresses) THEN new.to_addresses ELSE '[]' END) je\n     WHERE je.type = 'object' AND coalesce(je.value ->> '$.address', '') <> '' AND length(je.value ->> '$.address') <= 254;\n  INSERT OR IGNORE INTO message_recipients (account_id, message_id, address)\n    SELECT new.account_id, new.id, lower(je.value ->> '$.address')\n      FROM json_each(CASE WHEN json_valid(new.cc_addresses) THEN new.cc_addresses ELSE '[]' END) je\n     WHERE je.type = 'object' AND coalesce(je.value ->> '$.address', '') <> '' AND length(je.value ->> '$.address') <= 254;\nEND;",
+      "CREATE TRIGGER IF NOT EXISTS messages_recipients_after_delete AFTER DELETE ON messages BEGIN\n  DELETE FROM message_recipients WHERE message_id = old.id;\nEND;",
+      "INSERT OR IGNORE INTO message_recipients (account_id, message_id, address)\n  SELECT m.account_id, m.id, lower(je.value ->> '$.address')\n    FROM messages m, json_each(CASE WHEN json_valid(m.to_addresses) THEN m.to_addresses ELSE '[]' END) je\n   WHERE je.type = 'object' AND coalesce(je.value ->> '$.address', '') <> '' AND length(je.value ->> '$.address') <= 254;",
+      "INSERT OR IGNORE INTO message_recipients (account_id, message_id, address)\n  SELECT m.account_id, m.id, lower(je.value ->> '$.address')\n    FROM messages m, json_each(CASE WHEN json_valid(m.cc_addresses) THEN m.cc_addresses ELSE '[]' END) je\n   WHERE je.type = 'object' AND coalesce(je.value ->> '$.address', '') <> '' AND length(je.value ->> '$.address') <= 254;"
+    ]
   }
 ] as const;

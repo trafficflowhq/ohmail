@@ -21,9 +21,8 @@ import { matchReadRoute } from "../src/cloud-read.js";
  * error anywhere, while the browser against the hosted API showed the rows. A door that accepts a
  * parameter and ignores it is worse than one that refuses it, and this is what that looks like.
  *
- * So the cases here are: the arm ANSWERS (the from-half, with rows), it is never the empty result,
- * it carries the direction on the wire, and it refuses what the hosted door refuses — by the same
- * code, since the service throws and the Cloud engine's dispatch answers `err.httpStatus`.
+ * So the cases here are: the arm ANSWERS (every direction, with rows), it is never the empty
+ * result, it carries the direction on the wire, and it refuses what the hosted door refuses.
  */
 
 const ACCOUNT = randomUUID();
@@ -44,6 +43,7 @@ interface Corpus {
   hersOlder: string;
   his: string;
   theirs: string;
+  toHer: string;
 }
 
 async function corpus(): Promise<Corpus> {
@@ -57,12 +57,13 @@ async function corpus(): Promise<Corpus> {
 
   const seed = async (o: {
     accountId: string; mailboxId: string; subject: string; from: string; date: string;
+    to?: Array<{ name: string | null; address: string }>;
   }): Promise<string> => {
     const dedup = `mid:${randomUUID()}`;
     const [m] = await db.insert(messages).values({
       accountId: o.accountId, mailboxId: o.mailboxId, messageIdHeader: dedup,
       bodyHash: randomUUID(), dedupKey: dedup, subject: o.subject, fromAddress: o.from,
-      date: new Date(o.date), snippet: o.subject, unread: false,
+      date: new Date(o.date), snippet: o.subject, unread: false, toAddresses: o.to ?? [],
       nativeLocator: { folder: "INBOX", ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await db.insert(folderState).values({
@@ -89,10 +90,20 @@ async function corpus(): Promise<Corpus> {
     from: "info@acme.test", date: "2026-07-27T09:30:00.000Z",
   });
 
+  const toHer = await seed({
+    accountId: ACCOUNT, mailboxId: mb!.id, subject: "To her",
+    from: "carol@acme.test", date: "2026-07-25T09:00:00.000Z", to: [{ name: null, address: "INFO@acme.test" }],
+  });
+  // Another account's mail TO the same address: never this account's answer.
+  await seed({
+    accountId: OTHER, mailboxId: otherMb!.id, subject: "Theirs to",
+    from: "dan@acme.test", date: "2026-07-26T09:00:00.000Z", to: [{ name: null, address: "info@acme.test" }],
+  });
+
   const ctx: ServiceContext = {
     db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "cloud-address",
   };
-  return { ctx, hers, hersOlder, his, theirs };
+  return { ctx, hers, hersOlder, his, theirs, toHer };
 }
 
 describe("the Cloud-mode read surface answers ?address=", () => {
@@ -150,20 +161,16 @@ describe("the Cloud-mode read surface answers ?address=", () => {
     expect(ids).not.toContain(theirs);
   });
 
-  it("refuses `to` and `any` with the SERVICE's own code, not a second spelling", async () => {
-    // The service throws a `ServiceError` and `cloud-engine.ts`'s dispatch answers its status and
-    // code, so both doors refuse with the same sentence. Here the throw propagates out of the
-    // handler, which is what that dispatch catches — so the assertion is on the rejection.
-    const { ctx } = await corpus();
-    for (const direction of ["to", "any"]) {
-      const verdict = await search(ctx, `address=info%40acme.test&direction=${direction}`)
-        .then(() => "resolved")
-        .catch((e: unknown) => {
-          const err = e as { code?: string; httpStatus?: number };
-          return `${err.code}:${err.httpStatus}`;
-        });
-      expect(verdict).toBe("search_direction_unsupported:400");
-    }
+  it("answers `to` and `any` with the direction echoed, within this account", async () => {
+    const { ctx, hers, hersOlder, toHer } = await corpus();
+    const to = await (await search(ctx, "address=info%40acme.test&direction=to")).json();
+    expect(to.items.map((m: { id: string }) => m.id)).toEqual([toHer]);
+    expect(to.total).toBe(1);
+    expect(to.direction).toBe("to");
+    const any = await (await search(ctx, "address=info%40acme.test&direction=any")).json();
+    expect(any.items.map((m: { id: string }) => m.id)).toEqual([hers, toHer, hersOlder]);
+    expect(any.total).toBe(3);
+    expect(any.direction).toBe("any");
   });
 
   it("refuses an absent or unknown direction at the door, with a 400 body", async () => {

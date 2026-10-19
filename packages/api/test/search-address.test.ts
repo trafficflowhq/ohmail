@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { eq } from "drizzle-orm";
+import { messages } from "@trafficflow/db";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { makeDeps, seedSession, seedMailbox, seedMessage, req, FIXED_NOW } from "./helpers.js";
 
@@ -8,14 +10,13 @@ const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, s
 /**
  * ═══ `GET /search?address=&direction=` — THE ADDRESS ARM'S HTTP SURFACE ═══════════════════
  *
- * Four things this door has to get right, and three of them are refusals:
+ * Four things this door has to get right, and two of them are refusals:
  *
  *  1. IT IS AN EQUALITY. A substring of the address matches nothing. That is asserted from the
  *     substring side rather than only from the exact side, because the failure mode is not "no
  *     results" — it is somebody else's mail on screen under this person's name.
- *  2. ONLY `from` IS ANSWERED. `to` and `any` are refused BY NAME. An empty list would read as
- *     "you have never written to them"; a from-only answer to `direction=any` is a claim about
- *     the whole archive that is false by exactly the recipients.
+ *  2. EVERY DIRECTION IS ANSWERED, and says which it answered: `from` the sender, `to` To and
+ *     Cc (mail 0154's recipient index), `any` the union.
  *  3. AN ABSENT OR UNKNOWN `direction` IS A 400, never a default. There is no direction this
  *     door can safely assume — see the route's own header.
  *  4. IT IS ACCOUNT-SCOPED, and that is not a formality here: a sender address is
@@ -105,29 +106,33 @@ describe("GET /search?address= — one correspondent, from the archive", () => {
     }
   });
 
-  it("refuses `to` and `any` BY NAME rather than answering them partially", async () => {
+  it("answers `to` and `any` from the recipients, with the direction echoed", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const mb = await seedMailbox(db, { accountId: s.accountId });
-    await seedMessage(db, {
+    const sent = await seedMessage(db, {
       accountId: s.accountId, mailboxId: mb, folder: "INBOX",
-      subject: "Hers", fromAddress: "info@acme.test", date: FIXED_NOW,
+      subject: "Hers", fromAddress: "info@acme.test", date: new Date(FIXED_NOW.getTime() - 3_600_000),
     });
+    const toHer = await seedMessage(db, {
+      accountId: s.accountId, mailboxId: mb, folder: "INBOX",
+      subject: "To her", fromAddress: "bob@acme.test", date: FIXED_NOW,
+    });
+    await db.update(messages).set({ ccAddresses: [{ name: null, address: "Info@ACME.test" }] }).where(eq(messages.id, toHer.id));
 
-    for (const direction of ["to", "any"]) {
-      const res = await H(
-        req("GET", `/search?address=info@acme.test&direction=${direction}`, { bearer: s.token }),
-        deps,
-      );
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      // THE CODE, not merely the status. A client distinguishes "the archive cannot search
-      // recipients yet" from a malformed request by this string, and the sentence it puts on
-      // screen depends on which one it is.
-      expect(body.error.code).toBe("search_direction_unsupported");
-      // And the refusal is not an empty result wearing a 400: nothing came back to render.
-      expect(body.items).toBeUndefined();
-    }
+    const ask = async (direction: string) => {
+      const res = await H(req("GET", `/search?address=info@acme.test&direction=${direction}`, { bearer: s.token }), deps);
+      expect(res.status).toBe(200);
+      return res.json() as Promise<{ items: Array<{ id: string }>; total: number; direction: string }>;
+    };
+    const to = await ask("to");
+    expect(to.items.map((m) => m.id)).toEqual([toHer.id]);
+    expect(to.total).toBe(1);
+    expect(to.direction).toBe("to");
+    const any = await ask("any");
+    expect(any.items.map((m) => m.id)).toEqual([toHer.id, sent.id]);
+    expect(any.total).toBe(2);
+    expect(any.direction).toBe("any");
   });
 
   it("refuses an ABSENT direction, and an unknown one, rather than defaulting", async () => {

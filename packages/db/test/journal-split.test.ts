@@ -3022,6 +3022,12 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "3122b404cb2bfe24",   // ALTER TABLE "routing_decisions" DROP CONSTRAINT IF EXISTS … (0118's own drop, verbatim)
     "8b45247728ca7e65",   // ADD CONSTRAINT routing_decisions_matched_rule_id_account_fk … ON DELETE SET NULL (…) NOT VALID
   ],
+  // THE ARCHIVE BY RECIPIENT — an IMMUTABLE function over To and Cc and its GIN expression index,
+  // IF NOT EXISTS (setup-prod builds it CONCURRENTLY ahead of the migrator). No column, no DML.
+  "0154_messages_recipient_keys": [
+    "80532d8274c1dcb7",   // CREATE OR REPLACE FUNCTION messages_recipient_keys(uuid, jsonb, jsonb) … IMMUTABLE
+    "c71b7fc976856c1a",   // create index if not exists messages_recipient_keys_idx … using gin (messages_recipient_keys(…))
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -3992,11 +3998,13 @@ describe("the two journals are well-formed", () => {
   // 0151_mailboxes_gap_since's.
   // 153 → 154 for `0153_rule_revoke_keeps_its_decisions`: its `when` (1791602600057) is strictly
   // above 0152_search_gin_pending_bounded's.
+  // 154 → 155 for `0154_messages_recipient_keys`: its `when` (1791602600058) is strictly above
+  // 0153_rule_revoke_keeps_its_decisions's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
-  it.each([["mail", MAIL_DIR, 154], ["cloud", CLOUD_DIR, 36]] as const)(
+  it.each([["mail", MAIL_DIR, 155], ["cloud", CLOUD_DIR, 36]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

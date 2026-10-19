@@ -149,6 +149,8 @@ describe.skipIf(!PG_UP)("what the production spec table declares", () => {
       "messages_account_arrival_order_idx",
       "messages_account_date_order_idx",
       "messages_account_msg_order_idx",
+      // Mail 0154's recipient keys — the prebuild's own spec, so the read-back checks it valid.
+      "messages_recipient_keys_idx",
       // Mail 0148's never-checked rows — the identity backfill's set, every row NULL at the column's
       // birth, so built CONCURRENTLY here and never in the journal.
       "messages_sender_check_owed_idx",

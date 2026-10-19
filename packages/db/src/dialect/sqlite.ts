@@ -537,6 +537,9 @@ export function sqliteDialect(): Dialect {
       },
       // The typo arm here is a LIKE already (`fuzzy`): there is no costlier operator to spare.
       typoPrefilter: (): null => null,
+      // The side table mail 0154's triggers keep, read by its (account, address) index.
+      recipient: ({ accountId, address }): SQL =>
+        sql`m.id in (select r.message_id from message_recipients r where r.account_id = ${accountId} and r.address = lower(${address}))`,
       // A LIKE, not an index operator, and one planner: there is nothing to set.
       searchSession: (): null => null,
       // The FTS5 tables are kept by triggers over every row, so nothing here is unindexed.

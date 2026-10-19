@@ -33,6 +33,12 @@ export interface ConcurrentIndexSpec {
    * write path. Absent ⇒ build at any size.
    */
   readonly minRows?: number;
+  /**
+   * Statements run under the lock before the build, each idempotent: what the DDL names and a
+   * database below its migration lacks (mail 0154's function). The prebuild runs ahead of the
+   * migrator, so without them the build would throw and stop the setup before it.
+   */
+  readonly prelude?: readonly SQL[];
 }
 
 const rowsOf = <T,>(r: unknown): T[] =>
@@ -131,6 +137,7 @@ export async function ensureConcurrentIndexes(
   await db.execute(sql.raw("set lock_timeout = 0"));
   try {
     for (const spec of wanted) {
+      for (const statement of spec.prelude ?? []) await db.execute(statement);
       const state = rowsOf<{ valid: boolean }>(await db.execute(sql`
         select i.indisvalid as valid
           from pg_index i join pg_class c on c.oid = i.indexrelid

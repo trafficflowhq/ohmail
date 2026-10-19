@@ -229,24 +229,21 @@ export interface Facets {
 }
 
 /**
- * THE ADDRESS ARM — one address, an EQUALITY, only in the FROM direction. Not a filter on
- * `search`, which requires a `q` — an address query has no words. Why `from` only, measured with
- * `EXPLAIN (ANALYZE, BUFFERS)` at 20 000 rows: `lower(from_address) = $1` is an INDEX SCAN
- * (`messages_account_from_addr_idx`); the recipients are two JSONB columns with NO index — SEQ
- * SCAN — and the OR loses the from-index too, so this is one predicate, never a union. A
- * recipient index is a migration with a backfill, not this change. The other two directions are
- * REFUSED BY NAME (`search_direction_unsupported`, 400): an empty list reads as "this address
- * never wrote you", and a from-only answer to `direction=any` is false by exactly the recipients.
+ * THE ADDRESS ARM — one address, an EQUALITY, in a direction. Not a filter on `search`, which
+ * requires a `q` — an address query has no words. `from` is `lower(from_address) = $1`, an INDEX
+ * SCAN of `messages_account_from_addr_idx`; `to` is To and Cc through mail 0154's account-keyed
+ * expression index (the device store: its trigger-kept side table); `any` is the two as a UNION
+ * of index-served branches, never an OR in one predicate (an OR loses both indexes).
  */
 export const ADDRESS_DIRECTIONS = ["any", "from", "to"] as const;
 export type AddressSearchDirection = (typeof ADDRESS_DIRECTIONS)[number];
 
 /**
- * THE DIRECTIONS THIS SERVICE CAN SERVE FROM AN INDEX — one, today. A closed list rather than a
- * hard-coded `=== "from"` so the day the recipient index lands, the arm and its refusal move
- * together; a comparison spelled inline in three places is three places to forget.
+ * THE DIRECTIONS THIS SERVICE CAN SERVE FROM AN INDEX — all three since mail 0154. Kept as a
+ * closed list with its refusal (`search_direction_unsupported`), so a direction added to the
+ * vocabulary is refused until an index serves it.
  */
-export const ADDRESS_DIRECTIONS_SERVED: readonly AddressSearchDirection[] = ["from"];
+export const ADDRESS_DIRECTIONS_SERVED: readonly AddressSearchDirection[] = ["any", "from", "to"];
 
 /** Narrow an untrusted string to a direction. Every door that accepts one uses this. */
 export function isAddressSearchDirection(v: unknown): v is AddressSearchDirection {
@@ -267,9 +264,8 @@ export interface AddressSearchResult {
   /** How many messages match, over the whole archive rather than over this page. */
   total: number;
   /**
-   * WHICH DIRECTION THIS ANSWER IS ABOUT — always `"from"` today, and on the wire rather than
-   * inferred. A caller that asked for `from` and a caller whose toggle says "All" receive the
-   * same rows, and only this field lets the second one label them honestly.
+   * WHICH DIRECTION THIS ANSWER IS ABOUT — on the wire rather than inferred: a client that fell
+   * back to `from` against an older server labels its rows by this field, not by what it asked.
    */
   direction: AddressSearchDirection;
   /** Present while the store has not taken in the whole mailbox ({@link importOpen}): `total` is of the mail synced so far. */
@@ -980,8 +976,8 @@ export class SearchService {
   }
 
   /**
-   * EVERY MESSAGE IN THE ARCHIVE FROM ONE ADDRESS — the address view's archive half; `from` is
-   * the only direction served. `lower(m.from_address) = lower($1)` — byte-for-byte `whereSql`'s
+   * EVERY MESSAGE IN THE ARCHIVE FROM OR TO ONE ADDRESS — the address view's archive half. `from`:
+   * `lower(m.from_address) = lower($1)` — byte-for-byte `whereSql`'s
    * `sender` filter, served by `messages_account_from_addr_idx`; an EQUALITY — a substring match
    * would put a stranger's mail under somebody else's name (the pg twin asserts a substring
    * returns NOTHING). `whereSql` supplies account scope and `deleted_at is null`; the account
@@ -1011,6 +1007,7 @@ export class SearchService {
     const limit = clampLimit(opts.limit);
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, {});
+    if (opts.direction !== "from") return this.searchByRecipient(ctx, d, where, { ...opts, address }, limit);
     const pred = sql`lower(m.from_address) = lower(${address})`;
 
     // The count carries the coverage fact in its own statement: no round trip for it.
@@ -1031,6 +1028,35 @@ export class SearchService {
 
     // The batch form, for the reason {@link SearchService.search} gives at its own call site:
     // one statement for the page instead of one per hit on a `max: 1` pool.
+    const byId = await materializeMessages(ctx.db, ctx.accountId, hitIds);
+    const items: MessageDTO[] = [];
+    for (const id of hitIds) {
+      const dto = byId.get(id);
+      if (dto) items.push(dto);
+    }
+    return { items, total, direction: opts.direction, ...(importing ? { importing: true as const } : {}) };
+  }
+
+  /**
+   * `to` and `any` (mail 0154): one bounded arm whose branches are each index-served — the
+   * recipient keys, and for `any` the from-branch beside it — merged as a union, never an OR. The
+   * own address is in To of nearly every message, so the dense case walks the newest messages
+   * under `whereSql` and the sparse case reads the index ({@link boundedRead}); PGlite's planner
+   * has no fresh statistics to choose between them. `total` counts the union, each message once.
+   * `whereSql` carries the account, and the server's key carries it too.
+   */
+  private async searchByRecipient(
+    ctx: ServiceContext, d: Dialect, where: SQL, opts: AddressSearchOptions, limit: number,
+  ): Promise<AddressSearchResult> {
+    const branches: Branch[] = [{ pred: d.search.recipient({ accountId: ctx.accountId, address: opts.address }), rank: sql`0` }];
+    if (opts.direction === "any") branches.push({ pred: sql`lower(m.from_address) = lower(${opts.address})`, rank: sql`0` });
+    const arm: Arm = { name: "recipient", ranked: false, bounded: true, branches };
+    const [total, importing] = await this.count(ctx, d, this.unionSql(where, [arm]));
+    const hitRows = await d.exec(ctx.db, sql`
+      select a.id from (${this.armSql(where, arm, limit, limit)}) a
+      order by a.r
+      limit ${limit}`);
+    const hitIds = hitRows.map((r) => String(r[0]));
     const byId = await materializeMessages(ctx.db, ctx.accountId, hitIds);
     const items: MessageDTO[] = [];
     for (const id of hitIds) {

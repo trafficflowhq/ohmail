@@ -122,8 +122,35 @@ export const ARRIVAL_ORDER_PREBUILD_SPEC: ConcurrentIndexSpec = {
   ddl: ARRIVAL_ORDER_INDEX_DDL,
 };
 
+/**
+ * Mail 0154's recipient keys, spelled ONCE: the function and its index, byte-equal to the journal
+ * (a test). The function is frozen once shipped: another meaning is a new name and a new index.
+ */
+export const RECIPIENT_KEYS_FUNCTION_DDL = sql`CREATE OR REPLACE FUNCTION messages_recipient_keys(account_id uuid, to_addresses jsonb, cc_addresses jsonb)
+RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  select coalesce(array_agg(distinct account_id::text || ':' || lower(e.addr)), '{}'::text[])
+    from (select v ->> 'address' as addr from jsonb_array_elements(case when jsonb_typeof(to_addresses) = 'array' then to_addresses else '[]'::jsonb end) v
+          union all
+          select v ->> 'address' from jsonb_array_elements(case when jsonb_typeof(cc_addresses) = 'array' then cc_addresses else '[]'::jsonb end) v) e
+   where e.addr is not null and e.addr <> '' and length(e.addr) <= 254
+$$`;
+
+export const RECIPIENT_KEYS_INDEX_DDL = sql`create index concurrently if not exists "messages_recipient_keys_idx" on public.messages using gin (messages_recipient_keys("account_id","to_addresses","cc_addresses")) with (gin_pending_list_limit = 256)`;
+
+/**
+ * Mail 0154's index, built CONCURRENTLY ahead of the migrator on 0139's pattern. On a database at
+ * 0153 the function does not exist yet, so the prelude creates it first under the lock; without it
+ * the build is 42883 and the setup stops before the migrator.
+ */
+export const RECIPIENT_KEYS_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "messages_recipient_keys_idx",
+  table: "messages",
+  prelude: [RECIPIENT_KEYS_FUNCTION_DDL],
+  ddl: RECIPIENT_KEYS_INDEX_DDL,
+};
+
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
-  WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC,
+  WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC, RECIPIENT_KEYS_PREBUILD_SPEC,
 ];
 
 export async function ensureWithheldProvenanceIndex(

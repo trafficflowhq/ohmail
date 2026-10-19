@@ -122,6 +122,13 @@ const GENERATED_SEARCH_COLUMNS: Record<string, readonly string[]> = {
   message_search: ["head_tsv", "text_tsv"],
 };
 
+/**
+ * Tables only the device declares, each standing in for a server index this store cannot spell:
+ * mail 0154's `message_recipients`, the side table its triggers keep in place of the server's
+ * expression GIN over To and Cc. It holds no data of its own; the server has no table to compare.
+ */
+const DEVICE_ONLY_TABLES = new Set(["messageRecipients"]);
+
 /** Indexes that exist only to serve those columns, and go with them. */
 const GENERATED_SEARCH_INDEXES = new Set([
   "messages_subject_tsv_idx", "message_bodies_body_tsv_idx", "kb_entries_kb_tsv_idx",
@@ -403,8 +410,10 @@ describe("the SQLite twin is the same schema", () => {
     expect(pgTables.length).toBeGreaterThan(40);
     const missing = pgTables.map(([name]) => name).filter((name) => !sqliteTables.has(name));
     expect(missing, "exported names present on the server twin and absent here").toEqual([]);
-    const extra = [...sqliteTables.keys()].filter((n) => !pgTables.some(([name]) => name === n));
+    const extra = [...sqliteTables.keys()].filter((n) => !pgTables.some(([name]) => name === n) && !DEVICE_ONLY_TABLES.has(n));
     expect(extra, "exported names here that the server twin does not have").toEqual([]);
+    // Each named device-only table exists here, so the exemption cannot outlive its table.
+    for (const n of DEVICE_ONLY_TABLES) expect(sqliteTables.has(n), `${n} is exempted and not declared`).toBe(true);
   });
 
   it("compares every foreign key, so a reference cannot drift on one store alone", () => {

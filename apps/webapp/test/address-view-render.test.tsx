@@ -292,6 +292,55 @@ describe("the address view — header, toggle, count line, rows", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+describe("an archive that answers every direction (mail 0154): To them lists its rows, the count plain", () => {
+  async function withRecipients(): Promise<{ engine: OhmailEngine; asked: string[] }> {
+    const asked: string[] = [];
+    const engine = new OhmailEngine({
+      adapter: new FixturesAdapter(),
+      now: () => DEMO_NOW,
+      serverAddressSearch: async (_address, opts) => {
+        const direction = opts.direction ?? "from";
+        asked.push(direction);
+        const sentTo = { ...archiveRow("to-1", "mila@lichtgrat.example", "2020-02-01T00:00:00.000Z"), to: [{ name: null, address: JONAS }] };
+        const items = direction === "from" ? [archiveRow("older-1", JONAS, "2020-01-01T00:00:00.000Z")]
+          : direction === "to" ? [sentTo] : [sentTo, archiveRow("older-1", JONAS, "2020-01-01T00:00:00.000Z")];
+        return { items: items as never, total: direction === "any" ? 9 : direction === "to" ? 4 : 5, direction };
+      },
+    });
+    await engine.start();
+    return { engine, asked };
+  }
+
+  it("To them: the archive's rows sent to them are listed, and the number carries no caveat", async () => {
+    const { engine, asked } = await withRecipients();
+    await mount(h(AddressView, { engine, version: 1, now: DEMO_NOW, address: JONAS, onOpen: () => {} }));
+    await settle();
+    await click(byText(".addr-bar .seg button", "To them"));
+    await settle();
+    expect(asked).toEqual(["any", "to"]);
+    expect([...host!.querySelectorAll("[data-hit]")].map((r) => r.getAttribute("data-hit"))).toEqual(["to-1"]);
+    const scope = host!.querySelector(".addr-scope")!;
+    expect(scope.textContent).toContain("4 in your whole mailbox");
+    expect(scope.textContent).not.toContain("(by sender)");
+    expect(scope.querySelector(".gloss-t")).toBeNull();
+    expect(text()).not.toContain(messages.search.addressArchiveNoRecipients);
+  });
+
+  it("All: the whole mailbox's number is the union, plain", async () => {
+    const { engine } = await withRecipients();
+    await mount(h(AddressView, { engine, version: 1, now: DEMO_NOW, address: JONAS, onOpen: () => {} }));
+    await settle();
+    const scope = host!.querySelector(".addr-scope")!;
+    expect(scope.textContent).toContain("9 in your whole mailbox");
+    expect(scope.textContent).not.toContain("(by sender)");
+    expect([...host!.querySelectorAll("[data-hit]")].map((r) => r.getAttribute("data-hit"))).toEqual(["jonas", "to-1", "older-1"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/* A SERVER BEFORE MAIL 0154 answers `from` only (the engine re-asks `from` on its refusal): the
+   caveat below is that fallback's, and it stays. */
 describe("the archive's half — by sender under All, the named line under To them", () => {
   async function withArchive(): Promise<OhmailEngine> {
     const engine = new OhmailEngine({

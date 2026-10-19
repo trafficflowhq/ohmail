@@ -35,14 +35,15 @@ import { brandDialect } from "@trafficflow/db/dialect";
  *
  * ── WHAT THIS FILE PROVES THAT PGlite CANNOT ──────────────────────────────────────────────
  *
- * The predicate is `lower(m.from_address) = lower($1)` and the index behind it is a functional
- * index (`messages_account_from_addr_idx`). There is deliberately NO plan assertion here — the
+ * The `from` predicate is `lower(m.from_address) = lower($1)` over `messages_account_from_addr_idx`;
+ * `to` is To and Cc through mail 0154's account-keyed expression index (`messages_recipient_keys`),
+ * and `any` is the union of the two. There is deliberately NO plan assertion here — the
  * planner sequential-scans a small table whatever indexes exist, so an `EXPLAIN` expectation in
  * a test would either be vacuous or would pin the planner's choice on a fixture size. The
  * measurement that established the index is served (a large table, `EXPLAIN ANALYZE BUFFERS`) is
  * recorded in `SearchService.searchByAddress`'s own header. What this file proves is the
- * SEMANTICS against a real server: the equality, the case folding, the account scope, the
- * refusals, and that the recipients columns are not silently reached.
+ * SEMANTICS against a real server: the equality, the case folding, the account scope in every
+ * direction, and that `from` never reaches the recipient columns.
  */
 const BASE = pgTestUrl(import.meta.url);
 
@@ -171,6 +172,15 @@ describe("GET /search?address= on real Postgres, on a private database", () => {
     await seedMsg({ key: "headerless", accountId: A, mailboxId: mbA!.id, subject: "Fourth", from: "", date: NEWER });
     // The same address in ANOTHER account.
     await seedMsg({ key: "otherAccount", accountId: B, mailboxId: mbB!.id, subject: "Theirs", from: "info@acme.test", date: NEWER });
+    // Info only in Cc, older; and ANOTHER account's mail addressed TO Info (the private-address control).
+    await seedMsg({
+      key: "ccAnna", accountId: A, mailboxId: mbA!.id, subject: "Fifth", from: "carol@acme.test",
+      cc: [{ name: "Info", address: "INFO@acme.test" }], date: OLDER,
+    });
+    await seedMsg({
+      key: "otherAccountTo", accountId: B, mailboxId: mbB!.id, subject: "Theirs to", from: "eve@acme.test",
+      to: [{ name: null, address: "info@acme.test" }], date: NEWER,
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -248,26 +258,72 @@ describe("GET /search?address= on real Postgres, on a private database", () => {
     expect(theirs.total).toBe(1);
   });
 
-  it("refuses `to` and `any` by name, with a 400 and the code a client switches on", async () => {
+  it("`to` answers To and Cc, case-folded, each message once, never the from-only rows", async () => {
+    const res = await svc.searchByAddress(ctx(A), { address: "info@acme.test", direction: "to" });
+    // `toAnna` has Info in To AND in Cc: one row. `ccAnna` has Info in Cc only.
+    expect(res.items.map((m) => m.id)).toEqual([ids.toAnna, ids.ccAnna]);
+    expect(res.total).toBe(2);
+    expect(res.direction).toBe("to");
+    expect(res.items.map((m) => m.id)).not.toContain(ids.annaNewer);
+  });
+
+  it("`any` is the union of the two halves, each message once", async () => {
+    const res = await svc.searchByAddress(ctx(A), { address: "INFO@acme.test", direction: "any" });
+    const got = res.items.map((m) => m.id);
+    expect(new Set(got)).toEqual(new Set([ids.annaNewer, ids.toAnna, ids.annaOlder, ids.ccAnna]));
+    expect(got).toHaveLength(4);
+    expect(res.total).toBe(4);
+    expect(res.direction).toBe("any");
+  });
+
+  it("`to` and `any` are account-scoped — another account's mail to the same address never leaks", async () => {
     for (const direction of ["to", "any"] as const) {
-      await expect(
-        svc.searchByAddress(ctx(A), { address: "info@acme.test", direction }),
-      ).rejects.toThrow(ServiceError);
-      // The CODE, not the message text. A one-word verdict rather than the rejected value
-      // itself: a `.rejects` assertion pretty-prints what it received, and a received value
-      // holding a live database handle has killed a worker in this repository.
-      const code = await svc.searchByAddress(ctx(A), { address: "info@acme.test", direction })
-        .then(() => "resolved")
-        .catch((e: unknown) => (e instanceof ServiceError ? `${e.code}:${e.httpStatus}` : "wrong-class"));
-      expect(code).toBe("search_direction_unsupported:400");
+      const mine = await svc.searchByAddress(ctx(A), { address: "info@acme.test", direction });
+      expect(mine.items.map((m) => m.id)).not.toContain(ids.otherAccountTo);
+      expect(mine.items.map((m) => m.id)).not.toContain(ids.otherAccount);
     }
+    const theirs = await svc.searchByAddress(ctx(B), { address: "info@acme.test", direction: "to" });
+    expect(theirs.items.map((m) => m.id)).toEqual([ids.otherAccountTo]);
+    expect(theirs.total).toBe(1);
+    const theirsAny = await svc.searchByAddress(ctx(B), { address: "info@acme.test", direction: "any" });
+    expect(theirsAny.total).toBe(2);
+  });
+
+  it("`to` is an EQUALITY too, and `limit` leaves its total alone", async () => {
+    for (const near of ["info@acme.tes", "nfo@acme.test", "acme.test", "%info@acme.test%", "info@acme.te_t"]) {
+      const res = await svc.searchByAddress(ctx(A), { address: near, direction: "to" });
+      expect(res.items).toHaveLength(0);
+      expect(res.total).toBe(0);
+    }
+    const one = await svc.searchByAddress(ctx(A), { address: "info@acme.test", direction: "to", limit: 1 });
+    expect(one.items.map((m) => m.id)).toEqual([ids.toAnna]);
+    expect(one.total).toBe(2);
+  });
+
+  it("odd recipient entries are stored and matched by nothing; a 254-character address is the bound", async () => {
+    const [mb] = await db!.insert(mailboxes).values({ accountId: A, provider: "imap", address: "odd@tf.test" }).returning();
+    const long = (n: number) => `${"x".repeat(n - "@acme.test".length)}@acme.test`;
+    // A string element, an entry without `address`, and two addresses past the bound: the insert
+    // succeeds (no index key is built for them) and no search finds the row by them.
+    await seedMsg({
+      key: "odd", accountId: A, mailboxId: mb!.id, subject: "Odd", from: "odd@acme.test",
+      to: ["info@acme.test", { name: "no address" }, { name: null, address: long(300) }, { name: null, address: long(3000) }] as never,
+      cc: [{ name: null, address: long(254) }], date: OLDER,
+    });
+    expect((await svc.searchByAddress(ctx(A), { address: "info@acme.test", direction: "to" })).items.map((m) => m.id)).not.toContain(ids.odd);
+    expect((await svc.searchByAddress(ctx(A), { address: long(300), direction: "to" })).total).toBe(0);
+    expect((await svc.searchByAddress(ctx(A), { address: long(3000), direction: "to" })).total).toBe(0);
+    const bound = await svc.searchByAddress(ctx(A), { address: long(254).toUpperCase(), direction: "to" });
+    expect(bound.items.map((m) => m.id)).toEqual([ids.odd]);
   });
 
   it("an empty or blank address answers empty — never the blank-From rows", async () => {
     for (const blank of ["", "   ", "\t"]) {
-      const res = await svc.searchByAddress(ctx(A), { address: blank, direction: "from" });
-      expect(res.items).toHaveLength(0);
-      expect(res.total).toBe(0);
+      for (const direction of ["from", "to", "any"] as const) {
+        const res = await svc.searchByAddress(ctx(A), { address: blank, direction });
+        expect(res.items).toHaveLength(0);
+        expect(res.total).toBe(0);
+      }
     }
     // The blank-From row exists and is reachable by its own subject through the text search, so
     // the assertion above is about the ADDRESS arm declining it rather than about a missing row.

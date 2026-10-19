@@ -1003,19 +1003,18 @@ export type ServerSearchFn = (
 ) => Promise<ServerSearchWire | null>;
 
 /**
- * WHAT `GET /search?address=&direction=from` ANSWERS — the archive half of the address view. `items` are canonical
+ * WHAT `GET /search?address=&direction=` ANSWERS — the archive half of the address view. `items` are canonical
  * `MessageDTO`s, so an {@link EngineMessage} IS one, exactly as {@link ServerSearchWire} explains. No `tier`: an
  * address query is an EQUALITY, so there is no lexical arm to have missed and no typo-tolerant guess to label.
- * `direction` is on the wire and is not assumed. Only `from` is answerable from an index today (the recipients are
- * two unindexed JSONB columns — `SearchService.searchByAddress` records the measurement), so the client asks for
- * `from` WHATEVER its toggle says and reads this field to label what came back. A client that inferred the direction
- * from its own request would report "everything in the archive" for an answer that covers one side of it.
+ * `direction` is on the wire and is not assumed: the client asks the direction on screen, and a server that predates
+ * the recipient index (mail 0154) is asked `from` instead ({@link OhmailEngine.searchAddressServer}), so this field,
+ * not the request, labels what came back.
  */
 export interface ServerAddressWire {
   items: EngineMessage[];
   /** Matches across the WHOLE corpus in the answered direction, which is more than `items.length`. */
   total: number;
-  /** Which side the server actually searched. Absent ⇒ `from`, the only direction it serves. */
+  /** Which side the server actually searched. Absent ⇒ `from`, all a server before the field served. */
   direction?: ServerAddressDirection;
   /** Present while the store has not taken in the whole mailbox: `total` is of the mail synced so far. */
   importing?: true;
@@ -1026,18 +1025,22 @@ export interface ServerAddressWire {
  * reason {@link SERVER_SEARCH_SORTS} gives one screen up: this package is the standalone desktop
  * payload and cannot import the hosted service.
  *
- * `SERVED` is the subset the server answers today. The two lists are separate because the
- * DIFFERENCE between them is a state the view has to state — "the archive cannot be searched by
- * recipient yet" — and a single list could not express it.
+ * `SERVED` is the subset this client asks the server; all three since mail 0154. An older server
+ * refuses `to`/`any` by name and is asked `from` instead, so the view still states the shortfall.
  */
 export const SERVER_ADDRESS_DIRECTIONS = ["any", "from", "to"] as const;
 export type ServerAddressDirection = (typeof SERVER_ADDRESS_DIRECTIONS)[number];
-/** The one direction `GET /search?address=` answers. See {@link ServerAddressWire.direction}. */
-export const SERVER_ADDRESS_DIRECTIONS_SERVED: readonly ServerAddressDirection[] = ["from"];
+/** The directions `GET /search?address=` is asked. See {@link ServerAddressWire.direction}. */
+export const SERVER_ADDRESS_DIRECTIONS_SERVED: readonly ServerAddressDirection[] = ["any", "from", "to"];
+
+/** The refusal code of a server that cannot search the asked direction (one before mail 0154). */
+const DIRECTION_UNSUPPORTED = "search_direction_unsupported";
 
 /** What a caller may ask of one archive address pass. */
 export interface ServerAddressOpts {
   limit?: number;
+  /** Which side of the message; absent ⇒ `from`. */
+  direction?: ServerAddressDirection;
 }
 
 /**
@@ -9651,14 +9654,11 @@ export class OhmailEngine {
   }
 
   /**
-   * ASK THE ARCHIVE ABOUT ONE ADDRESS — `GET /search?address=&direction=from`. The SECOND answer, never the first,
+   * ASK THE ARCHIVE ABOUT ONE ADDRESS — `GET /search?address=&direction=`. The SECOND answer, never the first,
    * exactly as {@link OhmailEngine.searchServer} is: {@link OhmailEngine.messagesWith} has already painted from the
-   * mirror and this extends it. THE DIRECTION IS NOT A PARAMETER, AND THAT IS DELIBERATE: The server answers `from`
-   * and refuses the other two by name, so a `direction` argument here would be a choice with one legal value and two
-   * ways to get a 400 — and the view's toggle must NOT reach the wire: switching to "To them" is a change to what is
-   * SHOWN, not a new question for an archive that cannot answer it. So this asks `from` always, and the outcome
-   * carries the direction back for the view to label. The day the recipient index lands, this grows an argument and
-   * the view stops discarding the toggle; nothing else moves.
+   * mirror and this extends it. The direction is the view's (default `from`). A server before mail 0154 refuses
+   * `to`/`any` with `search_direction_unsupported`: that refusal is asked `from` once, and the outcome says `from`,
+   * so the view keeps its by-sender caveat there instead of a failure.
    */
 
   /**
@@ -9674,18 +9674,26 @@ export class OhmailEngine {
     // An empty address is not a question. The server answers it empty too, so this is a saved
     // round trip rather than a divergence — and `ready` with no items is the honest shape: this
     // client did ask and there is nothing, which is what the count line reports.
+    const direction = opts.direction ?? "from";
     if (address.trim() === "") {
-      return { state: "ready", items: [], total: 0, direction: "from" };
+      return { state: "ready", items: [], total: 0, direction };
     }
     // `JSON.stringify` over a tuple, not a `\u0000`-joined string: it is unambiguous for any
     // address a header can carry, and this repository has twice paid for a control byte used
     // as a separator (a raw NUL in a source file makes every `grep` skip the whole file in
     // silence). The text arm one method up still joins on the escape; this is the form to copy.
-    const key = JSON.stringify([opts.limit ?? null, address]);
+    const key = JSON.stringify([opts.limit ?? null, address, direction]);
     const inFlight = this.serverAddressSearches.get(key);
     if (inFlight) return inFlight;
 
-    const request = fn(address, opts)
+    const ask = { ...opts, direction };
+    const request = fn(address, ask)
+      .catch((err: unknown) => {
+        // A server before mail 0154: asked by sender instead, once, and labelled `from`.
+        if (direction === "from" || (err as { code?: unknown } | null)?.code !== DIRECTION_UNSUPPORTED) throw err;
+        return fn(address, { ...ask, direction: "from" })
+          .then((wire) => (wire === null ? null : { ...wire, direction: "from" as const }));
+      })
       .then((wire): ServerAddressOutcome => {
         // `null` ⇒ this transport serves no archive, and it must not become an empty `ready`:
         // "we searched the archive and there is nothing" is a claim, and this is the case where
@@ -9695,8 +9703,8 @@ export class OhmailEngine {
           state: "ready",
           items: Array.isArray(wire.items) ? wire.items : [],
           total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
-          // Absent ⇒ `from`: it is the only direction the route serves, so a server that
-          // predates the field answered `from` whatever it said. Anything the wire says that is
+          // Absent ⇒ `from`: a server that predates the field answered `from` whatever it was
+          // asked. Anything the wire says that is
           // not a known direction takes the same reading rather than being carried through — a
           // view labelling its list with a word it does not understand is worse than the
           // conservative one.

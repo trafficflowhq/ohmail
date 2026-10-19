@@ -28,6 +28,19 @@ const COLD_PAGE_BUDGET_MS = 150;
 const ROWS_PER_SCAN = 6 * 4 * 50;
 const MID = "kestrelmid";
 const QUERIES = ["w1", "w40", "w3000", MID, "axa", "portl", '"myaxa portal"'] as const;
+/** The recipients (mail 0154): the own address in To of every message, a rare contact, a mid one in Cc. */
+const OWN = "Budget@mail.example";
+const RARE = "rare@contact.example";
+const MID_CONTACT = "mid@contact.example";
+const ADDRESS_CLASSES = [
+  { cls: "to rare", address: RARE, direction: "to", total: 10 },
+  { cls: "to mid", address: MID_CONTACT, direction: "to", total: 200 },
+  { cls: "to own", address: OWN, direction: "to", total: N },
+  { cls: "any own", address: OWN.toLowerCase(), direction: "any", total: N },
+  { cls: "from", address: "news@axa.example", direction: "from", total: 30 },
+] as const;
+/** The exact count reads every match by contract; the bound on rows read is the page's. */
+const isCount = (text: string): boolean => /^\s*select\s+\(?(cast\()?count\(\*\)/i.test(text);
 const rows = (r: unknown): any[] => (Array.isArray(r) ? r : ((r as { rows?: any[] }).rows ?? []));
 const textOf = (st: SQL): string => (o.db as unknown as { dialect: { sqlToQuery(s: SQL): { sql: string } } }).dialect.sqlToQuery(st).sql;
 
@@ -155,7 +168,10 @@ describe(`the desktop store's search is milliseconds (PGlite, ${N} messages)`, (
           || case when g % 12 = 0 then ' ' || ${MID} else '' end,
         case when g % 333 = 0 then 'news@axa.example' else 'sender' || (g % 2000) || '@dom' || (g % 300) || '.example' end,
         timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g * 97), g % 3 = 0, g % 10 = 0,
-        jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g), '[]'::jsonb, '[]'::jsonb
+        jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g),
+        jsonb_build_array(jsonb_build_object('name', null, 'address', ${OWN}::text))
+          || case when g % 1000 = 7 then jsonb_build_array(jsonb_build_object('name', null, 'address', ${RARE}::text)) else '[]'::jsonb end,
+        case when g % 50 = 3 then jsonb_build_array(jsonb_build_object('name', 'Mid', 'address', ${MID_CONTACT}::text)) else '[]'::jsonb end
       from generate_series(1, ${N}) g`);
     await o.db.execute(sql`
       insert into message_bodies (message_id, text)
@@ -214,6 +230,41 @@ describe(`the desktop store's search is milliseconds (PGlite, ${N} messages)`, (
     }, 600_000);
   }
 
+  it(`the address arm, every direction: inside ${PAGE_BUDGET_MS} ms at p95, no table scanned, no page scan past ${ROWS_PER_SCAN} rows`, async () => {
+    const svc = searchFor("local");
+    for (const c of ADDRESS_CLASSES) {
+      const r = await svc.searchByAddress(ctx(), { address: c.address, direction: c.direction });
+      expect(r.total, c.cls).toBe(c.total);
+      expect(r.items.length, c.cls).toBe(Math.min(50, c.total));
+    }
+    const best = await bestOfRounds("address", Object.fromEntries(ADDRESS_CLASSES.map((c) => [c.cls, PAGE_BUDGET_MS])), async () => {
+      const figures: Record<string, number> = {};
+      for (const c of ADDRESS_CLASSES) {
+        const ms: number[] = [];
+        for (let i = 0; i < 20; i++) {
+          const t = performance.now();
+          await svc.searchByAddress(ctx(), { address: c.address, direction: c.direction });
+          ms.push(Math.round(performance.now() - t));
+        }
+        figures[c.cls] = p95(ms);
+      }
+      return figures;
+    });
+    for (const c of ADDRESS_CLASSES) {
+      expect(best[c.cls]!, `${c.cls} p95, the best of ${ROUNDS} rounds; the run's quietest reference ${quietest.toFixed(1)} ms`).toBeLessThanOrEqual(PAGE_BUDGET_MS);
+      seen.length = 0;
+      await svc.searchByAddress(ctx(), { address: c.address, direction: c.direction });
+      const statements = seen.filter(({ st }) => !/^\s*explain/i.test(textOf(st)));
+      expect(statements.length).toBeGreaterThan(1);
+      for (const { st, session } of statements) {
+        expect(await seqScans(st, session), `${c.cls}: ${textOf(st).slice(0, 160)}`).toEqual([]);
+        if (isCount(textOf(st))) continue;
+        const wide = await widestScan(st, session);
+        expect(wide.rows, `${c.cls}: ${wide.at} read ${wide.rows} rows — ${textOf(st).slice(0, 120)}`).toBeLessThanOrEqual(ROWS_PER_SCAN);
+      }
+    }
+  }, 600_000);
+
   it(`first after a fresh open: the broad and the one-in-twelve page inside ${COLD_PAGE_BUDGET_MS} ms, no scan past ${ROWS_PER_SCAN} rows`, async () => {
     // A round is a fresh open and the two first pages; the next round opens the store again.
     const best = await bestOfRounds("first after a fresh open", { first: COLD_PAGE_BUDGET_MS }, async () => {
@@ -231,6 +282,13 @@ describe(`the desktop store's search is milliseconds (PGlite, ${N} messages)`, (
         const arms = seen.filter(({ st }) => /message_search/.test(textOf(st)) && !/^\s*explain/i.test(textOf(st)));
         expect(arms.length).toBeGreaterThan(0);
         for (const { st, session } of arms) expect((await widestScan(st, session)).rows).toBeLessThanOrEqual(ROWS_PER_SCAN);
+      }
+      // A recipient page first after the open, the own address (the walk) and a rare contact (the index).
+      for (const address of [OWN, RARE]) {
+        const t = performance.now();
+        const r = await svc.searchByAddress(ctx(), { address, direction: "to" });
+        first.push(performance.now() - t);
+        expect(r.items.length).toBeGreaterThan(0);
       }
       return { first: Math.max(...first) };
     });

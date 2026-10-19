@@ -860,25 +860,18 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /**
-   * `GET /search?address=<addr>&direction=from` — every message in the archive FROM one address. **`direction=from`
-   * IS ALWAYS SENT, EXPLICITLY, and that is the opposite of the `sort` decision one method up.** `sort=relevance` is
-   * left off the wire because it is the server's default and omitting it asks an older deploy the question it always
-   * answered. There is no such default here: a deploy that predates the address arm ignores an unknown `address` and
-   * runs a TEXT search for the empty string, which answers `200` with an empty result — a client that read that as
-   * "the archive holds nothing from this person" would state it on screen.
-   */
-
-  /**
-   * Sending the parameter does not fix that (nothing can, from this side), but the value is required by the route on
-   * every deploy that HAS the arm, and the route refuses an absent or unknown direction rather than assuming one, so
-   * no build of this client can be answered a different question than it asked. The address is NOT lowercased here.
-   * The server compares `lower(from_address) = lower($1)`, so the case-folding is one rule in one place; folding it a
-   * second time on the client would be a second place for the two to disagree about what an address is.
+   * `GET /search?address=<addr>&direction=<dir>` — every message in the archive from, to, or from-or-to one address.
+   * **THE DIRECTION IS ALWAYS SENT, EXPLICITLY (`from` when the caller names none)**, the opposite of the `sort`
+   * decision one method up: a deploy that predates the address arm ignores an unknown `address` and runs a TEXT search
+   * for the empty string, answering `200` with nothing, and every deploy that has the arm refuses an absent direction
+   * rather than assuming one. A deploy before mail 0154 refuses `to`/`any` with `search_direction_unsupported`, which
+   * the engine answers by asking `from`. The address is NOT lowercased here: the server folds both sides with
+   * `lower()`, one rule in one place.
    */
   async searchAddressServer(
     address: string, opts: ServerAddressOpts = {},
   ): Promise<ServerAddressWire> {
-    const q = new URLSearchParams({ address, direction: "from" });
+    const q = new URLSearchParams({ address, direction: opts.direction ?? "from" });
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
     const res = await this.request("GET", `/search?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);

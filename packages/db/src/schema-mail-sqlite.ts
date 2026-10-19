@@ -711,6 +711,21 @@ export const messages = sqliteTable("messages", {
 }));
 
 /**
+ * DEVICE-ONLY (mail 0154): each message's To and Cc addresses, lowercased, one row per pair — the
+ * twin of the server's `messages_recipient_keys` expression index. Written only by the triggers
+ * on `messages`; read only by `Dialect.search.recipient`. No foreign key: the delete trigger owns
+ * removal, as the full-text tables' triggers do.
+ */
+export const messageRecipients = sqliteTable("message_recipients", {
+  accountId: text("account_id").notNull(),
+  messageId: text("message_id").notNull(),
+  address: text("address").notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.messageId, t.address] }),
+  ixAccountAddress: index("message_recipients_account_address_idx").on(t.accountId, t.address, t.messageId),
+}));
+
+/**
  * Physical identity — every locator one LOGICAL message occupies (mail 0028). `native_locator`
  * names exactly one place, and a message legitimately occupies several: the Sent twin of a
  * self-CC, a list echo, and — the case this table exists for — a SECOND DELIVERY of the same
