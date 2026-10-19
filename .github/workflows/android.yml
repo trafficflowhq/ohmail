@@ -103,11 +103,12 @@ on:
 permissions:
   contents: read
 
-# Only a pull request's superseded run is cancelled. A run on main, on a tag or on a merge group has a
-# group of its own — the commit — so it is never cancelled, nor dropped while pending behind another.
+# A pull request's superseded run is cancelled, and so is a main run a newer push to main replaces. A run
+# on a tag, on a merge group or by dispatch has a group of its own — the commit — so it is never
+# cancelled, nor dropped while pending behind another.
 concurrency:
-  group: android-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: android-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
 jobs:
   # ── which pull requests need the APK ────────────────────────────────────────────────────

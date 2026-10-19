@@ -8,10 +8,11 @@ import { publicPath } from "./support/public-root.mjs";
  * THE PUBLIC MAIN TAKES PULL REQUESTS, AND THE WORKFLOWS FOLLOW.
  *
  * A required check that does not run on `merge_group` leaves a merge queue waiting until it gives up;
- * a concurrency group that cancels on main or on a tag drops the run a release takes its installers
- * from; a job that holds a signing key outside the `release` environment can be made to run, key in
- * hand, from any branch; and a feeds recovery dispatched on the tag still takes main's tools. Nothing
- * here runs GitHub Actions, so the rules are read off the files, the tools ref evaluated as written.
+ * a concurrency group that cancels on a tag drops the run a release takes its installers from, while a
+ * main run a newer push to main replaces only holds runners the pool is short of; a job that holds a
+ * signing key outside the `release` environment can be made to run, key in hand, from any branch; and a
+ * feeds recovery dispatched on the tag still takes main's tools. Nothing here runs GitHub Actions, so the
+ * rules are read off the files, the expressions evaluated as written.
  */
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const WF = (n: string) => readFileSync(publicPath(`github/workflows/${n}.yml`, ROOT), "utf8");
@@ -32,13 +33,63 @@ export function concurrencyOf(text: string): { group: string | null; cancel: str
   };
 }
 
-/** Problems with a concurrency that must never cancel, nor replace, a run on main or a tag. */
+/** build.yml's and android.yml's concurrency: a pull request's run and a push to main's are superseded by
+ * the next one; any other run is keyed by its commit and never cancelled. */
+export const CANCEL = "${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
+export const groupOf = (prefix: string) =>
+  `${prefix}-\${{ github.ref }}-\${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}`;
+
+/** Problems with the concurrency as written. */
 export function concurrencyFindings(c: { group: string | null; cancel: string | null }, prefix: string): string[] {
   const out: string[] = [];
-  if (c.cancel !== "${{ github.event_name == 'pull_request' }}") out.push(`cancels off a pull request: ${c.cancel}`);
-  /* A group shared by two runs on main makes the second PENDING and drops any third: the commit keys it. */
-  if (c.group !== `${prefix}-\${{ github.ref }}-\${{ github.event_name == 'pull_request' && 'pr' || github.sha }}`) {
-    out.push(`a run on main or a tag can share its group: ${c.group}`);
+  if (c.cancel !== CANCEL) out.push(`cancels beyond a pull request and a push to main: ${c.cancel}`);
+  /* A group shared by two runs that never cancel makes the second PENDING and drops any third: the commit keys it. */
+  if (c.group !== groupOf(prefix)) out.push(`a run on a tag or a merge group can share its group: ${c.group}`);
+  return out;
+}
+
+type Run = { label: string; event: string; ref: string; sha: string };
+const SHA_A = "a".repeat(40), SHA_B = "b".repeat(40);
+/** Pairs where the second run supersedes the first: one group, and the second cancels. */
+const SUPERSEDED: Array<[Run, Run]> = [
+  [{ label: "a pull request", event: "pull_request", ref: "refs/pull/7/merge", sha: SHA_A },
+    { label: "its next push", event: "pull_request", ref: "refs/pull/7/merge", sha: SHA_B }],
+  [{ label: "a push to main", event: "push", ref: "refs/heads/main", sha: SHA_A },
+    { label: "the next push to main", event: "push", ref: "refs/heads/main", sha: SHA_B }],
+];
+/** Runs that are never cancelled and share a group with no other commit's run. */
+const KEPT: Run[] = [
+  { label: "a v* tag", event: "push", ref: "refs/tags/v1.2.3", sha: SHA_A },
+  { label: "an android-v* tag", event: "push", ref: "refs/tags/android-v1.2.3", sha: SHA_A },
+  { label: "a merge group", event: "merge_group", ref: `refs/heads/gh-readonly-queue/main/pr-7-${SHA_A}`, sha: SHA_A },
+  { label: "a dispatch on a tag", event: "workflow_dispatch", ref: "refs/tags/v1.2.3", sha: SHA_A },
+  { label: "a dispatch on main", event: "workflow_dispatch", ref: "refs/heads/main", sha: SHA_A },
+];
+
+/** A workflow value as the runner reads it: a whole `${{ }}` is its value, a bare true or false that
+ * boolean, and any other text has each `${{ }}` in it evaluated to a string. */
+export function valueOf(raw: string, ctx: Record<string, string | null>): unknown {
+  const whole = /^\$\{\{([\s\S]*)\}\}$/.exec(raw.trim());
+  if (whole && !whole[1].includes("}}")) return evaluate(whole[1].trim(), ctx);
+  if (raw === "true" || raw === "false") return raw === "true";
+  return raw.replace(/\$\{\{([\s\S]*?)\}\}/g, (_m, e: string) => String(evaluate(e.trim(), ctx) ?? ""));
+}
+
+/** What the concurrency does to the runs above, evaluated as written. */
+export function concurrencyRuns(c: { group: string | null; cancel: string | null }, prefix: string): string[] {
+  const at = (r: Run) => ({ "github.event_name": r.event, "github.ref": r.ref, "github.sha": r.sha });
+  const group = (r: Run) => String(valueOf(c.group ?? "", at(r)));
+  const cancels = (r: Run) => Boolean(valueOf(c.cancel ?? "false", at(r)));
+  const out: string[] = [];
+  for (const [old, next] of SUPERSEDED) {
+    if (group(old) !== group(next)) out.push(`${prefix}: ${old.label} and ${next.label} do not share a group`);
+    if (!cancels(next)) out.push(`${prefix}: ${next.label} does not cancel ${old.label}`);
+  }
+  const pr = SUPERSEDED[0][0];
+  if (group(pr) === group({ ...pr, ref: "refs/pull/8/merge" })) out.push(`${prefix}: two pull requests share a group`);
+  for (const r of KEPT) {
+    if (cancels(r)) out.push(`${prefix}: ${r.label} cancels the run before it`);
+    if (group(r) === group({ ...r, sha: SHA_B })) out.push(`${prefix}: ${r.label} shares its group with another commit's run`);
   }
   return out;
 }
@@ -90,9 +141,17 @@ describe("the workflows of a main that takes pull requests", () => {
     expect(triggersOf(android)).toEqual(["push", "pull_request", "merge_group", "workflow_dispatch"]);
   });
 
-  it("concurrency cancels only a pull request's superseded run", () => {
-    expect(concurrencyFindings(concurrencyOf(build), "build")).toEqual([]);
-    expect(concurrencyFindings(concurrencyOf(android), "android")).toEqual([]);
+  it("concurrency cancels a pull request's and main's superseded run, never a tag's", () => {
+    for (const [t, prefix] of [[build, "build"], [android, "android"]] as const) {
+      expect(concurrencyFindings(concurrencyOf(t), prefix)).toEqual([]);
+      expect(concurrencyRuns(concurrencyOf(t), prefix)).toEqual([]);
+    }
+    const group = concurrencyOf(build).group!;
+    const at = (event: string, ref: string) => ({ "github.event_name": event, "github.ref": ref, "github.sha": SHA_A });
+    expect(valueOf(group, at("pull_request", "refs/pull/7/merge"))).toBe("build-refs/pull/7/merge-pr");
+    expect(valueOf(group, at("push", "refs/heads/main"))).toBe("build-refs/heads/main-main");
+    expect(valueOf(group, at("push", "refs/tags/v1.2.3"))).toBe(`build-refs/tags/v1.2.3-${SHA_A}`);
+    expect(valueOf(group, at("workflow_dispatch", "refs/heads/main"))).toBe(`build-refs/heads/main-${SHA_A}`);
   });
 
   it("every job holding a signing secret runs in the release environment", () => {
@@ -114,12 +173,29 @@ describe("the workflows of a main that takes pull requests", () => {
 
   it("each reader is watched failing on the shape it guards", () => {
     expect(triggersOf(build.replace("  merge_group:\n", ""))).not.toContain("merge_group");
-    expect(concurrencyFindings(concurrencyOf(build.replace(
-      "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: true")), "build"))
-      .toEqual(["cancels off a pull request: true"]);
-    expect(concurrencyFindings(concurrencyOf(build.replace(
-      "group: build-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}", "group: build-${{ github.ref }}")), "build"))
-      .toEqual(["a run on main or a tag can share its group: build-${{ github.ref }}"]);
+    /* Cancelling everywhere cancels the tag's run. */
+    const always = concurrencyOf(build.replace(`cancel-in-progress: ${CANCEL}`, "cancel-in-progress: true"));
+    expect(concurrencyFindings(always, "build")).toEqual(["cancels beyond a pull request and a push to main: true"]);
+    expect(concurrencyRuns(always, "build")).toEqual(KEPT.map((r) => `build: ${r.label} cancels the run before it`));
+    /* A group without the commit: two runs of one tag share it. */
+    const noSha = concurrencyOf(build.replace(" || github.sha }}", " }}"));
+    expect(noSha.group).not.toBe(groupOf("build"));
+    expect(concurrencyRuns(noSha, "build")).toContain("build: a v* tag shares its group with another commit's run");
+    expect(concurrencyFindings(concurrencyOf(build.replace(`group: ${groupOf("build")}`, "group: build-${{ github.ref }}")), "build"))
+      .toEqual(["a run on a tag or a merge group can share its group: build-${{ github.ref }}"]);
+    /* android.yml left on the block before main's runs were superseded. */
+    const before = android
+      .replace(`group: ${groupOf("android")}`, "group: android-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}")
+      .replace(`cancel-in-progress: ${CANCEL}`, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    expect(before).not.toBe(android);
+    expect(concurrencyRuns(concurrencyOf(before), "android")).toEqual([
+      "android: a push to main and the next push to main do not share a group",
+      "android: the next push to main does not cancel a push to main",
+    ]);
+    /* A pull request's group without the pull request: every pull request shares one. */
+    expect(concurrencyRuns(concurrencyOf(build.replace("-${{ github.ref }}-", "-")), "build")).toContain("build: two pull requests share a group");
+    expect(valueOf("x-${{ github.ref }}-${{ github.sha }}", { "github.ref": "r", "github.sha": "s" })).toBe("x-r-s");
+    expect(valueOf("${{ github.ref == 'r' }}", { "github.ref": "r" })).toBe(true);
     expect(keysOutsideRelease(android.replace("    environment: release\n", ""))).toEqual(["sign"]);
     expect(keysOutsideRelease(feeds.replace("    environment: release\n", ""))).toEqual(["sign"]);
     expect(keysOutsideRelease(build.replace(/^ {4}environment: .+\n/m, ""))).toEqual(["macos"]);

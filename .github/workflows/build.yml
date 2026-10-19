@@ -143,12 +143,13 @@ env:
   # reviewed commit.
   RUST_TOOLCHAIN: "1.99.0"
 
-# Only a pull request's superseded run is cancelled. A run on main, on a tag or on a merge group has a
-# group of its own — the commit — so it is never cancelled, nor dropped while pending behind another:
-# a release's installers come from those runs.
+# A pull request's superseded run is cancelled, and so is a main run a newer push to main replaces: the
+# newest one proves what landed. A run on a tag, on a merge group or by dispatch has a group of its own —
+# the commit — so it is never cancelled, nor dropped while pending behind another: a release's
+# installers come from the tag's run.
 concurrency:
-  group: build-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: build-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
 jobs:
   # ── WHICH PLATFORM BUILDS A PULL REQUEST NEEDS ─────────────────────────────

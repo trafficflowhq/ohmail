@@ -8,6 +8,9 @@ name: ci
 # instead of a skip. A file marked `@postpush: alone` runs in a job of its own on a database made from
 # empty, because it reads state its own seeding does not own. A new test file needs no edit here: a
 # file the shard map does not name runs in the shard its path hashes to.
+#
+# The hosted runners are one pool for the whole organisation, so each matrix bounds how many of its
+# jobs run at once (max-parallel): three suite shards, one alone file, one SQLite shard.
 
 on:
   pull_request:
@@ -66,6 +69,7 @@ jobs:
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     # Every image by digest, the same ones docker-compose.yml runs: Postgres from our mirror
@@ -212,6 +216,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         file: ${{ fromJSON(needs.plan.outputs.alone) }}
     services:
@@ -285,6 +290,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.sqlite) }}
     services:
