@@ -178,3 +178,73 @@ describe("the auth family's transactions open on the erasure fence", () => {
     expect(judge(planted)).toEqual(["RAW pairing.ts:plantedRaw: a transaction opened past the opener"]);
   });
 });
+
+/**
+ * EVERY OPENER THAT MINTS A GRANT OR VOIDS THEM TAKES THE USER ROW FIRST. A mint holds its session
+ * last (`holdLiveSession`), a revoke voids the user's grants (`voidPendingGrants`), and each awaits
+ * `lockUserRow` before anything else, so a mint and a revoke of one user wait for each other whole.
+ * Postgres shows the waits (`revoke-grants-race.pg.test.ts`) and PGlite, one statement at a time,
+ * cannot; this reads every opener, so a mint or a revoke without the lock first is red by name.
+ */
+const USER_ROW_OPENERS = [
+  "auth-service.ts:approveAuthorize", "auth-service.ts:authorize", "auth-service.ts:confirmDesktopApproval",
+  "auth-service.ts:issueDesktopLink", "pairing.ts:mintPairingToken", "session-lifecycle.ts:logout",
+  "session-lifecycle.ts:revokeClaimedSessions",
+];
+
+/** The callee of the first `await` under `node`, in source order; `null` when nothing is awaited. */
+function firstAwaited(node: ts.Node): string | null {
+  let found: string | null = null;
+  const visit = (n: ts.Node): void => {
+    if (found !== null) return;
+    if (ts.isAwaitExpression(n)) {
+      found = ts.isCallExpression(n.expression) ? (calleeName(n.expression) ?? "?") : "?";
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return found;
+}
+
+function userRowFirst(plant?: { file: string; append: string }): { matched: string[]; findings: string[] } {
+  const matched: string[] = [];
+  const findings: string[] = [];
+  for (const f of FILES) {
+    const text = readFileSync(path.join(ROOT, f), "utf8") + (plant?.file === f ? plant.append : "");
+    const sf = ts.createSourceFile(f, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const visit = (n: ts.Node): void => {
+      if (ts.isCallExpression(n) && ["inTransaction", "runInTransaction"].includes(calleeName(n) ?? "")) {
+        const body = n.arguments.find((a): a is ts.ArrowFunction | ts.FunctionExpression =>
+          ts.isArrowFunction(a) || ts.isFunctionExpression(a));
+        if (body && (calls(body, "holdLiveSession") || calls(body, "voidPendingGrants"))) {
+          const key = `${path.basename(f)}:${enclosingName(n)}`;
+          matched.push(key);
+          const first = firstAwaited(body.body);
+          if (first !== "lockUserRow") findings.push(`${key}: awaits ${first} before lockUserRow`);
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return { matched: matched.sort(), findings };
+}
+
+describe("every opener that mints or voids a grant takes the user row first", () => {
+  it("the seven openers that hold their session last or void grants each await lockUserRow first", () => {
+    expect(userRowFirst()).toEqual({ matched: USER_ROW_OPENERS, findings: [] });
+  });
+
+  it("RED: a planted mint that holds its session without the lock first is named", () => {
+    const planted = userRowFirst({ file: "packages/services/src/pairing.ts", append: "\nasync function plantedMint(ctx: any) {"
+      + " return runInTransaction(ctx, async (t: any) => { await writeSomething(t); await holdLiveSession(t, t); }); }\n" });
+    expect(planted.findings).toEqual(["pairing.ts:plantedMint: awaits writeSomething before lockUserRow"]);
+  });
+
+  it("RED: a planted revoke that voids grants before the lock is named", () => {
+    const planted = userRowFirst({ file: `${AUTH_DIR}/session-lifecycle.ts`, append: "\nasync function plantedRevoke(x: any) {"
+      + " await x.inTransaction(x, async (t: any) => { await x.voidPendingGrants(t); await lockUserRow(t, \"u\"); }); }\n" });
+    expect(planted.findings).toEqual(["session-lifecycle.ts:plantedRevoke: awaits voidPendingGrants before lockUserRow"]);
+  });
+});

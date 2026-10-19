@@ -58,7 +58,7 @@ import {
   allowedOrigins, assertOriginConfig, resolveCeremonyOrigin, tryNormalizeOrigin,
 } from "./origins.js";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp.js";
-import { SessionLifecycle, holdLiveSession, refuseCrossAccountCredential } from "./session-lifecycle.js";
+import { SessionLifecycle, holdLiveSession, lockUserRow, refuseCrossAccountCredential } from "./session-lifecycle.js";
 
 type Method = "webauthn" | "totp" | "recovery_code";
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
@@ -1186,12 +1186,11 @@ export class AuthService extends SessionLifecycle {
     // delete then both insert and BOTH codes survive; the lock serializes them, and the `users`
     // row is locked because a lock can only take rows that EXIST (a first mint has no token
     // row). A racing claim of the old code is correct in both orders: claim then delete, or
-    // delete then `invalid_code`. NO KEY UPDATE, the lock every revoke takes first
-    // (`lockUserForRevoke`): two mints, or a mint and a revoke, wait for each other whole, and a
-    // writer that only references the user (a foreign key reads it FOR KEY SHARE) is not held off.
+    // delete then `invalid_code`. {@link lockUserRow}, which every grant mint takes first and every
+    // revoke before its first void: two mints, or a mint and a revoke, wait for each other whole.
     await this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
-      await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("no key update");
+      await lockUserRow(db, userId);
       // The minting session's factor time, carried for the claim.
       const meta = await desktopGrantMeta(db, ctx);
       await db.delete(loginTokens).where(and(
@@ -1425,9 +1424,11 @@ export class AuthService extends SessionLifecycle {
     const userId = this.requireUser(ctx);
     const now = ctx.now();
     if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
-    // The bind gives the row to this user, a row the erasure deletes: opened on the account row.
+    // The bind gives the row to this user, a row the erasure deletes: opened on the account row. A
+    // confirm is a grant mint, so its user row comes first ({@link lockUserRow}).
     return this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
+      await lockUserRow(db, userId);
       // The confirming session's factor time, for the claim to inherit as a desktop link's does:
       // stamped `approved_at`, a desktop signed in here could confirm the next one into a fresh window.
       const meta = await desktopGrantMeta(db, ctx);
@@ -2337,11 +2338,11 @@ export class AuthService extends SessionLifecycle {
     // open authorization request per user, so a second link clicked cannot leave a first one
     // confirmable behind it, and `login_tokens` — which has no reaper — stays bounded by users
     // rather than by clicks. The OWNER row is locked because delete-then-insert is not a
-    // supersede under READ COMMITTED, and the `users` row is what is certain to exist; NO KEY
-    // UPDATE, for {@link issueDesktopLink}'s reason (the lock every revoke takes first).
+    // supersede under READ COMMITTED, and the `users` row is what is certain to exist: {@link
+    // lockUserRow}, for {@link issueDesktopLink}'s reason.
     await this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
-      await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("no key update");
+      await lockUserRow(db, userId);
       // The authorizing session's REAL factor time, read here because this is the only point where
       // the browser session and the native one are both in scope. NULL resolves to a session that
       // cannot clear step-up, which is the closed side.
@@ -2421,10 +2422,11 @@ export class AuthService extends SessionLifecycle {
 
     const rawCode = generateToken();
     // ONE TRANSACTION, the burn, the code and the confirming session's hold: a code is minted only
-    // while that session is live ({@link holdLiveSession}). A refusal of the binding RETURNS, so its
-    // burn commits.
+    // while that session is live ({@link holdLiveSession}), its user row taken first as every grant
+    // mint takes it ({@link lockUserRow}). A refusal of the binding RETURNS, so its burn commits.
     const meta = await this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
+      await lockUserRow(db, userId);
       const [row] = await db.update(loginTokens)
         .set({ consumedAt: now })
         .where(and(
@@ -3402,8 +3404,9 @@ export class AuthService extends SessionLifecycle {
    * verifies, the recovery code, the desktop link and approval claims, the OAuth exchange and the
    * pairing redeem — so a redeem holding its burn makes this wait, commits, and the claim then takes
    * the session it wrote; one that comes second waits on the row voided here and finds it spent.
-   * After: a mint that proved its session live before the claim made the claim wait, and its grant
-   * is taken here. The device-pair arm is the lifecycle's own, run first.
+   * After: every grant mint takes the user row first ({@link lockUserRow}), as the revoke does before
+   * this, so no mint commits between the two, and a grant row any other writer committed before the
+   * claim is taken here. The device-pair arm is the lifecycle's own, run first.
    */
   protected override async voidPendingGrants(db: Tx, userId: string, now: Date): Promise<void> {
     await super.voidPendingGrants(db, userId, now);

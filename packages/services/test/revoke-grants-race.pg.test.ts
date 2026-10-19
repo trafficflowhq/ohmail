@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { accounts, sessions, users } from "@trafficflow/db";
-import { credentials, loginTokens, makeOwnedDb, totpSecrets, type OwnedDb } from "@trafficflow/db/cloud";
+import { accounts, pairingTokens, refreshTokens, sessions, users } from "@trafficflow/db";
+import { credentials, loginTokens, makeOwnedDb, totpSecrets, webauthnCredentials, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -21,12 +21,12 @@ import { SoftwareAuthenticator } from "./webauthn-authenticator.js";
  *
  *  1. Every mint proves its own session live as its LAST statement, read FOR SHARE. A revoke that
  *     claimed the session first makes that read find nothing, and the mint rolls back.
- *  2. Every revoke voids the user's pending grants again after its session claim. A mint that held
- *     its session before the claim makes the claim wait, commits, and the second void takes it.
- *  3. Every revoke takes its user row FOR NO KEY UPDATE before its first void, the lock the mints that
- *     supersede a code take first, so the two wait for each other whole. A desktop link that had
- *     deleted the code before it and waited on the revoke's claim, while the revoke's second void
- *     waited on that row, was a deadlock.
+ *  2. Every revoke voids the user's pending grants again after its session claim, so a grant row
+ *     committed before the claim is taken whatever wrote it.
+ *  3. Every revoke takes its user row FOR NO KEY UPDATE before its first void, and every mint takes the
+ *     same row as its first statement, so a mint and a revoke of one user wait for each other whole, in
+ *     either order. A desktop link that had deleted the code before it and waited on the revoke's claim,
+ *     while the revoke's second void waited on that row, was a deadlock.
  *  4. Every redeem burns its grant and writes its session in ONE transaction. A redeem holding its
  *     burn makes the revoke's first void wait, commits, and the claim then takes the session it wrote;
  *     a void that came first makes the burn wait, and the burn then finds the grant spent.
@@ -92,6 +92,7 @@ function lockOf(q: string | null): string {
   if (/from "sessions".*for share/is.test(q)) return "sessions FOR SHARE";
   if (/from "sessions".*for update/is.test(q)) return "sessions FOR UPDATE";
   if (/^\s*update "login_tokens"/i.test(q)) return "UPDATE login_tokens";
+  if (/^\s*update "refresh_tokens"/i.test(q)) return "UPDATE refresh_tokens";
   if (/^\s*delete from "login_tokens"/i.test(q)) return "DELETE login_tokens";
   if (/^\s*update "pairing_tokens"/i.test(q)) return "UPDATE pairing_tokens";
   if (/^\s*update "oauth_auth_codes"/i.test(q)) return "UPDATE oauth_auth_codes";
@@ -140,7 +141,8 @@ async function holding(hold: OwnedDb, steps: Array<ReturnType<typeof sql>>): Pro
     locked();
     await released;
   });
-  await isLocked;
+  // A hold that never starts fails its case here rather than leaving it waiting.
+  await Promise.race([isLocked, done]);
   return { release, done };
 }
 
@@ -154,6 +156,12 @@ const liveLinks = async (userId: string): Promise<string[]> =>
     isNull(loginTokens.consumedAt), gt(loginTokens.expiresAt, new Date()),
   ))).map((r) => r.id);
 
+const livePairs = async (userId: string): Promise<string[]> =>
+  (await db().select({ id: pairingTokens.id }).from(pairingTokens).where(and(
+    eq(pairingTokens.createdByUserId, userId), eq(pairingTokens.grant, "device-pair"),
+    isNull(pairingTokens.consumedAt), isNull(pairingTokens.revokedAt), gt(pairingTokens.expiresAt, new Date()),
+  ))).map((r) => r.id);
+
 describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
@@ -162,6 +170,11 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
   afterAll(async () => {
     await Promise.all(opened.map((o) => o.close()));
     await base?.close();
+  });
+  // Each case's handles close with it: a server's connection slots are shared, and a file that kept
+  // every party's pool open to the end ran out of them.
+  afterEach(async () => {
+    await Promise.all(opened.splice(0).map((o) => o.close()));
   });
 
   it("a desktop link asked while everything is signed out waits at its user lock, is refused, and leaves no code", async () => {
@@ -191,10 +204,10 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
     expect(await liveSessions(p.userId)).toEqual([]);
   }, 60_000);
 
-  it("a pairing code minted between the revoke's first void and its claim is voided by the second", async () => {
+  it("a pairing code asked while a device revoke runs waits at its user lock, is refused, and leaves no code", async () => {
     const p = await person();
     const auth = makeAuthService(makeTestAuthDeps());
-    // A first step of the user's, held: the revoke's first void waits on it with the pairing arm done.
+    // A first step of the user's, held: the revoke parks in its first void, its user row taken.
     const [step] = await db().insert(loginTokens).values({
       userId: p.userId, tokenHash: hashToken(generateToken()), methods: [], purpose: "login",
       expiresAt: new Date(Date.now() + 5 * 60_000),
@@ -206,15 +219,48 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
     const revoke = settle(auth.revokeDevice(ctxOn(revoker.db, p, p.caller), p.other));
     expect(lockOf(await blockedOn(C, H, 10_000)), "the revoke is parked in its first void").toBe("UPDATE login_tokens");
 
-    const minted = await settle(mintPairingToken(ctxOn(minter.db, p, p.other), { grant: "device-pair", label: "rg-race phone" }));
+    let mintDone = false;
+    const minted = settle(mintPairingToken(ctxOn(minter.db, p, p.other), { grant: "device-pair", label: "rg-race phone" }))
+      .finally(() => { mintDone = true; });
+    const waited = lockOf(await blockedOn(M, C, 10_000, () => mintDone));
     parked.release();
     await parked.done;
-    const r = await revoke;
+    const [r, m] = await Promise.all([revoke, minted]);
 
-    expect({ mint: answer(minted), revoke: answer(r) }).toEqual({ mint: "ok", revoke: "ok" });
-    const token = minted.ok ? minted.v.token : "";
-    const redeemed = await settle(redeemDevicePair(ctxOn(db(), p, null), auth, { token, kind: "mobile-android" }));
-    expect(answer(redeemed), "a pairing code minted before the claim outlived the revoke").toBe("pairing_invalid");
+    expect({ waited, revoke: answer(r), mint: answer(m) })
+      .toEqual({ waited: "users FOR NO KEY UPDATE", revoke: "ok", mint: "unauthorized" });
+    expect(await livePairs(p.userId), "a pairing code minted for a revoked session outlived the revoke").toEqual([]);
+    expect(await liveSessions(p.userId)).toEqual([p.caller]);
+  }, 60_000);
+
+  it("a pairing row written while a device revoke is in its first void is voided by its second", async () => {
+    const p = await person();
+    const auth = makeAuthService(makeTestAuthDeps());
+    // A first step of the user's, held: the revoke's first void waits on it with the pairing arm done.
+    const [step] = await db().insert(loginTokens).values({
+      userId: p.userId, tokenHash: hashToken(generateToken()), methods: [], purpose: "login",
+      expiresAt: new Date(Date.now() + 5 * 60_000),
+    }).returning();
+    const tag = randomUUID().slice(0, 8);
+    const [H, C] = [`rgr-hold-${tag}`, `rgr-revoke-${tag}`];
+    const hold = named(H); const revoker = named(C);
+    const parked = await holding(hold, [sql`select id from login_tokens where id = ${step!.id} for update`]);
+    const revoke = settle(auth.revokeDevice(ctxOn(revoker.db, p, p.caller), p.other));
+    expect(lockOf(await blockedOn(C, H, 10_000)), "the revoke is parked in its first void").toBe("UPDATE login_tokens");
+
+    // Written past the mint door, which would wait at the user row: only the second void can take it.
+    const raw = generateToken();
+    await db().insert(pairingTokens).values({
+      createdByUserId: p.userId, grant: "device-pair", tokenHash: hashToken(raw), label: "rg-race by hand",
+      expiresAt: new Date(Date.now() + 5 * 60_000),
+    });
+    parked.release();
+    await parked.done;
+
+    expect(answer(await revoke)).toBe("ok");
+    const redeemed = await settle(redeemDevicePair(ctxOn(db(), p, null), auth, { token: raw, kind: "mobile-android" }));
+    expect(answer(redeemed), "a pairing row committed before the claim outlived the revoke").toBe("pairing_invalid");
+    expect(await livePairs(p.userId)).toEqual([]);
     expect(await liveSessions(p.userId)).toEqual([p.caller]);
   }, 60_000);
 
@@ -567,4 +613,317 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
       .filter(([k]) => k !== "mint unauthorized" && k !== "claim invalid_code"));
     expect({ ...others, outlived }, JSON.stringify(answers)).toEqual({ "revoke ok": ROUNDS, outlived: 0 });
   }, 180_000);
+
+  /*
+   * EVERY GRANT MINT TAKES ITS USER ROW FIRST, the row every revoke takes before its first void, so a
+   * sign-out everywhere, a password change or an authenticator removal also ends a sign-in whose grant
+   * is minted while it runs. Asked while the revoke runs, a mint waits at that row and then finds its
+   * session revoked. Running when the revoke is asked, it makes the revoke wait there, and the revoke's
+   * first void takes what it minted. Whatever a mint answers is spent as soon as it comes back, and no
+   * spend may sign in.
+   */
+  type Revocable = Person & { low: string };
+
+  /**
+   * A person every take-back door accepts: a password, an activated TOTP and a passkey row (the
+   * authenticator goes only while another factor stays), and a third session whose id sorts first,
+   * with its refresh token: a claim in id order stops at it before it takes any other, and the sweep
+   * after the claim stops at its token.
+   */
+  async function revocable(): Promise<Revocable> {
+    const p = await person();
+    await db().insert(credentials).values({ userId: p.userId, passwordHash: await deps.passwordHasher.hash(PW), algo: "scrypt" });
+    const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(newTotpSecret());
+    await db().insert(totpSecrets).values({ userId: p.userId, secretEnc: ciphertext, keyVersion, activated: true });
+    await db().insert(webauthnCredentials).values({ userId: p.userId, credentialId: `rg-race-${randomUUID()}`, publicKey: "AAAA" });
+    const now = Date.now();
+    const familyId = randomUUID();
+    const [low] = await db().insert(sessions).values({
+      id: `00000000-0000-4000-8000-${randomUUID().slice(-12)}`, accountId: p.accountId, userId: p.userId, familyId,
+      accessTokenHash: hashToken(generateToken()), accessExpiresAt: new Date(now + 10 * 60_000),
+      refreshExpiresAt: new Date(now + 30 * 86_400_000), lastTwofaAt: new Date(now),
+    }).returning();
+    await db().insert(refreshTokens).values({
+      accountId: p.accountId, userId: p.userId, sessionId: low!.id, familyId, tokenHash: hashToken(generateToken()),
+      expiresAt: new Date(now + 30 * 86_400_000), createdAt: new Date(now),
+    });
+    return { ...p, low: low!.id };
+  }
+
+  type Prep = Record<string, string>;
+  interface GrantMint {
+    grant: string;
+    /** The desktop link, whose mint took the user row first before the others did: the control. */
+    control?: true;
+    /** What the mint needs, made before any revoke: an open OAuth request, a desktop's approval request. */
+    prepare: (auth: Auth, p: Revocable) => Promise<Prep>;
+    mint: (auth: Auth, handle: unknown, p: Revocable, by: string, prep: Prep) => Promise<unknown>;
+    spend: (auth: Auth, handle: unknown, p: Revocable, minted: unknown, prep: Prep) => Promise<unknown>;
+    /** What the spend answers once a revoke took the grant. */
+    refusal: string;
+  }
+
+  const GRANT_MINTS: GrantMint[] = [
+    {
+      grant: "an OAuth code", refusal: "invalid_grant",
+      prepare: async (auth, p) => {
+        const verifier = generateToken();
+        const { request } = await auth.authorize(ctxOn(db(), p, p.other), {
+          response_type: "code", client_id: "tf-macos", redirect_uri: "trafficflow://auth",
+          code_challenge: s256(verifier), code_challenge_method: `S${"256"}` as const, state: "s", scope: "full",
+        });
+        return { verifier, request };
+      },
+      mint: async (auth, h, p, by, prep) =>
+        new URL((await auth.approveAuthorize(ctxOn(h, p, by), { request: prep.request! })).redirect).searchParams.get("code"),
+      spend: (auth, h, p, code, prep) => auth.token(ctxOn(h, p, null), {
+        grant_type: "authorization_code", code: code as string, redirect_uri: "trafficflow://auth", client_id: "tf-macos",
+        code_verifier: prep.verifier!,
+      }),
+    },
+    {
+      grant: "a device-pair code", refusal: "pairing_invalid",
+      prepare: async () => ({}),
+      mint: async (_auth, h, p, by) => (await mintPairingToken(ctxOn(h, p, by), { grant: "device-pair", label: "rg-race phone" })).token,
+      spend: (auth, h, p, token) => redeemDevicePair(ctxOn(h, p, null), auth, { token: token as string, kind: "mobile-android" }),
+    },
+    {
+      grant: "a desktop approval", refusal: "approval_denied",
+      prepare: async (auth, p) => {
+        const verifier = generateToken();
+        const { approvalId } = await auth.issueDesktopApproval(ctxOn(db(), p, null), { challenge: hashToken(verifier), kind: "desktop-linux" });
+        return { verifier, approvalId };
+      },
+      mint: (auth, h, p, by, prep) => auth.confirmDesktopApproval(ctxOn(h, p, by), prep.approvalId!),
+      spend: async (auth, h, p, _minted, prep) => {
+        const claimed = await auth.claimDesktopApproval(ctxOn(h, p, null), { approvalId: prep.approvalId!, verifier: prep.verifier!, kind: "desktop-linux" });
+        if (!("tokens" in claimed)) throw Object.assign(new Error("still pending"), { code: "pending" });
+        return claimed;
+      },
+    },
+    {
+      grant: "a desktop link", refusal: "invalid_code", control: true,
+      prepare: async () => ({}),
+      mint: async (auth, h, p, by) => (await auth.issueDesktopLink(ctxOn(h, p, by))).code,
+      spend: (auth, h, p, code) => auth.claimDesktopLink(ctxOn(h, p, null), { code: code as string }),
+    },
+  ];
+
+  interface TakeBack { door: string; run: (auth: Auth, c: ServiceContext) => Promise<unknown>; keeps: (p: Revocable) => string[] }
+  /** The password change and the authenticator removal leave their caller signed in. */
+  const TAKE_BACKS: TakeBack[] = [
+    { door: "signing out everywhere", run: (auth, c) => auth.logout(c, { allDevices: true }), keeps: () => [] },
+    {
+      door: "changing the password", keeps: (p) => [p.caller],
+      run: (auth, c) => auth.changePassword(c, { currentPassword: PW, newPassword: "new-battery-staple-horse-password" }),
+    },
+    { door: "removing the authenticator", run: (auth, c) => auth.totpRemove(c), keeps: (p) => [p.caller] },
+  ];
+
+  for (const m of GRANT_MINTS) {
+    for (const d of m.control ? TAKE_BACKS.slice(0, 1) : TAKE_BACKS) {
+      it(`${m.grant} asked while ${d.door} runs waits at its user lock, is refused, and nothing signs in`, async () => {
+        const p = await revocable();
+        const auth = makeAuthService(deps);
+        const prep = await m.prepare(auth, p);
+        const tag = randomUUID().slice(0, 8);
+        const [H1, H2, C, M, S] = [`rgr-hold-${tag}`, `rgr-hold2-${tag}`, `rgr-revoke-${tag}`, `rgr-mint-${tag}`, `rgr-spend-${tag}`];
+        const claimHold = named(H1); const sweepHold = named(H2); const revoker = named(C); const minter = named(M);
+        const spender = named(S);
+        // The revoke parked at its claim, on the session that sorts first: its user row taken, its first void done.
+        const atClaim = await holding(claimHold, [sql`select id from sessions where id = ${p.low} for update`]);
+        const revoke = settle(d.run(auth, ctxOn(revoker.db, p, p.caller)));
+        const parked = lockOf(await blockedOn(C, H1, 10_000));
+
+        // The mint, after its route admitted the other session.
+        let mintDone = false;
+        const minted = settle(m.mint(auth, minter.db, p, p.other, prep)).finally(() => { mintDone = true; });
+        const waited = lockOf(await blockedOn(M, C, 10_000, () => mintDone));
+        // The revoke past its claim, parked again at its sweep: what the mint answered by now is spent now.
+        const atSweep = await holding(sweepHold, [sql`select id from refresh_tokens where session_id = ${p.low} for update`]);
+        atClaim.release();
+        await atClaim.done;
+        const sweep = lockOf(await blockedOn(C, H2, 10_000));
+        const early = mintDone ? await minted : null;
+        const spentEarly = early?.ok ? answer(await settle(m.spend(auth, spender.db, p, early.v, prep))) : null;
+        atSweep.release();
+        await atSweep.done;
+        const [rv, mt] = await Promise.all([revoke, minted]);
+        // And what it answered after the revoke, spent then.
+        const spentLate = early === null && mt.ok ? answer(await settle(m.spend(auth, db(), p, mt.v, prep))) : null;
+
+        const outlived = (await liveSessions(p.userId)).filter((id) => !d.keeps(p).includes(id)).length;
+        expect({ parked, sweep, waited, mint: answer(mt), revoke: answer(rv), spentEarly, spentLate, outlived }).toEqual({
+          parked: "sessions FOR UPDATE", sweep: "UPDATE refresh_tokens", waited: "users FOR NO KEY UPDATE",
+          mint: "unauthorized", revoke: "ok", spentEarly: null, spentLate: null, outlived: 0,
+        });
+      }, 60_000);
+    }
+  }
+
+  for (const m of GRANT_MINTS.filter((x) => !x.control)) {
+    for (const d of TAKE_BACKS.slice(0, 2)) {
+      it(`${m.grant} minting when ${d.door} is asked makes the revoke wait at its user row, and the revoke takes it`, async () => {
+        const p = await revocable();
+        const auth = makeAuthService(deps);
+        const prep = await m.prepare(auth, p);
+        const tag = randomUUID().slice(0, 8);
+        const [H, C, M] = [`rgr-hold-${tag}`, `rgr-revoke-${tag}`, `rgr-mint-${tag}`];
+        const hold = named(H); const revoker = named(C); const minter = named(M);
+        // The minting session held: the mint parks at its last statement, past its user lock and its writes.
+        const atHold = await holding(hold, [sql`select id from sessions where id = ${p.other} for update`]);
+        const minted = settle(m.mint(auth, minter.db, p, p.other, prep));
+        const mintParked = lockOf(await blockedOn(M, H, 10_000));
+
+        let revoked = false;
+        const revoke = settle(d.run(auth, ctxOn(revoker.db, p, p.caller))).finally(() => { revoked = true; });
+        const waited = lockOf(await blockedOn(C, M, 10_000, () => revoked));
+        atHold.release();
+        await atHold.done;
+        const [mt, rv] = await Promise.all([minted, revoke]);
+        const spent = mt.ok ? answer(await settle(m.spend(auth, db(), p, mt.v, prep))) : null;
+
+        const outlived = (await liveSessions(p.userId)).filter((id) => !d.keeps(p).includes(id)).length;
+        expect({ mintParked, waited, mint: answer(mt), revoke: answer(rv), spent, outlived }).toEqual({
+          mintParked: "sessions FOR SHARE", waited: "users FOR NO KEY UPDATE", mint: "ok", revoke: "ok", spent: m.refusal,
+          outlived: 0,
+        });
+      }, 60_000);
+    }
+  }
+
+  /**
+   * THE SESSION A PASSWORD CHANGE SPARES KEEPS WHAT IT MINTS: its pairing code waits for the change at
+   * the user row, then lands, and the phone it pairs stays signed in. A mint is refused by its session's
+   * hold, never by the lock.
+   */
+  it("a pairing code the password change's own caller asks while it runs waits for it, and the phone it pairs stays signed in", async () => {
+    const p = await revocable();
+    const auth = makeAuthService(deps);
+    const tag = randomUUID().slice(0, 8);
+    const [H, C, M] = [`rgr-hold-${tag}`, `rgr-revoke-${tag}`, `rgr-mint-${tag}`];
+    const hold = named(H); const revoker = named(C); const minter = named(M);
+    const atClaim = await holding(hold, [sql`select id from sessions where id = ${p.low} for update`]);
+    const revoke = settle(auth.changePassword(ctxOn(revoker.db, p, p.caller), {
+      currentPassword: PW, newPassword: "new-battery-staple-horse-password",
+    }));
+    const parked = lockOf(await blockedOn(C, H, 10_000));
+
+    let mintDone = false;
+    const minted = settle(mintPairingToken(ctxOn(minter.db, p, p.caller), { grant: "device-pair", label: "rg-race phone" }))
+      .finally(() => { mintDone = true; });
+    const waited = lockOf(await blockedOn(M, C, 10_000, () => mintDone));
+    atClaim.release();
+    await atClaim.done;
+    const [rv, mt] = await Promise.all([revoke, minted]);
+    const redeemed = mt.ok
+      ? answer(await settle(redeemDevicePair(ctxOn(db(), p, null), auth, { token: mt.v.token, kind: "mobile-android" })))
+      : null;
+
+    const live = await liveSessions(p.userId);
+    expect({ parked, waited, revoke: answer(rv), mint: answer(mt), redeemed, caller: live.includes(p.caller), live: live.length })
+      .toEqual({
+        parked: "sessions FOR UPDATE", waited: "users FOR NO KEY UPDATE", revoke: "ok", mint: "ok", redeemed: "ok",
+        caller: true, live: 2,
+      });
+  }, 60_000);
+
+  /*
+   * THE MINT RACE WITH NO HOLDERS: the session being taken back mints every grant and spends each at
+   * once, back to back on four connections, while the person takes it back. Nothing deadlocks, and after
+   * a sign-out everywhere, a password change or an authenticator removal nothing it minted is signed in.
+   * The device-scoped doors are read for deadlocks only: a session redeemed before them is another device.
+   */
+  type Count = (k: string) => void;
+  /** One loop per grant, minting as the other session: false ends it, at the mint refused 401. */
+  const GRANT_LOOPS: Array<(auth: Auth, h: unknown, p: Revocable, count: Count) => Promise<boolean>> = [
+    async (auth, h, p, count) => {
+      const verifier = generateToken();
+      const q = await settle(auth.authorize(ctxOn(h, p, p.other), {
+        response_type: "code", client_id: "tf-macos", redirect_uri: "trafficflow://auth",
+        code_challenge: s256(verifier), code_challenge_method: `S${"256"}` as const, state: "s", scope: "full",
+      }));
+      if (!q.ok) { count(`authorize ${answer(q)}`); return answer(q) !== "unauthorized"; }
+      const ap = await settle(auth.approveAuthorize(ctxOn(h, p, p.other), { request: q.v.request }));
+      if (!ap.ok) { count(`approve ${answer(ap)}`); return answer(ap) !== "unauthorized"; }
+      const code = new URL(ap.v.redirect).searchParams.get("code")!;
+      count(`token ${answer(await settle(auth.token(ctxOn(h, p, null), {
+        grant_type: "authorization_code", code, redirect_uri: "trafficflow://auth", client_id: "tf-macos", code_verifier: verifier,
+      })))}`);
+      return true;
+    },
+    async (auth, h, p, count) => {
+      const m = await settle(mintPairingToken(ctxOn(h, p, p.other), { grant: "device-pair", label: "rg-race phone" }));
+      if (!m.ok) { count(`pair-mint ${answer(m)}`); return answer(m) !== "unauthorized"; }
+      count(`pair-redeem ${answer(await settle(redeemDevicePair(ctxOn(h, p, null), auth, { token: m.v.token, kind: "mobile-android" })))}`);
+      return true;
+    },
+    async (auth, h, p, count) => {
+      const verifier = generateToken();
+      const asked = await settle(auth.issueDesktopApproval(ctxOn(h, p, null), { challenge: hashToken(verifier), kind: "desktop-linux" }));
+      if (!asked.ok) { count(`approval-ask ${answer(asked)}`); return true; }
+      const c = await settle(auth.confirmDesktopApproval(ctxOn(h, p, p.other), asked.v.approvalId));
+      if (!c.ok) { count(`approval-confirm ${answer(c)}`); return answer(c) !== "unauthorized"; }
+      const cl = await settle(auth.claimDesktopApproval(ctxOn(h, p, null), { approvalId: asked.v.approvalId, verifier, kind: "desktop-linux" }));
+      count(`approval-claim ${cl.ok ? ("tokens" in cl.v ? "ok" : "pending") : answer(cl)}`);
+      return true;
+    },
+    async (auth, h, p, count) => {
+      const m = await settle(auth.issueDesktopLink(ctxOn(h, p, p.other)));
+      if (!m.ok) { count(`link-mint ${answer(m)}`); return answer(m) !== "unauthorized"; }
+      count(`link-claim ${answer(await settle(auth.claimDesktopLink(ctxOn(h, p, null), { code: m.v.code })))}`);
+      return true;
+    },
+  ];
+
+  /**
+   * Everything a loop may hear: a grant spent before the revoke (whose session the revoke then takes),
+   * a grant the revoke voided before its spend, and a mint refused once its session is gone.
+   */
+  const GRANT_LOOP_ANSWERS = new Set([
+    "token ok", "pair-redeem ok", "approval-claim ok", "link-claim ok",
+    "token invalid_grant", "pair-redeem pairing_invalid", "approval-claim approval_denied", "link-claim invalid_code",
+    "authorize unauthorized", "approve unauthorized", "pair-mint unauthorized", "approval-confirm unauthorized",
+    "link-mint unauthorized",
+  ]);
+
+  const BURST_DOORS: Array<[string, (auth: Auth, c: ServiceContext, p: Revocable) => Promise<unknown>, ((p: Revocable) => string[]) | null]> = [
+    ["signing out everywhere", (auth, c) => auth.logout(c, { allDevices: true }), () => []],
+    [
+      "changing the password",
+      (auth, c) => auth.changePassword(c, { currentPassword: PW, newPassword: "new-battery-staple-horse-password" }),
+      (p) => [p.caller],
+    ],
+    ["removing the authenticator", (auth, c) => auth.totpRemove(c), (p) => [p.caller]],
+    ["revoking the other device", (auth, c, p) => auth.revokeDevice(c, p.other), null],
+    ["signing out the other web sessions", (auth, c) => auth.revokeWebSessions(c), null],
+  ];
+
+  for (const [door, run, keeps] of BURST_DOORS) {
+    it(`${door} while that session mints and spends every grant never deadlocks${keeps ? " and leaves none signed in" : ""}`, async () => {
+      const auth = makeAuthService(deps);
+      const tag = randomUUID().slice(0, 8);
+      const loops = GRANT_LOOPS.map((_, i) => named(`rgr-grant${i}-${tag}`));
+      const revoker = named(`rgr-grant-revoke-${tag}`);
+      const answers: Record<string, number> = {};
+      const count: Count = (k) => { answers[k] = (answers[k] ?? 0) + 1; };
+      let outlived = 0;
+      for (let round = 0; round < ROUNDS; round++) {
+        const p = await revocable();
+        let stop = false;
+        const looping = GRANT_LOOPS.map(async (step, i) => {
+          while (!stop) if (!(await step(auth, loops[i]!.db, p, count))) return;
+        });
+        await sleep(5 + (round % 7) * 3);
+        count(`revoke ${answer(await settle(run(auth, ctxOn(revoker.db, p, p.caller), p)))}`);
+        stop = true;
+        await Promise.all(looping);
+        const kept = keeps?.(p);
+        if (kept && (await liveSessions(p.userId)).some((id) => !kept.includes(id))) outlived++;
+      }
+      // A deadlock victim answers 40P01, which no expected answer admits.
+      const others = Object.fromEntries(Object.entries(answers).filter(([k]) => !GRANT_LOOP_ANSWERS.has(k)));
+      expect({ ...others, outlived }, JSON.stringify(answers)).toEqual({ "revoke ok": ROUNDS, outlived: 0 });
+    }, 180_000);
+  }
 });

@@ -13,6 +13,11 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Signing out also ends a sign-in being issued
+
+Signing out everywhere, changing your password or removing your authenticator now also ends a sign-in whose
+code or confirmation was being issued at that same moment.
+
 ### A meeting invitation that arrives as an Outlook link says so
 
 When a Microsoft 365 or Exchange server delivers a meeting invitation as an Outlook Web App link instead of

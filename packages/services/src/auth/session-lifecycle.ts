@@ -34,13 +34,11 @@ export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAcco
 
 /**
  * A MINT'S LAST STATEMENT: the session that asked for the grant, still live, read FOR SHARE — or 401.
- * The route checked it when the request came in; a revoke can commit after that and before the mint
- * does. Last, after the door's own writes, so the two orders against a revoke both end with no grant:
- * the revoke claimed the session first, and this read finds it revoked and the mint rolls back; or
- * this read came first, the claim waits for the mint to commit, and the revoke's second void takes
- * the grant. Taken first, a mint holding the session would wait on a grant row the revoke's first
- * void holds while the claim waits on the session. SHARE and not KEY SHARE: the claim writes
- * `revoked_at`, a non-key column, which KEY SHARE would not hold off.
+ * The route checked it when the request came in; a revoke can commit after that. Every mint takes
+ * {@link lockUserRow} first, so a mint that waited for a revoke finds its session revoked here and
+ * rolls back, and a revoke that waited for a mint voids what it committed. Last, after the door's
+ * own writes, so a session revoked by any other door while they ran is seen too. SHARE and not KEY
+ * SHARE: the claim writes `revoked_at`, a non-key column, which KEY SHARE would not hold off.
  */
 export async function holdLiveSession(tx: Tx, ctx: ServiceContext): Promise<{ lastTwofaAt: Date | null }> {
   if (!ctx.sessionId) throw new ServiceError("unauthorized", 401, "no active session");
@@ -48,6 +46,19 @@ export async function holdLiveSession(tx: Tx, ctx: ServiceContext): Promise<{ la
     .where(and(eq(sessions.id, ctx.sessionId), isNull(sessions.revokedAt))).limit(1), { mode: "share" });
   if (!live) throw new ServiceError("unauthorized", 401, "no active session");
   return live;
+}
+
+/**
+ * THE USER ROW, FOR NO KEY UPDATE: every grant mint takes it as its first statement after the fence,
+ * and every revoke before its first void. A mint and a revoke of one user then wait for each other
+ * whole, so a sign-out everywhere, a password change or an authenticator removal also ends a sign-in
+ * whose grant is minted while it runs, and a desktop link's supersede cannot deadlock against a
+ * revoke's second void. A writer that only references the user (a foreign key reads the row FOR KEY
+ * SHARE) is not held off.
+ */
+export async function lockUserRow(tx: Tx, userId: string): Promise<void> {
+  await dialect(tx).forUpdate(tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1),
+    { mode: "no key update" });
 }
 
 /**
@@ -248,7 +259,7 @@ export class SessionLifecycle {
       // row first and the pending grants voided before the claim and again after it, as there.
       familyIds = await this.inTransaction(ctx, async (txCtx) => {
         const tx = asTx(txCtx);
-        await this.lockUserForRevoke(tx, userId);
+        await lockUserRow(tx, userId);
         await this.voidPendingGrants(tx, userId, now);
         const mine = and(eq(sessions.userId, userId), isNull(sessions.revokedAt));
         await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions).where(mine).orderBy(asc(sessions.id)));
@@ -512,9 +523,9 @@ export class SessionLifecycle {
    * The shared core behind the revocations — a device, "sign out all other web sessions" and the
    * credential-change rule below — because two hand-written claim-and-sweep pairs agree until
    * one is edited. `familyIds` names what was swept, for a hosted caller that prunes by family.
-   * The user row is taken first ({@link lockUserForRevoke}), then the user's pending grants are
-   * voided before the claim and again after it ({@link voidPendingGrants}): a mint that held its
-   * session before the claim commits while the claim waits, and the second void takes what it wrote.
+   * The user row is taken first ({@link lockUserRow}), as every grant mint takes it, then the user's
+   * pending grants are voided before the claim and again after it ({@link voidPendingGrants}), so a
+   * grant row committed before the claim is taken whatever wrote it.
    */
   /*
    * Set-based AND atomic, one measured defect each. Set-based: a per-family loop was 400+ round
@@ -529,7 +540,7 @@ export class SessionLifecycle {
   ): Promise<{ revoked: number; familyIds: string[] }> {
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
-      await this.lockUserForRevoke(tx, userId);
+      await lockUserRow(tx, userId);
       await this.voidPendingGrants(tx, userId, now);
       // Locked in id order first, erasure's step-7 order: the claim alone locks in scan order, and
       // the two orders deadlocked over two of one account's sessions.
@@ -579,19 +590,6 @@ export class SessionLifecycle {
     if (ctx.sessionId) preds.push(ne(sessions.id, ctx.sessionId));
     if (current) preds.push(ne(sessions.familyId, current.familyId));
     return this.revokeClaimedSessions(ctx, userId, preds, now);
-  }
-
-  /**
-   * A REVOKE'S FIRST LOCK, before its first void: the user row, FOR NO KEY UPDATE — the lock the mints
-   * that supersede a grant (`issueDesktopLink`, `authorize`) take first. The two then wait for each
-   * other whole. Without it a desktop link that had deleted the code before it waited, at its
-   * {@link holdLiveSession}, on the session this revoke claimed, while this revoke's second void waited
-   * on the row it deleted: a deadlock, and the revoke was as likely to be killed as the mint. A writer
-   * that only references the user (a foreign key reads the row FOR KEY SHARE) is not held off.
-   */
-  private async lockUserForRevoke(db: Tx, userId: string): Promise<void> {
-    await dialect(db).forUpdate(db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1),
-      { mode: "no key update" });
   }
 
   /**

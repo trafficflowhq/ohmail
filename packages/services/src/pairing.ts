@@ -3,7 +3,7 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { type Tx } from "@trafficflow/db";
 import { pairingTokens, users } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
-import { PAIRED_DEVICE_KINDS, holdLiveSession, type PairedDeviceKind } from "./auth/session-lifecycle.js";
+import { PAIRED_DEVICE_KINDS, holdLiveSession, lockUserRow, type PairedDeviceKind } from "./auth/session-lifecycle.js";
 import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
@@ -131,10 +131,12 @@ export async function mintPairingToken(
   const mint = { createdByUserId, grant, label, ttlMs, now };
   // The first-boot mint carries no session and writes as it always has.
   if (!ctx.sessionId) return writePairingToken(asTx(ctx), mint);
-  // A session's mint lands only while that session is live, proved last ({@link holdLiveSession}):
-  // a revoke that commits after the route's check takes the code with it.
+  // A session's mint takes its creator's user row first ({@link lockUserRow}) and lands only while
+  // that session is live, proved last ({@link holdLiveSession}): a revoke of that user either waits
+  // for it and voids the code, or runs first and leaves this mint refused.
   return runInTransaction(ctx, async (txCtx) => {
     const tx = asTx(txCtx);
+    if (createdByUserId !== null) await lockUserRow(tx, createdByUserId);
     const minted = await writePairingToken(tx, mint);
     await holdLiveSession(tx, txCtx);
     return minted;
