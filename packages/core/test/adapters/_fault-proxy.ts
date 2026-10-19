@@ -9,8 +9,10 @@ import type { ImapFlow } from "imapflow";
  * closes before the server's answer reaches the client (the server expunged, the client cannot
  * know). `hide` strips capabilities from every list, so a server with MOVE can be made to take
  * the COPY + EXPUNGE path. `hold` parks the first client command it matches, and everything after
- * it, until its `run` settles (another session acting between two commands of this one). Both
- * directions are parsed literal-aware; bytes are otherwise verbatim.
+ * it, until its `run` settles (another session acting between two commands of this one); with
+ * `unsolicitedFirst` the parked command's reply then arrives behind the server's unsolicited flag
+ * updates instead of ahead of them. Both directions are parsed literal-aware; bytes are otherwise
+ * verbatim.
  */
 export type ExpungeFault = "pass" | "no" | "drop" | "drop-after";
 
@@ -18,6 +20,15 @@ export type ExpungeFault = "pass" | "no" | "drop" | "drop-after";
 export interface CommandHold {
   when: (command: string, args: string) => boolean;
   run: () => Promise<void>;
+  /**
+   * Deliver the parked command's untagged flags-only FETCH answers (the server telling this
+   * session that ANOTHER session changed a flag) ahead of the answers the command asked for.
+   * RFC 3501 §5.2: a server can send data the client did not request at any time, and SHOULD send
+   * the flag changes another session made without being asked. Dovecot 2.3 and GreenMail 2.1 send
+   * it after the reply; a server that sends it first (iCloud, by the 2026-10-19 forward's timing)
+   * is what this models. Nothing is invented or dropped: the same bytes, in the other legal order.
+   */
+  unsolicitedFirst?: boolean;
 }
 
 export interface FaultProxy {
@@ -27,6 +38,8 @@ export interface FaultProxy {
   onlyMailbox: string | null;
   /** Armed by a test; cleared once it has matched. */
   hold: CommandHold | null;
+  /** Flag updates an `unsolicitedFirst` hold moved ahead of the reply they followed. */
+  readonly reordered: number;
   /** Commands seen, by name, with the mailbox selected when each was sent. */
   readonly log: ReadonlyArray<{ command: string; mailbox: string | null; faulted: boolean }>;
   count(command: string, mailbox?: string): number;
@@ -96,6 +109,7 @@ export async function startFaultProxy(
   const sockets = new Set<net.Socket>();
   const state = {
     fault: opts.fault ?? "pass" as ExpungeFault, onlyMailbox: opts.onlyMailbox ?? null, hold: null as CommandHold | null,
+    reordered: 0,
   };
 
   const stripCaps = (text: string): string => {
@@ -116,6 +130,18 @@ export async function startFaultProxy(
     const toUpstream = (b: Buffer): void => { if (parked) parked.push(b); else upstream.write(b); };
     const cs: Framer = { buf: Buffer.alloc(0), literal: 0, continuing: false };
     const ss: Framer = { buf: Buffer.alloc(0), literal: 0, continuing: false };
+    /**
+     * An `unsolicitedFirst` hold's reply, held whole until its tagged completion: one entry per
+     * untagged answer (its first line, and every byte of it including literals), then written back
+     * with the flags-only answers first and the rest in the order the server sent them.
+     */
+    let reordering: { tag: string; units: Array<{ head: string; bytes: Buffer[] }> } | null = null;
+    const toClient = (b: Buffer): void => {
+      const unit = reordering?.units.at(-1);
+      if (unit) unit.bytes.push(b); else client.write(b);
+    };
+    const flagsOnly = (u: { head: string; bytes: Buffer[] }): boolean =>
+      u.bytes.length === 1 && /^\* \d+ FETCH \(/i.test(u.head) && !/BODY\[|BINARY\[|RFC822|ENVELOPE|BODYSTRUCTURE/i.test(u.head);
 
     client.on("data", (chunk: Buffer) => frame(cs, chunk, toUpstream, (text, atStart, raw) => {
       if (!atStart) return raw;
@@ -134,7 +160,11 @@ export async function startFaultProxy(
       if (hold && !parked && hold.when(command, m[4] ?? "")) {
         state.hold = null;
         parked = [raw];
-        void hold.run().finally(() => { const q = parked ?? []; parked = null; for (const b of q) upstream.write(b); });
+        void hold.run().finally(() => {
+          // Armed BEFORE the parked bytes go out, so the reply cannot arrive ahead of it.
+          if (hold.unsolicitedFirst) reordering = { tag, units: [] };
+          const q = parked ?? []; parked = null; for (const b of q) upstream.write(b);
+        });
         return null;
       }
       if (!faulted) return raw;
@@ -147,7 +177,20 @@ export async function startFaultProxy(
       return raw;
     }));
 
-    upstream.on("data", (chunk: Buffer) => frame(ss, chunk, (b) => client.write(b), (text, atStart, raw) => {
+    upstream.on("data", (chunk: Buffer) => frame(ss, chunk, toClient, (text, atStart, raw) => {
+      if (reordering) {
+        if (atStart && text.startsWith(`${reordering.tag} `)) {
+          const { units } = reordering;
+          reordering = null;
+          const first = units.filter(flagsOnly);
+          state.reordered += first.filter((u) => units.slice(0, units.indexOf(u)).some((v) => !flagsOnly(v))).length;
+          for (const u of [...first, ...units.filter((u) => !flagsOnly(u))]) for (const b of u.bytes) client.write(b);
+          return raw;
+        }
+        if (atStart) reordering.units.push({ head: text, bytes: [raw] });
+        else reordering.units.at(-1)?.bytes.push(raw);
+        return null;
+      }
       if (!atStart) return raw;
       if (swallowTag !== null && text.startsWith(`${swallowTag} `)) { kill(); return "halt"; }
       if (pendingSelect && text.startsWith(`${pendingSelect.tag} `)) {
@@ -175,6 +218,7 @@ export async function startFaultProxy(
     set onlyMailbox(m: string | null) { state.onlyMailbox = m; },
     get hold() { return state.hold; },
     set hold(h: CommandHold | null) { state.hold = h; },
+    get reordered() { return state.reordered; },
     log,
     count(command, mailbox) {
       return log.filter((e) => e.command === command && (mailbox === undefined || e.mailbox === mailbox)).length;

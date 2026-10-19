@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
-  ImapFlow, type FetchMessageObject, type ImapFlowOptions, type ListResponse, type MailboxObject,
-  type StatusObject,
+  ImapFlow, type FetchMessageObject, type FetchOptions, type FetchQueryObject, type ImapFlowOptions,
+  type ListResponse, type MailboxObject, type SequenceString, type StatusObject,
 } from "imapflow";
 import nodemailer, { type Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
@@ -1183,6 +1183,88 @@ function sliceRowStreams(client: ImapFlow): void {
   client.fetch = slicedFetch(client.fetch.bind(client)) as ImapFlow["fetch"];
 }
 
+/**
+ * `fetchOne` ANSWERS FOR THE MESSAGE IT ASKED ABOUT, NEVER WITH WHATEVER ARRIVED FIRST.
+ *
+ * imapflow's FETCH command collects every untagged FETCH that arrives while it runs, and its
+ * `fetchOne` answers with the first one. A server may send, during any command, the flag changes
+ * another session made in the selected mailbox (RFC 3501 §5.2) — the sync worker setting \Seen on a
+ * message somebody just opened is one — and a server that sends that update AHEAD of the reply hid
+ * the reply: `download` read "no chunk" and ended a part there without an error, and a tree read
+ * answered nothing. On 2026-10-19 a forwarded 268 662-byte PDF, read while the worker set \Seen on
+ * it, missed its sha256 and the forward was refused. Dovecot and GreenMail send the update after the
+ * reply (measured); iCloud, by that forward's timing, before it.
+ *
+ * Every `fetchOne` on this connection — the chunks imapflow's `download` asks for, the tree, the
+ * existence and fingerprint reads — now collects the command's answers and keeps the asked
+ * message's own, merged ({@link answerFor}). A range or `*` keeps imapflow's own choice, and a
+ * driver that stopped handing `onUntaggedFetch` through to the FETCH (nothing collected) keeps its
+ * own answer: neither is worse than before.
+ */
+export function answerForTheAskedMessage(client: ImapFlow): void {
+  if (typeof client.fetchOne !== "function") return;
+  const fetchOne = client.fetchOne.bind(client);
+  client.fetchOne = (async (seq: SequenceString, query: FetchQueryObject, options?: FetchOptions) => {
+    const answers: FetchMessageObject[] = [];
+    const own = await fetchOne(seq, query, {
+      ...(options ?? {}),
+      // imapflow's fetch command streams each untagged FETCH here instead of into its list.
+      onUntaggedFetch: (message: FetchMessageObject, done: (err?: Error) => void): void => { answers.push(message); done(); },
+    } as FetchOptions);
+    return answers.length === 0 ? own : answerFor(answers, seq, query, options?.uid === true);
+  }) as ImapFlow["fetchOne"];
+}
+
+/** What a FETCH query asks the server to carry back, as the answer's own field names. */
+const ASKED_ITEMS: ReadonlyArray<keyof FetchQueryObject & keyof FetchMessageObject> = [
+  "bodyParts", "source", "bodyStructure", "envelope", "size", "internalDate", "headers", "threadId", "labels", "flags",
+];
+
+/**
+ * The answer `fetchOne` gives from every untagged FETCH its command received — see
+ * {@link answerForTheAskedMessage}. One message asked (a UID, or a sequence number without the `uid`
+ * option): only that message's answers count, and none is `false`, as imapflow says "no such
+ * message". Several: the one carrying the most of what the query asked for is the reply, and the
+ * others only fill what it left out — a `Map` or `Set` (the body parts, the parts that came decoded)
+ * is a union in which the reply's entries win. A range or `*` answers imapflow's way, first come.
+ *
+ * A UID FETCH reply must carry the UID (RFC 3501 §6.4.8, and imapflow asks for it besides). For a
+ * server that leaves it out all the same, an answer that names no UID and carries content the query
+ * asked for (a flag is not content: an update carries one) is the answer, alone — nothing tells two
+ * such answers apart. A query that asked for no content (an existence check) gets no such reading:
+ * there, an update about some other message would read as the asked one still being there.
+ */
+export function answerFor(
+  answers: readonly FetchMessageObject[], seq: SequenceString, query: FetchQueryObject, byUid: boolean,
+): FetchMessageObject | false {
+  const one = typeof seq === "number" ? seq
+    : typeof seq === "bigint" ? Number(seq)
+      : /^\d+$/.test(String(seq).trim()) ? Number(String(seq).trim()) : null;
+  if (one === null) return answers[0] ?? false;
+  const asked = ASKED_ITEMS.filter((k) => Boolean(query[k]));
+  const carried = (m: FetchMessageObject, items = asked): number => items.filter((k) => m[k] !== undefined).length;
+  const its = answers.filter((m) => (byUid ? m.uid : m.seq) === one);
+  if (its.length === 0) {
+    const content = asked.filter((k) => k !== "flags");
+    const nameless = byUid ? answers.filter((m) => typeof m.uid !== "number" && carried(m, content) > 0) : [];
+    return nameless.length === 0 ? false : nameless.reduce((top, m) => (carried(m, content) > carried(top, content) ? m : top));
+  }
+  if (its.length === 1) return its[0]!;
+  const reply = its.reduce((top, m) => (carried(m) > carried(top) ? m : top));
+  const merged: Record<string, unknown> = { ...reply };
+  for (const m of its) {
+    if (m === reply) continue;
+    for (const [k, v] of Object.entries(m)) {
+      if (v === undefined) continue;
+      const mine = merged[k];
+      if (mine === undefined) merged[k] = v;
+      else if (mine instanceof Map && v instanceof Map) merged[k] = new Map([...v, ...mine]);
+      else if (mine instanceof Set && v instanceof Set) merged[k] = new Set([...v, ...mine]);
+    }
+  }
+  return merged as unknown as FetchMessageObject;
+}
+
 export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private client!: ImapFlow;
   private transporter: Transporter | null = null;
@@ -1544,10 +1626,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (this.opts.client) {
       this.client = this.opts.client as ImapFlow;
       sliceRowStreams(this.client);
+      answerForTheAskedMessage(this.client);
       this.guardAsyncErrors();
     } else {
       this.client = new ImapFlow(imapFlowOptions({ ...this.config, auth: resolvedAuth }, { logger: this.opts.logger }));
       sliceRowStreams(this.client);
+      answerForTheAskedMessage(this.client);
       // BEFORE the dial, not after, and the ordering is the whole point. imapflow's own
       // `emitError` routes to `initialReject` only while the connect promise is pending; the
       // moment it resolves, every later failure is a plain `emit("error")`. `connect()` is

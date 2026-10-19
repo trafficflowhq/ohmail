@@ -413,3 +413,114 @@ describe("the door repairs an older row's section at first use", () => {
     expect(await partIdOf(db, theirRow)).toBe("2.2.1");
   });
 });
+
+/* ── A READ THAT FAILED IS READ AGAIN when the server's own tree vouches for the stored section ── */
+
+/** One flaky answer per read of a section, in order; the last one repeats. */
+function flakyServing(structure: MimeStructure, answers: Record<string, Uint8Array[]>) {
+  const state = { asked: [] as string[], structures: 0 };
+  const served: Record<string, number> = {};
+  const openAdapter: OpenAdapter = async (): Promise<AttachmentAdapter> => ({
+    fetchPart: async (_l, partId) => {
+      const section = partId ?? "1";
+      state.asked.push(section);
+      const list = answers[section] ?? [new Uint8Array()];
+      const at = Math.min(served[section] ?? 0, list.length - 1);
+      served[section] = (served[section] ?? 0) + 1;
+      return { contentType: "application/pdf", filename: null, body: list[at]! };
+    },
+    fetchStructure: async () => { state.structures += 1; return structure; },
+    close: async () => { /* nothing */ },
+  });
+  return { openAdapter, state };
+}
+/** The forwarded newsletter's shape: an html body, then the PDF at section 2. */
+const NEWSLETTER = multi("mixed", [text("html"), leafNode("application/pdf", "a.pdf")]);
+/** The cut a flag update made of the 2026-10-19 forward's PDF: its first chunk, decoded. */
+const CUT = RIGHT.subarray(0, 9);
+
+describe("a read the server's tree vouches for is read again before anything is refused", () => {
+  it("the door: a short first read, a whole second one — the file is served, the row untouched", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId);
+    const id = await seedRow(db, accountId, messageId, "2", sha(RIGHT), "a.pdf");
+    const { openAdapter, state } = flakyServing(NEWSLETTER, { "2": [CUT, RIGHT] });
+    const cap = capturingLog();
+
+    const got = await svc.fetchBytes(ctx, id, { openAdapter, log: cap.log });
+
+    expect(sha(got.body)).toBe(sha(RIGHT));
+    expect([state.asked, state.structures]).toEqual([["2", "2"], 1]);
+    expect(await partIdOf(db, id)).toBe("2");
+    expect(cap.lines().map((l) => [l.event, l.partId, l.tries])).toEqual([["attachment_part_reread", "2", 1]]);
+    expect(JSON.stringify(cap.lines())).not.toContain("a.pdf");
+  });
+
+  it("the forward: the first press sends, with the whole file, and nothing is refused", async () => {
+    const { db } = await makeDeps(FIXED_NOW);
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId, address: "me@atelier.example" });
+    const orig = await seedApiMessage(db, {
+      accountId: s.accountId, mailboxId, subject: "Autumn newsletter", fromAddress: "news@sender.example",
+      date: FIXED_NOW, nativeLocator: { folder: "INBOX", ref: "42:7" },
+    });
+    await seedBody(db, { messageId: orig.id, text: "", html: "<p>Dear readers</p>" });
+    await db.insert(attachmentsTbl).values({
+      accountId: s.accountId, messageId: orig.id, filename: "a.pdf", contentType: "application/pdf",
+      sizeBytes: RIGHT.byteLength, partId: "2", inline: false, contentSha256: sha(RIGHT),
+    });
+    const [draft] = await db.insert(drafts).values({
+      accountId: s.accountId, mailboxId, subject: "Fwd: Autumn newsletter", body: "",
+      to: [{ name: null, address: "sam@example.test" }], cc: [], bcc: [], status: "draft",
+      createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
+    }).returning();
+    const ctx = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "part-reread" };
+    const delivered: OutboundMessage[] = [];
+    const openSendAdapter = async (): Promise<SendAdapter> => ({
+      async send(msg: OutboundMessage) { delivered.push(msg); return { providerMessageId: msg.messageId ?? "<none>" }; },
+      async messageInSent() { return false; },
+      async close() { /* nothing */ },
+    });
+    const { openAdapter } = flakyServing(NEWSLETTER, { "2": [CUT, RIGHT] });
+
+    const res = await sendService.send(
+      ctx, draft!.id, "reread-key-1", { openSendAdapter, openFetchAdapter: openAdapter, log: capturingLog().log },
+      { forwardOf: orig.id },
+    );
+
+    expect(res.status).toBe("sent");
+    expect(delivered).toHaveLength(1);
+    expect(sha(delivered[0]!.attachments![0]!.content as Uint8Array)).toBe(sha(RIGHT));
+  });
+
+  it("bounded: a section that keeps answering short is read twice more, then refused as before", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId);
+    const id = await seedRow(db, accountId, messageId, "2", sha(RIGHT), "a.pdf");
+    const { openAdapter, state } = flakyServing(NEWSLETTER, { "2": [CUT] });
+    const cap = capturingLog();
+
+    const err = await svc.fetchBytes(ctx, id, { openAdapter, log: cap.log }).catch((e: unknown) => e);
+
+    expect((err as ServiceError).code).toBe("attachment_part_mismatch");
+    expect(state.asked).toEqual(["2", "2", "2"]);
+    expect(cap.lines().map((l) => [l.event, l.tries ?? l.reason, l.status])).toEqual([
+      ["attachment_part_reread", 2, "mismatch"],
+      ["attachment_part_unrepairable", "no_candidate", undefined],
+      ["attachment_part_mismatch", undefined, undefined],
+    ]);
+  });
+
+  it("the control: a tree that puts another file at the stored section is a wrong row, never re-read", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId);
+    const id = await seedRow(db, accountId, messageId, "2", sha(RIGHT), "a.pdf");
+    const tree = multi("mixed", [text("html"), leafNode("application/zip", "b.zip")]);
+    const { openAdapter, state } = flakyServing(tree, { "2": [WRONG, RIGHT] });
+
+    const err = await svc.fetchBytes(ctx, id, { openAdapter, log: capturingLog().log }).catch((e: unknown) => e);
+
+    expect((err as ServiceError).code).toBe("attachment_part_mismatch");
+    expect(state.asked).toEqual(["2"]);
+  });
+});

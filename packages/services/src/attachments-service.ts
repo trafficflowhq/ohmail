@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNull } from "drizzle-orm";
 import { attachments, messages } from "@trafficflow/db";
 import {
-  CALENDAR_FALLBACK_FILENAME, candidateSections, createLogger, isCalendarMime, isMessageGone,
+  CALENDAR_FALLBACK_FILENAME, candidateSections, createLogger, isCalendarMime, isMessageGone, sectionHoldsFile,
   type Logger, type MimeStructure, type NativeLocator, type EmailAddress,
 } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -142,6 +142,12 @@ export function verifiedPart(row: PartRow, fetched: FetchedBytes, log: Logger = 
 export const REPAIRS_PER_REQUEST = 10;
 /** How many of the server's sections one row may download looking for its file. */
 export const REPAIR_DOWNLOADS_PER_ROW = 3;
+/**
+ * The waits before each re-read of a stored section the server's tree vouches for, one entry per
+ * re-read: the first soon, the second after the answer had time to settle. Two, because a third
+ * would spend a send's attempt ceiling (twenty seconds) on a part that stays wrong.
+ */
+export const PART_REREAD_WAITS_MS: readonly number[] = [250, 1500];
 
 /** What the repair reads off a row: the gate's three, and the two its candidate order ranks by. */
 export interface RepairRow extends PartRow { contentType: string; filename: string | null }
@@ -193,9 +199,12 @@ function shaOf(f: FetchedBytes): string { return f.sha256 ?? shaHex(f.body); }
 /**
  * THE GATE, WITH ONE BOUNDED REPAIR FOR AN OLDER ROW. The stored section is fetched; equal bytes
  * are served, a null sha is served and said ({@link verifiedPart}). On a mismatch the server's
- * tree is asked once and at most {@link REPAIR_DOWNLOADS_PER_ROW} of its sections, in
- * `candidateSections`' order, are downloaded under the same ceiling; the first sha-equal one is
- * served and written back. Nothing else is served, and with no equal section the 409 stands.
+ * tree is asked once. When it says the stored section IS the row's file ({@link sectionHoldsFile}),
+ * the read is what went wrong, and the section is read again after each of
+ * {@link PART_REREAD_WAITS_MS}; an equal read is served. Otherwise, or after those, at most
+ * {@link REPAIR_DOWNLOADS_PER_ROW} other sections, in `candidateSections`' order, are downloaded
+ * under the same ceiling; the first sha-equal one is served and written back. Nothing else is
+ * served, and with no equal read the 409 stands.
  */
 export async function repairedPart(
   row: RepairRow, read: PartReader, ctx: ServiceContext, opts: { log?: Logger; budget?: RepairBudget } = {},
@@ -217,7 +226,7 @@ export async function repairedPart(
   return (await repairFrom(row, read, ctx, known, opts.budget, log)) ?? verifiedPart(row, fetched, log);
 }
 
-/** The repair itself: the allowance, the tree, the candidates, the write. `null` is unrepairable. */
+/** The repair itself: the allowance, the tree, the re-reads, the candidates, the write. `null` is unrepairable. */
 async function repairFrom(
   row: RepairRow, read: PartReader, ctx: ServiceContext, known: MimeStructure | null,
   budget: RepairBudget | undefined, log: Logger,
@@ -230,6 +239,21 @@ async function repairFrom(
   if (budget !== undefined) budget.rows -= 1;
   const structure = known ?? (read.fetchStructure ? await read.fetchStructure() : null);
   if (structure === null) return refuse("no_structure", 0);
+  // THE TREE VOUCHES FOR THE STORED SECTION, so the row is right and the READ was not: a chunk
+  // the connection lost, an answer the server had not settled. Read it again before anything else;
+  // one line either way, `served` or still a `mismatch`, with the number of re-reads.
+  if (sectionHoldsFile(structure, row)) {
+    let tries = 0;
+    for (const wait of PART_REREAD_WAITS_MS) {
+      await new Promise<void>((resolve) => setTimeout(resolve, wait));
+      tries += 1;
+      const again = await read.fetchPart(row.partId);
+      if (shaOf(again) !== row.contentSha256) continue;
+      log.info("attachment_part_reread", { partRowId: row.id, partId: row.partId, tries, status: "served" });
+      return again;
+    }
+    log.warn("attachment_part_reread", { partRowId: row.id, partId: row.partId, tries, status: "mismatch" });
+  }
   const candidates = candidateSections(structure, row);
   let tried = 0;
   for (const section of candidates.slice(0, REPAIR_DOWNLOADS_PER_ROW)) {

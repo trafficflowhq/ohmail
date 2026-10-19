@@ -94,6 +94,17 @@ export function SendStatus({
               : send.code === "forward_original_unavailable"
                 ? { tone: "error", text: t("statusForwardOriginalUnavailable") }
               /**
+               * A FORWARD'S ORIGINAL THAT DID NOT READ BACK, and a dial that ran out of time. Each
+               * reached a person as "Sending didn't work … Try again" (2026-10-19: a forwarded PDF
+               * whose read the server cut short), which names neither what failed nor what helps.
+               */
+              : send.code === "attachment_part_mismatch"
+                ? { tone: "error", text: t("statusAttachmentMismatch") }
+              : send.code === "forward_source_moved"
+                ? { tone: "error", text: t("statusForwardSourceMoved") }
+              : send.code === "send_timeout"
+                ? { tone: "error", text: t("statusTimeout") }
+              /**
                * ANOTHER WINDOW WROTE THIS DRAFT BETWEEN THE LAST SAVE AND THIS PRESS. `warn`, not
                * `error`: nothing failed and nothing left — the row simply is not the message this
                * screen was looking at, and sending it would have delivered somebody else's words.

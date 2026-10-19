@@ -142,6 +142,36 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
+  it("a forward's refusals and a timed-out dial say what happened, in both scopes and both languages", () => {
+    // 2026-10-19: a forward refused `attachment_part_mismatch` showed "Sending didn't work … Try
+    // again" — the one sentence that says nothing about what failed. Each code below can reach a
+    // person from the send route, and each now names its cause and the act that helps.
+    const cases = [
+      ["attachment_part_mismatch", "An attachment of the original didn't come back from your mail server the way it arrived",
+        "Ein Anhang des Originals kam von deinem Mailserver nicht so zurück, wie er angekommen ist"],
+      ["forward_source_moved", "The message you're forwarding has moved on your mail server",
+        "Die Nachricht, die du weiterleitest, wurde auf deinem Mailserver verschoben"],
+      ["send_timeout", "Your mail server didn't answer in time", "Dein Mailserver hat nicht rechtzeitig geantwortet"],
+    ] as const;
+    for (const [code, enText, deText] of cases) {
+      const send: SendState = { phase: "failed", reason: "the server's own words", code };
+      for (const scope of ["reply", "compose"] as const) {
+        const en1 = render(send, en, "en", scope);
+        expect(en1, code).toContain(enText);
+        expect(en1, code).toContain("draft is kept");
+        expect(en1, code).not.toContain("Sending didn't work");
+        expect(en1, code).not.toContain("the server's own words");
+        act(() => root?.unmount());
+        host?.remove();
+        const de1 = render(send, de, "de", scope);
+        expect(de1, code).toContain(deText);
+        expect(de1, code).not.toContain("Senden hat nicht geklappt");
+        act(() => root?.unmount());
+        host?.remove();
+      }
+    }
+  });
+
   it("mailbox_not_signed_in says the file's sentence after the kept draft, with no Try again, in both scopes and languages", () => {
     const send = phaseFor({ status: "rolled_back", error: {
       code: "mailbox_not_signed_in", retryable: false,

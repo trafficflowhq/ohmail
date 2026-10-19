@@ -44,6 +44,16 @@ either, nothing new is listed.
 Staff whose only role is operations no longer see a mailbox's sender name, and the account list's search matches
 only what they are shown of a login (its domain). Owners, support and billing see both as before.
 
+### Forwarding right after opening a message
+
+Forwarding a message with an attachment could fail with "Sending didn't work" and go through on the next press,
+most often just after you opened the message (seen with iCloud). Opening it marks it read, and when your mail
+server reported a change like that while ohmail was reading the attachment, the read stopped early: the file no
+longer matched the one that arrived, so nothing was sent. Opening or saving an attachment could fail the same
+way. ohmail now reads through such reports, and reads an attachment once more when your mail server's own
+description of the message says it is the right file. When a forward still cannot go, or your mail server does
+not answer in time, the message now says so instead of "Sending didn't work".
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

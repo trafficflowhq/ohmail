@@ -407,6 +407,23 @@ const nameOf = (n: MimeStructure): string | null =>
   (n.disposition?.params.filename ?? n.params.name ?? "").trim() || null;
 
 /**
+ * DOES THE SERVER'S TREE SAY THE STORED SECTION IS THIS ROW'S FILE? A leaf at `row.partId` of the
+ * row's base type (or a server's octet-stream), bearing the row's name when the row has one — the
+ * test {@link candidateSections} ranks the other sections by. When it does, a read of that section
+ * that missed the row's sha256 is a READ that went wrong (a cut chunk, a transient answer), not a
+ * row numbered wrong, and reading it again is the repair.
+ */
+export function sectionHoldsFile(structure: MimeStructure, row: CandidateRow): boolean {
+  if (row.partId === null) return false;
+  const stored = enumerateSections(structure)?.find((s) => s.section === row.partId);
+  if (stored === undefined || stored.kind !== "leaf") return false;
+  const type = baseTypeOf(stored.node.type);
+  if (type !== baseTypeOf(row.contentType) && type !== "application/octet-stream") return false;
+  const name = row.filename?.trim() || null;
+  return name === null || nameOf(stored.node) === name;
+}
+
+/**
  * Where an older row's file most likely is, in the order the door downloads them: (i) the stored
  * id names an rfc822 whose body is one part — `<id>.1`, the 3.9.32 class, exact; (ii) the section
  * mailparser 3.9.18 would have numbered with the stored id, the 3.9.18 class, exact; (iii) the
